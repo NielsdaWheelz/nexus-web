@@ -13,7 +13,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import TextIO
 
-from nexus_test_control.evidence import RunEvidence, evidence_json, redact_text
+from nexus_test_control.evidence import (
+    DiagnosticRerunEvidence,
+    RunEvidence,
+    diagnostic_evidence_json,
+    evidence_json,
+    redact_text,
+    run_evidence_from_json,
+)
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
     Capability,
@@ -50,6 +57,7 @@ from nexus_test_control.services import clean_owned_runtime, new_run_id, test_en
 
 _PROOF_RUNNERS = frozenset({"gradle", "playwright", "pytest", "static", "vitest"})
 _FAULT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+_RUN_ID = re.compile(r"[0-9a-f]{16}\Z")
 _DEFERRED_OWNER = {
     Capability.SENSITIVITY: Workflow.PR,
     Capability.MIGRATIONS: Workflow.PR,
@@ -89,6 +97,11 @@ class ProveCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class DiagnoseCommand:
+    original_run_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class CleanCommand:
     pass
 
@@ -98,7 +111,7 @@ class ListCommand:
     pass
 
 
-type Command = WorkflowCommand | ProveCommand | CleanCommand | ListCommand
+type Command = WorkflowCommand | ProveCommand | DiagnoseCommand | CleanCommand | ListCommand
 
 
 def parser() -> argparse.ArgumentParser:
@@ -119,6 +132,9 @@ def parser() -> argparse.ArgumentParser:
     prove = commands.add_parser("prove")
     prove.add_argument("--proof", required=True)
     prove.add_argument("--against", required=True)
+
+    diagnose = commands.add_parser("diagnose")
+    diagnose.add_argument("--of", required=True)
 
     commands.add_parser("clean")
     list_command = commands.add_parser("list")
@@ -157,6 +173,10 @@ def parse_command(argv: Sequence[str]) -> Command:
         elif _FAULT_ID.fullmatch(against) is None:
             argument_parser.error("fault id must be a lowercase hyphenated identifier")
         return ProveCommand(parsed.proof, method, against)
+    if command == "diagnose":
+        if _RUN_ID.fullmatch(parsed.of) is None:
+            argument_parser.error("--of must be a 16-character lowercase hexadecimal run id")
+        return DiagnoseCommand(parsed.of)
     if command == "clean":
         return CleanCommand()
     if command == "list":
@@ -169,6 +189,12 @@ def parse_command(argv: Sequence[str]) -> Command:
 def list_json() -> dict[str, object]:
     return {
         "version": 1,
+        "commands": [
+            {"id": "prove"},
+            {"id": "diagnose"},
+            {"id": "clean"},
+            {"id": "list"},
+        ],
         "workflows": [
             {
                 "id": workflow.value,
@@ -208,6 +234,8 @@ def main(
         with controller_signal_handlers():
             if isinstance(command, ProveCommand):
                 return _execute_prove(root, command, env, output)
+            if isinstance(command, DiagnoseCommand):
+                return _execute_diagnose(root, command, env, output)
             if isinstance(command, CleanCommand):
                 with workspace_heavy_lock(root):
                     runtime_existed = (root / ".nexus-test/runtime.json").is_file()
@@ -283,6 +311,115 @@ def _execute_workflow(
     relative_summary = write_summary(repo_root, evidence, environment_secrets(environment))
     output.write(f"{command.workflow.value}: {evidence.status.value}; summary={relative_summary}\n")
     return 0 if evidence.status is RunStatus.PASS else 1
+
+
+def _execute_diagnose(
+    repo_root: Path,
+    command: DiagnoseCommand,
+    environment: Mapping[str, str],
+    output: TextIO,
+) -> int:
+    original = _load_failed_run(repo_root, command.original_run_id)
+    git_sha = _git_sha(repo_root, "HEAD")
+    if original.git_sha != git_sha:
+        raise ControlPlaneError("diagnostic rerun requires the original committed HEAD")
+    _require_clean_checkout(repo_root)
+
+    run_id = new_run_id()
+    original_directory = repo_root / "test-results" / "runs" / original.run_id
+    claim = original_directory / "diagnostic-rerun.json"
+    relative_summary = Path("test-results") / "runs" / run_id / "summary.json"
+    try:
+        with claim.open("x", encoding="utf-8") as target:
+            target.write(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "command": "diagnose",
+                        "diagnostic_run_id": run_id,
+                        "summary": relative_summary.as_posix(),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+    except FileExistsError as error:
+        raise ControlPlaneError("failed run already has a formal diagnostic rerun") from error
+
+    started = time.monotonic_ns()
+    results_directory = relative_summary.parent
+    absolute_results_directory = repo_root / results_directory
+    absolute_results_directory.mkdir(parents=True, exist_ok=False)
+    context = CapabilityContext(
+        repo_root,
+        original.workflow,
+        tuple(item for item in original.selection if item.deferred_to is None),
+        False,
+        frozenset(item.proof for item in original.sensitivity),
+    )
+    owned_environment = {
+        **environment,
+        "NEXUS_TEST_RESULTS_DIR": str(absolute_results_directory),
+        "NEXUS_TEST_RUN_ID": run_id,
+    }
+    workflow_run = run_workflow(context, output, owned_environment, run_id=run_id)
+    evidence = DiagnosticRerunEvidence(
+        run_id=run_id,
+        workflow=original.workflow,
+        git_sha=git_sha,
+        diagnostic_of_run_id=original.run_id,
+        duration_ms=(time.monotonic_ns() - started) // 1_000_000,
+        peak_owned_mib=workflow_run.peak_owned_mib,
+        capabilities=workflow_run.capabilities,
+    )
+    with (repo_root / relative_summary).open("x", encoding="utf-8") as target:
+        target.write(
+            json.dumps(
+                diagnostic_evidence_json(evidence, environment_secrets(environment)),
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+    output.write(
+        "diagnose: first=fail; "
+        f"diagnostic={evidence.diagnostic_status.value}; verdict=fail; "
+        f"summary={relative_summary.as_posix()}\n"
+    )
+    return 1
+
+
+def _load_failed_run(repo_root: Path, run_id: str) -> RunEvidence:
+    relative = Path("test-results") / "runs" / run_id / "summary.json"
+    summary = repo_root / relative
+    try:
+        resolved = summary.resolve(strict=True)
+        resolved.relative_to(repo_root.resolve(strict=True))
+        value = json.loads(resolved.read_text(encoding="utf-8"))
+        evidence = run_evidence_from_json(repo_root, value)
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        raise ControlPlaneError(f"invalid original run summary: {error}") from error
+    if resolved != summary or evidence.run_id != run_id:
+        raise ControlPlaneError("original run summary identity does not match --of")
+    if evidence.status is not RunStatus.FAIL:
+        raise ControlPlaneError("diagnostic rerun requires a failed workflow run")
+    return evidence
+
+
+def _require_clean_checkout(repo_root: Path) -> None:
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ControlPlaneError("could not inspect the diagnostic checkout") from error
+    if status.strip():
+        raise ControlPlaneError("diagnostic rerun requires a clean committed checkout")
 
 
 def _route_selection_for_workflow(

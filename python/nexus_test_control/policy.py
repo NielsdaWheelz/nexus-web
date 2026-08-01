@@ -26,6 +26,8 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\n]+)\)")
 _URI_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*:", re.I)
+_WEB_TEST_LOOKING = re.compile(r"(?:^|[._-])(?:test|spec)\.[cm]?[jt]sx?\Z", re.I)
+_WEB_TEST_EXECUTABLE = re.compile(r"\.(?:unit|browser)\.test\.(?:ts|tsx)\Z")
 _REQUIRED_JOURNEY_IDS = frozenset({"nexus-search-open-restore"})
 _SECRET = re.compile(
     rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
@@ -72,7 +74,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     "scripts/agency_verify.sh": (
         ("exec ./scripts/test confidence",),
-        ("make test", "pytest", "playwright"),
+        ("make test", "pytest", "playwright", "./scripts/test diagnose"),
     ),
     "scripts/agency_setup.sh": (
         ("uv sync --all-extras --locked", "bun install --frozen-lockfile"),
@@ -107,6 +109,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         (
             "./scripts/test confidence",
             "./scripts/test prove",
+            "./scripts/test diagnose",
             "## 11. Local test-runtime safety",
             "nexus-run-<run-id>",
         ),
@@ -397,6 +400,7 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     violations: list[PolicyViolation] = []
     scan_paths = [repo_root / "Makefile", repo_root / "python/pyproject.toml"]
     scan_paths.extend((repo_root / ".github/workflows").glob("*.yml"))
+    scan_paths.extend((repo_root / ".github/workflows").glob("*.yaml"))
     scan_paths.extend(repo_root.glob("**/playwright.config.*"))
     for candidate in scan_paths:
         if not candidate.is_file() or "node_modules" in candidate.parts:
@@ -420,6 +424,26 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             violations.append(
                 PolicyViolation(
                     "repository-automatic-retry", relative, "automatic retries are forbidden"
+                )
+            )
+        if relative.startswith(".github/workflows/") and "./scripts/test diagnose" in text:
+            violations.append(
+                PolicyViolation(
+                    "repository-diagnostic-gate",
+                    relative,
+                    "diagnostic reruns are explicit local evidence, never a CI gate",
+                )
+            )
+
+    for candidate in (repo_root / "apps/web/src").rglob("*"):
+        if not candidate.is_file() or not _WEB_TEST_LOOKING.search(candidate.name):
+            continue
+        if _WEB_TEST_EXECUTABLE.search(candidate.name) is None:
+            violations.append(
+                PolicyViolation(
+                    "repository-web-test-discovery",
+                    candidate.relative_to(repo_root).as_posix(),
+                    "web proof must end in .unit.test.ts[x] or .browser.test.ts[x]",
                 )
             )
 

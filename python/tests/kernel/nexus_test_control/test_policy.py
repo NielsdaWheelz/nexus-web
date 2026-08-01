@@ -151,7 +151,7 @@ def _minimal_repository(root: Path) -> None:
     _write(
         root,
         "docs/local-rules/testing-standards.md",
-        "./scripts/test confidence\n./scripts/test prove\n"
+        "./scripts/test confidence\n./scripts/test prove\n./scripts/test diagnose\n"
         "## 11. Local test-runtime safety\nnexus-run-<run-id>\n",
     )
     for relative in ("README.md", "python/README.md", "apps/web/README.md"):
@@ -208,6 +208,47 @@ def test_repository_guard_rejects_automatic_retry(tmp_path: Path) -> None:
         content="export default { retries: 1 }\n",
     )
     assert "repository-automatic-retry" in _rules(repository_violations(tmp_path))
+
+
+def test_repository_guard_rejects_diagnostic_rerun_as_a_gate(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    _write(
+        tmp_path,
+        ".github/workflows/diagnostic.yaml",
+        "steps:\n  - run: ./scripts/test diagnose --of 0123456789abcdef\n",
+    )
+
+    assert "repository-diagnostic-gate" in _rules(repository_violations(tmp_path))
+
+    _write(
+        tmp_path,
+        "scripts/agency_verify.sh",
+        "./scripts/test diagnose --of 0123456789abcdef\nexec ./scripts/test confidence\n",
+    )
+    assert "repository-route-contract" in _rules(repository_violations(tmp_path))
+
+
+def test_repository_guard_rejects_undiscoverable_web_test_name(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    _write(tmp_path, "apps/web/src/lib/reader/reader.test.tsx", "test('reader', () => {})\n")
+    _write(
+        tmp_path,
+        "apps/web/src/lib/reader/reader.browser.test.tsx",
+        "test('reader', () => {})\n",
+    )
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "repository-web-test-discovery"
+        and violation.path == "apps/web/src/lib/reader/reader.test.tsx"
+        for violation in violations
+    )
+    assert not any(
+        violation.rule == "repository-web-test-discovery"
+        and violation.path.endswith("reader.browser.test.tsx")
+        for violation in violations
+    )
 
 
 def test_repository_guard_rejects_second_playwright_owner(tmp_path: Path) -> None:
@@ -511,7 +552,9 @@ def test_empty_fault_manifest_is_valid() -> None:
 
 def test_fault_guard_allows_the_exact_controller_execution_owner(tmp_path: Path) -> None:
     manifest = _fault_repository(tmp_path)
-    patch = b"diff --git a/python/nexus_test_control/runner.py b/python/nexus_test_control/runner.py\n"
+    patch = (
+        b"diff --git a/python/nexus_test_control/runner.py b/python/nexus_test_control/runner.py\n"
+    )
     (tmp_path / "testdata/faults/example.patch").write_bytes(patch)
     manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
     _dump(tmp_path, "testdata/faults/manifest.json", manifest)

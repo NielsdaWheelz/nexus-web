@@ -5,11 +5,14 @@ import pytest
 from nexus_test_control.evidence import (
     REDACTED,
     CapabilityEvidence,
+    DiagnosticRerunEvidence,
     PeakOwnedMemory,
     RunEvidence,
     compute_proof_digest,
+    diagnostic_evidence_json,
     evidence_json,
     redact_json,
+    run_evidence_from_json,
 )
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
@@ -100,6 +103,52 @@ def test_evidence_matches_schema_and_preserves_not_run(tmp_path: Path) -> None:
         }
     ]
     assert payload["sensitivity"][0]["red"]["phase"] == "assertion"  # type: ignore[index]  # justify-type-assertion: exact JSON schema shape is under proof.
+
+
+def test_run_summary_round_trips_through_exact_typed_loading(tmp_path: Path) -> None:
+    evidence = RunEvidence(
+        repo_root=tmp_path,
+        run_id="0123456789abcdef",
+        workflow=Workflow.DOCTOR,
+        git_sha="a" * 40,
+        base_sha=None,
+        duration_ms=3,
+        peak_owned_mib=PeakOwnedMemory(1, 2, 3),
+        selection=(),
+        sensitivity=(),
+        capabilities=(
+            CapabilityEvidence(Capability.DOCTOR, RunStatus.FAIL, 3, 3, detail="failed"),
+        ),
+    )
+
+    loaded = run_evidence_from_json(tmp_path, evidence_json(evidence))
+
+    assert loaded == evidence
+
+
+def test_diagnostic_pass_preserves_the_failed_top_level_verdict() -> None:
+    evidence = DiagnosticRerunEvidence(
+        run_id="fedcba9876543210",
+        workflow=Workflow.DOCTOR,
+        git_sha="a" * 40,
+        diagnostic_of_run_id="0123456789abcdef",
+        duration_ms=3,
+        peak_owned_mib=PeakOwnedMemory(1, 2, 3),
+        capabilities=(
+            CapabilityEvidence(Capability.DOCTOR, RunStatus.PASS, 3, 3, detail="passed"),
+        ),
+    )
+
+    payload = diagnostic_evidence_json(evidence)
+
+    assert payload["command"] == "diagnose"
+    assert payload["status"] == "fail"
+    assert payload["diagnostic_of"] == {
+        "run_id": "0123456789abcdef",
+        "status": "fail",
+        "summary": "test-results/runs/0123456789abcdef/summary.json",
+    }
+    assert payload["diagnostic_result"]["status"] == "pass"  # type: ignore[index]  # justify-type-assertion: exact JSON schema shape is under proof.
 
 
 def test_run_evidence_rejects_missing_required_capability(tmp_path: Path) -> None:

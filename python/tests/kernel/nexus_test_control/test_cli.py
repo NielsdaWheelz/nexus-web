@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from nexus_test_control.cli import (
+    DiagnoseCommand,
     ListCommand,
     ProveCommand,
     WorkflowCommand,
@@ -25,6 +26,7 @@ from nexus_test_control.model import (
     SensitivityMethod,
     Workflow,
 )
+from nexus_test_control.runner import WorkflowRun
 from nexus_test_control.selection import load_selection_index
 
 
@@ -57,6 +59,9 @@ def test_parser_accepts_only_the_explicit_command_shapes() -> None:
         "wrong-result",
     )
     assert isinstance(parse_command(["list", "--json"]), ListCommand)
+    assert parse_command(["diagnose", "--of", "0123456789abcdef"]) == DiagnoseCommand(
+        "0123456789abcdef"
+    )
 
 
 @pytest.mark.parametrize(
@@ -71,6 +76,10 @@ def test_parser_accepts_only_the_explicit_command_shapes() -> None:
         ("pr", "--base", "main"),
         ("prove", "--proof", "unknown:file.py", "--against", "base:HEAD"),
         ("prove", "--proof", "pytest:file.py", "--against", "fault:Bad_Fault"),
+        ("diagnose",),
+        ("diagnose", "--of", "too-short"),
+        ("diagnose", "--of", "0123456789ABCDEF"),
+        ("diagnose", "--of", "0123456789abcdef", "--proof", "pytest:file.py"),
     ],
 )
 def test_parser_rejects_ambiguous_or_unsafe_commands(argv: tuple[str, ...]) -> None:
@@ -90,6 +99,12 @@ def test_list_json_is_derived_from_the_typed_registry() -> None:
     assert payload["workflows"][2]["capabilities"] == [
         {"id": requirement.capability.value, "scope": requirement.scope.value}
         for requirement in WORKFLOW_REGISTRY[Workflow.PR].requirements
+    ]
+    assert [command["id"] for command in payload["commands"]] == [
+        "prove",
+        "diagnose",
+        "clean",
+        "list",
     ]
 
 
@@ -157,6 +172,182 @@ def test_summary_coexists_with_same_run_failure_artifacts(tmp_path: Path) -> Non
     assert (run_directory / "summary.json").is_file()
 
 
+def test_diagnose_replays_failed_workflow_once_but_keeps_failed_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _git_repository(tmp_path)
+    git_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    original_id = "0123456789abcdef"
+    original = RunEvidence(
+        repo_root=tmp_path,
+        run_id=original_id,
+        workflow=Workflow.DOCTOR,
+        git_sha=git_sha,
+        base_sha=None,
+        duration_ms=1,
+        peak_owned_mib=PeakOwnedMemory(1, 0, 1),
+        selection=(),
+        sensitivity=(),
+        capabilities=(
+            CapabilityEvidence(
+                Capability.DOCTOR,
+                RunStatus.FAIL,
+                1,
+                1,
+                detail="first failure",
+            ),
+        ),
+    )
+    original_directory = tmp_path / "test-results/runs" / original_id
+    original_directory.mkdir(parents=True)
+    write_summary(tmp_path, original)
+    observed_contexts = []
+
+    def replay(context: object, *args: object, **kwargs: object) -> WorkflowRun:
+        observed_contexts.append(context)
+        return WorkflowRun(
+            (
+                CapabilityEvidence(
+                    Capability.DOCTOR,
+                    RunStatus.PASS,
+                    1,
+                    1,
+                    detail="diagnostic pass",
+                ),
+            ),
+            PeakOwnedMemory(1, 0, 1),
+        )
+
+    monkeypatch.setattr("nexus_test_control.cli.run_workflow", replay)
+    output = StringIO()
+
+    assert (
+        main(
+            ["diagnose", "--of", original_id],
+            repo_root=tmp_path,
+            environment={},
+            stdout=output,
+        )
+        == 1
+    )
+
+    assert len(observed_contexts) == 1
+    assert output.getvalue().startswith("diagnose: first=fail; diagnostic=pass; verdict=fail;")
+    summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
+    summary = json.loads(summary_path.read_text())
+    assert summary["status"] == "fail"
+    assert summary["diagnostic_result"]["status"] == "pass"
+    assert summary["diagnostic_of"]["run_id"] == original_id
+    claim = json.loads((original_directory / "diagnostic-rerun.json").read_text())
+    assert claim["summary"] == summary_path.relative_to(tmp_path).as_posix()
+
+    errors = StringIO()
+    assert (
+        main(
+            ["diagnose", "--of", original_id],
+            repo_root=tmp_path,
+            environment={},
+            stderr=errors,
+        )
+        == 1
+    )
+    assert "already has a formal diagnostic rerun" in errors.getvalue()
+
+
+def test_diagnose_requires_the_same_clean_committed_head(tmp_path: Path) -> None:
+    _git_repository(tmp_path)
+    git_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    original_id = "0123456789abcdef"
+    original_directory = tmp_path / "test-results/runs" / original_id
+    original_directory.mkdir(parents=True)
+    write_summary(
+        tmp_path,
+        RunEvidence(
+            repo_root=tmp_path,
+            run_id=original_id,
+            workflow=Workflow.DOCTOR,
+            git_sha=git_sha,
+            base_sha=None,
+            duration_ms=1,
+            peak_owned_mib=PeakOwnedMemory(1, 0, 1),
+            selection=(),
+            sensitivity=(),
+            capabilities=(
+                CapabilityEvidence(Capability.DOCTOR, RunStatus.FAIL, 1, 1, detail="failed"),
+            ),
+        ),
+    )
+    (tmp_path / "README.md").write_text("dirty\n")
+    errors = StringIO()
+
+    assert main(["diagnose", "--of", original_id], repo_root=tmp_path, stderr=errors) == 1
+    assert "clean committed checkout" in errors.getvalue()
+    assert not (original_directory / "diagnostic-rerun.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("status", "add_unknown_field", "expected"),
+    [
+        (RunStatus.PASS, False, "requires a failed workflow run"),
+        (RunStatus.FAIL, True, "run summary fields differ"),
+    ],
+)
+def test_diagnose_rejects_nonfailed_or_untyped_original_evidence(
+    tmp_path: Path,
+    status: RunStatus,
+    add_unknown_field: bool,
+    expected: str,
+) -> None:
+    _git_repository(tmp_path)
+    git_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    run_id = "0123456789abcdef"
+    run_directory = tmp_path / "test-results/runs" / run_id
+    run_directory.mkdir(parents=True)
+    write_summary(
+        tmp_path,
+        RunEvidence(
+            repo_root=tmp_path,
+            run_id=run_id,
+            workflow=Workflow.DOCTOR,
+            git_sha=git_sha,
+            base_sha=None,
+            duration_ms=1,
+            peak_owned_mib=PeakOwnedMemory(1, 0, 1),
+            selection=(),
+            sensitivity=(),
+            capabilities=(CapabilityEvidence(Capability.DOCTOR, status, 1, 1, detail="result"),),
+        ),
+    )
+    summary_path = run_directory / "summary.json"
+    if add_unknown_field:
+        payload = json.loads(summary_path.read_text())
+        payload["unexpected"] = True
+        summary_path.write_text(json.dumps(payload) + "\n")
+    errors = StringIO()
+
+    assert main(["diagnose", "--of", run_id], repo_root=tmp_path, stderr=errors) == 1
+    assert expected in errors.getvalue()
+    assert not (run_directory / "diagnostic-rerun.json").exists()
+
+
 def test_changed_focus_uses_the_repository_root_and_records_explicit_selection(
     tmp_path: Path,
 ) -> None:
@@ -215,9 +406,19 @@ def test_plain_focus_keeps_every_manifest_owned_journey_route(tmp_path: Path) ->
         load_selection_index(tmp_path),
     )
 
-    assert len(selections) == 2
-    assert {selection.capability for selection in selections} == {Capability.JOURNEYS_ALL}
+    assert len(selections) == 3
+    assert {selection.capability for selection in selections} == {
+        Capability.COMPONENT,
+        Capability.JOURNEYS_ALL,
+    }
+    assert {
+        selection.path
+        for selection in selections
+        if selection.capability is Capability.COMPONENT
+    } == {"apps/web/src/lib/panes/paneRenderRegistry.tsx"}
+    assert all(selection.reason is SelectionReason.EXPLICIT_FOCUS for selection in selections)
     assert {selection.proof for selection in selections} == {
+        None,
         "playwright:apps/web/e2e/journeys/reader-open.journey.spec.ts",
         "playwright:apps/web/e2e/journeys/search-open.journey.spec.ts",
     }
@@ -329,8 +530,9 @@ def test_clean_rejects_caller_resource_configuration_before_contact(tmp_path: Pa
 
 def _git_repository(path: Path) -> None:
     (path / "README.md").write_text("test repository\n")
+    (path / ".gitignore").write_text("test-results/\n.nexus-test/\n")
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
-    subprocess.run(["git", "add", "README.md"], cwd=path, check=True)
+    subprocess.run(["git", "add", "README.md", ".gitignore"], cwd=path, check=True)
     subprocess.run(
         [
             "git",

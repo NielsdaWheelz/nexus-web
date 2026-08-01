@@ -4,13 +4,20 @@ import re
 from collections.abc import Iterable
 from dataclasses import InitVar, dataclass
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
     Capability,
     RunStatus,
     Selection,
+    SelectionReason,
     Sensitivity,
+    SensitivityAgainst,
+    SensitivityGreen,
+    SensitivityMethod,
+    SensitivityPhase,
+    SensitivityRed,
     Workflow,
     aggregate_status,
 )
@@ -30,6 +37,7 @@ _SENSITIVE_KEY_PARTS = (
     "token",
 )
 _BEARER = re.compile(r"(?i)\bbearer\s+[^\s,;]+")
+_RUN_ID = re.compile(r"[0-9a-f]{16}\Z")
 
 
 def _nonnegative(name: str, value: int | float) -> None:
@@ -141,6 +149,247 @@ class RunEvidence:
         return aggregate_status(tuple(item.status for item in self.capabilities))
 
 
+@dataclass(frozen=True, slots=True)
+class DiagnosticRerunEvidence:
+    run_id: str
+    workflow: Workflow
+    git_sha: str
+    diagnostic_of_run_id: str
+    duration_ms: int
+    peak_owned_mib: PeakOwnedMemory
+    capabilities: tuple[CapabilityEvidence, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("diagnostic workflow must be typed")
+        if (
+            _RUN_ID.fullmatch(self.run_id) is None
+            or _RUN_ID.fullmatch(self.diagnostic_of_run_id) is None
+        ):
+            raise ValueError("diagnostic run ids must be 16 lowercase hex characters")
+        if self.run_id == self.diagnostic_of_run_id:
+            raise ValueError("diagnostic and original run ids must differ")
+        if re.fullmatch(r"[0-9a-f]{40}", self.git_sha) is None:
+            raise ValueError("diagnostic Git SHA must be full and lowercase")
+        _nonnegative("diagnostic duration", self.duration_ms)
+        ids = tuple(capability.id for capability in self.capabilities)
+        required = {
+            requirement.capability for requirement in WORKFLOW_REGISTRY[self.workflow].requirements
+        }
+        if len(ids) != len(set(ids)) or set(ids) != required:
+            raise ValueError("diagnostic capabilities must exactly match the original workflow")
+
+    @property
+    def status(self) -> RunStatus:
+        return RunStatus.FAIL
+
+    @property
+    def diagnostic_status(self) -> RunStatus:
+        return aggregate_status(tuple(item.status for item in self.capabilities))
+
+
+def run_evidence_from_json(repo_root: Path, value: object) -> RunEvidence:
+    payload = _exact_object(
+        value,
+        {
+            "version",
+            "run_id",
+            "workflow",
+            "git_sha",
+            "base_sha",
+            "status",
+            "duration_ms",
+            "peak_owned_mib",
+            "selection",
+            "sensitivity",
+            "capabilities",
+        },
+        "run summary",
+    )
+    if type(payload["version"]) is not int or payload["version"] != 1:
+        raise ValueError("run summary version must be exactly 1")
+    peak = _parse_memory(payload["peak_owned_mib"])
+    selection = tuple(_parse_selection(item) for item in _list(payload["selection"], "selection"))
+    sensitivity = tuple(
+        _parse_sensitivity(item) for item in _list(payload["sensitivity"], "sensitivity")
+    )
+    capabilities = tuple(
+        _parse_capability(item) for item in _list(payload["capabilities"], "capabilities")
+    )
+    evidence = RunEvidence(
+        repo_root=repo_root,
+        run_id=_string(payload["run_id"], "run id"),
+        workflow=_enum(Workflow, payload["workflow"], "workflow"),
+        git_sha=_string(payload["git_sha"], "Git SHA"),
+        base_sha=_optional_string(payload["base_sha"], "base SHA"),
+        duration_ms=_integer(payload["duration_ms"], "duration"),
+        peak_owned_mib=peak,
+        selection=selection,
+        sensitivity=sensitivity,
+        capabilities=capabilities,
+    )
+    status = _enum(RunStatus, payload["status"], "status")
+    if status is not evidence.status:
+        raise ValueError("recorded run status does not match capability evidence")
+    return evidence
+
+
+def _parse_memory(value: object) -> PeakOwnedMemory:
+    payload = _exact_object(
+        value,
+        {"process_tree_rss", "container_working_set", "total", "measurement_complete"},
+        "owned memory",
+    )
+    measurement_complete = payload["measurement_complete"]
+    if type(measurement_complete) is not bool:
+        raise ValueError("memory measurement state must be boolean")
+    return PeakOwnedMemory(
+        _integer(payload["process_tree_rss"], "process tree RSS"),
+        _integer(payload["container_working_set"], "container working set"),
+        _integer(payload["total"], "total owned memory"),
+        measurement_complete,
+    )
+
+
+def _parse_selection(value: object) -> Selection:
+    payload = _exact_object(
+        value,
+        {
+            "path",
+            "capability",
+            "reason",
+            "proof",
+            "sensitivity_required",
+            "deferred_to",
+        },
+        "selection",
+    )
+    sensitivity_required = payload["sensitivity_required"]
+    if type(sensitivity_required) is not bool:
+        raise ValueError("selection sensitivity state must be boolean")
+    deferred_value = payload["deferred_to"]
+    deferred = None if deferred_value is None else _enum(Workflow, deferred_value, "deferral")
+    return Selection(
+        _string(payload["path"], "selection path"),
+        _enum(Capability, payload["capability"], "selection capability"),
+        _enum(SelectionReason, payload["reason"], "selection reason"),
+        _optional_string(payload["proof"], "selection proof"),
+        sensitivity_required,
+        deferred,
+    )
+
+
+def _parse_sensitivity(value: object) -> Sensitivity:
+    payload = _exact_object(
+        value,
+        {"proof", "changed_paths", "proof_digest", "method", "against", "red", "green"},
+        "sensitivity",
+    )
+    against = _exact_object(payload["against"], {"git_sha", "fault_id"}, "sensitivity against")
+    red = _exact_object(
+        payload["red"], {"status", "phase", "failure_fingerprint"}, "sensitivity red"
+    )
+    green = _exact_object(payload["green"], {"status", "git_sha"}, "sensitivity green")
+    return Sensitivity(
+        proof=_string(payload["proof"], "sensitivity proof"),
+        changed_paths=tuple(
+            _string(path, "sensitivity changed path")
+            for path in _list(payload["changed_paths"], "sensitivity changed paths")
+        ),
+        proof_digest=_string(payload["proof_digest"], "sensitivity proof digest"),
+        method=_enum(SensitivityMethod, payload["method"], "sensitivity method"),
+        against=SensitivityAgainst(
+            _optional_string(against["git_sha"], "sensitivity Git SHA"),
+            _optional_string(against["fault_id"], "sensitivity fault id"),
+        ),
+        red=SensitivityRed(
+            phase=_enum(SensitivityPhase, red["phase"], "sensitivity phase"),
+            failure_fingerprint=_string(
+                red["failure_fingerprint"], "sensitivity failure fingerprint"
+            ),
+            status=_enum(RunStatus, red["status"], "sensitivity red status"),
+        ),
+        green=SensitivityGreen(
+            git_sha=_string(green["git_sha"], "sensitivity green Git SHA"),
+            status=_enum(RunStatus, green["status"], "sensitivity green status"),
+        ),
+    )
+
+
+def _parse_capability(value: object) -> CapabilityEvidence:
+    payload = _exact_object(
+        value,
+        {
+            "id",
+            "status",
+            "duration_ms",
+            "peak_owned_mib",
+            "provider_calls",
+            "estimated_cost_usd",
+            "artifacts",
+            "detail",
+        },
+        "capability",
+    )
+    return CapabilityEvidence(
+        id=_enum(Capability, payload["id"], "capability id"),
+        status=_enum(RunStatus, payload["status"], "capability status"),
+        duration_ms=_integer(payload["duration_ms"], "capability duration"),
+        peak_owned_mib=_integer(payload["peak_owned_mib"], "capability memory"),
+        provider_calls=_integer(payload["provider_calls"], "provider calls"),
+        estimated_cost_usd=_number(payload["estimated_cost_usd"], "estimated provider cost"),
+        artifacts=tuple(
+            _string(item, "capability artifact")
+            for item in _list(payload["artifacts"], "capability artifacts")
+        ),
+        detail=_string(payload["detail"], "capability detail"),
+    )
+
+
+def _exact_object(value: object, keys: set[str], label: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+        raise ValueError(f"{label} must be an object")
+    if set(value) != keys:
+        raise ValueError(f"{label} fields differ; expected={sorted(keys)}, actual={sorted(value)}")
+    return value
+
+
+def _list(value: object, label: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be an array")
+    return value
+
+
+def _string(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    return value
+
+
+def _optional_string(value: object, label: str) -> str | None:
+    return None if value is None else _string(value, label)
+
+
+def _integer(value: object, label: str) -> int:
+    if type(value) is not int:
+        raise ValueError(f"{label} must be an integer")
+    return value
+
+
+def _number(value: object, label: str) -> int | float:
+    if type(value) not in {int, float}:
+        raise ValueError(f"{label} must be numeric")
+    return value  # type: ignore[return-value]  # justify-type-assertion: exact runtime type is narrowed above.
+
+
+def _enum(enum_type: type[Any], value: object, label: str) -> Any:
+    raw = _string(value, label)
+    try:
+        return enum_type(raw)
+    except ValueError as error:
+        raise ValueError(f"{label} is unknown: {raw}") from error
+
+
 def compute_proof_digest(repo_root: Path, proof: str, changed_paths: tuple[str, ...]) -> str:
     root = repo_root.resolve(strict=True)
     runner, separator, node = proof.partition(":")
@@ -216,6 +465,33 @@ def _sensitivity_json(sensitivity: Sensitivity) -> dict[str, JsonValue]:
     }
 
 
+def _memory_json(memory: PeakOwnedMemory) -> dict[str, JsonValue]:
+    return {
+        "process_tree_rss": memory.process_tree_rss,
+        "container_working_set": memory.container_working_set,
+        "total": memory.total,
+        "measurement_complete": memory.measurement_complete,
+    }
+
+
+def _capabilities_json(
+    capabilities: tuple[CapabilityEvidence, ...],
+) -> list[JsonValue]:
+    return [
+        {
+            "id": capability.id.value,
+            "status": capability.status.value,
+            "duration_ms": capability.duration_ms,
+            "peak_owned_mib": capability.peak_owned_mib,
+            "provider_calls": capability.provider_calls,
+            "estimated_cost_usd": capability.estimated_cost_usd,
+            "artifacts": list(capability.artifacts),
+            "detail": capability.detail,
+        }
+        for capability in capabilities
+    ]
+
+
 def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[str, JsonValue]:
     payload: dict[str, JsonValue] = {
         "version": 1,
@@ -225,12 +501,7 @@ def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[st
         "base_sha": evidence.base_sha,
         "status": evidence.status.value,
         "duration_ms": evidence.duration_ms,
-        "peak_owned_mib": {
-            "process_tree_rss": evidence.peak_owned_mib.process_tree_rss,
-            "container_working_set": evidence.peak_owned_mib.container_working_set,
-            "total": evidence.peak_owned_mib.total,
-            "measurement_complete": evidence.peak_owned_mib.measurement_complete,
-        },
+        "peak_owned_mib": _memory_json(evidence.peak_owned_mib),
         "selection": [
             {
                 "path": selection.path,
@@ -245,18 +516,38 @@ def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[st
             for selection in evidence.selection
         ],
         "sensitivity": [_sensitivity_json(item) for item in evidence.sensitivity],
-        "capabilities": [
-            {
-                "id": capability.id.value,
-                "status": capability.status.value,
-                "duration_ms": capability.duration_ms,
-                "peak_owned_mib": capability.peak_owned_mib,
-                "provider_calls": capability.provider_calls,
-                "estimated_cost_usd": capability.estimated_cost_usd,
-                "artifacts": list(capability.artifacts),
-                "detail": capability.detail,
-            }
-            for capability in evidence.capabilities
-        ],
+        "capabilities": _capabilities_json(evidence.capabilities),
     }
     return redact_json(payload, secrets)  # type: ignore[return-value]  # justify-type-assertion: payload is a JSON object and redaction preserves its outer shape.
+
+
+def diagnostic_evidence_json(
+    evidence: DiagnosticRerunEvidence, secrets: Iterable[str] = ()
+) -> dict[str, JsonValue]:
+    original_summary = (
+        PurePosixPath("test-results/runs") / evidence.diagnostic_of_run_id / "summary.json"
+    )
+    payload: dict[str, JsonValue] = {
+        "version": 1,
+        "command": "diagnose",
+        "run_id": evidence.run_id,
+        "workflow": evidence.workflow.value,
+        "git_sha": evidence.git_sha,
+        "status": evidence.status.value,
+        "diagnostic_of": {
+            "run_id": evidence.diagnostic_of_run_id,
+            "status": RunStatus.FAIL.value,
+            "summary": original_summary.as_posix(),
+        },
+        "diagnostic_result": {
+            "status": evidence.diagnostic_status.value,
+            "duration_ms": evidence.duration_ms,
+            "peak_owned_mib": _memory_json(evidence.peak_owned_mib),
+            "capabilities": _capabilities_json(evidence.capabilities),
+        },
+    }
+    redacted = redact_json(payload, secrets)
+    if not isinstance(redacted, dict):
+        raise AssertionError("diagnostic evidence redaction changed the object shape")
+    redacted["command"] = "diagnose"
+    return redacted

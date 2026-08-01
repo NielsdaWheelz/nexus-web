@@ -109,6 +109,7 @@ smokes remain deployment operations.
 ./scripts/test release
 ./scripts/test prove --proof <node-id> \
   --against base:<git-ref>|fault:<fault-id>
+./scripts/test diagnose --of <16-hex-failed-run-id>
 ./scripts/test doctor
 ./scripts/test clean
 ./scripts/test list --json
@@ -133,9 +134,10 @@ Rules:
 - Exit zero means every required selected capability passed. Missing tools,
   secrets, device, or provider execution is `not_run`, never pass.
 - Every gate fails when a required selected capability is `not_run`.
-- Gates have zero automatic retries. One explicit diagnostic rerun MAY collect
-  richer artifacts, but the first run remains failed and the rerun is recorded
-  separately.
+- Gates have zero automatic retries. `diagnose --of` MAY replay one failed v1
+  workflow at the same clean committed `HEAD` for richer artifacts. It records
+  separate linked evidence, retains top-level `fail`, exits nonzero, and is
+  forbidden in CI and Agency gates.
 
 | Workflow | Required composition |
 |---|---|
@@ -591,7 +593,7 @@ Write ignored `test-results/runs/<run_id>/summary.json`:
 ```json
 {
   "version": 1,
-  "run_id": "opaque",
+  "run_id": "16 lowercase hex",
   "workflow": "pr",
   "git_sha": "full sha",
   "base_sha": "full sha or null",
@@ -638,6 +640,31 @@ Write ignored `test-results/runs/<run_id>/summary.json`:
       "detail": "redacted decisive diagnostic"
     }
   ]
+}
+```
+
+A formal diagnostic replay writes a separate summary; it never rewrites the
+first run:
+
+```json
+{
+  "version": 1,
+  "command": "diagnose",
+  "run_id": "new 16-hex id",
+  "workflow": "pr",
+  "git_sha": "same full sha",
+  "status": "fail",
+  "diagnostic_of": {
+    "run_id": "failed 16-hex id",
+    "status": "fail",
+    "summary": "test-results/runs/<failed-id>/summary.json"
+  },
+  "diagnostic_result": {
+    "status": "pass|fail|not_run",
+    "duration_ms": 0,
+    "peak_owned_mib": {},
+    "capabilities": []
+  }
 }
 ```
 
