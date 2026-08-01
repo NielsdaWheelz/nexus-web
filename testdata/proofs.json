@@ -73,11 +73,15 @@
         "python/nexus/services/billing.py",
         "python/nexus/services/billing_entitlements.py",
         "python/nexus/services/chat_run_usage.py",
+        "python/nexus/services/llm_credentials.py",
+        "python/nexus/services/llm_execution.py",
         "python/nexus/services/llm_ledger.py",
-        "python/nexus/services/rate_limit.py"
+        "python/nexus/services/provider_http.py",
+        "python/nexus/services/rate_limit.py",
+        "python/nexus/tasks/llm_task.py"
       ],
       "proofs": [
-        "pytest:python/tests/service/test_costly_effects.py::test_token_budget_reservation_and_settlement_are_exactly_once"
+        "pytest:python/tests/service/test_costly_effects.py::test_generation_dispatches_once_and_settles_success_or_interruption_exactly_once"
       ],
       "capabilities": [
         "service"
@@ -144,10 +148,10 @@
         "python/nexus/services/chat_run_tools.py"
       ],
       "proofs": [
-        "pytest:python/tests/evals/test_tool_safety_eval.py::test_prompt_injection_eval_refuses_scripted_adversarial_tool_calls"
+        "pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo"
       ],
       "capabilities": [
-        "llm-eval"
+        "service"
       ]
     },
     {

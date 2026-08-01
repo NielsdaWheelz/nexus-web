@@ -48,13 +48,13 @@
       "expected_failure": "0207 must canonicalize legacy Podcast instants"
     },
     {
-      "id": "costly-effects-replay-charge",
-      "patch": "testdata/faults/costly-effects-replay-charge.patch",
-      "sha256": "892bb565271651c438fa13edcdd8903ecbf589fda1b4383bf98932ee2de34541",
+      "id": "costly-effects-stream-interruption-misclassification",
+      "patch": "testdata/faults/costly-effects-stream-interruption-misclassification.patch",
+      "sha256": "0490b6ab84b2492ff5eaa18d6ffd48ee7555acf9b2a9cee94db458363d647d40",
       "proofs": [
-        "pytest:python/tests/service/test_costly_effects.py::test_token_budget_reservation_and_settlement_are_exactly_once"
+        "pytest:python/tests/service/test_costly_effects.py::test_generation_dispatches_once_and_settles_success_or_interruption_exactly_once"
       ],
-      "expected_failure": "replayed settlement changed the first durable charge"
+      "expected_failure": "consumer cancellation was not durably terminalized"
     },
     {
       "id": "reading-progress-cas-bypass",
@@ -93,13 +93,13 @@
       "expected_failure": "database deletion did not publish its exact object cleanup obligation"
     },
     {
-      "id": "llm-tool-context-authorization-bypass",
-      "patch": "testdata/faults/llm-tool-context-authorization-bypass.patch",
-      "sha256": "5655d47e5dc7c044e9ea822d9be34fe3722e1ddf8cda4a6c7ddf84af4e6a82da",
+      "id": "llm-write-tool-authorization-bypass",
+      "patch": "testdata/faults/llm-write-tool-authorization-bypass.patch",
+      "sha256": "5d8fbe7a6cb18abe5ec85f7c889fe8f0945ed7b53e3558447fd1b34795d94129",
       "proofs": [
-        "pytest:python/tests/evals/test_tool_safety_eval.py::test_prompt_injection_eval_refuses_scripted_adversarial_tool_calls"
+        "pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo"
       ],
-      "expected_failure": "tool-safety evaluation failures"
+      "expected_failure": "one or more mutating tool classes did not fail closed"
     },
     {
       "id": "dossier-citation-disposition-bypass",

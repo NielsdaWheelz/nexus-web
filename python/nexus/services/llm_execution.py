@@ -402,6 +402,11 @@ async def execute_generation_stream(
                     usage=facts.usage,
                 )
             yield event
+    except GeneratorExit:
+        # Async-generator closure is the normal consumer-interruption path.
+        # Leave ``defect`` empty so the durable terminal facts use the exact
+        # provider-stream interruption contract below.
+        raise
     except BaseException as exc:
         defect = exc
         raise
