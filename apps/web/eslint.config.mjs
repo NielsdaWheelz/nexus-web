@@ -93,6 +93,26 @@ const PLAYWRIGHT_ROUTE_BANS = [
   },
 ];
 
+const PLAYWRIGHT_RAW_REQUEST_BANS = [
+  {
+    selector:
+      "ImportDeclaration[source.value=/^(?:@playwright\\/test|playwright\\/test)$/] > ImportSpecifier[imported.name=/^(?:request|APIRequestContext)$/]",
+    message:
+      "Raw Playwright API requests belong only to e2e/request.ts. Import the harness-owned request facade.",
+  },
+  {
+    selector:
+      "MemberExpression[property.name='request']:not([object.name='route'])",
+    message:
+      "Do not use page.request or context.request. Use the origin-validating e2e/request.ts facade.",
+  },
+  {
+    selector: "ObjectPattern > Property[key.name='request']",
+    message:
+      "Do not use Playwright's raw request fixture. Use the origin-validating e2e/request.ts facade.",
+  },
+];
+
 const PLAYWRIGHT_RETRY_AND_WORKER_BANS = [
   {
     selector:
@@ -321,6 +341,7 @@ const eslintConfig = [
         FAKE_TIMER_BAN,
         ...SLEEP_BANS,
         DISABLED_TEST_BAN,
+        ...PLAYWRIGHT_RAW_REQUEST_BANS,
       ],
     },
   },
@@ -334,7 +355,21 @@ const eslintConfig = [
         FAKE_TIMER_BAN,
         ...SLEEP_BANS,
         DISABLED_TEST_BAN,
+        ...PLAYWRIGHT_RAW_REQUEST_BANS,
         ...PLAYWRIGHT_ROUTE_BANS,
+      ],
+    },
+  },
+  {
+    files: ["e2e/request.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...PLAYWRIGHT_RETRY_AND_WORKER_BANS,
+        ...OWNED_MODULE_MOCK_BANS,
+        FAKE_TIMER_BAN,
+        ...SLEEP_BANS,
+        DISABLED_TEST_BAN,
       ],
     },
   },

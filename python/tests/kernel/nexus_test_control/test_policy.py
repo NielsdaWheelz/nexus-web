@@ -119,6 +119,24 @@ def _minimal_repository(root: Path) -> None:
     _write(root, "apps/web/e2e/playwright.config.ts", "export default { workers: 1, retries: 0 }\n")
     _write(
         root,
+        "apps/web/e2e/request.ts",
+        'import type { APIRequestContext } from "playwright/test";\n',
+    )
+    _write(
+        root,
+        "apps/web/package.json",
+        json.dumps(
+            {
+                "scripts": {
+                    "test:eslint-policy": "bun scripts/test-eslint-policy.mjs",
+                    "test:unit": "vitest run --project unit",
+                    "test:browser": "vitest run --project browser",
+                }
+            }
+        ),
+    )
+    _write(
+        root,
         "scripts/test",
         "exec uv run --frozen --no-sync python -m nexus_test_control\n",
     )
@@ -136,12 +154,21 @@ def _minimal_repository(root: Path) -> None:
     _write(
         root,
         ".github/workflows/nightly.yml",
-        'NEXUS_HOSTED_CANARY: "1"\nscript: ./scripts/test nightly\n',
+        'NEXUS_HOSTED_CANARY: "1"\n'
+        "uses: reactivecircus/android-emulator-runner@example\n"
+        "script: ./scripts/test nightly\n",
     )
     _write(
         root,
         ".github/workflows/release.yml",
-        'NEXUS_PROVIDER_CERTIFICATION: "1"\nscript: ./scripts/test release\n',
+        'NEXUS_PROVIDER_CERTIFICATION: "1"\n'
+        "uses: reactivecircus/android-emulator-runner@example\n"
+        "script: ./scripts/test release\n",
+    )
+    _write(
+        root,
+        "deploy/smoke/auth-redirect-construction-smoke.sh",
+        "bunx playwright test --project deployment-smoke\n",
     )
     _write(
         root,
@@ -180,6 +207,45 @@ def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
     _write(tmp_path, "scripts/agency_verify.sh", "exec make test\n")
 
     assert "repository-route-contract" in _rules(repository_violations(tmp_path))
+
+
+def test_repository_guard_rejects_rogue_workflow_test_route(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    _write(
+        tmp_path,
+        ".github/workflows/rogue.yml",
+        "steps:\n  - run: uv run pytest python/tests/kernel\n",
+    )
+
+    assert "repository-test-route-owner" in _rules(repository_violations(tmp_path))
+
+
+def test_repository_guard_rejects_rogue_composite_action_test_route(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    _write(
+        tmp_path,
+        ".github/actions/rogue/action.yml",
+        "runs:\n  using: composite\n  steps:\n    - run: bunx playwright test\n",
+    )
+
+    assert "repository-test-route-owner" in _rules(repository_violations(tmp_path))
+
+
+def test_repository_guard_rejects_rogue_public_script_test_route(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    _write(tmp_path, "scripts/rogue.ts", 'Bun.spawn(["bunx", "vitest", "run"]);\n')
+
+    assert "repository-test-route-owner" in _rules(repository_violations(tmp_path))
+
+
+def test_repository_guard_rejects_package_runner_override(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    package = tmp_path / "apps/web/package.json"
+    payload = json.loads(package.read_text(encoding="utf-8"))
+    payload["scripts"]["test:browser"] = "vitest run --project browser --retry 1 --maxWorkers 8"
+    package.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert "repository-package-test-route" in _rules(repository_violations(tmp_path))
 
 
 def test_repository_guard_rejects_documented_legacy_route(tmp_path: Path) -> None:

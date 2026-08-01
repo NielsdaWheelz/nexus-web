@@ -27,6 +27,47 @@ const cases = [
     `,
     expected: "Do not sleep in tests",
   },
+  {
+    filename: "e2e/journeys/raw-request-import.journey.spec.ts",
+    source: `
+      import { request, test } from "playwright/test";
+      test("raw request factory", async () => {
+        const client = await request.newContext();
+        await client.dispose();
+      });
+    `,
+    expected: "Raw Playwright API requests belong only to e2e/request.ts",
+  },
+  {
+    filename: "e2e/journeys/page-request.journey.spec.ts",
+    source: `
+      import { test } from "playwright/test";
+      test("page request", async ({ page }) => {
+        await page.request.get("/api/me");
+      });
+    `,
+    expected: "Do not use page.request or context.request",
+  },
+  {
+    filename: "e2e/extension/context-request.extension.spec.ts",
+    source: `
+      import { test } from "playwright/test";
+      test("context request", async ({ context }) => {
+        await context.request.get("/api/me");
+      });
+    `,
+    expected: "Do not use page.request or context.request",
+  },
+  {
+    filename: "e2e/deployment/request-fixture.deployed.spec.ts",
+    source: `
+      import { test } from "playwright/test";
+      test("raw request fixture", async ({ request }) => {
+        await request.get("/api/me");
+      });
+    `,
+    expected: "Do not use Playwright's raw request fixture",
+  },
 ];
 
 for (const fixture of cases) {

@@ -136,6 +136,10 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("./scripts/test", "testing-standards.md", "apps/web/e2e/"),
         ("testing_standards.md", "make test-", "make verify", "PLAYWRIGHT_ARGS"),
     ),
+    "apps/web/e2e/request.ts": (
+        ("playwright/test",),
+        (),
+    ),
     ".env.example": (
         ("NEXUS_ENV=local",),
         (
@@ -148,6 +152,73 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
     ),
 }
+
+_CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
+    "confidence": "scripts/agency_verify.sh",
+    "pr": ".github/workflows/ci.yml",
+    "full": ".github/workflows/ci.yml",
+    "nightly": ".github/workflows/nightly.yml",
+    "release": ".github/workflows/release.yml",
+}
+_INTERNAL_PACKAGE_RUNNERS: dict[tuple[str, str], str] = {
+    ("apps/web/package.json", "test:eslint-policy"): "bun scripts/test-eslint-policy.mjs",
+    ("apps/web/package.json", "test:unit"): "vitest run --project unit",
+    ("apps/web/package.json", "test:browser"): "vitest run --project browser",
+}
+_PACKAGE_RUNNER = re.compile(
+    r"(?:^|[;&|]\s*|\s)(?:"
+    r"\.?/?scripts/test\b|"
+    r"pytest(?=[\"']|\s|$)|"
+    r"vitest(?=[\"']|\s|$)|"
+    r"playwright\s+test\b|"
+    r"(?:\./)?gradlew\b[^\n]*(?::(?:test|connected)[A-Za-z0-9_-]*)|"
+    r"bun\s+run\s+(?:test|verify|check)(?::|\s|$)"
+    r")",
+    re.I,
+)
+_DIRECT_RUNNERS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("pytest", re.compile(r"(?<![.\w-])pytest(?=[\"']|\s|$)")),
+    ("vitest", re.compile(r"(?<![.\w-])vitest(?=[\"']|\s|$)")),
+    ("playwright", re.compile(r"\bplaywright\s+test\b")),
+    (
+        "gradle",
+        re.compile(r"(?:\./)?gradlew\b[^\n]*(?::(?:test|connected)[A-Za-z0-9_-]*)", re.I),
+    ),
+    ("package-script", re.compile(r"\bbun\s+run\s+(?:test|verify|check)(?::|\s|$)")),
+    ("make-alias", re.compile(r"\bmake\s+(?:test|verify)(?:[-_][A-Za-z0-9_-]+)?\b")),
+)
+_OWNERSHIP_TOKENS: tuple[tuple[str, re.Pattern[str], frozenset[str], dict[str, int]], ...] = (
+    (
+        "provider-certification",
+        re.compile(r"\bNEXUS_PROVIDER_CERTIFICATION\b"),
+        frozenset({".github/workflows/release.yml"}),
+        {".github/workflows/release.yml": 1},
+    ),
+    (
+        "hosted-canary",
+        re.compile(r"\bNEXUS_HOSTED_CANARY\b"),
+        frozenset({".github/workflows/nightly.yml"}),
+        {".github/workflows/nightly.yml": 1},
+    ),
+    (
+        "android-emulator",
+        re.compile(r"reactivecircus/android-emulator-runner@"),
+        frozenset({".github/workflows/nightly.yml", ".github/workflows/release.yml"}),
+        {".github/workflows/nightly.yml": 1, ".github/workflows/release.yml": 1},
+    ),
+    (
+        "android-signing-publication",
+        re.compile(r"\b(?:NEXUS_ANDROID_RELEASE_KEYSTORE_BASE64|gh\s+release)\b"),
+        frozenset({".github/workflows/release.yml"}),
+        {},
+    ),
+    (
+        "deployment-smoke",
+        re.compile(r"--project\s+deployment-smoke\b"),
+        frozenset({"deploy/smoke/auth-redirect-construction-smoke.sh"}),
+        {"deploy/smoke/auth-redirect-construction-smoke.sh": 1},
+    ),
+)
 
 
 def _sorted(violations: list[PolicyViolation]) -> tuple[PolicyViolation, ...]:
@@ -395,6 +466,196 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
     return _sorted(violations)
 
 
+def _governed_executable_surfaces(repo_root: Path) -> dict[str, str]:
+    candidates: set[Path] = {repo_root / "Makefile"}
+    for directory, patterns in (
+        (repo_root / ".github/workflows", ("*.yml", "*.yaml")),
+        (repo_root / ".github/actions", ("action.yml", "action.yaml")),
+    ):
+        for pattern in patterns:
+            candidates.update(directory.rglob(pattern))
+    scripts = repo_root / "scripts"
+    if scripts.is_dir():
+        candidates.update(
+            path
+            for path in scripts.rglob("*")
+            if path.is_file()
+            and (
+                path.suffix in {".sh", ".py", ".js", ".cjs", ".mjs", ".ts", ".tsx"}
+                or path.name == "test"
+                or path.stat().st_mode & 0o111
+            )
+        )
+    candidates.add(repo_root / "deploy/smoke/auth-redirect-construction-smoke.sh")
+    return {
+        path.relative_to(repo_root).as_posix(): path.read_text(encoding="utf-8")
+        for path in sorted(candidates)
+        if path.is_file()
+    }
+
+
+def _executable_lines(text: str) -> tuple[tuple[int, str], ...]:
+    lines: list[tuple[int, str]] = []
+    for line_number, raw_line in enumerate(text.splitlines(), 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = re.sub(r"^-\s+", "", line)
+        if re.match(r"^(?:name|description):", line, re.I):
+            continue
+        line = re.sub(r"^(?:run|script):\s*", "", line)
+        if line in {"|", ">", "|-", ">-"} or re.match(r"^@?(?:echo|printf)\b", line):
+            continue
+        lines.append((line_number, line))
+    return tuple(lines)
+
+
+def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
+    surfaces = _governed_executable_surfaces(repo_root)
+    violations: list[PolicyViolation] = []
+    controller_counts: dict[tuple[str, str], int] = {}
+    direct_counts: dict[tuple[str, str], int] = {}
+
+    for relative, text in surfaces.items():
+        for line_number, line in _executable_lines(text):
+            for match in re.finditer(
+                r"(?:^|[;&|]\s*|\bexec\s+)\./scripts/test\s+([a-z-]+)\b", line
+            ):
+                command = match.group(1)
+                controller_counts[(relative, command)] = (
+                    controller_counts.get((relative, command), 0) + 1
+                )
+                expected = _CONTROLLER_COMMAND_OWNERS.get(command)
+                if expected != relative:
+                    violations.append(
+                        PolicyViolation(
+                            "repository-test-route-owner",
+                            relative,
+                            f"./scripts/test {command} is not owned by this executable surface",
+                            line_number,
+                        )
+                    )
+            control_plane = len(re.findall(r"\bpython\s+-m\s+nexus_test_control\b", line))
+            if control_plane:
+                direct_counts[(relative, "control-plane")] = (
+                    direct_counts.get((relative, "control-plane"), 0) + control_plane
+                )
+                if relative != "scripts/test":
+                    violations.append(
+                        PolicyViolation(
+                            "repository-test-route-owner",
+                            relative,
+                            "the typed control plane may be launched only by scripts/test",
+                            line_number,
+                        )
+                    )
+            for runner, pattern in _DIRECT_RUNNERS:
+                count = len(pattern.findall(line))
+                if not count:
+                    continue
+                direct_counts[(relative, runner)] = direct_counts.get((relative, runner), 0) + count
+                allowed = runner == "playwright" and relative == (
+                    "deploy/smoke/auth-redirect-construction-smoke.sh"
+                )
+                if not allowed:
+                    violations.append(
+                        PolicyViolation(
+                            "repository-test-route-owner",
+                            relative,
+                            f"direct {runner} execution is not owned by this executable surface",
+                            line_number,
+                        )
+                    )
+
+    required_routes = {(owner, command): 1 for command, owner in _CONTROLLER_COMMAND_OWNERS.items()}
+    required_routes[("scripts/test", "control-plane")] = 1
+    required_routes[("deploy/smoke/auth-redirect-construction-smoke.sh", "playwright")] = 1
+    for owner_command, expected_count in required_routes.items():
+        owner, command = owner_command
+        counts = controller_counts if command in _CONTROLLER_COMMAND_OWNERS else direct_counts
+        actual = counts.get(owner_command, 0)
+        if actual != expected_count:
+            violations.append(
+                PolicyViolation(
+                    "repository-test-route-owner",
+                    owner,
+                    f"owned {command} route count must be {expected_count}, got {actual}",
+                )
+            )
+
+    for name, pattern, owners, required_counts in _OWNERSHIP_TOKENS:
+        for relative, text in surfaces.items():
+            count = len(pattern.findall(text))
+            if count and relative not in owners:
+                violations.append(
+                    PolicyViolation(
+                        "repository-test-route-owner",
+                        relative,
+                        f"{name} belongs only to {', '.join(sorted(owners))}",
+                    )
+                )
+        for owner, expected_count in required_counts.items():
+            actual = len(pattern.findall(surfaces.get(owner, "")))
+            if actual != expected_count:
+                violations.append(
+                    PolicyViolation(
+                        "repository-test-route-owner",
+                        owner,
+                        f"owned {name} token count must be {expected_count}, got {actual}",
+                    )
+                )
+    return _sorted(violations)
+
+
+def _package_runner_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
+    violations: list[PolicyViolation] = []
+    seen_expected: set[tuple[str, str]] = set()
+    for path in repo_root.rglob("package.json"):
+        if any(part in {"node_modules", ".next", ".nexus-test"} for part in path.parts):
+            continue
+        relative = path.relative_to(repo_root).as_posix()
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue  # The owning package manager/static capability reports malformed JSON.
+        scripts = payload.get("scripts") if isinstance(payload, dict) else None
+        if not isinstance(scripts, dict):
+            continue
+        for name, command in scripts.items():
+            if not isinstance(name, str) or not isinstance(command, str):
+                continue
+            owner = (relative, name)
+            expected = _INTERNAL_PACKAGE_RUNNERS.get(owner)
+            if expected is not None:
+                seen_expected.add(owner)
+                if command != expected:
+                    violations.append(
+                        PolicyViolation(
+                            "repository-package-test-route",
+                            f"{relative}#scripts.{name}",
+                            f"runner command must be exactly {expected!r}",
+                        )
+                    )
+            elif _PACKAGE_RUNNER.search(command):
+                violations.append(
+                    PolicyViolation(
+                        "repository-package-test-route",
+                        f"{relative}#scripts.{name}",
+                        "package manifests may not create another test or verification route",
+                    )
+                )
+    for owner in sorted(set(_INTERNAL_PACKAGE_RUNNERS).difference(seen_expected)):
+        relative, name = owner
+        violations.append(
+            PolicyViolation(
+                "repository-package-test-route",
+                f"{relative}#scripts.{name}",
+                "required internal runner command is absent",
+            )
+        )
+    return _sorted(violations)
+
+
 def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     """Check the small repository-level contracts that are mechanically decisive."""
     violations: list[PolicyViolation] = []
@@ -556,6 +817,8 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 "test and verification targets are forbidden compatibility aliases",
             )
         )
+    violations.extend(_executable_route_violations(repo_root))
+    violations.extend(_package_runner_violations(repo_root))
     return _sorted(violations)
 
 
