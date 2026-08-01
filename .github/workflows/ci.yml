@@ -306,6 +306,7 @@ jobs:
         include:
           - api-level: 35
             contract: shell regression
+            sdk-channel: stable
             ram-size: 2048M
             test-command: >-
               cd apps/android &&
@@ -313,6 +314,7 @@ jobs:
               -Pandroid.testInstrumentationRunnerArguments.notAnnotation=app.nexus.android.RequiresWebViewM144
           - api-level: 34
             contract: shell regression
+            sdk-channel: stable
             ram-size: 2048M
             test-command: >-
               cd apps/android &&
@@ -320,6 +322,7 @@ jobs:
               -Pandroid.testInstrumentationRunnerArguments.notAnnotation=app.nexus.android.RequiresWebViewM144
           - api-level: 37
             contract: WebView M144 system insets
+            sdk-channel: canary
             ram-size: 4096M
             test-command: >-
               cd apps/android &&
@@ -366,6 +369,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           ram-size: ${{ matrix.ram-size }}
+          channel: ${{ matrix.sdk-channel }}
           script: ${{ matrix.test-command }}
 
   test-e2e-env:
