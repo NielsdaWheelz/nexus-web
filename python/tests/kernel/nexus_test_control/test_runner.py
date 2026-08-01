@@ -1529,7 +1529,7 @@ def test_long_command_diagnostic_preserves_the_behavioral_assertion() -> None:
         ("pytest",),
         1,
         "migration log\n" * 400
-        + "E   AssertionError: intended fault was observed\n"
+        + "E       AssertionError: intended fault was observed\n"
         + "warning footer\n" * 400,
         "",
     )

@@ -1891,14 +1891,7 @@ def _classified_exact_result(result: CapabilityResult, proof_id: str) -> Capabil
         or re.search(r"\btests\s+\d+\s+failed\b", folded) is not None
         or ("failed " in folded and "::" in folded and " - assertionerror" in folded)
         or ("error: expect(" in folded and " › " in folded)
-        or any(
-            marker in folded
-            for marker in (
-                "\ne   assert ",
-                "\ne   assertionerror",
-                "\ne   failed:",
-            )
-        )
+        or re.search(r"\ne\s+(?:assert|assertionerror|failed:)", folded) is not None
     ):
         kind = "behavioral_assertion_failure"
     else:
@@ -3865,7 +3858,7 @@ def _decisive_output(value: str, limit: int = 1900) -> str:
         line
         for line in stripped.splitlines()
         if re.search(
-            r"(?:^|\s)(?:E\s{3}(?:assert|AssertionError|Failed:)|FAILED\s|"
+            r"(?:^|\s)(?:E\s+(?:assert|AssertionError|Failed:)|FAILED\s|"
             r"AssertionError:|Error:\s*expect\(|Tests\s+\d+\s+failed|falsifying example:)",
             line,
             re.IGNORECASE,
