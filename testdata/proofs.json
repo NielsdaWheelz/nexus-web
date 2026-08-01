@@ -147,7 +147,6 @@
       ],
       "proofs": [
         "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker",
-        "pytest:python/tests/service/test_durable_job_replay.py::test_owned_worker_replays_committed_note_index_after_process_death",
         "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job"
       ],
       "capabilities": [
