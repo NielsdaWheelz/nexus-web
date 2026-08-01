@@ -675,7 +675,10 @@ async function dispatchTouchDrag(
       await cdp.send("Input.synthesizeScrollGesture", {
         x,
         y: startY,
-        yDistance: -roundedDeltaY,
+        // CDP synthesizes the touch path itself, so its distance has the same
+        // sign as the finger delta. Inverting a retreat drag at the reader top
+        // requests an impossible upward scroll and emits no native events.
+        yDistance: roundedDeltaY,
         speed: Math.max(
           1,
           Math.round(Math.abs(roundedDeltaY) / (steps * 0.008)),
@@ -2353,7 +2356,8 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       await page.getByRole("button", { name: "Open Nexus, 2 tabs" }).tap();
       await page
         .getByRole("dialog", { name: "Nexus" })
-        .locator('[data-switchboard-row-id="OpenPane:pane-player-reader"]')
+        .getByRole("region", { name: "Open" })
+        .getByRole("button", { name: /^Media\b/ })
         .tap();
       await expect(page.getByRole("dialog", { name: "Nexus" })).toHaveCount(0);
       await expect(player).toBeVisible();

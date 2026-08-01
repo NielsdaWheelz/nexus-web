@@ -4,6 +4,7 @@ import {
   type APIResponse,
   type Response as PlaywrightResponse,
 } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,6 +15,15 @@ import {
   gotoSinglePaneWorkspace,
   waitForWorkspaceHydration,
 } from "./workspace";
+
+const ROOT_DIR = path.resolve(__dirname, "..", "..");
+const SCRIPT_ONLY_SECRET_KEYS = [
+  "SERVICE_ROLE_KEY",
+  "SUPABASE_AUTH_ADMIN_KEY",
+  "SUPABASE_DATABASE_URL",
+  "SUPABASE_SERVICE_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+] as const;
 
 interface SeededMedia {
   media_id: string;
@@ -148,31 +158,43 @@ async function resetPodcastSubscriptionSettings(
   expect(response.ok(), await response.text()).toBeTruthy();
 }
 
-async function clearEpisodePlaybackRate(
-  page: Parameters<typeof gotoSinglePaneWorkspace>[0],
-  mediaId: string,
-): Promise<void> {
-  const currentResponse = await page.request.get(
-    `/api/media/${mediaId}/listening-state`,
-  );
-  expect(currentResponse.ok(), await currentResponse.text()).toBeTruthy();
-  const current = (await currentResponse.json()) as { data: ListeningState };
-  const response = await page.request.put(
-    `/api/media/${mediaId}/listening-state`,
+function childAppRuntimeEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const key of SCRIPT_ONLY_SECRET_KEYS) delete env[key];
+  return env;
+}
+
+function resetPlaybackRateFixture(
+  ownerId: string,
+  mediaIds: readonly string[],
+): void {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("DATABASE_URL is required for the playback-rate fixture");
+  }
+  execFileSync(
+    "uv",
+    [
+      "run",
+      "--project",
+      "python",
+      "python",
+      "e2e/reset-consumption-playback-rate.py",
+    ],
     {
-      headers: stateChangingApiHeaders(),
-      data: {
-        positionMs: current.data.positionMs,
-        durationMs: current.data.durationMs,
-        episodePlaybackRate: { kind: "Absent" },
-        expectedWriteRevision: current.data.writeRevision,
-        expectedResetEpoch: current.data.resetEpoch,
-        heartbeatGeneration: randomUUID(),
-        heartbeatSequence: 1,
+      cwd: ROOT_DIR,
+      env: {
+        ...childAppRuntimeEnv(),
+        DATABASE_URL: databaseUrl.replace(
+          /^postgresql:\/\//,
+          "postgresql+psycopg://",
+        ),
+        NEXUS_E2E_OWNER_USER_ID: ownerId,
+        NEXUS_E2E_PLAYBACK_MEDIA_IDS: JSON.stringify(mediaIds),
       },
+      stdio: ["ignore", "pipe", "pipe"],
     },
   );
-  expect(response.ok(), await response.text()).toBeTruthy();
 }
 
 async function resetAudioProgress(
@@ -268,6 +290,41 @@ async function postActivity(
   expect(value.headers()["cache-control"]).toBe("private, no-store");
 }
 
+const playbackRateTest = test.extend<{ playbackRateAudio: SeededAudio }>({
+  playbackRateAudio: async ({ page }, use) => {
+    const audio = seededAudio();
+    const viewerResponse = await page.request.get("/api/me");
+    expect(
+      viewerResponse.ok(),
+      `Read playback-rate fixture viewer: ${await viewerResponse.text()}`,
+    ).toBeTruthy();
+    const ownerId = (
+      (await viewerResponse.json()) as { data: { user_id: string } }
+    ).data.user_id;
+    const mediaIds = [
+      audio.playback_media_id,
+      audio.playback_successor_media_id,
+    ];
+    resetPlaybackRateFixture(ownerId, mediaIds);
+    try {
+      await use(audio);
+    } finally {
+      // Fixture teardown receives its own Playwright timeout. Keep rollback out
+      // of the journey's budget so a slow production interaction cannot strand
+      // shared playback state when the test reaches its deadline.
+      // Leave the app first so the live player cannot race rollback with one
+      // last revision-fenced heartbeat.
+      await page.goto("about:blank", { waitUntil: "load" });
+      await removeAudioFromLectern(page, [
+        audio.playback_media_id,
+        audio.playback_successor_media_id,
+      ]);
+      resetPlaybackRateFixture(ownerId, mediaIds);
+      await resetPodcastSubscriptionSettings(page, audio.podcast_id);
+    }
+  },
+});
+
 test("resets podcast progress through the BFF to a canonical install snapshot", async ({
   page,
 }) => {
@@ -328,11 +385,11 @@ test("resets podcast progress through the BFF to a canonical install snapshot", 
   expect(after.data).toEqual(reset.listeningState.value);
 });
 
-test("inherits podcast playback speed and resumes an episode override", async ({
+playbackRateTest("inherits podcast playback speed and resumes an episode override", async ({
   page,
+  playbackRateAudio: audio,
 }) => {
-  test.slow();
-  const audio = seededAudio();
+  playbackRateTest.slow();
   const rawDeviceId = `e2e-playback-rate-${randomUUID()}`;
   await page.route(
     new RegExp(
@@ -348,99 +405,85 @@ test("inherits podcast playback speed and resumes an episode override", async ({
   await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
 
   await resetPodcastSubscriptionSettings(page, audio.podcast_id);
-  await clearEpisodePlaybackRate(page, audio.playback_media_id);
-  await clearEpisodePlaybackRate(page, audio.playback_successor_media_id);
 
-  try {
-    const preference = await page.request.patch(
-      `/api/podcasts/subscriptions/${audio.podcast_id}/settings`,
-      {
-        headers: stateChangingApiHeaders(),
-        data: {
-          default_playback_speed: { kind: "Present", value: 1.5 },
-        },
+  const preference = await page.request.patch(
+    `/api/podcasts/subscriptions/${audio.podcast_id}/settings`,
+    {
+      headers: stateChangingApiHeaders(),
+      data: {
+        default_playback_speed: { kind: "Present", value: 1.5 },
       },
-    );
-    expect(preference.ok(), await preference.text()).toBeTruthy();
+    },
+  );
+  expect(preference.ok(), await preference.text()).toBeTruthy();
 
-    await resetAndPlaceAudio(page, audio.playback_media_id);
-    await resetAudioProgress(page, audio.playback_successor_media_id);
-    await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
-    await activeWorkspacePane(page)
-      .getByRole("button", { name: `Play ${audio.playback_title}` })
-      .click();
+  await resetAndPlaceAudio(page, audio.playback_media_id);
+  await resetAudioProgress(page, audio.playback_successor_media_id);
+  await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
+  await activeWorkspacePane(page)
+    .getByRole("button", { name: `Play ${audio.playback_title}` })
+    .click();
 
-    const audioElement = page.locator(
-      'audio[aria-label="Media player audio"]',
-    );
-    await expect(audioElement).toHaveJSProperty("paused", false);
-    await expect
-      .poll(() =>
-        audioElement.evaluate(
-          (element) => (element as HTMLAudioElement).playbackRate,
-        ),
-      )
-      .toBe(1.5);
-    await expect(
-      page.getByRole("button", {
-        name: "Playback speed, 1.5 times",
-      }),
-    ).toBeVisible();
+  const audioElement = page.locator('audio[aria-label="Media player audio"]');
+  await expect(audioElement).toHaveJSProperty("paused", false);
+  await expect
+    .poll(() =>
+      audioElement.evaluate(
+        (element) => (element as HTMLAudioElement).playbackRate,
+      ),
+    )
+    .toBe(1.5);
+  await expect(
+    page.getByRole("button", {
+      name: "Playback speed, 1.5 times",
+    }),
+  ).toBeVisible();
 
-    const persistedRate = page.waitForResponse((response) => {
-      if (
-        response.request().method() !== "PUT" ||
-        new URL(response.url()).pathname !==
-          `/api/media/${audio.playback_media_id}/listening-state`
-      ) {
-        return false;
+  const persistedRate = page.waitForResponse((response) => {
+    if (
+      response.request().method() !== "PUT" ||
+      new URL(response.url()).pathname !==
+        `/api/media/${audio.playback_media_id}/listening-state`
+    ) {
+      return false;
+    }
+    const rate = (
+      response.request().postDataJSON() as {
+        episodePlaybackRate?: { kind?: string; value?: number };
       }
-      const rate = (
-        response.request().postDataJSON() as {
-          episodePlaybackRate?: { kind?: string; value?: number };
-        }
-      ).episodePlaybackRate;
-      return rate?.kind === "Present" && rate.value === 1.75;
-    });
-    await page
-      .getByRole("button", { name: "Playback speed, 1.5 times" })
-      .click();
-    const playbackDialog = page.getByRole("dialog", { name: "Playback" });
-    await playbackDialog
-      .getByRole("slider", { name: "Playback speed" })
-      .fill("1.75");
-    expect((await persistedRate).ok()).toBeTruthy();
-    await expect(audioElement).toHaveJSProperty("playbackRate", 1.75);
-    await page.keyboard.press("Escape");
+    ).episodePlaybackRate;
+    return rate?.kind === "Present" && rate.value === 1.75;
+  });
+  await page
+    .getByRole("button", { name: "Playback speed, 1.5 times" })
+    .click();
+  const playbackDialog = page.getByRole("dialog", { name: "Playback" });
+  await playbackDialog
+    .getByRole("slider", { name: "Playback speed" })
+    .fill("1.75");
+  expect((await persistedRate).ok()).toBeTruthy();
+  await expect(audioElement).toHaveJSProperty("playbackRate", 1.75);
+  await page.keyboard.press("Escape");
 
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await waitForWorkspaceHydration(page);
-    await activeWorkspacePane(page)
-      .getByRole("button", { name: `Play ${audio.playback_title}` })
-      .click();
-    await expect(audioElement).toHaveJSProperty("playbackRate", 1.75);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await waitForWorkspaceHydration(page);
+  await activeWorkspacePane(page)
+    .getByRole("button", { name: `Play ${audio.playback_title}` })
+    .click();
+  await expect(audioElement).toHaveJSProperty("playbackRate", 1.75);
 
-    await page
-      .getByRole("region", { name: "Media player" })
-      .getByRole("button", { name: "Close player" })
-      .click();
-    await resetAndPlaceAudio(page, audio.playback_successor_media_id);
-    await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
-    await activeWorkspacePane(page)
-      .getByRole("button", {
-        name: `Play ${audio.playback_successor_title}`,
-      })
-      .click();
-    await expect(audioElement).toHaveJSProperty("playbackRate", 1.5);
-  } finally {
-    await removeAudioFromLectern(page, [
-      audio.playback_media_id,
-      audio.playback_successor_media_id,
-    ]);
-    await clearEpisodePlaybackRate(page, audio.playback_media_id);
-    await clearEpisodePlaybackRate(page, audio.playback_successor_media_id);
-    await resetPodcastSubscriptionSettings(page, audio.podcast_id);
-  }
+  await page
+    .getByRole("region", { name: "Media player" })
+    .getByRole("button", { name: "Close player" })
+    .click();
+  await resetAndPlaceAudio(page, audio.playback_successor_media_id);
+  await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
+  await activeWorkspacePane(page)
+    .getByRole("button", {
+      name: `Play ${audio.playback_successor_title}`,
+    })
+    .click();
+  await expect(audioElement).toHaveJSProperty("playbackRate", 1.5);
 });
 
 test("persists pause shortening through subscription settings while browser playback omits the unsupported control", async ({
@@ -835,7 +878,7 @@ test("records private activity through the BFF and renders filtered Stats", asyn
   await nexus
     .getByRole("combobox", { name: "Find anything" })
     .fill("stats");
-  await nexus.getByRole("option", { name: /^Stats\b/ }).click();
+  await nexus.getByRole("gridcell", { name: /^Stats\b/ }).click();
 
   const initialResponse = await Promise.race([
     initialStats,
