@@ -95,7 +95,9 @@ test("a highlight note remains attached to the exact canonical passage after a f
   const mediaId = await ingestArticle(page);
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
   await expect(
-    page.getByRole("heading", { name: "There's Water on the Moon?" }),
+    page
+      .getByTestId("html-renderer")
+      .getByRole("heading", { name: "There's Water on the Moon?" }),
   ).toBeVisible({ timeout: 15_000 });
   await dragSelectExactText(
     page,
@@ -167,7 +169,10 @@ test("a highlight note remains attached to the exact canonical passage after a f
   const evidenceTab = page.getByRole("tab", { name: "Evidence" });
   await evidenceTab.click();
   await expect(evidenceTab).toHaveAttribute("aria-selected", "true");
-  const evidence = page.getByRole("article").filter({ hasText: QUOTE });
+  const evidence = page
+    .getByTestId("evidence-pane-surface")
+    .getByRole("article")
+    .filter({ hasText: QUOTE });
   await expect(
     evidence,
     `Evidence for highlight ${highlight.id} did not retain canonical quote ${JSON.stringify(QUOTE)}.`,
@@ -190,7 +195,11 @@ test("a highlight note remains attached to the exact canonical passage after a f
   await page.getByRole("button", { name: "Companion", exact: true }).click();
   await page.getByRole("tab", { name: "Evidence" }).click();
   await expect(
-    page.getByRole("article").filter({ hasText: QUOTE }).getByText(noteText),
+    page
+      .getByTestId("evidence-pane-surface")
+      .getByRole("article")
+      .filter({ hasText: QUOTE })
+      .getByText(noteText),
     `Fresh document load lost note provenance for highlight ${highlight.id}.`,
   ).toBeVisible();
 });

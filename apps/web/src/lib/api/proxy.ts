@@ -132,6 +132,7 @@ interface ProxyDeps {
   readSession: (request: Request) => SessionState;
   fetch: typeof fetch;
   generateRequestId: () => string;
+  appPublicOrigin: string;
   config: {
     fastApiBaseUrl: string;
     internalSecret: string;
@@ -285,6 +286,7 @@ async function readProxiedBody(
 }
 
 async function createDefaultDeps(): Promise<ProxyDeps> {
+  const env = getEnv();
   return {
     readSession: (request) =>
       readSupabaseSessionCookie(
@@ -292,7 +294,8 @@ async function createDefaultDeps(): Promise<ProxyDeps> {
       ),
     fetch: globalThis.fetch,
     generateRequestId: createRandomId,
-    config: getEnv().internalApi,
+    appPublicOrigin: env.appPublicOrigin,
+    config: env.internalApi,
   };
 }
 
@@ -335,11 +338,11 @@ export async function proxyToFastAPIWithDeps(
   const queryString = requestUrl.search; // includes leading '?' if present
 
   // CSRF defense for state-changing methods: a same-origin browser request and
-  // the Android WebView shell (which hosts the web origin) both send the app's
-  // own Origin; any other Origin is a cross-site forgery.
+  // the Android WebView shell (which hosts the web origin) both send the
+  // configured public Origin; request.url may reflect an internal proxy host.
   if (
     STATE_CHANGING_METHODS.has(request.method) &&
-    request.headers.get("origin") !== requestUrl.origin
+    request.headers.get("origin") !== deps.appPublicOrigin
   ) {
     return NextResponse.json(
       {
