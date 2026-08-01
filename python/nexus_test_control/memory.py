@@ -20,6 +20,7 @@ from nexus_test_control.runtime import (
 
 _MEMORY = re.compile(r"([0-9]+(?:\.[0-9]+)?)(B|kB|KiB|MB|MiB|GB|GiB)\Z")
 _MIB = 1024 * 1024
+_CONTAINER_READ_ATTEMPTS = 2
 
 
 def available_memory_mib(meminfo: Path = Path("/proc/meminfo")) -> int | None:
@@ -55,6 +56,7 @@ class OwnedMemorySampler:
         self._current_process_bytes = 0
         self._current_container_bytes = 0
         self._container_sample_failed = False
+        self._container_failure_detail: str | None = None
         self._thread = threading.Thread(target=self._sample_until_stopped, daemon=True)
         self.evidence: PeakOwnedMemory | None = None
 
@@ -84,6 +86,7 @@ class OwnedMemorySampler:
         self._thread.join(timeout=6)
         if self._thread.is_alive():
             self._container_sample_failed = True
+            self._container_failure_detail = "owned-memory sampler did not stop within 6 seconds"
         else:
             self._sample(include_containers=False)
         return self._snapshot(interval=False)
@@ -98,6 +101,11 @@ class OwnedMemorySampler:
             self._interval_process_bytes = self._current_process_bytes
             self._interval_container_bytes = self._current_container_bytes
         return evidence
+
+    @property
+    def failure_detail(self) -> str | None:
+        with self._lock:
+            return self._container_failure_detail
 
     def _snapshot(self, *, interval: bool) -> PeakOwnedMemory:
         with self._lock:
@@ -133,16 +141,18 @@ class OwnedMemorySampler:
         container_bytes: int | None = None
         sampled_roots: set[Path] = set()
         failed_roots: set[Path] = set()
+        failure_detail: str | None = None
         if include_containers:
             with self._lock:
                 container_roots = tuple(self._container_roots)
             container_bytes = 0
             for root in container_roots:
                 try:
-                    container_bytes += self._container_reader(root)
+                    container_bytes += self._read_container(root)
                     sampled_roots.add(root)
-                except (OSError, RuntimeContractError, subprocess.SubprocessError):
+                except (OSError, RuntimeContractError, subprocess.SubprocessError) as error:
                     failed_roots.add(root)
+                    failure_detail = str(error) or type(error).__name__
         with self._lock:
             self._current_process_bytes = process_bytes
             self._peak_process_bytes = max(self._peak_process_bytes, process_bytes)
@@ -153,6 +163,7 @@ class OwnedMemorySampler:
             active_failed_roots = failed_roots.intersection(self._container_roots)
             if active_failed_roots:
                 self._container_sample_failed = True
+                self._container_failure_detail = failure_detail or "owned container probe failed"
             elif container_bytes is not None:
                 self._sampled_container_roots.update(sampled_roots)
                 self._current_container_bytes = container_bytes
@@ -160,6 +171,21 @@ class OwnedMemorySampler:
                 self._interval_container_bytes = max(
                     self._interval_container_bytes, container_bytes
                 )
+
+    def _read_container(self, repo_root: Path) -> int:
+        """Recover one transient Docker probe without rerunning any proof."""
+        last_error: OSError | RuntimeContractError | subprocess.SubprocessError | None = None
+        for _attempt in range(_CONTAINER_READ_ATTEMPTS):
+            try:
+                return self._container_reader(repo_root)
+            except (OSError, RuntimeContractError, subprocess.SubprocessError) as error:
+                last_error = error
+        if last_error is None:
+            raise AssertionError("container measurement made no read attempt")
+        detail = str(last_error) or type(last_error).__name__
+        raise RuntimeContractError(
+            f"owned container probe failed {_CONTAINER_READ_ATTEMPTS} consecutive reads: {detail}"
+        ) from last_error
 
 
 @contextmanager

@@ -348,7 +348,9 @@ def _execute_workflow(
     if not peak_owned_mib.measurement_complete and all(
         item.status is RunStatus.PASS for item in capabilities
     ):
-        detail = "owned container memory could not be measured truthfully"
+        detail = memory_sampler.failure_detail or (
+            "owned container memory could not be measured truthfully"
+        )
         reporter.report(
             output,
             owner="memory",

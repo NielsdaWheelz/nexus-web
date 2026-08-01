@@ -111,6 +111,32 @@ def test_inflight_sample_ignores_only_an_owner_disabled_for_exact_teardown(
     assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 4, 6)
 
 
+def test_active_owner_recovers_one_transient_container_probe_without_losing_evidence(
+    tmp_path: Path,
+) -> None:
+    samples = 0
+
+    def read_container(_repo_root: Path) -> int:
+        nonlocal samples
+        samples += 1
+        if samples == 1:
+            raise RuntimeContractError("synthetic transient Docker failure")
+        return 4 * 1024 * 1024
+
+    sampler = memory.OwnedMemorySampler(
+        tmp_path,
+        include_containers=True,
+        process_reader=lambda _pid: 2 * 1024 * 1024,
+        container_reader=read_container,
+    )
+    sampler._sample(include_containers=True)
+    evidence = sampler.snapshot()
+
+    assert samples == 2
+    assert evidence.measurement_complete is True
+    assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 4, 6)
+
+
 def test_active_owner_docker_error_remains_a_fail_closed_measurement(
     tmp_path: Path,
 ) -> None:
@@ -134,4 +160,8 @@ def test_active_owner_docker_error_remains_a_fail_closed_measurement(
     evidence = sampler.stop()
 
     assert evidence.measurement_complete is False
+    assert sampler.failure_detail == (
+        "owned container probe failed 2 consecutive reads: "
+        "synthetic Docker failure for active owner"
+    )
     assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 4, 6)

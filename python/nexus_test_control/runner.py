@@ -753,7 +753,9 @@ def run_workflow(
     if not workflow_memory.measurement_complete and all(
         item.status is RunStatus.PASS for item in capabilities
     ):
-        detail = "owned container memory could not be measured truthfully"
+        detail = workflow_sampler.failure_detail or (
+            "owned container memory could not be measured truthfully"
+        )
         reporter.report(
             stream,
             owner="memory",
