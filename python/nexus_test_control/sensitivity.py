@@ -513,14 +513,14 @@ def isolated_worktree(
     finally:
         try:
             with workspace_heavy_lock(checkout):
+                if memory_sampler is not None:
+                    memory_sampler.disable_containers(checkout.resolve(strict=True))
                 runtime_cleaner(checkout, {"NEXUS_ENV": "test"})
         except BaseException as error:
             raise SensitivityError(
                 "isolated sensitivity runtime cleanup failed; ownership evidence was retained at "
                 f"{checkout}; recover with: cd {checkout} && ./scripts/test clean"
             ) from error
-        if memory_sampler is not None:
-            memory_sampler.disable_containers(checkout.resolve(strict=True))
         _git(repo_root, "worktree", "remove", "--force", str(checkout))
         shutil.rmtree(temporary)
 

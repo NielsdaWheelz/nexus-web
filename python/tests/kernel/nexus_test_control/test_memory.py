@@ -1,4 +1,5 @@
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -71,3 +72,66 @@ def test_one_sampler_tracks_main_and_isolated_container_owners_without_double_co
     assert set(container_samples) == {tmp_path, isolated}
     assert evidence.measurement_complete is True
     assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 6, 8)
+
+
+def test_inflight_sample_ignores_only_an_owner_disabled_for_exact_teardown(
+    tmp_path: Path,
+) -> None:
+    sample_started = threading.Event()
+    teardown_started = threading.Event()
+    samples = 0
+
+    def read_container(_repo_root: Path) -> int:
+        nonlocal samples
+        samples += 1
+        if samples == 1:
+            return 4 * 1024 * 1024
+        sample_started.set()
+        assert teardown_started.wait(timeout=1), "synthetic teardown never started"
+        raise RuntimeContractError("container disappeared during exact teardown")
+
+    sampler = memory.OwnedMemorySampler(
+        tmp_path,
+        include_containers=True,
+        process_reader=lambda _pid: 2 * 1024 * 1024,
+        container_reader=read_container,
+    )
+    sampler.start()
+    inflight = threading.Thread(target=sampler._sample, kwargs={"include_containers": True})
+    inflight.start()
+    assert sample_started.wait(timeout=1), "synthetic Docker sample never became in-flight"
+
+    sampler.disable_containers(tmp_path)
+    teardown_started.set()
+    inflight.join(timeout=1)
+    assert not inflight.is_alive(), "synthetic Docker sample did not finish"
+    evidence = sampler.stop()
+
+    assert evidence.measurement_complete is True
+    assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 4, 6)
+
+
+def test_active_owner_docker_error_remains_a_fail_closed_measurement(
+    tmp_path: Path,
+) -> None:
+    samples = 0
+
+    def read_container(_repo_root: Path) -> int:
+        nonlocal samples
+        samples += 1
+        if samples == 1:
+            return 4 * 1024 * 1024
+        raise RuntimeContractError("synthetic Docker failure for active owner")
+
+    sampler = memory.OwnedMemorySampler(
+        tmp_path,
+        include_containers=True,
+        process_reader=lambda _pid: 2 * 1024 * 1024,
+        container_reader=read_container,
+    )
+    sampler.start()
+    sampler._sample(include_containers=True)
+    evidence = sampler.stop()
+
+    assert evidence.measurement_complete is False
+    assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 4, 6)

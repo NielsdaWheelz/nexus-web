@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from nexus_test_control.evidence import CapabilityEvidence
-from nexus_test_control.memory import measure_owned_memory
+from nexus_test_control.memory import OwnedMemorySampler, measure_owned_memory
 from nexus_test_control.model import (
     Capability,
     RunStatus,
@@ -18,6 +18,7 @@ from nexus_test_control.model import (
     SensitivityPhase,
 )
 from nexus_test_control.runner import CapabilityResult, RunContextRecorder
+from nexus_test_control.runtime import RuntimeContractError
 from nexus_test_control.sensitivity import (
     SensitivityError,
     SensitivityExecutionError,
@@ -419,6 +420,50 @@ def test_isolated_worktree_cleans_runtime_before_removal_on_proof_exit(
     assert checkout is not None
     assert not checkout.exists()
     assert str(checkout) not in _git_output(tmp_path, "worktree", "list", "--porcelain")
+
+
+def test_isolated_worktree_disables_container_sampling_before_exact_teardown(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "proof.txt").write_text("proof\n")
+    _commit(tmp_path, "base")
+    revision = _git_output(tmp_path, "rev-parse", "HEAD")
+    teardown_started = False
+
+    def read_container(_worktree: Path) -> int:
+        if teardown_started:
+            raise RuntimeContractError("container disappeared during exact teardown")
+        return 3 * 1024 * 1024
+
+    sampler = OwnedMemorySampler(
+        tmp_path,
+        include_containers=False,
+        process_reader=lambda _pid: 2 * 1024 * 1024,
+        container_reader=read_container,
+    )
+    sampler.start()
+
+    def clean_runtime(
+        _worktree: Path,
+        _environment: Mapping[str, str],
+    ) -> tuple[str, ...]:
+        nonlocal teardown_started
+        teardown_started = True
+        sampler._sample(include_containers=True)
+        return ()
+
+    with isolated_worktree(
+        tmp_path,
+        revision,
+        overlays=(),
+        runtime_cleaner=clean_runtime,
+        memory_sampler=sampler,
+    ) as red_root:
+        sampler.enable_containers(red_root)
+
+    evidence = sampler.stop()
+    assert evidence.measurement_complete is True
+    assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 3, 5)
 
 
 def test_isolated_worktree_owns_its_python_environment(tmp_path: Path) -> None:

@@ -73,7 +73,7 @@ class OwnedMemorySampler:
         self._sample(include_containers=True)
 
     def disable_containers(self, repo_root: Path) -> None:
-        """Stop sampling a sensitivity checkout before its path is removed."""
+        """Stop sampling an owner before its exact container teardown begins."""
         with self._lock:
             self._container_roots.discard(repo_root)
             if not self._container_roots:
@@ -131,21 +131,27 @@ class OwnedMemorySampler:
     def _sample(self, *, include_containers: bool) -> None:
         process_bytes = self._process_reader(os.getpid())
         container_bytes: int | None = None
-        container_failed = False
         sampled_roots: set[Path] = set()
+        failed_roots: set[Path] = set()
         if include_containers:
             with self._lock:
                 container_roots = tuple(self._container_roots)
-            try:
-                container_bytes = sum(self._container_reader(root) for root in container_roots)
-                sampled_roots.update(container_roots)
-            except (OSError, RuntimeContractError, subprocess.SubprocessError):
-                container_failed = True
+            container_bytes = 0
+            for root in container_roots:
+                try:
+                    container_bytes += self._container_reader(root)
+                    sampled_roots.add(root)
+                except (OSError, RuntimeContractError, subprocess.SubprocessError):
+                    failed_roots.add(root)
         with self._lock:
             self._current_process_bytes = process_bytes
             self._peak_process_bytes = max(self._peak_process_bytes, process_bytes)
             self._interval_process_bytes = max(self._interval_process_bytes, process_bytes)
-            if container_failed:
+            # Teardown first disables the exact owner. An in-flight Docker stats
+            # call may then observe that owner's expected disappearance. Only a
+            # failure for a still-active owner invalidates the measurement.
+            active_failed_roots = failed_roots.intersection(self._container_roots)
+            if active_failed_roots:
                 self._container_sample_failed = True
             elif container_bytes is not None:
                 self._sampled_container_roots.update(sampled_roots)
