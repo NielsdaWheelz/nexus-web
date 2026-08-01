@@ -12,6 +12,11 @@
 import { isRecord } from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
+  decodeExecutionAdvisory,
+  EXECUTION_ADVISORY_EVENT_TYPE,
+  type DurableExecution,
+} from "@/lib/api/executionAdvisory";
+import {
   decodeCitationOut,
   type CitationOut,
 } from "@/lib/conversations/citationOut";
@@ -60,6 +65,11 @@ interface SSEAssistantActivityEvent {
     provider_event_seq_start?: number | null;
     provider_event_seq_end?: number | null;
   };
+}
+
+export interface SSEExecutionAdvisoryEvent {
+  type: "ExecutionAdvisory";
+  data: DurableExecution;
 }
 
 /** Incremental assistant content. */
@@ -172,6 +182,7 @@ export type SSEEvent = (
   | SSEToolResultEvent
   | SSECitationIndexEvent
   | SSEContextRefAddedEvent
+  | SSEExecutionAdvisoryEvent
 ) & { seq: number };
 
 function parseMetaData(data: unknown): SSEMetaEvent["data"] {
@@ -573,8 +584,15 @@ function parseContextRefAddedData(
 export function toChatSSEEvent(
   eventType: string,
   data: unknown,
-  id = "0",
+  id = "",
 ): SSEEvent {
+  if (eventType === EXECUTION_ADVISORY_EVENT_TYPE) {
+    return {
+      seq: 0,
+      type: EXECUTION_ADVISORY_EVENT_TYPE,
+      data: decodeExecutionAdvisory(data, id),
+    };
+  }
   const seq = Number(id || 0);
   if (!Number.isInteger(seq) || seq < 0) {
     throw new Error("Invalid SSE event id");

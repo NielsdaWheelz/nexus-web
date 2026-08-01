@@ -1,4 +1,5 @@
 .textarea {
+  box-sizing: border-box;
   font-family: inherit;
   color: var(--ink);
   width: 100%;
@@ -19,7 +20,8 @@
 
 .autoGrow {
   resize: none;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: hidden;
 }
 
 /* Sizes (match Button font-size scale) */

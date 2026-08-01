@@ -83,6 +83,19 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   await gotoWithStrictCsp(page, `/conversations/${conversationId}`);
   const input = page.getByRole("textbox", { name: /ask anything/i });
   await expect(input).toBeVisible();
+  await page.getByRole("combobox", { name: "Model" }).selectOption("fast");
+  await page.getByRole("combobox", { name: "Effort" }).selectOption("high");
+  let chatAdmissions = 0;
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      request.method() === "POST" &&
+      url.origin === webOrigin &&
+      url.pathname === "/api/chat-runs"
+    ) {
+      chatAdmissions += 1;
+    }
+  });
   await input.fill(
     "What did SOFIA establish about water in Clavius Crater? Use the attached source.",
   );
@@ -90,14 +103,25 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
     (response) =>
       matchesResponse(response, webOrigin, "POST", "/api/chat-runs"),
   );
-  const send = page.getByRole("button", { name: "SEND", exact: true });
+  const send = page.getByRole("button", {
+    name: "Send message",
+    exact: true,
+  });
   await expect(send).toBeEnabled();
   await send.click();
   const runResponse = await runResponsePromise;
+  const runText = await runResponse.text();
   expect(
     runResponse.ok(),
-    `Chat admission for conversation ${conversationId} failed: ${runResponse.status()} ${await runResponse.text()}`,
+    `Chat admission for conversation ${conversationId} failed: ${runResponse.status()} ${runText}`,
   ).toBeTruthy();
+  const admitted = JSON.parse(runText) as {
+    data: { run: { profile_id: string; reasoning_option_id: string } };
+  };
+  expect(admitted.data.run).toMatchObject({
+    profile_id: "fast",
+    reasoning_option_id: "high",
+  });
 
   const chatLog = page.getByRole("log", { name: "Chat messages" });
   const citation = chatLog
@@ -115,7 +139,28 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
     "href",
     `/media/${mediaId}#evidence-${evidenceSpanId}`,
   );
-  await citation.click();
+  await page.reload();
+  const durableCitation = page
+    .getByRole("log", { name: "Chat messages" })
+    .getByRole("link", { name: /^Open citation \d+$/ })
+    .first();
+  await expect(
+    durableCitation,
+    `Conversation ${conversationId} lost its published citation after reload.`,
+  ).toHaveAttribute("href", `/media/${mediaId}#evidence-${evidenceSpanId}`);
+  await expect(
+    page.getByText(/SOFIA helped confirm water on the Moon/i).first(),
+    `Conversation ${conversationId} lost its published answer after reload.`,
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Send message" }),
+    `Conversation ${conversationId} remained operationally suspended after terminal reload.`,
+  ).toBeVisible();
+  expect(
+    chatAdmissions,
+    `Conversation ${conversationId} admitted more than one run across send and reload.`,
+  ).toBe(1);
+  await durableCitation.click();
   await expect(
     page,
     `Citation evidence ${evidenceSpanId} was not consumed into the canonical media ${mediaId} URL.`,

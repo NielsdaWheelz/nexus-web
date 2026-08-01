@@ -29,8 +29,10 @@ from ``session_factory``:
    code="budget_exceeded"} and re-raises the same ``ApiError`` (the sole
    budget-denial site). Reservation succeeding precedes
    :func:`llm_ledger.commit_plan_facts`, committed.
-5. Dispatch ``runtime.generate``/``runtime.stream`` with the resolved
-   platform ``generation_credential``.
+5. Invoke the optional caller-owned pre-dispatch checkpoint, then dispatch
+   ``runtime.generate``/``runtime.stream`` with the resolved platform
+   ``generation_credential``. The checkpoint runs inside this sole generation
+   boundary and immediately before the runtime call.
 6. Terminalize from the outcome (:func:`llm_ledger.terminalize`), committed
    before any owner-side postprocessing.
 7. Settle the reservation exactly once (:func:`_settle` / the defect-path
@@ -50,8 +52,8 @@ terminal ``RuntimeStreamEvent``.
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, replace
 from typing import Protocol
 from uuid import UUID
 
@@ -229,6 +231,8 @@ async def execute_generation(
     session_factory: sessionmaker[Session],
     runtime: ExecutionRuntime,
     settings: Settings,
+    before_dispatch: Callable[[], None] | None = None,
+    single_dispatch: bool = False,
 ) -> CallOutcome:
     _check_entitlement(session_factory, user_id=req.owner.user_id)
 
@@ -253,6 +257,8 @@ async def execute_generation(
             latency_ms=None,
         )
         return CallOutcome(generation_id, rejected_outcome, facts.support_id)
+    if single_dispatch:
+        plan = _single_dispatch_plan(plan)
 
     rate_limiter = get_rate_limiter()
     _reserve(
@@ -277,6 +283,8 @@ async def execute_generation(
             session_factory, generation_id=generation_id, profile=req.profile, plan=plan
         )
         credential = generation_credential(settings, req.profile.target.provider)
+        if before_dispatch is not None:
+            before_dispatch()
         dispatch_attempted = True
         started = time.monotonic()
         outcome = await runtime.generate(req.intent, plan, credential)
@@ -329,6 +337,8 @@ async def execute_generation_stream(
     runtime: ExecutionRuntime,
     settings: Settings,
     cancel: CancelSignal,
+    before_dispatch: Callable[[], None] | None = None,
+    single_dispatch: bool = False,
 ) -> AsyncIterator[RuntimeStreamEvent]:
     _check_entitlement(session_factory, user_id=req.owner.user_id)
 
@@ -354,6 +364,8 @@ async def execute_generation_stream(
         )
         yield RuntimeStreamEvent(seq=1, event=TerminalEvent(outcome=synthetic))
         return
+    if single_dispatch:
+        plan = _single_dispatch_plan(plan)
 
     rate_limiter = get_rate_limiter()
     _reserve(
@@ -378,6 +390,8 @@ async def execute_generation_stream(
             session_factory, generation_id=generation_id, profile=req.profile, plan=plan
         )
         credential = generation_credential(settings, req.profile.target.provider)
+        if before_dispatch is not None:
+            before_dispatch()
         dispatch_attempted = True
         started = time.monotonic()
         async for event in runtime.stream(req.intent, plan, credential, cancel=cancel):
@@ -458,6 +472,14 @@ def _plan(
         raise
 
 
+def _single_dispatch_plan(plan: FinalizedProviderCall) -> FinalizedProviderCall:
+    """Keep an ambiguity-sensitive owner to one provider transport attempt."""
+    return replace(
+        plan,
+        retry_policy=replace(plan.retry_policy, max_attempts=1),
+    )
+
+
 def _reserve(
     session_factory: sessionmaker[Session],
     rate_limiter: RateLimiter,
@@ -490,8 +512,8 @@ def _reservation_defect_facts(exc: ApiError) -> tuple[FailureOrigin, str, str]:
     cause. Only a real quota denial is ``budget_exceeded`` — a rate-limiter
     outage or a billing gate must never be mislabelled as quota-exhaustion
     (which the chat surface would render as "Monthly AI token quota exceeded").
-    For chat these non-budget codes route through ``finalize_defect`` (generic
-    non-rerunnable card); no ``ExpectedChatFailure`` variant asserts on them."""
+    Chat treats only quota exhaustion as an expected terminal result; other
+    reservation defects escape into queue retry and suspension."""
     if exc.code == ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED:
         return "budget", "budget_exceeded", "token budget reservation denied"
     if exc.code == ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE:

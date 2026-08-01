@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,13 +22,22 @@ from web_search_tool.types import (
 )
 
 from nexus.db.models import ResourceExternalSnapshot
+from nexus.ids import new_uuid7
 from nexus.logging import get_logger
+from nexus.schemas.conversation import MESSAGE_TOOL_STATUSES, ChatRunToolResultEventPayload
 from nexus.schemas.retrieval import (
+    ExternalSnapshotId,
+    ExternalUrlLocator,
+    ProviderResultRef,
+    RetrievalContextRef,
+    WebRetrievalResultRef,
     retrieval_context_ref_json,
     retrieval_locator_json,
-    retrieval_result_ref_json,
 )
-from nexus.services.chat_run_citations import prune_tool_call_retrievals
+from nexus.services.chat_run_citations import (
+    CitationCandidateNumbering,
+    number_tool_citation_candidates,
+)
 from nexus.services.retrieval_citation import RetrievalCitation, insert_retrieval_row
 
 logger = get_logger(__name__)
@@ -99,9 +109,9 @@ WEB_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
 
 @dataclass(slots=True)
 class WebSearchCitation:
-    """Compact model/frontend citation for a public web result."""
+    """Provider-boundary citation whose result ref is not a Nexus identity."""
 
-    result_ref: str
+    result_ref: ProviderResultRef
     title: str
     url: str
     display_url: str
@@ -127,33 +137,97 @@ class WebSearchCitation:
             raise ValueError("web search citation is missing external_url locator")
         return locator
 
-    def to_json(self, *, source_id: str | None = None) -> dict[str, Any]:
-        source_id = source_id or self.result_ref
-        return {
-            "type": "web_result",
-            "id": source_id,
-            "result_type": "web_result",
-            "result_ref": self.result_ref,
-            "source_id": source_id,
-            "title": self.title,
-            "url": self.url,
-            "display_url": self.display_url,
-            "deep_link": self.url,
-            "citation_target": f"external_snapshot:{source_id}",
-            "locator": self.locator_json(),
-            "snippet": self.snippet,
-            "extra_snippets": list(self.extra_snippets),
-            "published_at": self.published_at,
-            "source_name": self.source_name,
-            "rank": self.rank,
-            "provider": self.provider,
-            "provider_request_id": self.provider_request_id,
-            "context_ref": {"type": "web_result", "id": source_id},
-            "media_id": None,
-            "media_kind": None,
-            "score": 1.0 / max(self.rank, 1),
-            "selected": self.selected,
-        }
+
+@dataclass(frozen=True, slots=True)
+class PersistedWebSearchCitation:
+    """Canonical web citation after Nexus has minted its resource identity."""
+
+    external_snapshot_id: ExternalSnapshotId
+    provider_result_ref: ProviderResultRef
+    title: str
+    url: str
+    display_url: str
+    snippet: str
+    extra_snippets: tuple[str, ...]
+    published_at: str | None
+    source_name: str | None
+    rank: int
+    provider: str
+    provider_request_id: str | None
+    selected: bool
+
+    @classmethod
+    def from_provider_citation(
+        cls,
+        citation: WebSearchCitation,
+        *,
+        external_snapshot_id: ExternalSnapshotId,
+        selected: bool,
+    ) -> PersistedWebSearchCitation:
+        return cls(
+            external_snapshot_id=external_snapshot_id,
+            provider_result_ref=citation.result_ref,
+            title=citation.title,
+            url=citation.url,
+            display_url=citation.display_url,
+            snippet=citation.snippet,
+            extra_snippets=citation.extra_snippets,
+            published_at=citation.published_at,
+            source_name=citation.source_name,
+            rank=citation.rank,
+            provider=citation.provider,
+            provider_request_id=citation.provider_request_id,
+            selected=selected,
+        )
+
+    def locator_json(self) -> dict[str, Any]:
+        locator = retrieval_locator_json(
+            {
+                "type": "external_url",
+                "url": self.url,
+                "title": self.title,
+                "display_url": self.display_url,
+            }
+        )
+        if locator is None:
+            raise AssertionError("persisted web citation is missing external_url locator")
+        return locator
+
+    def retrieval_result_ref(self) -> WebRetrievalResultRef:
+        """Build the sole identity-bearing wire/ledger representation."""
+        snapshot_id = self.external_snapshot_id
+        return WebRetrievalResultRef(
+            type="web_result",
+            id=snapshot_id,
+            result_type="web_result",
+            result_ref=self.provider_result_ref,
+            source_id=snapshot_id,
+            title=self.title,
+            url=self.url,
+            display_url=self.display_url,
+            deep_link=self.url,
+            citation_target=f"external_snapshot:{snapshot_id}",
+            locator=ExternalUrlLocator.model_validate(self.locator_json()),
+            snippet=self.snippet,
+            extra_snippets=list(self.extra_snippets),
+            published_at=self.published_at,
+            source_name=self.source_name,
+            rank=self.rank,
+            provider=self.provider,
+            provider_request_id=self.provider_request_id,
+            context_ref=RetrievalContextRef(type="web_result", id=snapshot_id),
+            media_id=None,
+            media_kind=None,
+            score=1.0 / max(self.rank, 1),
+            selected=self.selected,
+        )
+
+    def retrieval_result_ref_json(self) -> dict[str, Any]:
+        return self.retrieval_result_ref().model_dump(
+            mode="json",
+            exclude_none=True,
+            exclude_defaults=True,
+        )
 
 
 @dataclass(slots=True)
@@ -169,55 +243,37 @@ class WebSearchRun:
     requested_domains: dict[str, list[str]]
     citations: list[WebSearchCitation]
     selected_citations: list[WebSearchCitation]
-    context_text: str
-    context_chars: int
     latency_ms: int
-    status: str
+    status: MESSAGE_TOOL_STATUSES
     error_code: str | None = None
     provider_request_ids: list[str] = field(default_factory=list)
     empty_status: str | None = None
-    tool_call_id: UUID | None = None
     tool_call_index: int = 0
 
-    def tool_call_event(self) -> dict[str, Any]:
-        return {
-            "tool_call_id": str(self.tool_call_id) if self.tool_call_id else None,
-            "assistant_message_id": str(self.assistant_message_id),
-            "tool_name": WEB_SEARCH_TOOL_NAME,
-            "tool_call_index": self.tool_call_index,
-            "status": "running",
-            "scope": "public_web",
-            "types": [self.result_type],
-            "filters": {
-                "freshness_days": self.requested_freshness_days,
-                "allowed_domains": self.requested_domains.get("allowed", []),
-                "blocked_domains": self.requested_domains.get("blocked", []),
-            },
-        }
 
-    def retrieval_result_event(self) -> dict[str, Any]:
-        return {
-            "tool_call_id": str(self.tool_call_id) if self.tool_call_id else None,
-            "assistant_message_id": str(self.assistant_message_id),
-            "tool_name": WEB_SEARCH_TOOL_NAME,
-            "tool_call_index": self.tool_call_index,
-            "status": self.status,
-            "error_code": self.error_code,
-            "result_count": len(self.citations),
-            "selected_count": len(self.selected_citations),
-            "latency_ms": self.latency_ms,
-            "filters": {
-                "freshness_days": self.requested_freshness_days,
-                "allowed_domains": self.requested_domains.get("allowed", []),
-                "blocked_domains": self.requested_domains.get("blocked", []),
-            },
-            "results": [citation.to_json() for citation in self.citations],
-        }
+@dataclass(frozen=True, slots=True)
+class PersistedWebSearchResult:
+    """Canonical caller-owned result of persisting one web-search tool step."""
+
+    tool_call_id: UUID
+    citations: tuple[PersistedWebSearchCitation, ...]
+    selected_citations: tuple[PersistedWebSearchCitation, ...]
+    next_citation_ordinal: int
+    model_output: str
+    result_event: ChatRunToolResultEventPayload
+
+    @property
+    def status(self) -> str:
+        return self.result_event.status
+
+    @property
+    def error_code(self) -> str | None:
+        return self.result_event.error_code
 
 
 def _citation_from_result(result: WebSearchResultItem) -> WebSearchCitation:
     return WebSearchCitation(
-        result_ref=result.result_ref,
+        result_ref=ProviderResultRef(result.result_ref),
         title=result.title,
         url=result.url,
         display_url=result.display_url,
@@ -325,169 +381,169 @@ def _render_single_web_context(citation: WebSearchCitation) -> str:
     return "\n".join(lines)
 
 
-def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
-    """Persist the web-search tool call and retrieval rows."""
+def _web_search_model_output(
+    run: WebSearchRun,
+    selected_citations: tuple[PersistedWebSearchCitation, ...],
+    numbering: CitationCandidateNumbering,
+) -> str:
+    results: list[dict[str, object]] = []
+    for citation, numbered in zip(selected_citations, numbering.rows, strict=True):
+        item: dict[str, object] = {
+            "title": citation.title,
+            "url": citation.url,
+            "snippet": citation.snippet,
+            "source": citation.source_name,
+            "published_at": citation.published_at,
+        }
+        if numbered.candidate_ordinal is not None:
+            item["n"] = numbered.candidate_ordinal
+        results.append(item)
+    return json.dumps(
+        {
+            "results": results,
+            "total_candidates": len(run.citations),
+            "status": run.status,
+            "error_code": run.error_code,
+        }
+    )
+
+
+def persist_web_search_run(
+    db: Session,
+    run: WebSearchRun,
+    *,
+    start_citation_ordinal: int,
+) -> PersistedWebSearchResult:
+    """Persist and number a web-search result without committing its transaction.
+
+    The provider refs on ``run`` remain provider telemetry. This function mints
+    application-owned snapshot UUIDs, builds every identity-bearing payload from
+    those UUIDs, and leaves snapshots, tool/retrieval rows, candidate numbering,
+    and the returned strict event pending for the durable-step caller to publish
+    and commit atomically. The insert is intentionally not an upsert: replay reads
+    the journal's completed result instead of minting replacement identities.
+    """
     owner_user_id = db.scalar(
         text("SELECT owner_user_id FROM conversations WHERE id = :conversation_id"),
         {"conversation_id": run.conversation_id},
     )
     if owner_user_id is None:
         raise ValueError("web_search conversation is missing")
-    snapshot_ids: dict[str, str] = {}
+
+    citation_object_ids = {id(citation) for citation in run.citations}
+    selected_object_ids = {id(citation) for citation in run.selected_citations}
+    if not selected_object_ids <= citation_object_ids:
+        raise AssertionError("selected web citations must come from the provider citation list")
     for citation in run.citations:
+        if citation.selected != (id(citation) in selected_object_ids):
+            raise AssertionError("web citation selected flag disagrees with selected citations")
+
+    persisted_citations: list[PersistedWebSearchCitation] = []
+    for citation in run.citations:
+        persisted_citation = PersistedWebSearchCitation.from_provider_citation(
+            citation,
+            external_snapshot_id=ExternalSnapshotId(new_uuid7()),
+            selected=id(citation) in selected_object_ids,
+        )
+        persisted_citations.append(persisted_citation)
         snapshot = ResourceExternalSnapshot(
+            id=persisted_citation.external_snapshot_id,
             user_id=owner_user_id,
             provider=citation.provider,
             url=citation.url,
             title=citation.title,
             snippet=citation.snippet,
-            source_snapshot=citation.to_json(),
+            source_snapshot=persisted_citation.retrieval_result_ref_json(),
         )
         db.add(snapshot)
-        db.flush()
-        source_id = str(snapshot.id)
-        snapshot.source_snapshot = citation.to_json(source_id=source_id)
-        snapshot_ids[citation.result_ref] = source_id
+    db.flush()
+
+    persisted_citations_tuple = tuple(persisted_citations)
+    selected_citations = tuple(citation for citation in persisted_citations if citation.selected)
+    result_ref_models = tuple(
+        citation.retrieval_result_ref() for citation in persisted_citations_tuple
+    )
+    result_refs = [
+        result_ref.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+        for result_ref in result_ref_models
+    ]
 
     selected_context_refs = [
         retrieval_context_ref_json(
             {
                 "type": "web_result",
-                "id": snapshot_ids[citation.result_ref],
+                "id": citation.external_snapshot_id,
             }
         )
-        for citation in run.selected_citations
-    ]
-    result_refs = [
-        retrieval_result_ref_json(citation.to_json(source_id=snapshot_ids[citation.result_ref]))
-        for citation in run.citations
+        for citation in selected_citations
     ]
     requested_types = [run.result_type]
 
-    existing = db.execute(
-        text(
-            """
-            SELECT id
-            FROM message_tool_calls
-            WHERE assistant_message_id = :assistant_message_id
-              AND tool_call_index = :tool_call_index
-            FOR UPDATE
-            """
-        ),
+    insert_tool = text(
+        """
+        INSERT INTO message_tool_calls (
+            conversation_id,
+            user_message_id,
+            assistant_message_id,
+            tool_name,
+            tool_call_index,
+            query_hash,
+            scope,
+            requested_types,
+            result_refs,
+            selected_context_refs,
+            provider_request_ids,
+            latency_ms,
+            status,
+            error_code
+        )
+        VALUES (
+            :conversation_id,
+            :user_message_id,
+            :assistant_message_id,
+            :tool_name,
+            :tool_call_index,
+            :query_hash,
+            'public_web',
+            :requested_types,
+            :result_refs,
+            :selected_context_refs,
+            :provider_request_ids,
+            :latency_ms,
+            :status,
+            :error_code
+        )
+        RETURNING id
+        """
+    ).bindparams(
+        bindparam("requested_types", type_=JSONB),
+        bindparam("result_refs", type_=JSONB),
+        bindparam("selected_context_refs", type_=JSONB),
+        bindparam("provider_request_ids", type_=JSONB),
+    )
+    tool_call_id = db.execute(
+        insert_tool,
         {
+            "conversation_id": run.conversation_id,
+            "user_message_id": run.user_message_id,
             "assistant_message_id": run.assistant_message_id,
+            "tool_name": WEB_SEARCH_TOOL_NAME,
             "tool_call_index": run.tool_call_index,
+            "query_hash": run.query_hash,
+            "requested_types": requested_types,
+            "result_refs": result_refs,
+            "selected_context_refs": selected_context_refs,
+            "provider_request_ids": run.provider_request_ids,
+            "latency_ms": run.latency_ms,
+            "status": run.status,
+            "error_code": run.error_code,
         },
-    ).first()
+    ).scalar_one()
 
-    if existing is None:
-        insert_tool = text(
-            """
-            INSERT INTO message_tool_calls (
-                conversation_id,
-                user_message_id,
-                assistant_message_id,
-                tool_name,
-                tool_call_index,
-                query_hash,
-                scope,
-                requested_types,
-                result_refs,
-                selected_context_refs,
-                provider_request_ids,
-                latency_ms,
-                status,
-                error_code
-            )
-            VALUES (
-                :conversation_id,
-                :user_message_id,
-                :assistant_message_id,
-                :tool_name,
-                :tool_call_index,
-                :query_hash,
-                'public_web',
-                :requested_types,
-                :result_refs,
-                :selected_context_refs,
-                :provider_request_ids,
-                :latency_ms,
-                :status,
-                :error_code
-            )
-            RETURNING id
-            """
-        ).bindparams(
-            bindparam("requested_types", type_=JSONB),
-            bindparam("result_refs", type_=JSONB),
-            bindparam("selected_context_refs", type_=JSONB),
-            bindparam("provider_request_ids", type_=JSONB),
-        )
-        tool_call_id = db.execute(
-            insert_tool,
-            {
-                "conversation_id": run.conversation_id,
-                "user_message_id": run.user_message_id,
-                "assistant_message_id": run.assistant_message_id,
-                "tool_name": WEB_SEARCH_TOOL_NAME,
-                "tool_call_index": run.tool_call_index,
-                "query_hash": run.query_hash,
-                "requested_types": requested_types,
-                "result_refs": result_refs,
-                "selected_context_refs": selected_context_refs,
-                "provider_request_ids": run.provider_request_ids,
-                "latency_ms": run.latency_ms,
-                "status": run.status,
-                "error_code": run.error_code,
-            },
-        ).scalar_one()
-    else:
-        tool_call_id = existing[0]
-        update_tool = text(
-            """
-            UPDATE message_tool_calls
-            SET query_hash = :query_hash,
-                scope = 'public_web',
-                requested_types = :requested_types,
-                result_refs = :result_refs,
-                selected_context_refs = :selected_context_refs,
-                provider_request_ids = :provider_request_ids,
-                latency_ms = :latency_ms,
-                status = :status,
-                error_code = :error_code,
-                updated_at = now()
-            WHERE id = :tool_call_id
-            """
-        ).bindparams(
-            bindparam("requested_types", type_=JSONB),
-            bindparam("result_refs", type_=JSONB),
-            bindparam("selected_context_refs", type_=JSONB),
-            bindparam("provider_request_ids", type_=JSONB),
-        )
-        db.execute(
-            update_tool,
-            {
-                "tool_call_id": tool_call_id,
-                "query_hash": run.query_hash,
-                "requested_types": requested_types,
-                "result_refs": result_refs,
-                "selected_context_refs": selected_context_refs,
-                "provider_request_ids": run.provider_request_ids,
-                "latency_ms": run.latency_ms,
-                "status": run.status,
-                "error_code": run.error_code,
-            },
-        )
-    run.tool_call_id = tool_call_id
-    if existing is not None:
-        prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
-
-    selected_refs = {citation.result_ref for citation in run.selected_citations}
-    persisted_count = 0
-    for ordinal, citation in enumerate(run.citations):
-        selected = citation.result_ref in selected_refs
+    for ordinal, citation in enumerate(persisted_citations_tuple):
+        selected = citation.selected
         score = 1.0 / max(citation.rank, 1)
-        source_id = snapshot_ids[citation.result_ref]
+        source_id = str(citation.external_snapshot_id)
         locator = citation.locator_json()
         insert_retrieval_row(
             db,
@@ -508,20 +564,50 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 media_id=None,
                 media_kind=None,
                 score=score,
-                result_ref=citation.to_json(source_id=source_id),
+                result_ref=citation.retrieval_result_ref_json(),
                 selected=selected,
             ),
             selected=selected,
             scope="public_web",
             retrieval_status="web_result",
         )
-        persisted_count = ordinal + 1
-    prune_tool_call_retrievals(db, tool_call_id=tool_call_id, min_ordinal=persisted_count)
-    db.commit()
+    numbering = number_tool_citation_candidates(
+        db,
+        tool_call_id=tool_call_id,
+        start_ordinal=start_citation_ordinal,
+    )
+    model_output = _web_search_model_output(run, selected_citations, numbering)
+    result_event = ChatRunToolResultEventPayload(
+        tool_call_id=tool_call_id,
+        assistant_message_id=run.assistant_message_id,
+        tool_name=WEB_SEARCH_TOOL_NAME,
+        tool_call_index=run.tool_call_index,
+        status=run.status,
+        scope="public_web",
+        types=requested_types,
+        filters={
+            "freshness_days": run.requested_freshness_days,
+            "allowed_domains": run.requested_domains.get("allowed", []),
+            "blocked_domains": run.requested_domains.get("blocked", []),
+        },
+        error_code=run.error_code,
+        result_count=len(persisted_citations_tuple),
+        selected_count=len(selected_citations),
+        latency_ms=run.latency_ms,
+        provider_request_ids=run.provider_request_ids,
+        results=list(result_ref_models),
+    )
+    return PersistedWebSearchResult(
+        tool_call_id=tool_call_id,
+        citations=persisted_citations_tuple,
+        selected_citations=selected_citations,
+        next_citation_ordinal=numbering.next_ordinal,
+        model_output=model_output,
+        result_event=result_event,
+    )
 
 
 async def execute_web_search(
-    db: Session,
     *,
     provider: WebSearchProvider,
     conversation_id: UUID,
@@ -531,15 +617,13 @@ async def execute_web_search(
     freshness_days: int | None,
     tool_call_index: int,
 ) -> WebSearchRun:
-    """Run a public web search and persist tool/retrieval metadata."""
+    """Run a public web search and return its unpersisted provider result."""
     start = time.monotonic()
     status = "complete"
     error_code: str | None = None
     normalized_query: str | None = None
     citations: list[WebSearchCitation] = []
     selected: list[WebSearchCitation] = []
-    context_text = ""
-    context_chars = 0
     provider_request_ids: list[str] = []
 
     try:
@@ -548,7 +632,7 @@ async def execute_web_search(
         citations = result.citations
         if result.provider_request_id:
             provider_request_ids = [result.provider_request_id]
-        context_text, context_chars, selected = render_web_context_blocks(citations)
+        _, _, selected = render_web_context_blocks(citations)
     except WebSearchQueryError as exc:
         logger.warning("agent_web_search_invalid_query", reason=str(exc))
         status = "error"
@@ -564,7 +648,7 @@ async def execute_web_search(
         error_code = exc.code.value
 
     latency_ms = int((time.monotonic() - start) * 1000)
-    run = WebSearchRun(
+    return WebSearchRun(
         conversation_id=conversation_id,
         user_message_id=user_message_id,
         assistant_message_id=assistant_message_id,
@@ -578,13 +662,9 @@ async def execute_web_search(
         requested_domains={"allowed": [], "blocked": []},
         citations=citations,
         selected_citations=selected,
-        context_text=context_text,
-        context_chars=context_chars,
         latency_ms=latency_ms,
         status=status,
         error_code=error_code,
         provider_request_ids=provider_request_ids,
         tool_call_index=tool_call_index,
     )
-    persist_web_search_run(db, run)
-    return run

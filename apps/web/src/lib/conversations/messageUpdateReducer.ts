@@ -24,7 +24,8 @@ import {
   type SearchCitationEventData,
   type WebCitationEventData,
 } from "@/lib/api/sse/citations";
-import { absent } from "@/lib/api/presence";
+import type { DurableExecution } from "@/lib/api/executionAdvisory";
+import { absent, present } from "@/lib/api/presence";
 import type {
   ChatToolStatus,
   SSECitationIndexEvent,
@@ -96,6 +97,11 @@ export type MessageUpdateAction =
       type: "apply_context_ref";
       assistantId: string;
       data: SSEContextRefAddedEvent["data"];
+    }
+  | {
+      type: "apply_execution_advisory";
+      assistantId: string;
+      execution: DurableExecution;
     }
   | {
       type: "finalize_done";
@@ -402,8 +408,40 @@ function finalizeDone(
       message_document: messageDocumentWithText(content),
       status,
       trust_trail: m.trust_trail
-        ? { ...m.trust_trail, status }
+        ? {
+            ...m.trust_trail,
+            status,
+            run: m.trust_trail.run
+              ? { ...m.trust_trail.run, execution: absent() }
+              : null,
+          }
         : m.trust_trail,
+    };
+  });
+}
+
+function applyExecutionAdvisory(
+  state: ConversationMessage[],
+  assistantId: string,
+  execution: DurableExecution,
+): ConversationMessage[] {
+  return state.map((message) => {
+    if (
+      message.id !== assistantId ||
+      message.trust_trail === null ||
+      message.trust_trail.run === null
+    ) {
+      return message;
+    }
+    return {
+      ...message,
+      trust_trail: {
+        ...message.trust_trail,
+        run: {
+          ...message.trust_trail.run,
+          execution: present(execution),
+        },
+      },
     };
   });
 }
@@ -444,6 +482,12 @@ export function messageUpdateReducer(
       return applyCitationIndex(state, action.assistantId, action.data);
     case "apply_context_ref":
       return applyContextRef(state, action.assistantId, action.data);
+    case "apply_execution_advisory":
+      return applyExecutionAdvisory(
+        state,
+        action.assistantId,
+        action.execution,
+      );
     case "finalize_done":
       return finalizeDone(state, action.assistantId, action.status, action.delta);
     case "merge_run_pair":

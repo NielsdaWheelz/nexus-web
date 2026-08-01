@@ -129,6 +129,7 @@ export function useChatRunTail({
     handleToolResult,
     handleCitationIndex,
     handleContextRefAdded,
+    handleExecutionAdvisory,
     handleDone,
     flushDeltas,
   } = useChatMessageUpdates({ dispatch, onContextRefAdded });
@@ -396,6 +397,10 @@ export function useChatRunTail({
               if (streamCtx.isSuperseded(runId, token)) return;
               if (event.seq > 0 && !shouldFoldEvent(runId, event.seq)) return;
               switch (event.type) {
+                case "ExecutionAdvisory":
+                  if (!currentVisible()) break;
+                  handleExecutionAdvisory(currentAssistantId, event.data);
+                  break;
                 case "meta":
                   currentUserId = event.data.user_message_id;
                   currentAssistantId = event.data.assistant_message_id;
@@ -549,6 +554,7 @@ export function useChatRunTail({
       handleToolResult,
       handleCitationIndex,
       handleContextRefAdded,
+      handleExecutionAdvisory,
       flushDeltas,
       shouldFoldEvent,
       mergeRunMessages,

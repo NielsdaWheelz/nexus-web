@@ -1249,49 +1249,61 @@ def ensure_media_in_library(
 
     Podcast episodes lock their parent Podcast before Media and Library.
     """
-    from nexus.services.media_deletion import clear_user_media_deletion
-
     with transaction(db):
-        media_exists = db.execute(
-            text("SELECT 1 FROM media WHERE id = :media_id"),
-            {"media_id": media_id},
-        ).fetchone()
-        if media_exists is None:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        if not (
-            can_restore_media(db, viewer_id, media_id)
-            or can_read_media(db, viewer_id, media_id, include_tearing_down=True)
-        ):
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        parent_podcast_id = _lock_parent_podcast_for_media(db, media_id)
-        _lock_authorized_media_for_filing(
+        return ensure_media_in_library_in_current_transaction(
             db,
-            viewer_id,
-            media_id,
-            authorization="filable",
+            viewer_id=viewer_id,
+            library_id=library_id,
+            media_id=media_id,
         )
 
-        ctx = governance.lock_library_for_member(db, viewer_id, library_id)
-        governance.require_admin(ctx.role)
-        governance.require_not_system(ctx.system_key)
 
-        target = media_target(media_id)
-        if (
-            parent_podcast_id is not None
-            and not ctx.is_default
-            and entry_exists(db, library_id, podcast_target(parent_podcast_id))
-        ):
-            clear_user_media_deletion(db, viewer_id, media_id)
-            return LibraryFilingOutcome(kind="IncludedThroughPodcast")
-        if not ctx.is_default and not entry_exists(db, library_id, target):
-            _require_share_entitlement_for_access_increase(
-                db, actor_user_id=viewer_id, library_id=library_id
-            )
-        inserted = ensure_entry(db, library_id, target)
-        # Idempotent re-file clears a tombstone even when the entry already
-        # existed (spec S4.3 rule 6 / AC4).
+def ensure_media_in_library_in_current_transaction(
+    db: Session, *, viewer_id: UUID, library_id: UUID, media_id: UUID
+) -> LibraryFilingOutcome:
+    """Run the canonical media filing command inside a caller-owned transaction."""
+    from nexus.services.media_deletion import clear_user_media_deletion
+
+    media_exists = db.execute(
+        text("SELECT 1 FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    ).fetchone()
+    if media_exists is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if not (
+        can_restore_media(db, viewer_id, media_id)
+        or can_read_media(db, viewer_id, media_id, include_tearing_down=True)
+    ):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    parent_podcast_id = _lock_parent_podcast_for_media(db, media_id)
+    _lock_authorized_media_for_filing(
+        db,
+        viewer_id,
+        media_id,
+        authorization="filable",
+    )
+
+    ctx = governance.lock_library_for_member(db, viewer_id, library_id)
+    governance.require_admin(ctx.role)
+    governance.require_not_system(ctx.system_key)
+
+    target = media_target(media_id)
+    if (
+        parent_podcast_id is not None
+        and not ctx.is_default
+        and entry_exists(db, library_id, podcast_target(parent_podcast_id))
+    ):
         clear_user_media_deletion(db, viewer_id, media_id)
-        _bump_entry_visibility_revisions(db)
+        return LibraryFilingOutcome(kind="IncludedThroughPodcast")
+    if not ctx.is_default and not entry_exists(db, library_id, target):
+        _require_share_entitlement_for_access_increase(
+            db, actor_user_id=viewer_id, library_id=library_id
+        )
+    inserted = ensure_entry(db, library_id, target)
+    # Idempotent re-file clears a tombstone even when the entry already
+    # existed (spec S4.3 rule 6 / AC4).
+    clear_user_media_deletion(db, viewer_id, media_id)
+    _bump_entry_visibility_revisions(db)
 
     return LibraryFilingOutcome(kind="Added" if inserted else "AlreadyPresent")
 

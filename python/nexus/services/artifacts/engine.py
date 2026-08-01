@@ -12,8 +12,9 @@ This module contains ZERO subject-scheme branches. Every scheme-specific decisio
 is delegated to the per-scheme :class:`SubjectPolicy` (identity / authz / audience
 / citation ownership) and :class:`DossierBinding` (collection / reduction /
 citation materialization / manifest / freshness). Lifecycle rules 1-10 and the
-durable Prepared/Uncertain/Completed coordination are owned here (CONTRACTS A6/A8,
-B1a). SOLE creator of heads/builds/terminal children.
+application of durable Prepared/Uncertain/Completed steps are owned here
+(CONTRACTS A6/A8, B1a); the owner-neutral journal state and codec live in
+``services.durable_step_journal``. SOLE creator of heads/builds/terminal children.
 """
 
 from __future__ import annotations
@@ -57,6 +58,7 @@ from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import (
+    SUCCEEDED,
     JobExecutionContext,
     RescheduleRequested,
     enqueue_unique_job,
@@ -67,8 +69,8 @@ from nexus.jobs.queue import (
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import Present, absent, present
+from nexus.services import durable_step_journal as step_journal
 from nexus.services import run_kit
-from nexus.services.artifacts import coordination
 from nexus.services.artifacts import learn as learn_service
 from nexus.services.artifacts.bindings import BINDINGS, DossierBinding
 from nexus.services.artifacts.bindings._shared import (
@@ -78,6 +80,7 @@ from nexus.services.artifacts.bindings._shared import (
     document_repair_user_content,
 )
 from nexus.services.artifacts.bindings.base import DossierInputTooLarge, MaterializedDossier
+from nexus.services.artifacts.coordination import DossierBuildRuntime, DossierResearchPending
 from nexus.services.artifacts.definition import DOSSIER_DEFINITION
 from nexus.services.artifacts.document_html import (
     DocumentHtmlError,
@@ -92,7 +95,6 @@ from nexus.services.artifacts.dossier_types import (
     BuildTicket,
     CancelledEventPayload,
     DossierAlreadyExists,
-    DossierBuildExecutionPhase,
     DossierBuildFailureCode,
     DossierGenerationInProgress,
     DossierSubjectLocator,
@@ -236,7 +238,7 @@ def reconcile_uncertain_build(
     db: Session,
     *,
     build_id: UUID,
-    resolution: coordination.UncertainStepResolution,
+    resolution: step_journal.UncertainStepResolution,
 ) -> None:
     """Repair one suspended uncertain provider step, then requeue the same build.
 
@@ -279,23 +281,23 @@ def reconcile_uncertain_build(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Build has no uncertain provider step to reconcile",
             )
-        state = coordination.StepReplayState.model_validate(raw_state)
-        if state.dispatch_phase is not coordination.Uncertain:
+        state = step_journal.StepReplayState.model_validate(raw_state)
+        if state.dispatch_phase is not step_journal.Uncertain:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Build provider step is not uncertain",
             )
-        if state.generation_id != coordination.stable_generation_id(build_id, _STEP_PATH):
+        if state.generation_id != step_journal.stable_generation_id(build_id, _STEP_PATH):
             raise AssertionError("dead dossier replay generation identity changed")
         if not isinstance(state.request_fingerprint, Present):
             raise AssertionError("uncertain dossier step has no request fingerprint")
         if isinstance(state.terminal_result, Present):
             raise AssertionError("uncertain dossier step already has a terminal result")
-        if isinstance(resolution, coordination.AttachReconciledResult):
+        if isinstance(resolution, step_journal.AttachReconciledResult):
             normalized = binding.schema.model_validate_json(resolution.terminal_result)
             next_state = state.model_copy(
                 update={
-                    "dispatch_phase": coordination.Completed,
+                    "dispatch_phase": step_journal.Completed,
                     "terminal_result": present(
                         _SynthesisAccepted(
                             envelope_json=normalized.model_dump_json()
@@ -303,17 +305,20 @@ def reconcile_uncertain_build(
                     ),
                 }
             )
-        elif isinstance(resolution, coordination.ProveNotDispatched):
+        elif isinstance(resolution, step_journal.ProveNotDispatched):
             next_state = state.model_copy(
                 update={
-                    "dispatch_phase": coordination.Prepared,
+                    "dispatch_phase": step_journal.Prepared,
                     "terminal_result": absent(),
                 }
             )
         else:
             assert_never(resolution)
-        raw_states[_STEP_PATH] = next_state.model_dump(mode="json")
-        payload["coordination"] = raw_states
+        payload = step_journal.payload_with_step_state(
+            payload,
+            step_path=_STEP_PATH,
+            state=next_state,
+        )
         db.execute(
             text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
             {"payload": json.dumps(payload), "job_id": row["id"]},
@@ -339,7 +344,7 @@ class DossierActiveBuildView:
     requester_user_id: UUID | None
     instruction: str | None
     created_at: datetime
-    execution: DossierBuildExecutionPhase
+    execution: step_journal.DurableExecutionPhase
 
 
 @dataclass(frozen=True, slots=True)
@@ -677,7 +682,7 @@ async def _run_idea_resolution_step(
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
-    generation_id = coordination.stable_generation_id(
+    generation_id = step_journal.stable_generation_id(
         request.request_id,
         _IDEA_RESOLUTION_STEP_PATH,
     )
@@ -688,14 +693,14 @@ async def _run_idea_resolution_step(
             generation_id=generation_id,
             fingerprint=fingerprint,
         )
-        if state.dispatch_phase is coordination.Completed:
+        if state.dispatch_phase is step_journal.Completed:
             if not isinstance(state.terminal_result, Present):
                 raise AssertionError("completed Idea-resolution step has no result")
             envelope = learn_service.IdeaResolverEnvelope.model_validate_json(
                 state.terminal_result.value
             )
             return learn_service.decode_idea_resolver_output(envelope.model_dump_json())
-        if state.dispatch_phase is coordination.Uncertain:
+        if state.dispatch_phase is step_journal.Uncertain:
             return await _await_uncertain_idea_resolution(
                 db,
                 request_id=request.request_id,
@@ -704,9 +709,9 @@ async def _run_idea_resolution_step(
             )
 
     if state is None:
-        prepared = coordination.StepReplayState(
+        prepared = step_journal.StepReplayState(
             generation_id=generation_id,
-            dispatch_phase=coordination.Prepared,
+            dispatch_phase=step_journal.Prepared,
             request_fingerprint=present(fingerprint),
             terminal_result=absent(),
         )
@@ -721,37 +726,37 @@ async def _run_idea_resolution_step(
             generation_id=generation_id,
             fingerprint=fingerprint,
         )
-    if state.dispatch_phase is coordination.Uncertain:
+    if state.dispatch_phase is step_journal.Uncertain:
         return await _await_uncertain_idea_resolution(
             db,
             request_id=request.request_id,
             generation_id=generation_id,
             fingerprint=fingerprint,
         )
-    if state.dispatch_phase is coordination.Completed:
+    if state.dispatch_phase is step_journal.Completed:
         if not isinstance(state.terminal_result, Present):
             raise AssertionError("completed Idea-resolution step has no result")
         envelope = learn_service.IdeaResolverEnvelope.model_validate_json(
             state.terminal_result.value
         )
         return learn_service.decode_idea_resolver_output(envelope.model_dump_json())
-    if state.dispatch_phase is not coordination.Prepared:
+    if state.dispatch_phase is not step_journal.Prepared:
         raise AssertionError(f"unexpected Idea-resolution phase {state.dispatch_phase!r}")
 
-    uncertain = coordination.StepReplayState(
+    uncertain = step_journal.StepReplayState(
         generation_id=generation_id,
-        dispatch_phase=coordination.Uncertain,
+        dispatch_phase=step_journal.Uncertain,
         request_fingerprint=present(fingerprint),
         terminal_result=absent(),
     )
     claimed, claimed_dispatch = _transition_learn_step(
         db,
         request_id=request.request_id,
-        expected=coordination.Prepared,
+        expected=step_journal.Prepared,
         next_state=uncertain,
     )
     if not claimed_dispatch:
-        if claimed.dispatch_phase is coordination.Completed:
+        if claimed.dispatch_phase is step_journal.Completed:
             if not isinstance(claimed.terminal_result, Present):
                 raise AssertionError("completed Idea-resolution step has no result")
             envelope = learn_service.IdeaResolverEnvelope.model_validate_json(
@@ -764,7 +769,7 @@ async def _run_idea_resolution_step(
             generation_id=generation_id,
             fingerprint=fingerprint,
         )
-    if claimed.dispatch_phase is not coordination.Uncertain:
+    if claimed.dispatch_phase is not step_journal.Uncertain:
         raise AssertionError("Idea-resolution dispatch claim landed in the wrong phase")
 
     try:
@@ -812,19 +817,19 @@ async def _run_idea_resolution_step(
         )
     else:
         resolution = learn_service.decode_idea_resolver_output(envelope.model_dump_json())
-    completed = coordination.StepReplayState(
+    completed = step_journal.StepReplayState(
         generation_id=generation_id,
-        dispatch_phase=coordination.Completed,
+        dispatch_phase=step_journal.Completed,
         request_fingerprint=present(fingerprint),
         terminal_result=present(envelope.model_dump_json()),
     )
     landed, completed_now = _transition_learn_step(
         db,
         request_id=request.request_id,
-        expected=coordination.Uncertain,
+        expected=step_journal.Uncertain,
         next_state=completed,
     )
-    if landed.dispatch_phase is not coordination.Completed or not completed_now:
+    if landed.dispatch_phase is not step_journal.Completed or not completed_now:
         raise AssertionError("Idea-resolution completion did not land")
     return resolution
 
@@ -854,7 +859,7 @@ async def _await_uncertain_idea_resolution(
         if row is None:
             db.rollback()
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight not found")
-        states = coordination.decode_step_states({"coordination": row["coordination"]})
+        states = step_journal.decode_step_states({"coordination": row["coordination"]})
         current = states.get(_IDEA_RESOLUTION_STEP_PATH)
         if current is None:
             db.rollback()
@@ -864,7 +869,7 @@ async def _await_uncertain_idea_resolution(
             generation_id=generation_id,
             fingerprint=fingerprint,
         )
-        if current.dispatch_phase is coordination.Completed:
+        if current.dispatch_phase is step_journal.Completed:
             if not isinstance(current.terminal_result, Present):
                 db.rollback()
                 raise AssertionError("completed Idea-resolution step has no result")
@@ -873,7 +878,7 @@ async def _await_uncertain_idea_resolution(
             )
             db.commit()
             return learn_service.decode_idea_resolver_output(envelope.model_dump_json())
-        if current.dispatch_phase is not coordination.Uncertain:
+        if current.dispatch_phase is not step_journal.Uncertain:
             db.rollback()
             raise AssertionError("claimed Idea-resolution step left Uncertain")
         lease_expires_at = row["resolver_lease_expires_at"]
@@ -906,8 +911,8 @@ def _expire_learn_resolver_lease(db: Session, *, request_id: UUID) -> bool:
 
 def _learn_step_state(
     request: learn_service.PendingLearnRequest,
-) -> coordination.StepReplayState | None:
-    return coordination.decode_step_states({"coordination": request.coordination}).get(
+) -> step_journal.StepReplayState | None:
+    return step_journal.decode_step_states({"coordination": request.coordination}).get(
         _IDEA_RESOLUTION_STEP_PATH
     )
 
@@ -916,10 +921,10 @@ def _transition_learn_step(
     db: Session,
     *,
     request_id: UUID,
-    expected: coordination.DispatchPhase | None,
-    next_state: coordination.StepReplayState,
-) -> tuple[coordination.StepReplayState, bool]:
-    def op() -> tuple[coordination.StepReplayState, bool]:
+    expected: step_journal.DispatchPhase | None,
+    next_state: step_journal.StepReplayState,
+) -> tuple[step_journal.StepReplayState, bool]:
+    def op() -> tuple[step_journal.StepReplayState, bool]:
         _lock_learn_request(db, request_id)
         current_request = learn_service.load_learn_request(db, request_id=request_id)
         if not isinstance(current_request, learn_service.PendingLearnRequest):
@@ -931,7 +936,7 @@ def _transition_learn_step(
             if current is None:
                 raise AssertionError("Idea-resolution coordination disappeared")
             return current, False
-        payload = coordination.payload_with_step_state(
+        payload = step_journal.payload_with_step_state(
             {"coordination": current_request.coordination},
             step_path=_IDEA_RESOLUTION_STEP_PATH,
             state=next_state,
@@ -944,7 +949,7 @@ def _transition_learn_step(
             request_id=request_id,
             coordination=raw_coordination,
         )
-        if next_state.dispatch_phase is coordination.Uncertain:
+        if next_state.dispatch_phase is step_journal.Uncertain:
             db.execute(
                 text(
                     "UPDATE artifact_learn_requests "
@@ -968,7 +973,7 @@ def _transition_learn_step(
 
 
 def _assert_learn_step_identity(
-    state: coordination.StepReplayState,
+    state: step_journal.StepReplayState,
     *,
     generation_id: UUID,
     fingerprint: str,
@@ -1074,7 +1079,7 @@ async def run_build(
     *,
     build_id: UUID,
     ctx: JobExecutionContext,
-    runtime: coordination.DossierBuildRuntime,
+    runtime: DossierBuildRuntime,
 ) -> RescheduleRequested | None:
     """Run one build attempt: collect audience-visible inputs, run the single
     coordinated synthesis step (Prepared -> commit Uncertain -> dispatch -> commit
@@ -1149,7 +1154,7 @@ async def run_build(
     try:
         try:
             collected = await binding.collect(db, resolved, audience, runtime)
-        except coordination.DossierResearchPending as exc:
+        except DossierResearchPending as exc:
             db.commit()
             return RescheduleRequested(available_at=exc.available_at)
         except ResearchLeaseLost:
@@ -1372,7 +1377,7 @@ async def _run_synthesis_step(
     """Run (or replay) the single coordinated provider step and return the decoded
     output. Returns ``None`` when the step wrote a terminal failure or lost its
     lease (the caller returns). Raises a defect on an uncertain-replay."""
-    gen_id = coordination.stable_generation_id(build_id, _STEP_PATH)
+    gen_id = step_journal.stable_generation_id(build_id, _STEP_PATH)
     profile = operation_profile(binding.llm_operation)
     user_content = binding.build_user_content(collected, instruction)
     intent = replace(
@@ -1401,7 +1406,7 @@ async def _run_synthesis_step(
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
-    states = coordination.read_step_states(job)
+    states = step_journal.read_step_states(job)
     st = states.get(_STEP_PATH)
     if st is not None:
         if st.generation_id != gen_id:
@@ -1419,13 +1424,13 @@ async def _run_synthesis_step(
                 input_recheck=input_recheck,
             )
             return None
-        if st.dispatch_phase in (coordination.Prepared, coordination.Uncertain) and isinstance(
+        if st.dispatch_phase in (step_journal.Prepared, step_journal.Uncertain) and isinstance(
             st.terminal_result, Present
         ):
             raise AssertionError(
                 f"{st.dispatch_phase} synthesis step already has a terminal result"
             )
-    if st is not None and st.dispatch_phase is coordination.Completed:
+    if st is not None and st.dispatch_phase is step_journal.Completed:
         if not isinstance(st.terminal_result, Present):
             # justify-defect: a Completed step must carry its memoized result.
             raise AssertionError("Completed synthesis step has no memoized result")
@@ -1433,13 +1438,13 @@ async def _run_synthesis_step(
         if isinstance(stored, _SynthesisInvalid):
             return stored
         return binding.schema.model_validate_json(stored.envelope_json)
-    if st is not None and st.dispatch_phase is coordination.Uncertain:
+    if st is not None and st.dispatch_phase is step_journal.Uncertain:
         raise _UncertainReplayDefect(f"build {build_id} synthesis step is uncertain on replay")
 
     # Prepared / absent: commit Uncertain immediately before the network dispatch.
-    prepared = coordination.StepReplayState(
+    prepared = step_journal.StepReplayState(
         generation_id=gen_id,
-        dispatch_phase=coordination.Prepared,
+        dispatch_phase=step_journal.Prepared,
         request_fingerprint=present(request_fingerprint),
         terminal_result=absent(),
     )
@@ -1447,7 +1452,7 @@ async def _run_synthesis_step(
         if not active():
             db.rollback()
             return None
-        if not coordination.checkpoint_step_state(
+        if not step_journal.checkpoint_step_state(
             db,
             ctx=ctx,
             job=job,
@@ -1460,7 +1465,7 @@ async def _run_synthesis_step(
         job = get_job(db, ctx.job_id)
         if job is None:
             return None
-    elif st.dispatch_phase is coordination.Prepared:
+    elif st.dispatch_phase is step_journal.Prepared:
         pass
     else:
         raise AssertionError(f"unknown synthesis dispatch phase {st.dispatch_phase!r}")
@@ -1512,14 +1517,14 @@ async def _run_synthesis_step(
         if not active():
             db.rollback()
             return None
-        landed = coordination.checkpoint_step_state(
+        landed = step_journal.checkpoint_step_state(
             db,
             ctx=ctx,
             job=job,
             step_path=_STEP_PATH,
-            state=coordination.StepReplayState(
+            state=step_journal.StepReplayState(
                 generation_id=gen_id,
-                dispatch_phase=coordination.Uncertain,
+                dispatch_phase=step_journal.Uncertain,
                 request_fingerprint=present(request_fingerprint),
                 terminal_result=absent(),
             ),
@@ -1707,14 +1712,14 @@ def _checkpoint_synthesis_result(
     result: _SynthesisStepResult,
 ) -> bool:
     fresh_job = get_job(db, ctx.job_id) or job
-    landed = coordination.checkpoint_step_state(
+    landed = step_journal.checkpoint_step_state(
         db,
         ctx=ctx,
         job=fresh_job,
         step_path=_STEP_PATH,
-        state=coordination.StepReplayState(
+        state=step_journal.StepReplayState(
             generation_id=generation_id,
-            dispatch_phase=coordination.Completed,
+            dispatch_phase=step_journal.Completed,
             request_fingerprint=present(request_fingerprint),
             terminal_result=present(result.model_dump_json()),
         ),
@@ -1743,7 +1748,7 @@ async def _run_document_repair_step(
 ) -> BaseModel | _SynthesisInvalid | None:
     """Run the one replay-safe, tool-free document repair attempt."""
     path = "document-repair"
-    generation_id = coordination.stable_generation_id(build_id, path)
+    generation_id = step_journal.stable_generation_id(build_id, path)
     profile = operation_profile(binding.llm_operation)
     original_user_content = binding.build_user_content(collected, instruction)
     system_prompt = document_repair_system_prompt(binding.system_prompt)
@@ -1778,7 +1783,7 @@ async def _run_document_repair_step(
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
-    state = coordination.read_step_states(job).get(path)
+    state = step_journal.read_step_states(job).get(path)
     if state is not None:
         if state.generation_id != generation_id:
             raise AssertionError("document-repair generation identity changed")
@@ -1796,21 +1801,21 @@ async def _run_document_repair_step(
                 input_recheck=input_recheck,
             )
             return None
-        if state.dispatch_phase is coordination.Completed:
+        if state.dispatch_phase is step_journal.Completed:
             if not isinstance(state.terminal_result, Present):
                 raise AssertionError("completed document-repair step has no result")
             stored = _SYNTHESIS_STEP_RESULT_ADAPTER.validate_json(state.terminal_result.value)
             if isinstance(stored, _SynthesisInvalid):
                 return stored
             return binding.schema.model_validate_json(stored.envelope_json)
-        if state.dispatch_phase is coordination.Uncertain:
+        if state.dispatch_phase is step_journal.Uncertain:
             raise _UncertainReplayDefect(
                 f"build {build_id} document-repair step is uncertain on replay"
             )
 
-    prepared = coordination.StepReplayState(
+    prepared = step_journal.StepReplayState(
         generation_id=generation_id,
-        dispatch_phase=coordination.Prepared,
+        dispatch_phase=step_journal.Prepared,
         request_fingerprint=present(fingerprint),
         terminal_result=absent(),
     )
@@ -1818,7 +1823,7 @@ async def _run_document_repair_step(
         if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
             db.rollback()
             return None
-        if not coordination.checkpoint_step_state(
+        if not step_journal.checkpoint_step_state(
             db,
             ctx=ctx,
             job=job,
@@ -1831,7 +1836,7 @@ async def _run_document_repair_step(
         job = get_job(db, ctx.job_id)
         if job is None:
             return None
-    elif state.dispatch_phase is not coordination.Prepared:
+    elif state.dispatch_phase is not step_journal.Prepared:
         raise AssertionError(f"unexpected document-repair phase {state.dispatch_phase!r}")
 
     progress = _append_guarded_stream_event(
@@ -1860,8 +1865,8 @@ async def _run_document_repair_step(
     if progress == "inactive":
         return None
 
-    uncertain = prepared.model_copy(update={"dispatch_phase": coordination.Uncertain})
-    if not coordination.checkpoint_step_state(
+    uncertain = prepared.model_copy(update={"dispatch_phase": step_journal.Uncertain})
+    if not step_journal.checkpoint_step_state(
         db,
         ctx=ctx,
         job=job,
@@ -1973,14 +1978,14 @@ async def _run_document_repair_step(
             )
 
     fresh_job = get_job(db, ctx.job_id) or job
-    landed = coordination.checkpoint_step_state(
+    landed = step_journal.checkpoint_step_state(
         db,
         ctx=ctx,
         job=fresh_job,
         step_path=path,
         state=uncertain.model_copy(
             update={
-                "dispatch_phase": coordination.Completed,
+                "dispatch_phase": step_journal.Completed,
                 "terminal_result": present(result.model_dump_json()),
             }
         ),
@@ -2433,7 +2438,7 @@ def assert_build_viewer(db: Session, *, build_id: UUID, viewer_id: UUID) -> None
 
 def build_execution_phase(
     db: Session, *, build_id: UUID, viewer_id: UUID
-) -> DossierBuildExecutionPhase:
+) -> step_journal.DurableExecutionPhase:
     """Return the fresh unsequenced queue/coordination advisory for one build."""
     assert_build_viewer(db, build_id=build_id, viewer_id=viewer_id)
     return _execution_phase(_job_state(db, build_id))
@@ -3141,6 +3146,7 @@ class _HeadRow:
 class _JobState:
     status: str
     attempts: int
+    error_code: str | None
 
 
 def _policy_for_locator(locator: DossierSubjectLocator) -> SubjectPolicy:
@@ -3384,33 +3390,37 @@ def _authorize_subject_read(
 def _job_state(db: Session, build_id: UUID) -> _JobState | None:
     row = (
         db.execute(
-            text("SELECT status, attempts FROM background_jobs WHERE dedupe_key = :k"),
+            text("SELECT status, attempts, error_code FROM background_jobs WHERE dedupe_key = :k"),
             {"k": _dispatch_key(build_id)},
         )
         .mappings()
         .first()
     )
-    return _JobState(status=str(row["status"]), attempts=int(row["attempts"])) if row else None
+    return (
+        _JobState(
+            status=str(row["status"]),
+            attempts=int(row["attempts"]),
+            error_code=(str(row["error_code"]) if row["error_code"] is not None else None),
+        )
+        if row
+        else None
+    )
 
 
-def _execution_phase(job: _JobState | None) -> DossierBuildExecutionPhase:
+def _execution_phase(job: _JobState | None) -> step_journal.DurableExecutionPhase:
     """Derive the unsequenced execution advisory from queue/coordination state (A8).
 
     Not persisted; never advances the cursor; cannot legalize a second Generate."""
-    if job is None:
-        return DossierBuildExecutionPhase.Queued
-    if job.status == "dead":
-        return DossierBuildExecutionPhase.Suspended
-    if job.status == "running":
-        # A reclaimed attempt (attempts incremented past the first) is Recovering.
-        return (
-            DossierBuildExecutionPhase.Recovering
-            if job.attempts >= 2
-            else DossierBuildExecutionPhase.Running
-        )
-    if job.status == "failed":
-        return DossierBuildExecutionPhase.Recovering  # errored, a retry is pending
-    return DossierBuildExecutionPhase.Queued  # pending / succeeded / unknown
+    # A build may be observed before enqueue lands, and a succeeded queue row may
+    # still be visible before the terminal child is read. Dossier owns those two
+    # correlations; all live queue-state semantics belong to the shared kernel.
+    if job is None or job.status == SUCCEEDED:
+        return step_journal.DurableExecutionPhase.Queued
+    return step_journal.project_execution_phase(
+        job_status=job.status,
+        attempts=job.attempts,
+        error_code=job.error_code,
+    )
 
 
 def _freshness(

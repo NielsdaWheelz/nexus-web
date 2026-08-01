@@ -15,7 +15,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Square } from "lucide-react";
+import { ArrowUp, RotateCcw, Square } from "lucide-react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { toFeedback } from "@/components/feedback/Feedback";
@@ -48,6 +48,7 @@ import type {
   ChatSendCapability,
   ChatRunResponse,
 } from "@/lib/conversations/types";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./ChatComposer.module.css";
 
 // ============================================================================
@@ -156,6 +157,9 @@ export default function ChatComposer({
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composingRef = useRef(false);
+  const restoreFocusAfterSendRef = useRef(false);
+  const isMobileViewport = useIsMobileViewport();
 
   const {
     content,
@@ -223,6 +227,12 @@ export default function ChatComposer({
     setError(null);
   }, [activeDraftKey]);
 
+  useEffect(() => {
+    if (sending || !restoreFocusAfterSendRef.current) return;
+    restoreFocusAfterSendRef.current = false;
+    textareaRef.current?.focus({ preventScroll: true });
+  }, [sending]);
+
   // The pending turn context resolves to one of four kinds; only a hydrated
   // `ReaderHighlight` is sendable. Loading / LoadFailed / NonSendable block send.
   const pending =
@@ -282,7 +292,9 @@ export default function ChatComposer({
       if (attempt.revision === null) {
         // justify-defect: a send attempt with a reader selection always
         // snapshots that selection's compare-on-send revision.
-        throw new Error("Reader-selection send attempt is missing its revision");
+        throw new Error(
+          "Reader-selection send attempt is missing its revision",
+        );
       }
       attemptedReaderSelection = {
         ...readerSelection,
@@ -308,6 +320,7 @@ export default function ChatComposer({
       });
 
       resolveSuccess();
+      restoreFocusAfterSendRef.current = true;
       onChatRunCreated?.(decodeChatRunData(runResponse.data));
       onIntentConsumed?.();
       onMessageSent?.();
@@ -316,6 +329,7 @@ export default function ChatComposer({
       if (handleUnauthenticatedApiError(err)) {
         // The auth boundary owns recovery; leave a retryable (not locked) draft.
         resolveKnownFailure();
+        restoreFocusAfterSendRef.current = true;
         return;
       }
       if (isApiError(err)) {
@@ -328,9 +342,11 @@ export default function ChatComposer({
             // revision on the SAME unconsumed key (revision is not identity).
             onReaderSelectionStale?.(fresh);
             reconfirmRevision(fresh.revision);
+            restoreFocusAfterSendRef.current = true;
             setError("The quoted passage changed — review it and send again.");
           } else {
             resolveKnownFailure();
+            restoreFocusAfterSendRef.current = true;
             setError(
               toFeedback(err, { fallback: "Failed to start chat run" }).title,
             );
@@ -339,12 +355,14 @@ export default function ChatComposer({
           // Another tab created the first message: refresh so the next send
           // replies to the active leaf — a new insertion mints a new key.
           resolveKnownFailure();
+          restoreFocusAfterSendRef.current = true;
           onConversationRefresh?.();
           setError(
             "This chat already has messages — send again to continue it.",
           );
         } else {
           resolveKnownFailure();
+          restoreFocusAfterSendRef.current = true;
           setError(
             toFeedback(err, { fallback: "Failed to start chat run" }).title,
           );
@@ -397,10 +415,31 @@ export default function ChatComposer({
   }, [activeRunId, cancelling, onCancelRun]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (!reconciling) handleSend();
+    if (e.key !== "Enter") return;
+    if (
+      composingRef.current ||
+      e.nativeEvent.isComposing ||
+      e.keyCode === 229
+    ) {
+      return;
     }
+    if (isMobileViewport) {
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        e.preventDefault();
+        const { selectionStart, selectionEnd } = e.currentTarget;
+        e.currentTarget.setRangeText(
+          "\n",
+          selectionStart,
+          selectionEnd,
+          "end",
+        );
+        setContent(e.currentTarget.value);
+      }
+      return;
+    }
+    if (e.shiftKey) return;
+    e.preventDefault();
+    if (!reconciling) void handleSend();
   };
 
   // --------------------------------------------------------------------------
@@ -460,10 +499,17 @@ export default function ChatComposer({
           ref={textareaRef}
           variant="bare"
           autoGrow
-          minRows={1}
-          maxRows={8}
+          minRows={2}
+          maxRows={6}
+          className={styles.composerInput}
           value={content}
           onChange={(e) => setContent(e.target.value)}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false;
+          }}
           onKeyDown={handleKeyDown}
           aria-label="Ask anything"
           placeholder="Ask anything..."
@@ -473,7 +519,7 @@ export default function ChatComposer({
         <div className={styles.composerActionRow}>
           {profilesError ? (
             <span className={styles.profileStatus} role="status">
-              AI profiles unavailable
+              Models unavailable
             </span>
           ) : isLoading ? (
             <span className={styles.profileStatus} role="status">
@@ -503,16 +549,18 @@ export default function ChatComposer({
           {reconciling ? (
             <Button
               variant="ghost"
-              size="sm"
+              size="md"
               className={styles.sendButton}
+              iconOnly
               onClick={handleSend}
               loading={sending}
+              aria-label={sending ? "Sending message" : "Retry send"}
             >
-              Retry send
+              <RotateCcw size={16} aria-hidden="true" />
             </Button>
           ) : activeRunId && onCancelRun ? (
             <Button
-              variant="danger"
+              variant="ghost"
               size="md"
               className={styles.sendButton}
               iconOnly
@@ -524,13 +572,16 @@ export default function ChatComposer({
             </Button>
           ) : (
             <Button
-              variant="ghost"
-              size="sm"
+              variant="primary"
+              size="md"
               className={styles.sendButton}
+              iconOnly
               onClick={handleSend}
               disabled={sendDisabled}
+              loading={sending}
+              aria-label={sending ? "Sending message" : "Send message"}
             >
-              {sending ? "SENDING" : "SEND"}
+              <ArrowUp size={18} aria-hidden="true" />
             </Button>
           )}
         </div>

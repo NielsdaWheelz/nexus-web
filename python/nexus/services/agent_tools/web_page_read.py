@@ -22,7 +22,7 @@ from nexus.db.models import MediaSourceAttempt, MediaSourceAttemptStatus
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.jobs.queue import JobRow, current_dead_job_for_payload, get_job
 from nexus.schemas.presence import Presence, Present, absent, present
-from nexus.services.artifacts.coordination import (
+from nexus.services.durable_step_journal import (
     Completed,
     decode_step_result,
     read_step_states,

@@ -745,6 +745,37 @@ def running_job_claim_is_current(
     )
 
 
+def lock_running_job_claim(db: Session, *, context: JobExecutionContext) -> bool:
+    """Fence one effect transaction to the exact live running attempt.
+
+    The row lock composes the ownership check with domain/event writes in the
+    caller's current transaction. Reclaim, dead-letter, and heartbeat updates
+    wait until that transaction commits or rolls back.
+    """
+    return (
+        db.execute(
+            text(
+                """
+                SELECT id
+                FROM background_jobs
+                WHERE id = :job_id
+                  AND status = 'running'
+                  AND claimed_by = :worker_id
+                  AND attempts = :attempt_no
+                  AND lease_expires_at > clock_timestamp()
+                FOR UPDATE
+                """
+            ),
+            {
+                "job_id": context.job_id,
+                "worker_id": context.worker_id,
+                "attempt_no": int(context.attempt_no),
+            },
+        ).first()
+        is not None
+    )
+
+
 def revoke_jobs_by_dedupe_keys(
     db: Session,
     *,
@@ -835,6 +866,29 @@ def reschedule_running_job(
             "available_at": available_at,
             "payload": json.dumps(dict(payload)) if payload is not None else None,
         },
+    ).first()
+    return updated is not None
+
+
+def replace_dead_job_payload(
+    db: Session,
+    *,
+    job_id: UUID,
+    payload: Mapping[str, Any],
+) -> bool:
+    """Replace one locked dead job's payload before its repair transition."""
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET payload = CAST(:payload AS jsonb),
+                updated_at = now()
+            WHERE id = :job_id
+              AND status = 'dead'
+            RETURNING id
+            """
+        ),
+        {"job_id": job_id, "payload": json.dumps(dict(payload))},
     ).first()
     return updated is not None
 

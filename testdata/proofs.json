@@ -21,8 +21,11 @@
         "python/nexus/auth/**/*.py",
         "python/nexus/api/routes/public_resource_shares.py",
         "python/nexus/services/conversations.py",
+        "python/nexus/services/chat_run_execution.py",
         "python/nexus/services/public_resource_sharing.py",
         "python/nexus/services/resource_grants.py",
+        "python/nexus/schemas/execution.py",
+        "python/nexus/api/routes/stream.py",
         "apps/web/src/app/auth/**/*",
         "apps/web/src/app/login/**/*",
         "apps/web/src/app/api/public/resource-share/**/*",
@@ -35,6 +38,7 @@
       ],
       "proofs": [
         "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked",
+        "pytest:python/tests/service/test_auth_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal",
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject"
       ],
       "capabilities": [
@@ -45,10 +49,12 @@
       "id": "destructive-side-effects",
       "source_globs": [
         "python/nexus/services/media_deletion.py",
-        "python/nexus/services/resource_graph/cleanup.py"
+        "python/nexus/services/resource_graph/cleanup.py",
+        "python/nexus/services/conversations.py"
       ],
       "proofs": [
-        "pytest:python/tests/service/test_destructive_side_effects.py::test_viewer_removal_preserves_shared_media_database_and_object"
+        "pytest:python/tests/service/test_destructive_side_effects.py::test_viewer_removal_preserves_shared_media_database_and_object",
+        "pytest:python/tests/service/test_destructive_side_effects.py::test_conversation_delete_removes_its_dead_chat_journal_only"
       ],
       "capabilities": [
         "service"
@@ -107,10 +113,13 @@
       "source_globs": [
         "python/nexus/services/retrieval_citation.py",
         "python/nexus/services/resource_graph/citations.py",
+        "python/nexus/services/agent_tools/web_search.py",
+        "python/nexus/schemas/retrieval.py",
         "apps/web/src/lib/conversations/citations.ts"
       ],
       "proofs": [
-        "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence"
+        "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence",
+        "pytest:python/tests/service/test_citation_provenance.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
       ],
       "capabilities": [
         "service"
@@ -120,11 +129,14 @@
       "id": "durable-job-replay",
       "source_globs": [
         "python/nexus/jobs/**/*.py",
-        "python/nexus/services/chat_run_idempotency.py"
+        "python/nexus/services/chat_run*.py",
+        "python/nexus/services/durable_step_journal.py",
+        "python/nexus/tasks/chat_run.py"
       ],
       "proofs": [
         "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker",
-        "pytest:python/tests/service/test_durable_job_replay.py::test_owned_worker_replays_committed_note_index_after_process_death"
+        "pytest:python/tests/service/test_durable_job_replay.py::test_owned_worker_replays_committed_note_index_after_process_death",
+        "pytest:python/tests/service/test_durable_job_replay.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job"
       ],
       "capabilities": [
         "service"
@@ -252,9 +264,14 @@
       "id": "grounded-chat-citation",
       "proof": "apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts",
       "source_globs": [
-        "python/nexus/services/chat_runs.py",
+        "python/nexus/services/chat_run*.py",
+        "python/nexus/api/routes/stream.py",
         "python/nexus/services/resource_graph/citations.py",
         "apps/web/src/components/chat/**/*",
+        "apps/web/src/lib/api/executionAdvisory.ts",
+        "apps/web/src/lib/api/sse/events.ts",
+        "apps/web/src/lib/conversations/messageUpdateReducer.ts",
+        "apps/web/src/lib/conversations/messageWire.ts",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
       "risks": [

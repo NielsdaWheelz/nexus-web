@@ -548,23 +548,23 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
         repo_root / "python/tests/contract/test_protocol.py",
         "def test_protocol():\n    assert provider_protocol()\n",
     )
-    checkout = tmp_path / "llm-calling"
-    checkout.mkdir()
-    (checkout / ".venv").mkdir()
     expected = "a" * 40
+    checkout = repo_root / ".nexus-test/provider-runtime" / expected
+    (checkout / ".venv").mkdir(parents=True)
+    _write(checkout / ".nexus-provider-runtime-revision", expected + "\n")
     _write(
         repo_root / "python/pyproject.toml",
         "[tool.uv.sources]\n"
         f'provider-runtime = {{ git = "https://example.invalid/runtime", rev = "{expected}" }}\n',
     )
-    environment = _stub_tools(repo_root, "uv", git_stdout=expected)
+    environment = _stub_tools(repo_root, "uv")
     context = CapabilityContext(repo_root, Workflow.FULL, ())
 
     result = run_capability(context, Capability.PROVIDER_RUNTIME, environment)
 
     assert result.evidence.status is RunStatus.PASS
     commands = _commands(repo_root)
-    assert [command["tool"] for command in commands] == ["uv", "git", "uv", "uv", "uv", "uv"]
+    assert [command["tool"] for command in commands] == ["uv"] * 5
     assert commands[0]["argv"] == [
         "run",
         "--frozen",
@@ -574,7 +574,6 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
         "no:randomly",
         "./tests/contract/test_protocol.py",
     ]
-    assert commands[1]["argv"] == ["-C", str(checkout), "rev-parse", "HEAD"]
     assert commands[-1]["argv"] == [
         "run",
         "--frozen",

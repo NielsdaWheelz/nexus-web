@@ -6,6 +6,7 @@
 // repository-wide `decodePresence`; unexpected shapes throw rather than coerce.
 import { expectExactRecord, expectRecord } from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
+import { decodeDurableExecution } from "@/lib/api/executionAdvisory";
 import {
   decodeCitationOut,
   type CitationOut,
@@ -15,7 +16,6 @@ import {
   type DossierBuildFailureCode,
   type DossierBuildSummary,
   type DossierCancelledFacts,
-  type DossierExecutionPhase,
   type DossierFailedFacts,
   type DossierFreshness,
   type DossierInputManifest,
@@ -49,18 +49,6 @@ function decodeInteger(value: unknown, field: string): number {
     fail(`${field} must be an integer`);
   }
   return value;
-}
-
-function decodeExecutionPhase(value: unknown): DossierExecutionPhase {
-  if (
-    value === "Queued" ||
-    value === "Running" ||
-    value === "Recovering" ||
-    value === "Suspended"
-  ) {
-    return value;
-  }
-  return fail(`unknown execution phase ${JSON.stringify(value)}`);
 }
 
 export function decodeFailureCode(value: unknown): DossierBuildFailureCode {
@@ -678,10 +666,9 @@ export function decodeDossierBuildSummary(raw: unknown): DossierBuildSummary {
       decodeString(v, "instruction"),
     ),
     createdAt: decodeString(build.created_at, "created_at"),
-    execution: decodePresence(build.execution, (v) => {
-      const execution = expectExactRecord(v, ["phase"], "execution");
-      return { phase: decodeExecutionPhase(execution.phase) };
-    }),
+    execution: decodePresence(build.execution, (v) =>
+      decodeDurableExecution(v),
+    ),
     failure: decodePresence(build.failure, decodeFailedFacts),
     cancellation: decodePresence(build.cancellation, decodeCancelledFacts),
   };

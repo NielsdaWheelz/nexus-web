@@ -115,17 +115,6 @@ class DossierBuildFailureCode(StrEnum):
     CitationValidationFailed = "CitationValidationFailed"
 
 
-class DossierBuildExecutionPhase(StrEnum):
-    """Advisory-only liveness derived from queue/coordination state (A8). Emitted
-    unsequenced as an ``ExecutionAdvisory``; NEVER a persisted build event, never
-    advances the cursor, cannot legalize a second Generate."""
-
-    Queued = "Queued"
-    Running = "Running"
-    Recovering = "Recovering"
-    Suspended = "Suspended"
-
-
 class ArtifactBuildEventType(StrEnum):
     """The persisted, sequenced build-event log types (A5). Stored in
     ``artifact_build_events.event_type`` (append-only, storage-enum CHECK)."""

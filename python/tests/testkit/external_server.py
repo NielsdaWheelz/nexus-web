@@ -6,7 +6,9 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import re
+import socket
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -45,6 +47,7 @@ _APP_SEARCH_ARGUMENTS = {
     "roles": None,
     "scopes": None,
 }
+_DURABLE_AMBIGUITY_MARKER = "nexus durable ambiguity proof"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +83,60 @@ class ExternalProtocolServer(ThreadingHTTPServer):
 
     def __init__(self, port: int, corpus: FixtureCorpus):
         self.corpus = corpus
+        self._evidence_lock = threading.Lock()
+        self._durable_ambiguity_requests = 0
         super().__init__(("127.0.0.1", port), ExternalProtocolHandler)
+
+    def record_durable_ambiguity_request(self) -> int:
+        """Record what the provider boundary observed before accepting dispatch."""
+        database_url = os.environ.get("DATABASE_URL", "").replace(
+            "postgresql+psycopg://", "postgresql://", 1
+        )
+        run_id = os.environ.get("NEXUS_TEST_RUN_ID", "")
+        if not database_url or not run_id:
+            raise RequestRejected(500, "durable_ambiguity_environment_missing")
+
+        import psycopg
+
+        with psycopg.connect(database_url) as connection:
+            rows = connection.execute(
+                """
+                SELECT job.payload->>'run_id',
+                       job.payload #>> '{coordination,turn/0/generation,dispatch_phase}'
+                FROM background_jobs AS job
+                JOIN chat_runs AS run
+                  ON run.id = CAST(job.payload->>'run_id' AS uuid)
+                JOIN messages AS prompt
+                  ON prompt.id = run.user_message_id
+                WHERE job.kind = 'chat_run'
+                  AND lower(prompt.content) LIKE '%nexus durable ambiguity proof%'
+                  AND job.payload #>> '{coordination,turn/0/generation,dispatch_phase}' IS NOT NULL
+                ORDER BY job.created_at DESC
+                """
+            ).fetchall()
+        if len(rows) != 1:
+            raise RequestRejected(500, "durable_ambiguity_job_not_unique")
+        chat_run_id, phase = rows[0]
+
+        with self._evidence_lock:
+            self._durable_ambiguity_requests += 1
+            request_index = self._durable_ambiguity_requests
+            evidence_path = Path("test-results") / "runs" / run_id / "external-durable-chat.jsonl"
+            evidence_path.parent.mkdir(parents=True, exist_ok=True)
+            with evidence_path.open("a", encoding="utf-8") as evidence:
+                evidence.write(
+                    json.dumps(
+                        {
+                            "chat_run_id": chat_run_id,
+                            "observed_phase": phase,
+                            "request_index": request_index,
+                        },
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
+        return request_index
 
 
 class ExternalProtocolHandler(BaseHTTPRequestHandler):
@@ -216,6 +272,20 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
             return
         if payload.get("stream") is not True:
             raise RequestRejected(422, "chat_must_stream")
+        if _DURABLE_AMBIGUITY_MARKER in _input_text(payload).casefold():
+            request_index = self.server.record_durable_ambiguity_request()
+            if request_index == 1:
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
+                self.connection.close()
+                return
+            self._send_sse(
+                _text_frames(
+                    payload["model"],
+                    "The reconciled durable response was published exactly once.",
+                )
+            )
+            return
         if _has_tool(payload, "queue_add"):
             media_uri = _require_tool_safety_contract(payload)
             self._send_sse(
@@ -778,10 +848,14 @@ def _app_search_frames(model: str) -> list[dict[str, Any]]:
 
 
 def _grounded_text_frames(model: str, citation_ordinal: int) -> list[dict[str, Any]]:
-    response = (
+    return _text_frames(
+        model,
         "The source says SOFIA helped confirm water on the Moon by detecting a "
-        f"water signature in Clavius Crater. [{citation_ordinal}]"
+        f"water signature in Clavius Crater. [{citation_ordinal}]",
     )
+
+
+def _text_frames(model: str, response: str) -> list[dict[str, Any]]:
     item = _message_item(response)
     return [
         {

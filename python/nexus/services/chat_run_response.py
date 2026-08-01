@@ -67,7 +67,9 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         has_write_tool_attempt=compute_has_write_tool_attempt(db, run),
         attempts=compute_terminal_attempts(db, run),
     )
-    run_out = _run_out(run, failure)
+    if trust_trail.run is None or trust_trail.run.run_id != run.id:
+        raise AssertionError("Chat run response trust projection lost its owning run")
+    run_out = _run_out(run, failure, execution=trust_trail.run.execution)
     return ChatRunResponse(
         run=run_out,
         conversation=conversation_to_out(
@@ -82,7 +84,12 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
     )
 
 
-def _run_out(run: ChatRun, failure: ExpectedChatFailure | None) -> ChatRunOut:
+def _run_out(
+    run: ChatRun,
+    failure: ExpectedChatFailure | None,
+    *,
+    execution: Any,
+) -> ChatRunOut:
     """Project nullable row facts once into the owned chat-run wire contract."""
     return ChatRunOut(
         id=run.id,
@@ -99,6 +106,7 @@ def _run_out(run: ChatRun, failure: ExpectedChatFailure | None) -> ChatRunOut:
         support_id=presence_from_nullable(run.support_id),
         publication_warning=chat_publication_warning_from_nullable(run.publication_warning_code),
         failure=failure,
+        execution=execution,
         cancel_requested_at=run.cancel_requested_at,
         started_at=run.started_at,
         completed_at=run.completed_at,

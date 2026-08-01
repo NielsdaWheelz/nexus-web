@@ -36,3 +36,21 @@ def expire_claim_and_handoff_code(db: Session, *, job_id: UUID, user_id: UUID) -
         ),
         {"user_id": user_id},
     )
+
+
+def make_failed_job_retryable(db: Session, *, job_id: UUID) -> None:
+    """Advance only a known failed synthetic job past its production backoff."""
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET available_at = now(), updated_at = now()
+            WHERE id = :job_id
+              AND status = 'failed'
+              AND claimed_by IS NULL
+            RETURNING kind
+            """
+        ),
+        {"job_id": job_id},
+    ).scalar_one()
+    db.execute(text("SELECT pg_notify('nexus_background_jobs', :kind)"), {"kind": updated})

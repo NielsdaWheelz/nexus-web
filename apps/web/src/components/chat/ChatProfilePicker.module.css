@@ -1,30 +1,59 @@
 .picker {
   display: flex;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
   align-items: center;
   gap: var(--space-2);
-  min-width: 0;
-}
-
-.field {
-  display: inline-flex;
   min-width: 0;
   max-width: 100%;
 }
 
-.srOnly {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+.field {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
 }
 
-.status {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
+.modelField {
+  flex: 1 1 9rem;
+}
+
+.effortField {
+  flex: 0 1 8rem;
+  max-width: 42%;
+}
+
+.control {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: var(--size-lg);
+}
+
+.control select {
+  height: var(--size-lg);
+  min-width: 0;
+  max-width: 100%;
+  background: var(--surface-2);
+  border-color: var(--edge);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.control select:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--edge-strong);
+}
+
+@media (any-pointer: coarse) {
+  .picker .control,
+  .control select {
+    height: var(--size-xl);
+    min-height: var(--size-xl);
+  }
+
+  .control select {
+    font-size: var(--text-md);
+  }
 }

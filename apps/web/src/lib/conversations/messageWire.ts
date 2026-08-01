@@ -17,6 +17,10 @@
 
 import { absent, decodePresence, type Presence } from "@/lib/api/presence";
 import {
+  decodeDurableExecution,
+  type DurableExecution,
+} from "@/lib/api/executionAdvisory";
+import {
   decodeReaderSelectionOut,
   type ReaderSelectionOut,
 } from "@/lib/conversations/readerSelection";
@@ -66,6 +70,13 @@ function decodeTrustTrail(
   if (trail === null) return null;
   return {
     ...trail,
+    run:
+      trail.run === null
+        ? null
+        : {
+            ...trail.run,
+            execution: decodeExecutionPresence(trail.run.execution),
+          },
     citations: trail.citations.map((entry) => {
       const citation = decodeCitationOut(entry.citation);
       if (!citation) {
@@ -81,6 +92,10 @@ function decodeTrustTrail(
       return { ...entry, activation };
     }),
   };
+}
+
+function decodeExecutionPresence(raw: unknown): Presence<DurableExecution> {
+  return decodePresence(raw, (value) => decodeDurableExecution(value));
 }
 
 /** Decode one wire message, preserving already-owned scalar fields. */
@@ -113,6 +128,10 @@ export function decodeChatRunData(
 ): ChatRunResponse["data"] {
   return {
     ...data,
+    run: {
+      ...data.run,
+      execution: decodeExecutionPresence(data.run.execution),
+    },
     user_message: decodeConversationMessage(data.user_message),
     assistant_message: decodeConversationMessage(data.assistant_message),
   };

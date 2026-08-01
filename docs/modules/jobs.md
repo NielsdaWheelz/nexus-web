@@ -40,7 +40,9 @@ kind is a frozen `JobDefinition`:
 - `periodic_interval_seconds` — set only for scheduler-driven background or
   maintenance kinds.
 - `failed_result_statuses` — see the gotcha below.
-- `dead_letter_handler` — the finalizer run once retries are exhausted.
+- `dead_letter_handler` — the kind-specific hook run once retries are exhausted;
+  a hook may finalize domain state, project suspension, or only record safe
+  diagnostics according to that kind's contract.
 
 `get_task_contract_version()` is a stable SHA-256 fingerprint over the registry's
 kind/attempts/delays/lease policy, surfaced on `/health` for deploy contract
@@ -56,10 +58,12 @@ plus the structured synthesis call plus the one bounded repair round
 
 ### Dead-lettering
 
-Exhausted retries dead-letter the row. Six kinds register a finalizer:
+Exhausted retries dead-letter the row. Six kinds register a hook:
 
-- `chat_run` (`_dead_letter_chat_run`) writes an errored assistant message so the
-  user sees a terminal failure.
+- `chat_run` (`_dead_letter_chat_run`) leaves the run, assistant message, and
+  event stream nonterminal and records safe suspension diagnostics. It requeues
+  only when cancellation was already requested, so the worker can publish the
+  ordinary cancelled fold.
 - `note_reindex_job` (`_dead_letter_note_reindex`) marks the note's content index
   `failed` so a stranded reindex is observable instead of stuck `pending`.
 - `dossier_build` (`_dead_letter_dossier_build`) preserves the active build and
@@ -74,7 +78,7 @@ Exhausted retries dead-letter the row. Six kinds register a finalizer:
   exact-matches subscription epoch, generation, job, and attempt before marking
   the subscription and every joined refresh item Failed.
 
-Other kinds have no finalizer; their failure is recorded on their own domain row.
+Other kinds have no hook; their failure is recorded on their own domain row.
 
 ### The `failed_result_statuses` gotcha
 
@@ -214,3 +218,20 @@ point; the build is the replay identity. Build success, modeled failure, and
 cancellation are terminal children, while exhausted or unreconciled execution
 remains a visible, operator-repairable suspended build. Dead `dossier_build`
 rows are never pruned.
+
+`services/durable_step_journal.py` owns the shared strict replay-state codec,
+stable step identity, lease-fenced queue-payload checkpoint, and durable
+execution-phase projection. `services/artifacts/coordination.py` now owns only
+the Dossier runtime capability and bounded research-yield behavior; Dossier,
+Media Intelligence, and page-read consumers import journal primitives directly
+from their shared owner.
+
+`chat_run` uses that kernel for preparation, every model/tool turn, and final
+publication. Dead chat jobs are retained because their payload is the in-flight
+recovery record. Code defects retry without terminalizing `ChatRun`; exhausted
+attempts project `Suspended`. Operator repair requeues the same row with a fresh
+attempt budget while preserving its prior `error_code`; that queue history makes
+both the repaired pending row and its first new claim project `Recovering`.
+Cancellation uses the same requeue only to fold the requested terminal outcome,
+conversation teardown deletes the row, and terminal folds clear coordination
+before the worker returns.

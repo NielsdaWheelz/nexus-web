@@ -61,7 +61,7 @@ from nexus.jobs.queue import (
 from nexus.logging import get_logger
 from nexus.schemas.media import MediaUnitStatus
 from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
-from nexus.services.artifacts import coordination
+from nexus.services import durable_step_journal as step_journal
 from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
 from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.llm_profiles import operation_profile
@@ -728,7 +728,7 @@ def reconcile_uncertain_media_unit(
     *,
     media_id: UUID,
     content_fingerprint: str,
-    resolution: coordination.UncertainStepResolution,
+    resolution: step_journal.UncertainStepResolution,
 ) -> None:
     """Repair one dead uncertain provider step and requeue the same durable job.
 
@@ -792,10 +792,10 @@ def reconcile_uncertain_media_unit(
         raw_state = raw_states.get(_MEDIA_UNIT_STEP_PATH)
         if raw_state is None:
             raise invalid("Media Intelligence has no uncertain provider step to reconcile")
-        state = coordination.StepReplayState.model_validate(raw_state)
-        if state.dispatch_phase is not coordination.Uncertain:
+        state = step_journal.StepReplayState.model_validate(raw_state)
+        if state.dispatch_phase is not step_journal.Uncertain:
             raise invalid("Media Intelligence provider step is not uncertain")
-        expected_generation_id = coordination.stable_generation_id(
+        expected_generation_id = step_journal.stable_generation_id(
             media_id, f"{content_fingerprint}:{_MEDIA_UNIT_STEP_PATH}"
         )
         if state.generation_id != expected_generation_id:
@@ -805,7 +805,7 @@ def reconcile_uncertain_media_unit(
         if isinstance(state.terminal_result, Present):
             raise AssertionError("uncertain media unit step already has a terminal result")
 
-        if isinstance(resolution, coordination.AttachReconciledResult):
+        if isinstance(resolution, step_journal.AttachReconciledResult):
             normalized = _COMPLETED_RESULT_ADAPTER.validate_json(resolution.terminal_result)
             candidates = _load_candidates(db, media_id=media_id)
             user_content = _build_media_unit_user_content(candidates)
@@ -833,22 +833,25 @@ def reconcile_uncertain_media_unit(
             terminal_result = _COMPLETED_RESULT_ADAPTER.dump_json(normalized).decode("utf-8")
             next_state = state.model_copy(
                 update={
-                    "dispatch_phase": coordination.Completed,
+                    "dispatch_phase": step_journal.Completed,
                     "terminal_result": present(terminal_result),
                 }
             )
-        elif isinstance(resolution, coordination.ProveNotDispatched):
+        elif isinstance(resolution, step_journal.ProveNotDispatched):
             next_state = state.model_copy(
                 update={
-                    "dispatch_phase": coordination.Prepared,
+                    "dispatch_phase": step_journal.Prepared,
                     "terminal_result": absent(),
                 }
             )
         else:
             assert_never(resolution)
 
-        raw_states[_MEDIA_UNIT_STEP_PATH] = next_state.model_dump(mode="json")
-        payload["coordination"] = raw_states
+        payload = step_journal.payload_with_step_state(
+            payload,
+            step_path=_MEDIA_UNIT_STEP_PATH,
+            state=next_state,
+        )
         db.execute(
             text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
             {
@@ -912,8 +915,8 @@ async def run_media_unit_build(
         return "ok"
     summary_id = summary.id
 
-    state = coordination.read_step_states(job).get(_MEDIA_UNIT_STEP_PATH)
-    generation_id = coordination.stable_generation_id(
+    state = step_journal.read_step_states(job).get(_MEDIA_UNIT_STEP_PATH)
+    generation_id = step_journal.stable_generation_id(
         media_id, f"{content_fingerprint}:{_MEDIA_UNIT_STEP_PATH}"
     )
     if state is not None and state.generation_id != generation_id:
@@ -922,7 +925,7 @@ async def run_media_unit_build(
         # A prior attempt already applied the Completed result.
         db.commit()
         return "ok"
-    if state is not None and state.dispatch_phase is coordination.Uncertain:
+    if state is not None and state.dispatch_phase is step_journal.Uncertain:
         raise _UncertainMediaUnitReplayDefect(
             f"media {media_id} fingerprint {content_fingerprint} synthesis is uncertain"
         )
@@ -979,7 +982,7 @@ async def run_media_unit_build(
             raise AssertionError("media unit replay state has no request fingerprint")
         if state.request_fingerprint.value != request_fingerprint:
             raise AssertionError("media unit synthesis request changed on replay")
-        if state.dispatch_phase is coordination.Completed:
+        if state.dispatch_phase is step_journal.Completed:
             if not isinstance(state.terminal_result, Present):
                 raise AssertionError("Completed media unit step has no terminal result")
             completed = _COMPLETED_RESULT_ADAPTER.validate_json(state.terminal_result.value)
@@ -993,7 +996,7 @@ async def run_media_unit_build(
                 ctx=ctx,
                 result=completed,
             )
-        if state.dispatch_phase is not coordination.Prepared:
+        if state.dispatch_phase is not step_journal.Prepared:
             raise AssertionError(f"unknown media unit dispatch phase {state.dispatch_phase!r}")
 
     # All request-shaping reads are complete before the external rate-limit and
@@ -1022,13 +1025,13 @@ async def run_media_unit_build(
             ):
                 db.rollback()
                 return "ok"
-            prepared = coordination.StepReplayState(
+            prepared = step_journal.StepReplayState(
                 generation_id=generation_id,
-                dispatch_phase=coordination.Prepared,
+                dispatch_phase=step_journal.Prepared,
                 request_fingerprint=present(request_fingerprint),
                 terminal_result=absent(),
             )
-            if not coordination.checkpoint_step_state(
+            if not step_journal.checkpoint_step_state(
                 db,
                 ctx=ctx,
                 job=job,
@@ -1050,14 +1053,14 @@ async def run_media_unit_build(
         ):
             db.rollback()
             return "ok"
-        if not coordination.checkpoint_step_state(
+        if not step_journal.checkpoint_step_state(
             db,
             ctx=ctx,
             job=job,
             step_path=_MEDIA_UNIT_STEP_PATH,
-            state=coordination.StepReplayState(
+            state=step_journal.StepReplayState(
                 generation_id=generation_id,
-                dispatch_phase=coordination.Uncertain,
+                dispatch_phase=step_journal.Uncertain,
                 request_fingerprint=present(request_fingerprint),
                 terminal_result=absent(),
             ),
@@ -1134,14 +1137,14 @@ async def run_media_unit_build(
         fresh_job = get_job(db, ctx.job_id)
         if fresh_job is None:
             return "ok"
-        if not coordination.checkpoint_step_state(
+        if not step_journal.checkpoint_step_state(
             db,
             ctx=ctx,
             job=fresh_job,
             step_path=_MEDIA_UNIT_STEP_PATH,
-            state=coordination.StepReplayState(
+            state=step_journal.StepReplayState(
                 generation_id=generation_id,
-                dispatch_phase=coordination.Completed,
+                dispatch_phase=step_journal.Completed,
                 request_fingerprint=present(request_fingerprint),
                 terminal_result=present(
                     _COMPLETED_RESULT_ADAPTER.dump_json(completed).decode("utf-8")

@@ -14,17 +14,11 @@
 //     | Terminal{outcome, reconciled}
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { Presence } from "@/lib/api/presence";
+import type { DurableExecution } from "@/lib/api/executionAdvisory";
 import type { ResourceActivation } from "@/lib/resources/activation";
 
 /** A9/A15 head-read freshness label (binding `manifests_equal` summary). */
 export type DossierFreshness = "Current" | "Stale";
-
-/** A8 advisory-only execution liveness for an active build. */
-export type DossierExecutionPhase =
-  | "Queued"
-  | "Running"
-  | "Recovering"
-  | "Suspended";
 
 /** A7 closed failure codes (mirrors `DossierBuildFailureCode` StrEnum). */
 export type DossierBuildFailureCode =
@@ -202,7 +196,7 @@ export interface DossierBuildSummary {
   requesterUserId: Presence<string>;
   instruction: Presence<string>;
   createdAt: string;
-  execution: Presence<{ phase: DossierExecutionPhase }>;
+  execution: Presence<DurableExecution>;
   failure: Presence<DossierFailedFacts>;
   cancellation: Presence<DossierCancelledFacts>;
 }

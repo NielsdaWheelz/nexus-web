@@ -926,8 +926,10 @@ without this current paid certification.
   wraps exhausted retry signals in an explicit expected outcome instead of
   narrowing them into a generic defect card.
 - The 80/20 rerun safety policy is conservative: any attempted write tool
-  disables whole-turn rerun. Nexus does not add checkpoint replay or a new
-  cross-run tool-idempotency system in this cutover.
+  disables whole-turn rerun. Superseded for durable chat execution by
+  `chat-durable-agent-step-journal-hard-cutover.md`: strict normalized step
+  results now resume the same run. Provider retry and user-created product
+  rerun remain unchanged; no cross-run tool-idempotency system was added.
 - Fable requires one explicit retention-acceptance assertion because mandatory
   retention is an operator decision, not an implementation default. The final
   portfolio is otherwise static.

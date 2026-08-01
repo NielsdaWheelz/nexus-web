@@ -14,9 +14,10 @@
     {
       "id": "auth-privacy-visibility-bypass",
       "patch": "testdata/faults/auth-privacy-visibility-bypass.patch",
-      "sha256": "f91050004ba8c4c48c829a60c11518ff384ef993a869094f88ed5ba990a213d9",
+      "sha256": "18b85a5c6691b1d5a791639267af02930d9bb851797dc721945f0acc006df4c6",
       "proofs": [
-        "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked"
+        "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked",
+        "pytest:python/tests/service/test_auth_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal"
       ],
       "expected_failure": "DID NOT RAISE"
     },
@@ -82,6 +83,33 @@
         "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker"
       ],
       "expected_failure": "expired claimant mutated the recovered terminal job"
+    },
+    {
+      "id": "durable-chat-uncertain-checkpoint-bypass",
+      "patch": "testdata/faults/durable-chat-uncertain-checkpoint-bypass.patch",
+      "sha256": "a8af3f77bb335513e5fc373234f142a28119d3b67679f88bf6ecbe311f58209b",
+      "proofs": [
+        "pytest:python/tests/service/test_durable_job_replay.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job"
+      ],
+      "expected_failure": "the provider boundary did not observe the pre-dispatch Uncertain checkpoint"
+    },
+    {
+      "id": "web-search-provider-identity-bypass",
+      "patch": "testdata/faults/web-search-provider-identity-bypass.patch",
+      "sha256": "2b1c6686bf086afdba22ec8e3f2f583b1186ef7c1aac5220e203f1d9da18e322",
+      "proofs": [
+        "pytest:python/tests/service/test_citation_provenance.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
+      ],
+      "expected_failure": "provider result ref replaced the Nexus snapshot identity"
+    },
+    {
+      "id": "conversation-chat-job-revocation-bypass",
+      "patch": "testdata/faults/conversation-chat-job-revocation-bypass.patch",
+      "sha256": "c0b7ae8b086a5a6ce850e2bc20da3002b509ea290f2c9f4dc545321519cada12",
+      "proofs": [
+        "pytest:python/tests/service/test_destructive_side_effects.py::test_conversation_delete_removes_its_dead_chat_journal_only"
+      ],
+      "expected_failure": "conversation deletion retained its private chat journal"
     },
     {
       "id": "database-object-delete-obligation-bypass",
@@ -163,6 +191,15 @@
         "playwright:apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts"
       ],
       "expected_failure": "A live highlight action must pin mobile reader chrome until dismissal"
+    },
+    {
+      "id": "composer-mobile-enter-send-bypass",
+      "patch": "testdata/faults/composer-mobile-enter-send-bypass.patch",
+      "sha256": "f661ce9afbacc37aad33a6ffa67458ac17a174751075c387ccde69cbf13b3de9",
+      "proofs": [
+        "vitest:apps/web/src/components/chat/ChatComposer.browser.test.tsx"
+      ],
+      "expected_failure": "mobile or IME Enter dispatched a chat run"
     },
     {
       "id": "android-device-method-scope-bypass",

@@ -8,6 +8,7 @@ import type {
   SSEToolCallDoneEvent,
   SSEToolResultEvent,
 } from "@/lib/api/sse/events";
+import type { DurableExecution } from "@/lib/api/executionAdvisory";
 import type {
   MessageUpdateAction,
   RenderToolCallData,
@@ -137,6 +138,18 @@ export function useChatMessageUpdates({
     [dispatch, onContextRefAdded],
   );
 
+  const handleExecutionAdvisory = useCallback(
+    (assistantId: string, execution: DurableExecution) => {
+      flushDeltas();
+      dispatch({
+        type: "apply_execution_advisory",
+        assistantId,
+        execution,
+      });
+    },
+    [dispatch, flushDeltas],
+  );
+
   const handleDone = useCallback(
     (assistantId: string, status: "complete" | "error" | "cancelled") => {
       const buffer = deltaBufferRef.current;
@@ -163,6 +176,7 @@ export function useChatMessageUpdates({
     handleToolResult,
     handleCitationIndex,
     handleContextRefAdded,
+    handleExecutionAdvisory,
     handleDone,
   };
 }

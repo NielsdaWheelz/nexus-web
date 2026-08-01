@@ -90,7 +90,13 @@ export default function AssistantMessage({
   // dropped; any terminal status — including a rehydrated `complete` — replaces
   // it (§10), so gate on non-terminal, not merely non-failure.
   const isTerminal = isTerminalFailure || message.status === "complete";
-  const showReconnectCard = Boolean(connectionLost) && !isTerminal;
+  const executionPhase =
+    trustRun?.execution.kind === "Present"
+      ? trustRun.execution.value.phase
+      : null;
+  const showSuspendedCard = !isTerminal && executionPhase === "Suspended";
+  const showReconnectCard =
+    Boolean(connectionLost) && !isTerminal && !showSuspendedCard;
 
   const {
     answerRef,
@@ -127,10 +133,12 @@ export default function AssistantMessage({
       onMouseUp={captureSelection}
       onKeyUp={captureSelection}
     >
-      {message.status === "pending" && !showReconnectCard ? (
+      {message.status === "pending" &&
+      !showReconnectCard &&
+      !showSuspendedCard ? (
         <StreamingGutterCue />
       ) : null}
-      <ToolActivity toolCalls={toolCalls} />
+      {showSuspendedCard ? null : <ToolActivity toolCalls={toolCalls} />}
       {renderAssistantBody ? (
         <AssistantAnswer
           message={message}
@@ -181,6 +189,8 @@ export default function AssistantMessage({
               : undefined
           }
         />
+      ) : showSuspendedCard ? (
+        <ChatFailureCard mode="suspended" />
       ) : showReconnectCard ? (
         <ChatFailureCard
           mode="reconnect"

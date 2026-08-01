@@ -250,7 +250,7 @@ export function createDossierControllerStore(
     });
     try {
       const stop = await openDossierBuildStream(handle, {
-        decode: (type, data) => decodeDossierStreamEvent(type, data),
+        decode: (type, data, id) => decodeDossierStreamEvent(type, data, id),
         isTerminal: isTerminalDossierStreamEvent,
         onEvent: (event) => {
           if (disposed || connectingHandle !== handle) return;

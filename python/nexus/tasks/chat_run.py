@@ -6,6 +6,7 @@ from typing import Any, assert_never
 from uuid import UUID
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from web_search_tool.brave import BraveSearchProvider
 from web_search_tool.types import WebSearchProvider
@@ -13,10 +14,8 @@ from web_search_tool.types import WebSearchProvider
 from nexus.config import get_settings
 from nexus.db.models import ChatRun
 from nexus.db.session import get_session_factory
-from nexus.jobs.queue import JobRow
+from nexus.jobs.queue import JobExecutionContext, JobRow, get_job, requeue_dead_job
 from nexus.logging import get_logger
-from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
-from nexus.services.chat_run_finalize import finalize_defect
 from nexus.services.chat_runs import (
     CancelledChatExecution,
     ChatExecutionOutcome,
@@ -34,13 +33,16 @@ logger = get_logger(__name__)
 _CHAT_RUN_SPEC = LlmTaskSpec(label="chat_run", http_timeout_s=60.0, http_limits=(100, 20))
 
 
-def chat_run(run_id: str) -> dict[str, Any]:
+def chat_run(run_id: str, *, context: JobExecutionContext) -> dict[str, Any]:
     run_uuid = UUID(run_id)
     settings = get_settings()
 
     async def _handler(
         db: Session, runtime: ExecutionRuntime, client: httpx.AsyncClient
     ) -> ChatExecutionOutcome:
+        job = get_job(db, context.job_id)
+        if job is None or str(job.payload.get("run_id")) != run_id:
+            raise AssertionError("claimed chat job does not match its run payload")
         web_search_provider: WebSearchProvider | None = (
             BraveSearchProvider(client, api_key=settings.brave_search_api_key)
             if settings.brave_search_api_key
@@ -49,16 +51,16 @@ def chat_run(run_id: str) -> dict[str, Any]:
         return await execute_chat_run(
             db,
             run_id=run_uuid,
+            job=job,
+            execution_context=context,
             session_factory=get_session_factory(),
             runtime=runtime,
             settings=settings,
             web_search_provider=web_search_provider,
         )
 
-    # No on_worker_exception: chat's per-attempt boundary lives inside
-    # execute_chat_run; an exception escaping it (finalize itself failed) must
-    # propagate to the queue's retry policy and, at exhaustion, the dead-letter
-    # finalizer below.
+    # Defects escape this handler unchanged. The queue owns retries and durable
+    # suspension; expected product failures are already folded by the executor.
     logger.info("chat_run_started", run_id=run_id)
     result = _serialize_chat_execution(run_llm_task(_CHAT_RUN_SPEC, _handler))
     logger.info("chat_run_completed", run_id=run_id, result=result)
@@ -96,25 +98,26 @@ def _serialize_chat_execution(outcome: ChatExecutionOutcome) -> dict[str, Any]:
     assert_never(outcome)
 
 
-def finalize_dead_lettered_chat_run(db: Session, job: JobRow) -> None:
-    """Finalize the chat run for a dead-lettered chat_run queue row.
-
-    No synthesized prose: a generic defect terminal (no closed §10 code, fresh
-    support_id) — the job attempts were exhausted before the run reached its
-    own terminal fold.
-    """
+def record_dead_lettered_chat_run(db: Session, job: JobRow) -> None:
+    """Suspend the run, or requeue the same job to fold a prior cancellation."""
     raw_run_id = job.payload.get("run_id")
     if raw_run_id is None:
         raise ValueError("chat_run dead-letter payload is missing run_id")
-
     run_id = UUID(str(raw_run_id))
-    run = db.get(ChatRun, run_id)
-    if run is None or run.status in TERMINAL_RUN_STATUSES:
-        return
-
-    finalize_defect(
-        db,
-        run_id=run.id,
-        error_detail=job.last_error[:1000] if job.last_error else None,
-        commit=False,
+    run = db.execute(
+        select(ChatRun.status, ChatRun.cancel_requested_at).where(ChatRun.id == run_id)
+    ).one_or_none()
+    requeued_for_cancellation = bool(
+        run is not None
+        and run.status in {"queued", "running"}
+        and run.cancel_requested_at is not None
+    )
+    if requeued_for_cancellation and not requeue_dead_job(db, job_id=job.id):
+        raise AssertionError("cancelled chat job changed during dead-letter handling")
+    logger.warning(
+        "chat_run_cancel_requeued" if requeued_for_cancellation else "chat_run_suspended",
+        run_id=str(run_id),
+        job_id=str(job.id),
+        attempts=job.attempts,
+        error_code=job.error_code,
     )
