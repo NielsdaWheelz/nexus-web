@@ -5,8 +5,11 @@ from uuid import uuid4
 import pytest
 
 from nexus.ops.epub_navigation_offsets_cutover import (
+    ActiveRepairJob,
+    CutoverCensus,
     DeferredMedia,
     classify_repair_action,
+    require_converged,
 )
 
 pytestmark = pytest.mark.unit
@@ -60,3 +63,33 @@ def test_non_resumable_media_state_fails_closed(
                 attempt_status=attempt_status,
             )
         )
+
+
+def test_convergence_requires_an_empty_unresolved_job_set():
+    census = CutoverCensus(
+        revision="0208",
+        deferred_rows=0,
+        media=(),
+        active_jobs=(
+            ActiveRepairJob(
+                job_id=uuid4(),
+                kind="ingest_media_source",
+                status="dead",
+                media_id=uuid4(),
+            ),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="did not converge"):
+        require_converged(census)
+
+
+def test_convergence_accepts_only_the_empty_repaired_census():
+    census = CutoverCensus(
+        revision="0208",
+        deferred_rows=0,
+        media=(),
+        active_jobs=(),
+    )
+
+    require_converged(census)

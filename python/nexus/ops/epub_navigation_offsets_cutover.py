@@ -28,7 +28,7 @@ from nexus.services.media_source_ingest import (
 _CUTOVER_REVISION = "0208"
 _REPAIR_JOB_KINDS = ("ingest_media_source", "media_content_reindex_job")
 _IN_FLIGHT_ATTEMPT_STATUSES = frozenset({"accepted", "queued", "running"})
-_ACTIVE_JOB_STATUSES = frozenset({"pending", "running", "failed"})
+_UNRESOLVED_JOB_STATUSES = frozenset({"pending", "running", "failed", "dead"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +70,16 @@ def classify_repair_action(media: DeferredMedia) -> Literal["enqueue", "resume"]
         f"for media {media.media_id}: "
         f"processing={media.processing_status} attempt={media.attempt_status}"
     )
+
+
+def require_converged(census: CutoverCensus) -> None:
+    """Fail unless the repaired projection and its durable work are complete."""
+    if census.deferred_rows != 0 or census.media or census.active_jobs:
+        raise RuntimeError(
+            "0208 EPUB navigation repair did not converge: "
+            f"deferred_rows={census.deferred_rows} "
+            f"media={len(census.media)} unresolved_jobs={len(census.active_jobs)}"
+        )
 
 
 def read_census(db: Session) -> CutoverCensus:
@@ -151,6 +161,7 @@ def repair_deferred_media() -> CutoverCensus:
     with session_factory() as db:
         before = read_census(db)
     if not before.media:
+        require_converged(before)
         return before
 
     affected_media_ids = {item.media_id for item in before.media}
@@ -204,11 +215,7 @@ def repair_deferred_media() -> CutoverCensus:
 
     with session_factory() as db:
         after = read_census(db)
-    if after.deferred_rows != 0 or after.active_jobs:
-        raise RuntimeError(
-            "0208 EPUB navigation repair did not converge: "
-            f"deferred_rows={after.deferred_rows} active_jobs={len(after.active_jobs)}"
-        )
+    require_converged(after)
     return after
 
 
@@ -220,7 +227,7 @@ def _read_active_repair_jobs(db: Session) -> tuple[ActiveRepairJob, ...]:
                 SELECT id, kind, status, payload->>'media_id' AS media_id
                 FROM background_jobs
                 WHERE kind IN ('ingest_media_source', 'media_content_reindex_job')
-                  AND status IN ('pending', 'running', 'failed')
+                  AND status IN ('pending', 'running', 'failed', 'dead')
                 ORDER BY id
                 """
             )
@@ -233,7 +240,11 @@ def _read_active_repair_jobs(db: Session) -> tuple[ActiveRepairJob, ...]:
         kind = str(row["kind"])
         status = str(row["status"])
         media_id = row["media_id"]
-        if kind not in _REPAIR_JOB_KINDS or status not in _ACTIVE_JOB_STATUSES or media_id is None:
+        if (
+            kind not in _REPAIR_JOB_KINDS
+            or status not in _UNRESOLVED_JOB_STATUSES
+            or media_id is None
+        ):
             raise RuntimeError(f"invalid active source job shape for job {row['id']}")
         jobs.append(
             ActiveRepairJob(

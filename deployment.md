@@ -303,7 +303,8 @@ deploy gate refuses to cross `0208`; complete this stopped-world repair first.
    census-selected EPUBs from their durable original files, creates audited
    source attempts, and drains only the canonical ingest/reindex job kinds.
    It is resumable for already queued/running cutover attempts and fails closed
-   on foreign active jobs, failed source state, or any remaining nullable row.
+   on foreign or dead repair-kind jobs, failed source state, or any remaining
+   nullable row.
 
    ```bash
    docker compose --env-file /etc/nexus/nexus.env \
