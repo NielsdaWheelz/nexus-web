@@ -156,6 +156,9 @@ def _minimal_repository(root: Path) -> None:
         ".github/workflows/nightly.yml",
         'NEXUS_HOSTED_CANARY: "1"\n'
         "uses: reactivecircus/android-emulator-runner@example\n"
+        "          api-level: 36\n"
+        "          system-image-api-level: 36-ext19\n"
+        "          channel: canary\n"
         "script: ./scripts/test nightly\n",
     )
     _write(
@@ -234,6 +237,33 @@ def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
     _write(tmp_path, "scripts/agency_verify.sh", "exec make test\n")
 
     assert "repository-route-contract" in _rules(repository_violations(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("current", "stale"),
+    [
+        ("api-level: 36", "api-level: 35"),
+        ("system-image-api-level: 36-ext19", "system-image-api-level: 35"),
+        ("channel: canary", "channel: stable"),
+    ],
+)
+def test_repository_guard_rejects_nightly_without_modern_system_webview_route(
+    tmp_path: Path, current: str, stale: str
+) -> None:
+    _minimal_repository(tmp_path)
+    nightly = tmp_path / ".github/workflows/nightly.yml"
+    nightly.write_text(
+        nightly.read_text(encoding="utf-8").replace(current, stale),
+        encoding="utf-8",
+    )
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "repository-route-contract"
+        and violation.path == ".github/workflows/nightly.yml"
+        for violation in violations
+    )
 
 
 def test_repository_guard_rejects_rogue_workflow_test_route(tmp_path: Path) -> None:

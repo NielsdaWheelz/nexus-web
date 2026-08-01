@@ -104,7 +104,13 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("make test", "pytest", "playwright test"),
     ),
     ".github/workflows/nightly.yml": (
-        ('NEXUS_HOSTED_CANARY: "1"', "script: ./scripts/test nightly"),
+        (
+            'NEXUS_HOSTED_CANARY: "1"',
+            "\n          api-level: 36\n",
+            "\n          system-image-api-level: 36-ext19\n",
+            "\n          channel: canary\n",
+            "script: ./scripts/test nightly",
+        ),
         ("make test",),
     ),
     ".github/workflows/release.yml": (

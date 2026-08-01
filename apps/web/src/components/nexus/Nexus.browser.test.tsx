@@ -201,9 +201,30 @@ describe("Nexus product composition", () => {
       name: "Find anything…",
     });
     await waitFor(() => expect(search).toHaveFocus());
+    const places = within(dialog).getByRole("region", { name: "Places" });
+    const placeButtons = within(places).getAllByRole("button");
+    expect(
+      placeButtons,
+    ).toEqual([
+      within(places).getByRole("button", { name: /^Lectern Place$/ }),
+      within(places).getByRole("button", { name: /^Libraries Place$/ }),
+      within(places).getByRole("button", { name: /^Browse Place$/ }),
+      within(places).getByRole("button", { name: /^Podcasts Place$/ }),
+      within(places).getByRole("button", { name: /^Chats Place$/ }),
+      within(places).getByRole("button", { name: /^Notes Place$/ }),
+    ]);
+    expect(
+      within(places).queryByRole("button", { name: /^Stats Place$/ }),
+    ).toBeNull();
+    expect(
+      within(places).queryByRole("button", { name: /^Atlas Place$/ }),
+    ).toBeNull();
+    expect(
+      within(places).queryByRole("button", { name: /^Oracle Place$/ }),
+    ).toBeNull();
 
     await userEvent.click(
-      within(dialog).getByRole("button", { name: /^Notes Place$/ }),
+      within(places).getByRole("button", { name: /^Notes Place$/ }),
     );
 
     await waitFor(() =>

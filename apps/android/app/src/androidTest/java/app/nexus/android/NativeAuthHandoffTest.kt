@@ -33,12 +33,15 @@ class NativeAuthHandoffTest {
     fun nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin() {
         Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            val oauthPrefix = "${BuildConfig.NEXUS_BASE_URL}/auth/oauth"
+            val oauthEndpoint = Uri.parse(BuildConfig.NEXUS_BASE_URL)
+                .buildUpon()
+                .appendEncodedPath("auth/oauth")
+                .build()
             val handoff = allOf(
                 hasAction(Intent.ACTION_VIEW),
                 hasData(
                     uriWithHandoffContract(
-                        prefix = oauthPrefix,
+                        endpoint = oauthEndpoint,
                         provider = "github",
                         mode = "signin",
                         next = "/browse"
@@ -58,20 +61,27 @@ class NativeAuthHandoffTest {
     }
 
     private fun uriWithHandoffContract(
-        prefix: String,
+        endpoint: Uri,
         provider: String,
         mode: String,
         next: String
     ): Matcher<Uri> = object : TypeSafeMatcher<Uri>() {
         private val challenge = Regex("^[0-9a-f]{64}$")
+        private val queryNames = setOf("provider", "mode", "flow", "hc", "next")
 
         override fun matchesSafely(item: Uri): Boolean =
-            item.toString().startsWith(prefix) &&
-                item.getQueryParameter("provider") == provider &&
-                item.getQueryParameter("mode") == mode &&
-                item.getQueryParameter("flow") == "handoff" &&
-                item.getQueryParameter("next") == next &&
-                challenge.matches(item.getQueryParameter("hc") ?: "")
+            item.scheme.equals(endpoint.scheme, ignoreCase = true) &&
+                item.host.equals(endpoint.host, ignoreCase = true) &&
+                effectivePort(item) == effectivePort(endpoint) &&
+                item.userInfo == null &&
+                item.path == endpoint.path &&
+                item.fragment == null &&
+                item.queryParameterNames == queryNames &&
+                item.getQueryParameters("provider") == listOf(provider) &&
+                item.getQueryParameters("mode") == listOf(mode) &&
+                item.getQueryParameters("flow") == listOf("handoff") &&
+                item.getQueryParameters("next") == listOf(next) &&
+                item.getQueryParameters("hc").singleOrNull()?.let(challenge::matches) == true
 
         override fun describeTo(description: Description) {
             description
@@ -80,5 +90,13 @@ class NativeAuthHandoffTest {
                 .appendText(" and return target ")
                 .appendValue(next)
         }
+
+        private fun effectivePort(uri: Uri): Int =
+            when {
+                uri.port >= 0 -> uri.port
+                uri.scheme.equals("https", ignoreCase = true) -> 443
+                uri.scheme.equals("http", ignoreCase = true) -> 80
+                else -> -1
+            }
     }
 }
