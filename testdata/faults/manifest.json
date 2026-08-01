@@ -145,6 +145,15 @@
         "vitest:apps/web/src/components/nexus/Nexus.browser.test.tsx"
       ],
       "expected_failure": "Desktop Nexus Shift+Enter lost its Fork disposition at the workspace boundary"
+    },
+    {
+      "id": "document-map-pulse-early-release",
+      "patch": "testdata/faults/document-map-pulse-early-release.patch",
+      "sha256": "5269bb930e15943ecb9d5ad94321ebbe63c066cf67c4470205f540cccdc4ddcb",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/usePendingDocumentMapPulse.browser.test.tsx"
+      ],
+      "expected_failure": "Interrupted render did not retain the pending Document Map highlight"
     }
   ]
 }

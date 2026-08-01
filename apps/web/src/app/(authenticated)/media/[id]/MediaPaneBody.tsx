@@ -322,6 +322,7 @@ import {
   type ReaderPulseTarget,
 } from "@/lib/reader/pulseEvent";
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
+import { usePendingDocumentMapPulse } from "@/lib/reader/usePendingDocumentMapPulse";
 import {
   fetchResolvedHighlightReaderTarget,
   type ResolvedHighlightReaderTarget,
@@ -1524,13 +1525,6 @@ export default function MediaPaneBody() {
     hasTrustedForwardTextScrollIntentRef.current = false;
     terminalReportedGenerationRef.current = null;
   }, []);
-  // A Document Map marker activation that had to navigate to a non-active
-  // fragment/section before its highlight could be pulsed.
-  const pendingDocumentMapPulseRef = useRef<{
-    fragmentId: string;
-    target: ReaderPulseTarget;
-    apparatusStableKey?: string;
-  } | null>(null);
   const pendingDocumentEmbedPulseRef = useRef<{
     fragmentId: string;
     occurrenceKey: string;
@@ -6833,43 +6827,14 @@ export default function MediaPaneBody() {
     };
   }, [activeContent?.fragmentId, renderedHtml, scrollDocumentEmbedIntoView]);
 
-  // Complete a target activation after its fragment/section has rendered.
-  useEffect(() => {
-    const pending = pendingDocumentMapPulseRef.current;
-    if (
-      !pending ||
-      epubSectionLoading ||
-      activeContent?.fragmentId !== pending.fragmentId
-    ) {
-      return;
-    }
-    if (pending.apparatusStableKey) {
-      pendingDocumentMapPulseRef.current = null;
-      focusReaderApparatusInContent(pending.apparatusStableKey, true);
-    } else if (pending.target.highlightId) {
-      return scrollRenderedHighlightIntoView(
-        pending.target.highlightId,
-        () => {
-          if (pendingDocumentMapPulseRef.current !== pending) return;
-          pendingDocumentMapPulseRef.current = null;
-          dispatchReaderPulse(pending.target);
-        },
-      );
-    }
-    pendingDocumentMapPulseRef.current = null;
-    const rafId = window.requestAnimationFrame(() => {
-      dispatchReaderPulse(pending.target);
-    });
-    return () => {
-      window.cancelAnimationFrame(rafId);
-    };
-  }, [
-    activeContent,
-    epubSectionLoading,
-    focusReaderApparatusInContent,
-    renderedHtml,
-    scrollRenderedHighlightIntoView,
-  ]);
+  const queueDocumentMapPulse = usePendingDocumentMapPulse({
+    activeFragmentId: activeContent?.fragmentId ?? null,
+    loading: epubSectionLoading,
+    renderedContentKey: renderedHtml,
+    focusApparatus: focusReaderApparatusInContent,
+    scrollHighlight: scrollRenderedHighlightIntoView,
+    dispatchPulse: dispatchReaderPulse,
+  });
 
   const activateEvidenceResolution = useCallback(
     (
@@ -6952,11 +6917,11 @@ export default function MediaPaneBody() {
           (candidate) => candidate.fragment_id === fragmentId,
         );
         if (!section) return false;
-        pendingDocumentMapPulseRef.current = {
+        queueDocumentMapPulse({
           fragmentId,
           target,
           apparatusStableKey,
-        };
+        });
         navigateToEpubSection(section.section_id);
         completeActivation();
         return true;
@@ -6966,22 +6931,22 @@ export default function MediaPaneBody() {
           (candidate) => candidate.id === fragmentId,
         );
         if (!fragment) return false;
-        pendingDocumentMapPulseRef.current = {
+        queueDocumentMapPulse({
           fragmentId,
           target,
           apparatusStableKey,
-        };
+        });
         handleTranscriptSegmentSelect(fragment);
         completeActivation();
         return true;
       }
       if (!fragments.some((fragment) => fragment.id === fragmentId))
         return false;
-      pendingDocumentMapPulseRef.current = {
+      queueDocumentMapPulse({
         fragmentId,
         target,
         apparatusStableKey,
-      };
+      });
       replaceReaderLocation({ fragmentId });
       setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
       completeActivation();
@@ -7000,6 +6965,7 @@ export default function MediaPaneBody() {
       id,
       isTranscriptMedia,
       navigateToEpubSection,
+      queueDocumentMapPulse,
       replaceReaderLocation,
       resume,
       scrollRenderedHighlightIntoView,
