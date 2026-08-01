@@ -215,13 +215,9 @@ test.describe("mobile app navigation", () => {
     ).toBeVisible();
     const places = sheet.getByRole("region", { name: "Places" });
     expect(
-      await places
-        .getByRole("button")
-        .evaluateAll((buttons) =>
-          buttons.map((button) =>
-            button.innerText.replace(/\s+/g, " ").trim(),
-          ),
-        ),
+      (await places.getByRole("button").allInnerTexts()).map((label) =>
+        label.replace(/\s+/g, " ").trim(),
+      ),
     ).toEqual([
       "Lectern Place",
       "Libraries Place",
