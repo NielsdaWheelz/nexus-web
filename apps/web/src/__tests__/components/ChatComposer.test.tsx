@@ -658,7 +658,9 @@ describe("ChatComposer", () => {
     );
 
     await screen.findByRole("combobox", { name: "Model" });
-    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    const message = screen.getByRole<HTMLTextAreaElement>("textbox", {
+      name: "Ask anything",
+    });
     await user.click(message);
     await user.keyboard("Plain{Enter}Shift{Shift>}{Enter}{/Shift}Ctrl");
     await user.keyboard("{Control>}{Enter}{/Control}Cmd");
