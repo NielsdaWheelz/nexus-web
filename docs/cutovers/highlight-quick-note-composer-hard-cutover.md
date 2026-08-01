@@ -5,6 +5,12 @@
 Implemented 2026-06-09. Single-user prototype; hard cutover; no flags, no legacy
 paths, no backward compatibility.
 
+Presentation note: the later
+[`text-selection-passage-palette-hard-cutover.md`](text-selection-passage-palette-hard-cutover.md)
+supersedes this historical cutover's fresh-selection label and role examples.
+Fresh selection now uses **Note** in `toolbar "Selection actions"`; existing
+Highlights retain **Add note**/**Edit note**.
+
 ## Summary
 
 Add a third verb to the selection popover — **Note** — that creates the highlight
@@ -64,8 +70,8 @@ has a canonical owner.
 
 ### Desktop
 
-1. User selects text → selection popover (unchanged: color dots, quote verbs) now
-   also shows a **Note** button.
+1. User selects text → the labeled selection toolbar shows **Note** after
+   **Colour**.
 2. Clicking **Note** (or pressing `n` with a reader selection active): the
    selection popover is replaced *in place* by the composer — a small anchored
    popover at the selection rect containing the highlight-note editor, focused,
@@ -216,17 +222,28 @@ and is keyed on that value so it never re-keys mid-session.
 ### `SelectionPopover` (reworked, generic over the created type)
 
 ```ts
-interface SelectionPopoverProps<H extends { id: string }> {
+interface SelectionPopoverBaseProps<H extends { id: string }> {
   selectionRect: DOMRect;
   selectionLineRects?: DOMRect[];
   containerRef: React.RefObject<HTMLElement | null>;
   onCreateHighlight: (color: HighlightColor) => Promise<H | null>; // returns the highlight now
-  onQuoteToNewChat?: (highlight: H) => void | Promise<void>;       // receives created highlight
-  onQuoteToExtantChat?: (highlight: H) => void | Promise<void>;
   onAddNote?: () => void;        // parent sequences (must open composer synchronously)
   onDismiss: () => void;
   isCreating?: boolean;
 }
+
+type SelectionPopoverChatProps<H extends { id: string }> =
+  | {
+      onQuoteToNewChat: (highlight: H) => void | Promise<void>;
+      onQuoteToExistingChat: (highlight: H) => void | Promise<void>;
+    }
+  | {
+      onQuoteToNewChat?: never;
+      onQuoteToExistingChat?: never;
+    };
+
+type SelectionPopoverProps<H extends { id: string }> =
+  SelectionPopoverBaseProps<H> & SelectionPopoverChatProps<H>;
 ```
 
 `SelectionPopover` internally sequences the quote verbs:
@@ -245,8 +262,8 @@ canAddNote: boolean;
 handlers.onAddNote: () => void;
 ```
 
-Option: `id: "note"`, icon `NotebookPen`, label `"Add note"` for selection targets
-and existing targets without a note, `"Edit note"` when
+Option: `id: "note"`, icon `NotebookPen`, label `"Note"` for selection targets,
+`"Add note"` for existing targets without a note, and `"Edit note"` when
 `target.highlight.linked_note_blocks` is non-empty. Ordered directly after
 `color`. Gated on `canAddNote` (sidecar passes `false` — its editor is already
 inline; both popover consumers pass `true`).
@@ -474,7 +491,7 @@ unit/browser projects); e2e in slice 7.
 
 ### Functional
 
-- AC-1: Selecting text shows a "Add note" button in the selection popover (both
+- AC-1: Selecting text shows a "Note" button in the selection popover (both
   readers); activating it creates a highlight (default color) and opens the
   composer with the editor focused; the selection popover is gone.
 - AC-2: Typing in the composer and dismissing (Esc / outside / scroll / sheet
@@ -554,11 +571,11 @@ unit/browser projects); e2e in slice 7.
 
 ### `SelectionPopover.test.tsx` additions
 
-- "Add note" button present iff `onAddNote` provided; fires synchronously (no
+- "Note" button present iff `onAddNote` provided; fires synchronously (no
   await before the callback — assert called in the same tick as the click).
 - Quote verb: `onCreateHighlight` resolves a highlight → `onQuoteToNewChat`
   receives that highlight; resolves `null` → quote callback not called.
-- Existing pinned contracts (`group "Selection actions"`, placement data
+- Existing pinned contracts (`toolbar "Selection actions"`, placement data
   attribute, preventDefault-inside) unchanged.
 
 ### `useHighlightNoteChord.test.tsx`

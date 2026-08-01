@@ -819,16 +819,19 @@ export async function createPdfHighlightThroughVisibleSelection(
     { method: "range" },
   );
 
-  const highlightActions = page.getByRole("group", {
+  const highlightActions = page.getByRole("toolbar", {
     name: /selection actions/i,
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
   await highlightActions
-    .getByRole("button", { name: "Highlight color" })
+    .getByRole("button", { name: "Colour" })
     .click();
-  const greenHighlightButton = page
-    .getByRole("button", { name: /^Green$/ })
-    .first();
+  const colourDialog = page.getByRole("dialog", {
+    name: "Highlight colours",
+  });
+  const greenHighlightButton = colourDialog.getByRole("button", {
+    name: /^Green$/,
+  });
   await expect(greenHighlightButton).toBeVisible({ timeout: 5_000 });
   const createdHighlightResponsePromise = page.waitForResponse(
     (response) =>
@@ -873,7 +876,8 @@ export async function createPdfHighlightThroughVisibleSelection(
     exact: createdHighlight.data.exact,
     selected_text: selectedText,
     container_selector: textLayerSelector,
-    action_selector: 'button[aria-label="Green"]',
+    action_selector:
+      '[role="dialog"][aria-label="Highlight colours"] button[aria-label="Green"]',
     request_url: createdHighlightResponse.url(),
   };
 }
@@ -920,13 +924,16 @@ export async function createFragmentHighlightThroughVisibleSelection(
     existingExacts,
     { method: "range" },
   );
-  const highlightActions = page.getByRole("group", {
+  const highlightActions = page.getByRole("toolbar", {
     name: /selection actions/i,
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
   await highlightActions
-    .getByRole("button", { name: "Highlight color" })
+    .getByRole("button", { name: "Colour" })
     .click();
+  const colourDialog = page.getByRole("dialog", {
+    name: "Highlight colours",
+  });
   const [createdHighlightResponse] = await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -934,10 +941,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
         response.url().includes("/api/fragments/") &&
         response.url().includes("/highlights"),
     ),
-    page
-      .getByRole("button", { name: /^Green$/ })
-      .first()
-      .click(),
+    colourDialog.getByRole("button", { name: /^Green$/ }).click(),
   ]);
   expect(createdHighlightResponse.ok()).toBeTruthy();
   const createdHighlight = (await createdHighlightResponse.json()) as {
@@ -1033,7 +1037,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
     selected_text: selectedText,
     container_selector: paneScopedContainerSelector,
     action_selector:
-      '[role="group"][aria-label="Selection actions"] button[aria-label^="Green"]',
+      '[role="dialog"][aria-label="Highlight colours"] button[aria-label="Green"]',
     request_url: createdHighlightResponse.url(),
   };
 }

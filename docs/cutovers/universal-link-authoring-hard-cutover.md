@@ -6,6 +6,12 @@ Type: hard cutover; one-user prototype; production-grade invariants
 Date: 2026-07-20
 Open questions: none
 
+Presentation note: the later
+[`text-selection-passage-palette-hard-cutover.md`](text-selection-passage-palette-hard-cutover.md)
+supersedes this specification's fresh-selection label and role examples. Fresh
+selection now uses **Link** in `toolbar "Selection actions"`; existing Highlights
+retain **Link…**.
+
 SME synthesis: Codex's repo-grounded architecture, data, search, reader, product,
 accessibility, and production-engineering review; no external endorsement.
 
@@ -125,8 +131,9 @@ creation returns the existing Link. Stance remains directional and may coexist.
 
 ### Reader
 
-1. Fresh selection or existing Highlight exposes primary **Link…** with the
-   conventional chain icon in the existing popup/action bar.
+1. Fresh selection exposes **Link** in the selection toolbar; an existing
+   Highlight exposes **Link…** in its action bar. Both use the conventional
+   chain icon.
 2. Link opens one searchable dialog. It accepts text or an exact ResourceRef.
 3. Results include direct Resources, existing Highlights, and passage candidates.
 4. Choosing a result is confirmation. While committing, the row/dialog is busy and
@@ -767,8 +774,8 @@ only when old routes/files/contracts are absent.
 
 ## Acceptance Criteria
 
-1. Primary chain-link **Link…** works from fresh and existing reflowable/PDF
-   Highlights; cancel writes nothing.
+1. Primary chain-link **Link** works from fresh reflowable/PDF selection and
+   **Link…** works from existing Highlights; cancel writes nothing.
 2. One confirmation atomically creates/reuses Highlight, passage anchor, and Link;
    failure leaves none of the new rows.
 3. Repeated/reverse concurrent calls yield one Link and one edge ID. Different

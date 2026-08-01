@@ -118,11 +118,13 @@ async function openRelationshipDisclosure(relationshipRow: Locator): Promise<voi
   await expect(disclosure).toHaveAttribute("aria-expanded", "true");
 }
 
-/** The Link action lives in the reader selection popup / highlight action bar as
- * a plain button whose accessible name is the "Link…" descriptor
- * (highlightActions.tsx). */
-async function clickLinkAction(scope: Locator): Promise<void> {
-  const linkButton = scope.getByRole("button", { name: "Link…" });
+/** Fresh-selection Link is the plain `Link` action in the Passage Palette.
+ * Existing Highlights retain their separate `Link…` menuitem contract. */
+async function clickFreshSelectionLinkAction(scope: Locator): Promise<void> {
+  const linkButton = scope.getByRole("button", {
+    name: "Link",
+    exact: true,
+  });
   await expect(linkButton).toBeVisible({ timeout: 5_000 });
   await linkButton.click();
 }
@@ -323,11 +325,11 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
       page,
       mediaId,
     );
-    const selectionActions = page.getByRole("group", {
+    const selectionActions = page.getByRole("toolbar", {
       name: /selection actions/i,
     });
     await expect(selectionActions).toBeVisible({ timeout: 5_000 });
-    await clickLinkAction(selectionActions);
+    await clickFreshSelectionLinkAction(selectionActions);
 
     const firstOption = await searchExactTarget(page, targetRef);
     const firstLink = await confirmTarget(page, firstOption);
@@ -372,7 +374,7 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
       mediaId,
     );
     await expect(selectionActions).toBeVisible({ timeout: 5_000 });
-    await clickLinkAction(selectionActions);
+    await clickFreshSelectionLinkAction(selectionActions);
     const secondOption = await searchExactTarget(page, targetRef);
     const secondLink = await confirmTarget(page, secondOption);
     expect(secondLink.created).toBe(true);
@@ -517,11 +519,11 @@ test("@real-media reflowable Link: cancel writes nothing, a Connections row appe
     page.on("request", countWrites);
     try {
       await selectFreshVisibleTextSnippet(page, htmlRenderer, []);
-      const selectionActions = page.getByRole("group", {
+      const selectionActions = page.getByRole("toolbar", {
         name: /selection actions/i,
       });
       await expect(selectionActions).toBeVisible({ timeout: 5_000 });
-      await clickLinkAction(selectionActions);
+      await clickFreshSelectionLinkAction(selectionActions);
       const dialog = page.getByRole("dialog", { name: "Link" });
       await expect(dialog).toBeVisible({ timeout: 5_000 });
       await page.keyboard.press("Escape");
@@ -542,11 +544,11 @@ test("@real-media reflowable Link: cancel writes nothing, a Connections row appe
       htmlRenderer,
       [],
     );
-    const selectionActions = page.getByRole("group", {
+    const selectionActions = page.getByRole("toolbar", {
       name: /selection actions/i,
     });
     await expect(selectionActions).toBeVisible({ timeout: 5_000 });
-    await clickLinkAction(selectionActions);
+    await clickFreshSelectionLinkAction(selectionActions);
     const option = await searchExactTarget(page, targetRef);
     const link = await confirmTarget(page, option);
     expect(link.created).toBe(true);

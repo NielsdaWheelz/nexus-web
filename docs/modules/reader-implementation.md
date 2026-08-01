@@ -191,6 +191,19 @@ semantic filters, and typed related-object disclosures is
 Evidence exposes only that target-centered payload; no removed reader lens,
 route, or storage-shaped response remains.
 
+### fresh-selection Passage Palette
+
+`SelectionPopover` mounts one `SelectionActionDock` inside
+`FloatingActionSurface`. Full-capability selections expose the fixed visible
+order **Colour**, **Note**, **Link**, **Share**, **Learn**, **New chat**, and
+**Existing chat**. Desktop is one labeled row; the canonical mobile render
+environment projects the same descriptors as a non-scrolling `4 + 3` grid.
+The dock owns toolbar focus and color disclosure only. Readers remain the sole
+selection-normalization and Highlight-creation owners, while
+`buildHighlightActions` remains the sole action-order and capability owner.
+Existing Highlight surfaces continue to use `HighlightActionBar` and keep their
+existing labels and behavior.
+
 ### quick-note composer
 
 the **quick-note composer** (`HighlightQuickNoteComposer`) is the in-context
@@ -207,8 +220,8 @@ skins.
   concurrently and opens the composer in the same gesture), the
   existing-highlight click popover's **Add note**/**Edit note** action, and
   the bare-`n` chord while a reader selection is active. `SelectionPopover`
-  is the single create-then-verb sequencer; the readers no longer hand-roll
-  create-then-quote wrappers.
+  is the single highlight-first composite-action sequencer for Colour, Share,
+  Learn, and chat; Note and Link retain the distinct reader-owned flows above.
 - pending-create sessions hand the editor a stable opaque session id as its
   `highlightId` and bridge to the real highlight id inside the composer's
   save wrapper once the concurrent create resolves; the editor is never
@@ -305,9 +318,10 @@ update cadences.
 
 ### reader-to-chat quote selection
 
-quote-to-chat is highlight-first. A durable Highlight must exist first; the
-reader's **Ask in new chat** and **Ask in existing chat…** actions launch chat
-with a typed intent and perform no conversation mutation on launch. The launch
+quote-to-chat is highlight-first. A durable Highlight must exist first; fresh
+selection actions are **New chat** and **Existing chat**, while existing
+Highlight surfaces retain **Ask in new chat** and **Ask in existing chat…**.
+Both launch chat with a typed intent and perform no conversation mutation on launch. The launch
 address is the pane-local intent hash `#mediaId=<uuid>&highlightId=<uuid>` (the
 destination is the path); the chat pane parses it, hydrates one canonical preview
 through `GET /api/chat-reader-selections/highlights/{id}?media_id=`, and shows

@@ -480,6 +480,34 @@ function toSelectionSnapshot(
   };
 }
 
+function refreshPdfSelectionSnapshot(
+  selection: SelectionState,
+): SelectionState | null {
+  try {
+    const { range } = selection;
+    if (
+      range.collapsed ||
+      !range.startContainer.isConnected ||
+      !range.endContainer.isConnected ||
+      range.toString().trim().length === 0
+    ) {
+      return null;
+    }
+    const rect = range.getBoundingClientRect();
+    if (!isValidPdfRect(rect)) return null;
+    const lineRects = Array.from(range.getClientRects()).filter((clientRect) =>
+      isValidPdfRect(clientRect),
+    );
+    return {
+      ...selection,
+      rect,
+      lineRects: lineRects.length > 0 ? lineRects : [rect],
+    };
+  } catch {
+    return null;
+  }
+}
+
 function buildSelectionSnapshotKey(selection: SelectionState): string {
   const { left, top, width, height } = selection.rect;
   return [
@@ -616,6 +644,7 @@ export default function PdfReader({
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const highlightCreationInFlightRef = useRef(false);
   const [pageHighlights, setPageHighlights] = useState<PdfHighlightOut[]>([]);
   const [signedUrlRefreshToken, setSignedUrlRefreshToken] = useState(0);
   const [localHighlightRefreshToken, setLocalHighlightRefreshToken] =
@@ -2250,7 +2279,7 @@ export default function PdfReader({
         selection ?? selectionSnapshotRef.current ?? fallbackSelection;
       if (
         !(textLayerUsable || shouldUseAreaFallback || activeSelection) ||
-        isCreating
+        highlightCreationInFlightRef.current
       ) {
         return null;
       }
@@ -2278,6 +2307,7 @@ export default function PdfReader({
         return null;
       }
 
+      highlightCreationInFlightRef.current = true;
       setIsCreating(true);
       setSelectionError(null);
       try {
@@ -2334,6 +2364,7 @@ export default function PdfReader({
         setSelectionError(toUserFacingError(err));
         return null;
       } finally {
+        highlightCreationInFlightRef.current = false;
         setIsCreating(false);
       }
     },
@@ -2342,7 +2373,6 @@ export default function PdfReader({
       buildSelectionQuads,
       clearSelection,
       editingHighlightId,
-      isCreating,
       mediaId,
       pageHighlights,
       resolveTextLayerRootFromRange,
@@ -2358,7 +2388,7 @@ export default function PdfReader({
   // highlight create runs concurrently (handleCreateHighlight reads the live
   // selection and clears it itself).
   const handleAddNote = useCallback(() => {
-    if (!selection) return;
+    if (!selection || highlightCreationInFlightRef.current) return;
     onAddNote?.({
       quote: selection.range.toString().trim(),
       anchorRect: selection.rect,
@@ -2848,6 +2878,65 @@ export default function PdfReader({
     };
   }, [syncSelectionFromWindow]);
 
+  const refreshRetainedSelectionGeometry = useCallback(() => {
+    const retainedSelection = selectionSnapshotRef.current;
+    if (!retainedSelection) return;
+    let selectionContext: ReturnType<typeof resolveTextLayerRootFromRange> = null;
+    try {
+      selectionContext = resolveTextLayerRootFromRange(retainedSelection.range);
+    } catch {
+      selectionContext = null;
+    }
+    const refreshedSelection =
+      selectionContext?.pageNumber === retainedSelection.pageNumber
+        ? refreshPdfSelectionSnapshot(retainedSelection)
+        : null;
+    if (!refreshedSelection) {
+      clearSelection();
+      return;
+    }
+    selectionSnapshotRef.current = refreshedSelection;
+    selectionSnapshotKeyRef.current =
+      buildSelectionSnapshotKey(refreshedSelection);
+    if (selectionVisibleRef.current) {
+      publishSelection(refreshedSelection);
+    }
+  }, [clearSelection, publishSelection, resolveTextLayerRootFromRange]);
+
+  useEffect(() => {
+    let active = true;
+    let refreshFrame = 0;
+    const scheduleRefresh = () => {
+      if (!active || refreshFrame !== 0) return;
+      refreshFrame = window.requestAnimationFrame(() => {
+        refreshFrame = 0;
+        if (active) refreshRetainedSelectionGeometry();
+      });
+    };
+    const viewport = viewerContainerRef.current;
+    const content = internalContentRef.current;
+    const visualViewport = window.visualViewport;
+    const resizeObserver = new ResizeObserver(scheduleRefresh);
+    if (viewport) resizeObserver.observe(viewport);
+    if (content && content !== viewport) resizeObserver.observe(content);
+    viewport?.addEventListener("scroll", scheduleRefresh, { passive: true });
+    window.addEventListener("resize", scheduleRefresh, { passive: true });
+    window.addEventListener("scroll", scheduleRefresh, true);
+    visualViewport?.addEventListener?.("resize", scheduleRefresh);
+    visualViewport?.addEventListener?.("scroll", scheduleRefresh);
+    scheduleRefresh();
+    return () => {
+      active = false;
+      resizeObserver.disconnect();
+      if (refreshFrame !== 0) window.cancelAnimationFrame(refreshFrame);
+      viewport?.removeEventListener("scroll", scheduleRefresh);
+      window.removeEventListener("resize", scheduleRefresh);
+      window.removeEventListener("scroll", scheduleRefresh, true);
+      visualViewport?.removeEventListener?.("resize", scheduleRefresh);
+      visualViewport?.removeEventListener?.("scroll", scheduleRefresh);
+    };
+  }, [pageRenderEpoch, pageScale, refreshRetainedSelectionGeometry, zoom]);
+
   // justify-polling: browser PDF text-layer selection events can miss active
   // selections, so this bounded UI poll runs only while a text layer is usable.
   useIntervalPoll({
@@ -3241,6 +3330,25 @@ export default function PdfReader({
     zoomPercent,
   ]);
 
+  const selectionPopoverProps =
+    selection && viewerContainerRef.current
+      ? {
+          selectionRect: selection.rect,
+          selectionLineRects: selection.lineRects,
+          containerRef: viewerContainerRef,
+          onCreateHighlight: handleCreateHighlight,
+          onLearn:
+            onLearn && textGeometryReliable
+              ? (highlight: PdfHighlightOut) =>
+                  onLearn(highlight.id, highlight)
+              : undefined,
+          onAddNote:
+            onAddNote && textGeometryReliable ? handleAddNote : undefined,
+          onLink: onLink && textGeometryReliable ? handleLink : undefined,
+          onDismiss: clearSelection,
+          isCreating,
+        }
+      : null;
   return (
     <div className={styles.viewer}>
       {recovering && (
@@ -3314,35 +3422,21 @@ export default function PdfReader({
         </div>
       )}
 
-      {selection && viewerContainerRef.current && (
-        <SelectionPopover
-          selectionRect={selection.rect}
-          selectionLineRects={selection.lineRects}
-          containerRef={viewerContainerRef}
-          onCreateHighlight={handleCreateHighlight}
-          onQuoteToNewChat={
-            onQuoteToNewChat && textGeometryReliable
-              ? (highlight) => onQuoteToNewChat(highlight.id, highlight)
-              : undefined
-          }
-          onQuoteToExistingChat={
-            onQuoteToExistingChat && textGeometryReliable
-              ? (highlight) => onQuoteToExistingChat(highlight.id, highlight)
-              : undefined
-          }
-          onLearn={
-            onLearn && textGeometryReliable
-              ? (highlight) => onLearn(highlight.id, highlight)
-              : undefined
-          }
-          onAddNote={
-            onAddNote && textGeometryReliable ? handleAddNote : undefined
-          }
-          onLink={onLink && textGeometryReliable ? handleLink : undefined}
-          onDismiss={clearSelection}
-          isCreating={isCreating}
-        />
-      )}
+      {selectionPopoverProps ? (
+        onQuoteToNewChat && onQuoteToExistingChat && textGeometryReliable ? (
+          <SelectionPopover
+            {...selectionPopoverProps}
+            onQuoteToNewChat={(highlight) =>
+              onQuoteToNewChat(highlight.id, highlight)
+            }
+            onQuoteToExistingChat={(highlight) =>
+              onQuoteToExistingChat(highlight.id, highlight)
+            }
+          />
+        ) : (
+          <SelectionPopover {...selectionPopoverProps} />
+        )
+      ) : null}
     </div>
   );
 }

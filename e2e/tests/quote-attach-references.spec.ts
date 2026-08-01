@@ -81,14 +81,14 @@ test.describe("quote-attach references (post-cutover)", () => {
       { method: "range" },
     );
 
-    const popover = page.getByRole("group", { name: /selection actions/i });
+    const popover = page.getByRole("toolbar", { name: /selection actions/i });
     await expect(popover).toBeVisible({ timeout: 5_000 });
-    // "Ask in new chat" creates a durable Highlight from the live selection
+    // New chat creates a durable Highlight from the live selection
     // (invariant 6), then navigates to a fresh conversation pane on the
     // pane-local intent hash. No conversation exists yet; the composer shows a
     // pending QuotedPassageCard, and the quote's context ResourceEdge is written
     // only on the first successful send.
-    await popover.getByRole("button", { name: "Ask in new chat" }).click();
+    await popover.getByRole("button", { name: "New chat" }).click();
 
     // The conversation pane opens as the active pane and shows the pending quoted
     // passage above the composer.
@@ -104,7 +104,7 @@ test.describe("quote-attach references (post-cutover)", () => {
       conversationPane.getByRole("textbox", { name: /ask anything/i }),
     ).toBeVisible({ timeout: 15_000 });
 
-    // "Ask in new chat" persists the selection as a Highlight before navigating,
+    // New chat persists the selection as a Highlight before navigating,
     // so the fresh selection is already a durable Highlight even before the first
     // send (the conversation and its context edge come later, at send time).
     const afterHighlightResponse = await page.request.get(

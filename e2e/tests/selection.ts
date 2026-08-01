@@ -482,7 +482,7 @@ async function dragSelection(
       Boolean(window.getSelection()?.toString().replace(/\s+/g, " ").trim()) ||
       Boolean(
         document.querySelector(
-          '[role="group"][aria-label="Selection actions"], [role="group"][aria-label="Assistant answer selection"]',
+          '[role="toolbar"][aria-label="Selection actions"], [role="group"][aria-label="Assistant answer selection"]',
         ),
       ),
     null,

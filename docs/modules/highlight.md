@@ -163,6 +163,16 @@ The wide reader may also project highlight-linked marginalia through
 `MarginRail`. Neither Evidence nor the margin owns highlight persistence or
 mutation behavior.
 
+A fresh reader selection has no Highlight yet. Its `SelectionPopover` renders
+the dedicated labeled `SelectionActionDock`; `HighlightActionBar` renders only
+existing Highlights. `buildHighlightActions` is the shared descriptor owner,
+using the fixed selection labels **Colour**, **Note**, **Link**, **Share**,
+**Learn**, **New chat**, and **Existing chat** without changing existing-
+Highlight labels. Composite selection actions are synchronously single-flight;
+the reader creation entrypoint independently prevents same-turn duplicate
+Highlight writes and releases after a null result or failure so the selection
+can retry.
+
 The canonical passage/document scope and typed highlight association contract
 is
 [`reader-evidence-scope-associations-hard-cutover.md`](../cutovers/reader-evidence-scope-associations-hard-cutover.md).
@@ -170,10 +180,10 @@ is
 ## Quote-To-Chat
 
 Reader quote-to-chat is Highlight-first: a durable Highlight must exist before
-launch, and chat launch performs no conversation mutation. The reader offers
-**Ask in new chat** and **Ask in existing chat…** on a Highlight; both navigate
-to the chat destination and pass a typed launch intent, never a generic subject
-send.
+launch, and chat launch performs no conversation mutation. Fresh selection
+offers **New chat** and **Existing chat**; an existing Highlight offers
+**Ask in new chat** and **Ask in existing chat…**. Both navigate to the chat
+destination and pass a typed launch intent, never a generic subject send.
 
 On send the server row-locks the Highlight, derives the canonical `exact`,
 `prefix`, `suffix`, source label, and `locator` from the stored anchor/quote

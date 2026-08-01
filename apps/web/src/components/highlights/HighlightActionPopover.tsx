@@ -52,7 +52,6 @@ export default function HighlightActionPopover({
       onDismiss={onDismiss}
     >
       <HighlightActionBar
-        variant="existing"
         presentation="bar"
         highlight={highlight}
         canQuoteToChat={canQuoteToChat}
