@@ -9,10 +9,10 @@
         "python/tests/testkit/**/*.py"
       ],
       "proofs": [
-        "pytest:python/tests/service/test_control_plane_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run"
+        "pytest:python/tests/kernel/nexus_test_control/test_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run"
       ],
       "capabilities": [
-        "service"
+        "kernel-python"
       ]
     },
     {
