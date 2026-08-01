@@ -192,6 +192,7 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
             writes.execute_write_tool(
                 db,
                 run=run,
+                effect_id=uuid4(),
                 tool_call_index=index,
                 tool_name=tool_name,
                 args=args,
@@ -356,6 +357,7 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
             writes.execute_write_tool(
                 db,
                 run=run,
+                effect_id=uuid4(),
                 tool_call_index=10 + index,
                 tool_name=tool_name,
                 args=args,

@@ -14,7 +14,10 @@ from nexus.services.chat_run_steps import ProveNotDispatched, reconcile_uncertai
 from nexus.services.chat_runs import get_chat_run
 from nexus_test_control import services as test_services
 from tests.testkit.chat import create_entitled_chat
-from tests.testkit.unreachable_state import make_failed_job_retryable
+from tests.testkit.unreachable_state import (
+    make_failed_job_retryable,
+    prioritize_job_for_worker_proof,
+)
 from tests.testkit.worker import (
     assert_production_worker,
     controller_run,
@@ -47,6 +50,8 @@ def test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job(
     marker = f"Nexus durable ambiguity proof {uuid4()}"
     with Session(engine) as db:
         chat = create_entitled_chat(db, content=marker)
+        prioritize_job_for_worker_proof(db, job_id=chat.job_id)
+        db.commit()
 
     worker = test_services.start_python_process(
         _REPO_ROOT,

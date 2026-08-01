@@ -8,6 +8,22 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
+def prioritize_job_for_worker_proof(db: Session, *, job_id: UUID) -> None:
+    """Make one known synthetic job precede unrelated rows in a shared test database."""
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET priority = 0
+            WHERE id = :job_id
+            RETURNING id
+            """
+        ),
+        {"job_id": job_id},
+    ).scalar_one()
+    assert updated == job_id
+
+
 def expire_job_claim(db: Session, *, job_id: UUID) -> None:
     """Model passage of a dead worker's lease without waiting in a proof."""
     db.execute(

@@ -232,6 +232,7 @@ def test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call(
             outcome = writes.execute_write_tool(
                 db,
                 run=run,
+                effect_id=uuid4(),
                 tool_call_index=index,
                 tool_name=tool_call.name,
                 args=dict(tool_call.arguments),

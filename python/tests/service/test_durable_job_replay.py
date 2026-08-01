@@ -21,6 +21,7 @@ from nexus_test_control import services as test_services
 from tests.testkit.unreachable_state import (
     expire_claim_and_handoff_code,
     expire_job_claim,
+    prioritize_job_for_worker_proof,
 )
 from tests.testkit.worker import (
     assert_production_worker,
@@ -91,6 +92,7 @@ def test_expired_claim_replays_once_and_fences_the_crashed_worker(engine: Engine
             db,
             kind=_KIND,
             payload={"request_id": "durable-replay-proof"},
+            priority=0,
             max_attempts=3,
         )
         db.commit()
@@ -171,6 +173,7 @@ def test_owned_worker_replays_committed_note_index_after_process_death(
         )
         db.flush()
         job_id = enqueue_note_reindex(db, note_block_id=note_block_id, reason="note_edit")
+        prioritize_job_for_worker_proof(db, job_id=job_id)
         db.commit()
 
     note_lock = engine.connect()
