@@ -39,7 +39,7 @@ from nexus.db.models import (
     Fragment,
 )
 from nexus.errors import ApiErrorCode
-from nexus.services.canonicalize import generate_canonical_text
+from nexus.services.canonicalize import generate_canonical_text_with_element_offsets
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.html_tree import parse_html_document, remove_element, unwrap_element
 from nexus.services.reader_apparatus import (
@@ -543,11 +543,11 @@ def build_epub_extraction_plan(
             )
         external_apparatus_targets = _collect_epub_apparatus_targets(chapter_specs)
 
-        # ---- sanitize + canonicalize + fragment creation --------------------
-        fragment_specs: list[
+        # ---- sanitize chapters ----------------------------------------------
+        sanitized_chapters: list[
             tuple[
-                Fragment,
                 _ChapterSpec,
+                str,
                 list[dict[str, object]],
                 list[dict[str, object]],
             ]
@@ -577,29 +577,12 @@ def build_epub_extraction_plan(
                     error_message=f"Sanitization failed for spine item {ch.spine_idx}: {exc}",
                 )
 
-            try:
-                canonical_text = generate_canonical_text(html_sanitized)
-            except ValueError as exc:
-                return EpubExtractionError(
-                    error_code=ApiErrorCode.E_SANITIZATION_FAILED.value,
-                    error_message=f"Canonicalization failed for spine item {ch.spine_idx}: {exc}",
-                )
-
             if not html_sanitized.strip():
                 continue
-
-            frag = Fragment(
-                media_id=media_id,
-                idx=len(fragment_specs),
-                html_sanitized=html_sanitized,
-                canonical_text=canonical_text,
-                created_at=now,
-            )
-            fragment_specs.append((frag, ch, apparatus_items, apparatus_edges))
-            all_block_specs.append(parse_fragment_blocks(canonical_text))
+            sanitized_chapters.append((ch, html_sanitized, apparatus_items, apparatus_edges))
             retained_hrefs.append(ch.href)
 
-        if not fragment_specs:
+        if not sanitized_chapters:
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
                 error_message="Zero renderable chapters after sanitization",
@@ -610,8 +593,76 @@ def build_epub_extraction_plan(
 
         # ---- TOC materialization -------------------------------------------
         toc_nodes = _materialize_toc(zf, opf_tree, manifest, href_to_frag_idx)
+        requested_targets: dict[int, dict[str, str]] = {}
+        for node in toc_nodes:
+            if node.fragment_idx is None:
+                continue
+            _href_path, href_fragment = _split_href_parts(node.href)
+            if href_fragment is not None:
+                requested_targets.setdefault(node.fragment_idx, {})[href_fragment] = str(node.href)
+
+        # ---- canonicalize once with exact requested anchor starts ----------
+        fragment_specs: list[
+            tuple[
+                Fragment,
+                _ChapterSpec,
+                list[dict[str, object]],
+                list[dict[str, object]],
+            ]
+        ] = []
+        anchor_offsets_by_fragment: dict[int, dict[str, int]] = {}
+        for fragment_idx, (ch, html_sanitized, apparatus_items, apparatus_edges) in enumerate(
+            sanitized_chapters
+        ):
+            targets = requested_targets.get(fragment_idx, {})
+            try:
+                canonical_text, offsets = generate_canonical_text_with_element_offsets(
+                    html_sanitized,
+                    set(targets),
+                )
+            except ValueError as exc:
+                return EpubExtractionError(
+                    error_code=ApiErrorCode.E_SANITIZATION_FAILED.value,
+                    error_message=f"Canonicalization failed for spine item {ch.spine_idx}: {exc}",
+                )
+            missing = targets.keys() - offsets.keys()
+            if missing:
+                anchor_id = min(missing)
+                return EpubExtractionError(
+                    error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
+                    error_message=(
+                        f"EPUB navigation target {targets[anchor_id]} names a missing anchor"
+                    ),
+                )
+            anchor_offsets_by_fragment[fragment_idx] = offsets
+            fragment = Fragment(
+                media_id=media_id,
+                idx=fragment_idx,
+                html_sanitized=html_sanitized,
+                canonical_text=canonical_text,
+                created_at=now,
+            )
+            fragment_specs.append((fragment, ch, apparatus_items, apparatus_edges))
+            all_block_specs.append(parse_fragment_blocks(canonical_text))
+
         fragments = [frag for frag, _ch, _items, _edges in fragment_specs]
         nav_locations = _materialize_nav_locations(toc_nodes, fragments, retained_hrefs)
+        previous_start_by_fragment: dict[int, int] = {}
+        for location in nav_locations:
+            start_offset = (
+                0
+                if location.href_fragment is None
+                else anchor_offsets_by_fragment[location.fragment_idx][location.href_fragment]
+            )
+            previous_start = previous_start_by_fragment.get(location.fragment_idx, -1)
+            if start_offset < previous_start:
+                return EpubExtractionError(
+                    error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
+                    error_message=(
+                        f"EPUB navigation target {location.location_id} is out of document order"
+                    ),
+                )
+            previous_start_by_fragment[location.fragment_idx] = start_offset
 
         # ---- check parse-time budget ---------------------------------------
         elapsed_ms = int((time.monotonic() - t_start) * 1000)
@@ -2090,7 +2141,7 @@ def _split_href_parts(href: str | None) -> tuple[str | None, str | None]:
     if "#" not in href:
         return href, None
     path_part, frag_part = href.split("#", 1)
-    return (path_part or None, frag_part or None)
+    return (path_part or None, unquote(frag_part) or None)
 
 
 def _section_location_id(

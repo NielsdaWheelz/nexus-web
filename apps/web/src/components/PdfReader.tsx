@@ -16,6 +16,10 @@ import {
   toFeedback,
 } from "@/components/feedback/Feedback";
 import type { PdfReaderResumeState } from "@/lib/reader/types";
+import type {
+  ReaderPositionIntent,
+  ReaderSemanticViewport,
+} from "@/lib/reader/readerDocumentPosition";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
 import {
   useMobileChromeReaderScrollport,
@@ -234,8 +238,10 @@ interface PdfReaderProps {
   startPageProgression?: number;
   /** Resume seed: zoom scale to apply when this media loads */
   startZoom?: number;
-  /** Called when page or zoom changes for progress persistence */
-  onResumeStateChange?: (resumeState: PdfReaderResumeState | null) => void;
+  /** Publishes the exact document-bound semantic viewport once per frame. */
+  onSemanticViewportChange?: (
+    semanticViewport: ReaderSemanticViewport | null,
+  ) => void;
   /** Publishes the exact document-bound PDF Find runtime. */
   onFindRuntimeReady?: (runtime: PdfFindRuntime | null) => void;
 }
@@ -272,10 +278,7 @@ interface PdfReaderPositioningRenderTarget {
   zoom: number;
 }
 
-export type PdfViewportIntent =
-  | "ReaderRestore"
-  | "FindPreview"
-  | "FindReturn";
+export type PdfViewportIntent = "ReaderRestore" | "FindPreview" | "FindReturn";
 
 const SIGNED_URL_REFRESH_SKEW_MS = 2_000;
 const MIN_ZOOM = 0.5;
@@ -299,6 +302,99 @@ const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
   pink: "rgba(233, 30, 99, 0.3)",
   purple: "rgba(156, 39, 176, 0.3)",
 };
+
+interface CapturedPdfViewportRange {
+  visibleStart: { kind: "Pdf"; page: number; pageFraction: number };
+  visibleEnd: { kind: "Pdf"; page: number; pageFraction: number };
+  atEnd: boolean;
+}
+
+function capturePdfViewportRange(
+  viewport: HTMLElement,
+  content: HTMLElement,
+  pageCount: number,
+): CapturedPdfViewportRange | null {
+  if (!Number.isInteger(pageCount) || pageCount <= 0) {
+    return null;
+  }
+  const viewportRect = viewport.getBoundingClientRect();
+  if (viewportRect.width <= 0 || viewportRect.height <= 0) {
+    return null;
+  }
+
+  const visiblePages: Array<{
+    page: number;
+    startFraction: number;
+    endFraction: number;
+  }> = [];
+  const seenPages = new Set<number>();
+  for (const pageElement of content.querySelectorAll<HTMLElement>(
+    ".page[data-page-number]",
+  )) {
+    const page = Number.parseInt(
+      pageElement.getAttribute("data-page-number") ?? "",
+      10,
+    );
+    const renderedPageHeight = Number.parseFloat(
+      pageElement.getAttribute("data-nexus-page-viewport-height") ?? "",
+    );
+    if (
+      !Number.isInteger(page) ||
+      page < 1 ||
+      page > pageCount ||
+      seenPages.has(page) ||
+      !Number.isFinite(renderedPageHeight) ||
+      renderedPageHeight <= 0
+    ) {
+      return null;
+    }
+    seenPages.add(page);
+    const pageRect = pageElement.getBoundingClientRect();
+    const pageTop = pageRect.top + pageElement.clientTop;
+    const pageBottom = pageTop + renderedPageHeight;
+    if (
+      pageBottom <= viewportRect.top ||
+      pageTop >= viewportRect.bottom ||
+      pageRect.right <= viewportRect.left ||
+      pageRect.left >= viewportRect.right
+    ) {
+      continue;
+    }
+    visiblePages.push({
+      page,
+      startFraction: clamp(
+        (Math.max(viewportRect.top, pageTop) - pageTop) / renderedPageHeight,
+        0,
+        1,
+      ),
+      endFraction: clamp(
+        (Math.min(viewportRect.bottom, pageBottom) - pageTop) /
+          renderedPageHeight,
+        0,
+        1,
+      ),
+    });
+  }
+  visiblePages.sort((left, right) => left.page - right.page);
+  const first = visiblePages[0];
+  const last = visiblePages[visiblePages.length - 1];
+  if (!first || !last) {
+    return null;
+  }
+  return {
+    visibleStart: {
+      kind: "Pdf",
+      page: first.page,
+      pageFraction: first.startFraction,
+    },
+    visibleEnd: {
+      kind: "Pdf",
+      page: last.page,
+      pageFraction: last.endFraction,
+    },
+    atEnd: last.page === pageCount && last.endFraction === 1,
+  };
+}
 
 function extractErrorStatus(error: unknown): number | null {
   if (typeof error !== "object" || error === null) {
@@ -480,6 +576,34 @@ function toSelectionSnapshot(
   };
 }
 
+function refreshPdfSelectionSnapshot(
+  selection: SelectionState,
+): SelectionState | null {
+  try {
+    const { range } = selection;
+    if (
+      range.collapsed ||
+      !range.startContainer.isConnected ||
+      !range.endContainer.isConnected ||
+      range.toString().trim().length === 0
+    ) {
+      return null;
+    }
+    const rect = range.getBoundingClientRect();
+    if (!isValidPdfRect(rect)) return null;
+    const lineRects = Array.from(range.getClientRects()).filter((clientRect) =>
+      isValidPdfRect(clientRect),
+    );
+    return {
+      ...selection,
+      rect,
+      lineRects: lineRects.length > 0 ? lineRects : [rect],
+    };
+  } catch {
+    return null;
+  }
+}
+
 function buildSelectionSnapshotKey(selection: SelectionState): string {
   const { left, top, width, height } = selection.rect;
   return [
@@ -538,9 +662,7 @@ function readViewerZoom(viewer: PdfViewerLike): number | null {
   }
   const scaleValue = viewer.currentScaleValue;
   const numericScale =
-    typeof scaleValue === "number"
-      ? scaleValue
-      : Number.parseFloat(scaleValue);
+    typeof scaleValue === "number" ? scaleValue : Number.parseFloat(scaleValue);
   return isPositiveFinite(numericScale) ? numericScale : null;
 }
 
@@ -584,7 +706,7 @@ export default function PdfReader({
   startPageNumber,
   startPageProgression,
   startZoom,
-  onResumeStateChange,
+  onSemanticViewportChange,
   onFindRuntimeReady,
 }: PdfReaderProps) {
   const isMobile = useIsMobileViewport();
@@ -616,6 +738,7 @@ export default function PdfReader({
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const highlightCreationInFlightRef = useRef(false);
   const [pageHighlights, setPageHighlights] = useState<PdfHighlightOut[]>([]);
   const [signedUrlRefreshToken, setSignedUrlRefreshToken] = useState(0);
   const [localHighlightRefreshToken, setLocalHighlightRefreshToken] =
@@ -682,6 +805,15 @@ export default function PdfReader({
   const readerPositioningRenderTargetRef =
     useRef<PdfReaderPositioningRenderTarget | null>(null);
   const renderedPageZoomByNumberRef = useRef<Map<number, number>>(new Map());
+  const semanticSourceKeyRef = useRef<string | null>(null);
+  const semanticLayoutGenerationRef = useRef(0);
+  const semanticCaptureFrameRef = useRef(0);
+  const pendingSemanticCaptureRef = useRef<{
+    sourceKey: string;
+    layoutGeneration: number;
+  } | null>(null);
+  const latestSemanticViewportRef = useRef<ReaderSemanticViewport | null>(null);
+  const readerRestoreSettledRef = useRef(false);
 
   const signedUrlResource = useResource<SignedUrlAccess>({
     cacheKey: `${mediaId}:${signedUrlRefreshToken}`,
@@ -709,44 +841,19 @@ export default function PdfReader({
       if (textLayerRefreshFrameRef.current?.frameId != null) {
         window.cancelAnimationFrame(textLayerRefreshFrameRef.current.frameId);
       }
+      if (semanticCaptureFrameRef.current !== 0) {
+        window.cancelAnimationFrame(semanticCaptureFrameRef.current);
+      }
     };
   }, []);
 
-  const onResumeStateChangeRef = useRef(onResumeStateChange);
-  onResumeStateChangeRef.current = onResumeStateChange;
+  const onSemanticViewportChangeRef = useRef(onSemanticViewportChange);
+  onSemanticViewportChangeRef.current = onSemanticViewportChange;
   const onFindRuntimeReadyRef = useRef(onFindRuntimeReady);
   onFindRuntimeReadyRef.current = onFindRuntimeReady;
   const onIntrinsicWidthChangeRef = useRef(onIntrinsicWidthChange);
   onIntrinsicWidthChangeRef.current = onIntrinsicWidthChange;
   const lastIntrinsicWidthPxRef = useRef<number | null>(null);
-
-  const publishResumeLocator = useCallback(
-    (
-      nextPageNumber: number,
-      nextZoom: number,
-      nextPageProgression: number | null,
-    ) => {
-      // Programmatic application (initial seed or a later addressable cursor)
-      // must not echo as movement: hold publishes until the pending page and
-      // intra-page progression have been consumed by the viewer.
-      if (
-        viewportIntentRef.current === "FindPreview" ||
-        viewportIntentRef.current === "FindReturn" ||
-        pendingViewerPageRef.current !== null ||
-        pendingStartPageProgressionRef.current !== null
-      ) {
-        return;
-      }
-      onResumeStateChangeRef.current?.({
-        kind: "pdf",
-        position: nextPageNumber,
-        page: nextPageNumber,
-        page_progression: nextPageProgression,
-        zoom: nextZoom,
-      });
-    },
-    [],
-  );
 
   const setContentNode = useCallback(
     (node: HTMLDivElement | null) => {
@@ -769,10 +876,7 @@ export default function PdfReader({
   );
   const viewerViewportRef = useMemo(
     () =>
-      composeRefs<HTMLDivElement>(
-        setViewportNode,
-        mobileChromeScrollportRef,
-      ),
+      composeRefs<HTMLDivElement>(setViewportNode, mobileChromeScrollportRef),
     [mobileChromeScrollportRef, setViewportNode],
   );
 
@@ -801,11 +905,7 @@ export default function PdfReader({
       return;
     }
     return mobileChromeVisibleLocks.acquire("pdf-selection");
-  }, [
-    mobileChromeEnabled,
-    mobileChromeVisibleLocks,
-    selection,
-  ]);
+  }, [mobileChromeEnabled, mobileChromeVisibleLocks, selection]);
 
   useEffect(() => {
     if (!mobileChromeEnabled || error !== null || readerRestoreSettled) {
@@ -842,11 +942,7 @@ export default function PdfReader({
       });
       return true;
     },
-    [
-      mobileChromeEnabled,
-      readerScrollPositioner,
-      settleReaderPositioning,
-    ],
+    [mobileChromeEnabled, readerScrollPositioner, settleReaderPositioning],
   );
 
   const waitForReaderPositioningRender = useCallback(
@@ -861,8 +957,7 @@ export default function PdfReader({
 
   const pageHasRenderedAtZoom = useCallback(
     (targetPage: number, zoom: number): boolean => {
-      const renderedZoom =
-        renderedPageZoomByNumberRef.current.get(targetPage);
+      const renderedZoom = renderedPageZoomByNumberRef.current.get(targetPage);
       return (
         renderedZoom !== undefined &&
         Math.abs(renderedZoom - zoom) <= PDF_FIND_VIEWPORT_SCALE_EPSILON
@@ -885,10 +980,7 @@ export default function PdfReader({
     settleReaderPositioning();
   }, [error, settleReaderPositioning]);
 
-  useEffect(
-    () => () => settleReaderPositioning(),
-    [settleReaderPositioning],
-  );
+  useEffect(() => () => settleReaderPositioning(), [settleReaderPositioning]);
 
   const ensurePdfJs = useCallback(async () => {
     if (pdfJsRef.current) {
@@ -939,58 +1031,104 @@ export default function PdfReader({
         return null;
       }
 
-      const pageHeight =
-        pageElement.getBoundingClientRect().height ||
-        pageElement.scrollHeight ||
-        pageElement.clientHeight ||
-        Number.parseFloat(pageElement.style.height) ||
-        0;
+      const pageHeight = Number.parseFloat(
+        pageElement.getAttribute("data-nexus-page-viewport-height") ?? "",
+      );
       const pageTop =
-        pageElement.offsetTop ||
+        pageElement.offsetTop + pageElement.clientTop ||
         (pageHeight > 0 ? (targetPage - 1) * pageHeight : 0);
 
-      return pageHeight > 0 ? { pageTop, pageHeight } : null;
+      return Number.isFinite(pageHeight) && pageHeight > 0
+        ? { pageTop, pageHeight }
+        : null;
     },
     [getPageElement],
   );
 
-  const readCurrentPageProgression = useCallback((): number | null => {
-    const container = viewerContainerRef.current;
-    if (!container) {
-      return null;
+  const publishPendingSemanticViewport = useCallback(() => {
+    semanticCaptureFrameRef.current = 0;
+    const fence = pendingSemanticCaptureRef.current;
+    pendingSemanticCaptureRef.current = null;
+    if (
+      !fence ||
+      semanticSourceKeyRef.current !== fence.sourceKey ||
+      semanticLayoutGenerationRef.current !== fence.layoutGeneration
+    ) {
+      return;
     }
-    const pageElement = getPageElement(pageNumberRef.current);
-    const metrics = readPageMetrics(pageNumberRef.current);
-    if (!pageElement || !metrics) {
-      return null;
+    const viewport = viewerContainerRef.current;
+    const content = internalContentRef.current;
+    const document = documentRef.current;
+    const captured =
+      viewport && content && document
+        ? capturePdfViewportRange(viewport, content, document.numPages)
+        : null;
+    if (
+      semanticSourceKeyRef.current !== fence.sourceKey ||
+      semanticLayoutGenerationRef.current !== fence.layoutGeneration
+    ) {
+      return;
     }
-    const localScrollTop = Math.max(
-      0,
-      container.getBoundingClientRect().top -
-        (pageElement.getBoundingClientRect().top + pageElement.clientTop),
+    if (!captured) {
+      latestSemanticViewportRef.current = null;
+      onSemanticViewportChangeRef.current?.(null);
+      return;
+    }
+    let intent: ReaderPositionIntent;
+    switch (viewportIntentRef.current) {
+      case "FindPreview":
+        intent = "Preview";
+        break;
+      case "FindReturn":
+        intent = "Return";
+        break;
+      case "ReaderRestore":
+        intent = "Restore";
+        break;
+      case null:
+        intent = readerRestoreSettledRef.current ? "Reader" : "Restore";
+        break;
+    }
+    const pageProgression = captured.visibleStart.pageFraction;
+    const semanticViewport: ReaderSemanticViewport = {
+      sourceKey: fence.sourceKey,
+      layoutGeneration: fence.layoutGeneration,
+      intent,
+      primaryLocator: {
+        kind: "pdf",
+        page: captured.visibleStart.page,
+        page_progression: pageProgression === 0 ? null : pageProgression,
+        zoom: zoomRef.current,
+        position: captured.visibleStart.page,
+      },
+      ...captured,
+    };
+    latestSemanticViewportRef.current = semanticViewport;
+    onSemanticViewportChangeRef.current?.(semanticViewport);
+  }, []);
+  const scheduleSemanticViewportCapture = useCallback(() => {
+    const sourceKey = semanticSourceKeyRef.current;
+    if (sourceKey === null) {
+      latestSemanticViewportRef.current = null;
+      onSemanticViewportChangeRef.current?.(null);
+      return;
+    }
+    pendingSemanticCaptureRef.current = {
+      sourceKey,
+      layoutGeneration: semanticLayoutGenerationRef.current,
+    };
+    if (semanticCaptureFrameRef.current !== 0) {
+      return;
+    }
+    semanticCaptureFrameRef.current = window.requestAnimationFrame(
+      publishPendingSemanticViewport,
     );
-    const maxLocalScroll = Math.max(
-      0,
-      metrics.pageHeight - container.clientHeight,
-    );
-    if (maxLocalScroll === 0) {
-      return null;
-    }
-    const progression = clamp(localScrollTop / maxLocalScroll, 0, 1);
-    // Top-of-page is the locator's null progression; publishing 0 here would
-    // false-dirty against a stored null and echo a write on initial apply.
-    return progression === 0 ? null : progression;
-  }, [getPageElement, readPageMetrics]);
-  const publishCurrentResumeLocator = useCallback(
-    (nextPageNumber = pageNumberRef.current, nextZoom = zoomRef.current) => {
-      publishResumeLocator(
-        nextPageNumber,
-        nextZoom,
-        readCurrentPageProgression(),
-      );
-    },
-    [publishResumeLocator, readCurrentPageProgression],
-  );
+  }, [publishPendingSemanticViewport]);
+  const invalidateSemanticViewportLayout = useCallback(() => {
+    semanticLayoutGenerationRef.current += 1;
+    latestSemanticViewportRef.current = null;
+    onSemanticViewportChangeRef.current?.(null);
+  }, []);
 
   const applyStartPageProgression = useCallback(() => {
     const targetProgression = pendingStartPageProgressionRef.current;
@@ -1005,60 +1143,43 @@ export default function PdfReader({
     if (!metrics) {
       return;
     }
-    const maxLocalScroll = Math.max(
-      0,
-      metrics.pageHeight - container.clientHeight,
-    );
     void readerScrollPositioner.run(({ setTop }) => {
       setTop(
         container,
-        metrics.pageTop +
-          maxLocalScroll * clamp(targetProgression, 0, 1),
+        metrics.pageTop + metrics.pageHeight * clamp(targetProgression, 0, 1),
       );
       pendingStartPageProgressionRef.current = null;
     });
   }, [readPageMetrics, readerScrollPositioner]);
 
   useEffect(() => {
-    if (onResumeStateChangeRef.current && numPages > 0) {
-      publishResumeLocator(pageNumber, zoom, readCurrentPageProgression());
-    }
-  }, [
-    numPages,
-    pageNumber,
-    publishResumeLocator,
-    readCurrentPageProgression,
-    zoom,
-  ]);
-
-  useEffect(() => {
     const container = viewerContainerRef.current;
-    if (!container || !onResumeStateChangeRef.current || numPages <= 0) {
+    if (!container || numPages <= 0) {
       return;
     }
-
-    let rafId = 0;
-    const handleScroll = () => {
-      if (rafId) {
-        window.cancelAnimationFrame(rafId);
-      }
-      rafId = window.requestAnimationFrame(() => {
-        publishResumeLocator(
-          pageNumberRef.current,
-          zoomRef.current,
-          readCurrentPageProgression(),
-        );
-      });
-    };
-
-    container.addEventListener("scroll", handleScroll, { passive: true });
+    container.addEventListener("scroll", scheduleSemanticViewportCapture, {
+      passive: true,
+    });
+    scheduleSemanticViewportCapture();
     return () => {
-      container.removeEventListener("scroll", handleScroll);
-      if (rafId) {
-        window.cancelAnimationFrame(rafId);
-      }
+      container.removeEventListener("scroll", scheduleSemanticViewportCapture);
     };
-  }, [numPages, publishResumeLocator, readCurrentPageProgression]);
+  }, [numPages, scheduleSemanticViewportCapture]);
+
+  useEffect(() => {
+    const viewport = viewerContainerRef.current;
+    const content = internalContentRef.current;
+    if (!viewport || !content || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const observer = new ResizeObserver(() => {
+      invalidateSemanticViewportLayout();
+      scheduleSemanticViewportCapture();
+    });
+    observer.observe(viewport);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [invalidateSemanticViewportLayout, scheduleSemanticViewportCapture]);
 
   const getTextLayerRootForPage = useCallback(
     (targetPage: number): HTMLElement | null => {
@@ -1078,16 +1199,12 @@ export default function PdfReader({
           "data-testid",
           `pdf-page-surface-${targetPage}`,
         );
-        const textLayer =
-          pageElement.querySelector<HTMLElement>(".textLayer");
+        const textLayer = pageElement.querySelector<HTMLElement>(".textLayer");
         textLayer?.setAttribute(
           "data-testid",
           `pdf-page-text-layer-${targetPage}`,
         );
-        textLayer?.setAttribute(
-          "data-reader-tap-reveal-surface",
-          "true",
-        );
+        textLayer?.setAttribute("data-reader-tap-reveal-surface", "true");
         pageElement
           .querySelector<HTMLElement>(".canvasWrapper")
           ?.setAttribute(
@@ -1392,12 +1509,12 @@ export default function PdfReader({
           const scale = readPageScale(targetPage);
           if (
             textLayer?.isConnected &&
-            (!requireText ||
-              (textLayer.textContent ?? "").trim().length > 0) &&
+            (!requireText || (textLayer.textContent ?? "").trim().length > 0) &&
             (textLayerRenderEpochByPageRef.current.get(targetPage) ?? 0) >=
               minimumTextLayerRenderEpoch &&
             (expectedScale === null ||
-              Math.abs(scale - expectedScale) <= PDF_FIND_VIEWPORT_SCALE_EPSILON)
+              Math.abs(scale - expectedScale) <=
+                PDF_FIND_VIEWPORT_SCALE_EPSILON)
           ) {
             finish("Ready");
             return;
@@ -1421,12 +1538,7 @@ export default function PdfReader({
     const pageElement = getPageElement(pageNumberRef.current);
     const viewer = pdfViewerRef.current;
     const zoom = viewer ? (readViewerZoom(viewer) ?? zoomRef.current) : null;
-    if (
-      !container ||
-      !pageElement ||
-      !documentRef.current ||
-      zoom === null
-    ) {
+    if (!container || !pageElement || !documentRef.current || zoom === null) {
       return { kind: "Unavailable" };
     }
     return {
@@ -1492,11 +1604,7 @@ export default function PdfReader({
         });
       }
     },
-    [
-      applyPdfViewportPage,
-      awaitPdfFindTextLayer,
-      readerScrollPositioner,
-    ],
+    [applyPdfViewportPage, awaitPdfFindTextLayer, readerScrollPositioner],
   );
 
   const restorePdfFindOrigin = useCallback(
@@ -1547,15 +1655,10 @@ export default function PdfReader({
           const zoomChanged =
             Math.abs(
               (readViewerZoom(viewer) ?? zoomRef.current) - origin.zoom,
-            ) >
-            PDF_FIND_VIEWPORT_SCALE_EPSILON;
+            ) > PDF_FIND_VIEWPORT_SCALE_EPSILON;
           pageScaleByNumberRef.current.clear();
           pageGeometryReliabilityRef.current.clear();
-          applyViewerScale(
-            viewer,
-            origin.zoom,
-            "FindReturn/currentScaleValue",
-          );
+          applyViewerScale(viewer, origin.zoom, "FindReturn/currentScaleValue");
           applyPdfViewportPage(origin.pageNumber, "FindReturn");
           await awaitPdfFindTextLayer(
             origin.pageNumber,
@@ -1580,10 +1683,7 @@ export default function PdfReader({
           const currentPageTopDeltaPx =
             pageElement.getBoundingClientRect().top -
             container.getBoundingClientRect().top;
-          adjustTop(
-            container,
-            currentPageTopDeltaPx - origin.pageTopDeltaPx,
-          );
+          adjustTop(container, currentPageTopDeltaPx - origin.pageTopDeltaPx);
           container.scrollLeft = origin.scrollLeft;
 
           await awaitPdfFindFrame(signal);
@@ -1665,38 +1765,46 @@ export default function PdfReader({
 
   const teardownViewer = useCallback(
     ({ publishFindUnavailable = true } = {}) => {
-    viewportIntentGenerationRef.current += 1;
-    viewportIntentRef.current = null;
-    if (publishFindUnavailable) {
-      onFindRuntimeReadyRef.current?.(null);
-    }
-    pendingPdfFindRuntimeRef.current = null;
-    pdfFindRuntimeRef.current?.setDocument(null);
-    pdfFindRuntimeRef.current?.dispose();
-    pdfFindRuntimeRef.current = null;
-    const eventBus = eventBusRef.current;
-    const handlers = eventHandlersRef.current;
-    if (eventBus && handlers) {
-      eventBus.off("pagechanging", handlers.pagechanging);
-      eventBus.off("pagesloaded", handlers.pagesloaded);
-      eventBus.off("pagerendered", handlers.pagerendered);
-      eventBus.off("textlayerrendered", handlers.textlayerrendered);
-      eventBus.off("annotationlayerrendered", handlers.annotationlayerrendered);
-    }
-    eventHandlersRef.current = null;
-    linkServiceRef.current?.setDocument(null, null);
-    pdfViewerRef.current?.setDocument(null);
-    eventBusRef.current = null;
-    linkServiceRef.current = null;
-    pdfViewerRef.current = null;
-    pendingViewerPageRef.current = null;
-    pendingViewerScaleRef.current = null;
-    textLayerRenderEpochByPageRef.current.clear();
-    publishIntrinsicWidth(null);
-    removeOverlayLayers();
-    if (internalContentRef.current) {
-      internalContentRef.current.innerHTML = "";
-    }
+      viewportIntentGenerationRef.current += 1;
+      viewportIntentRef.current = null;
+      semanticSourceKeyRef.current = null;
+      semanticLayoutGenerationRef.current += 1;
+      pendingSemanticCaptureRef.current = null;
+      latestSemanticViewportRef.current = null;
+      onSemanticViewportChangeRef.current?.(null);
+      if (publishFindUnavailable) {
+        onFindRuntimeReadyRef.current?.(null);
+      }
+      pendingPdfFindRuntimeRef.current = null;
+      pdfFindRuntimeRef.current?.setDocument(null);
+      pdfFindRuntimeRef.current?.dispose();
+      pdfFindRuntimeRef.current = null;
+      const eventBus = eventBusRef.current;
+      const handlers = eventHandlersRef.current;
+      if (eventBus && handlers) {
+        eventBus.off("pagechanging", handlers.pagechanging);
+        eventBus.off("pagesloaded", handlers.pagesloaded);
+        eventBus.off("pagerendered", handlers.pagerendered);
+        eventBus.off("textlayerrendered", handlers.textlayerrendered);
+        eventBus.off(
+          "annotationlayerrendered",
+          handlers.annotationlayerrendered,
+        );
+      }
+      eventHandlersRef.current = null;
+      linkServiceRef.current?.setDocument(null, null);
+      pdfViewerRef.current?.setDocument(null);
+      eventBusRef.current = null;
+      linkServiceRef.current = null;
+      pdfViewerRef.current = null;
+      pendingViewerPageRef.current = null;
+      pendingViewerScaleRef.current = null;
+      textLayerRenderEpochByPageRef.current.clear();
+      publishIntrinsicWidth(null);
+      removeOverlayLayers();
+      if (internalContentRef.current) {
+        internalContentRef.current.innerHTML = "";
+      }
     },
     [publishIntrinsicWidth, removeOverlayLayers],
   );
@@ -1778,6 +1886,7 @@ export default function PdfReader({
         setTextGeometryReliable(evaluatePageGeometryReliability(nextPage));
         setPageRenderEpoch((value) => value + 1);
         scheduleTextLayerStateRefresh(nextPage, runId);
+        scheduleSemanticViewportCapture();
       };
 
       const handlePagesLoaded = (rawEvent: unknown) => {
@@ -1840,6 +1949,8 @@ export default function PdfReader({
             );
           }
           scheduleIntrinsicWidthPublish();
+          invalidateSemanticViewportLayout();
+          scheduleSemanticViewportCapture();
         });
         const findRuntime = pendingPdfFindRuntimeRef.current;
         if (findRuntime) {
@@ -1862,21 +1973,18 @@ export default function PdfReader({
           : pageNumberRef.current;
 
         markPageSurface(renderedPage, event.source);
+        invalidateSemanticViewportLayout();
         rememberPageScale(renderedPage, event.source);
-        const renderedZoom =
-          readViewerZoom(pdfViewer) ?? zoomRef.current;
+        const renderedZoom = readViewerZoom(pdfViewer) ?? zoomRef.current;
         if (!event.error) {
-          renderedPageZoomByNumberRef.current.set(
-            renderedPage,
-            renderedZoom,
-          );
+          renderedPageZoomByNumberRef.current.set(renderedPage, renderedZoom);
         }
         scheduleIntrinsicWidthPublish();
+        scheduleSemanticViewportCapture();
         evaluatePageGeometryReliability(renderedPage);
 
         const signedUrlExpiryRenderError =
-          event.error != null &&
-          isLikelySignedUrlExpiryError(event.error);
+          event.error != null && isLikelySignedUrlExpiryError(event.error);
         if (
           signedUrlExpiryRenderError &&
           !recoveringFromRenderErrorRef.current
@@ -1888,8 +1996,7 @@ export default function PdfReader({
         if (renderedPage === pageNumberRef.current) {
           applyStartPageProgression();
           scheduleTextLayerStateRefresh(renderedPage, runId);
-          const positioningTarget =
-            readerPositioningRenderTargetRef.current;
+          const positioningTarget = readerPositioningRenderTargetRef.current;
           if (
             !signedUrlExpiryRenderError &&
             positioningTarget?.runId === runId &&
@@ -1902,7 +2009,12 @@ export default function PdfReader({
           if (!signedUrlExpiryRenderError) {
             window.requestAnimationFrame(() => {
               if (runId === runRef.current) {
+                if (viewportIntentRef.current === "ReaderRestore") {
+                  viewportIntentRef.current = null;
+                }
+                readerRestoreSettledRef.current = true;
                 setReaderRestoreSettled(true);
+                scheduleSemanticViewportCapture();
               }
             });
           }
@@ -1973,6 +2085,7 @@ export default function PdfReader({
       clearSelection,
       evaluatePageGeometryReliability,
       ensurePdfJsViewer,
+      invalidateSemanticViewportLayout,
       isTextLayerUsableForPage,
       markPageSurface,
       mediaId,
@@ -1982,6 +2095,7 @@ export default function PdfReader({
       revealPdfFindMatch,
       revealPdfFindPage,
       scheduleIntrinsicWidthPublish,
+      scheduleSemanticViewportCapture,
       scheduleTextLayerStateRefresh,
       settleReaderPositioning,
     ],
@@ -2004,6 +2118,12 @@ export default function PdfReader({
       pageGeometryReliabilityRef.current.clear();
       pendingViewerPageRef.current = null;
       removeOverlayLayers();
+      const fingerprint = doc.fingerprints.find(
+        (value): value is string =>
+          typeof value === "string" && value.length > 0,
+      );
+      semanticSourceKeyRef.current = `${mediaId}:pdf:${fingerprint ?? runId}`;
+      invalidateSemanticViewportLayout();
 
       const boundedPage = clamp(targetPage, 1, doc.numPages);
       pageNumberRef.current = boundedPage;
@@ -2035,7 +2155,12 @@ export default function PdfReader({
       pendingPdfFindRuntimeRef.current = findRuntime;
       viewer.setDocument(doc);
     },
-    [initializeViewerIfNeeded, removeOverlayLayers],
+    [
+      initializeViewerIfNeeded,
+      invalidateSemanticViewportLayout,
+      mediaId,
+      removeOverlayLayers,
+    ],
   );
 
   const requestSignedUrlRecovery = useCallback(
@@ -2250,7 +2375,7 @@ export default function PdfReader({
         selection ?? selectionSnapshotRef.current ?? fallbackSelection;
       if (
         !(textLayerUsable || shouldUseAreaFallback || activeSelection) ||
-        isCreating
+        highlightCreationInFlightRef.current
       ) {
         return null;
       }
@@ -2278,6 +2403,7 @@ export default function PdfReader({
         return null;
       }
 
+      highlightCreationInFlightRef.current = true;
       setIsCreating(true);
       setSelectionError(null);
       try {
@@ -2334,6 +2460,7 @@ export default function PdfReader({
         setSelectionError(toUserFacingError(err));
         return null;
       } finally {
+        highlightCreationInFlightRef.current = false;
         setIsCreating(false);
       }
     },
@@ -2342,7 +2469,6 @@ export default function PdfReader({
       buildSelectionQuads,
       clearSelection,
       editingHighlightId,
-      isCreating,
       mediaId,
       pageHighlights,
       resolveTextLayerRootFromRange,
@@ -2358,7 +2484,7 @@ export default function PdfReader({
   // highlight create runs concurrently (handleCreateHighlight reads the live
   // selection and clears it itself).
   const handleAddNote = useCallback(() => {
-    if (!selection) return;
+    if (!selection || highlightCreationInFlightRef.current) return;
     onAddNote?.({
       quote: selection.range.toString().trim(),
       anchorRect: selection.rect,
@@ -2408,7 +2534,6 @@ export default function PdfReader({
       onPageHighlightsChangeRef.current?.(nextPage, []);
       pageNumberRef.current = nextPage;
       setPageNumber(nextPage);
-      publishCurrentResumeLocator(nextPage, zoomRef.current);
 
       const currentRun = runRef.current;
       try {
@@ -2458,7 +2583,6 @@ export default function PdfReader({
       clearSelection,
       numPages,
       pageHasRenderedAtZoom,
-      publishCurrentResumeLocator,
       requestSignedUrlRecovery,
       settleReaderPositioning,
       waitForReaderPositioningRender,
@@ -2672,16 +2796,20 @@ export default function PdfReader({
       setPageScale(zoom);
       setPageRenderEpoch((value) => value + 1);
       window.requestAnimationFrame(() => {
+        invalidateSemanticViewportLayout();
         setTextGeometryReliable(
           evaluatePageGeometryReliability(pageNumberRef.current),
         );
         scheduleIntrinsicWidthPublish();
+        scheduleSemanticViewportCapture();
       });
     });
   }, [
     evaluatePageGeometryReliability,
+    invalidateSemanticViewportLayout,
     readerScrollPositioner,
     scheduleIntrinsicWidthPublish,
+    scheduleSemanticViewportCapture,
     zoom,
   ]);
 
@@ -2705,6 +2833,7 @@ export default function PdfReader({
     setZoom(startZoomLevel);
     setPageScale(startZoomLevel);
     setPageRenderEpoch(0);
+    readerRestoreSettledRef.current = false;
     setReaderRestoreSettled(false);
     setSelection(null);
     setSelectionError(null);
@@ -2747,12 +2876,7 @@ export default function PdfReader({
       void destroyPdfDocument(existingDoc);
       destroyPdfLoadingTask(existingTask);
     };
-  }, [
-    clearSelection,
-    mediaId,
-    settleReaderPositioning,
-    teardownViewer,
-  ]);
+  }, [clearSelection, mediaId, settleReaderPositioning, teardownViewer]);
 
   useEffect(() => {
     if (
@@ -2847,6 +2971,65 @@ export default function PdfReader({
       document.removeEventListener("selectionchange", syncSelectionFromWindow);
     };
   }, [syncSelectionFromWindow]);
+
+  const refreshRetainedSelectionGeometry = useCallback(() => {
+    const retainedSelection = selectionSnapshotRef.current;
+    if (!retainedSelection) return;
+    let selectionContext: ReturnType<typeof resolveTextLayerRootFromRange> = null;
+    try {
+      selectionContext = resolveTextLayerRootFromRange(retainedSelection.range);
+    } catch {
+      selectionContext = null;
+    }
+    const refreshedSelection =
+      selectionContext?.pageNumber === retainedSelection.pageNumber
+        ? refreshPdfSelectionSnapshot(retainedSelection)
+        : null;
+    if (!refreshedSelection) {
+      clearSelection();
+      return;
+    }
+    selectionSnapshotRef.current = refreshedSelection;
+    selectionSnapshotKeyRef.current =
+      buildSelectionSnapshotKey(refreshedSelection);
+    if (selectionVisibleRef.current) {
+      publishSelection(refreshedSelection);
+    }
+  }, [clearSelection, publishSelection, resolveTextLayerRootFromRange]);
+
+  useEffect(() => {
+    let active = true;
+    let refreshFrame = 0;
+    const scheduleRefresh = () => {
+      if (!active || refreshFrame !== 0) return;
+      refreshFrame = window.requestAnimationFrame(() => {
+        refreshFrame = 0;
+        if (active) refreshRetainedSelectionGeometry();
+      });
+    };
+    const viewport = viewerContainerRef.current;
+    const content = internalContentRef.current;
+    const visualViewport = window.visualViewport;
+    const resizeObserver = new ResizeObserver(scheduleRefresh);
+    if (viewport) resizeObserver.observe(viewport);
+    if (content && content !== viewport) resizeObserver.observe(content);
+    viewport?.addEventListener("scroll", scheduleRefresh, { passive: true });
+    window.addEventListener("resize", scheduleRefresh, { passive: true });
+    window.addEventListener("scroll", scheduleRefresh, true);
+    visualViewport?.addEventListener?.("resize", scheduleRefresh);
+    visualViewport?.addEventListener?.("scroll", scheduleRefresh);
+    scheduleRefresh();
+    return () => {
+      active = false;
+      resizeObserver.disconnect();
+      if (refreshFrame !== 0) window.cancelAnimationFrame(refreshFrame);
+      viewport?.removeEventListener("scroll", scheduleRefresh);
+      window.removeEventListener("resize", scheduleRefresh);
+      window.removeEventListener("scroll", scheduleRefresh, true);
+      visualViewport?.removeEventListener?.("resize", scheduleRefresh);
+      visualViewport?.removeEventListener?.("scroll", scheduleRefresh);
+    };
+  }, [pageRenderEpoch, pageScale, refreshRetainedSelectionGeometry, zoom]);
 
   // justify-polling: browser PDF text-layer selection events can miss active
   // selections, so this bounded UI poll runs only while a text layer is usable.
@@ -3070,36 +3253,26 @@ export default function PdfReader({
     if (!pdfViewerRef.current) {
       return;
     }
-    const nextZoom = clamp(
-      zoomRef.current - ZOOM_STEP,
-      MIN_ZOOM,
-      MAX_ZOOM,
-    );
+    const nextZoom = clamp(zoomRef.current - ZOOM_STEP, MIN_ZOOM, MAX_ZOOM);
     if (Math.abs(nextZoom - zoomRef.current) <= 0.001) {
       return;
     }
     waitForReaderPositioningRender(pageNumberRef.current, nextZoom);
     zoomRef.current = nextZoom;
-    publishCurrentResumeLocator(pageNumberRef.current, nextZoom);
     setZoom(nextZoom);
-  }, [publishCurrentResumeLocator, waitForReaderPositioningRender]);
+  }, [waitForReaderPositioningRender]);
   const zoomIn = useCallback(() => {
     if (!pdfViewerRef.current) {
       return;
     }
-    const nextZoom = clamp(
-      zoomRef.current + ZOOM_STEP,
-      MIN_ZOOM,
-      MAX_ZOOM,
-    );
+    const nextZoom = clamp(zoomRef.current + ZOOM_STEP, MIN_ZOOM, MAX_ZOOM);
     if (Math.abs(nextZoom - zoomRef.current) <= 0.001) {
       return;
     }
     waitForReaderPositioningRender(pageNumberRef.current, nextZoom);
     zoomRef.current = nextZoom;
-    publishCurrentResumeLocator(pageNumberRef.current, nextZoom);
     setZoom(nextZoom);
-  }, [publishCurrentResumeLocator, waitForReaderPositioningRender]);
+  }, [waitForReaderPositioningRender]);
 
   const applyResumeState = useCallback(
     (resume: PdfReaderResumeState): boolean => {
@@ -3112,13 +3285,16 @@ export default function PdfReader({
         nextZoom !== null && Math.abs(nextZoom - zoomRef.current) > 0.001;
       const boundedPage = clamp(resume.page, 1, numPages);
       const pageChanged = boundedPage !== pageNumberRef.current;
-      if (
-        !zoomChanged &&
-        !pageChanged &&
-        resume.page_progression === null
-      ) {
+      if (!zoomChanged && !pageChanged && resume.page_progression === null) {
         return true;
       }
+
+      viewportIntentGenerationRef.current += 1;
+      const intentGeneration = viewportIntentGenerationRef.current;
+      viewportIntentRef.current = "ReaderRestore";
+      readerRestoreSettledRef.current = false;
+      setReaderRestoreSettled(false);
+      scheduleSemanticViewportCapture();
 
       const expectedZoom =
         zoomChanged && nextZoom !== null
@@ -3127,8 +3303,7 @@ export default function PdfReader({
       let waitsForRender = false;
       if (
         zoomChanged ||
-        (pageChanged &&
-          !pageHasRenderedAtZoom(boundedPage, expectedZoom))
+        (pageChanged && !pageHasRenderedAtZoom(boundedPage, expectedZoom))
       ) {
         waitsForRender = waitForReaderPositioningRender(
           boundedPage,
@@ -3149,6 +3324,9 @@ export default function PdfReader({
         } catch (error) {
           setError(toUserFacingError(error));
           settleReaderPositioning();
+          viewportIntentRef.current = null;
+          readerRestoreSettledRef.current = true;
+          setReaderRestoreSettled(true);
           return false;
         }
         if (!waitsForRender) {
@@ -3160,6 +3338,18 @@ export default function PdfReader({
       }
       if (!waitsForRender) {
         settleReaderPositioning();
+        scheduleSemanticViewportCapture();
+        window.requestAnimationFrame(() => {
+          if (
+            viewportIntentGenerationRef.current === intentGeneration &&
+            viewportIntentRef.current === "ReaderRestore"
+          ) {
+            viewportIntentRef.current = null;
+            readerRestoreSettledRef.current = true;
+            setReaderRestoreSettled(true);
+            scheduleSemanticViewportCapture();
+          }
+        });
       }
       return true;
     },
@@ -3169,23 +3359,22 @@ export default function PdfReader({
       beginReaderPositioning,
       numPages,
       pageHasRenderedAtZoom,
+      scheduleSemanticViewportCapture,
       settleReaderPositioning,
       waitForReaderPositioningRender,
     ],
   );
 
   const captureResumeState = useCallback((): PdfReaderResumeState | null => {
-    if (numPages <= 0) {
-      return null;
+    if (pendingSemanticCaptureRef.current !== null) {
+      if (semanticCaptureFrameRef.current !== 0) {
+        window.cancelAnimationFrame(semanticCaptureFrameRef.current);
+      }
+      publishPendingSemanticViewport();
     }
-    return {
-      kind: "pdf",
-      position: pageNumberRef.current,
-      page: pageNumberRef.current,
-      page_progression: readCurrentPageProgression(),
-      zoom: zoomRef.current,
-    };
-  }, [numPages, readCurrentPageProgression]);
+    const locator = latestSemanticViewportRef.current?.primaryLocator;
+    return locator?.kind === "pdf" ? locator : null;
+  }, [publishPendingSemanticViewport]);
 
   useEffect(() => {
     if (!onControlsReady) {
@@ -3241,6 +3430,25 @@ export default function PdfReader({
     zoomPercent,
   ]);
 
+  const selectionPopoverProps =
+    selection && viewerContainerRef.current
+      ? {
+          selectionRect: selection.rect,
+          selectionLineRects: selection.lineRects,
+          containerRef: viewerContainerRef,
+          onCreateHighlight: handleCreateHighlight,
+          onLearn:
+            onLearn && textGeometryReliable
+              ? (highlight: PdfHighlightOut) =>
+                  onLearn(highlight.id, highlight)
+              : undefined,
+          onAddNote:
+            onAddNote && textGeometryReliable ? handleAddNote : undefined,
+          onLink: onLink && textGeometryReliable ? handleLink : undefined,
+          onDismiss: clearSelection,
+          isCreating,
+        }
+      : null;
   return (
     <div className={styles.viewer}>
       {recovering && (
@@ -3314,35 +3522,21 @@ export default function PdfReader({
         </div>
       )}
 
-      {selection && viewerContainerRef.current && (
-        <SelectionPopover
-          selectionRect={selection.rect}
-          selectionLineRects={selection.lineRects}
-          containerRef={viewerContainerRef}
-          onCreateHighlight={handleCreateHighlight}
-          onQuoteToNewChat={
-            onQuoteToNewChat && textGeometryReliable
-              ? (highlight) => onQuoteToNewChat(highlight.id, highlight)
-              : undefined
-          }
-          onQuoteToExistingChat={
-            onQuoteToExistingChat && textGeometryReliable
-              ? (highlight) => onQuoteToExistingChat(highlight.id, highlight)
-              : undefined
-          }
-          onLearn={
-            onLearn && textGeometryReliable
-              ? (highlight) => onLearn(highlight.id, highlight)
-              : undefined
-          }
-          onAddNote={
-            onAddNote && textGeometryReliable ? handleAddNote : undefined
-          }
-          onLink={onLink && textGeometryReliable ? handleLink : undefined}
-          onDismiss={clearSelection}
-          isCreating={isCreating}
-        />
-      )}
+      {selectionPopoverProps ? (
+        onQuoteToNewChat && onQuoteToExistingChat && textGeometryReliable ? (
+          <SelectionPopover
+            {...selectionPopoverProps}
+            onQuoteToNewChat={(highlight) =>
+              onQuoteToNewChat(highlight.id, highlight)
+            }
+            onQuoteToExistingChat={(highlight) =>
+              onQuoteToExistingChat(highlight.id, highlight)
+            }
+          />
+        ) : (
+          <SelectionPopover {...selectionPopoverProps} />
+        )
+      ) : null}
     </div>
   );
 }

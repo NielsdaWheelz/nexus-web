@@ -1,6 +1,6 @@
 # Reader Progress Continuity Hard Cutover
 
-**Status:** Proposed implementation specification · 2026-07-15
+**Status:** Current contract
 
 **Posture:** One coordinated hard cutover. No legacy payloads, fallback readers,
 dual writes, public null-reset path, feature flag, or mixed-version support.
@@ -28,6 +28,15 @@ serve that role. This spec's cursor CAS semantics, `useReaderProgress`
 client coordinator, revalidation triggers, and URL-precedence rules are
 otherwise unchanged and remain canonical.
 
+**Canonical-position completion (2026-07-31):**
+[`reader-document-map-canonical-position-hard-cutover.md`](reader-document-map-canonical-position-hard-cutover.md)
+supersedes this document's coarse format-capture descriptions. The persistence
+schema, CAS, coordinator, and URL authority remain here. The active reader now
+publishes one exact source/layout-fenced semantic viewport: text is
+`(fragment_id, canonical codepoint offset)` and PDF is `(page, normalized
+full-page fraction)`. That capture is shared by progress, activity, and the
+Document Map rail; pixels are not a persisted coordinate or fallback.
+
 ## 1. Executive decision
 
 There are no blocking product questions.
@@ -49,7 +58,7 @@ generic synchronization framework.
 
 | Situation | Final behavior |
 |---|---|
-| Open bare `/media/:id` | Load and apply the user's canonical cursor internally; keep the URL bare |
+| Open bare `/media/:id` | Load and apply the user's canonical cursor internally; for web, select its saved fragment before exact restore; keep the URL bare |
 | Reload after ordinary reading | Restore the latest cursor that reached the server, including the synchronous lifecycle capture path |
 | Phone saved newer progress; laptop pane is dormant and clean | Revalidate on return/reconnect and apply the newer cursor without remount |
 | Phone saved newer progress; laptop is active or locally dirty | Do not teleport; show `Go to most recent position` / `Stay at this position` |
@@ -99,7 +108,7 @@ Rereading an earlier chapter can be the newest valid cursor.
 - per-device cursors, cursor history, CRDTs, “furthest wins,” or timestamp merge;
 - exact-location sharing redesign;
 - same-resource pane deduplication;
-- reader locator precision or source-reingestion repair;
+- source-reingestion repair;
 - attention-ledger redesign, active-pane dwell changes, device-identity cleanup,
   listening-state changes, or audio/podcast recency changes;
 - generic autosave/sync abstractions.
@@ -108,7 +117,7 @@ Rereading an earlier chapter can be the newest valid cursor.
 
 ```text
 genuine reader movement
-  -> format-owned locator capture
+  -> format-owned exact semantic viewport capture
   -> useReaderProgress (single-flight, latest-only, revision-aware)
   -> existing reader-state BFF
   -> services/consumption/_reader_cursor_store.py conditional mutation
@@ -128,7 +137,7 @@ return / reconnect / pane activation
 | Canonical cursor and revision | `reader_media_state` + Consumption `_reader_cursor_store.py` | Read snapshot; conditionally replace or reset |
 | Browser ordering/revalidation | `useReaderProgress` | One in-flight PUT per mounted coordinator; one queued latest locator |
 | Pure decisions/decoding | `readerProgress.ts` | Strict wire parsing, equality, conflict and adoption decisions |
-| Capture/application | `MediaPaneBody` and format readers | Synchronous capture where available; addressable apply with completion |
+| Capture/application | format readers + `MediaPaneBody` | One source/layout-fenced semantic viewport; addressable apply with completion |
 | Pane activity | `WorkspaceHost` -> pane runtime | Required `isActive` capability for adoption versus handoff |
 | URL intent | pane router, `useReaderTarget`, `readerLocationHref.ts` | Hash/cold/live provenance; no cursor authority |
 
@@ -298,15 +307,22 @@ applyCursor({ requestId, generation, source, locator })
   -> Applied | CancelledByUser | Failed
 ```
 
-Routine capture may be animation-frame throttled. On hidden, `pagehide`, pane
-deactivation, and reader teardown, synchronously attempt capture before a
-best-effort keepalive flush. Lifecycle is not user intent: only a position already
-made dirty by genuine reader input may be promoted.
+Routine capture may be animation-frame throttled. The active format publishes
+both exact visible endpoints: text over ordered unique canonical fragments and
+PDF in normalized full-page space. The persistence locator remains the existing
+`ReaderResumeState`; projection owns no second cursor schema. On hidden,
+`pagehide`, pane deactivation, and reader teardown, synchronously attempt
+capture before a best-effort keepalive flush. Lifecycle is not user intent:
+only a position already made dirty by genuine reader input may be promoted.
 
 Initial and remote application use the same format restore path. Programmatic
 application suppresses save echo, but genuine wheel/touch/key/scrollbar input
 cancels a delayed restore and prevents snap-back. PDF receives later addressable
 requests; delete its current page-derived remount key.
+
+`Restore`, Find `Preview`, and Find `Return` may publish the visible band but
+cannot write cursor progress or Consumption activity. An unavailable exact
+capture remains absent; it never becomes a zero, midpoint, or scrollbar value.
 
 The force-kill/in-flight tail is accepted: if a lifecycle request cannot be sent,
 or a newer locator is queued behind an older request when the page dies, the last
@@ -361,7 +377,8 @@ The stable entry is `/media/:id`; it never redirects to progress parameters.
 Cold mount precedence:
 
 1. fresh feature-owned hash/evidence/highlight/apparatus target;
-2. Positioned canonical cursor;
+2. Positioned canonical cursor (select the saved web `target.fragment_id`
+   before exact restore);
 3. coarse cold `?loc`/`?fragment` only when the cursor is Empty;
 4. default readable source.
 
@@ -390,6 +407,8 @@ Delete completely:
 - `ReaderStateWithAttention` and `parse_reader_state_with_attention`;
 - `useReaderResumeState.ts` and its tests/compatibility export;
 - frozen `initialReaderResumeState` and page-derived PDF remounting;
+- rail-only scrollbar capture, `documentSpan`, and duplicate first-visible
+  position scans;
 - attention-only locator substitution;
 - duplicated media-reader query/hash builders;
 - tests and docs that say GET/PUT is `ReaderResumeState | null` or that cold
@@ -452,6 +471,8 @@ touch listening/device identity, active-pane attention tracking, or audio recenc
    not a stale animation-frame snapshot.
 10. Initial/remote/hash/history application produces no cursor write echo;
     genuine input cancels delayed EPUB restore.
+10a. One exact semantic viewport drives progress, activity, and the rail;
+    Preview, Return, and restore produce no progress/activity write.
 11. Bare web, transcript, EPUB, and PDF routes apply canonical state internally
     without flashing default content or changing the URL.
 12. Clean dormant re-entry auto-applies a greater revision without stealing
@@ -464,6 +485,8 @@ touch listening/device identity, active-pane attention tracking, or audio recenc
     navigation.
 15. Non-readable media produces no progress request or reader loading state.
 16. PDF later application changes page/progression/zoom without remount.
+16a. Web saved-fragment resume opens that fragment before exact restore; EPUB
+    repeated navigation targets do not duplicate fragment length.
 17. Document engagement recency comes only from
     `reader_engagement_states`; podcast recency remains heartbeat-owned.
 18. No locator/quote content appears in URL, browser storage, or logs.

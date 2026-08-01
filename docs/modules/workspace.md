@@ -64,7 +64,7 @@ Every supported route declares one `PaneRouteHeaderContract`:
 - `section` resolves the destination-owned standing head and an optional folio
 - `resource` resolves a title plus structured credit groups
 
-Pane bodies publish the orthogonal `{ header, toolbar, search, actions, menu,
+Pane bodies publish the orthogonal `{ header, search, instrument, actions, menu,
 refresh }`
 capabilities through `usePanePrimaryChrome`. Each update carries the current
 `routeKey`; `PaneShell` rejects stale updates before validating the header kind.
@@ -94,16 +94,14 @@ representation-only—merges the published groups, and invokes
 arrays or duplicate core behavior. Share and promoted header actions project
 from the universal resource-action catalog.
 
-The three projections are fixed:
-
-- desktop section header: 44px
-- desktop resource header: 60px
-- mobile top bar: 60px plus safe area
+Every primary identity projection uses one 60px track. The mobile safe area is
+additive.
 
 Desktop promoted actions render through `ActionBar`; overflow publications
-render through `ActionMenu` in desktop and mobile chrome. Free-form `toolbar`
-content is reserved for bounded format navigation such as PDF and EPUB
-controls. It is not another action channel.
+render through `ActionMenu` in desktop and mobile chrome. PDF and EPUB publish
+one labelled `instrument` containing control content only. `PaneShell` owns its
+40px desktop or 48px mobile contextual frame and renders it as an accessible
+group. Expanded Search takes exclusive occupancy of that same track.
 
 Each pane landmark is named from its resolved header. Resource identity owns its
 `h1`; imported reader headings are projected beneath it, and pending resource
@@ -123,7 +121,7 @@ is loading, short, or being replaced. Window, workspace, nested transcript
 segments, and non-reader pane scroll never participate.
 
 The provider reduces reader scroll to one normalized collapse progress. The app
-top bar, optional active reader toolbar, and inner Nexus control consume that
+top bar, optional active contextual row, and inner Nexus control consume that
 progress in the same animation frame through compositor-only transforms. Top
 chrome retreats upward and Nexus retreats downward. The untransformed outer
 Nexus wrapper remains the fixed-obstruction measurement surface, so content
@@ -143,8 +141,9 @@ and while reader restore, positioning, Find, selection, navigation,
 secondary-surface, library-picker, menu, or chrome-focus locks are held.
 `useMobileChromeVisibleLocks` is the only lock capability, and final release
 rebaselines from the live scrollport. Enabled mobile surfaces register as
-`AppBar`, `PaneToolbar`, or `NexusControl`; only the active pane toolbar
-registers. Focus on a real control acquires `chrome-focus`; primary pointer
+`AppBar`, `PaneToolbar`, or `NexusControl`; `PaneToolbar` remains the
+internal motion-role name for the active pane's effective contextual row.
+Focus on a real control acquires `chrome-focus`; primary pointer
 intent on the reader releases only that focus. Tracking, settling, and hidden
 moving roots are inert, non-hit-testable, and absent from accessibility
 navigation, while the pane landmark remains represented. Desktop chrome is

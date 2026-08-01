@@ -6,25 +6,31 @@
 
 .popover {
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2);
+  width: max-content;
+  max-width: calc(100vw - var(--space-4));
+  padding: var(--space-1);
   box-shadow: var(--shadow-2);
 }
 
 .popover[data-mobile="true"] {
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1);
-  border-radius: var(--radius-full);
-  box-shadow: var(--shadow-3);
-  width: max-content;
-  min-width: 0;
-  max-width: min(
-    228px,
+  width: min(
+    360px,
     calc(
       100vw - max(var(--space-2), var(--viewport-safe-left)) -
-      max(var(--space-2), var(--viewport-safe-right)) - var(--space-4)
+        max(var(--space-2), var(--viewport-safe-right)) - var(--space-4)
     )
   );
+  max-width: calc(
+    100vw - max(var(--space-2), var(--viewport-safe-left)) -
+      max(var(--space-2), var(--viewport-safe-right)) - var(--space-4)
+  );
+  padding: var(--space-1);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-2);
+  min-width: 0;
+}
+
+.popover:is([data-reflow-width="true"], [data-compact-width="true"]) {
+  width: var(--floating-action-content-max-width);
+  min-width: 0;
 }

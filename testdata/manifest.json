@@ -25,7 +25,8 @@
       "source": "https://www.gutenberg.org/ebooks/2701",
       "license": "Project Gutenberg public-domain ebook; retained as the canonical real EPUB input",
       "purpose": [
-        "Durable EPUB ingest, library publication, and reader-open proof"
+        "Durable EPUB ingest, library publication, and reader-open proof",
+        "Canonical EPUB navigation-anchor, document-position, and resume proof"
       ]
     },
     {
@@ -43,7 +44,8 @@
       "source": "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/",
       "license": "NASA public web content with no copyright asserted unless noted; retained as the canonical captured-web input",
       "purpose": [
-        "Captured web ingest and grounded citation proof"
+        "Captured web ingest and grounded citation proof",
+        "Real Chromium selection, highlight provenance, and canonical web-position proof"
       ]
     },
     {

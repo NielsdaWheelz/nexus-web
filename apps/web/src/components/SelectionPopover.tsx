@@ -1,37 +1,51 @@
 /**
  * SelectionPopover - Selection actions for highlight and chat destinations.
  *
- * Appears when user selects text in the content area. Positioned relative
- * to the selection bounding box. Selecting a color creates the highlight
- * immediately; the chat icons create a default-color highlight and then quote
- * it into a new or an existing chat (this component owns that sequencing).
+ * Appears when the user selects text in a reader. The shared floating surface
+ * owns collision-aware placement; the dock owns action presentation and focus.
+ * Actions that need a persisted highlight create it first, then continue with
+ * that exact highlight (this component owns and serializes that sequencing).
  * Dismisses on Escape, click outside, or selection collapse.
  */
 
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
-import HighlightActionBar from "@/components/highlights/HighlightActionBar";
+import SelectionActionDock, {
+  type SelectionPendingActionId,
+} from "@/components/highlights/SelectionActionDock";
+import { buildHighlightActions } from "@/components/highlights/highlightActions";
 import styles from "./SelectionPopover.module.css";
 import { useShareController } from "@/lib/sharing/controller";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
 import { resourceShareTarget } from "@/lib/sharing/targets";
 
-interface SelectionPopoverProps<H extends { id: string }> {
+interface SelectionPopoverBaseProps<H extends { id: string }> {
   selectionRect: DOMRect;
   selectionLineRects?: DOMRect[];
   containerRef: React.RefObject<HTMLElement | null>;
   onCreateHighlight: (color: HighlightColor) => Promise<H | null>;
-  onQuoteToNewChat?: (highlight: H) => void | Promise<void>;
-  onQuoteToExistingChat?: (highlight: H) => void | Promise<void>;
   onAddNote?: () => void;
   onLink?: () => void;
   onLearn?: (highlight: H) => void | Promise<void>;
   onDismiss: () => void;
   isCreating?: boolean;
 }
+
+type SelectionPopoverChatProps<H extends { id: string }> =
+  | {
+      onQuoteToNewChat: (highlight: H) => void | Promise<void>;
+      onQuoteToExistingChat: (highlight: H) => void | Promise<void>;
+    }
+  | {
+      onQuoteToNewChat?: never;
+      onQuoteToExistingChat?: never;
+    };
+
+type SelectionPopoverProps<H extends { id: string }> =
+  SelectionPopoverBaseProps<H> & SelectionPopoverChatProps<H>;
 
 export const DEFAULT_COLOR: HighlightColor = "yellow";
 
@@ -49,22 +63,52 @@ export default function SelectionPopover<H extends { id: string }>({
   isCreating = false,
 }: SelectionPopoverProps<H>) {
   const { openShare } = useShareController();
-  const quoteHighlight = useCallback(
-    (quote?: (highlight: H) => void | Promise<void>) => {
-      if (isCreating || !quote) return;
+  const actionLockRef = useRef(false);
+  const [pendingActionId, setPendingActionId] =
+    useState<SelectionPendingActionId | null>(null);
+  const actionBusy = isCreating || pendingActionId !== null;
+  const chatDestinations =
+    onQuoteToNewChat && onQuoteToExistingChat
+      ? {
+          newChat: onQuoteToNewChat,
+          existingChat: onQuoteToExistingChat,
+        }
+      : null;
+
+  const runHighlightFirst = useCallback(
+    (
+      actionId: SelectionPendingActionId,
+      color: HighlightColor,
+      afterCreate?: (highlight: H) => void | Promise<void>,
+    ) => {
+      if (isCreating || actionLockRef.current) return;
+      actionLockRef.current = true;
+      setPendingActionId(actionId);
       void (async () => {
-        const highlight = await onCreateHighlight(DEFAULT_COLOR);
-        if (highlight) await quote(highlight);
+        try {
+          const highlight = await onCreateHighlight(color);
+          if (highlight && afterCreate) await afterCreate(highlight);
+        } finally {
+          actionLockRef.current = false;
+          setPendingActionId(null);
+        }
       })();
     },
     [isCreating, onCreateHighlight],
   );
+
+  const quoteHighlight = useCallback(
+    (
+      actionId: "quote-new" | "quote-existing",
+      quote: (highlight: H) => void | Promise<void>,
+    ) => {
+      runHighlightFirst(actionId, DEFAULT_COLOR, quote);
+    },
+    [runHighlightFirst],
+  );
   const shareHighlight = useCallback(
     (triggerEl: HTMLButtonElement | null) => {
-      if (isCreating) return;
-      void (async () => {
-        const highlight = await onCreateHighlight(DEFAULT_COLOR);
-        if (!highlight) return;
+      runHighlightFirst("share", DEFAULT_COLOR, (highlight) => {
         openShare(
           resourceShareTarget(`highlight:${highlight.id}`),
           anchoredShareOpenOptions(triggerEl, () =>
@@ -73,17 +117,43 @@ export default function SelectionPopover<H extends { id: string }>({
             ),
           ),
         );
-      })();
+      });
     },
-    [isCreating, onCreateHighlight, openShare],
+    [openShare, runHighlightFirst],
   );
-  const learnHighlight = useCallback(() => {
-    if (isCreating || !onLearn) return;
-    void (async () => {
-      const highlight = await onCreateHighlight(DEFAULT_COLOR);
-      if (highlight) await onLearn(highlight);
-    })();
-  }, [isCreating, onCreateHighlight, onLearn]);
+  const learnHighlight = onLearn
+    ? () => runHighlightFirst("learn", DEFAULT_COLOR, onLearn)
+    : undefined;
+  const chatHandlers = chatDestinations
+    ? {
+        onQuoteToNewChat: () =>
+          quoteHighlight("quote-new", chatDestinations.newChat),
+        onQuoteToExistingChat: () =>
+          quoteHighlight("quote-existing", chatDestinations.existingChat),
+      }
+    : {};
+
+  const actions = buildHighlightActions({
+    target: { kind: "selection", color: DEFAULT_COLOR },
+    canQuoteToChat: chatDestinations !== null,
+    canAddNote: Boolean(onAddNote),
+    isReflowable: false,
+    state: {
+      isEditingBounds: false,
+      deleting: false,
+      changingColor: actionBusy,
+    },
+    handlers: {
+      onSelectColor: (color) => runHighlightFirst("color", color),
+      onAddNote,
+      onLink,
+      onShare: ({ triggerEl }) => shareHighlight(triggerEl),
+      onLearn: learnHighlight,
+      ...chatHandlers,
+      onToggleEditBounds: () => {},
+      onDelete: () => {},
+    },
+  });
 
   return (
     <FloatingActionSurface
@@ -93,24 +163,13 @@ export default function SelectionPopover<H extends { id: string }>({
       lineRects={selectionLineRects}
       boundary={containerRef.current}
       className={styles.popover}
-      role="group"
-      label="Selection actions"
       preservePointerSelection
       onDismiss={onDismiss}
     >
-      <HighlightActionBar
-        variant="selection"
-        selectionColor={DEFAULT_COLOR}
-        canQuoteToChat={Boolean(onQuoteToNewChat || onQuoteToExistingChat)}
-        canAddNote={Boolean(onAddNote)}
-        busy={isCreating}
-        onSelectColor={onCreateHighlight}
-        onAddNote={onAddNote}
-        onLink={onLink}
-        onLearn={onLearn ? learnHighlight : undefined}
-        onShare={({ triggerEl }) => shareHighlight(triggerEl)}
-        onQuoteToNewChat={() => quoteHighlight(onQuoteToNewChat)}
-        onQuoteToExistingChat={() => quoteHighlight(onQuoteToExistingChat)}
+      <SelectionActionDock
+        actions={actions}
+        pendingActionId={pendingActionId}
+        externalBusy={isCreating && pendingActionId === null}
       />
     </FloatingActionSurface>
   );

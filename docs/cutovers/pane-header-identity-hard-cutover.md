@@ -8,6 +8,12 @@ Date: 2026-07-20
 > replaced by the universal Companion action in
 > [`resource-inspector-and-universal-dossiers-hard-cutover.md`](resource-inspector-and-universal-dossiers-hard-cutover.md).
 > The retained header-identity rules remain background, not current opener guidance.
+>
+> **Superseded (2026-07-31):** Primary pane geometry and the contextual
+> publication contract were replaced by
+> [`pane-chrome-frame-hard-cutover.md`](pane-chrome-frame-hard-cutover.md).
+> The retained identity, route-gating, action, focus, and error-boundary clauses
+> remain authoritative.
 
 ## Decision
 
@@ -76,14 +82,13 @@ The bordered media byline and the rail/list generic opener are deleted.
 Geometry has one CSS owner:
 
 ```css
---pane-section-header-height: 44px;
---pane-resource-header-height: 60px;
---appnav-bar-height: var(--pane-resource-header-height);
+--pane-chrome-header-height: max(60px, 3.75rem);
+--pane-chrome-instrument-height: max(40px, 2.5rem);
 ```
 
-- Desktop section header: exactly 44px.
-- Desktop resource header: exactly 60px.
+- Every desktop primary header: exactly 60px at default text scale.
 - Mobile top bar: exactly 60px for every route; safe area is additional.
+- The contextual row is 40px desktop and 48px mobile.
 - Resource title and credit summary each reserve one line box, including an
   empty credit state, so loading/data transitions do not move chrome.
 - Controls remain 32px desktop and 44px touch targets.
@@ -102,8 +107,8 @@ Typography:
 `SurfaceHeader` and `NavTopBar` receive `data-header-kind`. CSS never infers
 header kind from viewport or `bodyMode`.
 
-All content-offset formulas continue to consume `--appnav-bar-height`:
-`PaneShell.module.css`, `PdfReader.module.css`, and media `page.module.css`.
+All content-offset formulas consume `--pane-chrome-header-height` plus the
+existing safe-area and measured contextual-row owners.
 `TOP_REVEAL_ZONE_PX` becomes `TOP_ALWAYS_VISIBLE_SCROLL_PX = 60`, an explicitly
 independent scroll-policy threshold; it no longer claims to mirror CSS
 geometry and may diverge from it deliberately.
@@ -189,13 +194,13 @@ Rules:
 - every other current route is explicitly `section`;
 - a section header accepts only a section header publication;
 - a resource route's **header field** accepts only a resource header
-  publication; its toolbar, actions, and options remain orthogonal.
+  publication; its instrument, actions, and options remain orthogonal.
 - resolved model/table types are discriminated supported/unsupported unions:
   every supported member has a non-null header and definition; only
   `id: "unsupported"` has nulls. `WorkspaceHost` branches on that discriminant
   and has no nullable-header fallback for a supported route.
 
-`PaneChromeDescriptor`, every `getChrome`, and route-level toolbar/action
+`PaneChromeDescriptor`, every `getChrome`, and route-level chrome/action
 React nodes are deleted. Route icons remain in `paneRouteTable.ts`.
 
 ## Typed Header Model
@@ -300,7 +305,10 @@ Extend `panePublications.ts`; `PanePrimaryChrome.tsx` owns transport only:
 ```ts
 export interface PanePrimaryChromePublication {
   readonly header?: PaneHeaderPublication;
-  readonly toolbar?: ReactNode;
+  readonly instrument?: {
+    readonly label: string;
+    readonly content: ReactNode;
+  };
   readonly actions?: readonly PaneHeaderAction[];
   readonly options?: readonly ActionDescriptor[];
 }
@@ -309,9 +317,10 @@ export interface PanePrimaryChromePublication {
 - `header` is identity only.
 - `actions` are responsive primary commands.
 - `options` are overflow-only commands.
-- `toolbar` is the sole bounded `ReactNode` exception, for PDF/EPUB format
-  navigation. Equality is `===`; producers must memoize it. No deep or value
-  comparison is attempted.
+- `instrument` is the sole bounded `ReactNode` exception, for PDF/EPUB format
+  navigation. Equality compares `label` by value and `content` by reference;
+  producers must memoize the content. `PaneShell` owns the labelled group and
+  outer frame.
 - Header fields compare structurally. Descriptor scalar/state fields compare
   by value; elements, handlers, and render callbacks compare by identity.
 - The transport record includes `routeKey`; stale cleanup cannot clear a newer
@@ -781,16 +790,16 @@ Architecture:
 - Route-key gate precedes normalization/kind validation.
 - A current mismatch fails only its pane; stale invalid publications and stale
   cleanup are ignored.
-- `toolbar: ReactNode` is the only free-form primary-chrome exception and has
-  tested referential equality.
+- `instrument.content: ReactNode` is the only free-form primary-chrome
+  exception and has tested label-value/content-reference equality.
 
 Identity and layout:
 
 - Media shows resource pending/ready/unavailable/failed identity and never
   `Libraries`.
-- Section/resource desktop heights are 44/60px; mobile is 60px plus safe area.
+- Section/resource desktop heights are both 60px; mobile is 60px plus safe area.
 - Title and credits do not overlap controls at 390px.
-- PDF/text targets align below app bar plus optional reader toolbar; hide/reveal
+- PDF/text targets align below app bar plus optional reader instrument; hide/reveal
   leaves no gap.
 - Title and credits independently ellipsize; full credits/title are visually
   inspectable through `Credits…`.
@@ -855,7 +864,7 @@ Cutover hygiene:
 - `SecondaryPaneShell`/`MobileSecondaryPaneHost`: group ID on outer container;
   tab IDs remain independent; collapsed DOM absent.
 - `ResourceHead`/`PaneShell`: pending accessible name; section/resource landmark
-  names; 44/60px geometry; same-resource concurrent IDs/counts.
+  names; unified 60px geometry; same-resource concurrent IDs/counts.
 - `Dialog`/`MobileSheet`/`MediaAuthorsEditor`: explicit trigger return,
   disconnected-trigger fallback, skip behavior, exclusive nested modality,
   lower-first scroll locking, and one-layer Escape.

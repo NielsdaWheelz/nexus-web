@@ -29,12 +29,12 @@ function ColorDot({ color }: { color: HighlightColor }) {
 /**
  * The single source of truth for highlight actions: which exist, their icons,
  * order, tone, toggled state, and gating. Pure — given the same target, flags,
- * state, and handlers it returns the same descriptors. Rendered by ActionBar in
- * the sidecar card, the reader-text click popover, and the selection popover.
+ * state, and handlers it returns the same descriptors. Existing Highlights are
+ * rendered by ActionBar/ActionMenu; fresh selections use SelectionActionDock.
  *
- * `selection` targets have no highlight yet: only color (which creates), note
- * (create-then-annotate), and the quotes (create-then-quote); never edit-bounds
- * or delete.
+ * `selection` targets have no highlight yet. Their descriptors expose the
+ * complete Passage Palette; edit-bounds and delete remain existing-highlight
+ * actions only.
  */
 export function buildHighlightActions({
   target,
@@ -55,8 +55,8 @@ export function buildHighlightActions({
     onLink?: () => void;
     onShare?: (detail: ActionSelectDetail) => void;
     onLearn?: () => void;
-    onQuoteToNewChat: () => void;
-    onQuoteToExistingChat: () => void;
+    onQuoteToNewChat?: () => void;
+    onQuoteToExistingChat?: () => void;
     onToggleEditBounds: () => void;
     onDelete: () => void;
   };
@@ -65,6 +65,8 @@ export function buildHighlightActions({
   const color = isExisting ? target.highlight.color : target.color;
   const canEdit = isExisting ? target.highlight.is_owner !== false : true;
   const hasQuoteText = isExisting ? target.highlight.exact.trim().length > 0 : true;
+  const quoteToNewChat = handlers.onQuoteToNewChat;
+  const quoteToExistingChat = handlers.onQuoteToExistingChat;
 
   const options: PaneHeaderAction[] = [];
 
@@ -72,7 +74,7 @@ export function buildHighlightActions({
     options.push({
       kind: "custom",
       id: "color",
-      label: "Highlight color",
+      label: isExisting ? "Highlight color" : "Colour",
       icon: <ColorDot color={color} />,
       disabled: state.changingColor,
       render: ({ closeMenu }) => (
@@ -93,7 +95,7 @@ export function buildHighlightActions({
     options.push({
       kind: "command",
       id: "note",
-      label: isExisting && target.highlight.linked_note_blocks?.length ? "Edit note" : "Add note",
+      label: isExisting ? (target.highlight.linked_note_blocks?.length ? "Edit note" : "Add note") : "Note",
       icon: <NotebookPen size={14} aria-hidden="true" />,
       disabled: !isExisting && state.changingColor,
       onSelect: handlers.onAddNote,
@@ -107,7 +109,7 @@ export function buildHighlightActions({
     options.push({
       kind: "command",
       id: "link",
-      label: "Link…",
+      label: isExisting ? "Link…" : "Link",
       icon: <Link2 size={14} aria-hidden="true" />,
       disabled: !isExisting && state.changingColor,
       onSelect: handlers.onLink,
@@ -115,13 +117,16 @@ export function buildHighlightActions({
   }
 
   if (canEdit && handlers.onShare) {
-    options.push(projectResourceActionToHeader({
+    const share = projectResourceActionToHeader({
       kind: "command",
       catalogKey: "Share",
       busy: !isExisting && state.changingColor,
       disabledReason: "Creating highlight",
       onSelect: handlers.onShare,
-    }));
+    });
+    options.push(
+      isExisting ? share : { ...share, label: "Share", separatorBefore: true },
+    );
   }
 
   if (hasQuoteText && handlers.onLearn) {
@@ -130,27 +135,28 @@ export function buildHighlightActions({
       id: "learn",
       label: "Learn",
       icon: <BookOpenText size={14} aria-hidden="true" />,
+      separatorBefore: !isExisting,
       disabled: !isExisting && state.changingColor,
       onSelect: handlers.onLearn,
     });
   }
 
-  if (canQuoteToChat && hasQuoteText) {
+  if (canQuoteToChat && hasQuoteText && quoteToNewChat && quoteToExistingChat) {
     options.push({
       kind: "command",
       id: "quote-new",
-      label: "Ask in new chat",
+      label: isExisting ? "Ask in new chat" : "New chat",
       icon: <MessageSquarePlus size={14} aria-hidden="true" />,
       disabled: !isExisting && state.changingColor,
-      onSelect: handlers.onQuoteToNewChat,
+      onSelect: quoteToNewChat,
     });
     options.push({
       kind: "command",
       id: "quote-existing",
-      label: "Ask in existing chat…",
+      label: isExisting ? "Ask in existing chat…" : "Existing chat",
       icon: <MessagesSquare size={14} aria-hidden="true" />,
       disabled: !isExisting && state.changingColor,
-      onSelect: handlers.onQuoteToExistingChat,
+      onSelect: quoteToExistingChat,
     });
   }
 

@@ -13,10 +13,12 @@ from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundEr
 from nexus.schemas.media import (
     EpubSectionOut,
     MediaNavigationOut,
+    ReaderNavigationFragmentOut,
     ReaderNavigationLocationOut,
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
+from nexus.services.canonicalize import generate_canonical_text_with_element_offsets
 from nexus.services.capabilities import is_document_status_ready
 
 
@@ -180,65 +182,130 @@ def get_epub_navigation_for_viewer(
     """Return canonical persisted EPUB navigation."""
     require_readable_epub(db, viewer_id, media_id)
 
-    section_rows = db.execute(
-        text("""
-            WITH nav AS (
+    fragment_rows = (
+        db.execute(
+            text(
+                """
+                SELECT id, idx, html_sanitized, canonical_text
+                FROM fragments
+                WHERE media_id = :mid
+                ORDER BY idx ASC
+                """
+            ),
+            {"mid": media_id},
+        )
+        .mappings()
+        .all()
+    )
+    section_rows = (
+        db.execute(
+            text(
+                """
                 SELECT n.location_id,
                        n.label,
-                       f.id AS fragment_id,
                        n.fragment_idx,
                        n.href_path,
                        n.href_fragment,
                        n.source_node_id,
                        n.source,
-                       n.ordinal,
-                       char_length(f.canonical_text) AS fragment_chars,
-                       row_number() OVER (
-                           PARTITION BY n.fragment_idx
-                           ORDER BY n.ordinal
-                       ) AS fragment_row
+                       n.ordinal
                 FROM epub_nav_locations n
-                JOIN fragments f
-                  ON f.media_id = n.media_id
-                 AND f.idx = n.fragment_idx
                 WHERE n.media_id = :mid
-            )
-            SELECT location_id,
-                   label,
-                   fragment_id,
-                   fragment_idx,
-                   href_path,
-                   href_fragment,
-                   source_node_id,
-                   source,
-                   ordinal,
-                   CASE WHEN fragment_row = 1 THEN fragment_chars ELSE 0 END
-            FROM nav
-            ORDER BY ordinal ASC
-        """),
-        {"mid": media_id},
-    ).fetchall()
+                ORDER BY n.ordinal ASC
+                """
+            ),
+            {"mid": media_id},
+        )
+        .mappings()
+        .all()
+    )
     toc_rows = _load_toc_rows(db, media_id)
     landmark_rows = _load_navigation_locations(db, media_id, "landmarks")
     page_rows = _load_navigation_locations(db, media_id, "page_list")
 
-    sections = [
-        ReaderNavigationSectionOut(
-            section_id=row[0],
-            label=row[1],
-            ordinal=row[8],
-            fragment_id=row[2],
-            fragment_idx=row[3],
-            href_path=row[4],
-            href_fragment=row[5],
-            anchor_id=row[5],
-            char_count=row[9],
+    fragment_by_idx = {int(row["idx"]): row for row in fragment_rows}
+    requested_ids: dict[int, set[str]] = {}
+    for row in section_rows:
+        anchor_id = row["href_fragment"]
+        if anchor_id is not None:
+            requested_ids.setdefault(int(row["fragment_idx"]), set()).add(str(anchor_id))
+
+    anchor_offsets: dict[int, dict[str, int]] = {}
+    for fragment_idx, ids in requested_ids.items():
+        fragment = fragment_by_idx.get(fragment_idx)
+        if fragment is None:
+            raise RuntimeError("Ready EPUB navigation targets a missing fragment")
+        canonical_text, offsets = generate_canonical_text_with_element_offsets(
+            str(fragment["html_sanitized"]),
+            ids,
         )
-        for row in section_rows
+        if canonical_text != str(fragment["canonical_text"]):
+            raise RuntimeError("Ready EPUB fragment canonical text drifted")
+        missing = ids - offsets.keys()
+        if missing:
+            raise RuntimeError(f"Ready EPUB navigation target is missing anchor {min(missing)!r}")
+        anchor_offsets[fragment_idx] = offsets
+
+    starts: list[int] = []
+    indexes_by_fragment: dict[int, list[int]] = {}
+    for row in section_rows:
+        fragment_idx = int(row["fragment_idx"])
+        if fragment_idx not in fragment_by_idx:
+            raise RuntimeError("Ready EPUB navigation targets a missing fragment")
+        anchor_id = row["href_fragment"]
+        starts.append(0 if anchor_id is None else anchor_offsets[fragment_idx][str(anchor_id)])
+        indexes_by_fragment.setdefault(fragment_idx, []).append(len(starts) - 1)
+
+    ends: list[int] = [0] * len(section_rows)
+    for fragment_idx, indexes in indexes_by_fragment.items():
+        previous_start = -1
+        fragment_length = len(str(fragment_by_idx[fragment_idx]["canonical_text"]))
+        for index in indexes:
+            if starts[index] < previous_start:
+                raise RuntimeError("Ready EPUB navigation anchors are not in document order")
+            previous_start = starts[index]
+        for position, index in enumerate(indexes):
+            ends[index] = next(
+                (
+                    starts[later]
+                    for later in indexes[position + 1 :]
+                    if starts[later] > starts[index]
+                ),
+                fragment_length,
+            )
+
+    sections: list[ReaderNavigationSectionOut] = []
+    for index, row in enumerate(section_rows):
+        fragment_idx = int(row["fragment_idx"])
+        fragment = fragment_by_idx[fragment_idx]
+        sections.append(
+            ReaderNavigationSectionOut(
+                section_id=str(row["location_id"]),
+                label=str(row["label"]),
+                ordinal=int(row["ordinal"]),
+                fragment_id=fragment["id"],
+                fragment_idx=fragment_idx,
+                start_offset=starts[index],
+                end_offset=ends[index],
+                href_path=row["href_path"],
+                href_fragment=row["href_fragment"],
+                anchor_id=row["href_fragment"],
+            )
+        )
+
+    fragments = [
+        ReaderNavigationFragmentOut(
+            fragment_id=row["id"],
+            fragment_idx=row["idx"],
+            char_count=len(str(row["canonical_text"])),
+        )
+        for row in fragment_rows
     ]
 
     section_by_source_node = {
-        str(row[6]): str(row[0]) for row in section_rows if row[6] is not None
+        str(row["source_node_id"]): str(row["location_id"])
+        for row in section_rows
+        if row["source_node_id"] is not None
     }
 
     nodes_by_id: dict[str, ReaderNavigationTocNodeOut] = {}
@@ -268,6 +335,7 @@ def get_epub_navigation_for_viewer(
     return MediaNavigationOut(
         media_id=media_id,
         kind="epub",
+        fragments=fragments,
         sections=sections,
         toc_nodes=roots,
         landmarks=[

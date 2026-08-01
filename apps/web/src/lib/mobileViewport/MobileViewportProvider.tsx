@@ -25,6 +25,7 @@ export interface MobileViewportCapability {
     element: HTMLElement,
   ): () => void;
   reportMobileOverlayKeyboardInset(px: number): () => void;
+  subscribeContentBottomClearance(listener: () => void): () => void;
 }
 
 interface FixedRegistration {
@@ -90,6 +91,7 @@ export function MobileViewportProvider({
   const mobileOverlayKeyboardReportsRef = useRef<
     MobileOverlayKeyboardReport[]
   >([]);
+  const contentBottomClearanceListenersRef = useRef(new Set<() => void>());
   const nextMobileOverlayKeyboardReportIdRef = useRef(0);
 
   const measureFixedObstructions = useCallback(() => {
@@ -169,12 +171,27 @@ export function MobileViewportProvider({
     };
   }, []);
 
+  const subscribeContentBottomClearance = useCallback(
+    (listener: () => void) => {
+      contentBottomClearanceListenersRef.current.add(listener);
+      return () => {
+        contentBottomClearanceListenersRef.current.delete(listener);
+      };
+    },
+    [],
+  );
+
   const capability = useMemo<MobileViewportCapability>(
     () => ({
       registerFixedObstruction,
       reportMobileOverlayKeyboardInset,
+      subscribeContentBottomClearance,
     }),
-    [registerFixedObstruction, reportMobileOverlayKeyboardInset],
+    [
+      registerFixedObstruction,
+      reportMobileOverlayKeyboardInset,
+      subscribeContentBottomClearance,
+    ],
   );
   // `fixedMeasurements` is identity-stable across renders (the setter returns the
   // current object when measurements are equal), so memoizing keeps `projection`
@@ -204,6 +221,9 @@ export function MobileViewportProvider({
       "--mobile-overlay-keyboard-inset",
       `${projection.overlayKeyboardInsetPx}px`,
     );
+    for (const listener of contentBottomClearanceListenersRef.current) {
+      listener();
+    }
   }, [projection]);
 
   useLayoutEffect(() => {
@@ -254,6 +274,7 @@ export function MobileViewportProvider({
       }
       registrationsRef.current.clear();
       mobileOverlayKeyboardReportsRef.current = [];
+      contentBottomClearanceListenersRef.current.clear();
       const root = document.documentElement;
       root.style.removeProperty("--mobile-content-bottom-clearance");
       root.style.removeProperty("--mobile-nexus-bottom-offset");

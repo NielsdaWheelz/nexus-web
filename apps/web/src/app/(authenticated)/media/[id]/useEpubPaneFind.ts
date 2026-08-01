@@ -22,7 +22,10 @@ import {
   type EpubFindSnapshotFragment,
   type EpubSectionContent,
 } from "@/lib/media/epubFind";
-import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
+import type {
+  ReaderNavigationFragment,
+  ReaderNavigationSection,
+} from "@/lib/media/readerNavigation";
 import {
   createPaneFindResultKey,
   type PaneFindResultKey,
@@ -978,6 +981,7 @@ export function createEpubFindAdapter({
 
 export function useEpubPaneFind({
   mediaId,
+  fragments,
   navigation,
   renderedStateRef,
   getRenderedSectionOverride,
@@ -990,6 +994,7 @@ export function useEpubPaneFind({
   scrollPositioner,
 }: {
   readonly mediaId: string;
+  readonly fragments: readonly ReaderNavigationFragment[] | null;
   readonly navigation: readonly ReaderNavigationSection[] | null;
   readonly renderedStateRef: RefObject<EpubFindRenderedState | null>;
   readonly getRenderedSectionOverride: () =>
@@ -1007,10 +1012,10 @@ export function useEpubPaneFind({
 }): PaneFindCapability<EpubFindError> {
   const snapshot = useMemo(
     () =>
-      navigation
-        ? createEpubFindSnapshot({ mediaId, navigation })
+      fragments && navigation
+        ? createEpubFindSnapshot({ mediaId, fragments, navigation })
         : null,
-    [mediaId, navigation],
+    [fragments, mediaId, navigation],
   );
   const currentSourceKeyRef = useRef<PaneFindSourceKey | null>(
     snapshot?.sourceKey ?? null,

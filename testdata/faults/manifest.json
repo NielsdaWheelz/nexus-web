@@ -67,6 +67,15 @@
       "expected_failure": "DID NOT RAISE"
     },
     {
+      "id": "reader-position-fragment-prefix-bypass",
+      "patch": "testdata/faults/reader-position-fragment-prefix-bypass.patch",
+      "sha256": "c6bb454eda56feb9518f732644aec2181e455d65f9c621adbce42279390aaaee",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/readerDocumentPosition.unit.test.ts"
+      ],
+      "expected_failure": "canonical reader position must count each preceding fragment exactly once"
+    },
+    {
       "id": "citation-canonical-locator-bypass",
       "patch": "testdata/faults/citation-canonical-locator-bypass.patch",
       "sha256": "ec54e76c045dc02579e820d0846cccbf59048bc0b6f4c856462abe1dffc0bf68",
@@ -74,6 +83,15 @@
         "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence"
       ],
       "expected_failure": "citation did not publish a canonical evidence locator"
+    },
+    {
+      "id": "reader-position-end-locus-bypass",
+      "patch": "testdata/faults/reader-position-end-locus-bypass.patch",
+      "sha256": "6bfaf98df60d77e179033fdc3a401c1623dfe8de5cc20cf91fad7c3af3859fc3",
+      "proofs": [
+        "pytest:python/tests/service/test_reader_document_positions.py::test_epub_navigation_and_document_map_share_exact_canonical_positions"
+      ],
+      "expected_failure": "Document Map used non-canonical section positions"
     },
     {
       "id": "durable-job-fence-bypass",

@@ -28,23 +28,7 @@
   text-decoration: underline;
 }
 
-.mediaToolbar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  width: 100%;
-  min-width: 0;
-}
-
-.mediaToolbarRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex-wrap: nowrap;
-  min-width: 0;
-}
-
-.mediaToolbarStatus {
+.mediaInstrumentStatus {
   flex: 1 1 auto;
   color: var(--ink-muted);
   font-size: var(--text-sm);
@@ -54,16 +38,16 @@
   white-space: nowrap;
 }
 
-.mediaToolbarSectionStatus {
+.mediaInstrumentSectionStatus {
   flex: 0 0 auto;
 }
 
-.mediaToolbarSectionSelect {
+.mediaInstrumentSectionSelect {
   flex: 1 1 0;
   min-width: 0;
 }
 
-.mediaToolbarSectionSelect select {
+.mediaInstrumentSectionSelect select {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

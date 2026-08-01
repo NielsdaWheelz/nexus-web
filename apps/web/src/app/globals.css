@@ -116,9 +116,8 @@
   /* Layout */
   --navbar-width: 240px;
   --navbar-collapsed-width: 48px;
-  --pane-section-header-height: 44px;
-  --pane-resource-header-height: 60px;
-  --appnav-bar-height: var(--pane-resource-header-height);
+  --pane-chrome-header-height: max(60px, 3.75rem);
+  --pane-chrome-instrument-height: max(40px, 2.5rem);
   --tabsbar-height: 40px;
   --viewport-safe-top: env(safe-area-inset-top);
   --viewport-safe-right: env(safe-area-inset-right);

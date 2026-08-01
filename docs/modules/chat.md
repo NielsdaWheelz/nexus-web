@@ -400,6 +400,13 @@ It owns fixed positioning, viewport clamping, mobile visual-viewport handling, t
 line-rect placement, Escape/outside-pointer dismissal, scroll dismissal/reposition policy,
 `data-dismiss-ignore`, and pointerdown prevention for preserving live text selections.
 
+Fresh reader selection is the **Passage Palette**: `SelectionPopover` sequences
+Highlight-first chat creation and `SelectionActionDock` renders the fixed
+**New chat** and **Existing chat** labels inside a labeled toolbar. The dock does
+not create conversations or own destination behavior. Both actions create or
+reuse the default-yellow Highlight before launch, and neither creates a
+Conversation before the first send.
+
 `ActionMenu` remains separate because it owns menu semantics: roving keyboard behavior,
 menu roles, focus restoration, and menuitem rendering.
 
@@ -446,7 +453,7 @@ the path), hydrates one canonical `ReaderSelectionPreview` through
 pending (above the composer, removable) and sent (read-only, above the user
 body). Both modes use the same three-line preview and explicit in-place
 expansion. The semantic figure has zero outer margin and cannot exceed its
-containing pane. `ConversationDestinationOverlay` is the "Ask in existing chat…" picker
+containing pane. `ConversationDestinationOverlay` is the existing-chat picker
 (title search over `GET /conversations?q=`). `useChatDraft` persists text, an
 explicit `ChatProfileSelection`, and the active send attempt (idempotency key,
 payload identity, exact sent profile selection, revision) in `sessionStorage`;

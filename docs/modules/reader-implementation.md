@@ -115,8 +115,8 @@ document completes only after a forward wheel/touch/key intent while its end is
 already visible.
 
 The terminal capture is the existing `web` or `epub` locator at the canonical
-text length. Only the last canonical fragment/navigation section may set both
-`progression` and `total_progression` to exact `1`. The browser owns no Finished
+text length. Only the last canonical fragment may set both `progression` and
+`total_progression` to exact `1`. The browser owns no Finished
 threshold and sends no completion command: the ordinary reader-state PUT
 atomically advances Consumption engagement and completion. After the write is
 acknowledged, the Lectern provider performs one FIFO-owned revalidation. Its
@@ -191,6 +191,19 @@ semantic filters, and typed related-object disclosures is
 Evidence exposes only that target-centered payload; no removed reader lens,
 route, or storage-shaped response remains.
 
+### fresh-selection Passage Palette
+
+`SelectionPopover` mounts one `SelectionActionDock` inside
+`FloatingActionSurface`. Full-capability selections expose the fixed visible
+order **Colour**, **Note**, **Link**, **Share**, **Learn**, **New chat**, and
+**Existing chat**. Desktop is one labeled row; the canonical mobile render
+environment projects the same descriptors as a non-scrolling `4 + 3` grid.
+The dock owns toolbar focus and color disclosure only. Readers remain the sole
+selection-normalization and Highlight-creation owners, while
+`buildHighlightActions` remains the sole action-order and capability owner.
+Existing Highlight surfaces continue to use `HighlightActionBar` and keep their
+existing labels and behavior.
+
 ### quick-note composer
 
 the **quick-note composer** (`HighlightQuickNoteComposer`) is the in-context
@@ -207,8 +220,8 @@ skins.
   concurrently and opens the composer in the same gesture), the
   existing-highlight click popover's **Add note**/**Edit note** action, and
   the bare-`n` chord while a reader selection is active. `SelectionPopover`
-  is the single create-then-verb sequencer; the readers no longer hand-roll
-  create-then-quote wrappers.
+  is the single highlight-first composite-action sequencer for Colour, Share,
+  Learn, and chat; Note and Link retain the distinct reader-owned flows above.
 - pending-create sessions hand the editor a stable opaque session id as its
   `highlightId` and bridge to the real highlight id inside the composer's
   save wrapper once the concurrent create resolves; the editor is never
@@ -272,23 +285,26 @@ Inspector reaches mobile through the workspace secondary sheet.
 
 ### overview rail positioning
 
-The aggregate service positions each anchored Document Map marker as a fraction
-`0..1` through the whole document, computed from owner locators and document
-metadata, never from rendered DOM geometry.
+The aggregate publishes markers from exact owner start locators. The active
+reader publishes one `ReaderSemanticViewport`; `readerDocumentPosition.ts`
+projects its visible start/end to `0..1` without DOM, React, persistence, or
+activation policy. Marker owners already publish normalized exact positions.
 
-- web/transcript: cumulative codepoint offset over `fragments` ordered by
-  `idx`, length = canonical-text codepoint length
-- epub: cumulative `char_count` over navigation sections ordered by `ordinal`;
-  a stored highlight anchors by `fragment_id`, and each navigation section
-  carries the `fragment_id` of its one fragment, so highlights position
-  directly against the section list
-- pdf: exact page geometry when available, normalized within the page and then
-  across `numPages`; page-only markers fall back to the page midpoint
-- items without a resolved reader position do not produce rail markers
-- the viewport band spans the active fragment/section's global offset range
-  (`documentSpan`), narrowed by the in-fragment scroll fraction
-- rail activation routes through `MediaPaneBody`, opens Contents or Evidence,
-  and then delegates to the owning item activation path.
+- text is `(fragment_id, canonical codepoint offset)` over ordered unique
+  fragments; every fragment contributes its length once
+- EPUB navigation sections are targets, not lengths: each carries an exact
+  `start_offset`/`end_offset` inside its required fragment; fragments carry
+  `char_count`
+- PDF is `(one-based page, normalized full-page fraction)`; page gaps, zoom,
+  and scrollable-remainder fractions are not document coordinates
+- a marker with no exact owner start has no rail marker; no midpoint, ordinal,
+  section-top, or scrollbar fallback exists
+- the rail receives only markers, a projected visible range, and activation;
+  it owns no scroll listener, content observer, `documentSpan`, content ref, or
+  position calculation. A track-only `ResizeObserver` recomputes presentation
+  clusters after fixed-chrome reflow and reads no document geometry
+- overlapping 24px targets form a median-position cluster. Every member is a
+  named native button; no primary member is selected implicitly.
 
 ### highlight read paths
 
@@ -305,9 +321,10 @@ update cadences.
 
 ### reader-to-chat quote selection
 
-quote-to-chat is highlight-first. A durable Highlight must exist first; the
-reader's **Ask in new chat** and **Ask in existing chat…** actions launch chat
-with a typed intent and perform no conversation mutation on launch. The launch
+quote-to-chat is highlight-first. A durable Highlight must exist first; fresh
+selection actions are **New chat** and **Existing chat**, while existing
+Highlight surfaces retain **Ask in new chat** and **Ask in existing chat…**.
+Both launch chat with a typed intent and perform no conversation mutation on launch. The launch
 address is the pane-local intent hash `#mediaId=<uuid>&highlightId=<uuid>` (the
 destination is the path); the chat pane parses it, hydrates one canonical preview
 through `GET /api/chat-reader-selections/highlights/{id}?media_id=`, and shows
@@ -330,8 +347,9 @@ the pending quote card above the composer.
 ### anchored evidence projection
 
 Anchored projection is the reader-owned bridge from target-owned locators to
-visible Evidence and margin rows. The overview rail never uses rendered DOM
-projection; its positions come from aggregate document fractions.
+visible Evidence and margin rows. The overview rail owns no DOM geometry:
+marker positions come from aggregate document fractions and its visible band
+comes from the format-owned semantic viewport.
 
 - Reflowable readers project highlights from rendered DOM segments tagged with
   `data-active-highlight-ids`.
@@ -621,6 +639,12 @@ pure black/white to reduce halation under long sessions.
   format adapter to apply its existing cold-start beginning; the client never
   fabricates a locator or revision.
 
+The active format publishes a snapshot only when both visible endpoints are
+exact for the current source/layout generation. `Reader` snapshots feed cursor
+and activity owners after genuine input. `Restore`, `Preview`, and `Return`
+snapshots may update the Document Map rail but retain their existing no-write,
+no-activity fences.
+
 ### consumption activity
 
 Reader progress is current-state resume data. It remains independent from
@@ -630,8 +654,9 @@ Consumption Activity's bounded historical facts.
   `activityRecorder`. Reading accrues only while the media pane is active, the
   document is visible and focused, and recent genuine reader input keeps the
   reader eligible.
-- The adapter reports cursor/progress measurements to the recorder but never
-  writes spans itself, sends a raw device id, or derives completion from dwell.
+- The adapter projects the same semantic viewport that drives the rail; it
+  never remeasures a scrollbar, writes spans itself, sends a raw device id, or
+  derives completion from dwell.
   Canonical Consumption state remains the completion owner.
 - PDF contributes observed time/progress but not exact word traversal. The
   canonical text/document-metrics owners provide word positions for supported
@@ -650,6 +675,8 @@ contract and [player.md](player.md) for audio capture ownership.
 - cold-mount precedence: fresh feature-owned hash/evidence/highlight/apparatus
   target -> Positioned canonical cursor -> coarse cold `?loc`/`?fragment` only
   when the cursor is Empty -> default readable source
+- a saved web cursor selects its `target.fragment_id` before exact text restore;
+  fragment one is the Empty-cursor default only
 - when the canonical cursor supersedes a cold coarse query, pane-local
   replace removes only `loc` and `fragment`, preserving `apparatus`,
   unrelated query state, and hash
@@ -731,8 +758,10 @@ of its location-target writes uses.
 ### epub reader surface
 
 - epub reader bootstraps from `GET /api/media/{id}/navigation`
-- navigation sections carry `fragment_id`, so an epub highlight can be mapped
-  to its section
+- navigation carries ordered unique `fragments` and exact section targets.
+  Fragments own document length; sections carry their required `fragment_id`,
+  `start_offset`, and `end_offset`. Repeated headings in one XHTML fragment do
+  not duplicate its length.
 - active epub content loads from
   `GET /api/media/{id}/sections/{section_id}`
 - `section_id` is treated as a path-encoded identifier and may contain `/`
@@ -762,9 +791,10 @@ scroll offsets.
 
 flow:
 
-- map dom text to canonical codepoint offsets
-- persist the first visible canonical offset while reading
-- map canonical offset back to dom location on restore
+- map DOM text to canonical codepoint offsets
+- capture the first and last visible canonical offsets in one DOM pass
+- persist the first offset only after genuine reader input
+- map the saved offset back to DOM location on restore
 
 this keeps resume robust when typography changes.
 

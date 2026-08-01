@@ -99,18 +99,29 @@
       "id": "reading-progress",
       "source_globs": [
         "python/nexus/services/consumption/**/*.py",
+        "apps/web/src/lib/reader/readerDocumentPosition.ts",
         "apps/web/src/lib/reader/readerProgress.ts"
       ],
       "proofs": [
-        "pytest:python/tests/service/test_reading_progress.py::test_reader_cursor_cas_rejects_stale_progress_without_partial_side_effects"
+        "pytest:python/tests/service/test_reading_progress.py::test_reader_cursor_cas_rejects_stale_progress_without_partial_side_effects",
+        "vitest:apps/web/src/lib/reader/readerDocumentPosition.unit.test.ts"
       ],
       "capabilities": [
-        "service"
+        "service",
+        "kernel-web"
       ]
     },
     {
       "id": "citation-provenance-identity",
       "source_globs": [
+        "python/nexus/schemas/media.py",
+        "python/nexus/services/canonicalize.py",
+        "python/nexus/services/epub_ingest.py",
+        "python/nexus/services/epub_read.py",
+        "python/nexus/services/reader_document_map.py",
+        "python/nexus/services/reader_evidence_markers.py",
+        "python/nexus/services/reader_locations.py",
+        "python/nexus/services/reader_navigation.py",
         "python/nexus/services/retrieval_citation.py",
         "python/nexus/services/resource_graph/citations.py",
         "python/nexus/services/agent_tools/web_search.py",
@@ -119,6 +130,7 @@
       ],
       "proofs": [
         "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence",
+        "pytest:python/tests/service/test_reader_document_positions.py::test_epub_navigation_and_document_map_share_exact_canonical_positions",
         "pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
       ],
       "capabilities": [
@@ -238,8 +250,13 @@
       "proof": "apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts",
       "source_globs": [
         "python/nexus/services/highlights.py",
+        "python/nexus/services/reader_document_map.py",
+        "python/nexus/services/reader_evidence_markers.py",
+        "python/nexus/services/reader_locations.py",
+        "apps/web/src/components/SelectionPopover.tsx",
         "apps/web/src/components/highlights/**/*",
         "apps/web/src/components/reader/document-map/**/*",
+        "apps/web/src/components/ui/FloatingActionSurface.tsx",
         "apps/web/src/lib/reader/usePendingDocumentMapPulse.ts",
         "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
@@ -253,6 +270,22 @@
       "proof": "apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts",
       "source_globs": [
         "python/nexus/services/consumption/**/*",
+        "python/nexus/schemas/media.py",
+        "python/nexus/services/canonicalize.py",
+        "python/nexus/services/epub_ingest.py",
+        "python/nexus/services/epub_read.py",
+        "python/nexus/services/reader_document_map.py",
+        "python/nexus/services/reader_evidence_markers.py",
+        "python/nexus/services/reader_locations.py",
+        "python/nexus/services/reader_navigation.py",
+        "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
+        "apps/web/src/app/(authenticated)/media/*/ReaderActivityAdapter.ts",
+        "apps/web/src/app/(authenticated)/media/*/epubHelpers.ts",
+        "apps/web/src/app/(authenticated)/media/*/epubRestore.ts",
+        "apps/web/src/app/(authenticated)/media/*/paneTextAnchor.ts",
+        "apps/web/src/app/(authenticated)/media/*/useEpubPaneFind.ts",
+        "apps/web/src/components/PdfReader.tsx",
+        "apps/web/src/lib/media/readerNavigation.ts",
         "apps/web/src/lib/reader/**/*",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],

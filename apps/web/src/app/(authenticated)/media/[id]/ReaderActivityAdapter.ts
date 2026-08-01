@@ -4,15 +4,16 @@ import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { activityRecorder } from "@/lib/consumption/activityRecorder";
 import { parseMediaRef } from "@/lib/consumption/activityContract";
 import { documentWordBoundaryOrdinal } from "@/lib/consumption/canonicalWordPosition";
+import {
+  projectReaderDocumentPoint,
+  type ReaderDocumentProjection,
+  type ReaderSemanticViewport,
+} from "@/lib/reader/readerDocumentPosition";
 
 interface ReaderActivityText {
+  fragmentId: string;
   canonicalText: string;
   documentWordStart?: number;
-}
-
-interface ReaderActivityPdfControls {
-  pageNumber: number;
-  numPages: number;
 }
 
 interface ReaderActivityViewport {
@@ -24,13 +25,13 @@ interface UseReaderActivityAdapterInput {
   mediaId: string;
   observerKey: string;
   canRead: boolean;
-  isPdf: boolean;
   paneActive: boolean;
   viewport: ReaderActivityViewport;
   readerRootRef: RefObject<HTMLDivElement | null>;
   pdfViewportRef: RefObject<HTMLDivElement | null>;
   activeContent: ReaderActivityText | null;
-  pdfControls: ReaderActivityPdfControls | null;
+  semanticViewport: ReaderSemanticViewport | null;
+  documentProjection: ReaderDocumentProjection | null;
   onGenuineReaderInput: () => void;
   previewLease: {
     isActive(): boolean;
@@ -38,16 +39,8 @@ interface UseReaderActivityAdapterInput {
   };
 }
 
-interface ReaderActivityTextMeasurement {
-  anchorOffset: number | null;
-  totalProgression: number | null;
-}
-
 interface ReaderActivityAdapter {
   noteGenuineInput: () => void;
-  publishTextMeasurement: (
-    measurement: ReaderActivityTextMeasurement,
-  ) => void;
 }
 
 const READING_IDLE_AFTER_MS = 300_000;
@@ -73,21 +66,22 @@ export function useReaderActivityAdapter({
   mediaId,
   observerKey,
   canRead,
-  isPdf,
   paneActive,
   viewport,
   readerRootRef,
   pdfViewportRef,
   activeContent,
-  pdfControls,
+  semanticViewport,
+  documentProjection,
   onGenuineReaderInput,
   previewLease,
 }: UseReaderActivityAdapterInput): ReaderActivityAdapter {
   const lastGenuineInputMonoRef = useRef<number | undefined>(undefined);
-  const textMeasurementRef = useRef<ReaderActivityTextMeasurement>({
-    anchorOffset: null,
-    totalProgression: null,
-  });
+  const semanticViewportRef = useRef(semanticViewport);
+  semanticViewportRef.current = semanticViewport;
+  const documentProjectionRef = useRef(documentProjection);
+  documentProjectionRef.current = documentProjection;
+  const documentKind = documentProjection?.kind ?? null;
   const updateRef = useRef<() => void>(() => undefined);
 
   const noteGenuineInput = useCallback(() => {
@@ -95,18 +89,16 @@ export function useReaderActivityAdapter({
     updateRef.current();
   }, []);
 
-  const publishTextMeasurement = useCallback(
-    (measurement: ReaderActivityTextMeasurement) => {
-      textMeasurementRef.current = measurement;
-      updateRef.current();
-    },
-    [],
-  );
-
   useEffect(() => {
-    if (!viewport.hydrated || !canRead || (!isPdf && !activeContent)) {
+    if (
+      !viewport.hydrated ||
+      !canRead ||
+      documentKind === null ||
+      (documentKind === "Text" && !activeContent)
+    ) {
       return;
     }
+    const isPdf = documentKind === "Pdf";
     const root = isPdf ? pdfViewportRef.current : readerRootRef.current;
     if (!root) return;
 
@@ -114,15 +106,25 @@ export function useReaderActivityAdapter({
     const update = () => {
       const now = performance.now();
       const lastGenuineInputMono = lastGenuineInputMonoRef.current;
-      const textMeasurement = textMeasurementRef.current;
+      const currentSemanticViewport = semanticViewportRef.current;
+      const currentDocumentProjection = documentProjectionRef.current;
+      const visibleStart = currentSemanticViewport?.visibleStart;
+      const progress =
+        currentSemanticViewport && currentDocumentProjection
+          ? projectReaderDocumentPoint(
+              currentDocumentProjection,
+              currentSemanticViewport.visibleStart,
+            )
+          : undefined;
       const wordPosition =
-        textMeasurement.anchorOffset === null ||
+        visibleStart?.kind !== "Text" ||
+        visibleStart.fragmentId !== activeContent?.fragmentId ||
         activeContent?.documentWordStart === undefined
           ? undefined
           : documentWordBoundaryOrdinal({
               canonicalText: activeContent.canonicalText,
               documentWordStart: activeContent.documentWordStart,
-              offset: textMeasurement.anchorOffset,
+              offset: visibleStart.offset,
             });
       recorder.observe(observerKey, {
         mediaRef: parseMediaRef(`media:${mediaId}`),
@@ -131,6 +133,7 @@ export function useReaderActivityAdapter({
         eligible:
           paneActive &&
           !previewLease.isActive() &&
+          currentSemanticViewport?.intent === "Reader" &&
           document.visibilityState === "visible" &&
           document.hasFocus() &&
           lastGenuineInputMono !== undefined &&
@@ -140,12 +143,7 @@ export function useReaderActivityAdapter({
             ? undefined
             : lastGenuineInputMono + READING_IDLE_AFTER_MS,
         measurement: {
-          progress:
-            isPdf
-              ? pdfControls && pdfControls.numPages > 0
-                ? pdfControls.pageNumber / pdfControls.numPages
-                : undefined
-              : (textMeasurement.totalProgression ?? undefined),
+          progress,
           // PDFs have no canonical text ordinal. `undefined` becomes Absent at
           // the recorder's strict wire boundary.
           wordPosition,
@@ -172,7 +170,6 @@ export function useReaderActivityAdapter({
       root.addEventListener("touchstart", noteInput, { passive: true });
       root.addEventListener("wheel", noteInput, { passive: true });
       root.addEventListener("keydown", noteInput);
-      root.addEventListener("scroll", update, { passive: true });
     }
     document.addEventListener("visibilitychange", update);
     window.addEventListener("focus", update);
@@ -184,7 +181,6 @@ export function useReaderActivityAdapter({
         root.removeEventListener("touchstart", noteInput);
         root.removeEventListener("wheel", noteInput);
         root.removeEventListener("keydown", noteInput);
-        root.removeEventListener("scroll", update);
       }
       document.removeEventListener("visibilitychange", update);
       window.removeEventListener("focus", update);
@@ -196,18 +192,21 @@ export function useReaderActivityAdapter({
   }, [
     activeContent,
     canRead,
-    isPdf,
+    documentKind,
     mediaId,
     observerKey,
     onGenuineReaderInput,
     paneActive,
     pdfViewportRef,
-    pdfControls,
     previewLease,
     readerRootRef,
     viewport.hydrated,
     viewport.kind,
   ]);
 
-  return { noteGenuineInput, publishTextMeasurement };
+  useEffect(() => {
+    updateRef.current();
+  }, [documentProjection, semanticViewport]);
+
+  return { noteGenuineInput };
 }
