@@ -146,7 +146,9 @@ def test_next_build_lock_is_cross_process_visible_under_runtime_state(tmp_path: 
     assert "BlockingIOError" in completed.stderr
 
 
-def test_build_is_fixed_isolated_normalized_atomic_and_reused(tmp_path: Path) -> None:
+def test_build_is_fixed_isolated_atomic_and_reused_once_per_fingerprint(
+    tmp_path: Path,
+) -> None:
     root = _repository(tmp_path)
     fake_bun = _fake_bun(root)
     environment = {
@@ -201,6 +203,16 @@ def test_build_is_fixed_isolated_normalized_atomic_and_reused(tmp_path: Path) ->
 
     assert ensure_standalone_build(root, environment, PUBLIC_KEY) == artifact
     assert len(json.loads((root / "apps" / "web" / "build-invocation.json").read_text())) == 2
+
+    (root / "apps" / "web" / "src" / "app" / "page.tsx").write_text("changed product\n")
+    changed_artifact = ensure_standalone_build(root, environment, PUBLIC_KEY)
+
+    assert changed_artifact.fingerprint != artifact.fingerprint
+    assert changed_artifact.root != artifact.root
+    assert artifact.server.read_text() == "server"
+    assert len(json.loads((root / "apps" / "web" / "build-invocation.json").read_text())) == 4
+    assert ensure_standalone_build(root, environment, PUBLIC_KEY) == changed_artifact
+    assert len(json.loads((root / "apps" / "web" / "build-invocation.json").read_text())) == 4
 
 
 def test_invalid_or_ambiguous_output_is_never_published(tmp_path: Path) -> None:

@@ -377,14 +377,19 @@ capabilities as blocked and launches no further heavy work.
 | exact proof / `changed` | under 10 seconds when no heavy boundary is selected | dependency or first template/build cost is recorded, not hidden |
 | `confidence` | 60–90 seconds | selected service/component setup may exceed the warm target |
 | `pr` | 3–5 minutes locally | CI duration is measured before a p95 ratchet is adopted |
-| `full` | measured; no fixed acceptance number | one build and one sequential heavy process |
+| `full` | measured; no fixed acceptance number | one current-revision build and one sequential heavy process |
 | `nightly` / `release` | scheduled and cost-capped | hosted/device work remains fail-closed |
 
 The controller records peak RSS for its process tree and the working set of
 containers owned by the exact test compose project. CPU count never chooses
 workers. Run one Next build, Chromium suite, or Gradle operation at a time; do
-not overlap unrelated heavy lanes. Build one fingerprinted strict-CSP Next
-artifact and reuse it.
+not overlap unrelated heavy lanes. Build a strict-CSP Next artifact at most
+once per distinct executable source/environment fingerprint and reuse it.
+Ordinary workflows therefore build the current revision once. Sensitivity MAY
+build one additional artifact for each distinct faulted or base revision whose
+production browser proof must execute that code; reusing the green artifact
+there would make the red oracle vacuous. Never rebuild the same fingerprint in
+one workflow.
 
 Before launching Node/browser/build/Gradle or other heavy proof, the controller
 acquires the single-heavy-operation lock and waits at most 30 seconds for
@@ -861,7 +866,7 @@ Build these in order:
 4. one migrated seed database cloned per run;
 5. one immutable canonical corpus plus per-run writable state;
 6. default-deny network, owned-mock/sleep lint, E2E lint, and visible flakes;
-7. one production build reused by browser projects;
+7. one production build per executable fingerprint, reused by browser projects;
 8. demonstrated-sensitive replacement proof and aggressive legacy deletion;
 9. bounded release proof and safe post-deploy smoke.
 

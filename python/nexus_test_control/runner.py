@@ -1965,6 +1965,7 @@ def _classified_exact_result(result: CapabilityResult, proof_id: str) -> Capabil
         or re.search(r"\btests\s+\d+\s+failed\b", folded) is not None
         or ("failed " in folded and "::" in folded and " - assertionerror" in folded)
         or "error: expect(" in folded
+        or re.search(r"\bexpect\(received\)\.to[a-z]+\(", folded) is not None
         or re.search(r"\bexpect\(locator\)\.to[a-z]+\([^\n]*\) failed\b", folded) is not None
         or re.search(r"\ne\s+(?:assert|assertionerror|failed:)", folded) is not None
     ):
@@ -3934,13 +3935,13 @@ def _decisive_output(value: str, limit: int = 1900) -> str:
     for index, line in enumerate(lines):
         if re.search(
             r"(?:^|\s)(?:E\s+(?:assert|AssertionError|Failed:)|FAILED\s|"
-            r"AssertionError:|Error:\s*expect\(|expect\(locator\)\.to[A-Za-z]+\(|"
+            r"AssertionError:|Error:\s*expect\(|expect\((?:locator|received)\)\.to[A-Za-z]+\(|"
             r"Tests\s+\d+\s+failed|falsifying example:)",
             line,
             re.IGNORECASE,
         ):
             decisive_lines.add(index)
-            if "expect(locator)." in line.casefold():
+            if re.search(r"expect\((?:locator|received)\)\.", line, re.IGNORECASE):
                 decisive_lines.update(range(max(0, index - 4), index))
     decisive = "\n".join(lines[index] for index in sorted(decisive_lines))
     return (decisive or stripped)[-limit:]

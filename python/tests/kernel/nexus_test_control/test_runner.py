@@ -1647,6 +1647,15 @@ def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behav
         ),
         proof,
     )
+    playwright_received_assertion = runner._classified_exact_result(
+        CapabilityResult(
+            evidence,
+            "Programmatic restore echoed a write.\n\n"
+            "expect(received).toBeNull()\n\n"
+            'Received: {"_type": "Request"}',
+        ),
+        proof,
+    )
 
     assert collection.detail.startswith("proof_result=collection_failure|")
     assert setup.detail.startswith("proof_result=setup_or_execution_failure|")
@@ -1654,6 +1663,9 @@ def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behav
     assert raises_assertion.detail.startswith("proof_result=behavioral_assertion_failure|")
     assert browser_assertion.detail.startswith("proof_result=behavioral_assertion_failure|")
     assert playwright_assertion.detail.startswith("proof_result=behavioral_assertion_failure|")
+    assert playwright_received_assertion.detail.startswith(
+        "proof_result=behavioral_assertion_failure|"
+    )
     assert f"proof_id={proof}|" in assertion.detail
 
 
@@ -1705,6 +1717,34 @@ def test_long_ansi_playwright_diagnostic_preserves_the_behavioral_assertion() ->
 
     assert "exact mobile lock failed" in detail
     assert "expect(locator).toHaveAttribute() failed" in detail
+    assert classified.detail.startswith("proof_result=behavioral_assertion_failure|")
+
+
+def test_long_playwright_received_diagnostic_preserves_the_custom_oracle() -> None:
+    completed = subprocess.CompletedProcess(
+        ("playwright",),
+        1,
+        "build log\n" * 400
+        + "Programmatic restore echoed a reader-state write.\n"
+        + "\n"
+        + "expect(received).toBeNull()\n"
+        + "\n"
+        + 'Received: {"_type": "Request"}\n'
+        + "source footer\n" * 400,
+        "",
+    )
+
+    detail = runner._command_result_detail(1, completed)
+    classified = runner._classified_exact_result(
+        CapabilityResult(
+            CapabilityEvidence(Capability.JOURNEYS_ALL, RunStatus.FAIL, 1, 0),
+            detail,
+        ),
+        "playwright:apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts",
+    )
+
+    assert "Programmatic restore echoed a reader-state write." in detail
+    assert "expect(received).toBeNull()" in detail
     assert classified.detail.startswith("proof_result=behavioral_assertion_failure|")
 
 

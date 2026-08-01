@@ -54,7 +54,8 @@ or fallback portfolios. The final routing commit removes the legacy paths.
   decide it.
 - Make focused proof the default; keep the static/kernel warm path under
   10 seconds and give slower affected proof an explicit cadence.
-- Reuse service processes and one production build; isolate all writable state.
+- Reuse service processes and each fingerprinted production build; isolate all
+  writable state.
 - Bound local concurrency by measured total owned memory; default to no more
   than two Python workers and one local heavy process.
 - Refuse Node/browser/build/Gradle and other heavy launches below 2,048 MiB
@@ -75,7 +76,8 @@ In scope:
 - the public test API, selectors, policy checks, runtime lifecycle, evidence,
   CI cadence, test structure, testkits, corpus, and proof portfolio;
 - PostgreSQL template cloning, per-run MinIO buckets, scenario-local Supabase
-  users, app-process lifecycle, and one cached Next production artifact;
+  users, app-process lifecycle, and fingerprint-cached Next production
+  artifacts;
 - deleting or replacing legacy tests and every old test-only path they own;
 - adapting the current Android emulator, protected provider-certification,
   signed-Android, and deployed-auth-smoke owners without duplicating their
@@ -267,10 +269,14 @@ cloning; runtime locking and engine disposal must enforce that.
 
 ### Build and resource control
 
-Build Next once per workflow with strict production CSP and a portable
-standalone output. Key the artifact by web sources, lockfile, build config, and
-build-time environment; record the fingerprint beside it. Playwright starts the
-already-built artifact and contains no build command. Remove
+Build Next at most once per distinct executable source/environment fingerprint
+with strict production CSP and a portable standalone output. Ordinary
+workflows have one current-revision fingerprint. Sensitivity MAY add one
+fingerprint for each distinct base or faulted production state that a browser
+proof must actually execute; it MUST NOT reuse the green artifact for a red
+state or rebuild any fingerprint. Key the artifact by web sources, lockfile,
+build config, and build-time environment; record the fingerprint beside it.
+Playwright starts the already-built artifact and contains no build command. Remove
 `E2E_DISABLE_CSP`; every journey uses the production CSP. Install Chromium
 during dependency setup, not inside a test target.
 
@@ -940,13 +946,17 @@ not supported compatibility modes.
   machine completes without OOM. CI p95 becomes a downward-only ratchet only
   after at least 20 comparable successful runs; it is not an initial acceptance
   fiction.
-- **AC7 — build/browser:** one Next build and one Chromium installation at most
-  per verification workflow. Local Playwright journey and extension
-  capabilities consume the same fingerprinted standalone artifact; deployment
-  smoke targets the deployed artifact while reusing the same Playwright
-  package, configuration, and browser installation. Vitest browser components
-  retain their Vite component boundary; all local journeys use strict CSP and
-  no disable escape.
+- **AC7 — build/browser:** one Next build at most per distinct executable
+  source/environment fingerprint and one Chromium installation at most per
+  verification workflow. The current green fingerprint is built once and
+  reused by green sensitivity, bundle, journey, and extension capabilities;
+  each distinct base/faulted browser state gets its own executable artifact so
+  the red oracle runs the injected code, and no fingerprint is rebuilt. Local
+  Playwright journey and extension capabilities consume the same current
+  standalone artifact; deployment smoke targets the deployed artifact while
+  reusing the same Playwright package, configuration, and browser installation.
+  Vitest browser components retain their Vite component boundary; all local
+  journeys use strict CSP and no disable escape.
 - **AC8 — portfolio:** every risk id in the in-scope typed floor has an
   independent, sensitive proof;
   the typed minimum risk floor cannot be lowered through `proofs.json`;
