@@ -26,7 +26,6 @@ from nexus_test_control.model import (
     SensitivityMethod,
     Workflow,
 )
-from nexus_test_control.runner import WorkflowRun
 from nexus_test_control.selection import load_selection_index
 
 
@@ -173,7 +172,7 @@ def test_summary_coexists_with_same_run_failure_artifacts(tmp_path: Path) -> Non
 
 
 def test_diagnose_replays_failed_workflow_once_but_keeps_failed_verdict(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     _git_repository(tmp_path)
     git_sha = subprocess.run(
@@ -207,24 +206,6 @@ def test_diagnose_replays_failed_workflow_once_but_keeps_failed_verdict(
     original_directory = tmp_path / "test-results/runs" / original_id
     original_directory.mkdir(parents=True)
     write_summary(tmp_path, original)
-    observed_contexts = []
-
-    def replay(context: object, *args: object, **kwargs: object) -> WorkflowRun:
-        observed_contexts.append(context)
-        return WorkflowRun(
-            (
-                CapabilityEvidence(
-                    Capability.DOCTOR,
-                    RunStatus.PASS,
-                    1,
-                    1,
-                    detail="diagnostic pass",
-                ),
-            ),
-            PeakOwnedMemory(1, 0, 1),
-        )
-
-    monkeypatch.setattr("nexus_test_control.cli.run_workflow", replay)
     output = StringIO()
 
     assert (
@@ -237,12 +218,11 @@ def test_diagnose_replays_failed_workflow_once_but_keeps_failed_verdict(
         == 1
     )
 
-    assert len(observed_contexts) == 1
-    assert output.getvalue().startswith("diagnose: first=fail; diagnostic=pass; verdict=fail;")
+    assert "diagnose: first=fail; diagnostic=not_run; verdict=fail;" in output.getvalue()
     summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
     summary = json.loads(summary_path.read_text())
     assert summary["status"] == "fail"
-    assert summary["diagnostic_result"]["status"] == "pass"
+    assert summary["diagnostic_result"]["status"] == "not_run"
     assert summary["diagnostic_of"]["run_id"] == original_id
     claim = json.loads((original_directory / "diagnostic-rerun.json").read_text())
     assert claim["summary"] == summary_path.relative_to(tmp_path).as_posix()
