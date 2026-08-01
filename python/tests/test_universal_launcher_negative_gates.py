@@ -3,13 +3,15 @@
 The Browse hard cutover deleted the standalone read-only web-search route
 (``api/routes/web_search.py``) but retained the read-only Brave service helper
 beneath Browse and chat. Persistence of a web-search run must therefore remain
-reachable only from the chat tool path: ``persist_web_search_run`` lives in the
-chat web_search service and is called nowhere else. This is a pure repo-text grep
-(no DB, no app import), so it runs in the unit lane.
+reachable only from the durable chat tool step: ``persist_web_search_run`` lives
+in the chat web_search service and is called only by the chat-run transaction
+owner. This is a syntax-aware source-tree check (no DB, no app import), so it
+runs in the unit lane.
 """
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -27,20 +29,33 @@ def test_web_search_persistence_owner_is_the_chat_tool_path() -> None:
     """The persistence primitive lives in the chat tool service and its sole caller
     is the durable chat-step owner, so no other surface can persist a web-search run.
     """
-    service_src = _WEB_SEARCH_SERVICE.read_text(encoding="utf-8")
-    chat_run_src = _CHAT_RUN_SERVICE.read_text(encoding="utf-8")
-    assert "def persist_web_search_run(" in service_src, (
-        "persist_web_search_run must remain defined in the chat web_search service"
-    )
-    assert chat_run_src.count("persist_web_search_run(") == 1, (
-        "the durable chat-step owner must call persist_web_search_run exactly once"
-    )
+    definitions: list[tuple[Path, int]] = []
+    calls: list[tuple[Path, int]] = []
     for path in _PY_ROOT.rglob("*.py"):
-        if path in {_WEB_SEARCH_SERVICE, _CHAT_RUN_SERVICE}:
-            continue
-        assert "persist_web_search_run(" not in path.read_text(encoding="utf-8"), (
-            f"web-search persistence escaped the durable chat-step owner: {path}"
-        )
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.as_posix())
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                and node.name == "persist_web_search_run"
+            ):
+                definitions.append((path, node.lineno))
+            if isinstance(node, ast.Call) and (
+                (isinstance(node.func, ast.Name) and node.func.id == "persist_web_search_run")
+                or (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "persist_web_search_run"
+                )
+            ):
+                calls.append((path, node.lineno))
+
+    assert len(definitions) == 1 and definitions[0][0] == _WEB_SEARCH_SERVICE, (
+        "persist_web_search_run must have one canonical definition in the chat tool "
+        f"service; found {definitions!r}"
+    )
+    assert len(calls) == 1 and calls[0][0] == _CHAT_RUN_SERVICE, (
+        "persist_web_search_run must have exactly one caller in the durable chat step; "
+        f"found {calls!r}"
+    )
 
 
 def test_web_search_persistence_has_one_canonical_identity_path() -> None:

@@ -325,14 +325,20 @@ class TestSucceeded:
             ),
         )
         runtime = _ScriptedRuntime(outcome=outcome)
+        dispatch_checkpoints: list[str] = []
 
         result = await execute_generation(
-            req, session_factory=factory, runtime=runtime, settings=_settings()
+            req,
+            session_factory=factory,
+            runtime=runtime,
+            settings=_settings(),
+            before_dispatch=lambda: dispatch_checkpoints.append("before_dispatch"),
         )
 
         assert result.outcome is outcome
         assert isinstance(result.support_id, Absent)
         assert runtime.calls == ["generate"]
+        assert dispatch_checkpoints == ["before_dispatch"]
 
         db_session.expire_all()
         call = db_session.get(LLMCall, result.generation_id)
@@ -431,6 +437,7 @@ class TestDefectSettlement:
     ):
         req = _req(_owner(entitled_user_id))
         runtime = _ScriptedRuntime()  # never reached: credential resolution fails first
+        dispatch_checkpoints: list[str] = []
 
         with pytest.raises(RuntimeDefect) as exc_info:
             await execute_generation(
@@ -438,9 +445,11 @@ class TestDefectSettlement:
                 session_factory=factory,
                 runtime=runtime,
                 settings=_settings(OPENAI_API_KEY=None),
+                before_dispatch=lambda: dispatch_checkpoints.append("before_dispatch"),
             )
         assert exc_info.value.code == "credential_missing"
         assert runtime.calls == []
+        assert dispatch_checkpoints == []
 
         db_session.expire_all()
         rows = db_session.execute(
@@ -528,6 +537,7 @@ class TestStreamedRefusal:
             RuntimeStreamEvent(seq=2, event=TerminalEvent(outcome=terminal)),
         ]
         runtime = _ScriptedRuntime(events=events)
+        dispatch_checkpoints: list[str] = []
 
         seen = []
         async for event in execute_generation_stream(
@@ -536,10 +546,12 @@ class TestStreamedRefusal:
             runtime=runtime,
             settings=_settings(),
             cancel=asyncio.Event(),
+            before_dispatch=lambda: dispatch_checkpoints.append("before_dispatch"),
         ):
             seen.append(event)
 
         assert seen == events
+        assert dispatch_checkpoints == ["before_dispatch"]
         db_session.expire_all()
         rows = db_session.execute(
             text("SELECT id FROM llm_calls WHERE owner_id = :id"), {"id": req.owner.id}
