@@ -280,7 +280,7 @@ def isolated_worktree(
     try:
         for relative in overlays:
             _overlay(repo_root, checkout, relative)
-        _link_dependency(repo_root / "python/.venv", checkout / "python/.venv")
+        _prepare_isolated_python_environment(checkout)
         _link_dependency(
             repo_root / "apps/web/node_modules",
             checkout / "apps/web/node_modules",
@@ -365,6 +365,42 @@ def _link_dependency(source: Path, target: Path) -> None:
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     target.symlink_to(source, target_is_directory=True)
+
+
+def _prepare_isolated_python_environment(worktree: Path) -> None:
+    project = worktree / "python"
+    if not (project / "pyproject.toml").is_file() or not (project / "uv.lock").is_file():
+        return
+    environment = {
+        key: value
+        for key in ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "XDG_CACHE_HOME")
+        if (value := os.environ.get(key)) is not None
+    }
+    try:
+        subprocess.run(
+            (
+                "uv",
+                "sync",
+                "--project",
+                str(project),
+                "--all-extras",
+                "--locked",
+                "--offline",
+                "--no-progress",
+            ),
+            cwd=worktree,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise SensitivityError(
+            "isolated locked Python environment could not be materialized from the local cache"
+        ) from error
+    environment_root = project / ".venv"
+    if environment_root.is_symlink() or not environment_root.is_dir():
+        raise SensitivityError("isolated Python environment is not independently owned")
 
 
 def _clear_isolated_python_bytecode(worktree: Path) -> None:

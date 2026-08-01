@@ -552,10 +552,13 @@ Sensitivity is enforced by the control plane, not by PR prose:
    targeted fault id from `testdata/faults/manifest.json`. The control plane
    applies that small checked patch to an isolated current worktree. Do not
    build a mutation framework or commit a production defect.
-4. One PR sensitivity portfolio reuses one isolated worktree and persistent
-   local services per revision group. It applies and exactly reverses one fault
-   at a time; every proof still receives disposable run state. Do not rebuild
-   the stack or schema template once per proof.
+4. One PR sensitivity portfolio reuses one isolated worktree, one
+   checkout-local locked Python environment, and persistent local services per
+   revision group. The environment is materialized offline from the lock and
+   is deleted with the worktree; it MUST NOT symlink, retarget, or reconcile the
+   developer worktree's `.venv`. The portfolio applies and exactly reverses one
+   fault at a time; every proof still receives disposable run state. Do not
+   rebuild the stack, Python environment, or schema template once per proof.
 5. Red is valid only when the named proof was collected/executed and failed at
    its expected behavioral assertion or property. Import, collection, build,
    service-readiness, and unrelated-test failures do not count.

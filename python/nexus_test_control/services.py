@@ -1003,7 +1003,17 @@ def _database_url(repo_root: Path, environment: Mapping[str, str], name: str) ->
 
 def _run_migrations(repo_root: Path, database_url: str) -> None:
     _run(
-        ("uv", "run", "--project", str(repo_root / "python"), "alembic", "upgrade", "head"),
+        (
+            "uv",
+            "run",
+            "--project",
+            str(repo_root / "python"),
+            "--frozen",
+            "--no-sync",
+            "alembic",
+            "upgrade",
+            "head",
+        ),
         cwd=repo_root / "migrations",
         environment={"DATABASE_URL": database_url, "NEXUS_ENV": "test"},
     )

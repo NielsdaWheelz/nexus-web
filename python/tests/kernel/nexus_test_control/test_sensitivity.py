@@ -122,6 +122,7 @@ def test_base_sensitivity_runs_the_overlaid_proof_red_then_current_green(
     project.mkdir()
     (project / "pyproject.toml").write_bytes((REPO_ROOT / "python/pyproject.toml").read_bytes())
     (project / "uv.lock").write_bytes((REPO_ROOT / "python/uv.lock").read_bytes())
+    (project / "README.md").write_text("# Test project\n")
     (project / ".venv").symlink_to(REPO_ROOT / "python/.venv", target_is_directory=True)
     owner = project / "nexus"
     owner.mkdir()
@@ -167,6 +168,7 @@ def test_fault_portfolio_reverses_each_fault_without_mutating_the_source_checkou
     project.mkdir()
     (project / "pyproject.toml").write_bytes((REPO_ROOT / "python/pyproject.toml").read_bytes())
     (project / "uv.lock").write_bytes((REPO_ROOT / "python/uv.lock").read_bytes())
+    (project / "README.md").write_text("# Test project\n")
     (project / ".venv").symlink_to(REPO_ROOT / "python/.venv", target_is_directory=True)
     owner = project / "nexus"
     owner.mkdir()
@@ -302,6 +304,49 @@ def test_isolated_worktree_cleans_runtime_before_removal_on_proof_exit(
     assert checkout is not None
     assert not checkout.exists()
     assert str(checkout) not in _git_output(tmp_path, "worktree", "list", "--porcelain")
+
+
+def test_isolated_worktree_owns_its_python_environment(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("python/.venv\n.nexus-test\n")
+    project = tmp_path / "python"
+    project.mkdir()
+    (project / "pyproject.toml").write_bytes((REPO_ROOT / "python/pyproject.toml").read_bytes())
+    (project / "uv.lock").write_bytes((REPO_ROOT / "python/uv.lock").read_bytes())
+    (project / "README.md").write_text("# Test project\n")
+    package = project / "nexus"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    _commit(tmp_path, "base")
+    revision = _git_output(tmp_path, "rev-parse", "HEAD")
+    source_environment = project / ".venv"
+    source_environment.mkdir()
+    sentinel = source_environment / "source-owner"
+    sentinel.write_text("developer environment\n")
+
+    def clean_runtime(
+        _worktree: Path,
+        _environment: Mapping[str, str],
+    ) -> tuple[str, ...]:
+        return ()
+
+    with isolated_worktree(
+        tmp_path,
+        revision,
+        overlays=(),
+        runtime_cleaner=clean_runtime,
+    ) as red_root:
+        isolated_environment = red_root / "python/.venv"
+        assert isolated_environment.is_dir()
+        assert not isolated_environment.is_symlink()
+        direct_url = next(
+            isolated_environment.glob("lib/python*/site-packages/nexus-*.dist-info/direct_url.json")
+        )
+        assert json.loads(direct_url.read_text())["url"] == (red_root / "python").as_uri()
+        assert sentinel.read_text() == "developer environment\n"
+        (isolated_environment / "isolated-owner").write_text("isolated\n")
+
+    assert sentinel.read_text() == "developer environment\n"
+    assert not (source_environment / "isolated-owner").exists()
 
 
 def test_isolated_worktree_retains_ownership_evidence_when_runtime_cleanup_fails(
