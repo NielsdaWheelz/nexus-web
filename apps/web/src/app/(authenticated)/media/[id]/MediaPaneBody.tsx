@@ -6843,15 +6843,20 @@ export default function MediaPaneBody() {
     ) {
       return;
     }
-    pendingDocumentMapPulseRef.current = null;
     if (pending.apparatusStableKey) {
+      pendingDocumentMapPulseRef.current = null;
       focusReaderApparatusInContent(pending.apparatusStableKey, true);
     } else if (pending.target.highlightId) {
       return scrollRenderedHighlightIntoView(
         pending.target.highlightId,
-        () => dispatchReaderPulse(pending.target),
+        () => {
+          if (pendingDocumentMapPulseRef.current !== pending) return;
+          pendingDocumentMapPulseRef.current = null;
+          dispatchReaderPulse(pending.target);
+        },
       );
     }
+    pendingDocumentMapPulseRef.current = null;
     const rafId = window.requestAnimationFrame(() => {
       dispatchReaderPulse(pending.target);
     });
