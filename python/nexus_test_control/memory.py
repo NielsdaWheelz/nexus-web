@@ -48,8 +48,11 @@ class OwnedMemorySampler:
 
     def stop(self) -> PeakOwnedMemory:
         self._stop.set()
-        self._thread.join(timeout=4)
-        self._sample(include_containers=True)
+        self._thread.join(timeout=6)
+        if self._thread.is_alive():
+            self._container_sample_failed = True
+        else:
+            self._sample(include_containers=True)
         process = _to_mib(self._peak_process_bytes)
         containers = _to_mib(self._peak_container_bytes)
         return PeakOwnedMemory(
@@ -66,7 +69,7 @@ class OwnedMemorySampler:
             include_containers = now >= next_container_sample
             self._sample(include_containers=include_containers)
             if include_containers:
-                next_container_sample = now + 1
+                next_container_sample = time.monotonic() + 1
 
     def _sample(self, *, include_containers: bool) -> None:
         self._peak_process_bytes = max(self._peak_process_bytes, _process_tree_rss(os.getpid()))
@@ -157,7 +160,7 @@ def _owned_container_working_set(repo_root: Path) -> int:
             capture_output=True,
             text=True,
             check=False,
-            timeout=2,
+            timeout=5,
             env=docker_environment,
         )
     except (
