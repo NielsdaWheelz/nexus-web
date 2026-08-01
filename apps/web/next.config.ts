@@ -26,6 +26,10 @@ const nextConfig: NextConfig = {
   },
   // Ensure all routes run in Node.js runtime (not Edge)
   experimental: {
+    // Reduce peak Webpack memory during production builds. This keeps the
+    // ordinary build path viable on the bounded-memory self-hosted environment
+    // without weakening type checks or changing runtime behavior.
+    webpackMemoryOptimizations: true,
     // Enable server actions for form handling
     serverActions: {
       bodySizeLimit: "1mb",
