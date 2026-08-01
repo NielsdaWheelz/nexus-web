@@ -89,6 +89,7 @@ def prove_many(
     _require_clean_checkout(root)
     if not requests:
         return ()
+    proof_environment = {**environment, "PYTHONDONTWRITEBYTECODE": "1"}
     current_sha = _git_sha(root, "HEAD")
     prepared: list[_PreparedSensitivity] = []
     for request in requests:
@@ -142,7 +143,7 @@ def prove_many(
                     red_result = run_proof(
                         CapabilityContext(red_root, Workflow.CHANGED, ()),
                         item.request.proof,
-                        environment,
+                        proof_environment,
                     )
                 red_results[index] = behavioral_red(
                     red_result,
@@ -156,7 +157,7 @@ def prove_many(
         green_result = run_proof(
             CapabilityContext(root, Workflow.CHANGED, ()),
             item.request.proof,
-            environment,
+            proof_environment,
         )
         if green_result.evidence.status is not RunStatus.PASS:
             raise SensitivityError(
@@ -283,6 +284,7 @@ def isolated_worktree(
             repo_root / "apps/web/node_modules",
             checkout / "apps/web/node_modules",
         )
+        _clear_isolated_python_bytecode(checkout)
         yield checkout.resolve(strict=True)
     finally:
         try:
@@ -362,6 +364,22 @@ def _link_dependency(source: Path, target: Path) -> None:
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     target.symlink_to(source, target_is_directory=True)
+
+
+def _clear_isolated_python_bytecode(worktree: Path) -> None:
+    for relative in ("migrations", "python", "scripts"):
+        root = worktree / relative
+        if not root.is_dir():
+            continue
+        for directory, names, files in os.walk(root, followlinks=False):
+            directory_path = Path(directory)
+            names[:] = [name for name in names if not (directory_path / name).is_symlink()]
+            if "__pycache__" in names:
+                shutil.rmtree(directory_path / "__pycache__")
+                names.remove("__pycache__")
+            for name in files:
+                if name.endswith((".pyc", ".pyo")):
+                    (directory_path / name).unlink()
 
 
 def _apply_fault(worktree: Path, patch: Path) -> None:
