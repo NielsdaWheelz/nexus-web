@@ -378,15 +378,24 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
     await secondHighlightRow
       .getByRole("button", { name: "1 linked object" })
       .click();
-    const targetButton = secondHighlightRow.getByRole("button", {
-      name: `Open target in reader for ${targetTitle}`,
-    });
     const unlink = await openUnlinkConnectionAction(page, secondHighlightRow);
     await page.keyboard.press("Escape");
     await expect(unlink).toBeHidden();
 
     // Opposite-end activation opens the target document in the reader (AC16/AC17:
-    // each reader row activates the opposite endpoint).
+    // each reader row activates the opposite endpoint). Escape also closes the
+    // focused Companion by design, so restore Evidence and relocate the row.
+    const evidenceAfterDismiss = await openEvidencePane(page);
+    const secondHighlightRowAfterDismiss = evidenceHighlightArticle(
+      evidenceAfterDismiss,
+      secondSelectedText,
+    );
+    await secondHighlightRowAfterDismiss
+      .getByRole("button", { name: "1 linked object" })
+      .click();
+    const targetButton = secondHighlightRowAfterDismiss.getByRole("button", {
+      name: `Open target in reader for ${targetTitle}`,
+    });
     await expect(targetButton).toBeEnabled();
     await targetButton.click();
     await expect
@@ -554,6 +563,14 @@ test("@real-media reflowable Link: cancel writes nothing, a Connections row appe
     await page.keyboard.press("Escape");
     await expect(unlink).toBeHidden();
 
+    // Escape from a focused Companion control closes that Companion. Reopen
+    // Evidence before using the durable Highlight's canonical action.
+    const evidenceAfterDismiss = await openEvidencePane(page);
+    const linkedHighlightRowAfterDismiss = evidenceHighlightArticle(
+      evidenceAfterDismiss,
+      linkedSelectionText,
+    );
+
     // --- Duplicate from the now-existing Highlight is Already linked (AC15) ---
     // The durable Highlight must paint without a reload, and its canonical
     // Evidence-row action must compute existing-link dedupe for the same
@@ -562,7 +579,7 @@ test("@real-media reflowable Link: cancel writes nothing, a Connections row appe
       .locator(`${htmlRenderer} [data-active-highlight-ids~="${highlightId}"]`)
       .first();
     await expect(paintedHighlight).toBeVisible({ timeout: 10_000 });
-    await linkedHighlightRow
+    await linkedHighlightRowAfterDismiss
       .getByRole("button", { name: "Highlight actions" })
       .click();
     await page.getByRole("menuitem", { name: "Link…" }).click();

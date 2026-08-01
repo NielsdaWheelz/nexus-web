@@ -11,6 +11,7 @@ import path from "node:path";
 import { stateChangingApiHeaders } from "./api";
 import { bootstrapMagicLinkSessionForEmail } from "./auth-bootstrap";
 import {
+  FRESH_REAL_MEDIA_FIXTURES,
   createPdfHighlightThroughVisibleSelection,
   gotoRealMediaSinglePane,
   readRealMediaSeed,
@@ -18,9 +19,7 @@ import {
 
 interface ShareUser {
   userHandle: string;
-  email:
-    | { kind: "Absent" }
-    | { kind: "Present"; value: string };
+  email: { kind: "Absent" } | { kind: "Present"; value: string };
 }
 
 interface ShareRow {
@@ -36,6 +35,7 @@ interface MediaFixture {
   expectedKind: "web_article" | "epub" | "pdf" | "video";
   publicReader: "article" | "epub" | "pdf" | "transcript";
   needle?: string;
+  epubSectionLabel?: string;
 }
 
 async function bootstrapUser(
@@ -89,8 +89,7 @@ async function findUser(page: Page, email: string): Promise<ShareUser> {
   const payload = (await response.json()) as { data: ShareUser[] };
   const user = payload.data.find(
     (candidate) =>
-      candidate.email.kind === "Present" &&
-      candidate.email.value === email,
+      candidate.email.kind === "Present" && candidate.email.value === email,
   );
   expect(user, `No exact user-search result for ${email}`).toBeDefined();
   return user!;
@@ -151,6 +150,7 @@ async function expectPublicMediaProjection(
   fixture: MediaFixture,
   title: string,
   browserErrors: string[],
+  options: { navigateEpubToProse?: boolean } = {},
 ): Promise<void> {
   await expect(
     page.getByText("Read-only shared view. No Nexus account is required."),
@@ -161,17 +161,34 @@ async function expectPublicMediaProjection(
 
   switch (fixture.publicReader) {
     case "article":
-      await expect(page.locator("main article")).toContainText(fixture.needle!, {
-        timeout: 15_000,
-      });
+      await expect(page.locator("main article")).toContainText(
+        fixture.needle!,
+        {
+          timeout: 15_000,
+        },
+      );
       break;
     case "epub":
-      await expect(
-        page.getByRole("navigation", { name: "Book contents" }),
-      ).toBeVisible();
-      await expect(page.locator("main article")).toHaveText(/\S/, {
-        timeout: 15_000,
+      expect(fixture.epubSectionLabel).toBeDefined();
+      expect(fixture.needle).toBeDefined();
+      const bookContents = page.getByRole("navigation", {
+        name: "Book contents",
       });
+      await expect(bookContents).toBeVisible();
+      if (options.navigateEpubToProse !== false) {
+        const proseSection = bookContents.getByRole("button", {
+          name: fixture.epubSectionLabel!,
+          exact: true,
+        });
+        await expect(proseSection).toBeVisible();
+        await proseSection.click();
+        await expect(page.locator("main article")).toContainText(
+          fixture.needle!,
+          {
+            timeout: 15_000,
+          },
+        );
+      }
       break;
     case "pdf":
       await expect(
@@ -251,11 +268,7 @@ async function createFreshTextHighlight(
   );
   const codepoints = Array.from(fragment.canonical_text);
   let selected: { startOffset: number; endOffset: number } | null = null;
-  for (
-    let candidate = 0;
-    candidate + 40 < codepoints.length;
-    candidate += 11
-  ) {
+  for (let candidate = 0; candidate + 40 < codepoints.length; candidate += 11) {
     let startOffset = candidate;
     while (
       startOffset < codepoints.length &&
@@ -364,6 +377,7 @@ async function expectPublicHighlightProjection({
     fixture,
     title,
     browserErrors,
+    { navigateEpubToProse: false },
   );
   await expect(
     anonymousPage.getByRole("complementary", { name: "Shared highlight" }),
@@ -420,16 +434,10 @@ function formatPublicTimestamp(milliseconds: number): string {
     .padStart(2, "0")}`;
 }
 
-async function deleteHighlight(
-  page: Page,
-  highlightId: string,
-): Promise<void> {
-  const response = await page.request.delete(
-    `/api/highlights/${highlightId}`,
-    {
-      headers: stateChangingApiHeaders(),
-    },
-  );
+async function deleteHighlight(page: Page, highlightId: string): Promise<void> {
+  const response = await page.request.delete(`/api/highlights/${highlightId}`, {
+    headers: stateChangingApiHeaders(),
+  });
   expect([204, 404]).toContain(response.status());
 }
 
@@ -453,6 +461,9 @@ test("@real-media resource shares remain path-local and every public reader revo
       mediaId: seed.fixtures.epub.media_id,
       expectedKind: "epub",
       publicReader: "epub",
+      needle: FRESH_REAL_MEDIA_FIXTURES.epubMobyDickOld.needle,
+      epubSectionLabel:
+        FRESH_REAL_MEDIA_FIXTURES.epubMobyDickOld.selectionSectionLabel,
     },
     {
       label: "PDF",
@@ -503,7 +514,9 @@ test("@real-media resource shares remain path-local and every public reader revo
     );
     created.push({ page: ownerPage, handle: ownerToReader.handle });
     expect(
-      (await reader.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)).ok(),
+      (
+        await reader.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)
+      ).ok(),
     ).toBeTruthy();
 
     const readerToResharer = await createShare(
@@ -516,25 +529,35 @@ test("@real-media resource shares remain path-local and every public reader revo
     );
     created.push({ page: reader.page, handle: readerToResharer.handle });
     expect(
-      (await resharer.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)).ok(),
+      (
+        await resharer.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)
+      ).ok(),
     ).toBeTruthy();
 
     await revokeShare(ownerPage, ownerToReader.handle);
     forgetCreated(created, ownerToReader.handle);
     expect(
-      (await reader.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)).ok(),
+      (
+        await reader.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)
+      ).ok(),
     ).toBeTruthy();
     expect(
-      (await resharer.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)).ok(),
+      (
+        await resharer.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)
+      ).ok(),
     ).toBeTruthy();
 
     await revokeShare(reader.page, readerToResharer.handle);
     forgetCreated(created, readerToResharer.handle);
     expect(
-      (await reader.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)).status(),
+      (
+        await reader.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)
+      ).status(),
     ).toBe(404);
     expect(
-      (await resharer.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)).status(),
+      (
+        await resharer.page.request.get(`/api/media/${pathLocalMedia.mediaId}`)
+      ).status(),
     ).toBe(404);
 
     for (const fixture of fixtures) {
