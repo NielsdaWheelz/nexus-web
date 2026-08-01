@@ -519,6 +519,8 @@ def run_workflow(
                 ):
                     workflow_lifecycle.enter_context(execution.ports.heavy_lock(context.repo_root))
                     heavy_lock_held = True
+                    if measures_containers:
+                        workflow_sampler.enable_containers()
                 admission = (
                     _heavy_memory_admission(requirement.capability, _available_memory())
                     if _requires_memory_admission(context, requirement.capability)
@@ -550,7 +552,10 @@ def run_workflow(
     with ExitStack() as workflow_lifecycle:
         with measure_owned_memory(
             context.repo_root,
-            include_containers=measures_containers,
+            # The process sampler may run while this workflow waits. Container
+            # sampling begins only after the workflow owns the heavy-work lock,
+            # so queued workflows cannot measure or contend on another run.
+            include_containers=False,
         ) as workflow_sampler:
             capabilities = tuple(
                 result.evidence
@@ -1493,7 +1498,10 @@ def _run_journeys(
                 journey_id,
                 prepared.supabase,
             )
-            if journey_id in {"grounded-chat-citation", "resource-share-boundary"}:
+            if journey_id in {
+                "grounded-chat-citation",
+                "resource-share-boundary",
+            }:
                 execution.ports.grant_scenario_ai_entitlement(
                     context.repo_root,
                     {"NEXUS_ENV": "test"},

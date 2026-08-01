@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from nexus_test_control import memory
 from nexus_test_control.memory import _memory_bytes, _process_tree_rss, available_memory_mib
 from nexus_test_control.runtime import RuntimeContractError
 
@@ -25,3 +26,24 @@ def test_available_memory_reads_the_kernel_admission_owner(tmp_path: Path) -> No
     meminfo.write_text("MemTotal: 8192000 kB\nMemAvailable: 2097152 kB\n", encoding="utf-8")
 
     assert available_memory_mib(meminfo) == 2048
+
+
+def test_container_sampling_starts_only_after_heavy_lock_enablement(
+    tmp_path: Path,
+) -> None:
+    container_samples: list[Path] = []
+    sampler = memory.OwnedMemorySampler(
+        tmp_path,
+        include_containers=False,
+        process_reader=lambda _pid: 2 * 1024 * 1024,
+        container_reader=lambda repo_root: container_samples.append(repo_root) or 3 * 1024 * 1024,
+    )
+
+    sampler.start()
+    assert container_samples == []
+    sampler.enable_containers()
+    evidence = sampler.stop()
+
+    assert container_samples == [tmp_path]
+    assert evidence.measurement_complete is True
+    assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 3, 5)

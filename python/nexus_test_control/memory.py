@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -32,9 +32,19 @@ def available_memory_mib(meminfo: Path = Path("/proc/meminfo")) -> int | None:
 
 
 class OwnedMemorySampler:
-    def __init__(self, repo_root: Path, *, include_containers: bool) -> None:
+    def __init__(
+        self,
+        repo_root: Path,
+        *,
+        include_containers: bool,
+        process_reader: Callable[[int], int] | None = None,
+        container_reader: Callable[[Path], int] | None = None,
+    ) -> None:
         self._repo_root = repo_root
+        self._process_reader = process_reader or _process_tree_rss
+        self._container_reader = container_reader or _owned_container_working_set
         self._include_containers = include_containers
+        self._containers_required = include_containers
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._peak_process_bytes = 0
@@ -51,6 +61,16 @@ class OwnedMemorySampler:
     def start(self) -> None:
         self._sample(include_containers=self._include_containers)
         self._thread.start()
+
+    def enable_containers(self) -> None:
+        """Begin container sampling after the caller owns the heavy-work lock."""
+        with self._lock:
+            if self._include_containers:
+                return
+            self._include_containers = True
+            self._containers_required = True
+            self._container_sampled = False
+        self._sample(include_containers=True)
 
     def stop(self) -> PeakOwnedMemory:
         self._stop.set()
@@ -78,7 +98,9 @@ class OwnedMemorySampler:
             container_bytes = (
                 self._interval_container_bytes if interval else self._peak_container_bytes
             )
-            measurement_complete = self._container_sampled and not self._container_sample_failed
+            measurement_complete = (
+                not self._containers_required or self._container_sampled
+            ) and not self._container_sample_failed
         process = _to_mib(process_bytes)
         containers = _to_mib(container_bytes)
         return PeakOwnedMemory(
@@ -92,18 +114,20 @@ class OwnedMemorySampler:
         next_container_sample = time.monotonic() + 1
         while not self._stop.wait(0.1):
             now = time.monotonic()
-            include_containers = self._include_containers and now >= next_container_sample
+            with self._lock:
+                containers_enabled = self._include_containers
+            include_containers = containers_enabled and now >= next_container_sample
             self._sample(include_containers=include_containers)
             if include_containers:
                 next_container_sample = time.monotonic() + 1
 
     def _sample(self, *, include_containers: bool) -> None:
-        process_bytes = _process_tree_rss(os.getpid())
+        process_bytes = self._process_reader(os.getpid())
         container_bytes: int | None = None
         container_failed = False
         if include_containers:
             try:
-                container_bytes = _owned_container_working_set(self._repo_root)
+                container_bytes = self._container_reader(self._repo_root)
             except (OSError, RuntimeContractError, subprocess.SubprocessError):
                 container_failed = True
         with self._lock:
