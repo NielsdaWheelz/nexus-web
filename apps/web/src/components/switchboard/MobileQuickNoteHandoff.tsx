@@ -11,121 +11,95 @@ import {
   type FormEvent,
   type SyntheticEvent,
 } from "react";
-import { Fragment } from "prosemirror-model";
-import { useFeedback } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import type {
+  MaterializedNexusTarget,
+  NexusDispatchOutcome,
+} from "@/lib/nexus/dispatch";
 import {
   DAILY_DRAFT_HANDOFF_CLAIM_EVENT,
+  clearDailyDraft,
   readDailyDraft,
   writeDailyDraft,
+  type DailyDraft,
 } from "@/lib/notes/dailyDraftStore";
 import {
-  createDailyAppendNoteEntry,
-  useOpenDailyPage,
-  useResolveDailyLocalDate,
-} from "@/lib/notes/openDailyPage";
-import { useWorkspaceStore } from "@/lib/workspace/store";
-import {
-  createNoteBodyDoc,
-  emptyNoteBody,
-  noteBodySchema,
-  noteBodyValueFromDoc,
-} from "@/lib/notes/prosemirror/schema";
+  appendDailyDraftText,
+  createDailyDraft,
+  dailyDraftAcceptsText,
+} from "@/lib/resourceSurface/dailySurfacePersistence";
 import { isRecord } from "@/lib/validation";
+import { useWorkspaceStore } from "@/lib/workspace/store";
 import styles from "./switchboard.module.css";
 
+type MaterializedDailyPageTarget = Extract<
+  MaterializedNexusTarget,
+  { kind: "OpenDailyPage" }
+>;
+
+export type MaterializedDailyTextHandoffTarget = Omit<
+  MaterializedDailyPageTarget,
+  "entry"
+> & {
+  readonly entry: Extract<
+    MaterializedDailyPageTarget["entry"],
+    { kind: "AppendNote" }
+  >;
+};
+
+export type DailyTextHandoffAccepted = Extract<
+  NexusDispatchOutcome,
+  { kind: "DailyPageAccepted" }
+>;
+
 export interface MobileQuickNoteHandoffHandle {
-  begin(returnFocus: HTMLElement): void;
+  /** Must be the first side effect of a mobile gesture activation. */
+  focus(): void;
+  prepare(target: MaterializedDailyTextHandoffTarget): void;
+  accept(
+    target: MaterializedDailyTextHandoffTarget,
+    outcome: DailyTextHandoffAccepted,
+  ): void;
+  cancel(returnFocus: HTMLElement | null): void;
 }
 
 interface ActiveHandoff {
   accountId: string;
   localDate: string;
-  activationId: string;
+  activationId: string | null;
   handoffId: string;
   noteId: string;
   clientMutationId: string;
-  richAppendBase:
-    | {
-        bodyPmJson: Record<string, unknown>;
-        textOffset: number;
-      }
-    | null;
+  appendBase: DailyDraft;
+  previousDraft: DailyDraft | null;
 }
 
-type RecoveredBodyIngress =
-  | { kind: "Plain" }
-  | {
-      kind: "AppendRich";
-      base: NonNullable<ActiveHandoff["richAppendBase"]>;
-    }
-  | { kind: "OpenAtomicEditor" };
-
-function bodyForText(text: string) {
-  return noteBodyValueFromDoc(
-    createNoteBodyDoc({ fallbackBodyText: text }),
-  );
+interface OpenOnlyHandoff {
+  localDate: string;
+  noteId: string;
+  clientMutationId: string;
 }
 
-function recoveredBodyIngress(
-  bodyPmJson: Record<string, unknown>,
-  bodyText: string,
-): RecoveredBodyIngress {
-  if (
-    JSON.stringify(bodyPmJson) ===
-    JSON.stringify(bodyForText(bodyText).bodyPmJson)
-  ) {
-    return { kind: "Plain" };
+function appendOrDefect(base: DailyDraft, text: string): DailyDraft {
+  const appended = appendDailyDraftText(base, text);
+  if (appended.kind === "Unavailable") {
+    throw new Error(
+      "Prepared mobile daily text handoff cannot append to its draft",
+    );
   }
-  const doc = createNoteBodyDoc({ bodyPmJson, fallbackBodyText: bodyText });
-  if (!doc.firstChild?.inlineContent) {
-    return { kind: "OpenAtomicEditor" };
-  }
-  let textOffset = 0;
-  doc.descendants((node) => {
-    if (node.isText) textOffset += node.text?.length ?? 0;
-    return true;
-  });
-  return {
-    kind: "AppendRich",
-    base: { bodyPmJson, textOffset },
-  };
-}
-
-function bodyWithRichAppend(
-  base: NonNullable<ActiveHandoff["richAppendBase"]>,
-  text: string,
-) {
-  const doc = createNoteBodyDoc({ bodyPmJson: base.bodyPmJson });
-  const body = doc.firstChild;
-  if (!body?.inlineContent) {
-    // justify-defect: richAppendBase is minted only for inline-capable bodies.
-    throw new Error("Rich Quick Note append body cannot accept inline text");
-  }
-  const content = text
-    ? body.content.append(Fragment.from(noteBodySchema.text(text)))
-    : body.content;
-  return noteBodyValueFromDoc(
-    noteBodySchema.nodes.note_body_doc!.create(
-      null,
-      body.type.create(body.attrs, content, body.marks),
-    ),
-  );
+  return appended.draft;
 }
 
 const MobileQuickNoteHandoff = forwardRef<
-  MobileQuickNoteHandoffHandle,
-  { onNavigationAccepted(): void }
->(function MobileQuickNoteHandoff({ onNavigationAccepted }, ref) {
+  MobileQuickNoteHandoffHandle
+>(function MobileQuickNoteHandoff(_props, ref) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const activeRef = useRef<ActiveHandoff | null>(null);
+  const openOnlyRef = useRef<OpenOnlyHandoff | null>(null);
   const composingRef = useRef(false);
   const [activeHandoffId, setActiveHandoffId] = useState<string | null>(null);
   const { accountId } = useAuthenticatedAccount();
-  const openDailyPage = useOpenDailyPage();
-  const resolveDailyLocalDate = useResolveDailyLocalDate();
   const { cancelledPaneEntryActivationIds } = useWorkspaceStore();
-  const feedback = useFeedback();
 
   const checkpoint = useCallback((composition: "Composing" | "Complete") => {
     const active = activeRef.current;
@@ -135,6 +109,7 @@ const MobileQuickNoteHandoff = forwardRef<
     if (
       !current ||
       current.noteId !== active.noteId ||
+      current.clientMutationId !== active.clientMutationId ||
       current.handoff.kind !== "Buffered" ||
       current.handoff.handoffId !== active.handoffId
     ) {
@@ -143,17 +118,14 @@ const MobileQuickNoteHandoff = forwardRef<
       if (document.activeElement === input) input.blur();
       return;
     }
-    const body = active.richAppendBase
-      ? bodyWithRichAppend(active.richAppendBase, input.value)
-      : bodyForText(input.value);
-    const selectionOffset = active.richAppendBase?.textOffset ?? 0;
+    const next = appendOrDefect(active.appendBase, input.value);
+    const selectionOffset = active.appendBase.bodyText.length;
     writeDailyDraft({
-      ...current,
-      ...body,
+      ...next,
       handoff: {
         kind: "Buffered",
         handoffId: active.handoffId,
-        text: body.bodyText,
+        text: next.bodyText,
         selectionStart:
           selectionOffset + (input.selectionStart ?? input.value.length),
         selectionEnd:
@@ -172,6 +144,7 @@ const MobileQuickNoteHandoff = forwardRef<
       const current = readDailyDraft(active.accountId, active.localDate);
       if (
         current?.noteId === active.noteId &&
+        current.clientMutationId === active.clientMutationId &&
         current.handoff.kind === "Buffered" &&
         current.handoff.handoffId === active.handoffId
       ) {
@@ -186,122 +159,178 @@ const MobileQuickNoteHandoff = forwardRef<
     [checkpoint],
   );
 
-  const begin = useCallback((returnFocus: HTMLElement) => {
+  const focus = useCallback(() => {
     const input = inputRef.current;
     if (!input) {
-      throw new Error("Mobile Quick Note handoff input is not mounted");
+      throw new Error("Mobile daily text handoff input is not mounted");
     }
 
-    // This focus is deliberately the first gesture-time side effect. On iOS,
-    // delaying it until pane activation or hydration loses keyboard authority.
+    // This is deliberately the first gesture-time side effect. iOS transfers
+    // keyboard authority only while the activating event still owns focus.
     input.focus({ preventScroll: true });
     retireActiveHandoff(false);
-
-    const localDate = resolveDailyLocalDate("Today");
-    const existing = readDailyDraft(accountId, localDate);
-    const pendingEntry = existing
-      ? {
-          kind: "AppendNote" as const,
-          noteId: existing.noteId,
-          clientMutationId: existing.clientMutationId,
-        }
-      : createDailyAppendNoteEntry();
-    const handoffId = crypto.randomUUID();
-    const recoveredIngress = existing
-      ? recoveredBodyIngress(existing.bodyPmJson, existing.bodyText)
-      : ({ kind: "Plain" } as const);
-    input.value =
-      recoveredIngress.kind === "Plain" ? (existing?.bodyText ?? "") : "";
-    input.setSelectionRange(input.value.length, input.value.length);
+    openOnlyRef.current = null;
+    input.value = "";
     composingRef.current = false;
+  }, [retireActiveHandoff]);
 
-    const opened = openDailyPage(
-      {
-        kind: "OpenDailyPage",
+  const prepare = useCallback(
+    (target: MaterializedDailyTextHandoffTarget) => {
+      const input = inputRef.current;
+      if (!input) {
+        throw new Error("Mobile daily text handoff input is not mounted");
+      }
+      if (target.date.kind !== "LocalDate") {
+        throw new Error("Materialized daily text handoff date is not frozen");
+      }
+      const localDate = target.date.value;
+      const existing = readDailyDraft(accountId, localDate);
+      if (
+        existing &&
+        (existing.noteId !== target.entry.noteId ||
+          existing.clientMutationId !== target.entry.clientMutationId)
+      ) {
+        throw new Error(
+          "Materialized mobile daily text identity drifted before staging",
+        );
+      }
+      const appendBase =
+        existing ??
+        createDailyDraft(
+          { accountId, localDate },
+          target.entry.noteId,
+          target.entry.clientMutationId,
+        );
+      input.value = target.entry.initialText;
+      input.setSelectionRange(input.value.length, input.value.length);
+
+      if (!dailyDraftAcceptsText(appendBase)) {
+        if (input.value.length > 0) {
+          throw new Error(
+            "A nonempty mobile daily text seed reached an atomic draft",
+          );
+        }
+        openOnlyRef.current = {
+          localDate,
+          noteId: target.entry.noteId,
+          clientMutationId: target.entry.clientMutationId,
+        };
+        return;
+      }
+
+      const handoffId = crypto.randomUUID();
+      const next = appendOrDefect(appendBase, input.value);
+      const selectionOffset = appendBase.bodyText.length;
+      activeRef.current = {
+        accountId,
         localDate,
-        entry: pendingEntry,
-      },
-      {
-        disposition: { kind: "Adopt" },
-        modality: "Pointer",
-      },
-    );
-    if (opened.activation.kind === "Rejected") {
-      input.blur();
-      if (returnFocus.isConnected) {
+        activationId: null,
+        handoffId,
+        noteId: target.entry.noteId,
+        clientMutationId: target.entry.clientMutationId,
+        appendBase,
+        previousDraft: existing,
+      };
+      setActiveHandoffId(handoffId);
+      writeDailyDraft({
+        ...next,
+        handoff: {
+          kind: "Buffered",
+          handoffId,
+          text: next.bodyText,
+          selectionStart: selectionOffset + input.selectionStart,
+          selectionEnd: selectionOffset + input.selectionEnd,
+          composition: "Complete",
+        },
+      });
+    },
+    [accountId],
+  );
+
+  const accept = useCallback(
+    (
+      target: MaterializedDailyTextHandoffTarget,
+      outcome: DailyTextHandoffAccepted,
+    ) => {
+      const input = inputRef.current;
+      if (!input) {
+        throw new Error("Mobile daily text handoff input is not mounted");
+      }
+      const openOnly = openOnlyRef.current;
+      if (openOnly) {
+        if (
+          openOnly.localDate !== outcome.localDate ||
+          openOnly.noteId !== target.entry.noteId ||
+          openOnly.clientMutationId !== target.entry.clientMutationId
+        ) {
+          throw new Error(
+            "Accepted mobile daily open-only identity does not match its preparation",
+          );
+        }
+        openOnlyRef.current = null;
+        input.blur();
+        input.value = "";
+        return;
+      }
+      const active = activeRef.current;
+      if (
+        !active ||
+        active.localDate !== outcome.localDate ||
+        active.noteId !== target.entry.noteId ||
+        active.clientMutationId !== target.entry.clientMutationId
+      ) {
+        throw new Error(
+          "Accepted mobile daily text identity does not match its staged buffer",
+        );
+      }
+      active.activationId = outcome.activationId;
+    },
+    [],
+  );
+
+  const cancel = useCallback(
+    (returnFocus: HTMLElement | null) => {
+      const active = activeRef.current;
+      if (active?.activationId === null) {
+        const current = readDailyDraft(active.accountId, active.localDate);
+        if (
+          current?.noteId === active.noteId &&
+          current.clientMutationId === active.clientMutationId &&
+          current.handoff.kind === "Buffered" &&
+          current.handoff.handoffId === active.handoffId
+        ) {
+          if (active.previousDraft) {
+            writeDailyDraft(active.previousDraft);
+          } else {
+            clearDailyDraft(active.accountId, active.localDate);
+          }
+        }
+        activeRef.current = null;
+        setActiveHandoffId(null);
+      } else {
+        retireActiveHandoff(true);
+      }
+      openOnlyRef.current = null;
+      const input = inputRef.current;
+      if (input && document.activeElement === input) input.blur();
+      if (returnFocus?.isConnected) {
         returnFocus.focus({ preventScroll: true });
       }
-      activeRef.current = null;
-      setActiveHandoffId(null);
-      feedback.show({
-        severity: "warning",
-        title: "Tab limit reached",
-        message: "Close a tab, then try Quick Note again.",
-      });
-      return;
-    }
+    },
+    [retireActiveHandoff],
+  );
 
-    const identity = existing ?? {
-      version: 1 as const,
-      accountId,
-      localDate: opened.localDate,
-      noteId: pendingEntry.noteId,
-      clientMutationId: pendingEntry.clientMutationId,
-      ...emptyNoteBody(),
-      handoff: { kind: "None" as const },
-    };
-    if (recoveredIngress.kind === "OpenAtomicEditor") {
-      writeDailyDraft({ ...identity, handoff: { kind: "None" } });
-      input.blur();
-      feedback.show({
-        severity: "info",
-        title: "Opened your existing note",
-        message: "Continue editing it in Today.",
-      });
-      onNavigationAccepted();
-      return;
-    }
-    const richAppendBase =
-      recoveredIngress.kind === "AppendRich" ? recoveredIngress.base : null;
-    const active = {
-      accountId,
-      localDate: opened.localDate,
-      activationId: opened.activationId,
-      handoffId,
-      noteId: identity.noteId,
-      clientMutationId: identity.clientMutationId,
-      richAppendBase,
-    };
-    activeRef.current = active;
-    setActiveHandoffId(handoffId);
-    writeDailyDraft({
-      ...identity,
-      handoff: {
-        kind: "Buffered",
-        handoffId,
-        text: richAppendBase ? identity.bodyText : input.value,
-        selectionStart:
-          (richAppendBase?.textOffset ?? 0) + input.selectionStart,
-        selectionEnd: (richAppendBase?.textOffset ?? 0) + input.selectionEnd,
-        composition: "Complete",
-      },
-    });
-    onNavigationAccepted();
-  }, [
-    accountId,
-    feedback,
-    onNavigationAccepted,
-    openDailyPage,
-    retireActiveHandoff,
-    resolveDailyLocalDate,
-  ]);
-
-  useImperativeHandle(ref, () => ({ begin }), [begin]);
+  useImperativeHandle(
+    ref,
+    () => ({ focus, prepare, accept, cancel }),
+    [accept, cancel, focus, prepare],
+  );
 
   useEffect(() => {
     const active = activeRef.current;
     if (
       !active ||
+      active.activationId === null ||
       !cancelledPaneEntryActivationIds.has(active.activationId)
     ) {
       return;
@@ -360,7 +389,7 @@ const MobileQuickNoteHandoff = forwardRef<
       ref={inputRef}
       className={styles.quickNoteHandoffInput}
       tabIndex={-1}
-      aria-label="Quick Note input handoff"
+      aria-label="Daily note input handoff"
       data-handoff-id={activeHandoffId ?? undefined}
       autoCapitalize="sentences"
       autoCorrect="on"

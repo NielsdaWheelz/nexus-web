@@ -6,6 +6,13 @@ proof pending
 Type: Hard cutover
 Date: 2026-07-30
 
+**Partial supersession (2026-07-31):**
+[`nexus-intent-router-hard-cutover.md`](nexus-intent-router-hard-cutover.md)
+removes desktop rail Quick Note/Today, the exactly-four desktop zero state,
+Today-not-a-quick-action, Library exclusion, preservation of the old mobile
+Root inventory, and AC-15. The daily Page, provisional draft, persistence,
+handoff, replay, and editor-ownership contracts remain authoritative.
+
 ## Decision
 
 Every account-local date has a latent daily Page address. A database Page exists

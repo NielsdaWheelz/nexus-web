@@ -149,20 +149,22 @@ not `MobileSheet` or `MobileFullScreenTask`.
 ## Mobile Nexus
 
 Mobile Nexus is the sole mobile global-access task. One mounted
-`SwitchboardTask` uses `MobileFullScreenTask` for the Root, Find, actions,
-creation, Add, and recovery pages; those pages replace one another inside the
-task. Their existing headers are the only headers and their content region is
-the only scroll owner. Quick Note uses the task-owned gesture-time handoff only
-until the destination Page editor claims input. Mobile Nexus has no global
-navigation drawer, bottom sheet, outside-click target, swipe dismissal, or
-stacked workflow task.
+`SwitchboardTask` uses `MobileFullScreenTask` for the autofocused Root,
+Choose Create, Choose Browse, Manage Tabs, Add, and recovery pages; those pages
+replace one another inside the task. Root owns query and canonical Nexus groups;
+there is no separate Find page or scope state. Each page's header is the only
+header and its content region is the only vertical scroll owner. Quick Note
+uses the task-owned typed gesture-time handoff only until the destination Page
+editor claims input. Mobile Nexus has no global navigation drawer, bottom
+sheet, outside-click target, swipe dismissal, or stacked workflow task.
 
 Nested Back, Escape, browser Back, and Android Back request the Nexus
-controller's existing guarded transition: a nested page pops one level, Root
-dismisses, and dirty or running work remains open behind its existing
-confirmation. Ordinary dismissal restores the Nexus control; accepted
-workspace activation leaves focus with the destination. Rotation and
-mobile/desktop breakpoint changes preserve controller state.
+controller's guarded transition: nonblank Root clears its query first; blank
+Root dismisses; a nested page restores the exact Root query and active identity;
+dirty or running work remains open behind its existing confirmation. Ordinary
+dismissal restores the Nexus control; accepted workspace activation leaves
+focus with the destination. Rotation and mobile/desktop breakpoint changes
+preserve controller state.
 
 ## Player Surfaces
 

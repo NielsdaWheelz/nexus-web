@@ -1,3 +1,4 @@
+import { Fragment } from "prosemirror-model";
 import {
   captureDailyPageNote,
   readDailyPage,
@@ -9,6 +10,11 @@ import type {
   ResourceSurfaceOccurrence,
 } from "@/lib/resources/resourceItems";
 import type { PaneEntryDelivery } from "@/lib/workspace/targetActivation";
+import {
+  createNoteBodyDoc,
+  noteBodySchema,
+  noteBodyValueFromDoc,
+} from "@/lib/notes/prosemirror/schema";
 
 export interface DailySurfaceOwner {
   accountId: string;
@@ -87,6 +93,40 @@ export function createDailyDraft(
     bodyText: "",
     handoff: { kind: "None" },
   };
+}
+
+export type DailyDraftTextAppend =
+  | { readonly kind: "Appended"; readonly draft: DailyDraft }
+  | { readonly kind: "Unavailable" };
+
+export function dailyDraftAcceptsText(draft: DailyDraft): boolean {
+  return Boolean(
+    createNoteBodyDoc({
+      bodyPmJson: draft.bodyPmJson,
+      fallbackBodyText: draft.bodyText,
+    }).firstChild?.inlineContent,
+  );
+}
+
+export function appendDailyDraftText(
+  draft: DailyDraft,
+  text: string,
+): DailyDraftTextAppend {
+  if (text.length === 0) return { kind: "Appended", draft };
+  const doc = createNoteBodyDoc({
+    bodyPmJson: draft.bodyPmJson,
+    fallbackBodyText: draft.bodyText,
+  });
+  const body = doc.firstChild;
+  if (!body?.inlineContent) return { kind: "Unavailable" };
+  const content = body.content.append(Fragment.from(noteBodySchema.text(text)));
+  const value = noteBodyValueFromDoc(
+    noteBodySchema.nodes.note_body_doc!.create(
+      null,
+      body.type.create(body.attrs, content, body.marks),
+    ),
+  );
+  return { kind: "Appended", draft: { ...draft, ...value } };
 }
 
 export function dailyDraftBodyChanged(

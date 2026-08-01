@@ -28,6 +28,7 @@ export interface WorkspacePaneEntry {
   kind: "AppendNote";
   noteId: string;
   clientMutationId: string;
+  initialText: string;
 }
 
 export interface WorkspacePaneEntryActivation {

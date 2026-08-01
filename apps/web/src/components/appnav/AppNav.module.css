@@ -171,53 +171,6 @@
   padding: var(--space-2);
 }
 
-/* ── Daily actions ──────────────────────────────────────── */
-.dailyActions {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 0 var(--space-2) var(--space-2);
-  border-bottom: 1px solid var(--edge-subtle);
-}
-
-.dailyAction {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  min-height: 48px;
-  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--ink-muted);
-  font: inherit;
-  font-weight: var(--weight-medium);
-  text-align: left;
-  cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-glide),
-    color var(--duration-fast) var(--ease-glide);
-}
-
-.dailyAction:hover {
-  background: var(--surface-hover);
-  color: var(--ink);
-}
-
-.dailyAction:active {
-  background: var(--surface-active);
-  transition-duration: var(--duration-instant);
-}
-
-.dailyAction:hover .itemIcon {
-  transform: translateY(-1px) scale(1.06);
-}
-
-.collapsed .dailyAction {
-  justify-content: center;
-  padding: var(--space-2);
-}
-
 /* ── Navigation items (rail + sheet) ────────────────────── */
 .scroll {
   position: relative;
@@ -555,7 +508,6 @@
   .rail,
   .collapseButton,
   .commandBar,
-  .dailyAction,
   .item,
   .itemIcon,
   .indicator,
@@ -566,8 +518,7 @@
     transition: none;
   }
 
-  .item:hover .itemIcon,
-  .dailyAction:hover .itemIcon {
+  .item:hover .itemIcon {
     transform: none;
   }
 }

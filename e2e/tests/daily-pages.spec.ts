@@ -80,8 +80,17 @@ test.describe("daily Pages", () => {
         "/libraries",
       );
       await page
-        .getByRole("navigation", { name: "Primary" })
-        .getByRole("button", { name: "Quick Note" })
+        .getByRole("button", { name: "Search or ask anything" })
+        .click();
+      const nexus = page.getByRole("dialog", { name: "Nexus" });
+      await expect(
+        nexus.getByRole("combobox", { name: "Find anything" }),
+      ).toBeFocused();
+      await nexus
+        .locator(
+          '[role="rowgroup"][aria-labelledby="desktop-nexus-section-QuickActions"]',
+        )
+        .getByRole("gridcell", { name: /^Quick Note\b/ })
         .click();
 
       await expect(page).toHaveURL(/\/daily\/\d{4}-\d{2}-\d{2}(?:[?#]|$)/);

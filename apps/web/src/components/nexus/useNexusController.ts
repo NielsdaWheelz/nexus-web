@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  createElement,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -10,58 +9,75 @@ import {
   useState,
 } from "react";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import {
   apiFetch,
   isApiError,
   isSameSystemApiDefect,
   type ApiPath,
 } from "@/lib/api/client";
+import { absent, present, type Presence } from "@/lib/api/presence";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { useResource } from "@/lib/api/useResource";
-import { usePaneWarm } from "@/lib/panes/paneWarm";
-import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
-import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { matchesKeyEvent } from "@/lib/keybindings";
-import {
-  useKeybindingLabel,
-  useKeybindings,
-} from "@/lib/keybindingsProvider";
+import { createLibrary } from "@/lib/libraries/client";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { buildResourceNexusActions } from "@/lib/nexus/actions";
+import { DESTINATIONS } from "@/lib/navigation/destinations";
+import { createNotePage } from "@/lib/notes/api";
+import {
+  readDailyDraft,
+  subscribeDailyDraft,
+  type DailyDraft,
+} from "@/lib/notes/dailyDraftStore";
+import { useOpenDailyPage, resolveDailyLocalDate } from "@/lib/notes/openDailyPage";
+import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
+import { getNexusCommand, NEXUS_COMMAND_IDS } from "@/lib/nexus/commands";
+import {
+  beginNexusPerformance,
+  completeNexusPerformanceAfterPaint,
+  NEXUS_OPEN_PERFORMANCE,
+} from "@/lib/nexus/performance";
 import {
   dispatchNexusTarget,
   isAndroidShellRestrictedHref,
+  materializeNexusTarget,
   PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
   PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
-  type NexusDispatchOutcome,
+  type MaterializedNexusTarget,
   type NexusDispatchCtx,
+  type NexusDispatchOutcome,
 } from "@/lib/nexus/dispatch";
 import {
-  consumePendingNexusOpenIntents,
   consumeNexusUrlIntent,
+  consumePendingNexusOpenIntents,
   NEXUS_OPEN_REQUESTED_EVENT,
   setNexusOpenReceiverReady,
 } from "@/lib/nexus/events";
-import {
-  type CommittedWorkflow,
-  type NexusAction,
-  type NexusEntry,
-  type NexusFindScope,
-  type NexusOpenIntent,
-  type NexusPage,
-  type NexusQuickAction,
-  type NexusTarget,
-  type NexusTargetActivation,
-  type RetainedActivation,
+import type {
+  CommittedWorkflow,
+  NexusAction,
+  NexusCommandId,
+  NexusEntry,
+  NexusEntryKey,
+  NexusOpenIntent,
+  NexusPage,
+  NexusProjection,
+  NexusReturnPoint,
+  NexusTarget,
+  NexusTargetActivation,
+  RetainedActivation,
+  RetainedActivationSource,
 } from "@/lib/nexus/model";
+import { nexusEntryKeyValue } from "@/lib/nexus/model";
 import {
-  buildNexusZeroState,
   commitNexusRevision,
-  composeNexusFindEntries,
+  composeNexusProjection,
+  composeNexusResultCandidates,
   mergeProgressiveNexusEntries,
-  parseNexusFindQuery,
+  nexusBrowseChoiceActions,
+  nexusCreateChoiceActions,
+  parseNexusQuery,
+  projectNexusCurrentPlaybackEntry,
   projectNexusLocalEntries,
   projectNexusOpenableEntries,
   projectNexusSearchEntries,
@@ -69,80 +85,48 @@ import {
   type NexusRecentTarget,
   type ProgressiveNexusCommit,
 } from "@/lib/nexus/results";
-import { serializeNexusEntryKey } from "@/lib/nexus/ranking";
+import { usePaneWarm } from "@/lib/panes/paneWarm";
+import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
+import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import {
-  beginNexusDesktopLocalRows,
-  beginNexusDesktopOpen,
-  beginNexusDesktopPaneActivation,
-  beginNexusDesktopProviders,
-  cancelNexusDesktopRun,
-  completeNexusDesktopLocalRows,
-  completeNexusDesktopOpenInputReady,
-  completeNexusDesktopProviders,
-  NEXUS_DESKTOP_PANE_ACTIVATE,
-  NEXUS_DESKTOP_PROVIDERS_FIRST_USABLE,
-  type NexusProviderPhase,
-  type NexusProviderSource,
-} from "@/lib/nexus/performance";
+  usePlayerCommands,
+  usePlayerSession,
+} from "@/lib/player/globalPlayer";
 import {
-  getQuickAction,
-  SWITCHBOARD_QUICK_ACTION_IDS,
-} from "@/lib/nexus/quickActions";
-import type {
-  DesktopNexusController,
-  DesktopNexusModality,
-} from "./desktop/types";
-import { paneStatusLabel } from "@/lib/switchboard/paneStatusLabel";
-import { DESTINATIONS } from "@/lib/navigation/destinations";
-import type { Destination } from "@/lib/navigation/destinations";
+  ResourceOpenablesContractDefect,
+  searchOpenableResources,
+  type ResourceOpenableSearchResponse,
+} from "@/lib/resources/openableResources";
+import { dailyDraftAcceptsText } from "@/lib/resourceSurface/dailySurfacePersistence";
+import {
+  useRenderEnvironment,
+  useViewportState,
+} from "@/lib/renderEnvironment/provider";
 import {
   fetchSearchResultPage,
   SearchContractDefect,
 } from "@/lib/search/searchApi";
 import { SEARCH_KINDS } from "@/lib/search/kinds";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
+import { useShareController } from "@/lib/sharing/controller";
+import { matchesKeyEvent } from "@/lib/keybindings";
 import {
-  useRenderEnvironment,
-  useViewportState,
-} from "@/lib/renderEnvironment/provider";
+  useKeybindings,
+  useKeybindingsController,
+} from "@/lib/keybindingsProvider";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import {
   resolveWorkspacePaneLabel,
   useWorkspaceStore,
 } from "@/lib/workspace/store";
-import { useShareController } from "@/lib/sharing/controller";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import {
-  ResourceOpenablesContractDefect,
-  searchOpenableResources,
-  type ResourceOpenableSearchResponse,
-} from "@/lib/resources/openableResources";
-import type { ResourceItem } from "@/lib/resources/resourceItems";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import {
-  switchboardOpenableSchemes,
-  switchboardSearchQuery,
-} from "@/lib/switchboard/findScopes";
-import {
-  mergeSwitchboardRows,
-  resourceMatchForQuery,
-} from "@/lib/switchboard/merge";
-import {
-  completeSwitchboardPerformance,
-  NEXUS_OPENABLES_PERFORMANCE,
-} from "@/lib/switchboard/performance";
 import type {
-  SwitchboardItem,
-  SwitchboardRowModel,
-} from "@/lib/switchboard/model";
-import { SWITCHBOARD_PLACES } from "@/lib/switchboard/places";
-import { absent, present, type Presence } from "@/lib/api/presence";
-import { createNotePage } from "@/lib/notes/api";
-import { useOpenDailyPage } from "@/lib/notes/openDailyPage";
-import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
-import { createLibrary } from "@/lib/libraries/client";
+  DesktopNexusActionsRequest,
+  DesktopNexusController,
+  DesktopNexusSource,
+} from "./desktop/types";
 import {
   resolveAddPanelInitialFocus,
   type AddDismissalConfirmation,
@@ -153,321 +137,151 @@ import {
 } from "./useAddContentSession";
 
 interface NexusHistoryResponse {
-  data: {
-    recent: NexusRecentTarget[];
-    frecency_by_href: Record<string, number>;
+  readonly data: {
+    readonly recent: NexusRecentTarget[];
+    readonly frecency_by_href: Record<string, number>;
   };
 }
 
-const NEXUS_OPENABLE_DEBOUNCE_MS = 80;
-const NEXUS_SEARCH_DEBOUNCE_MS = 160;
-const SWITCHBOARD_OPENABLE_DEBOUNCE_MS = 80;
-const SWITCHBOARD_DEEP_DEBOUNCE_MS = 160;
-const SWITCHBOARD_BUSY_DELAY_MS = 150;
-const EMPTY_RECENT: NexusRecentTarget[] = [];
-const EMPTY_FRECENCY: Record<string, number> = {};
-const EMPTY_SEARCH: SearchResultRowViewModel[] = [];
-
-function isRetryableWorkflowFailure(error: unknown): boolean {
-  return (
-    isApiError(error) ||
-    error instanceof TypeError ||
-    error instanceof DOMException
-  );
+export interface NexusManagedPane extends NexusPane {
+  readonly activationRouteId: ReturnType<typeof resolveWorkspaceActivationRouteId>;
 }
 
-function desktopPaneTargetId(
-  target: NexusTarget,
-  panes: readonly NexusPane[],
-): string | null {
-  if (target.kind === "InternalHref") {
-    return resolveWorkspaceActivationRouteId(target.href);
-  }
-  if (target.kind === "PaneOpen") {
-    const pane = panes.find((candidate) => candidate.id === target.paneId);
-    return pane ? resolveWorkspaceActivationRouteId(pane.href) : null;
-  }
-  if (
-    target.kind === "ResourceOpen" &&
-    target.subject.activation.kind === "route" &&
-    target.subject.activation.href !== null
-  ) {
-    return resolveWorkspaceActivationRouteId(target.subject.activation.href);
-  }
-  return null;
+export interface NexusManagedClosedPane {
+  readonly id: string;
+  readonly label: string;
 }
 
-export interface SwitchboardPane {
-  id: string;
-  href: string;
-  label: string;
-  visibility: "visible" | "minimized";
-  current: boolean;
-  activationRouteId: ReturnType<typeof resolveWorkspaceActivationRouteId>;
-}
-
-export interface SwitchboardClosedPane {
-  id: string;
-  label: string;
-}
-
-function routeOnlyOpenableSubject(item: ResourceItem) {
-  const href = item.activation.href;
-  if (item.activation.kind !== "route" || href === null) {
-    // justify-defect: the owned openables endpoint admits route activations only.
-    throw new Error(`Openable resource is not route-admitted: ${item.ref}`);
-  }
-  const ref = assumeCanonicalResourceRef(item.ref);
-  if (item.activation.resourceRef !== ref) {
-    // justify-defect: a canonical ResourceItem cannot identify two resources.
-    throw new Error(`Openable activation does not match ${item.ref}`);
-  }
-  return {
-    href,
-    subject: {
-      kind: "Resource" as const,
-      ref,
-      activation: item.activation,
-      missing: item.missing,
-    },
-  };
-}
-
-function openableRow(
-  item: ResourceItem,
-  query: string,
-  recentRouteIds: ReadonlySet<string>,
-): SwitchboardRowModel {
-  const { href, subject } = routeOnlyOpenableSubject(item);
-  return {
-    id: `Resource:${item.ref}`,
-    item: {
-      kind: "Resource",
-      occurrenceRef: item.ref,
-      ownerRef: item.ref,
-      activationRouteId: resolveWorkspaceActivationRouteId(href),
-      subject,
-      label: item.label,
-      summary: item.summary,
-      match: resourceMatchForQuery(
-        item.label,
-        item.summary,
-        query,
-        "Openable",
-      ),
-    },
-    label: item.label,
-    metadata: item.summary,
-    recent: recentRouteIds.has(resolveWorkspaceActivationRouteId(href)),
-  };
-}
-
-function deepSearchRow(
-  result: SearchResultRowViewModel,
-  query: string,
-  recentRouteIds: ReadonlySet<string>,
-): SwitchboardRowModel | null {
-  const href = result.actionTarget.activation.href;
-  if (
-    result.actionTarget.missing ||
-    result.actionTarget.activation.kind !== "route" ||
-    href === null
-  ) {
-    return null;
-  }
-  const summary =
-    result.snippetSegments.map((segment) => segment.text).join("").trim() ||
-    result.sourceMeta ||
-    result.typeLabel;
-  const deep =
-    result.resourceRef !== result.ownerResourceRef ||
-    result.contextRef?.locator !== undefined ||
-    result.type === "note_block" ||
-    result.type === "message";
-  return {
-    id: `Resource:${result.resourceRef}`,
-    item: {
-      kind: "Resource",
-      occurrenceRef: result.resourceRef,
-      ownerRef: result.ownerResourceRef,
-      activationRouteId: resolveWorkspaceActivationRouteId(href),
-      subject: result.actionTarget,
-      label: result.primaryText,
-      summary,
-      match: deep
-        ? "Deep"
-        : resourceMatchForQuery(
-            result.primaryText,
-            summary,
-            query,
-            "Openable",
-          ),
-    },
-    label: result.primaryText,
-    metadata: result.sourceMeta ?? result.typeLabel,
-    recent: recentRouteIds.has(resolveWorkspaceActivationRouteId(href)),
-  };
+export interface NexusMobileProjection {
+  readonly projection: NexusProjection;
+  readonly failures: ReadonlySet<DesktopNexusSource>;
+  readonly busy: boolean;
+  readonly pending: boolean;
 }
 
 export interface NexusController {
-  open: boolean;
-  paneCount: number;
-  query: string;
-  page: NexusPage;
-  addSession: AddContentSessionController;
-  dialogLabel: string;
-  focusKey: string;
-  dismissalConfirmation: AddDismissalConfirmation;
-  desktop: DesktopNexusController;
-  switchboardPanes: readonly SwitchboardPane[];
-  switchboardClosedPanes: readonly SwitchboardClosedPane[];
-  switchboardPlaces: readonly Destination[];
-  switchboardQuickActions: readonly NexusQuickAction[];
-  switchboardFindRows: readonly SwitchboardRowModel[];
-  switchboardFindActiveId: string | null;
-  switchboardFindBusy: boolean;
-  // Raw (undelayed) remote in-flight state. `busy` is delayed by
-  // SWITCHBOARD_BUSY_DELAY for the "Searching…" indicator; `pending` gates the
-  // "No results" empty state so it never flashes while a search is running.
-  switchboardFindPending: boolean;
-  switchboardOpenablesFailed: boolean;
-  switchboardDeepFailed: boolean;
-  setQuery(next: string): void;
+  readonly open: boolean;
+  readonly paneCount: number;
+  readonly query: string;
+  readonly page: NexusPage;
+  readonly projection: NexusProjection;
+  readonly actionsRequest: DesktopNexusActionsRequest | null;
+  readonly failures: ReadonlySet<DesktopNexusSource>;
+  readonly busy: boolean;
+  readonly pending: boolean;
+  readonly announcement: string;
+  readonly addSession: AddContentSessionController;
+  readonly dialogLabel: string;
+  readonly focusKey: string;
+  readonly dismissalConfirmation: AddDismissalConfirmation;
+  readonly desktop: DesktopNexusController;
+  readonly managedPanes: readonly NexusManagedPane[];
+  readonly managedClosedPanes: readonly NexusManagedClosedPane[];
+  readonly createChoiceActions: readonly NexusAction[];
+  readonly browseChoiceActions: readonly NexusAction[];
+  setQuery(query: string): void;
+  setActiveEntry(key: NexusEntryKey): void;
+  openEntryActions(entry: NexusEntry): void;
+  announceUnavailable(reason: string): void;
+  activateAction(
+    action: NexusAction,
+    activation: NexusTargetActivation,
+    entry?: NexusEntry,
+  ): void;
+  materialize(target: NexusTarget): MaterializedNexusTarget;
+  dispatch(
+    target: MaterializedNexusTarget,
+    activation: NexusTargetActivation,
+    entry?: NexusEntry,
+  ): Promise<NexusDispatchOutcome>;
+  reportActivationFailure(error: unknown): void;
+  retry(source: DesktopNexusSource): void;
   openTarget(target: NexusTarget): void;
   openAddTarget(target: NexusTarget): void;
   back(): void;
+  escape(): void;
   openRoot(): void;
-  enterFind(): void;
-  setFindScope(scope: NexusFindScope): void;
-  setSwitchboardFindActiveId(id: string | null): void;
-  openSwitchboardItem(item: SwitchboardItem, fork: boolean): void;
-  switchboardItemActions(item: SwitchboardItem): readonly NexusAction[];
-  runSwitchboardAction(action: NexusAction): void;
-  runAction(action: NexusAction): void;
-  openSwitchboardPlace(destination: Destination): void;
-  runSwitchboardQuickAction(action: NexusQuickAction): void;
-  closeSwitchboardPane(paneId: string): void;
-  restoreSwitchboardPane(paneId: string): void;
-  retrySwitchboardOpenables(): void;
-  retrySwitchboardDeep(): void;
+  close(): void;
+  dismissAccepted(): void;
+  guardClose(): DismissDecision;
+  initialFocus(container: HTMLElement, isMobile: boolean): HTMLElement | null;
+  shouldSuppressReturnFocusOnClose(): boolean;
+  keepWorking(): void;
+  confirmDismissal(): void;
   setLibraryNameDraft(name: string): void;
   submitLibrary(): void;
   retryPageCreation(): void;
   manageTabs(): void;
+  openManagedPane(paneId: string): void;
+  closeManagedPane(paneId: string): void;
+  restoreManagedPane(paneId: string): void;
   retryRetainedActivation(): void;
   cancelRetainedActivation(): void;
-  close(): void;
-  completeMobileQuickNoteNavigation(): void;
-  dismissAccepted(): void;
-  guardClose(): DismissDecision;
-  escape(): void;
-  initialFocus(container: HTMLElement, isMobile: boolean): HTMLElement | null;
-  keepWorking(): void;
-  confirmDismissal(): void;
-  shouldSuppressReturnFocusOnClose(): boolean; // read at close: true after a navigating dispatch
 }
 
+const EMPTY_RECENT: readonly NexusRecentTarget[] = [];
+const EMPTY_FRECENCY: Readonly<Record<string, number>> = {};
+const EMPTY_SEARCH: readonly SearchResultRowViewModel[] = [];
+const OPENABLE_DEBOUNCE_MS = 80;
+const SEARCH_DEBOUNCE_MS = 160;
+const BUSY_DELAY_MS = 150;
+const TODAY_APPEND_UNAVAILABLE =
+  "Open Today to finish the current embedded draft";
+
 type ExitIntent =
-  | { kind: "Close" }
-  | { kind: "Root" }
-  | { kind: "Content" }
+  | { readonly kind: "Close" }
+  | { readonly kind: "Root" }
+  | { readonly kind: "Content" }
+  | { readonly kind: "Replace"; readonly detail: NexusOpenIntent }
   | {
-      kind: "Navigate";
-      target: NexusTarget;
-      retained?: Omit<RetainedActivation, "target" | "activation">;
-      // Absent → Follow (desktop destination/today keyboard navigation). A
-      // completed Switchboard workflow (Import result) passes an Adopt
-      // activation so it opens beside, never replaces, the source pane.
-      activation?: NexusTargetActivation;
-    }
-  | { kind: "Replace"; detail: NexusOpenIntent };
+      readonly kind: "Navigate";
+      readonly target: NexusTarget;
+      readonly activation?: NexusTargetActivation;
+      readonly retained?: Omit<RetainedActivation, "target" | "activation">;
+    };
 
 type PendingDismissal = {
-  confirmation: Exclude<AddDismissalConfirmation, null>["kind"];
-  intent: ExitIntent;
+  readonly confirmation: Exclude<AddDismissalConfirmation, null>["kind"];
+  readonly intent: ExitIntent;
 };
 
+function isRetryableWorkflowFailure(error: unknown): boolean {
+  return isApiError(error) || error instanceof TypeError || error instanceof DOMException;
+}
+
+function actionTarget(action: NexusAction): NexusTarget | null {
+  return action.availability.kind === "Available"
+    ? action.availability.target
+    : null;
+}
+
+function playerDescriptor(session: ReturnType<typeof usePlayerSession>) {
+  const state = session.state;
+  if (state.kind !== "Active" || state.phase !== "Paused") return null;
+  return state.session.descriptor;
+}
+
 export function useNexusController(): NexusController {
+  const { accountId, calendarTimeZone } = useAuthenticatedAccount();
   const { androidShell } = useRenderEnvironment();
   const viewport = useViewportState();
   const keybindings = useKeybindings();
-  const paneSearchKeybindingHint = useKeybindingLabel("Pane.Search");
+  const keybindingController = useKeybindingsController();
   const feedback = useFeedback();
   const { openShare } = useShareController();
   const warmPane = usePaneWarm();
-  // The one Lectern capability (append is stable across renders); dispatch's queue-add
-  // case calls it. useLectern requires a LecternProvider ancestor (AuthenticatedShell).
   const { placeItems } = useLectern();
-  const addSession = useAddContentSession();
+  const playerSession = usePlayerSession();
+  const playerCommands = usePlayerCommands();
   const openDailyPage = useOpenDailyPage();
+  const addSession = useAddContentSession();
   const {
     start: startAddSession,
     backToContent: backToAddContent,
     discard: discardAddSession,
     stop: stopAddSession,
   } = addSession;
-  const [open, setOpen] = useState(false);
-  const [query, setQueryState] = useState("");
-  const [page, setPage] = useState<NexusPage>({ kind: "Root" });
-  const [desktopCommit, setDesktopCommit] =
-    useState<ProgressiveNexusCommit>({
-      entries: [],
-      activeKey: null,
-    });
-  const [desktopOpenablesRetry, setDesktopOpenablesRetry] = useState(0);
-  const [desktopSearchRetry, setDesktopSearchRetry] = useState(0);
-  const [pendingDismissal, setPendingDismissal] =
-    useState<PendingDismissal | null>(null);
-  const [switchboardFindActiveId, setSwitchboardFindActiveId] =
-    useState<string | null>(null);
-  const [openablesRetry, setOpenablesRetry] = useState(0);
-  const [deepRetry, setDeepRetry] = useState(0);
-  const [showSwitchboardBusy, setShowSwitchboardBusy] = useState(false);
-  const userMovedRef = useRef(false);
-  // Close reason for the dialog's return-focus. Reset to the a11y default (restore the
-  // opener) on every open; a navigating dispatch flips it true just before it closes so
-  // the surface's useReturnFocus doesn't yank focus back from the destination.
-  const suppressReturnFocusRef = useRef(false);
-  const previousSwitchboardRowsRef = useRef<{
-    key: string;
-    rows: readonly SwitchboardRowModel[];
-  }>({ key: "", rows: [] });
-  const desktopRunCounterRef = useRef(0);
-  const desktopOpenRunRef = useRef<string | null>(null);
-  const desktopLocalRunRef = useRef<{
-    id: string;
-    revision: string;
-  } | null>(null);
-  const desktopProviderRunsRef = useRef<
-    Record<
-      NexusProviderSource,
-      {
-        id: string;
-        revision: string;
-        phase: NexusProviderPhase;
-        sawLoading: boolean;
-        terminalEpoch: number | null;
-      } | null
-    >
-  >({ Openables: null, Owned: null });
-  const desktopProviderWarmRef = useRef<
-    Record<NexusProviderSource, boolean>
-  >({ Openables: false, Owned: false });
-  const desktopOpenablesCacheRef = useRef(
-    new Map<string, ResourceOpenableSearchResponse>(),
-  );
-  const clearDesktopOpenablesCache = useCallback(() => {
-    desktopOpenablesCacheRef.current.clear();
-  }, []);
-  const invalidateDesktopOpenablesCache = useCallback(() => {
-    clearDesktopOpenablesCache();
-    setDesktopOpenablesRetry((current) => current + 1);
-  }, [clearDesktopOpenablesCache]);
-  const previousAddMutationKindRef = useRef(
-    addSession.state.mutation.kind,
-  );
-  const [desktopCommitEpoch, setDesktopCommitEpoch] = useState(0);
-
+  const workspace = useWorkspaceStore();
   const {
     state,
     recentlyClosedPanes,
@@ -477,206 +291,157 @@ export function useNexusController(): NexusController {
     closePane,
     restoreClosedPane,
     restorePane,
-  } = useWorkspaceStore();
+  } = workspace;
+
+  const [open, setOpen] = useState(false);
+  const [query, setQueryState] = useState("");
+  const [page, setPage] = useState<NexusPage>({ kind: "Root" });
+  const [commit, setCommit] = useState<ProgressiveNexusCommit>({
+    normalizedQuery: "",
+    entries: [],
+    activeKey: null,
+  });
+  const [typedActionActiveKey, setTypedActionActiveKey] =
+    useState<NexusEntryKey | null>(null);
+  const [blankActiveKey, setBlankActiveKey] = useState<NexusEntryKey | null>(null);
+  const [actionsRequest, setActionsRequest] =
+    useState<DesktopNexusActionsRequest | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const [openablesRetry, setOpenablesRetry] = useState(0);
+  const [searchRetry, setSearchRetry] = useState(0);
+  const [showBusy, setShowBusy] = useState(false);
+  const [pendingDismissal, setPendingDismissal] =
+    useState<PendingDismissal | null>(null);
+  const [todayDraft, setTodayDraft] = useState<DailyDraft | null>(() => {
+    if (typeof window === "undefined") return null;
+    const localDate = resolveDailyLocalDate({ kind: "Today" }, calendarTimeZone);
+    return readDailyDraft(accountId, localDate);
+  });
+  const userMovedRef = useRef(false);
+  const suppressReturnFocusRef = useRef(false);
+  const requestIdRef = useRef(0);
+  const openablesCacheRef = useRef(new Map<string, ResourceOpenableSearchResponse>());
+
+  const parsed = useMemo(() => parseNexusQuery(query), [query]);
+  const todayLocalDate = resolveDailyLocalDate(
+    { kind: "Today" },
+    calendarTimeZone,
+  );
+  useEffect(() => {
+    setTodayDraft(readDailyDraft(accountId, todayLocalDate));
+    return subscribeDailyDraft(accountId, todayLocalDate, setTodayDraft);
+  }, [accountId, todayLocalDate]);
 
   useEffect(() => {
     if (!open) return;
     suppressReturnFocusRef.current = false;
-    // Openables are reusable only within one modal invocation. Resource
-    // mutations elsewhere in the app cannot race this modal, and a later open
-    // always starts from the canonical owner.
-    clearDesktopOpenablesCache();
-  }, [clearDesktopOpenablesCache, open]);
+    openablesCacheRef.current.clear();
+  }, [open]);
 
-  useEffect(() => {
-    const current = addSession.state.mutation.kind;
-    if (
-      previousAddMutationKindRef.current === "Running" &&
-      current === "Idle"
-    ) {
-      invalidateDesktopOpenablesCache();
-    }
-    previousAddMutationKindRef.current = current;
-  }, [
-    addSession.state.mutation.kind,
-    invalidateDesktopOpenablesCache,
-  ]);
-
-  const parsedQuery = useMemo(() => parseNexusFindQuery(query), [query]);
-  const requestedHistoryPath = useMemo<ApiPath | null>(() => {
-    if (!open || viewport.isMobile) return null;
-    return parsedQuery.text
-      ? `/api/me/nexus-history?${new URLSearchParams({ query: parsedQuery.text }).toString()}`
+  const historyPath = useMemo<ApiPath | null>(() => {
+    if (!open) return null;
+    return parsed.text
+      ? (`/api/me/nexus-history?${new URLSearchParams({ query: parsed.text })}` as ApiPath)
       : "/api/me/nexus-history";
-  }, [open, parsedQuery.text, viewport.isMobile]);
-
+  }, [open, parsed.text]);
   const historyResource = useResource<NexusHistoryResponse>({
-    cacheKey: requestedHistoryPath,
+    cacheKey: historyPath,
     path: (path) => path as ApiPath,
   });
-  const historyProjection = useMemo(() => {
+  const history = useMemo(() => {
     if (historyResource.status !== "ready") {
-      return { rows: EMPTY_RECENT, frecencyByHref: EMPTY_FRECENCY };
+      return { recent: EMPTY_RECENT, frecencyByHref: EMPTY_FRECENCY };
     }
     return {
-      rows: historyResource.data.data.recent.filter(
-        (recent) =>
-          !isAndroidShellRestrictedHref(recent.target_href, androidShell),
+      recent: historyResource.data.data.recent.filter(
+        (entry) => !isAndroidShellRestrictedHref(entry.target_href, androidShell),
       ),
       frecencyByHref: historyResource.data.data.frecency_by_href,
     };
   }, [androidShell, historyResource]);
-  const historyRows = historyProjection.rows;
-  const frecencyByHref = historyProjection.frecencyByHref;
 
-  const desktopFindEnabled =
-    open && !viewport.isMobile && parsedQuery.text.length > 0;
-  const desktopOpenablesIdentity = desktopFindEnabled ? query : null;
-  const desktopOpenablesFetch = useDebouncedFetch(
-    desktopOpenablesIdentity !== null
-      ? `${query}:${desktopOpenablesRetry}`
-      : null,
+  const panes = useMemo<NexusManagedPane[]>(
+    () =>
+      getWorkspacePrimaryPanes(state).map((pane) => {
+        const href = pane.currentVisit.href;
+        return {
+          id: pane.id,
+          href,
+          visibility: pane.visibility,
+          label: resolveWorkspacePaneLabel(pane, runtimeLabelByPaneId).label,
+          current: pane.id === state.activePrimaryPaneId,
+          activationRouteId: resolveWorkspaceActivationRouteId(href),
+        };
+      }),
+    [runtimeLabelByPaneId, state],
+  );
+  const managedClosedPanes = useMemo<NexusManagedClosedPane[]>(
+    () =>
+      recentlyClosedPanes.map((snapshot) => ({
+        id: snapshot.pane.id,
+        label: resolveWorkspacePaneLabel(snapshot.pane, runtimeLabelByPaneId).label,
+      })),
+    [recentlyClosedPanes, runtimeLabelByPaneId],
+  );
+
+  const commandShortcutHints = useMemo(
+    () =>
+      Object.fromEntries(
+        NEXUS_COMMAND_IDS.flatMap((id) => {
+          const label = keybindingController.labelFor(id);
+          return label ? [[id, label]] : [];
+        }),
+      ) as Partial<Record<NexusCommandId, string>>,
+    [keybindingController],
+  );
+  const findEnabled = open && parsed.text.length > 0;
+  const openablesIdentity = findEnabled ? query : null;
+  const openablesFetch = useDebouncedFetch(
+    openablesIdentity === null ? null : `${query}:${openablesRetry}`,
     async (signal) => {
-      const cacheKey = parsedQuery.text.toLocaleLowerCase();
-      const cached = desktopOpenablesCacheRef.current.get(cacheKey);
-      if (cached !== undefined) {
-        desktopOpenablesCacheRef.current.delete(cacheKey);
-        desktopOpenablesCacheRef.current.set(cacheKey, cached);
-        return cached;
-      }
+      const cacheKey = parsed.normalizedText;
+      const cached = openablesCacheRef.current.get(cacheKey);
+      if (cached) return cached;
       const response = await searchOpenableResources({
-        q: parsedQuery.text,
+        q: parsed.text,
         schemes: absent(),
         signal,
       });
-      if (!signal.aborted) {
-        desktopOpenablesCacheRef.current.set(cacheKey, response);
-        if (desktopOpenablesCacheRef.current.size > 32) {
-          const oldest = desktopOpenablesCacheRef.current.keys().next().value;
-          if (oldest !== undefined) {
-            desktopOpenablesCacheRef.current.delete(oldest);
-          }
-        }
-      }
+      if (!signal.aborted) openablesCacheRef.current.set(cacheKey, response);
       return response;
     },
     {
-      debounceMs:
-        parsedQuery.text.length === 1 ? 0 : NEXUS_OPENABLE_DEBOUNCE_MS,
-      identity: desktopOpenablesIdentity,
+      debounceMs: parsed.text.length === 1 ? 0 : OPENABLE_DEBOUNCE_MS,
+      identity: openablesIdentity,
     },
   );
-  const ownedSearchQuery = useMemo(
-    () => {
-      const requestedKinds =
-        parsedQuery.searchQuery.requestedKinds ??
-        new Set(SEARCH_KINDS);
-      return {
-        ...parsedQuery.searchQuery,
-        requestedKinds: new Set(
-          [...requestedKinds].filter((kind) => kind !== "web"),
-        ),
-      };
-    },
-    [parsedQuery.searchQuery],
-  );
-  const desktopSearchCandidateIdentity =
-    open && !viewport.isMobile && parsedQuery.text.length >= 2
-      ? query
+  const ownedSearchQuery = useMemo(() => {
+    const kinds = parsed.searchQuery.requestedKinds ?? new Set(SEARCH_KINDS);
+    return {
+      ...parsed.searchQuery,
+      requestedKinds: new Set([...kinds].filter((kind) => kind !== "web")),
+    };
+  }, [parsed.searchQuery]);
+  const ownedCandidateIdentity = open && parsed.text.length >= 2 ? query : null;
+  // Preserve the established latency policy: cheap Openables reaches a
+  // terminal state before expensive owned full-text retrieval starts.
+  const openablesTerminal =
+    openablesFetch.dataIdentity === ownedCandidateIdentity ||
+    openablesFetch.errorIdentity === ownedCandidateIdentity;
+  const ownedIdentity =
+    ownedCandidateIdentity !== null && openablesTerminal
+      ? ownedCandidateIdentity
       : null;
-  const desktopOpenablesTerminal =
-    desktopOpenablesFetch.dataIdentity === desktopSearchCandidateIdentity ||
-    desktopOpenablesFetch.errorIdentity === desktopSearchCandidateIdentity;
-  // Owned retrieval is the expensive enrichment path. Its quiet period starts
-  // only after the faster Openables source reaches a terminal state, so stale
-  // deep SQL never contends with the first-usable path during rapid typing.
-  const desktopSearchIdentity =
-    desktopSearchCandidateIdentity !== null &&
-    desktopOpenablesTerminal
-      ? desktopSearchCandidateIdentity
-      : null;
-  const desktopSearchFetch = useDebouncedFetch(
-    desktopSearchIdentity !== null
-      ? `${query}:${desktopSearchRetry}`
-      : null,
+  const ownedFetch = useDebouncedFetch(
+    ownedIdentity === null ? null : `${query}:${searchRetry}`,
     (signal) =>
       fetchSearchResultPage(ownedSearchQuery, {
         limit: 40,
         cursor: null,
         signal,
       }),
-    {
-      debounceMs: NEXUS_SEARCH_DEBOUNCE_MS,
-      identity: desktopSearchIdentity,
-    },
+    { debounceMs: SEARCH_DEBOUNCE_MS, identity: ownedIdentity },
   );
-  const mobileFindQuery =
-    page.kind === "Find" ? page.query.trim() : "";
-  const mobileFindScope =
-    page.kind === "Find" ? page.scope : ("All" as const);
-  const mobileFindEnabled =
-    open && viewport.isMobile && page.kind === "Find";
-  const openablesIdentity =
-    mobileFindEnabled && mobileFindQuery.length >= 1
-      ? `${mobileFindScope}:${mobileFindQuery}`
-      : null;
-  const openablesFetch = useDebouncedFetch(
-    openablesIdentity !== null
-      ? `${openablesIdentity}:${openablesRetry}`
-      : null,
-    (signal) =>
-      searchOpenableResources({
-        q: mobileFindQuery,
-        schemes: switchboardOpenableSchemes(mobileFindScope),
-        signal,
-      }),
-    {
-      debounceMs: SWITCHBOARD_OPENABLE_DEBOUNCE_MS,
-      identity: openablesIdentity,
-    },
-  );
-  const switchboardDeepQuery = useMemo(
-    () => switchboardSearchQuery(mobileFindScope, mobileFindQuery),
-    [mobileFindQuery, mobileFindScope],
-  );
-  const deepIdentity =
-    mobileFindEnabled &&
-    mobileFindQuery.length >= 2 &&
-    switchboardDeepQuery !== null
-      ? `${mobileFindScope}:${mobileFindQuery}`
-      : null;
-  const deepFetch = useDebouncedFetch(
-    deepIdentity !== null
-      ? `${deepIdentity}:${deepRetry}`
-      : null,
-    (signal) =>
-      fetchSearchResultPage(switchboardDeepQuery!, {
-        limit: 20,
-        cursor: null,
-        signal,
-      }),
-    {
-      debounceMs: SWITCHBOARD_DEEP_DEBOUNCE_MS,
-      identity: deepIdentity,
-    },
-  );
-
-  const desktopOpenablesData =
-    desktopOpenablesFetch.dataIdentity === desktopOpenablesIdentity
-      ? desktopOpenablesFetch.data
-      : null;
-  const desktopOpenablesError =
-    desktopOpenablesFetch.errorIdentity === desktopOpenablesIdentity
-      ? desktopOpenablesFetch.error
-      : null;
-  const desktopSearchData =
-    desktopSearchFetch.dataIdentity === desktopSearchIdentity
-      ? desktopSearchFetch.data
-      : null;
-  const desktopSearchError =
-    desktopSearchFetch.errorIdentity === desktopSearchIdentity
-      ? desktopSearchFetch.error
-      : null;
   const openablesData =
     openablesFetch.dataIdentity === openablesIdentity
       ? openablesFetch.data
@@ -685,416 +450,154 @@ export function useNexusController(): NexusController {
     openablesFetch.errorIdentity === openablesIdentity
       ? openablesFetch.error
       : null;
-  const deepData =
-    deepFetch.dataIdentity === deepIdentity ? deepFetch.data : null;
-  const deepError =
-    deepFetch.errorIdentity === deepIdentity ? deepFetch.error : null;
-  useLayoutEffect(() => {
-    if (openablesData !== null) {
-      completeSwitchboardPerformance(NEXUS_OPENABLES_PERFORMANCE);
-    }
-  }, [openablesData]);
-
-  const switchboardContractDefect =
+  const ownedData =
+    ownedFetch.dataIdentity === ownedIdentity ? ownedFetch.data : null;
+  const ownedError =
+    ownedFetch.errorIdentity === ownedIdentity ? ownedFetch.error : null;
+  const contractDefect =
     openablesError instanceof ResourceOpenablesContractDefect ||
     isSameSystemApiDefect(openablesError)
       ? openablesError
-      : deepError instanceof SearchContractDefect ||
-          isSameSystemApiDefect(deepError)
-        ? deepError
+      : ownedError instanceof SearchContractDefect || isSameSystemApiDefect(ownedError)
+        ? ownedError
         : null;
-  if (switchboardContractDefect !== null) {
-    throw switchboardContractDefect;
-  }
+  if (contractDefect) throw contractDefect;
 
-  const mobileRemoteBusy =
-    openablesFetch.loading || deepFetch.loading;
+  const remoteBusy = openablesFetch.loading || ownedFetch.loading;
   useEffect(() => {
-    if (!mobileRemoteBusy) {
-      setShowSwitchboardBusy(false);
+    if (!remoteBusy) {
+      setShowBusy(false);
       return;
     }
-    const timer = window.setTimeout(
-      () => setShowSwitchboardBusy(true),
-      SWITCHBOARD_BUSY_DELAY_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [mobileRemoteBusy]);
+    const timeout = window.setTimeout(() => setShowBusy(true), BUSY_DELAY_MS);
+    return () => window.clearTimeout(timeout);
+  }, [remoteBusy]);
 
-  // --- Context → items → view (pure, memoized) ---
-  const panes = useMemo(
+  const localEntries = useMemo(
     () =>
-      getWorkspacePrimaryPanes(state).map((pane) => ({
-        id: pane.id,
-        href: pane.currentVisit.href,
-        visibility: pane.visibility,
-        label: resolveWorkspacePaneLabel(pane, runtimeLabelByPaneId).label,
-      })),
-    [state, runtimeLabelByPaneId],
-  );
-  const switchboardPanes = useMemo<SwitchboardPane[]>(
-    () =>
-      panes.map((pane) => ({
-        ...pane,
-        current: pane.id === state.activePrimaryPaneId,
-        activationRouteId: resolveWorkspaceActivationRouteId(pane.href),
-      })),
-    [panes, state.activePrimaryPaneId],
-  );
-  const switchboardClosedPanes = useMemo<SwitchboardClosedPane[]>(
-    () =>
-      recentlyClosedPanes.map((snapshot) => ({
-        id: snapshot.pane.id,
-        label: resolveWorkspacePaneLabel(
-          snapshot.pane,
-          runtimeLabelByPaneId,
-        ).label,
-      })),
-    [recentlyClosedPanes, runtimeLabelByPaneId],
-  );
-  const ownerPaneRows = useMemo<SwitchboardRowModel[]>(
-    () =>
-      [...switchboardPanes]
-        .sort((left, right) => {
-          if (left.current !== right.current) return left.current ? -1 : 1;
-          if (left.visibility !== right.visibility) {
-            return left.visibility === "visible" ? -1 : 1;
-          }
-          return 0;
-        })
-        .map((pane) => ({
-          id: `OpenPane:${pane.id}`,
-          item: {
-            kind: "OpenPane",
-            paneId: pane.id,
-            activationRouteId: pane.activationRouteId,
-          },
-          label: pane.label,
-          metadata: paneStatusLabel(pane),
-          recent: false,
-        })),
-    [switchboardPanes],
-  );
-  const recentRouteIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const history of historyRows) {
-      if (resolvePaneRoute(history.target_href).id !== "unsupported") {
-        ids.add(resolveWorkspaceActivationRouteId(history.target_href));
-      }
-    }
-    return ids;
-  }, [historyRows]);
-
-  const localFindRows = useMemo<SwitchboardRowModel[]>(() => {
-    const query = mobileFindQuery.toLocaleLowerCase();
-    if (!query) return [];
-    const paneRows = switchboardPanes.flatMap((pane) => {
-      if (
-        !pane.label.toLocaleLowerCase().includes(query) &&
-        !pane.href.toLocaleLowerCase().includes(query)
-      ) {
-        return [];
-      }
-      return [
-        {
-          id: `OpenPane:${pane.id}`,
-          item: {
-            kind: "OpenPane" as const,
-            paneId: pane.id,
-            activationRouteId: resolveWorkspaceActivationRouteId(pane.href),
-          },
-          label: pane.label,
-          metadata: paneStatusLabel(pane),
-          recent: false,
-        },
-      ];
-    });
-    const recentHrefs = new Set(
-      historyRows.map((history) => history.target_href),
-    );
-    const destinationRows = DESTINATIONS.flatMap((destination) => {
-      if (
-        ![
-          destination.label,
-          destination.href,
-          ...destination.keywords,
-        ].some((value) => value.toLocaleLowerCase().includes(query))
-      ) {
-        return [];
-      }
-      return [
-        {
-          id: `Destination:${destination.id}`,
-          item: {
-            kind: "Destination" as const,
-            destinationId: destination.id,
-          },
-          label: destination.label,
-          metadata: "Place",
-          recent: recentHrefs.has(destination.href),
-        },
-      ];
-    });
-    return [...paneRows, ...destinationRows];
-  }, [historyRows, mobileFindQuery, switchboardPanes]);
-
-  const openableRows = useMemo(
-    () =>
-      (openablesData?.items ?? []).map((item) =>
-        openableRow(item, mobileFindQuery, recentRouteIds),
-      ),
-    [mobileFindQuery, openablesData, recentRouteIds],
-  );
-  const deepRows = useMemo(() => {
-    return (deepData?.rows ?? []).flatMap((result) => {
-      const row = deepSearchRow(result, mobileFindQuery, recentRouteIds);
-      return row ? [row] : [];
-    });
-  }, [deepData, mobileFindQuery, recentRouteIds]);
-  const switchboardFindRows = useMemo(() => {
-    const key = `${mobileFindScope}:${mobileFindQuery}`;
-    const previous =
-      previousSwitchboardRowsRef.current.key === key
-        ? previousSwitchboardRowsRef.current.rows
-        : [];
-    const rows = mergeSwitchboardRows({
-      query: mobileFindQuery,
-      previous,
-      incoming: [...localFindRows, ...openableRows, ...deepRows],
-      ownerPanes: ownerPaneRows,
-      activeId: switchboardFindActiveId,
-    });
-    previousSwitchboardRowsRef.current = { key, rows };
-    return rows;
-  }, [
-    localFindRows,
-    deepRows,
-    mobileFindQuery,
-    mobileFindScope,
-    openableRows,
-    ownerPaneRows,
-    switchboardFindActiveId,
-  ]);
-
-  const nexusPanes = useMemo<NexusPane[]>(
-    () =>
-      switchboardPanes.map((pane) => ({
-        id: pane.id,
-        href: pane.href,
-        visibility: pane.visibility,
-        label: pane.label,
-        current: pane.current,
-      })),
-    [switchboardPanes],
-  );
-  const quickActions = useMemo(
-    () => SWITCHBOARD_QUICK_ACTION_IDS.map(getQuickAction),
-    [],
-  );
-  const synchronousEntries = useMemo(
-    () =>
-      parsedQuery.text
-        ? projectNexusLocalEntries({
-            query: parsedQuery.text,
-            panes: nexusPanes,
-            destinations: DESTINATIONS,
-            quickActions,
-            frecencyByHref,
-            paneSearchKeybindingHint: paneSearchKeybindingHint ?? undefined,
-          })
-        : buildNexusZeroState({
-            panes: nexusPanes,
-            recent: historyRows,
-            frecencyByHref,
-            quickActions,
-          }),
-    [
-      frecencyByHref,
-      historyRows,
-      nexusPanes,
-      parsedQuery.text,
-      paneSearchKeybindingHint,
-      quickActions,
-    ],
+      projectNexusLocalEntries({
+        query,
+        panes,
+        destinations: DESTINATIONS,
+        frecencyByHref: history.frecencyByHref,
+        commandShortcutHints,
+      }),
+    [commandShortcutHints, history.frecencyByHref, panes, query],
   );
   const openableEntries = useMemo(
     () =>
       projectNexusOpenableEntries({
-        query: parsedQuery.text,
-        items: desktopOpenablesData?.items ?? [],
-        panes: nexusPanes,
+        query: parsed.text,
+        items: openablesData?.items ?? [],
+        panes,
+        frecencyByHref: history.frecencyByHref,
       }),
-    [desktopOpenablesData, nexusPanes, parsedQuery.text],
+    [history.frecencyByHref, openablesData, panes, parsed.text],
   );
-  const searchEntries = useMemo(
+  const ownedEntries = useMemo(
     () =>
       projectNexusSearchEntries({
-        query: parsedQuery.text,
-        rows: desktopSearchData?.rows ?? EMPTY_SEARCH,
-        panes: nexusPanes,
+        query: parsed.text,
+        rows: ownedData?.rows ?? EMPTY_SEARCH,
+        panes,
+        frecencyByHref: history.frecencyByHref,
       }),
-    [desktopSearchData, nexusPanes, parsedQuery.text],
+    [history.frecencyByHref, ownedData, panes, parsed.text],
   );
-  const composedDesktopEntries = useMemo(
+  const candidates = useMemo(
     () =>
-      parsedQuery.text
-        ? composeNexusFindEntries({
-            query,
-            local: synchronousEntries,
-            openables: openableEntries,
-            search: searchEntries,
-          })
-        : synchronousEntries,
-    [
-      openableEntries,
-      parsedQuery.text,
-      query,
-      searchEntries,
-      synchronousEntries,
-    ],
+      composeNexusResultCandidates({
+        local: localEntries,
+        openables: openableEntries,
+        search: ownedEntries,
+      }),
+    [localEntries, openableEntries, ownedEntries],
   );
-  const desktopRevision = `${open ? "Open" : "Closed"}:${query}`;
-  const revisionRef = useRef(desktopRevision);
-  const synchronousEntriesRef = useRef(synchronousEntries);
-  synchronousEntriesRef.current = synchronousEntries;
+  const localEntriesRef = useRef(localEntries);
+  localEntriesRef.current = localEntries;
   useLayoutEffect(() => {
-    if (viewport.isMobile) return;
-    revisionRef.current = desktopRevision;
+    if (!parsed.normalizedText) return;
     userMovedRef.current = false;
-    setDesktopCommit(
-      commitNexusRevision(synchronousEntriesRef.current),
+    setTypedActionActiveKey(null);
+    setCommit(
+      commitNexusRevision({
+        normalizedQuery: parsed.normalizedText,
+        incoming: localEntriesRef.current,
+        activeKey: null,
+      }),
     );
-    setDesktopCommitEpoch((current) => current + 1);
-  }, [desktopRevision, viewport.isMobile]);
+  }, [parsed.normalizedText]);
   useLayoutEffect(() => {
-    if (viewport.isMobile) return;
-    if (revisionRef.current !== desktopRevision) return;
-    setDesktopCommit((previous) =>
+    if (!parsed.text) return;
+    setCommit((previous) =>
       mergeProgressiveNexusEntries({
         previous,
-        incoming: composedDesktopEntries,
+        normalizedQuery: parsed.normalizedText,
+        incoming: candidates,
         userMoved: userMovedRef.current,
       }),
     );
-    setDesktopCommitEpoch((current) => current + 1);
-  }, [composedDesktopEntries, desktopRevision, viewport.isMobile]);
-  const desktopCommitRef = useRef(desktopCommit);
-  desktopCommitRef.current = desktopCommit;
+  }, [candidates, parsed.normalizedText, parsed.text]);
 
-  useLayoutEffect(() => {
-    if (viewport.isMobile) return;
-    const run = desktopLocalRunRef.current;
-    if (!run || run.revision !== desktopRevision) return;
-    completeNexusDesktopLocalRows(run.id);
-    desktopLocalRunRef.current = null;
-  }, [desktopCommitEpoch, desktopRevision, viewport.isMobile]);
-
-  useEffect(() => {
-    if (
-      !desktopOpenablesFetch.loading &&
-      desktopOpenablesError === null &&
-      desktopOpenablesData !== null
-    ) {
-      desktopProviderWarmRef.current.Openables = true;
-    }
-    if (
-      !desktopSearchFetch.loading &&
-      desktopSearchError === null &&
-      desktopSearchData !== null
-    ) {
-      desktopProviderWarmRef.current.Owned = true;
-    }
-  }, [
-    desktopOpenablesData,
-    desktopOpenablesError,
-    desktopOpenablesFetch.loading,
-    desktopSearchData,
-    desktopSearchError,
-    desktopSearchFetch.loading,
-  ]);
-
-  useLayoutEffect(() => {
-    for (const source of ["Openables", "Owned"] as const) {
-      const run = desktopProviderRunsRef.current[source];
-      if (!run || run.revision !== desktopRevision) continue;
-      const loading =
-        source === "Openables"
-          ? desktopOpenablesFetch.loading
-          : desktopSearchFetch.loading;
-      const data =
-        source === "Openables"
-          ? desktopOpenablesData
-          : desktopSearchData;
-      const error =
-        source === "Openables"
-          ? desktopOpenablesError
-          : desktopSearchError;
-      if (loading) {
-        run.sawLoading = true;
-        continue;
-      }
-      if (!run.sawLoading && data === null && error === null) continue;
-      if (error !== null || data === null) {
-        cancelNexusDesktopRun(
-          NEXUS_DESKTOP_PROVIDERS_FIRST_USABLE,
-          run.id,
-        );
-        desktopProviderRunsRef.current[source] = null;
-        continue;
-      }
-      if (run.terminalEpoch === null) {
-        run.terminalEpoch = desktopCommitEpoch;
-        const other = source === "Openables" ? "Owned" : "Openables";
-        const superseded = desktopProviderRunsRef.current[other];
-        if (superseded) {
-          cancelNexusDesktopRun(
-            NEXUS_DESKTOP_PROVIDERS_FIRST_USABLE,
-            superseded.id,
-          );
-          desktopProviderRunsRef.current[other] = null;
-        }
-        return;
-      }
-      if (desktopCommitEpoch <= run.terminalEpoch) return;
-      completeNexusDesktopProviders(run.id, run.phase, source);
-      desktopProviderRunsRef.current[source] = null;
-      return;
-    }
-  }, [
-    desktopCommitEpoch,
-    desktopOpenablesData,
-    desktopOpenablesError,
-    desktopOpenablesFetch.loading,
-    desktopRevision,
-    desktopSearchData,
-    desktopSearchError,
-    desktopSearchFetch.loading,
-  ]);
-
-  const setActiveEntry = useCallback(
-    (key: string) => {
-      userMovedRef.current = true;
-      setDesktopCommit((current) => ({ ...current, activeKey: key }));
-      const entry = desktopCommitRef.current.entries.find(
-        (candidate) => serializeNexusEntryKey(candidate.key) === key,
-      );
-      const target = entry?.primaryAction.target;
-      if (target?.kind === "InternalHref") {
-        warmPane(target.href);
-      } else if (
-        target?.kind === "ResourceOpen" &&
-        target.subject.activation.kind === "route" &&
-        target.subject.activation.href !== null
-      ) {
-        warmPane(target.subject.activation.href);
-      } else if (target?.kind === "PaneOpen") {
-        const pane = panes.find((candidate) => candidate.id === target.paneId);
-        if (pane) warmPane(pane.href);
-      }
-    },
-    [panes, warmPane],
+  const descriptor = playerDescriptor(playerSession);
+  const currentPlayback = useMemo(
+    () =>
+      descriptor
+        ? projectNexusCurrentPlaybackEntry({
+            label: descriptor.title,
+            metadata:
+              descriptor.subtitle.kind === "Present"
+                ? descriptor.subtitle.value
+                : undefined,
+          })
+        : null,
+    [descriptor],
   );
+  const todayAppend = useMemo(
+    () =>
+      todayDraft === null || dailyDraftAcceptsText(todayDraft)
+        ? ({ kind: "Available" } as const)
+        : ({ kind: "Unavailable", reason: TODAY_APPEND_UNAVAILABLE } as const),
+    [todayDraft],
+  );
+  const projectionInput = {
+    query,
+    panes,
+    currentPlayback,
+    recent: history.recent,
+    destinations: DESTINATIONS,
+    frecencyByHref: history.frecencyByHref,
+    commandShortcutHints,
+    results: commit.entries,
+    activeKey: parsed.text
+      ? (typedActionActiveKey ?? commit.activeKey)
+      : blankActiveKey,
+    todayAppend,
+  } as const;
+  const desktopProjection = composeNexusProjection({
+    surface: "Desktop",
+    ...projectionInput,
+  });
+  const mobileProjection = composeNexusProjection({
+    surface: "Mobile",
+    ...projectionInput,
+  });
+  const projection = viewport.isMobile ? mobileProjection : desktopProjection;
+  const rootReturnPoint = useMemo<NexusReturnPoint>(
+    () => ({ kind: "Root", query, activeKey: projection.activeKey }),
+    [projection.activeKey, query],
+  );
+  const failures = useMemo(() => {
+    const value = new Set<DesktopNexusSource>();
+    if (openablesError) value.add("Openables");
+    if (ownedError) value.add("Owned");
+    return value;
+  }, [openablesError, ownedError]);
 
+  const invalidateOpenables = useCallback(() => {
+    openablesCacheRef.current.clear();
+    setOpenablesRetry((value) => value + 1);
+  }, []);
   const dispatchCtx = useMemo<NexusDispatchCtx>(
     () => ({
       androidShell,
@@ -1103,7 +606,7 @@ export function useNexusController(): NexusController {
       activateWorkspaceTarget,
       placeItems: async (input) => {
         const result = await placeItems(input);
-        invalidateDesktopOpenablesCache();
+        invalidateOpenables();
         return result;
       },
       panes,
@@ -1113,6 +616,7 @@ export function useNexusController(): NexusController {
       requestPaneSearch: dispatchPaneSearchRequest,
       openShare,
       openDailyPage,
+      resumeCurrentPlayback: playerCommands.resume,
       shareOptions: () => {
         const returnTarget =
           document.activeElement instanceof HTMLElement
@@ -1127,55 +631,26 @@ export function useNexusController(): NexusController {
       },
     }),
     [
-      androidShell,
-      feedback,
-      activateWorkspaceTarget,
-      invalidateDesktopOpenablesCache,
-      placeItems,
-      panes,
       activatePane,
-      restorePane,
+      activateWorkspaceTarget,
+      androidShell,
       closePane,
-      openShare,
+      feedback,
+      invalidateOpenables,
       openDailyPage,
+      openShare,
+      panes,
+      placeItems,
+      playerCommands.resume,
+      restorePane,
       state.activePrimaryPaneId,
     ],
   );
-
-  const logSelection = useCallback(
-    (entry: NexusEntry, clientMutationId: string) => {
-      const target = entry.primaryAction.target;
-      const href =
-        target.kind === "InternalHref"
-          ? target.href
-          : target.kind === "ResourceOpen" &&
-              target.subject.activation.kind === "route" &&
-              target.subject.activation.href
-            ? target.subject.activation.href
-            : target.kind === "PaneOpen"
-              ? panes.find((pane) => pane.id === target.paneId)?.href
-              : undefined;
-      if (!href || isAndroidShellRestrictedHref(href, androidShell)) return;
-      void apiFetch("/api/me/nexus-selections", {
-        method: "POST",
-        body: JSON.stringify({
-          client_mutation_id: clientMutationId,
-          query: parsedQuery.text || null,
-          target_href: href,
-          label_snapshot: entry.label,
-          source: entry.historySource,
-        }),
-      }).catch((error) => {
-        if (handleUnauthenticatedApiError(error)) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-        feedback.show(
-          toFeedback(error, { fallback: "Nexus history was not saved" }),
-        );
-      });
-    },
-    [androidShell, feedback, panes, parsedQuery.text],
+  const materialize = useCallback(
+    (target: NexusTarget) =>
+      materializeNexusTarget(target, { accountId, calendarTimeZone }),
+    [accountId, calendarTimeZone],
   );
-
   const fail = useCallback(
     (error: unknown) => {
       if (handleUnauthenticatedApiError(error)) return;
@@ -1184,16 +659,7 @@ export function useNexusController(): NexusController {
     },
     [feedback],
   );
-
-  const returnTo = useMemo<RetainedActivation["returnTo"]>(
-    () =>
-      page.kind === "Find"
-        ? { kind: "Find", query: page.query, scope: page.scope }
-        : { kind: "Root" },
-    [page],
-  );
-
-  const applyDispatchOutcome = useCallback(
+  const applyNavigationOutcome = useCallback(
     (
       outcome: NexusDispatchOutcome,
       activation: NexusTargetActivation,
@@ -1204,6 +670,7 @@ export function useNexusController(): NexusController {
         case "WorkflowRequested":
           return;
         case "NavigationAccepted":
+        case "DailyPageAccepted":
           suppressReturnFocusRef.current = true;
           setOpen(false);
           return;
@@ -1221,399 +688,83 @@ export function useNexusController(): NexusController {
     },
     [],
   );
-
-  const dispatchOwned = useCallback(
-    (
-      target: NexusTarget,
-      activation: NexusTargetActivation,
-      retained: Omit<RetainedActivation, "target" | "activation">,
-    ) =>
-      dispatchNexusTarget(target, dispatchCtx, activation).then((outcome) => {
-        applyDispatchOutcome(outcome, activation, retained);
-        return outcome;
-      }),
-    [applyDispatchOutcome, dispatchCtx],
-  );
-
   const dispatchWorkspaceTarget = useCallback(
     (input: {
-      target: WorkspaceTarget;
-      source: RetainedActivation["source"];
-      completion?: Presence<CommittedWorkflow>;
-      returnTo: RetainedActivation["returnTo"];
-      activation?: NexusTargetActivation;
-      onAccepted?: () => void;
+      readonly target: WorkspaceTarget;
+      readonly source: RetainedActivationSource;
+      readonly completion?: Presence<CommittedWorkflow>;
+      readonly returnTo: NexusReturnPoint;
+      readonly activation: NexusTargetActivation;
+      readonly onAccepted?: () => void;
     }) => {
-      void dispatchOwned(
-        {
-          kind: "InternalHref",
-          href: input.target.href,
-          labelHint: input.target.labelHint,
-        },
-        input.activation ?? PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
-        {
-          source: input.source,
-          completion: input.completion ?? absent(),
-          returnTo: input.returnTo,
-        },
-      )
+      const target = materialize({
+        kind: "InternalHref",
+        href: input.target.href,
+        labelHint: input.target.labelHint,
+      });
+      void dispatchNexusTarget(target, dispatchCtx, input.activation)
         .then((outcome) => {
+          applyNavigationOutcome(outcome, input.activation, {
+            source: input.source,
+            completion: input.completion ?? absent(),
+            returnTo: input.returnTo,
+          });
           if (outcome.kind === "NavigationAccepted") input.onAccepted?.();
         })
         .catch(fail);
     },
-    [dispatchOwned, fail],
+    [applyNavigationOutcome, dispatchCtx, fail, materialize],
   );
-
   const runPageCreation = useCallback(
-    (pageId: string, activation: NexusTargetActivation) => {
+    (input: {
+      readonly pageId: string;
+      readonly titleDraft: string;
+      readonly activation: NexusTargetActivation;
+      readonly returnTo: NexusReturnPoint;
+    }) => {
+      const title = input.titleDraft.trim() || "Untitled";
       setPage({
         kind: "CreatePage",
-        pageId,
+        pageId: input.pageId,
+        titleDraft: title,
+        activation: input.activation,
         submit: { kind: "Running" },
-        activation,
       });
-      void createNotePage({ pageId, title: "Untitled" })
+      void createNotePage({ pageId: input.pageId, title })
         .then((created) => {
-          invalidateDesktopOpenablesCache();
+          invalidateOpenables();
           setPendingNoteFocus({ pageId: created.id, target: "title" });
           dispatchWorkspaceTarget({
-            target: {
-              href: `/pages/${created.id}`,
-              labelHint: created.title,
-            },
+            target: { href: `/pages/${created.id}`, labelHint: created.title },
             source: "Page",
-            completion: present({ kind: "Page", replayId: pageId }),
-            returnTo: { kind: "Root" },
-            activation,
+            completion: present({ kind: "Page", replayId: input.pageId }),
+            returnTo: input.returnTo,
+            activation: input.activation,
           });
         })
         .catch((error: unknown) => {
           if (handleUnauthenticatedApiError(error)) return;
-          if (
-            isSameSystemApiDefect(error) ||
-            !isRetryableWorkflowFailure(error)
-          ) {
+          if (isSameSystemApiDefect(error) || !isRetryableWorkflowFailure(error)) {
             throw error;
           }
           setPage({
             kind: "CreatePage",
-            pageId,
-            activation,
+            pageId: input.pageId,
+            titleDraft: title,
+            activation: input.activation,
             submit: {
               kind: "Retryable",
-              message: toFeedback(error, {
-                fallback: "Couldn’t create page. Retry",
-              }).title,
+              message: toFeedback(error, { fallback: "Couldn’t create page. Retry" }).title,
             },
           });
         });
     },
-    [dispatchWorkspaceTarget, invalidateDesktopOpenablesCache],
+    [dispatchWorkspaceTarget, invalidateOpenables],
   );
-
-  const submitLibrary = useCallback(() => {
-    if (page.kind !== "CreateLibrary" || page.submit.kind === "Running") {
-      return;
-    }
-    const name = page.nameDraft.trim();
-    if (!name) return;
-    const libraryId = page.libraryId;
-    setPage({ ...page, nameDraft: name, submit: { kind: "Running" } });
-    void createLibrary({ libraryId, name })
-      .then((library) => {
-        invalidateDesktopOpenablesCache();
-        dispatchWorkspaceTarget({
-          target: {
-            href: `/libraries/${library.id}`,
-            labelHint: library.name,
-          },
-          source: "Library",
-          completion: present({ kind: "Library", replayId: libraryId }),
-          returnTo: { kind: "Root" },
-          activation: page.activation,
-        });
-      })
-      .catch((error: unknown) => {
-        if (handleUnauthenticatedApiError(error)) return;
-        if (
-          isSameSystemApiDefect(error) ||
-          !isRetryableWorkflowFailure(error)
-        ) {
-          throw error;
-        }
-        setPage({
-          kind: "CreateLibrary",
-          libraryId,
-          nameDraft: name,
-          activation: page.activation,
-          submit: {
-            kind: "Retryable",
-            message: toFeedback(error, {
-              fallback: "Couldn’t create library. Retry",
-            }).title,
-          },
-        });
-      });
-  }, [dispatchWorkspaceTarget, invalidateDesktopOpenablesCache, page]);
-
-  const setLibraryNameDraft = useCallback((name: string) => {
-    setPage((current) => {
-      if (
-        current.kind !== "CreateLibrary" ||
-        current.submit.kind === "Running"
-      ) {
-        return current;
-      }
-      return {
-        ...current,
-        nameDraft: name,
-        libraryId:
-          current.submit.kind === "Retryable" &&
-          name !== current.nameDraft
-            ? crypto.randomUUID()
-            : current.libraryId,
-        submit: { kind: "Ready" },
-      };
-    });
-  }, []);
-
-  const openSwitchboardItem = useCallback(
-    (item: SwitchboardItem, fork: boolean) => {
-      const activation: NexusTargetActivation = {
-        disposition: { kind: fork ? "Fork" : "Adopt" },
-        modality: "Programmatic",
-      };
-      switch (item.kind) {
-        case "OpenPane": {
-          const pane = panes.find((candidate) => candidate.id === item.paneId);
-          if (!pane) {
-            // justify-defect: rendered pane rows come from the current workspace.
-            throw new Error(`Unknown Switchboard pane: ${item.paneId}`);
-          }
-          if (fork) {
-            dispatchWorkspaceTarget({
-              target: { href: pane.href, labelHint: pane.label },
-              source: "Find",
-              returnTo,
-              activation,
-            });
-            return;
-          }
-          if (pane.visibility === "minimized") restorePane(item.paneId);
-          else activatePane(item.paneId);
-          suppressReturnFocusRef.current =
-            item.paneId !== state.activePrimaryPaneId;
-          setOpen(false);
-          return;
-        }
-        case "ClosedPane": {
-          const result = restoreClosedPane(item.paneId);
-          if (result.kind === "Rejected") {
-            feedback.show({
-              severity: "warning",
-              title: "Tab limit reached",
-              message: "Close a tab, then restore this one.",
-            });
-            return;
-          }
-          suppressReturnFocusRef.current = true;
-          setOpen(false);
-          return;
-        }
-        case "Destination": {
-          const destination = DESTINATIONS.find(
-            (candidate) => candidate.id === item.destinationId,
-          );
-          if (!destination) {
-            // justify-defect: destination ids are projected from the registry.
-            throw new Error(
-              `Unknown Switchboard destination: ${item.destinationId}`,
-            );
-          }
-          if (destination.id === "today") {
-            void dispatchOwned(
-              {
-                kind: "OpenDailyPage",
-                localDate: "Today",
-                entry: { kind: "View" },
-              },
-              activation,
-              {
-                source: "Find",
-                completion: absent(),
-                returnTo,
-              },
-            ).catch(fail);
-          } else {
-            dispatchWorkspaceTarget({
-              target: {
-                href: destination.href,
-                labelHint: destination.label,
-              },
-              source: "Find",
-              returnTo,
-              activation,
-            });
-          }
-          return;
-        }
-        case "Resource": {
-          const href = item.subject.activation.href;
-          if (item.subject.activation.kind !== "route" || href === null) {
-            // justify-defect: Switchboard Find admits internal routes only.
-            throw new Error(
-              `Switchboard resource is not internally routeable: ${item.occurrenceRef}`,
-            );
-          }
-          dispatchWorkspaceTarget({
-            target: { href, labelHint: item.label },
-            source: "Find",
-            returnTo,
-            activation,
-          });
-          return;
-        }
-        default: {
-          const _exhaustive: never = item;
-          return _exhaustive;
-        }
-      }
-    },
-    [
-      activatePane,
-      dispatchOwned,
-      dispatchWorkspaceTarget,
-      fail,
-      feedback,
-      panes,
-      restoreClosedPane,
-      restorePane,
-      returnTo,
-      state.activePrimaryPaneId,
-    ],
-  );
-
-  const openSwitchboardPlace = useCallback(
-    (destination: Destination) => {
-      if (destination.id === "today") {
-        void dispatchOwned(
-          {
-            kind: "OpenDailyPage",
-            localDate: "Today",
-            entry: { kind: "View" },
-          },
-          PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
-          {
-            source: "Place",
-            completion: absent(),
-            returnTo: { kind: "Root" },
-          },
-        ).catch(fail);
-        return;
-      }
-      dispatchWorkspaceTarget({
-        target: { href: destination.href, labelHint: destination.label },
-        source: "Place",
-        returnTo: { kind: "Root" },
-        activation: PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
-      });
-    },
-    [dispatchOwned, dispatchWorkspaceTarget, fail],
-  );
-
-  const switchboardItemActions = useCallback(
-    (item: SwitchboardItem): readonly NexusAction[] =>
-      item.kind === "Resource"
-        ? buildResourceNexusActions(item.subject, item.label)
-        : [],
-    [],
-  );
-
-  const runSwitchboardAction = useCallback(
-    (action: NexusAction) => {
-      void dispatchOwned(
-        action.target,
-        {
-          disposition: { kind: "Adopt" },
-          modality: "Programmatic",
-        },
-        {
-          source: "Find",
-          completion: absent(),
-          returnTo,
-        },
-      ).catch(fail);
-    },
-    [dispatchOwned, fail, returnTo],
-  );
-
-  const runSwitchboardQuickAction = useCallback(
-    (action: NexusQuickAction) => {
-      const adopt = PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION;
-      switch (action.target.kind) {
-        case "OpenDailyPage":
-          void dispatchOwned(
-            action.target,
-            adopt,
-            {
-              source: "Place",
-              completion: absent(),
-              returnTo: { kind: "Root" },
-            },
-          ).catch(fail);
-          return;
-        case "CreatePage":
-          runPageCreation(crypto.randomUUID(), adopt);
-          return;
-        case "CreateChat":
-          dispatchWorkspaceTarget({
-            target: { href: "/conversations/new", labelHint: "New chat" },
-            source: "Chat",
-            returnTo: { kind: "Root" },
-            activation: {
-              disposition: { kind: "Fork" },
-              modality: "Programmatic",
-            },
-          });
-          return;
-        case "CreateLibrary":
-          setPage({
-            kind: "CreateLibrary",
-            nameDraft: "",
-            libraryId: crypto.randomUUID(),
-            submit: { kind: "Ready" },
-            activation: adopt,
-          });
-          return;
-        case "Import":
-          setPage({
-            kind: "Add",
-            sessionId: startAddSession(action.target.seed),
-            activation: adopt,
-          });
-          return;
-        default: {
-          const _exhaustive: never = action.target;
-          return _exhaustive;
-        }
-      }
-    },
-    [
-      dispatchOwned,
-      dispatchWorkspaceTarget,
-      fail,
-      runPageCreation,
-      startAddSession,
-    ],
-  );
-
   const handleWorkflowRequest = useCallback(
     (
-      outcome: Extract<
-        NexusDispatchOutcome,
-        { kind: "WorkflowRequested" }
-      >,
+      outcome: Extract<NexusDispatchOutcome, { kind: "WorkflowRequested" }>,
+      returnTo: NexusReturnPoint,
     ) => {
       const { target, activation } = outcome;
       switch (target.kind) {
@@ -1625,216 +776,324 @@ export function useNexusController(): NexusController {
           });
           return;
         case "CreatePage":
-          runPageCreation(crypto.randomUUID(), activation);
+          runPageCreation({
+            pageId: crypto.randomUUID(),
+            titleDraft: target.titleDraft,
+            activation,
+            returnTo,
+          });
           return;
         case "CreateLibrary":
           setPage({
             kind: "CreateLibrary",
-            nameDraft: "",
+            nameDraft: target.nameDraft,
             libraryId: crypto.randomUUID(),
             submit: { kind: "Ready" },
             activation,
           });
           return;
+        case "ChooseCreate":
+          setPage({ kind: "ChooseCreate", initialDraft: target.initialDraft });
+          return;
+        case "ChooseBrowse":
+          setPage({ kind: "ChooseBrowse", query: target.query });
+          return;
+        case "ManageTabs":
+          setPage({ kind: "ManageTabs", origin: { kind: "Direct" } });
+          return;
       }
     },
     [runPageCreation, startAddSession],
   );
-
-  const selectEntry = useCallback(
-    (
-      key: string,
-      disposition: "Follow" | "Fork",
-      modality: DesktopNexusModality,
-    ) => {
-      const snapshot = desktopCommitRef.current;
-      const entry = snapshot.entries.find(
-        (candidate) => serializeNexusEntryKey(candidate.key) === key,
-      );
-      if (!entry) return;
-      const activation: NexusTargetActivation = {
-        disposition: { kind: disposition },
-        modality,
+  const logSelection = useCallback(
+    (entry: NexusEntry, target: MaterializedNexusTarget) => {
+      const href =
+        target.kind === "InternalHref"
+          ? target.href
+          : target.kind === "ResourceOpen" &&
+              target.subject.activation.kind === "route"
+            ? target.subject.activation.href
+            : target.kind === "PaneOpen"
+              ? panes.find((pane) => pane.id === target.paneId)?.href
+              : null;
+      if (!href || isAndroidShellRestrictedHref(href, androidShell)) return;
+      void apiFetch("/api/me/nexus-selections", {
+        method: "POST",
+        body: JSON.stringify({
+          client_mutation_id: crypto.randomUUID(),
+          query: parsed.text || null,
+          target_href: href,
+          label_snapshot: entry.label,
+          source: entry.historySource,
+        }),
+      }).catch((error: unknown) => {
+        if (handleUnauthenticatedApiError(error)) return;
+        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+        feedback.show(toFeedback(error, { fallback: "Nexus history was not saved" }));
+      });
+    },
+    [androidShell, feedback, panes, parsed.text],
+  );
+  const dispatch = useCallback(
+    async (
+      target: MaterializedNexusTarget,
+      activation: NexusTargetActivation,
+      entry?: NexusEntry,
+    ): Promise<NexusDispatchOutcome> => {
+      setAnnouncement("");
+      const outcome = await dispatchNexusTarget(target, dispatchCtx, activation);
+      const retained = {
+        source: "Result" as const,
+        completion: absent<CommittedWorkflow>(),
+        returnTo: rootReturnPoint,
       };
-      const paneTargetId = desktopPaneTargetId(entry.primaryAction.target, nexusPanes);
-      const targetIsCurrent = paneTargetId
-        ? nexusPanes.some(
-            (pane) =>
-              pane.current &&
-              resolveWorkspaceActivationRouteId(pane.href) === paneTargetId,
-          )
-        : false;
-      const paneRunId = paneTargetId && !(disposition === "Follow" && targetIsCurrent)
-        ? `pane-${++desktopRunCounterRef.current}`
-        : null;
-      if (paneRunId && paneTargetId) {
-        beginNexusDesktopPaneActivation(paneRunId, paneTargetId);
+      if (outcome.kind === "WorkflowRequested") {
+        handleWorkflowRequest(outcome, rootReturnPoint);
+      } else {
+        applyNavigationOutcome(outcome, activation, retained);
+        if (outcome.kind === "Stayed" && target.kind === "ResumeCurrentPlayback") {
+          setOpen(false);
+        }
       }
-      const clientMutationId = crypto.randomUUID();
-      void dispatchOwned(entry.primaryAction.target, activation, {
-        source: "Find",
-        completion: absent(),
-        returnTo,
-      })
-        .then((outcome) => {
-          if (outcome.kind === "WorkflowRequested") {
-            if (paneRunId) {
-              cancelNexusDesktopRun(NEXUS_DESKTOP_PANE_ACTIVATE, paneRunId);
-            }
-            handleWorkflowRequest(outcome);
-          } else if (outcome.kind === "NavigationAccepted") {
-            logSelection(entry, clientMutationId);
-          } else if (paneRunId) {
-            cancelNexusDesktopRun(NEXUS_DESKTOP_PANE_ACTIVATE, paneRunId);
-          }
-        })
-        .catch((error: unknown) => {
-          if (paneRunId) {
-            cancelNexusDesktopRun(NEXUS_DESKTOP_PANE_ACTIVATE, paneRunId);
-          }
-          fail(error);
-        });
+      if (
+        entry &&
+        (outcome.kind === "NavigationAccepted" ||
+          outcome.kind === "DailyPageAccepted")
+      ) {
+        logSelection(entry, target);
+      }
+      return outcome;
     },
     [
-      dispatchOwned,
-      fail,
+      applyNavigationOutcome,
+      dispatchCtx,
       handleWorkflowRequest,
       logSelection,
-      nexusPanes,
-      returnTo,
+      rootReturnPoint,
     ],
   );
-
-  // AddPanel uses openAddTarget,
-  // whose guarded Navigate intent closes Add after the destination accepts focus.
-  const openTarget = useCallback(
-    (target: NexusTarget) => {
-      const activation =
-        page.kind === "Add"
-          ? page.activation
-          : PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION;
-      void dispatchOwned(
-        target,
-        activation,
-        {
-          source: "Find",
-          completion: absent(),
-          returnTo,
-        },
-      ).catch(fail);
-    },
-    [dispatchOwned, fail, page, returnTo],
-  );
-
-  const openActions = useCallback(() => {
-    if (page.kind !== "Root" && page.kind !== "Find") return;
-    const snapshot = desktopCommitRef.current;
-    const entry = snapshot.entries.find(
-      (candidate) =>
-        serializeNexusEntryKey(candidate.key) === snapshot.activeKey,
-    );
-    if (!entry || entry.secondaryActions.length === 0) return;
-    setPage({
-      kind: "Actions",
-      entry,
-      actions: entry.secondaryActions,
-    });
-  }, [page.kind]);
-
-  const runAction = useCallback(
-    (action: NexusAction) => {
-      void dispatchOwned(
-        action.target,
-        PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
-        {
-          source: "Find",
-          completion: absent(),
-          returnTo,
-        },
-      )
-        .then((outcome) => {
-          if (outcome.kind === "WorkflowRequested") {
-            handleWorkflowRequest(outcome);
-          } else if (
-            outcome.kind === "Stayed" &&
-            action.target.kind === "PaneClose"
-          ) {
-            setPage({ kind: "Root" });
-          }
-        })
-        .catch(fail);
-    },
-    [dispatchOwned, fail, handleWorkflowRequest, returnTo],
-  );
-
-  const runDesktopAction = useCallback(
-    (actionId: string) => {
-      if (page.kind !== "Actions") return;
-      const action = page.actions.find(
-        (candidate) => candidate.id === actionId,
-      );
-      if (action) runAction(action);
-    },
-    [page, runAction],
-  );
-
-  const setQuery = useCallback(
-    (next: string) => {
-      if (open && !viewport.isMobile) {
-        const revision = `Open:${next}`;
-        const localRunId = `local-${++desktopRunCounterRef.current}`;
-        beginNexusDesktopLocalRows(localRunId);
-        desktopLocalRunRef.current = { id: localRunId, revision };
-
-        const normalized = next.trim();
-        for (const source of ["Openables", "Owned"] as const) {
-          const previous = desktopProviderRunsRef.current[source];
-          if (previous) {
-            cancelNexusDesktopRun(
-              NEXUS_DESKTOP_PROVIDERS_FIRST_USABLE,
-              previous.id,
-            );
-            desktopProviderRunsRef.current[source] = null;
-          }
-        }
-        const sources: NexusProviderSource[] =
-          normalized.length >= 2
-            ? ["Openables", "Owned"]
-            : normalized.length === 1
-              ? ["Openables"]
-              : [];
-        for (const source of sources) {
-          const providerRunId =
-            `providers-${source}-${++desktopRunCounterRef.current}`;
-          beginNexusDesktopProviders(providerRunId, source);
-          desktopProviderRunsRef.current[source] = {
-            id: providerRunId,
-            revision,
-            phase: desktopProviderWarmRef.current[source] ? "Warm" : "Cold",
-            sawLoading: false,
-            terminalEpoch: null,
-          };
-        }
+  const activateAction = useCallback(
+    (
+      action: NexusAction,
+      activation: NexusTargetActivation,
+      entry?: NexusEntry,
+    ) => {
+      if (action.availability.kind === "Unavailable") {
+        setAnnouncement(action.availability.reason);
+        return;
       }
-      userMovedRef.current = false;
-      setQueryState(next);
-      setPage((current) =>
-        current.kind === "Find"
-          ? { ...current, query: next }
-          : next.trim()
-            ? { kind: "Find", query: next, scope: "All" }
-            : { kind: "Root" },
-      );
+      setAnnouncement("");
+      const prepared = materialize(action.availability.target);
+      void dispatch(prepared, activation, entry).catch(fail);
     },
-    [open, viewport.isMobile],
+    [dispatch, fail, materialize],
   );
-
-  const inputReady = useCallback(() => {
-    const runId = desktopOpenRunRef.current;
-    if (!runId) return;
-    completeNexusDesktopOpenInputReady(runId);
-    desktopOpenRunRef.current = null;
+  const setActiveEntry = useCallback(
+    (key: NexusEntryKey) => {
+      userMovedRef.current = true;
+      if (parsed.text) {
+        if (key.kind === "Continuation") {
+          setTypedActionActiveKey(key);
+        } else {
+          setTypedActionActiveKey(null);
+          setCommit((value) => ({ ...value, activeKey: key }));
+        }
+      } else {
+        setBlankActiveKey(key);
+      }
+      const entry = projection.groups
+        .flatMap((group) => group.entries)
+        .find((candidate) =>
+          nexusEntryKeyValue(candidate.key) === nexusEntryKeyValue(key),
+        );
+      const target = entry ? actionTarget(entry.primaryAction) : null;
+      if (target?.kind === "InternalHref") warmPane(target.href);
+      if (
+        target?.kind === "ResourceOpen" &&
+        target.subject.activation.kind === "route" &&
+        target.subject.activation.href
+      ) {
+        warmPane(target.subject.activation.href);
+      }
+    },
+    [parsed.text, projection.groups, warmPane],
+  );
+  const setQuery = useCallback((next: string) => {
+    userMovedRef.current = false;
+    setAnnouncement("");
+    setBlankActiveKey(null);
+    setQueryState(next);
   }, []);
+  const openEntryActions = useCallback((entry: NexusEntry) => {
+    if (entry.secondaryActions.length === 0) return;
+    setPage({ kind: "EntryActions", entry });
+  }, []);
+  const announceUnavailable = useCallback((reason: string) => {
+    setAnnouncement(reason);
+  }, []);
+  const requestActiveActions = useCallback(() => {
+    if (page.kind !== "Root") return;
+    const active = projection.activeKey;
+    if (!active) return;
+    const key = nexusEntryKeyValue(active);
+    const entry = projection.groups
+      .flatMap((group) => group.entries)
+      .find((candidate) => nexusEntryKeyValue(candidate.key) === key);
+    if (!entry || entry.secondaryActions.length === 0) return;
+    setActionsRequest({ requestId: ++requestIdRef.current, entry });
+  }, [page.kind, projection]);
+
+  const submitLibrary = useCallback(() => {
+    if (page.kind !== "CreateLibrary" || page.submit.kind === "Running") return;
+    const name = page.nameDraft.trim();
+    if (!name) return;
+    const frozen = { ...page, nameDraft: name, submit: { kind: "Running" } as const };
+    setPage(frozen);
+    void createLibrary({ libraryId: frozen.libraryId, name })
+      .then((library) => {
+        invalidateOpenables();
+        dispatchWorkspaceTarget({
+          target: { href: `/libraries/${library.id}`, labelHint: library.name },
+          source: "Library",
+          completion: present({ kind: "Library", replayId: frozen.libraryId }),
+          returnTo: rootReturnPoint,
+          activation: frozen.activation,
+        });
+      })
+      .catch((error: unknown) => {
+        if (handleUnauthenticatedApiError(error)) return;
+        if (isSameSystemApiDefect(error) || !isRetryableWorkflowFailure(error)) {
+          throw error;
+        }
+        setPage({
+          ...frozen,
+          submit: {
+            kind: "Retryable",
+            message: toFeedback(error, { fallback: "Couldn’t create library. Retry" }).title,
+          },
+        });
+      });
+  }, [dispatchWorkspaceTarget, invalidateOpenables, page, rootReturnPoint]);
+  const setLibraryNameDraft = useCallback((name: string) => {
+    setPage((current) => {
+      if (current.kind !== "CreateLibrary" || current.submit.kind === "Running") {
+        return current;
+      }
+      return {
+        ...current,
+        nameDraft: name,
+        libraryId:
+          current.submit.kind === "Retryable" && name !== current.nameDraft
+            ? crypto.randomUUID()
+            : current.libraryId,
+        submit: { kind: "Ready" },
+      };
+    });
+  }, []);
+  const retryPageCreation = useCallback(() => {
+    if (page.kind !== "CreatePage" || page.submit.kind !== "Retryable") return;
+    runPageCreation({
+      pageId: page.pageId,
+      titleDraft: page.titleDraft,
+      activation: page.activation,
+      returnTo: rootReturnPoint,
+    });
+  }, [page, rootReturnPoint, runPageCreation]);
+
+  const restoreRoot = useCallback(() => setPage({ kind: "Root" }), []);
+  const restoreReturnPoint = useCallback((returnTo: NexusReturnPoint) => {
+    setQueryState(returnTo.query);
+    if (returnTo.query.trim()) {
+      if (returnTo.activeKey?.kind === "Continuation") {
+        setTypedActionActiveKey(returnTo.activeKey);
+      } else {
+        setTypedActionActiveKey(null);
+        setCommit((current) => ({
+          ...current,
+          normalizedQuery: parseNexusQuery(returnTo.query).normalizedText,
+          activeKey: returnTo.activeKey,
+        }));
+      }
+    } else {
+      setBlankActiveKey(returnTo.activeKey);
+    }
+    setPage({ kind: "Root" });
+  }, []);
+  const manageTabs = useCallback(() => {
+    setPage((current) =>
+      current.kind === "ActivationBlocked"
+        ? {
+            kind: "ManageTabs",
+            origin: { kind: "Recovery", retained: current.retained },
+          }
+        : { kind: "ManageTabs", origin: { kind: "Direct" } },
+    );
+  }, []);
+  const retryRetainedActivation = useCallback(() => {
+    const retained =
+      page.kind === "ActivationBlocked"
+        ? page.retained
+        : page.kind === "ManageTabs" && page.origin.kind === "Recovery"
+          ? page.origin.retained
+          : null;
+    if (!retained) return;
+    void dispatchNexusTarget(retained.target, dispatchCtx, retained.activation)
+      .then((outcome) => {
+        applyNavigationOutcome(outcome, retained.activation, {
+          source: retained.source,
+          completion: retained.completion,
+          returnTo: retained.returnTo,
+        });
+        if (outcome.kind === "NavigationAccepted" || outcome.kind === "DailyPageAccepted") {
+          restoreReturnPoint(retained.returnTo);
+        }
+      })
+      .catch(fail);
+  }, [
+    applyNavigationOutcome,
+    dispatchCtx,
+    fail,
+    page,
+    restoreReturnPoint,
+  ]);
+  const cancelRetainedActivation = useCallback(() => {
+    const retained =
+      page.kind === "ActivationBlocked"
+        ? page.retained
+        : page.kind === "ManageTabs" && page.origin.kind === "Recovery"
+          ? page.origin.retained
+          : null;
+    if (!retained) return;
+    restoreReturnPoint(retained.returnTo);
+  }, [page, restoreReturnPoint]);
+  const openManagedPane = useCallback(
+    (paneId: string) => {
+      const pane = panes.find((candidate) => candidate.id === paneId);
+      if (!pane) throw new Error(`Unknown Nexus pane: ${paneId}`);
+      if (pane.visibility === "minimized") restorePane(paneId);
+      else activatePane(paneId);
+      suppressReturnFocusRef.current = paneId !== state.activePrimaryPaneId;
+      setOpen(false);
+    },
+    [activatePane, panes, restorePane, state.activePrimaryPaneId],
+  );
+  const closeManagedPane = useCallback((paneId: string) => closePane(paneId), [closePane]);
+  const restoreManagedPane = useCallback(
+    (paneId: string) => {
+      const restored = restoreClosedPane(paneId);
+      if (restored.kind === "Rejected") {
+        feedback.show({
+          severity: "warning",
+          title: "Tab limit reached",
+          message: "Close a tab, then restore this one.",
+        });
+        return;
+      }
+      suppressReturnFocusRef.current = true;
+      setOpen(false);
+    },
+    [feedback, restoreClosedPane],
+  );
 
   const performExit = useCallback(
     (intent: ExitIntent) => {
@@ -1845,35 +1104,43 @@ export function useNexusController(): NexusController {
           return;
         case "Root":
           discardAddSession();
-          setPage({ kind: "Root" });
+          restoreRoot();
           return;
         case "Close":
           discardAddSession();
           setOpen(false);
           return;
-        case "Navigate":
-          void dispatchOwned(
-            intent.target,
-            intent.activation ?? PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
-            intent.retained ?? {
-              source: page.kind === "Add" ? "Import" : "Place",
-              completion: absent(),
-              returnTo,
-            },
-          )
+        case "Navigate": {
+          const activation = intent.activation ?? PROGRAMMATIC_NEXUS_TARGET_ACTIVATION;
+          const target = materialize(intent.target);
+          void dispatchNexusTarget(target, dispatchCtx, activation)
             .then((outcome) => {
-              if (outcome.kind === "NavigationAccepted") {
+              if (outcome.kind === "WorkflowRequested") {
+                handleWorkflowRequest(outcome, rootReturnPoint);
+                return;
+              }
+              applyNavigationOutcome(
+                outcome,
+                activation,
+                intent.retained ?? {
+                  source: page.kind === "Add" ? "Import" : "Place",
+                  completion: absent(),
+                  returnTo: rootReturnPoint,
+                },
+              );
+              if (outcome.kind === "NavigationAccepted" || outcome.kind === "DailyPageAccepted") {
                 discardAddSession();
               }
             })
             .catch(fail);
           return;
+        }
         case "Replace": {
-          const { detail } = intent;
-          userMovedRef.current = false;
+          const detail = intent.detail;
+          if (detail.kind === "Root") {
+            beginNexusPerformance(NEXUS_OPEN_PERFORMANCE);
+          }
           suppressReturnFocusRef.current = false;
-          // A Root reopen preserves retained recovery so dismiss → reopen does
-          // not lose the exact activation target.
           if (
             detail.kind === "Root" &&
             (page.kind === "ActivationBlocked" || page.kind === "ManageTabs")
@@ -1881,43 +1148,45 @@ export function useNexusController(): NexusController {
             setOpen(true);
             return;
           }
+          discardAddSession();
+          setQueryState("");
+          setBlankActiveKey(null);
           if (detail.kind === "Add") {
             setPage({
               kind: "Add",
               sessionId: startAddSession(detail.seed),
               activation: PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
             });
-            setQueryState("");
-          } else if (detail.kind === "QuickAction") {
-            discardAddSession();
-            runSwitchboardQuickAction(getQuickAction(detail.actionId));
-            setQueryState("");
           } else if (detail.kind === "UnsupportedLink") {
-            discardAddSession();
             setPage({ kind: "UnsupportedLink" });
-            setQueryState("");
           } else {
-            discardAddSession();
             setPage({ kind: "Root" });
-            setQueryState("");
           }
           setOpen(true);
+          if (detail.kind === "QuickAction") {
+            const command = getNexusCommand(detail.actionId);
+            const target = materialize(command.target({ argument: "" }));
+            void dispatch(target, PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION).catch(fail);
+          }
           return;
         }
       }
     },
     [
+      applyNavigationOutcome,
       backToAddContent,
       discardAddSession,
-      dispatchOwned,
+      dispatch,
+      dispatchCtx,
       fail,
+      handleWorkflowRequest,
+      materialize,
       page.kind,
-      returnTo,
-      runSwitchboardQuickAction,
+      restoreRoot,
+      rootReturnPoint,
       startAddSession,
     ],
   );
-
   const guardExit = useCallback(
     (intent: ExitIntent): DismissDecision => {
       if (pendingDismissal) return "blocked";
@@ -1926,8 +1195,6 @@ export function useNexusController(): NexusController {
         setPendingDismissal({ confirmation: "Stop", intent });
         return "blocked";
       }
-      // OPML Back is an explicit branch-local discard, not a request to throw
-      // away the parent Content session.
       if (intent.kind === "Content") return "accepted";
       if (addSession.dirty) {
         setPendingDismissal({ confirmation: "Discard", intent });
@@ -1935,167 +1202,69 @@ export function useNexusController(): NexusController {
       }
       return "accepted";
     },
-    [
-      addSession.dirty,
-      addSession.state.mutation.kind,
-      page.kind,
-      pendingDismissal,
-    ],
+    [addSession.dirty, addSession.state.mutation.kind, page.kind, pendingDismissal],
   );
-
   const requestExit = useCallback(
     (intent: ExitIntent) => {
-      if (guardExit(intent) !== "accepted") return;
-      if (
-        intent.kind === "Replace" &&
-        !open &&
-        !viewport.isMobile
-      ) {
-        const runId = `open-${++desktopRunCounterRef.current}`;
-        beginNexusDesktopOpen(runId);
-        desktopOpenRunRef.current = runId;
-      }
-      performExit(intent);
+      if (guardExit(intent) === "accepted") performExit(intent);
     },
-    [guardExit, open, performExit, viewport.isMobile],
+    [guardExit, performExit],
   );
-
   const back = useCallback(() => {
     if (page.kind === "Add" && addSession.state.branch === "Opml") {
       requestExit({ kind: "Content" });
       return;
     }
-    requestExit({ kind: "Root" });
-  }, [addSession.state.branch, page.kind, requestExit]);
-
-  const close = useCallback(
-    () => requestExit({ kind: "Close" }),
-    [requestExit],
-  );
-  const completeMobileQuickNoteNavigation = useCallback(() => {
-    suppressReturnFocusRef.current = true;
-    discardAddSession();
-    setOpen(false);
-  }, [discardAddSession]);
-  const openRoot = useCallback(
-    () => {
-      if (
-        page.kind === "ActivationBlocked" ||
-        page.kind === "ManageTabs"
-      ) {
-        suppressReturnFocusRef.current = false;
-        setOpen(true);
-        return;
-      }
-      requestExit({ kind: "Replace", detail: { kind: "Root" } });
-    },
-    [page.kind, requestExit],
-  );
-  const enterFind = useCallback(() => {
-    setSwitchboardFindActiveId(null);
-    setQueryState("");
-    setPage({ kind: "Find", query: "", scope: "All" });
-  }, []);
-  const setFindScope = useCallback((scope: NexusFindScope) => {
-    setSwitchboardFindActiveId(null);
-    setPage((current) =>
-      current.kind === "Find" ? { ...current, scope } : current,
-    );
-  }, []);
-  const closeSwitchboardPane = useCallback(
-    (paneId: string) => closePane(paneId),
-    [closePane],
-  );
-  const restoreSwitchboardPane = useCallback(
-    (paneId: string) =>
-      openSwitchboardItem({ kind: "ClosedPane", paneId }, false),
-    [openSwitchboardItem],
-  );
-  const retryPageCreation = useCallback(() => {
-    if (page.kind === "CreatePage" && page.submit.kind === "Retryable") {
-      runPageCreation(page.pageId, page.activation);
-    }
-  }, [page, runPageCreation]);
-  const manageTabs = useCallback(() => {
-    setPage((current) =>
-      current.kind === "ActivationBlocked"
-        ? { kind: "ManageTabs", retained: current.retained }
-        : current,
-    );
-  }, []);
-  const retryRetainedActivation = useCallback(() => {
-    if (
-      page.kind !== "ActivationBlocked" &&
-      page.kind !== "ManageTabs"
-    ) {
+    if (page.kind === "ManageTabs" && page.origin.kind === "Recovery") {
+      setPage({ kind: "ActivationBlocked", retained: page.origin.retained });
       return;
     }
-    const retained = page.retained;
-    void dispatchOwned(
-      retained.target,
-      retained.activation,
-      {
-        source: retained.source,
-        completion: retained.completion,
-        returnTo: retained.returnTo,
-      },
-    )
-      .then((outcome) => {
-        if (outcome.kind !== "NavigationAccepted") return;
-        setPage(
-          retained.returnTo.kind === "Find"
-            ? {
-                kind: "Find",
-                query: retained.returnTo.query,
-                scope: retained.returnTo.scope,
-              }
-            : { kind: "Root" },
-        );
-      })
-      .catch(fail);
-  }, [dispatchOwned, fail, page]);
-  const cancelRetainedActivation = useCallback(() => {
-    setPage((current) => {
-      if (
-        current.kind !== "ActivationBlocked" &&
-        current.kind !== "ManageTabs"
-      ) {
-        return current;
-      }
-      return current.retained.returnTo.kind === "Find"
-        ? {
-            kind: "Find",
-            query: current.retained.returnTo.query,
-            scope: current.retained.returnTo.scope,
-          }
-        : { kind: "Root" };
-    });
-  }, []);
-  const dismissAccepted = useCallback(
-    () => performExit({ kind: "Close" }),
-    [performExit],
+    if (page.kind === "ActivationBlocked") {
+      restoreReturnPoint(page.retained.returnTo);
+      return;
+    }
+    requestExit({ kind: "Root" });
+  }, [addSession.state.branch, page, requestExit, restoreReturnPoint]);
+  const close = useCallback(() => requestExit({ kind: "Close" }), [requestExit]);
+  const escape = useCallback(() => {
+    if (page.kind === "Root" && query.trim()) {
+      setQuery("");
+      return;
+    }
+    if (page.kind !== "Root") {
+      back();
+      return;
+    }
+    close();
+  }, [back, close, page.kind, query, setQuery]);
+  const openRoot = useCallback(
+    () => requestExit({ kind: "Replace", detail: { kind: "Root" } }),
+    [requestExit],
   );
   const guardClose = useCallback((): DismissDecision => {
-    if (
-      page.kind === "Root" ||
-      page.kind === "ActivationBlocked" ||
-      page.kind === "ManageTabs"
-    ) {
-      return guardExit({ kind: "Close" });
+    if (page.kind === "Root" && query.trim()) {
+      setQuery("");
+      return "blocked";
     }
-    const intent: ExitIntent =
-      page.kind === "Add" && addSession.state.branch === "Opml"
-        ? { kind: "Content" }
-        : { kind: "Root" };
-    if (guardExit(intent) === "accepted") performExit(intent);
-    // A nested transition always keeps the one mounted task open. Its modal
-    // lifecycle must treat even a successful pop as a blocked dismissal.
-    return "blocked";
-  }, [addSession.state.branch, guardExit, page.kind, performExit]);
-  const escape = useCallback(() => {
-    if (guardClose() === "accepted") dismissAccepted();
-  }, [dismissAccepted, guardClose]);
-
+    if (page.kind !== "Root" && page.kind !== "ActivationBlocked") {
+      back();
+      return "blocked";
+    }
+    return guardExit({ kind: "Close" });
+  }, [back, guardExit, page.kind, query, setQuery]);
+  const dismissAccepted = useCallback(() => performExit({ kind: "Close" }), [performExit]);
+  const openTarget = useCallback(
+    (target: NexusTarget) =>
+      requestExit({
+        kind: "Navigate",
+        target,
+        activation:
+          page.kind === "Add"
+            ? page.activation
+            : PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
+      }),
+    [page, requestExit],
+  );
   const openAddTarget = useCallback(
     (target: NexusTarget) => {
       let replayId: string | null = null;
@@ -2110,10 +1279,8 @@ export function useNexusController(): NexusController {
         const committed = mediaId
           ? addSession.state.items.find(
               (item) =>
-                (item.kind === "Accepted" &&
-                  item.result.mediaId === mediaId) ||
-                (item.kind === "AcceptedUncertain" &&
-                  item.mediaId === mediaId),
+                (item.kind === "Accepted" && item.result.mediaId === mediaId) ||
+                (item.kind === "AcceptedUncertain" && item.mediaId === mediaId),
             )
           : undefined;
         replayId = committed?.id ?? null;
@@ -2121,8 +1288,6 @@ export function useNexusController(): NexusController {
       requestExit({
         kind: "Navigate",
         target,
-        // Completed Import opens the result with Adopt (never replace the
-        // source pane), matching the capability table's "Adopt result".
         activation:
           page.kind === "Add"
             ? page.activation
@@ -2132,7 +1297,7 @@ export function useNexusController(): NexusController {
           completion: replayId
             ? present({ kind: "Import", replayId })
             : absent(),
-          returnTo: { kind: "Root" },
+          returnTo: rootReturnPoint,
         },
       });
     },
@@ -2142,9 +1307,9 @@ export function useNexusController(): NexusController {
       addSession.state.opml.kind,
       page,
       requestExit,
+      rootReturnPoint,
     ],
   );
-
   const keepWorking = useCallback(() => setPendingDismissal(null), []);
   const confirmDismissal = useCallback(() => {
     if (!pendingDismissal) return;
@@ -2154,37 +1319,37 @@ export function useNexusController(): NexusController {
     performExit(pending.intent);
   }, [pendingDismissal, performExit, stopAddSession]);
 
+  const retry = useCallback(
+    (source: DesktopNexusSource) => {
+      if (source === "Openables") invalidateOpenables();
+      else setSearchRetry((value) => value + 1);
+    },
+    [invalidateOpenables],
+  );
   const initialFocus = useCallback(
     (container: HTMLElement, isMobile: boolean): HTMLElement | null => {
       if (page.kind === "Root") {
-        return isMobile
-          ? container.querySelector<HTMLElement>("[data-switchboard-heading]")
-          : container.querySelector<HTMLElement>('[role="combobox"]');
-      }
-      if (page.kind === "Find") {
-        return container.querySelector<HTMLElement>('input[type="search"]');
+        return container.querySelector<HTMLElement>(
+          isMobile ? "[data-mobile-nexus-search]" : '[role="combobox"]',
+        );
       }
       if (page.kind === "CreateLibrary") {
-        return container.querySelector<HTMLElement>(
-          "[data-switchboard-library-name]",
-        );
+        return container.querySelector<HTMLElement>("[data-switchboard-library-name]");
       }
-      if (page.kind === "ManageTabs") {
-        return container.querySelector<HTMLElement>(
-          "[data-switchboard-open-heading]",
-        );
+      if (page.kind === "Add") {
+        return resolveAddPanelInitialFocus(container, isMobile, {
+          branch: addSession.state.branch,
+          initialFocus: addSession.state.initialFocus,
+        });
       }
-      if (page.kind !== "Add") {
-        return container.querySelector<HTMLElement>("[data-switchboard-heading]");
-      }
-      return resolveAddPanelInitialFocus(container, isMobile, {
-        branch: addSession.state.branch,
-        initialFocus: addSession.state.initialFocus,
-      });
+      return container.querySelector<HTMLElement>("[data-switchboard-heading]");
     },
     [addSession.state.branch, addSession.state.initialFocus, page.kind],
   );
-
+  const shouldSuppressReturnFocusOnClose = useCallback(
+    () => suppressReturnFocusRef.current,
+    [],
+  );
   const dialogLabel =
     page.kind === "Add"
       ? addSession.state.branch === "Opml"
@@ -2193,12 +1358,7 @@ export function useNexusController(): NexusController {
       : "Nexus";
   const focusKey =
     page.kind === "Add"
-      ? `${addSession.state.sessionId}:${addSession.state.branch}:${
-          addSession.state.branch === "Content" &&
-          addSession.state.initialFocus === "Opml"
-            ? "Url"
-            : addSession.state.initialFocus
-        }`
+      ? `${addSession.state.sessionId}:${addSession.state.branch}:${addSession.state.initialFocus}`
       : page.kind;
   const dismissalConfirmation: AddDismissalConfirmation = pendingDismissal
     ? {
@@ -2214,175 +1374,108 @@ export function useNexusController(): NexusController {
                 : "Stop and go back",
       }
     : null;
-  const shouldSuppressReturnFocusOnClose = useCallback(
-    () => suppressReturnFocusRef.current,
-    [],
-  );
 
-  // --- Triggers: open event, deep link, global hotkeys ---
   useEffect(() => {
-    const openIntent = (detail: NexusOpenIntent) => {
+    const openIntent = (detail: NexusOpenIntent) =>
       requestExit({ kind: "Replace", detail });
-    };
-    const handler = (event: Event) => {
-      const detail =
-        (event as CustomEvent<NexusOpenIntent>).detail ??
-        ({ kind: "Root" } as const);
-      openIntent(detail);
-    };
+    const handler = (event: Event) =>
+      openIntent(
+        (event as CustomEvent<NexusOpenIntent>).detail ?? { kind: "Root" },
+      );
     window.addEventListener(NEXUS_OPEN_REQUESTED_EVENT, handler);
     setNexusOpenReceiverReady(true);
-    for (const intent of consumePendingNexusOpenIntents()) {
-      openIntent(intent);
-    }
+    consumePendingNexusOpenIntents().forEach(openIntent);
     return () => {
       window.removeEventListener(NEXUS_OPEN_REQUESTED_EVENT, handler);
       setNexusOpenReceiverReady(false);
     };
   }, [requestExit]);
-
-  // The URL intent is a one-shot bootstrap ingress, not a reactive route state.
   useLayoutEffect(() => {
     const intent = consumeNexusUrlIntent();
-    if (intent !== null) {
-      requestExit({ kind: "Replace", detail: intent });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- consume once only.
+    if (intent) requestExit({ kind: "Replace", detail: intent });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot URL ingress.
   }, []);
-
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const nexusCombo = keybindings["Nexus.Open"];
-      if (nexusCombo && matchesKeyEvent(nexusCombo, event)) {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const openBinding = keybindings["Nexus.Open"];
+      if (openBinding && matchesKeyEvent(openBinding, event)) {
         event.preventDefault();
-        if (open) {
-          openActions();
-          return;
-        }
-        userMovedRef.current = false;
-        requestExit({ kind: "Replace", detail: { kind: "Root" } });
+        if (open) requestActiveActions();
+        else openRoot();
         return;
       }
       for (const [actionId, combo] of Object.entries(keybindings)) {
-        if (actionId === "Nexus.Open") continue;
-        if (!matchesKeyEvent(combo, event)) continue;
+        if (actionId === "Nexus.Open" || !matchesKeyEvent(combo, event)) continue;
+        const command = NEXUS_COMMAND_IDS.includes(actionId as NexusCommandId)
+          ? getNexusCommand(actionId as NexusCommandId)
+          : null;
         const destination = DESTINATIONS.find((entry) => entry.id === actionId);
-        const target: NexusTarget | null =
-          actionId === "today"
+        const target = command
+          ? command.target({ argument: "" })
+          : destination?.id === "today"
             ? {
-                kind: "OpenDailyPage",
-                localDate: "Today",
-                entry: { kind: "View" },
+                kind: "OpenDailyPage" as const,
+                date: { kind: "Today" as const },
+                entry: { kind: "View" as const },
               }
-            : actionId === "Nexus.Quick.Note"
-              ? {
-                  kind: "OpenDailyPage",
-                  localDate: "Today",
-                  entry: { kind: "AppendNote" },
-                }
             : destination
               ? {
-                  kind: "InternalHref",
+                  kind: "InternalHref" as const,
                   href: destination.href,
                   labelHint: destination.label,
                 }
               : null;
-        if (!target) continue; // a bound non-destination combo (e.g. pane-nav) is owned elsewhere
+        if (!target) continue;
         event.preventDefault();
         requestExit({ kind: "Navigate", target });
         return;
       }
     };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [keybindings, open, openActions, requestExit]);
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [keybindings, open, openRoot, requestActiveActions, requestExit]);
 
-  const desktopContractDefect =
-    desktopOpenablesError instanceof ResourceOpenablesContractDefect ||
-    isSameSystemApiDefect(desktopOpenablesError)
-      ? desktopOpenablesError
-      : desktopSearchError instanceof SearchContractDefect ||
-          isSameSystemApiDefect(desktopSearchError)
-        ? desktopSearchError
-        : null;
-  if (desktopContractDefect !== null) throw desktopContractDefect;
-
-  const retryDesktop = useCallback(
-    (source: "Openables" | "Owned") => {
-      if (source === "Openables") {
-        invalidateDesktopOpenablesCache();
-      } else {
-        setDesktopSearchRetry((current) => current + 1);
-      }
-    },
-    [invalidateDesktopOpenablesCache],
-  );
-  const desktopFailures = useMemo(() => {
-    const failed = new Set<"Openables" | "Owned">();
-    if (desktopOpenablesError !== null) failed.add("Openables");
-    if (desktopSearchError !== null) failed.add("Owned");
-    return failed;
-  }, [desktopOpenablesError, desktopSearchError]);
-  const desktopEntries = useMemo(
+  const createChoiceActions = useMemo(
     () =>
-      desktopCommit.entries.map((entry) => ({
-        key: serializeNexusEntryKey(entry.key),
-        label: entry.label,
-        shortcutHint: entry.shortcutHint,
-        typeLabel: entry.typeLabel,
-        metadata: entry.metadata,
-        excerpt: entry.snippetSegments
-          ?.map((segment) => segment.text)
-          .join(""),
-        excerptSegments: entry.snippetSegments,
-        open: entry.openState !== undefined,
-        parentKey: entry.parent
-          ? serializeNexusEntryKey(entry.parent.key)
-          : undefined,
-        parentLabel: entry.parent?.label,
-        icon: createElement(entry.icon, {
-          size: 18,
-          "aria-hidden": true,
-        }),
-        hasSecondaryActions: entry.secondaryActions.length > 0,
-      })),
-    [desktopCommit.entries],
+      page.kind === "ChooseCreate"
+        ? nexusCreateChoiceActions(page.initialDraft, todayAppend)
+        : [],
+    [page, todayAppend],
   );
-  const desktopPage = useMemo<DesktopNexusController["page"]>(() => {
-    if (page.kind === "Actions") {
-      return {
-        kind: "Actions",
-        label: page.entry.label,
-        actions: page.actions.map((action) => ({
-          id: action.id,
-          label: action.label,
-          icon: createElement(action.icon, {
-            size: 18,
-            "aria-hidden": true,
-          }),
-        })),
-      };
-    }
-    return { kind: query.trim() ? "Find" : "Root" };
-  }, [page, query]);
+  const browseChoiceActions = useMemo(
+    () =>
+      page.kind === "ChooseBrowse"
+        ? nexusBrowseChoiceActions(page.query)
+        : [],
+    [page],
+  );
   const desktop: DesktopNexusController = {
     open,
-    page: desktopPage,
+    projection: desktopProjection,
     query,
-    entries: desktopEntries,
-    activeEntryKey: desktopCommit.activeKey,
-    failures: desktopFailures,
-    busy:
-      desktopOpenablesFetch.loading || desktopSearchFetch.loading,
+    failures,
+    busy: showBusy && remoteBusy,
+    announcement: announcement || null,
     focusKey,
-    inputReady,
+    nexusOpenShortcutLabel: keybindingController.labelFor("Nexus.Open") ?? "",
+    actionsRequest,
+    inputReady: () =>
+      completeNexusPerformanceAfterPaint(NEXUS_OPEN_PERFORMANCE),
     setQuery,
     setActiveEntry,
-    selectEntry,
-    openActions,
-    runAction: runDesktopAction,
-    retry: retryDesktop,
-    back,
+    activatePrimary: ({ entry, disposition, modality }) =>
+      activateAction(
+        entry.primaryAction,
+        { disposition: { kind: disposition }, modality },
+        entry,
+      ),
+    activateAction: ({ entry, action, modality }) =>
+      activateAction(
+        action,
+        { disposition: { kind: "Follow" }, modality },
+        entry,
+      ),
+    retry,
     escape,
     shouldSuppressReturnFocusOnClose,
   };
@@ -2392,58 +1485,50 @@ export function useNexusController(): NexusController {
     paneCount: panes.length,
     query,
     page,
+    projection: mobileProjection,
+    actionsRequest,
+    failures,
+    busy: showBusy && remoteBusy,
+    pending: remoteBusy,
+    announcement,
     addSession,
     dialogLabel,
     focusKey,
     dismissalConfirmation,
     desktop,
-    switchboardPanes,
-    switchboardClosedPanes,
-    switchboardPlaces: SWITCHBOARD_PLACES,
-    switchboardQuickActions:
-      SWITCHBOARD_QUICK_ACTION_IDS.map(getQuickAction),
-    switchboardFindRows,
-    switchboardFindActiveId,
-    switchboardFindBusy:
-      showSwitchboardBusy &&
-      (openablesFetch.loading || deepFetch.loading),
-    switchboardFindPending: openablesFetch.loading || deepFetch.loading,
-    switchboardOpenablesFailed: openablesError !== null,
-    switchboardDeepFailed: deepError !== null,
+    managedPanes: panes,
+    managedClosedPanes,
+    createChoiceActions,
+    browseChoiceActions,
     setQuery,
+    setActiveEntry,
+    openEntryActions,
+    announceUnavailable,
+    activateAction,
+    materialize,
+    dispatch,
+    reportActivationFailure: fail,
+    retry,
     openTarget,
     openAddTarget,
     back,
-    runAction,
+    escape,
     openRoot,
-    enterFind,
-    setFindScope,
-    setSwitchboardFindActiveId,
-    openSwitchboardItem,
-    switchboardItemActions,
-    runSwitchboardAction,
-    openSwitchboardPlace,
-    runSwitchboardQuickAction,
-    closeSwitchboardPane,
-    restoreSwitchboardPane,
-    retrySwitchboardOpenables: () =>
-      setOpenablesRetry((current) => current + 1),
-    retrySwitchboardDeep: () =>
-      setDeepRetry((current) => current + 1),
+    close,
+    dismissAccepted,
+    guardClose,
+    initialFocus,
+    shouldSuppressReturnFocusOnClose,
+    keepWorking,
+    confirmDismissal,
     setLibraryNameDraft,
     submitLibrary,
     retryPageCreation,
     manageTabs,
+    openManagedPane,
+    closeManagedPane,
+    restoreManagedPane,
     retryRetainedActivation,
     cancelRetainedActivation,
-    close,
-    completeMobileQuickNoteNavigation,
-    dismissAccepted,
-    guardClose,
-    escape,
-    initialFocus,
-    keepWorking,
-    confirmDismissal,
-    shouldSuppressReturnFocusOnClose,
   };
 }

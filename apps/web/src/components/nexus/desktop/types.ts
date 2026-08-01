@@ -1,72 +1,58 @@
 import type { ReactNode } from "react";
-import type { EmphasisSegment } from "@/lib/ui/emphasis";
+import type {
+  NexusAction,
+  NexusEntry,
+  NexusEntryKey,
+  NexusProjection,
+} from "@/lib/nexus/model";
 
 export type DesktopNexusModality = "Keyboard" | "Pointer";
-
-/**
- * Desktop-only presentation contract. The shared Nexus controller maps its
- * domain entries into this deliberately small view at the boundary; desktop
- * markup never infers an owner, action, or activation from displayed text.
- */
-export interface DesktopNexusEntry {
-  readonly key: string;
-  readonly label: string;
-  /** Current formatted keybinding for static teaching entries. */
-  readonly shortcutHint?: string;
-  /** A factual type label, such as `Page` or `Highlight`; absent means omit. */
-  readonly typeLabel?: string;
-  /** Existing owner or source fact; absent means omit. */
-  readonly metadata?: string;
-  /** Existing matched excerpt; no generated summaries belong here. */
-  readonly excerpt?: string;
-  /** Existing matched excerpt segments; rendering stays text-only. */
-  readonly excerptSegments?: readonly EmphasisSegment[];
-  /** Only emitted when the entry is already an open workspace pane. */
-  readonly open?: boolean;
-  /** Serialized canonical-owner/open-pane identity, never this entry's key. */
-  readonly parentKey?: string;
-  /** Existing-fact group label when the parent is not itself rendered. */
-  readonly parentLabel?: string;
-  readonly icon: ReactNode;
-  readonly hasSecondaryActions: boolean;
-}
-
-export interface DesktopNexusAction {
-  readonly id: string;
-  readonly label: string;
-  readonly icon: ReactNode;
-}
+export type DesktopNexusCell = "Primary" | "Actions";
 
 export type DesktopNexusSource = "Openables" | "Owned";
 
-export type DesktopNexusPage =
-  | { readonly kind: "Root" | "Find" }
-  | { readonly kind: "Actions"; readonly label: string; readonly actions: readonly DesktopNexusAction[] };
+export interface DesktopNexusActionsRequest {
+  readonly requestId: number;
+  /** Exact entry/action snapshot captured when Nexus.Open was pressed. */
+  readonly entry: NexusEntry;
+}
 
+/**
+ * Desktop-only controller boundary. Semantic membership and action meaning stay
+ * in the shared projection; this contract carries user intents back to the one
+ * Nexus session owner.
+ */
 export interface DesktopNexusController {
   readonly open: boolean;
-  readonly page: DesktopNexusPage;
+  readonly projection: NexusProjection;
   readonly query: string;
-  readonly entries: readonly DesktopNexusEntry[];
-  readonly activeEntryKey: string | null;
   readonly failures: ReadonlySet<DesktopNexusSource>;
   readonly busy: boolean;
+  readonly announcement: string | null;
   readonly focusKey: string;
+  readonly nexusOpenShortcutLabel: string;
+  readonly actionsRequest: DesktopNexusActionsRequest | null;
   /** A retained workflow panel owned by the shared controller. */
   readonly workflow?: ReactNode;
   setQuery(query: string): void;
-  setActiveEntry(key: string): void;
-  selectEntry(
-    key: string,
-    disposition: "Follow" | "Fork",
-    modality: DesktopNexusModality,
-  ): void;
-  openActions(): void;
-  runAction(actionId: string): void;
+  setActiveEntry(key: NexusEntryKey): void;
+  activatePrimary(input: {
+    readonly entry: NexusEntry;
+    readonly disposition: "Follow" | "Fork";
+    readonly modality: DesktopNexusModality;
+  }): void;
+  activateAction(input: {
+    readonly entry: NexusEntry;
+    readonly action: NexusAction;
+    readonly modality: DesktopNexusModality;
+  }): void;
   /** The adapter calls this only after the real desktop input receives focus. */
   inputReady?(): void;
   retry(source: DesktopNexusSource): void;
-  back(): void;
   escape(): void;
   shouldSuppressReturnFocusOnClose(): boolean;
+}
+
+export interface DesktopNexusActionsOpener {
+  (entry: NexusEntry, modality: DesktopNexusModality): void;
 }

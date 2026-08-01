@@ -11,7 +11,7 @@
   overscroll-behavior: contain;
 }
 
-.rootPage {
+.searchPage {
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -19,19 +19,19 @@
   overflow: hidden;
 }
 
-.rootPage > .header {
+.searchPage > .header {
   flex: 0 0 auto;
   padding-inline: max(var(--space-4), env(safe-area-inset-left))
     max(var(--space-4), env(safe-area-inset-right));
 }
 
-.rootScroll {
+.searchScroll {
   display: grid;
   flex: 1 1 auto;
   min-height: 0;
   align-content: start;
-  gap: var(--space-4);
-  padding: 0 max(var(--space-4), env(safe-area-inset-right))
+  gap: var(--space-5);
+  padding: var(--space-3) max(var(--space-4), env(safe-area-inset-right))
     max(var(--space-4), env(safe-area-inset-bottom))
     max(var(--space-4), env(safe-area-inset-left));
   overflow-y: auto;
@@ -53,8 +53,7 @@
 }
 
 .header h2,
-.section h3,
-.recoveryBanner h3 {
+.section h3 {
   margin: 0;
 }
 
@@ -71,13 +70,9 @@
 
 .textButton,
 .iconButton,
-.compactAction,
-.findButton,
 .rowMain,
 .rowMenu,
-.scopes button,
 .sourceStatus button,
-.recoveryBanner button,
 .form button {
   min-height: 48px;
 }
@@ -102,31 +97,50 @@
   gap: var(--space-2);
 }
 
-.section h3 {
+.pinnedGroup {
+  display: grid;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+  padding: 0 max(var(--space-4), env(safe-area-inset-right))
+    var(--space-3) max(var(--space-4), env(safe-area-inset-left));
+  background: var(--surface-canvas);
+}
+
+.section h3,
+.pinnedGroup h3 {
   color: var(--ink-muted);
   font-size: var(--text-sm);
-  letter-spacing: var(--tracking-wider);
-  text-transform: uppercase;
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-tight);
 }
 
-.compactGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2);
+.section h3,
+.pinnedGroup h3 {
+  margin: 0;
 }
 
-.compactAction {
+.compactRail {
   display: flex;
-  min-width: 0;
-  align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2);
+  padding: 1px;
+  margin: -1px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-snap-type: inline proximity;
+  scrollbar-width: none;
+  list-style: none;
+}
+
+.compactRail::-webkit-scrollbar {
+  display: none;
+}
+
+.compactRail .row {
+  flex: 0 0 clamp(12rem, 64vw, 18rem);
   border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-lg);
-  background: var(--surface-2);
-  color: var(--ink);
-  font-weight: var(--weight-medium);
-  text-align: start;
+  scroll-snap-align: start;
+  overflow: hidden;
 }
 
 .quickNoteHandoffInput {
@@ -143,11 +157,6 @@
   font-size: 16px;
   opacity: 0.01;
   resize: none;
-}
-
-.compactAction span {
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
 
 .rows {
@@ -172,6 +181,10 @@
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+.row[data-active="true"] {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .row[data-nested="true"] {
   padding-inline-start: var(--space-4);
 }
@@ -180,14 +193,36 @@
   display: grid;
   flex: 1;
   min-width: 0;
-  justify-items: start;
-  align-content: center;
-  gap: 2px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
   border: 0;
   background: transparent;
   color: var(--ink);
   text-align: start;
+}
+
+.rowMain[aria-disabled="true"] {
+  color: var(--ink-muted);
+}
+
+.rowIcon {
+  display: grid;
+  width: 20px;
+  place-items: center;
+  color: var(--ink-muted);
+}
+
+.rowBody {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 2px;
+}
+
+.rowBody:only-child {
+  grid-column: 1 / -1;
 }
 
 .rowLabel,
@@ -205,22 +240,45 @@
   font-size: var(--text-sm);
 }
 
-.findButton {
-  flex: 0 0 auto;
-  width: auto;
-  margin: 0 max(var(--space-4), env(safe-area-inset-right))
-    max(var(--space-4), env(safe-area-inset-bottom))
-    max(var(--space-4), env(safe-area-inset-left));
-  padding: 0 var(--space-4);
-  border: 1px solid var(--edge-strong);
-  border-radius: var(--radius-full);
-  background: var(--surface-1);
+.rowSnippet,
+.rowUnavailable {
+  max-width: 100%;
+  overflow: hidden;
   color: var(--ink-muted);
-  text-align: start;
-  box-shadow: var(--shadow-2);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.findInput input,
+.rowSnippetMatch {
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+}
+
+.rowUnavailable {
+  color: var(--danger);
+}
+
+.rowShortcut {
+  min-width: max-content;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+}
+
+.searchInput {
+  display: block;
+  flex: 0 0 auto;
+  padding: 0 max(var(--space-4), env(safe-area-inset-right))
+    var(--space-3) max(var(--space-4), env(safe-area-inset-left));
+  background: var(--surface-canvas);
+}
+
+.searchInput input,
 .form input {
   width: 100%;
   min-height: 48px;
@@ -233,27 +291,6 @@
   font-size: var(--text-md);
 }
 
-.scopes {
-  display: flex;
-  gap: var(--space-2);
-  overflow-x: auto;
-  padding-block: 1px;
-}
-
-.scopes button {
-  flex: 0 0 auto;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--ink);
-}
-
-.scopes button[aria-pressed="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 .sourceStatus {
   display: grid;
   gap: var(--space-2);
@@ -261,7 +298,6 @@
 
 .sourceStatus p,
 .empty,
-.recoveryBanner p,
 .form p {
   margin: 0;
   color: var(--ink-muted);
@@ -274,18 +310,15 @@
 }
 
 .liveRegion {
-  min-height: 1.25rem;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
-.recoveryBanner {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-lg);
-  background: var(--accent-muted);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .form {
@@ -306,7 +339,6 @@
 
 .page > button,
 .recoveryActions button,
-.recoveryBanner button,
 .form button {
   min-height: 48px;
   padding: 0 var(--space-3);
@@ -421,11 +453,7 @@
   .iconButton:hover,
   .rowMain:hover,
   .rowMenu:hover,
-  .compactAction:hover,
-  .findButton:hover,
-  .scopes button:hover,
   .recoveryActions button:hover,
-  .recoveryBanner button:hover,
   .form button:hover {
     background: var(--surface-hover);
     color: var(--ink);
@@ -459,7 +487,6 @@
 }
 
 @media (max-width: 360px) {
-  .compactGrid,
   .recoveryActions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

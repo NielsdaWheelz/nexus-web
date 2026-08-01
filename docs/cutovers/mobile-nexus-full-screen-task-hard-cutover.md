@@ -4,7 +4,14 @@
 **Type:** Presentation-only hard cutover
 **Boundary:** Mobile Nexus only; 80/20 prototype slice
 
-**Follow-up authority (2026-07-30):**
+**Partial supersession (2026-07-31):**
+[`nexus-intent-router-hard-cutover.md`](nexus-intent-router-hard-cutover.md)
+replaces AC-3 in full, explicit Root -> Find, and the Root portion of AC-4.
+Root now owns an autofocused search field and may open the software keyboard.
+Full-screen geometry, modal lifecycle, guarded dismissal, safe-area,
+visual-viewport, and focus-containment contracts remain authoritative.
+
+**Historical follow-up authority (2026-07-30):**
 [`daily-pages-quick-capture-hard-cutover.md`](daily-pages-quick-capture-hard-cutover.md)
 deletes Today Capture and its workflow/recovery files, then composes the
 gesture-time Quick Note handoff inside the final `SwitchboardTask`. Preserve

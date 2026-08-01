@@ -5,7 +5,13 @@
 **Type:** Hard cutover — no legacy mobile path, fallback, compatibility shim,
 feature flag, or dual entry point.
 
-**Follow-up authority (2026-07-30):**
+**Superseded Nexus contract (2026-07-31):**
+[`nexus-intent-router-hard-cutover.md`](nexus-intent-router-hard-cutover.md)
+replaces this document's dashboard Root, mobile-only Places projection,
+separate Find page, scope chips, `SwitchboardRowModel`, and mobile-only merge.
+This file is implementation history for all replaced clauses.
+
+**Historical follow-up authority (2026-07-30):**
 [`mobile-nexus-full-screen-task-hard-cutover.md`](mobile-nexus-full-screen-task-hard-cutover.md)
 replaces `SwitchboardSheet` with `SwitchboardTask`.
 [`daily-pages-quick-capture-hard-cutover.md`](daily-pages-quick-capture-hard-cutover.md)

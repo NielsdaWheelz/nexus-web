@@ -1,17 +1,21 @@
 "use client";
 
-import { useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { MoreHorizontal } from "lucide-react";
+import { nexusEntryKeyValue, type NexusEntry } from "@/lib/nexus/model";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import {
   ModalLayerProvider,
   modalBackdropProjection,
 } from "@/lib/ui/useModalLayer";
-import DesktopNexusActionsPage from "./DesktopNexusActionsPage";
 import DesktopNexusInput from "./DesktopNexusInput";
 import DesktopNexusResults from "./DesktopNexusResults";
-import type { DesktopNexusController } from "./types";
+import type {
+  DesktopNexusActionsOpener,
+  DesktopNexusCell,
+  DesktopNexusController,
+  DesktopNexusModality,
+} from "./types";
 import styles from "./desktopNexus.module.css";
 
 export default function DesktopNexus({
@@ -20,6 +24,11 @@ export default function DesktopNexus({
   controller: DesktopNexusController;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const actionsOpenersRef = useRef(new Map<string, DesktopNexusActionsOpener>());
+  const openMenuKeyRef = useRef<string | null>(null);
+  const handledActionsRequestRef = useRef<number | null>(null);
+  const [activeCell, setActiveCell] = useState<DesktopNexusCell>("Primary");
   const overlay = useDialogOverlay({
     ref: panelRef,
     active: controller.open,
@@ -30,9 +39,6 @@ export default function DesktopNexus({
           "[data-nexus-workflow-initial-focus]",
         );
       }
-      if (controller.page.kind === "Actions") {
-        return container.querySelector<HTMLElement>('[role="menuitem"]');
-      }
       return container.querySelector<HTMLElement>('input[role="combobox"]');
     },
     skipReturnFocus: controller.shouldSuppressReturnFocusOnClose,
@@ -40,16 +46,81 @@ export default function DesktopNexus({
     layerScope: "nexus",
   });
 
-  if (!controller.open) return null;
-  const actionsAvailable =
-    controller.page.kind !== "Actions" &&
-    controller.entries.some(
-      (entry) =>
-        entry.key === controller.activeEntryKey && entry.hasSecondaryActions,
+  const registerActionsOpener = useCallback(
+    (key: string, opener: DesktopNexusActionsOpener | null) => {
+      if (opener) actionsOpenersRef.current.set(key, opener);
+      else actionsOpenersRef.current.delete(key);
+    },
+    [],
+  );
+  const openActions = useCallback(
+    (entry: NexusEntry, modality: DesktopNexusModality) => {
+      const opener = actionsOpenersRef.current.get(
+        nexusEntryKeyValue(entry.key),
+      );
+      if (!opener) return;
+      controller.setActiveEntry(entry.key);
+      setActiveCell("Actions");
+      opener(entry, modality);
+    },
+    [controller],
+  );
+  const onActionMenuOpenChange = useCallback(
+    (key: string, open: boolean) => {
+      if (open) {
+        openMenuKeyRef.current = key;
+        setActiveCell("Actions");
+        return;
+      }
+      if (openMenuKeyRef.current !== key) return;
+      openMenuKeyRef.current = null;
+      requestAnimationFrame(() => inputRef.current?.focus());
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!controller.open) {
+      openMenuKeyRef.current = null;
+      setActiveCell("Primary");
+    }
+  }, [controller.open]);
+
+  useEffect(() => {
+    if (activeCell !== "Actions") return;
+    const activeKey = controller.projection.activeKey
+      ? nexusEntryKeyValue(controller.projection.activeKey)
+      : null;
+    const activeEntry = controller.projection.groups
+      .flatMap((group) => group.entries)
+      .find((entry) => nexusEntryKeyValue(entry.key) === activeKey);
+    if (!activeEntry || activeEntry.secondaryActions.length === 0) {
+      setActiveCell("Primary");
+    }
+  }, [activeCell, controller.projection]);
+
+  useEffect(() => {
+    const request = controller.actionsRequest;
+    if (
+      !controller.open ||
+      controller.workflow ||
+      !request ||
+      handledActionsRequestRef.current === request.requestId
+    ) {
+      return;
+    }
+    const opener = actionsOpenersRef.current.get(
+      nexusEntryKeyValue(request.entry.key),
     );
-  const selectedLabel = controller.entries.find(
-    (entry) => entry.key === controller.activeEntryKey,
-  )?.label;
+    if (!opener) return;
+    handledActionsRequestRef.current = request.requestId;
+    openActions(request.entry, "Keyboard");
+  }, [controller.actionsRequest, controller.open, controller.workflow, openActions]);
+
+  if (controller.projection.surface !== "Desktop") {
+    throw new Error("DesktopNexus requires a Desktop projection");
+  }
+  if (!controller.open) return null;
 
   return createPortal(
     <ModalLayerProvider token={overlay.layerToken}>
@@ -68,32 +139,23 @@ export default function DesktopNexus({
         >
           {controller.workflow ? (
             controller.workflow
-          ) : controller.page.kind === "Actions" ? (
-            <DesktopNexusActionsPage controller={controller} />
           ) : (
             <>
               <h2 className="sr-only">Nexus</h2>
-              <DesktopNexusInput controller={controller} />
-              <DesktopNexusResults controller={controller} />
-              <footer className={styles.footer}>
-                <span className={styles.keyHint}>
-                  <kbd>↩</kbd> Open
-                </span>
-                <span className={styles.keyHint}>
-                  <kbd>⇧↩</kbd> New tab
-                </span>
-                {actionsAvailable ? (
-                  <button
-                    type="button"
-                    className={styles.actionsButton}
-                    onClick={controller.openActions}
-                    aria-label={`Actions for ${selectedLabel}`}
-                  >
-                    <MoreHorizontal size={16} aria-hidden="true" />
-                    Actions
-                  </button>
-                ) : null}
-              </footer>
+              <DesktopNexusInput
+                controller={controller}
+                inputRef={inputRef}
+                activeCell={activeCell}
+                setActiveCell={setActiveCell}
+                openActions={openActions}
+              />
+              <DesktopNexusResults
+                controller={controller}
+                activeCell={activeCell}
+                setActiveCell={setActiveCell}
+                registerActionsOpener={registerActionsOpener}
+                onActionMenuOpenChange={onActionMenuOpenChange}
+              />
             </>
           )}
         </div>

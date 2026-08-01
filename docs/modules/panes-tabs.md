@@ -37,8 +37,10 @@ row; collapsed Filter chrome marks any applied non-default domain state.
 Document-shaped panes, including an individual Conversation, publish
 `FindOccurrences` with transient Companion results.
 
-Open-pane management belongs to the Nexus Switchboard Root. It renders all
-primary panes in stable workspace order, activates or restores an exact pane,
-closes panes without dismissing, and exposes the workspace provider's bounded
-session-local recently-closed stack. Mobile never recreates the desktop pane
-strip or mounts inactive pane columns.
+Nexus Root projects at most five open panes in stable workspace order and then
+one direct `Manage tabs…` row. The dedicated Manage Tabs page renders all
+primary panes, activates or restores an exact pane, closes panes without
+dismissing, and exposes the workspace provider's bounded session-local
+recently-closed stack. Recovery opens the same page with the exact retained
+activation; direct Manage Tabs needs no retained activation. Mobile never
+recreates the desktop pane strip or mounts inactive pane columns.

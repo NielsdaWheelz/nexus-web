@@ -8,33 +8,22 @@ import {
 } from "@/lib/localDate";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import type {
+  DailyPageLocator,
+  MaterializedOpenDailyPageTarget,
+} from "@/lib/nexus/model";
+import type {
   WorkspaceTargetActivationResult,
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
 import type { PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
 
-export type OpenDailyPageTarget = {
-  kind: "OpenDailyPage";
-  localDate: "Today" | string;
-  entry:
-    | { kind: "View" }
-    | {
-        kind: "AppendNote";
-        noteId: string;
-        clientMutationId: string;
-      };
-};
-
-export function createDailyAppendNoteEntry(): Extract<
-  OpenDailyPageTarget["entry"],
-  { kind: "AppendNote" }
-> {
-  return {
-    kind: "AppendNote",
-    noteId: crypto.randomUUID(),
-    clientMutationId: crypto.randomUUID(),
-  };
-}
+export type OpenDailyPageTarget =
+  | MaterializedOpenDailyPageTarget
+  | {
+      readonly kind: "OpenDailyPage";
+      readonly date: DailyPageLocator;
+      readonly entry: { readonly kind: "View" };
+    };
 
 export interface OpenDailyPageActivation {
   disposition: WorkspaceTargetDisposition;
@@ -48,28 +37,28 @@ export interface OpenDailyPageResult {
 }
 
 export function resolveDailyLocalDate(
-  value: OpenDailyPageTarget["localDate"],
+  locator: DailyPageLocator,
   calendarTimeZone: string,
   now = new Date(),
 ): string {
   const localDate =
-    value === "Today"
+    locator.kind === "Today"
       ? formatLocalDateInTimeZone(now, calendarTimeZone)
-      : value;
+      : locator.value;
   if (!isLocalDate(localDate)) {
     throw new TypeError(
-      "OpenDailyPage.localDate must be Today or a valid YYYY-MM-DD date",
+      "OpenDailyPage date must be a valid YYYY-MM-DD local date",
     );
   }
   return localDate;
 }
 
 export function useResolveDailyLocalDate(): (
-  value: OpenDailyPageTarget["localDate"],
+  locator: DailyPageLocator,
 ) => string {
   const { calendarTimeZone } = useAuthenticatedAccount();
   return useCallback(
-    (value) => resolveDailyLocalDate(value, calendarTimeZone),
+    (locator) => resolveDailyLocalDate(locator, calendarTimeZone),
     [calendarTimeZone],
   );
 }
@@ -88,7 +77,7 @@ export function useOpenDailyPage(): (
         modality: "Programmatic",
       },
     ): OpenDailyPageResult => {
-      const localDate = resolveLocalDate(target.localDate);
+      const localDate = resolveLocalDate(target.date);
       const activationId = crypto.randomUUID();
       const result = activateWorkspaceTarget({
         originPaneId: state.activePrimaryPaneId,
@@ -106,6 +95,7 @@ export function useOpenDailyPage(): (
                   kind: "AppendNote",
                   noteId: target.entry.noteId,
                   clientMutationId: target.entry.clientMutationId,
+                  initialText: target.entry.initialText,
                 }
               : null,
         },

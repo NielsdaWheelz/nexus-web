@@ -237,6 +237,25 @@ function DailyHarness() {
   </>;
 }
 
+function DeliveredDailyHarness() {
+  const session = useResourceSurfaceSession({
+    sessionKey: `daily:${ACCOUNT_ID}:${LOCAL_DATE}`,
+    daily: { accountId: ACCOUNT_ID, localDate: LOCAL_DATE },
+    delivery: {
+      activationId: "activation-1",
+      paneId: "pane-1",
+      visitId: "visit-1",
+      entry: {
+        kind: "AppendNote",
+        noteId: NOTE.slice("note_block:".length),
+        clientMutationId: "delivery-mutation-1",
+        initialText: "Project Ideas",
+      },
+    },
+  });
+  return <output aria-label="delivered daily body">{session.provisional?.bodyText}</output>;
+}
+
 describe("useResourceSurfaceSession", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -245,6 +264,37 @@ describe("useResourceSurfaceSession", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("installs the exact AppendNote seed through the daily draft owner", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        dataResponse({
+          data: {
+            kind: "Latent",
+            localDate: LOCAL_DATE,
+            defaultTitle: "Thursday, July 30",
+          },
+        }),
+      ),
+    );
+
+    render(<DeliveredDailyHarness />);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("delivered daily body")).toHaveTextContent(
+        "Project Ideas",
+      ),
+    );
+    const stored = JSON.parse(
+      window.localStorage.getItem(dailyDraftKey(ACCOUNT_ID, LOCAL_DATE)) ?? "null",
+    ) as { bodyText?: string; noteId?: string; clientMutationId?: string } | null;
+    expect(stored).toMatchObject({
+      bodyText: "Project Ideas",
+      noteId: NOTE.slice("note_block:".length),
+      clientMutationId: "delivery-mutation-1",
+    });
   });
 
   it("rebases a rapid split from a local occurrence onto the acknowledged insert", async () => {

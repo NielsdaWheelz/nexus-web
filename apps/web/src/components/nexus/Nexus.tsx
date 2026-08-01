@@ -4,43 +4,36 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import NexusButton from "@/components/switchboard/NexusButton";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import SwitchboardRecovery from "@/components/switchboard/SwitchboardRecovery";
-import SwitchboardRoot from "@/components/switchboard/SwitchboardRoot";
 import SwitchboardTask from "@/components/switchboard/SwitchboardTask";
-import { paneStatusLabel } from "@/lib/switchboard/paneStatusLabel";
-import { retainedNexusTargetLabel } from "@/lib/nexus/model";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
+import ChooseBrowsePage from "./ChooseBrowsePage";
+import ChooseCreatePage from "./ChooseCreatePage";
+import ManageTabsPage from "./ManageTabsPage";
 import DesktopNexus from "./desktop/DesktopNexus";
-import {
-  useNexusController,
-  type NexusController,
-} from "./useNexusController";
+import { useNexusController, type NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
 
 function desktopWorkflow(input: {
-  controller: NexusController;
-  activeAddDefect: boolean;
-  onAddDefect(error: unknown): void;
-  onClearAddDefect(): void;
+  readonly controller: NexusController;
+  readonly activeAddDefect: boolean;
+  readonly onAddDefect: (error: unknown) => void;
+  readonly onClearAddDefect: () => void;
 }): ReactNode {
-  const {
-    controller,
-    activeAddDefect,
-    onAddDefect,
-    onClearAddDefect,
-  } = input;
+  const { controller, activeAddDefect, onAddDefect, onClearAddDefect } = input;
   const page = controller.page;
   let content: ReactNode;
   switch (page.kind) {
     case "Root":
-    case "Find":
-    case "Actions":
+    case "EntryActions":
       return undefined;
     case "UnsupportedLink":
       content = (
-        <section>
-          <h2>This link is no longer supported</h2>
+        <section className={styles.workflowPage}>
+          <h2 tabIndex={-1} data-switchboard-heading>
+            This link is no longer supported
+          </h2>
           <button
             type="button"
             onClick={() =>
@@ -56,14 +49,42 @@ function desktopWorkflow(input: {
         </section>
       );
       break;
+    case "ChooseCreate":
+      content = (
+        <ChooseCreatePage
+          initialDraft={page.initialDraft}
+          actions={controller.createChoiceActions}
+          onBack={controller.back}
+          onSelect={(action, activation) =>
+            controller.activateAction(action, activation)
+          }
+          onUnavailable={controller.announceUnavailable}
+        />
+      );
+      break;
+    case "ChooseBrowse":
+      content = (
+        <ChooseBrowsePage
+          query={page.query}
+          actions={controller.browseChoiceActions}
+          onBack={controller.back}
+          onSelect={(action, activation) =>
+            controller.activateAction(action, activation)
+          }
+          onUnavailable={controller.announceUnavailable}
+        />
+      );
+      break;
     case "CreatePage":
       content = (
-        <section>
-          <h2>New page</h2>
+        <section className={styles.workflowPage}>
+          <h2 tabIndex={-1} data-switchboard-heading>
+            New page
+          </h2>
           <p>
             {page.submit.kind === "Retryable"
-              ? "Couldn’t create page."
-              : "Creating page…"}
+              ? page.submit.message
+              : `Creating “${page.titleDraft}”…`}
           </p>
           {page.submit.kind === "Retryable" ? (
             <button type="button" onClick={controller.retryPageCreation}>
@@ -119,44 +140,14 @@ function desktopWorkflow(input: {
       break;
     case "ManageTabs":
       content = (
-        <SwitchboardRoot
-          places={[]}
-          quickActions={[]}
-          panes={controller.switchboardPanes.map((pane) => ({
-            id: pane.id,
-            label: pane.label,
-            metadata: paneStatusLabel(pane),
-            current: pane.current,
-            activationRouteId: pane.activationRouteId,
-          }))}
-          recentlyClosed={controller.switchboardClosedPanes.map((pane) => ({
-            id: pane.id,
-            label: pane.label,
-            metadata: "Closed tab",
-          }))}
-          accountMenu={null}
-          retainedTarget={retainedNexusTargetLabel(page.retained.target)}
-          manageTabs
-          onDone={controller.close}
-          onFind={controller.enterFind}
-          onPlace={controller.openSwitchboardPlace}
-          onQuickAction={controller.runSwitchboardQuickAction}
-          onOpenPane={(paneId) => {
-            const pane = controller.switchboardPanes.find(
-              (candidate) => candidate.id === paneId,
-            );
-            if (!pane) throw new Error(`Unknown Nexus pane: ${paneId}`);
-            controller.openSwitchboardItem(
-              {
-                kind: "OpenPane",
-                paneId,
-                activationRouteId: pane.activationRouteId,
-              },
-              false,
-            );
-          }}
-          onClosePane={controller.closeSwitchboardPane}
-          onRestorePane={controller.restoreSwitchboardPane}
+        <ManageTabsPage
+          origin={page.origin}
+          panes={controller.managedPanes}
+          recentlyClosed={controller.managedClosedPanes}
+          onBack={controller.back}
+          onOpen={controller.openManagedPane}
+          onClose={controller.closeManagedPane}
+          onRestore={controller.restoreManagedPane}
           onRetryRetained={controller.retryRetainedActivation}
           onCancelRetained={controller.cancelRetainedActivation}
         />
@@ -170,10 +161,7 @@ function desktopWorkflow(input: {
       tabIndex={-1}
       onFocus={(event) => {
         if (event.target !== event.currentTarget) return;
-        const target = controller.initialFocus(
-          event.currentTarget,
-          false,
-        );
+        const target = controller.initialFocus(event.currentTarget, false);
         if (target && target !== event.currentTarget) target.focus();
       }}
     >
@@ -186,8 +174,8 @@ export default function Nexus() {
   const controller = useNexusController();
   const sessionId = controller.addSession.state.sessionId;
   const [addDefect, setAddDefect] = useState<{
-    sessionId: string;
-    error: unknown;
+    readonly sessionId: string;
+    readonly error: unknown;
   } | null>(null);
   const reportAddDefect = useCallback(
     (error: unknown) => {
@@ -198,7 +186,6 @@ export default function Nexus() {
   );
   const clearAddDefect = useCallback(() => setAddDefect(null), []);
   const viewport = useViewportState();
-  const isMobile = viewport.isMobile;
   const waitingForViewport = controller.open && !viewport.hydrated;
   const workflow = desktopWorkflow({
     controller,
@@ -215,19 +202,19 @@ export default function Nexus() {
     <>
       <SwitchboardTask
         controller={controller}
-        active={controller.open && isMobile}
+        active={controller.open && viewport.isMobile}
         activeAddDefect={addDefect?.sessionId === sessionId}
         onAddDefect={reportAddDefect}
         onClearAddDefect={clearAddDefect}
       />
-      {isMobile && !waitingForViewport ? (
+      {viewport.isMobile && !waitingForViewport ? (
         <NexusButton
           paneCount={controller.paneCount}
           switchboardOpen={controller.open}
           onOpen={controller.openRoot}
         />
       ) : null}
-      {!isMobile && !waitingForViewport ? (
+      {!viewport.isMobile && !waitingForViewport ? (
         <DesktopNexus controller={desktopController} />
       ) : null}
     </>

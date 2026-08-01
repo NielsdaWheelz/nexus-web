@@ -1,5 +1,5 @@
-import type { NexusOpenIntent, NexusQuickActionId } from "./model";
-import { QUICK_ACTION_REGISTRY } from "./quickActions";
+import type { NexusOpenIntent } from "./model";
+import { isNexusCommandId } from "./commands";
 
 export const NEXUS_OPEN_REQUESTED_EVENT = "Nexus.OpenRequested";
 const NEXUS_OPEN_RECEIVER_READY_KEY = "__nexusOpenReceiverReady";
@@ -59,12 +59,6 @@ function singleValue(
   return values.length === 1 ? values[0]! : null;
 }
 
-function registeredQuickAction(
-  value: string,
-): value is NexusQuickActionId {
-  return Object.hasOwn(QUICK_ACTION_REGISTRY, value);
-}
-
 export function parseNexusUrlIntent(
   params: URLSearchParams,
 ): NexusOpenIntent | null {
@@ -86,7 +80,7 @@ export function parseNexusUrlIntent(
     case "QuickAction":
       return query === null &&
         action !== null &&
-        registeredQuickAction(action)
+        isNexusCommandId(action)
         ? { kind: "QuickAction", actionId: action }
         : null;
     default:

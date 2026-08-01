@@ -270,78 +270,16 @@ describe("AppNav (desktop rail)", () => {
     setNexusOpenReceiverReady(false);
   });
 
-  it("renders Quick Note then Today between the command bar and Places", async () => {
+  it("keeps Quick Note and Today out of fixed navigation", () => {
     renderNav();
 
     const navigation = screen.getByRole("navigation", { name: "Primary" });
-    const daily = within(navigation).getByRole("group", { name: "Daily" });
-    expect(within(daily).getAllByRole("button")).toHaveLength(2);
-    const quickNote = within(navigation).getByRole("button", {
-      name: "Quick Note",
-    });
-    const today = within(navigation).getByRole("button", { name: "Today" });
-    const places = within(navigation).getByRole("link", { name: "Lectern" });
-
     expect(
-      quickNote.compareDocumentPosition(today) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+      within(navigation).queryByRole("button", { name: "Quick Note" }),
+    ).not.toBeInTheDocument();
     expect(
-      today.compareDocumentPosition(places) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(getComputedStyle(quickNote).minHeight).toBe("48px");
-    expect(getComputedStyle(today).minHeight).toBe("48px");
-
-    fireEvent.click(today);
-    await waitFor(() => {
-      expect(screen.getByTestId("workspace-probe")).toHaveTextContent(
-        "/daily/",
-      );
-    });
-  });
-
-  it("offers an exact-identity Quick Note retry when the desktop rail reaches the pane cap", async () => {
-    renderNav();
-    const podcasts = screen.getByRole("link", { name: "Podcasts" });
-    for (let index = 1; index < MAX_PANES; index += 1) {
-      fireEvent.click(podcasts, { detail: 1, shiftKey: true });
-    }
-    await waitFor(() =>
-      expect(screen.getByTestId("workspace-probe")).toHaveAttribute(
-        "data-pane-count",
-        String(MAX_PANES),
-      ),
-    );
-    const noteId = "11111111-1111-4111-8111-111111111111";
-    const clientMutationId = "22222222-2222-4222-8222-222222222222";
-    let generated = 0;
-    vi.spyOn(crypto, "randomUUID").mockImplementation(() => {
-      generated += 1;
-      if (generated === 1) return noteId;
-      if (generated === 2) return clientMutationId;
-      return `33333333-3333-4333-8333-${String(generated).padStart(12, "0")}`;
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Quick Note" }));
-    const retry = await screen.findByRole("button", { name: "Retry" });
-    fireEvent.click(retry);
-    expect(screen.getByTestId("workspace-entry-probe")).toHaveTextContent(
-      "null",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Close test pane" }));
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("workspace-probe")).toHaveTextContent(
-        /^\/daily\/\d{4}-\d{2}-\d{2}$/,
-      ),
-    );
-    expect(screen.getByTestId("workspace-entry-probe")).toHaveTextContent(
-      noteId,
-    );
-    expect(screen.getByTestId("workspace-entry-probe")).toHaveTextContent(
-      clientMutationId,
-    );
+      within(navigation).queryByRole("button", { name: "Today" }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens source-first Add from the + button", () => {

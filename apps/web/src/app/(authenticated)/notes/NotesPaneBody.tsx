@@ -137,7 +137,7 @@ export default function NotesPaneBody() {
       openDailyPage(
         {
           kind: "OpenDailyPage",
-          localDate: "Today",
+          date: { kind: "Today" },
           entry: { kind: "View" },
         },
         PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,

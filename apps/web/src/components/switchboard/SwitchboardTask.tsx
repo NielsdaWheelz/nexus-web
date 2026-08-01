@@ -2,46 +2,118 @@
 
 import { useRef, type MouseEvent, type ReactNode } from "react";
 import AccountMenu from "@/components/appnav/AccountMenu";
-import AddPanel from "@/components/nexus/AddPanel";
+import AddPanel, {
+  type AddDismissalConfirmation,
+} from "@/components/nexus/AddPanel";
 import AddPanelBoundary from "@/components/nexus/AddPanelBoundary";
+import ChooseBrowsePage from "@/components/nexus/ChooseBrowsePage";
+import ChooseCreatePage from "@/components/nexus/ChooseCreatePage";
+import ManageTabsPage from "@/components/nexus/ManageTabsPage";
+import type { AddContentSessionController } from "@/components/nexus/useAddContentSession";
+import type {
+  NexusManagedClosedPane,
+  NexusManagedPane,
+} from "@/components/nexus/useNexusController";
 import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
 import { getDestination } from "@/lib/navigation/destinations";
-import { retainedNexusTargetLabel } from "@/lib/nexus/model";
+import type {
+  MaterializedNexusTarget,
+  NexusDispatchOutcome,
+} from "@/lib/nexus/dispatch";
+import type {
+  NexusAction,
+  NexusEntry,
+  NexusEntryKey,
+  NexusPage,
+  NexusProjection,
+  NexusTarget,
+  NexusTargetActivation,
+} from "@/lib/nexus/model";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
-import type { NexusController } from "@/components/nexus/useNexusController";
+import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import CreateLibraryPanel from "./CreateLibraryPanel";
-import MobileQuickNoteHandoff, {
-  type MobileQuickNoteHandoffHandle,
-} from "./MobileQuickNoteHandoff";
+import MobileNexusActivationAdapter, {
+  type MobileNexusActivationAdapterHandle,
+} from "./MobileNexusActivationAdapter";
 import SwitchboardActions from "./SwitchboardActions";
-import SwitchboardFind from "./SwitchboardFind";
 import SwitchboardRecovery from "./SwitchboardRecovery";
-import SwitchboardRoot from "./SwitchboardRoot";
-import { useSwitchboardController } from "./useSwitchboardController";
+import SwitchboardSearch, {
+  type MobileNexusActionsRequest,
+  type MobileNexusFailureSource,
+} from "./SwitchboardSearch";
 import styles from "./switchboard.module.css";
+
+export interface MobileNexusTaskController {
+  readonly query: string;
+  readonly page: NexusPage;
+  readonly projection: NexusProjection;
+  readonly actionsRequest: MobileNexusActionsRequest | null;
+  readonly failures: ReadonlySet<MobileNexusFailureSource>;
+  readonly busy: boolean;
+  readonly pending: boolean;
+  readonly announcement: string;
+  readonly dialogLabel: string;
+  readonly focusKey: string;
+  readonly addSession: AddContentSessionController;
+  readonly dismissalConfirmation: AddDismissalConfirmation;
+  readonly createChoiceActions: readonly NexusAction[];
+  readonly browseChoiceActions: readonly NexusAction[];
+  readonly managedPanes: readonly NexusManagedPane[];
+  readonly managedClosedPanes: readonly NexusManagedClosedPane[];
+  setQuery(query: string): void;
+  setActiveEntry(key: NexusEntryKey): void;
+  openEntryActions(entry: NexusEntry): void;
+  announceUnavailable(reason: string): void;
+  materialize(target: NexusTarget): MaterializedNexusTarget;
+  dispatch(
+    target: MaterializedNexusTarget,
+    activation: NexusTargetActivation,
+    entry?: NexusEntry,
+  ): Promise<NexusDispatchOutcome>;
+  reportActivationFailure(error: unknown): void;
+  retry(source: MobileNexusFailureSource): void;
+  back(): void;
+  escape(): void;
+  close(): void;
+  dismissAccepted(): void;
+  guardClose(): DismissDecision;
+  initialFocus(container: HTMLElement, isMobile: boolean): HTMLElement | null;
+  shouldSuppressReturnFocusOnClose(): boolean;
+  openTarget(target: NexusTarget): void;
+  openAddTarget(target: NexusTarget): void;
+  keepWorking(): void;
+  confirmDismissal(): void;
+  setLibraryNameDraft(name: string): void;
+  submitLibrary(): void;
+  retryPageCreation(): void;
+  manageTabs(): void;
+  openManagedPane(paneId: string): void;
+  closeManagedPane(paneId: string): void;
+  restoreManagedPane(paneId: string): void;
+  retryRetainedActivation(): void;
+  cancelRetainedActivation(): void;
+}
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled Switchboard page: ${JSON.stringify(value)}`);
 }
 
 function CreationStatus({
-  kind,
   failed,
   onRetry,
 }: {
-  kind: "page";
   failed: boolean;
-  onRetry: () => void;
+  onRetry(): void;
 }) {
   return (
     <div className={styles.page}>
       <header className={styles.header}>
         <h2 tabIndex={-1} data-switchboard-heading>
-          New {kind}
+          New page
         </h2>
       </header>
-      <p>{failed ? `Couldn’t create ${kind}.` : `Creating ${kind}…`}</p>
+      <p>{failed ? "Couldn’t create page." : "Creating page…"}</p>
       {failed ? (
         <button type="button" onClick={onRetry}>
           Retry
@@ -58,22 +130,46 @@ export default function SwitchboardTask({
   onAddDefect,
   onClearAddDefect,
 }: {
-  controller: NexusController;
+  controller: MobileNexusTaskController;
   active: boolean;
   activeAddDefect: boolean;
   onAddDefect(error: unknown): void;
   onClearAddDefect(): void;
 }) {
-  const switchboard = useSwitchboardController(controller);
-  const quickNoteHandoffRef =
-    useRef<MobileQuickNoteHandoffHandle>(null);
+  const activationAdapterRef =
+    useRef<MobileNexusActivationAdapterHandle>(null);
   const settingsDestination = getDestination("settings");
   const accountSettings = {
     ...settingsDestination,
     icon:
-      settingsDestination.icon ??
-      getPaneRouteIcon(settingsDestination.href),
+      settingsDestination.icon ?? getPaneRouteIcon(settingsDestination.href),
     presentation: "default" as const,
+  };
+  const activate = (
+    action: NexusAction,
+    activation: NexusTargetActivation,
+    returnFocus: HTMLElement,
+    entry?: NexusEntry,
+  ) => {
+    activationAdapterRef.current?.activate(
+      action,
+      activation,
+      returnFocus,
+      entry,
+    );
+    if (entry) controller.setActiveEntry(entry.key);
+  };
+  const back = () => {
+    controller.announceUnavailable("");
+    controller.back();
+  };
+  const close = () => {
+    controller.announceUnavailable("");
+    controller.close();
+  };
+  const escape = () => {
+    controller.announceUnavailable("");
+    controller.escape();
   };
   const accountMenu = (
     <AccountMenu
@@ -91,108 +187,89 @@ export default function SwitchboardTask({
           Account
         </button>
       )}
-      onNavigate={(
-        event: MouseEvent<HTMLElement>,
-      ): AppNavActivationResult => {
+      onNavigate={(event: MouseEvent<HTMLElement>): AppNavActivationResult => {
         event.preventDefault();
-        controller.openSwitchboardPlace(settingsDestination);
+        controller.openTarget({
+          kind: "InternalHref",
+          href: settingsDestination.href,
+          labelHint: settingsDestination.label,
+        });
         return "handled-destination-focus";
       }}
     />
   );
 
-  const root = (manageTabs = false) => (
-    <SwitchboardRoot
-      places={switchboard.places}
-      quickActions={controller.switchboardQuickActions}
-      panes={switchboard.panes}
-      recentlyClosed={switchboard.recentlyClosed}
-      accountMenu={accountMenu}
-      manageTabs={manageTabs}
-      retainedTarget={
-        manageTabs &&
-        (controller.page.kind === "ManageTabs" ||
-          controller.page.kind === "ActivationBlocked")
-          ? retainedNexusTargetLabel(controller.page.retained.target)
-          : undefined
-      }
-      onDone={controller.close}
-      onFind={controller.enterFind}
-      onPlace={controller.openSwitchboardPlace}
-      onQuickAction={(action, trigger) => {
-        if (action.id === "Nexus.Quick.Note") {
-          quickNoteHandoffRef.current?.begin(trigger);
-          return;
-        }
-        controller.runSwitchboardQuickAction(action);
-      }}
-      onOpenPane={(paneId) => {
-        const pane = controller.switchboardPanes.find(
-          (candidate) => candidate.id === paneId,
-        );
-        if (!pane) {
-          throw new Error(`Unknown Switchboard pane: ${paneId}`);
-        }
-        controller.openSwitchboardItem(
-          {
-            kind: "OpenPane",
-            paneId,
-            activationRouteId: pane.activationRouteId,
-          },
-          false,
-        );
-      }}
-      onClosePane={controller.closeSwitchboardPane}
-      onRestorePane={controller.restoreSwitchboardPane}
-      onRetryRetained={controller.retryRetainedActivation}
-    />
-  );
-
-  // One exhaustive switch over the page union: a new NexusPage variant is a
-  // compile error here instead of silently falling through to the Root render.
   const renderPage = (): ReactNode => {
     const page = controller.page;
     switch (page.kind) {
       case "Root":
-        return root();
-      case "Find":
         return (
-          <SwitchboardFind
-            query={page.query}
-            scope={page.scope}
-            rows={controller.switchboardFindRows}
-            activeId={controller.switchboardFindActiveId}
-            busy={controller.switchboardFindBusy}
-            pending={controller.switchboardFindPending}
-            openablesFailed={controller.switchboardOpenablesFailed}
-            deepFailed={controller.switchboardDeepFailed}
-            onBack={controller.back}
+          <SwitchboardSearch
+            active={active}
+            focusKey={controller.focusKey}
+            query={controller.query}
+            projection={controller.projection}
+            accountMenu={accountMenu}
+            failures={controller.failures}
+            busy={controller.busy}
+            pending={controller.pending}
+            announcement={controller.announcement}
+            actionsRequest={controller.actionsRequest}
+            onDone={close}
             onQuery={controller.setQuery}
-            onScope={controller.setFindScope}
-            onActive={controller.setSwitchboardFindActiveId}
-            onSelect={(row) => {
-              if (row.item) {
-                controller.openSwitchboardItem(row.item, false);
-              }
+            onActive={controller.setActiveEntry}
+            onActivate={activate}
+            onEntryActions={(entry) => {
+              controller.announceUnavailable("");
+              controller.openEntryActions(entry);
             }}
-            onFork={(row) => {
-              if (row.item) {
-                controller.openSwitchboardItem(row.item, true);
-              }
-            }}
-            actionsFor={controller.switchboardItemActions}
-            onAction={controller.runSwitchboardAction}
-            onRetryOpenables={controller.retrySwitchboardOpenables}
-            onRetryDeep={controller.retrySwitchboardDeep}
+            onEscapeRoot={escape}
+            onUnavailable={controller.announceUnavailable}
+            onRetry={controller.retry}
           />
         );
-      case "Actions":
+      case "EntryActions":
         return (
           <SwitchboardActions
-            label={page.entry.label}
-            actions={page.actions}
-            onBack={controller.back}
-            onSelect={controller.runAction}
+            entry={page.entry}
+            onBack={back}
+            onSelect={activate}
+            onUnavailable={controller.announceUnavailable}
+            unavailableAnnouncement={controller.announcement}
+          />
+        );
+      case "ChooseCreate":
+        return (
+          <ChooseCreatePage
+            initialDraft={page.initialDraft}
+            actions={controller.createChoiceActions}
+            onBack={back}
+            onSelect={activate}
+            onUnavailable={controller.announceUnavailable}
+          />
+        );
+      case "ChooseBrowse":
+        return (
+          <ChooseBrowsePage
+            query={page.query}
+            actions={controller.browseChoiceActions}
+            onBack={back}
+            onSelect={activate}
+            onUnavailable={controller.announceUnavailable}
+          />
+        );
+      case "ManageTabs":
+        return (
+          <ManageTabsPage
+            origin={page.origin}
+            panes={controller.managedPanes}
+            recentlyClosed={controller.managedClosedPanes}
+            onBack={back}
+            onOpen={controller.openManagedPane}
+            onClose={controller.closeManagedPane}
+            onRestore={controller.restoreManagedPane}
+            onRetryRetained={controller.retryRetainedActivation}
+            onCancelRetained={controller.cancelRetainedActivation}
           />
         );
       case "UnsupportedLink":
@@ -220,7 +297,6 @@ export default function SwitchboardTask({
       case "CreatePage":
         return (
           <CreationStatus
-            kind="page"
             failed={page.submit.kind === "Retryable"}
             onRetry={controller.retryPageCreation}
           />
@@ -231,7 +307,7 @@ export default function SwitchboardTask({
             name={page.nameDraft}
             submit={page.submit}
             onName={controller.setLibraryNameDraft}
-            onBack={controller.back}
+            onBack={back}
             onSubmit={controller.submitLibrary}
           />
         );
@@ -249,8 +325,8 @@ export default function SwitchboardTask({
               session={controller.addSession}
               dismissalConfirmation={controller.dismissalConfirmation}
               onOpen={controller.openAddTarget}
-              onClose={controller.close}
-              onBack={controller.back}
+              onClose={close}
+              onBack={back}
               onKeepWorking={controller.keepWorking}
               onConfirmDismissal={controller.confirmDismissal}
               onDefect={onAddDefect}
@@ -266,8 +342,6 @@ export default function SwitchboardTask({
             onCancel={controller.cancelRetainedActivation}
           />
         );
-      case "ManageTabs":
-        return root(true);
       default:
         return assertNever(page);
     }
@@ -277,18 +351,40 @@ export default function SwitchboardTask({
     <>
       <MobileFullScreenTask
         active={active}
-        onDismiss={controller.dismissAccepted}
-        onDismissRequest={controller.guardClose}
-        ariaLabel={activeAddDefect ? "Add needs attention" : "Nexus"}
+        onDismiss={() => {
+          controller.announceUnavailable("");
+          controller.dismissAccepted();
+        }}
+        onDismissRequest={() => {
+          controller.announceUnavailable("");
+          return controller.guardClose();
+        }}
+        ariaLabel={activeAddDefect ? "Add needs attention" : controller.dialogLabel}
         initialFocus={(container) => controller.initialFocus(container, true)}
+        returnFocusTo={() =>
+          document.querySelector<HTMLElement>("[data-nexus-return-focus]")
+        }
         skipReturnFocus={controller.shouldSuppressReturnFocusOnClose}
         focusKey={controller.focusKey}
       >
         {renderPage()}
+        {controller.page.kind !== "Root" &&
+        controller.page.kind !== "EntryActions" ? (
+          <div
+            className={styles.liveRegion}
+            role="status"
+            aria-label="Nexus status"
+            aria-live="polite"
+          >
+            {controller.announcement}
+          </div>
+        ) : null}
       </MobileFullScreenTask>
-      <MobileQuickNoteHandoff
-        ref={quickNoteHandoffRef}
-        onNavigationAccepted={controller.completeMobileQuickNoteNavigation}
+      <MobileNexusActivationAdapter
+        ref={activationAdapterRef}
+        materialize={controller.materialize}
+        dispatch={controller.dispatch}
+        onError={controller.reportActivationFailure}
       />
     </>
   );

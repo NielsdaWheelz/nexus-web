@@ -42,16 +42,26 @@ describe("Nexus architecture invariants", () => {
     ).toEqual([]);
   });
 
-  it("keeps shared Nexus independent of mobile presentation models", () => {
+  it("keeps one semantic Nexus owner and the superseded engines deleted", () => {
     const offenders = sourceFiles(join(APP_ROOT, "src/lib/nexus")).filter(
       (path) =>
         sourceText(path).includes("@/lib/switchboard/model") ||
         sourceText(path).includes("@/components/switchboard"),
     );
     expect(offenders).toEqual([]);
-    expect(
-      existsSync(join(APP_ROOT, "src/lib/switchboard/merge.ts")),
-    ).toBe(true);
+    const deleted = [
+      "src/lib/nexus/quickActions.ts",
+      "src/lib/switchboard/model.ts",
+      "src/lib/switchboard/merge.ts",
+      "src/lib/switchboard/findScopes.ts",
+      "src/lib/switchboard/places.ts",
+      "src/lib/switchboard/performance.ts",
+      "src/components/switchboard/SwitchboardRoot.tsx",
+      "src/components/switchboard/SwitchboardFind.tsx",
+      "src/components/switchboard/useSwitchboardController.ts",
+      "src/components/nexus/desktop/DesktopNexusActionsPage.tsx",
+    ];
+    expect(deleted.filter((path) => existsSync(join(APP_ROOT, path)))).toEqual([]);
   });
 
   it("keeps Switchboard components presentation-only", () => {
@@ -67,8 +77,51 @@ describe("Nexus architecture invariants", () => {
     const controller = sourceText(
       "src/components/nexus/useNexusController.ts",
     );
-    expect(controller).toContain("parsedQuery.text.length > 0");
-    expect(controller).toContain("parsedQuery.text.length >= 2");
+    expect(controller).toContain("parsed.text.length > 0");
+    expect(controller).toContain("parsed.text.length >= 2");
+  });
+
+  it("keeps target materialization and projection ownership singular", () => {
+    const nexus = sourceFiles(join(APP_ROOT, "src/lib/nexus"));
+    expect(
+      nexus.filter((path) =>
+        /function materializeNexusTarget\s*\(/.test(sourceText(path)),
+      ),
+    ).toEqual(["src/lib/nexus/dispatch.ts"]);
+    expect(
+      nexus.filter((path) =>
+        /function composeNexusProjection\s*\(/.test(sourceText(path)),
+      ),
+    ).toEqual(["src/lib/nexus/results.ts"]);
+    expect(
+      nexus.filter((path) =>
+        /function dispatchNexusTarget\s*\(/.test(sourceText(path)),
+      ),
+    ).toEqual(["src/lib/nexus/dispatch.ts"]);
+  });
+
+  it("keeps one Nexus performance engine", () => {
+    const performance = sourceText("src/lib/nexus/performance.ts");
+    expect(performance).not.toMatch(/NexusDesktop|NEXUS_DESKTOP/);
+    expect(
+      sourceFiles(join(APP_ROOT, "src")).filter((path) =>
+        sourceText(path).includes("@/lib/switchboard/performance"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps direct and recovery Manage Tabs in the shared page owner", () => {
+    const controller = sourceText(
+      "src/components/nexus/useNexusController.ts",
+    );
+    const nexus = sourceText("src/components/nexus/Nexus.tsx");
+    expect(controller).toContain(
+      'setPage({ kind: "ManageTabs", origin: { kind: "Direct" } });',
+    );
+    expect(controller).toContain(
+      'page.kind === "ManageTabs" && page.origin.kind === "Recovery"',
+    );
+    expect(nexus).toContain("<ManageTabsPage");
   });
 
   it("uses deterministic code-unit tie-breaking and explicit targets", () => {

@@ -3,6 +3,7 @@
 import { useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
+import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 import {
   ModalLayerProvider,
   modalBackdropProjection,
@@ -20,6 +21,7 @@ interface MobileFullScreenTaskProps {
   ariaLabel: string;
   children: ReactNode;
   initialFocus(container: HTMLElement): HTMLElement | null;
+  returnFocusTo?: ReturnFocusTarget;
   skipReturnFocus?: () => boolean;
   focusKey: unknown;
 }
@@ -37,6 +39,7 @@ export default function MobileFullScreenTask({
   ariaLabel,
   children,
   initialFocus,
+  returnFocusTo,
   skipReturnFocus,
   focusKey,
 }: MobileFullScreenTaskProps) {
@@ -47,6 +50,7 @@ export default function MobileFullScreenTask({
     onDismiss,
     onDismissRequest,
     initialFocus,
+    returnFocusTo,
     skipReturnFocus,
     focusKey,
   });

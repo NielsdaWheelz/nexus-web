@@ -1,11 +1,12 @@
 import { FileText } from "lucide-react";
 import { describe, expect, it } from "vitest";
-import type { NexusEntry, NexusEntryKey, NexusRankTier } from "./model";
 import {
-  nexusTextRankTier,
-  rankNexusEntries,
-  serializeNexusEntryKey,
-} from "./ranking";
+  nexusEntryKeyValue,
+  type NexusEntry,
+  type NexusEntryKey,
+  type NexusRankTier,
+} from "./model";
+import { nexusTextRankTier, rankNexusEntries } from "./ranking";
 
 function entry(input: {
   key: NexusEntryKey;
@@ -16,13 +17,17 @@ function entry(input: {
   return {
     key: input.key,
     historySource: "Search",
-    label: serializeNexusEntryKey(input.key),
+    label: nexusEntryKeyValue(input.key),
     icon: FileText,
     primaryAction: {
       id: "open",
       label: "Open",
       icon: FileText,
-      target: { kind: "InternalHref", href: "/notes" },
+      activation: { kind: "Standard" },
+      availability: {
+        kind: "Available",
+        target: { kind: "InternalHref", href: "/notes" },
+      },
     },
     secondaryActions: [],
     rank: {
@@ -34,78 +39,103 @@ function entry(input: {
 }
 
 describe("Nexus ranking", () => {
-  it("keeps lexical tiers authoritative over unrelated score and frecency", () => {
-    const exact = entry({
-      key: { kind: "Destination", destinationId: "notes" },
-      tier: "Exact",
+  it("gives every closed key variant a stable, disjoint renderer identity", () => {
+    const cases: readonly (readonly [NexusEntryKey, string])[] = [
+      [{ kind: "Pane", paneId: "a" }, "Pane:a"],
+      [{ kind: "PaneSearch" }, "PaneSearch"],
+      [{ kind: "Destination", destinationId: "notes" }, "Destination:notes"],
+      [{ kind: "Resource", occurrenceRef: "page:1" }, "Resource:page:1"],
+      [
+        { kind: "QuickAction", actionId: "Nexus.Quick.Note" },
+        "QuickAction:Nexus.Quick.Note",
+      ],
+      [
+        { kind: "ImportUrl", normalizedUrl: "https://example.com/" },
+        "ImportUrl:https://example.com/",
+      ],
+      [{ kind: "Intent", id: "Browse.Podcast" }, "Intent:Browse.Podcast"],
+      [{ kind: "ManageTabs" }, "ManageTabs"],
+      [{ kind: "Continuation", id: "AddToToday" }, "Continuation:AddToToday"],
+    ];
+    const values = cases.map(([key, expected]) => {
+      expect(nexusEntryKeyValue(key)).toBe(expected);
+      return expected;
     });
-    const fullText = entry({
-      key: { kind: "Resource", occurrenceRef: "highlight:1" },
-      tier: "FullText",
-      score: 1,
-      frecency: 1,
-    });
-    expect(rankNexusEntries([fullText, exact])).toEqual([exact, fullText]);
+    expect(new Set(values).size).toBe(values.length);
   });
 
-  it("uses score, frecency, source order, then semantic key", () => {
+  it("keeps all six semantic tiers authoritative over score and frecency", () => {
+    const tiers: readonly NexusRankTier[] = [
+      "ExplicitIntent",
+      "Exact",
+      "PrefixOrToken",
+      "CurrentContext",
+      "FuzzyOrSynonym",
+      "MetadataOrFullText",
+    ];
+    const entries = tiers.map((tier, index) =>
+      entry({
+        key: { kind: "Resource", occurrenceRef: `${index}` },
+        tier,
+        score: index === tiers.length - 1 ? 1 : 0,
+        frecency: index === tiers.length - 1 ? 1 : 0,
+      }),
+    );
+
+    expect(rankNexusEntries([...entries].reverse()).map((value) => value.rank.tier)).toEqual(
+      tiers,
+    );
+  });
+
+  it("uses normalized score, href frecency, source order, then semantic key", () => {
     const entries = [
       entry({
-        key: { kind: "Resource", occurrenceRef: "resource:lower-score" },
-        tier: "Metadata",
+        key: { kind: "Resource", occurrenceRef: "lower-score" },
+        tier: "MetadataOrFullText",
         score: 0.6,
         frecency: 1,
       }),
       entry({
-        key: { kind: "Resource", occurrenceRef: "resource:b" },
-        tier: "Metadata",
+        key: { kind: "Resource", occurrenceRef: "b" },
+        tier: "MetadataOrFullText",
         score: 0.7,
         frecency: 0.8,
       }),
       entry({
         key: { kind: "Pane", paneId: "pane-a" },
-        tier: "Metadata",
+        tier: "MetadataOrFullText",
         score: 0.7,
         frecency: 0.8,
       }),
       entry({
-        key: { kind: "Resource", occurrenceRef: "resource:a" },
-        tier: "Metadata",
+        key: { kind: "Resource", occurrenceRef: "a" },
+        tier: "MetadataOrFullText",
         score: 0.7,
         frecency: 0.8,
       }),
       entry({
         key: { kind: "Destination", destinationId: "lower-frecency" },
-        tier: "Metadata",
+        tier: "MetadataOrFullText",
         score: 0.7,
         frecency: 0.7,
       }),
     ];
-    expect(
-      rankNexusEntries(entries).map((value) =>
-        serializeNexusEntryKey(value.key),
-      ),
-    ).toEqual([
+
+    expect(rankNexusEntries(entries).map((value) => nexusEntryKeyValue(value.key))).toEqual([
       "Pane:pane-a",
-      "Resource:resource:a",
-      "Resource:resource:b",
+      "Resource:a",
+      "Resource:b",
       "Destination:lower-frecency",
-      "Resource:resource:lower-score",
+      "Resource:lower-score",
     ]);
   });
 
-  it("serializes the pane Search teaching entry as its dedicated key", () => {
-    expect(serializeNexusEntryKey({ kind: "PaneSearch" })).toBe(
-      "PaneSearch",
-    );
-  });
-
-  it("rejects an invalid normalized score or frecency even for a singleton", () => {
+  it("rejects invalid normalized score or frecency even for a singleton", () => {
     expect(() =>
       rankNexusEntries([
         entry({
           key: { kind: "Resource", occurrenceRef: "bad-score" },
-          tier: "FullText",
+          tier: "MetadataOrFullText",
           score: Number.NaN,
         }),
       ]),
@@ -114,57 +144,46 @@ describe("Nexus ranking", () => {
       rankNexusEntries([
         entry({
           key: { kind: "Resource", occurrenceRef: "bad-frecency" },
-          tier: "FullText",
+          tier: "MetadataOrFullText",
           frecency: 1.01,
         }),
       ]),
     ).toThrow(/frecency must be finite and normalized/);
   });
 
-  it("classifies exact, prefix, token, alias, open context, and fuzzy title", () => {
-    expect(
-      nexusTextRankTier({
-        query: "notes",
-        label: "Notes",
-        fallback: "Metadata",
-      }),
-    ).toBe("Exact");
-    expect(
-      nexusTextRankTier({
-        query: "note",
-        label: "Notes",
-        fallback: "Metadata",
-      }),
-    ).toBe("Prefix");
-    expect(
-      nexusTextRankTier({
-        query: "set",
-        label: "Reader Settings",
-        fallback: "Metadata",
-      }),
-    ).toBe("Token");
-    expect(
-      nexusTextRankTier({
-        query: "journal",
-        label: "Notes",
-        aliases: ["journal"],
-        fallback: "Metadata",
-      }),
-    ).toBe("Alias");
+  it.each([
+    [
+      { query: "ask why", label: "Ask Nexus", explicitIntent: true },
+      "ExplicitIntent",
+    ],
+    [{ query: "notes", label: "Notes" }, "Exact"],
+    [{ query: "set", label: "Reader Settings" }, "PrefixOrToken"],
+    [
+      {
+        query: "/daily",
+        label: "Today",
+        aliases: ["/daily"],
+        currentContext: true,
+      },
+      "CurrentContext",
+    ],
+    [{ query: "journal", label: "Notes", aliases: ["journal"] }, "FuzzyOrSynonym"],
+    [
+      { query: "author", label: "A story", metadata: ["An author"] },
+      "MetadataOrFullText",
+    ],
+    [{ query: "unmatched", label: "A story", fullText: true }, "MetadataOrFullText"],
+  ] as const)("classifies text match %# in its product tier", (input, expected) => {
+    expect(nexusTextRankTier(input)).toBe(expected);
+  });
+
+  it("does not admit an unmatched current tab or local entry", () => {
     expect(
       nexusTextRankTier({
         query: "unmatched",
         label: "Open page",
-        openContext: true,
-        fallback: "Metadata",
+        currentContext: true,
       }),
-    ).toBe("OpenContext");
-    expect(
-      nexusTextRankTier({
-        query: "lbrs",
-        label: "Libraries",
-        fallback: "Metadata",
-      }),
-    ).toBe("FuzzyTitle");
+    ).toBeNull();
   });
 });
