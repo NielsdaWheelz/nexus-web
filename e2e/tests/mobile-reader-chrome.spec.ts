@@ -73,6 +73,7 @@ interface ChromeGestureRecording {
     recordedAt: number;
   }>;
   touchStartAt: number | null;
+  touchMoveAt: number | null;
   touchEndAt: number | null;
 }
 
@@ -335,6 +336,7 @@ async function startChromeGestureRecording(scrollport: Locator): Promise<void> {
       readSample(): ChromeSample;
       onScroll(): void;
       onTouchStart(): void;
+      onTouchMove(): void;
       onTouchEnd(): void;
       onTransition(event: Event): void;
     };
@@ -435,6 +437,7 @@ async function startChromeGestureRecording(scrollport: Locator): Promise<void> {
       scrollEvents: [],
       transitionEvents: [],
       touchStartAt: null,
+      touchMoveAt: null,
       touchEndAt: null,
       frame: 0,
       scrollport: element,
@@ -444,6 +447,9 @@ async function startChromeGestureRecording(scrollport: Locator): Promise<void> {
       },
       onTouchStart: () => {
         recorder.touchStartAt = performance.now();
+      },
+      onTouchMove: () => {
+        recorder.touchMoveAt ??= performance.now();
       },
       onTouchEnd: () => {
         recorder.touchEndAt = performance.now();
@@ -468,6 +474,7 @@ async function startChromeGestureRecording(scrollport: Locator): Promise<void> {
     };
     element.addEventListener("scroll", recorder.onScroll, { passive: true });
     element.addEventListener("touchstart", recorder.onTouchStart, true);
+    element.addEventListener("touchmove", recorder.onTouchMove, true);
     element.addEventListener("touchend", recorder.onTouchEnd, true);
     element.addEventListener("touchcancel", recorder.onTouchEnd, true);
     document.addEventListener("transitionrun", recorder.onTransition, true);
@@ -492,6 +499,7 @@ async function stopChromeGestureRecording(
       readSample(): ChromeSample;
       onScroll(): void;
       onTouchStart(): void;
+      onTouchMove(): void;
       onTouchEnd(): void;
       onTransition(event: Event): void;
     };
@@ -505,6 +513,7 @@ async function stopChromeGestureRecording(
     cancelAnimationFrame(recorder.frame);
     element.removeEventListener("scroll", recorder.onScroll);
     element.removeEventListener("touchstart", recorder.onTouchStart, true);
+    element.removeEventListener("touchmove", recorder.onTouchMove, true);
     element.removeEventListener("touchend", recorder.onTouchEnd, true);
     element.removeEventListener("touchcancel", recorder.onTouchEnd, true);
     document.removeEventListener("transitionrun", recorder.onTransition, true);
@@ -521,6 +530,7 @@ async function stopChromeGestureRecording(
       scrollEvents: recorder.scrollEvents,
       transitionEvents: recorder.transitionEvents,
       touchStartAt: recorder.touchStartAt,
+      touchMoveAt: recorder.touchMoveAt,
       touchEndAt: recorder.touchEndAt,
     };
   });
@@ -531,10 +541,16 @@ function expectContinuousTrustedGesture(
   allowTransitionDuringTouch: boolean,
   expectPaneToolbar: boolean,
 ): void {
-  const { touchStartAt, touchEndAt } = recording;
-  if (touchStartAt === null || touchEndAt === null) {
+  const { touchStartAt, touchMoveAt, touchEndAt } = recording;
+  if (
+    touchStartAt === null ||
+    touchMoveAt === null ||
+    touchEndAt === null ||
+    touchMoveAt < touchStartAt ||
+    touchMoveAt > touchEndAt
+  ) {
     throw new Error(
-      `trusted drag lost its native touch boundary; recording=${JSON.stringify(recording)}`,
+      `trusted drag lost its ordered native touch lifecycle; recording=${JSON.stringify(recording)}`,
     );
   }
   const cadenceWindowStart = allowTransitionDuringTouch
@@ -694,6 +710,32 @@ async function dispatchTouchDrag(
         gestureSourceType: "mouse",
         preventFling: true,
       });
+      // The explicit boundary otherwise has no touch movement, so Chromium
+      // classifies the lift as a tap and dispatches a click that reveals the
+      // reader chrome. Cross the platform touch slop after the compositor
+      // stream, and prove that Chromium observed the move before lifting.
+      const touchSlopDeltaY = 48 * Math.sign(roundedDeltaY);
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: point(startY + touchSlopDeltaY),
+      });
+      const touchMoveHandle = await page.waitForFunction(
+        () => {
+          const recorderWindow = window as typeof window & {
+            __nexusMobileChromeGestureRecorder?: {
+              touchMoveAt: number | null;
+            };
+          };
+          return (
+            typeof recorderWindow.__nexusMobileChromeGestureRecorder
+              ?.touchMoveAt === "number"
+          );
+        },
+        undefined,
+        { polling: "raf", timeout: 1_000 },
+      );
+      await touchMoveHandle.dispose();
+      await waitForAnimationFrame(page);
       await cdp.send("Input.dispatchTouchEvent", {
         type: "touchEnd",
         touchPoints: [],
