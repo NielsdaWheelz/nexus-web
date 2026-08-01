@@ -27297,7 +27297,7 @@ class TestMigration0208PersistEpubNavigationOffsets:
             media_id = uuid4()
             fragment_count = 8
             anchors_per_fragment = 128
-            fragment_text = "x" * (256 * 1024)
+            fragment_text = "x" * (384 * 1024)
             anchors = "".join(
                 f'<span id="anchor-{anchor_index}"></span>'
                 for anchor_index in range(anchors_per_fragment)
@@ -27363,7 +27363,7 @@ class TestMigration0208PersistEpubNavigationOffsets:
 
             result = run_alembic_command(
                 "upgrade 0208",
-                address_space_limit_bytes=700 * 1024 * 1024,
+                address_space_limit_bytes=384 * 1024 * 1024,
             )
             assert result.returncode == 0, result.stderr
 

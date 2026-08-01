@@ -23,9 +23,9 @@ After ready_for_reading, canonical_text is immutable.
 
 import re
 import unicodedata
+from array import array
 from bisect import bisect_left
 from collections import defaultdict, deque
-from dataclasses import dataclass
 from xml.dom import Node
 from xml.dom.minidom import Element
 
@@ -69,10 +69,25 @@ SKIP_ELEMENTS = frozenset({"script", "style", "noscript", "template"})
 WHITESPACE_RE = re.compile(r"[\s\u00a0]+")
 
 
-@dataclass(frozen=True, slots=True)
-class _Token:
-    char: str
-    sources: tuple[int, ...]
+class _RawTextBuilder:
+    """Build the pre-canonical text without one Python object per character."""
+
+    __slots__ = ("_chunks", "last_char", "length")
+
+    def __init__(self) -> None:
+        self._chunks: list[str] = []
+        self.last_char = ""
+        self.length = 0
+
+    def append(self, text: str) -> None:
+        if not text:
+            return
+        self._chunks.append(text)
+        self.last_char = text[-1]
+        self.length += len(text)
+
+    def build(self) -> str:
+        return "".join(self._chunks)
 
 
 def generate_canonical_text(html_sanitized: str) -> str:
@@ -115,13 +130,12 @@ def generate_canonical_text_with_element_offsets(
     if root is None:
         return "", {}
 
-    tokens: list[_Token] = []
+    builder = _RawTextBuilder()
     raw_offsets: dict[str, int] = {}
 
-    _walk_element(root, tokens, element_ids, raw_offsets)
-    final_tokens = _canonical_tokens(tokens)
-    text = "".join(token.char for token in final_tokens)
-    source_starts = sorted(min(token.sources) for token in final_tokens)
+    _walk_element(root, builder, element_ids, raw_offsets)
+    text, final_source_starts = _canonical_text_with_sources(builder.build())
+    source_starts = sorted(final_source_starts)
     offsets = {
         element_id: bisect_left(source_starts, raw_offset)
         for element_id, raw_offset in raw_offsets.items()
@@ -131,7 +145,7 @@ def generate_canonical_text_with_element_offsets(
 
 def _walk_element(
     element: Element,
-    tokens: list[_Token],
+    builder: _RawTextBuilder,
     element_ids: set[str],
     raw_offsets: dict[str, int],
 ) -> None:
@@ -146,116 +160,135 @@ def _walk_element(
 
     is_block = tag in BLOCK_ELEMENTS
 
-    if is_block and tokens:
-        last_char = tokens[-1].char
-        if last_char not in ("\n", ""):
-            _append_tokens(tokens, "\n")
+    if is_block and builder.length and builder.last_char != "\n":
+        builder.append("\n")
 
     for attribute in ("id", "name"):
         value = element.getAttribute(attribute)
         if value in element_ids:
-            raw_offsets.setdefault(value, len(tokens))
+            raw_offsets.setdefault(value, builder.length)
 
     if tag == "br":
-        _append_tokens(tokens, "\n")
+        builder.append("\n")
         return
 
     for child in element.childNodes:
         if child.nodeType == Node.TEXT_NODE:
             normalized = _normalize_text(child.data or "")
             if normalized:
-                _append_tokens(tokens, normalized)
+                builder.append(normalized)
         elif child.nodeType == Node.ELEMENT_NODE:
-            _walk_element(child, tokens, element_ids, raw_offsets)
+            _walk_element(child, builder, element_ids, raw_offsets)
 
-    if is_block and tokens:
-        last_char = tokens[-1].char
-        if last_char not in ("\n", ""):
-            _append_tokens(tokens, "\n")
+    if is_block and builder.length and builder.last_char != "\n":
+        builder.append("\n")
 
 
-def _append_tokens(tokens: list[_Token], text: str) -> None:
-    for char in text:
-        tokens.append(_Token(char=char, sources=(len(tokens),)))
+def _canonical_text_with_sources(raw_text: str) -> tuple[str, array]:
+    normalized_text, normalized_sources = _normalize_nfc_with_sources(raw_text)
+    collapsed_text, collapsed_sources = _collapse_blank_lines(
+        normalized_text,
+        normalized_sources,
+    )
+    return _trim_lines(collapsed_text, collapsed_sources)
 
 
-def _canonical_tokens(tokens: list[_Token]) -> list[_Token]:
-    normalized = _normalize_nfc(tokens)
-    collapsed: list[_Token] = []
+def _collapse_blank_lines(text: str, sources: array) -> tuple[str, array]:
+    chunks: list[str] = []
+    collapsed_sources = array("Q")
     index = 0
-    while index < len(normalized):
-        token = normalized[index]
-        if token.char != "\n":
-            collapsed.append(token)
-            index += 1
-            continue
+    while index < len(text):
+        newline = text.find("\n", index)
+        if newline == -1:
+            chunks.append(text[index:])
+            collapsed_sources.extend(sources[index:])
+            break
+        if newline > index:
+            chunks.append(text[index:newline])
+            collapsed_sources.extend(sources[index:newline])
+        index = newline
+
         end = index + 1
         newline_count = 1
-        while end < len(normalized) and _is_whitespace(normalized[end].char):
-            if normalized[end].char == "\n":
+        while end < len(text) and _is_whitespace(text[end]):
+            if text[end] == "\n":
                 newline_count += 1
             end += 1
         if newline_count < 2:
-            collapsed.append(token)
+            chunks.append("\n")
+            collapsed_sources.append(sources[index])
             index += 1
             continue
-        sources = tuple(
-            sorted({source for item in normalized[index:end] for source in item.sources})
-        )
-        collapsed.extend([_Token("\n", sources), _Token("\n", sources)])
+
+        collapsed_source = min(sources[index:end])
+        chunks.append("\n\n")
+        collapsed_sources.extend((collapsed_source, collapsed_source))
         index = end
 
-    line_trimmed: list[_Token] = []
-    line_start = 0
-    for index in range(len(collapsed) + 1):
-        if index < len(collapsed) and collapsed[index].char != "\n":
-            continue
-        first = line_start
-        while first < index and _is_whitespace(collapsed[first].char):
-            first += 1
-        last = index - 1
-        while last >= first and _is_whitespace(collapsed[last].char):
-            last -= 1
-        line_trimmed.extend(collapsed[first : last + 1])
-        if index < len(collapsed):
-            line_trimmed.append(collapsed[index])
-        line_start = index + 1
+    return "".join(chunks), collapsed_sources
 
+
+def _trim_lines(text: str, sources: array) -> tuple[str, array]:
+    chunks: list[str] = []
+    trimmed_sources = array("Q")
+    line_start = 0
+    while line_start <= len(text):
+        newline = text.find("\n", line_start)
+        line_end = len(text) if newline == -1 else newline
+        first = line_start
+        while first < line_end and _is_whitespace(text[first]):
+            first += 1
+        last = line_end - 1
+        while last >= first and _is_whitespace(text[last]):
+            last -= 1
+        if first <= last:
+            chunks.append(text[first : last + 1])
+            trimmed_sources.extend(sources[first : last + 1])
+        if newline == -1:
+            break
+        chunks.append("\n")
+        trimmed_sources.append(sources[newline])
+        line_start = newline + 1
+
+    line_trimmed = "".join(chunks)
     start = 0
-    while start < len(line_trimmed) and _is_whitespace(line_trimmed[start].char):
+    while start < len(line_trimmed) and _is_whitespace(line_trimmed[start]):
         start += 1
     end = len(line_trimmed)
-    while end > start and _is_whitespace(line_trimmed[end - 1].char):
+    while end > start and _is_whitespace(line_trimmed[end - 1]):
         end -= 1
-    return line_trimmed[start:end]
+    return line_trimmed[start:end], trimmed_sources[start:end]
 
 
-def _normalize_nfc(tokens: list[_Token]) -> list[_Token]:
-    text = "".join(token.char for token in tokens)
+def _normalize_nfc_with_sources(text: str) -> tuple[str, array]:
     if not text:
-        return []
-    decomposed_by_char: dict[str, deque[_Token]] = defaultdict(deque)
-    for token in tokens:
-        for char in unicodedata.normalize("NFD", token.char):
-            decomposed_by_char[char].append(_Token(char, token.sources))
-    reordered = [decomposed_by_char[char].popleft() for char in unicodedata.normalize("NFD", text)]
+        return "", array("Q")
+    if unicodedata.is_normalized("NFC", text):
+        return text, array("Q", range(len(text)))
 
-    normalized: list[_Token] = []
+    decomposed_sources: dict[str, deque[int]] = defaultdict(deque)
+    for source, original_char in enumerate(text):
+        for decomposed_char in unicodedata.normalize("NFD", original_char):
+            decomposed_sources[decomposed_char].append(source)
+    reordered_sources = array(
+        "Q",
+        (
+            decomposed_sources[decomposed_char].popleft()
+            for decomposed_char in unicodedata.normalize("NFD", text)
+        ),
+    )
+
+    normalized_text = unicodedata.normalize("NFC", text)
+    normalized_sources = array("Q")
     nfd_offset = 0
-    for char in unicodedata.normalize("NFC", text):
+    for char in normalized_text:
         decomposition = unicodedata.normalize("NFD", char)
-        sources = tuple(
-            sorted(
-                {
-                    source
-                    for token in reordered[nfd_offset : nfd_offset + len(decomposition)]
-                    for source in token.sources
-                }
-            )
-        )
-        normalized.append(_Token(char, sources))
+        source_start = reordered_sources[nfd_offset]
+        for source_index in range(nfd_offset + 1, nfd_offset + len(decomposition)):
+            source_start = min(source_start, reordered_sources[source_index])
+        normalized_sources.append(source_start)
         nfd_offset += len(decomposition)
-    return normalized
+    return normalized_text, normalized_sources
 
 
 def _is_whitespace(char: str) -> bool:
