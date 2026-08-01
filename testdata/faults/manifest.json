@@ -127,6 +127,24 @@
         "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_exact_android_device_proof_uses_one_instrumentation_method"
       ],
       "expected_failure": "Android device executor lost exact method scoping"
+    },
+    {
+      "id": "active-pane-reactivation-republication",
+      "patch": "testdata/faults/active-pane-reactivation-republication.patch",
+      "sha256": "401603a7d845ba2ad8e0f9fcc529ae53e8f9da969a151e624ab9459bf9cc2866",
+      "proofs": [
+        "vitest:apps/web/src/lib/workspace/store.browser.test.tsx"
+      ],
+      "expected_failure": "Reactivating the active pane republished unchanged workspace state to its child"
+    },
+    {
+      "id": "nexus-desktop-fork-disposition-bypass",
+      "patch": "testdata/faults/nexus-desktop-fork-disposition-bypass.patch",
+      "sha256": "5bc1c34ad22692eb983bd76dda573eb7e8e7fa881a89b0e6fdb5d4ac35c6433b",
+      "proofs": [
+        "vitest:apps/web/src/components/nexus/Nexus.browser.test.tsx"
+      ],
+      "expected_failure": "Desktop Nexus Shift+Enter lost its Fork disposition at the workspace boundary"
     }
   ]
 }

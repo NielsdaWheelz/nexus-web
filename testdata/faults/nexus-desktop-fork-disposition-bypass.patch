@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/nexus/desktop/DesktopNexusInput.tsx b/apps/web/src/components/nexus/desktop/DesktopNexusInput.tsx
+index b5637b94..52901ffd 100644
+--- a/apps/web/src/components/nexus/desktop/DesktopNexusInput.tsx
++++ b/apps/web/src/components/nexus/desktop/DesktopNexusInput.tsx
+@@ -142,7 +142,7 @@ export default function DesktopNexusInput({
+             } else {
+               controller.activatePrimary({
+                 entry: activeEntry,
+-                disposition: event.shiftKey ? "Fork" : "Follow",
++                disposition: "Follow",
+                 modality: "Keyboard",
+               });
+             }

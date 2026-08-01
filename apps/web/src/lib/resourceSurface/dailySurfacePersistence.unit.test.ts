@@ -18,7 +18,7 @@ function draft(bodyPmJson: Record<string, unknown>, bodyText: string): DailyDraf
   };
 }
 
-describe("daily draft text append", () => {
+describe("daily draft append ownership", () => {
   it("appends the exact seed while preserving replay identity", () => {
     const result = appendDailyDraftText(
       draft(

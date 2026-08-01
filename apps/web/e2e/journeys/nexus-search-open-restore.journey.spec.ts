@@ -94,7 +94,12 @@ test("Nexus finds and opens a place whose workspace survives a fresh document", 
   const input = nexus.getByRole("combobox", { name: "Find anything" });
   await expect(input).toBeFocused();
   await input.fill("stats");
-  await nexus.getByRole("option", { name: /^Stats\b/ }).click();
+  const stats = nexus.getByRole("gridcell", { name: /^Stats\b/ });
+  await expect(
+    stats,
+    `Nexus did not project the canonical Stats place for workspace device ${deviceId}.`,
+  ).toBeVisible();
+  await stats.click();
   await expect(
     page,
     `Nexus did not immediately project the opened Stats place into its canonical URL for device ${deviceId}.`,

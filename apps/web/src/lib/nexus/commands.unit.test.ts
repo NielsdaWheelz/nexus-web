@@ -6,7 +6,7 @@ import {
   isNexusCommandId,
 } from "./commands";
 
-describe("Nexus command contract", () => {
+describe("Nexus command vocabulary and target contract", () => {
   it("publishes the closed, teachable command vocabulary", () => {
     expect(
       NEXUS_COMMAND_IDS.map((id) => {
