@@ -329,7 +329,6 @@ test.describe("pane return memento", () => {
       await expect(targetConversation).toBeVisible();
       await placeRowAtOffset(targetConversation, TARGET_OFFSET_PX);
       const targetLink = targetConversation.locator("[data-row-focusable]");
-      await expect(targetLink).toBeInViewport({ ratio: 1 });
       // Finish actionability before capturing both the return memento and the
       // raw pointer target. A same-document view transition temporarily owns
       // hit testing, and hover can scroll while waiting for that layer to clear.
@@ -342,10 +341,22 @@ test.describe("pane return memento", () => {
         collectionRow(page, CONVERSATIONS_SCOPE, conversationEyeLineId),
       );
       const targetLinkBox = await targetLink.boundingBox();
+      const listScrollportBox = await listScrollport.boundingBox();
       expect(targetLinkBox).not.toBeNull();
+      expect(listScrollportBox).not.toBeNull();
+      const pointerX = targetLinkBox!.x + targetLinkBox!.width / 2;
+      const pointerY = targetLinkBox!.y + targetLinkBox!.height / 2;
+      expect(pointerX).toBeGreaterThanOrEqual(listScrollportBox!.x);
+      expect(pointerX).toBeLessThanOrEqual(
+        listScrollportBox!.x + listScrollportBox!.width,
+      );
+      expect(pointerY).toBeGreaterThanOrEqual(listScrollportBox!.y);
+      expect(pointerY).toBeLessThanOrEqual(
+        listScrollportBox!.y + listScrollportBox!.height,
+      );
       await page.mouse.click(
-        targetLinkBox!.x + targetLinkBox!.width / 2,
-        targetLinkBox!.y + targetLinkBox!.height / 2,
+        pointerX,
+        pointerY,
       );
       await expect(page).toHaveURL(
         new RegExp(`/conversations/${target.conversation_id}$`),
