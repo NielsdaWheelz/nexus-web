@@ -140,6 +140,7 @@ def prove_many(
             for index, item in group:
                 fault_path = root / item.fault.patch if item.fault is not None else None
                 with applied_fault(red_root, fault_path):
+                    _clear_isolated_python_bytecode(red_root)
                     red_result = run_proof(
                         CapabilityContext(red_root, Workflow.CHANGED, ()),
                         item.request.proof,
