@@ -1026,6 +1026,7 @@ def _is_product_path(path: str) -> bool:
     )
     test_runtime_product = path in {
         "python/nexus_test_control/build.py",
+        "python/nexus_test_control/runner.py",
         "python/nexus_test_control/runtime.py",
         "python/nexus_test_control/services.py",
     }

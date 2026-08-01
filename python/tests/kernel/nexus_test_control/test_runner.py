@@ -445,13 +445,17 @@ def test_exact_android_device_proof_uses_one_instrumentation_method(tmp_path: Pa
 
     assert result.evidence.status is RunStatus.PASS
     command = _commands(tmp_path)[-1]
-    assert command["argv"] == [
+    expected_argv = [
         "--no-daemon",
         ":app:connectedDebugAndroidTest",
         "-Pandroid.testInstrumentationRunnerArguments.class="
         "app.nexus.android.NativeAuthHandoffTest#"
         "nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin",
     ]
+    assert command["argv"] == expected_argv, (
+        "Android device executor lost exact method scoping: "
+        f"proof={proof}; expected boundary={expected_argv}; actual argv={command['argv']}"
+    )
     assert command["google_client_id"] == "nexus-test.apps.googleusercontent.com"
 
 

@@ -1,0 +1,13 @@
+diff --git a/python/nexus_test_control/runner.py b/python/nexus_test_control/runner.py
+index f8bf6620..532d1c0a 100644
+--- a/python/nexus_test_control/runner.py
++++ b/python/nexus_test_control/runner.py
+@@ -3385,7 +3385,7 @@ def _android_device_test_target(repo_root: Path, node: str) -> str:
+     ):
+         raise ValueError(f"Android device proof has no exact method: {node}")
+     target = f"{package.group(1)}.{class_name}"
+-    return f"{target}#{method}" if separator else target
++    return target
+ 
+ 
+ def _android_sdk_available(android_root: Path, environment: Mapping[str, str]) -> bool:

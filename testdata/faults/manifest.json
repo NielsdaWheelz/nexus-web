@@ -118,6 +118,15 @@
         "vitest:apps/web/src/components/workspace/usePaneSecondaryPublicationRegistry.browser.test.tsx"
       ],
       "expected_failure": "first Companion action was rejected before the publication render committed"
+    },
+    {
+      "id": "android-device-method-scope-bypass",
+      "patch": "testdata/faults/android-device-method-scope-bypass.patch",
+      "sha256": "7b46a2b441d4dcc18513e536f85c192e4d259a205d4cf79bb2d98357ebe8b240",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_exact_android_device_proof_uses_one_instrumentation_method"
+      ],
+      "expected_failure": "Android device executor lost exact method scoping"
     }
   ]
 }
