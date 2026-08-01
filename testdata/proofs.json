@@ -54,7 +54,7 @@
       ],
       "proofs": [
         "pytest:python/tests/service/test_destructive_side_effects.py::test_viewer_removal_preserves_shared_media_database_and_object",
-        "pytest:python/tests/service/test_destructive_side_effects.py::test_conversation_delete_removes_its_dead_chat_journal_only"
+        "pytest:python/tests/service/test_conversation_deletion.py::test_conversation_delete_removes_its_dead_chat_journal_only"
       ],
       "capabilities": [
         "service"
