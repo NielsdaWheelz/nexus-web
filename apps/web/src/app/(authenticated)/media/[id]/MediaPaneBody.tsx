@@ -3089,6 +3089,14 @@ export default function MediaPaneBody() {
         ? isCanonicalTextAnchorVisible(container, cursor, resumeOffset)
         : false;
       if (restored && visible) {
+        // The scroll positioner can settle between two canonical text
+        // boundaries: the next viewport publication may therefore capture a
+        // different visible-start offset than the exact restored anchor. It is
+        // still the tail of this programmatic restore, not genuine reading
+        // movement, so seed that captured boundary without echoing a cursor
+        // write. This also fences remote handoff adoption from writing the
+        // position it just accepted back to the server.
+        mediaFindPreviewLease.armNextCaptureSuppression();
         scrollRestoreAppliedRef.current = true;
         lastSavedTextAnchorOffsetRef.current = resumeOffset;
         releaseChrome();
@@ -3136,6 +3144,7 @@ export default function MediaPaneBody() {
     readerResumePosition,
     readerLayoutReady,
     restorePhase,
+    mediaFindPreviewLease,
     mobileChromeVisibleLocks,
     readerScrollPositioner,
     settleRestoreSession,

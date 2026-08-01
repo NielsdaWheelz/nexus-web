@@ -293,8 +293,11 @@ async function expectConversationPaneOpened(page: Page): Promise<void> {
 }
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
-  return pdfControlsInstrument(page)
-    .locator(`[aria-label="Page ${pageNumber} of ${pageCount}"]`)
+  return activeWorkspacePane(page)
+    .getByRole("status")
+    .filter({
+      hasText: new RegExp(`^Page ${pageNumber} of ${pageCount}$`),
+    })
     .first();
 }
 
@@ -302,10 +305,11 @@ async function readCurrentPageNumber(
   page: Page,
   pageCount: number,
 ): Promise<number | null> {
-  const indicator = pdfControlsInstrument(page)
-    .locator(`[aria-label^="Page "][aria-label$=" of ${pageCount}"]`)
+  const indicator = activeWorkspacePane(page)
+    .getByRole("status")
+    .filter({ hasText: new RegExp(`^Page \\d+ of ${pageCount}$`) })
     .first();
-  const label = (await indicator.getAttribute("aria-label")) ?? "";
+  const label = (await indicator.textContent()) ?? "";
   const match = label.match(/Page\s+(\d+)\s+of\s+\d+/i);
   if (!match) {
     return null;
@@ -319,8 +323,9 @@ async function ensureOnPage(
   targetPage: number,
   pageCount: number,
 ): Promise<void> {
-  const anyIndicator = pdfControlsInstrument(page)
-    .locator(`[aria-label^="Page "][aria-label$=" of ${pageCount}"]`)
+  const anyIndicator = activeWorkspacePane(page)
+    .getByRole("status")
+    .filter({ hasText: new RegExp(`^Page \\d+ of ${pageCount}$`) })
     .first();
   await expect(anyIndicator).toBeVisible({ timeout: 20_000 });
 

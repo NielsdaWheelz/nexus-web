@@ -460,7 +460,9 @@ test.describe("web articles", () => {
       `/media/${seed.media_id}`,
     );
     await expect(
-      activeWorkspacePane(page).getByText(seed.quote_exact),
+      activeWorkspacePane(page)
+        .getByTestId("html-renderer")
+        .getByText(seed.quote_exact, { exact: true }),
     ).toBeVisible({ timeout: 10_000 });
   });
 
