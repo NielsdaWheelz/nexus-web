@@ -100,6 +100,24 @@
         "pytest:python/tests/evals/test_tool_authorization.py::test_prompt_injected_resource_reads_are_refused_without_side_effects"
       ],
       "expected_failure": "tool authorization baseline failures"
+    },
+    {
+      "id": "dossier-citation-disposition-bypass",
+      "patch": "testdata/faults/dossier-citation-disposition-bypass.patch",
+      "sha256": "7576e4aa3338bf72c508cf5ddd010c411c3cc34b1ca539685d2ce954671d95e0",
+      "proofs": [
+        "vitest:apps/web/src/components/dossier/DossierDocumentFrame.browser.test.tsx"
+      ],
+      "expected_failure": "citation disposition protocol lost deliberate Fork"
+    },
+    {
+      "id": "companion-publication-commit-race",
+      "patch": "testdata/faults/companion-publication-commit-race.patch",
+      "sha256": "7cde02f2ffe3dd920ecf64909ac05591dde6be59fe04f11b21344bf80e433187",
+      "proofs": [
+        "vitest:apps/web/src/components/workspace/usePaneSecondaryPublicationRegistry.browser.test.tsx"
+      ],
+      "expected_failure": "first Companion action was rejected before the publication render committed"
     }
   ]
 }

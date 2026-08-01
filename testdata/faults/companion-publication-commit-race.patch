@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/components/workspace/usePaneSecondaryPublicationRegistry.ts b/apps/web/src/components/workspace/usePaneSecondaryPublicationRegistry.ts
+--- a/apps/web/src/components/workspace/usePaneSecondaryPublicationRegistry.ts
++++ b/apps/web/src/components/workspace/usePaneSecondaryPublicationRegistry.ts
+@@ -83,7 +83,6 @@ export function usePaneSecondaryPublicationRegistry() {
+       ) => Map<string, PaneSecondaryPublicationRecord>,
+     ) => {
+       const next = transform(recordsRef.current);
+-      recordsRef.current = next;
+       setRecords(next);
+     },
+     [],

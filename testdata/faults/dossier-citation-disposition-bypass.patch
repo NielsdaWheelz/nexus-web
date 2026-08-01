@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/dossier/dossierDocumentRuntime.ts b/apps/web/src/components/dossier/dossierDocumentRuntime.ts
+--- a/apps/web/src/components/dossier/dossierDocumentRuntime.ts
++++ b/apps/web/src/components/dossier/dossierDocumentRuntime.ts
+@@ -956,8 +956,7 @@ function dossierDocumentRuntime(): void {
+     if (!raw || !/^[1-9][0-9]*$/u.test(raw)) return;
+     const ordinal = Number(raw);
+     if (!Number.isSafeInteger(ordinal)) return;
+-    const disposition =
+-      event.shiftKey && event.detail !== 0 ? "Fork" : "Follow";
++    const disposition = "Follow";
+     post({ kind: "Citation", ordinal, disposition });
+   });
+ 
