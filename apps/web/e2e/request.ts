@@ -65,40 +65,85 @@ export class ExactOriginRequest {
     private readonly context: APIRequestContext,
     origin: string,
     private readonly ownsContext = false,
+    private readonly browserContext?: BrowserContext,
   ) {
     this.origin = canonicalOrigin(origin);
   }
 
-  get(target: string, options?: GetOptions): Promise<APIResponse> {
-    return this.context.get(exactTarget(this.origin, target), noRedirects(options));
+  async get(target: string, options?: GetOptions): Promise<APIResponse> {
+    const url = exactTarget(this.origin, target);
+    return this.context.get(
+      url,
+      noRedirects({
+        ...options,
+        headers: await this.headers(url, options?.headers),
+      }),
+    );
   }
 
-  post(target: string, options?: PostOptions): Promise<APIResponse> {
-    return this.context.post(exactTarget(this.origin, target), noRedirects(options));
+  async post(target: string, options?: PostOptions): Promise<APIResponse> {
+    const url = exactTarget(this.origin, target);
+    return this.context.post(
+      url,
+      noRedirects({
+        ...options,
+        headers: await this.headers(url, options?.headers),
+      }),
+    );
   }
 
-  put(target: string, options?: PutOptions): Promise<APIResponse> {
-    return this.context.put(exactTarget(this.origin, target), noRedirects(options));
+  async put(target: string, options?: PutOptions): Promise<APIResponse> {
+    const url = exactTarget(this.origin, target);
+    return this.context.put(
+      url,
+      noRedirects({
+        ...options,
+        headers: await this.headers(url, options?.headers),
+      }),
+    );
   }
 
-  delete(target: string, options?: DeleteOptions): Promise<APIResponse> {
-    return this.context.delete(exactTarget(this.origin, target), noRedirects(options));
+  async delete(target: string, options?: DeleteOptions): Promise<APIResponse> {
+    const url = exactTarget(this.origin, target);
+    return this.context.delete(
+      url,
+      noRedirects({
+        ...options,
+        headers: await this.headers(url, options?.headers),
+      }),
+    );
   }
 
   async dispose(): Promise<void> {
     if (this.ownsContext) await this.context.dispose();
   }
+
+  private async headers(
+    url: string,
+    supplied: Record<string, string> | undefined,
+  ): Promise<Record<string, string>> {
+    const headers = { ...supplied };
+    if (!this.browserContext) return headers;
+    if (Object.keys(headers).some((name) => name.toLowerCase() === "cookie")) {
+      throw new Error("Browser-owned requests cannot override the context cookie jar.");
+    }
+    const cookies = await this.browserContext.cookies(url);
+    if (cookies.length > 0) {
+      headers.Cookie = cookies.map(({ name, value }) => `${name}=${value}`).join("; ");
+    }
+    return headers;
+  }
 }
 
 export function pageRequest(page: Page, origin: string): ExactOriginRequest {
-  return new ExactOriginRequest(page.request, origin);
+  return new ExactOriginRequest(page.request, origin, false, page.context());
 }
 
 export function contextRequest(
   context: BrowserContext,
   origin: string,
 ): ExactOriginRequest {
-  return new ExactOriginRequest(context.request, origin);
+  return new ExactOriginRequest(context.request, origin, false, context);
 }
 
 export async function isolatedRequest(

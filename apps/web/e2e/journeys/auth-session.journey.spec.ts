@@ -118,4 +118,16 @@ test("password sign-in bootstraps owned state and a real refresh rotates the dur
   await gotoWithStrictCsp(page, "/lectern");
   await expect(page).toHaveURL(/\/lectern$/);
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Sign Out", exact: true }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  const authCookie = authCookieBaseName();
+  expect(
+    (await page.context().cookies()).some(
+      ({ name }) => name === authCookie || name.startsWith(`${authCookie}.`),
+    ),
+    "Sign out retained the durable Supabase session cookie.",
+  ).toBeFalsy();
+  expect((await api.get("/api/me")).status()).toBe(401);
 });
