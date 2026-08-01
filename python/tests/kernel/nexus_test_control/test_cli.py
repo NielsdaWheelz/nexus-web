@@ -412,9 +412,7 @@ def test_plain_focus_keeps_every_manifest_owned_journey_route(tmp_path: Path) ->
         Capability.JOURNEYS_ALL,
     }
     assert {
-        selection.path
-        for selection in selections
-        if selection.capability is Capability.COMPONENT
+        selection.path for selection in selections if selection.capability is Capability.COMPONENT
     } == {"apps/web/src/lib/panes/paneRenderRegistry.tsx"}
     assert all(selection.reason is SelectionReason.EXPLICIT_FOCUS for selection in selections)
     assert {selection.proof for selection in selections} == {
