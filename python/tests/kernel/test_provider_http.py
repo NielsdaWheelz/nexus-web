@@ -31,7 +31,11 @@ def test_provider_gateway_rewrites_only_the_owned_openai_origin() -> None:
     asyncio.run(rewrite(unrelated))
 
     assert str(openai.url) == "http://127.0.0.1:19091/v1/responses"
+    assert openai.headers["host"] == "127.0.0.1:19091", (
+        "provider gateway retained the upstream Host header"
+    )
     assert str(unrelated.url) == "https://api.search.brave.com/res/v1/web/search"
+    assert unrelated.headers["host"] == "api.search.brave.com"
 
 
 def test_provider_gateway_rejects_plain_http_in_production() -> None:

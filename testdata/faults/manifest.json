@@ -102,6 +102,24 @@
       "expected_failure": "one or more mutating tool classes did not fail closed"
     },
     {
+      "id": "llm-tool-safety-prompt-bypass",
+      "patch": "testdata/faults/llm-tool-safety-prompt-bypass.patch",
+      "sha256": "1122868373841a528ce08f55b5891dfd380b22dbb4d6f5c901c3d353b9e28468",
+      "proofs": [
+        "pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call"
+      ],
+      "expected_failure": "production prompt lost a reviewed tool-safety instruction"
+    },
+    {
+      "id": "provider-gateway-host-rewrite-bypass",
+      "patch": "testdata/faults/provider-gateway-host-rewrite-bypass.patch",
+      "sha256": "5717a99398eed954ef8a1314b19f58e17b7733005a67d57662d58ad9ea304ad8",
+      "proofs": [
+        "pytest:python/tests/kernel/test_provider_http.py::test_provider_gateway_rewrites_only_the_owned_openai_origin"
+      ],
+      "expected_failure": "provider gateway retained the upstream Host header"
+    },
+    {
       "id": "dossier-citation-disposition-bypass",
       "patch": "testdata/faults/dossier-citation-disposition-bypass.patch",
       "sha256": "7576e4aa3338bf72c508cf5ddd010c411c3cc34b1ca539685d2ce954671d95e0",

@@ -409,6 +409,8 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
     assert environment["R2_BUCKET"] == run.bucket
     assert environment["NEXT_PUBLIC_SUPABASE_URL"] == "http://127.0.0.1:25421"
     assert environment["NEXT_PUBLIC_SUPABASE_ANON_KEY"] == "public-anon-key"
+    assert environment["OPENAI_API_BASE_URL"] == "http://127.0.0.1:19091/v1"
+    assert environment["OPENAI_API_KEY"] == "nexus-test-fixture-openai-key"
     assert environment["NEXUS_EXTENSION_REDIRECT_ORIGINS"] == (
         f"https://{TEST_EXTENSION_ID}.chromiumapp.org"
     )

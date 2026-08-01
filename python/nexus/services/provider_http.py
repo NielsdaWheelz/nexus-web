@@ -29,7 +29,9 @@ def provider_request_event_hooks(
     async def rewrite_openai_request(request: httpx.Request) -> None:
         raw_url = str(request.url)
         if raw_url == _OPENAI_API_BASE_URL or raw_url.startswith(f"{_OPENAI_API_BASE_URL}/"):
-            request.url = httpx.URL(f"{configured}{raw_url[len(_OPENAI_API_BASE_URL) :]}")
+            rewritten = httpx.URL(f"{configured}{raw_url[len(_OPENAI_API_BASE_URL) :]}")
+            request.url = rewritten
+            request.headers["host"] = rewritten.netloc.decode("ascii")
 
     return {"request": [rewrite_openai_request]}
 

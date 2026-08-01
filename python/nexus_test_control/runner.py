@@ -198,6 +198,12 @@ _LOCAL_RUNTIME_CAPABILITIES = frozenset(
         Capability.AUDIT,
     }
 )
+_EXTERNAL_PROTOCOL_CAPABILITIES = frozenset(
+    {
+        Capability.SERVICE,
+        Capability.LLM_EVAL,
+    }
+)
 _TEST_GOOGLE_CLIENT_ID = "nexus-test.apps.googleusercontent.com"
 _CRITICAL_JOURNEY_IDS = frozenset(
     {
@@ -347,9 +353,41 @@ class _WorkflowExecution:
     ports: _RunnerPorts = field(default_factory=_RunnerPorts)
     run: TestRun | None = None
     build: StandaloneBuild | None = None
+    external_protocol_started: bool = False
     journey_runtime_started: bool = False
     preparation_attempted: bool = False
     preparation_failure: CapabilityResult | None = None
+
+    def ensure_external_protocol(
+        self,
+        capability: Capability,
+        prepared: TestRun,
+    ) -> CapabilityResult | None:
+        if self.external_protocol_started:
+            return None
+        try:
+            external = self.ports.start_python_process(
+                self.context.repo_root,
+                {"NEXUS_ENV": "test"},
+                prepared,
+                "external",
+            )
+            self.ports.wait_process_ready(
+                self.context.repo_root,
+                {"NEXUS_ENV": "test"},
+                external,
+                EndpointKind.EXTERNAL,
+                "/health",
+            )
+        except OSError as error:
+            return _not_run(
+                capability,
+                f"owned external protocol could not start: {error.strerror or error}",
+            )
+        except RuntimeContractError as error:
+            return _fail(capability, f"owned external protocol failed: {error}")
+        self.external_protocol_started = True
+        return None
 
     def prepare(self, capability: Capability) -> TestRun | CapabilityResult:
         if self.run is not None:
@@ -645,6 +683,12 @@ def run_proof(
                     environment,
                     execution,
                     owner="tests/evals",
+                    exact=True,
+                )
+            case Capability.PROVIDER_RUNTIME:
+                result = _run_provider_runtime(
+                    proof_context,
+                    environment,
                     exact=True,
                 )
             case Capability.COMPONENT:
@@ -1217,6 +1261,10 @@ def _run_python_heavy(
         return prepared
     if execution is None:
         raise AssertionError("prepared run exists without workflow execution")
+    if capability in _EXTERNAL_PROTOCOL_CAPABILITIES:
+        protocol_failure = execution.ensure_external_protocol(capability, prepared)
+        if protocol_failure is not None:
+            return protocol_failure
     child_environment = _heavy_environment(context, environment, prepared, execution.ports)
     return _run_owned_commands(
         capability,
@@ -1656,19 +1704,9 @@ def _ensure_browser_processes(
     if execution.build is None:
         raise AssertionError("browser runtime requires the retained standalone artifact")
     try:
-        external = execution.ports.start_python_process(
-            context.repo_root,
-            {"NEXUS_ENV": "test"},
-            prepared,
-            "external",
-        )
-        execution.ports.wait_process_ready(
-            context.repo_root,
-            {"NEXUS_ENV": "test"},
-            external,
-            EndpointKind.EXTERNAL,
-            "/health",
-        )
+        protocol_failure = execution.ensure_external_protocol(capability, prepared)
+        if protocol_failure is not None:
+            return protocol_failure
         api = execution.ports.start_python_process(
             context.repo_root,
             {"NEXUS_ENV": "test"},
@@ -1767,6 +1805,7 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
             ("python/tests/kernel/", Capability.KERNEL_PYTHON, Workflow.CHANGED),
             ("python/tests/service/", Capability.SERVICE, Workflow.CHANGED),
             ("python/tests/migrations/", Capability.MIGRATIONS, Workflow.CHANGED),
+            ("python/tests/contract/", Capability.PROVIDER_RUNTIME, Workflow.FULL),
             ("python/tests/evals/", Capability.LLM_EVAL, Workflow.FULL),
             ("python/tests/audit/", Capability.AUDIT, Workflow.CHANGED),
             (
@@ -2056,6 +2095,9 @@ def _run_audit(
             return prepared
         if execution is None:
             raise AssertionError("randomized audit prepared without workflow execution")
+        protocol_failure = execution.ensure_external_protocol(capability, prepared)
+        if protocol_failure is not None:
+            return protocol_failure
         child_environment = _heavy_environment(
             context,
             environment,
@@ -2333,18 +2375,60 @@ def _provider_runtime_pin(repo_root: Path) -> str:
 
 
 def _run_provider_runtime(
-    context: CapabilityContext, environment: Mapping[str, str]
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    *,
+    exact: bool = False,
 ) -> CapabilityResult:
+    capability = Capability.PROVIDER_RUNTIME
+    python_root = context.repo_root / "python"
+    contract_root = python_root / "tests/contract"
+    owners = tuple(sorted(contract_root.rglob("test_*.py"))) if contract_root.is_dir() else ()
+    if not owners or not (python_root / ".venv").is_dir():
+        return _not_run(capability, "local provider protocol contract owner is absent")
+    nodes, promoted = _selected_proof_nodes(context, capability, "pytest")
+    if exact:
+        if not nodes or promoted:
+            raise ValueError("exact provider protocol proof must name one pytest node")
+        targets = tuple(_python_heavy_node(node, "tests/contract") for node in nodes)
+    elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
+        targets = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in owners)
+    elif nodes:
+        targets = tuple(_python_heavy_node(node, "tests/contract") for node in nodes)
+    else:
+        return _pass(capability, "no selected local provider protocol proof")
+    local = _run_fixed_commands(
+        capability,
+        (
+            (
+                (
+                    "uv",
+                    "run",
+                    "--frozen",
+                    "--no-sync",
+                    "pytest",
+                    *_DETERMINISTIC_PYTEST,
+                    *targets,
+                ),
+                python_root,
+            ),
+        ),
+        environment,
+        ("uv",),
+    )
+    if local.evidence.status is not RunStatus.PASS or exact:
+        return local
+
     checkout = context.repo_root.parent / "llm-calling"
     if not checkout.is_dir() or not (checkout / ".venv").is_dir():
-        return _not_run(Capability.PROVIDER_RUNTIME, "pinned provider-runtime checkout is absent")
+        return _not_run(capability, "pinned provider-runtime checkout is absent")
     try:
         expected = _provider_runtime_pin(context.repo_root)
     except RuntimeContractError as error:
-        return _fail(Capability.PROVIDER_RUNTIME, str(error))
+        return _fail(capability, str(error))
     child_environment = _child_environment(environment)
     if shutil.which("git", path=child_environment.get("PATH")) is None:
-        return _not_run(Capability.PROVIDER_RUNTIME, "required tool is absent: git")
+        return _not_run(capability, "required tool is absent: git")
     started = time.monotonic_ns()
     try:
         revision = run_command(
@@ -2356,20 +2440,20 @@ def _run_provider_runtime(
         )
     except OSError as error:
         return _not_run(
-            Capability.PROVIDER_RUNTIME,
+            capability,
             f"pinned revision check could not start: {error.strerror or error}",
         )
     duration_ms = (time.monotonic_ns() - started) // 1_000_000
     if revision.returncode != 0:
         return _result(
-            Capability.PROVIDER_RUNTIME,
+            capability,
             RunStatus.FAIL,
             duration_ms,
             _failed_command_detail(1, revision),
         )
     if revision.stdout.strip() != expected:
         return _result(
-            Capability.PROVIDER_RUNTIME,
+            capability,
             RunStatus.FAIL,
             duration_ms,
             "provider-runtime checkout does not match its pinned revision",
@@ -2407,12 +2491,18 @@ def _run_provider_runtime(
             checkout,
         ),
     )
-    return _run_fixed_commands(
-        Capability.PROVIDER_RUNTIME,
+    pinned = _run_fixed_commands(
+        capability,
         commands,
         environment,
         ("uv",),
-        elapsed_ms=duration_ms,
+        elapsed_ms=local.evidence.duration_ms + duration_ms,
+    )
+    if pinned.evidence.status is not RunStatus.PASS:
+        return pinned
+    return CapabilityResult(
+        pinned.evidence,
+        "local provider protocol contract and pinned provider-runtime suite passed",
     )
 
 

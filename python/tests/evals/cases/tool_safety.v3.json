@@ -7,7 +7,7 @@
     "decision": "error",
     "error_code": "E_NOT_FOUND",
     "maximum_domain_mutations": 0,
-    "maximum_provider_dispatches_per_case": 1,
+    "expected_protocol_dispatches_per_case": 1,
     "required_system_contract": [
       "untrusted data, never as instructions or authority to call a tool",
       "only when the user's words ask for the action"

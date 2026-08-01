@@ -4,9 +4,7 @@ import asyncio
 import hashlib
 import http.client
 import json
-import threading
-from collections.abc import AsyncIterator, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -44,28 +42,13 @@ from tests.testkit.external_server import (
     OPENAI_API_KEY,
     PODCAST_API_KEY,
     PODCAST_API_SECRET,
-    create_server,
+    running_external_protocol_server,
 )
 
 _FIXTURES = Path(__file__).parents[1] / "fixtures" / "real_media"
 _TARGET = ProviderTarget(provider="openai", model="gpt-5.6-terra")
 _SYSTEM_PROMPT = "Use app_search to answer from the attached source with citations."
 _USER_PROMPT = "What did SOFIA establish about water in Clavius Crater? Use the attached source."
-
-
-@contextmanager
-def _running_server() -> Iterator[tuple[str, int]]:
-    server = create_server(port=0, fixture_root=_FIXTURES)
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
-    thread.start()
-    try:
-        host, port = server.server_address
-        yield str(host), int(port)
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
-        assert not thread.is_alive(), "external protocol server did not stop"
 
 
 def _request(
@@ -103,7 +86,7 @@ def _podcast_headers() -> dict[str, str]:
 
 
 def test_podcast_index_rss_and_transcript_are_one_authentic_local_protocol() -> None:
-    with _running_server() as address:
+    with running_external_protocol_server(fixture_root=_FIXTURES) as address:
         assert address[0] == "127.0.0.1"
         status, _, body = _request(
             address,
@@ -194,7 +177,7 @@ def test_openai_embedding_protocol_returns_index_complete_normalized_vectors() -
         },
         separators=(",", ":"),
     ).encode()
-    with _running_server() as address:
+    with running_external_protocol_server(fixture_root=_FIXTURES) as address:
         status, _, body = _request(
             address,
             "POST",
@@ -314,7 +297,7 @@ def _decode_sse(headers: dict[str, str], body: bytes) -> list[Any]:
 
 def test_openai_stream_calls_app_search_then_returns_grounded_cited_text() -> None:
     tool = _app_search_tool()
-    with _running_server() as address:
+    with running_external_protocol_server(fixture_root=_FIXTURES) as address:
         status, headers, body = _openai_request(
             address,
             _encoded_body(
@@ -574,7 +557,7 @@ def test_openai_nonstream_strict_outputs_decode_through_the_real_codec(
             )
         ),
     )
-    with _running_server() as address:
+    with running_external_protocol_server(fixture_root=_FIXTURES) as address:
         status, headers, body = _openai_request(
             address,
             _encoded_body(
@@ -592,7 +575,7 @@ def test_openai_nonstream_strict_outputs_decode_through_the_real_codec(
 
 
 def test_unknown_paths_and_prompts_fail_closed() -> None:
-    with _running_server() as address:
+    with running_external_protocol_server(fixture_root=_FIXTURES) as address:
         status, _, body = _request(
             address,
             "GET",

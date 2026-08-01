@@ -40,6 +40,37 @@ from nexus_test_control.services import (
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
+class _ReadyExternalPorts(runner._RunnerPorts):
+    def start_python_process(
+        self,
+        _repo_root: Path,
+        _environment: Mapping[str, str],
+        run: OwnedTestRun,
+        role: str,
+    ) -> StartedProcess:
+        assert role == "external"
+        return StartedProcess(
+            role=role,
+            process_group_id=101,
+            process_start_token="1",
+            run_id=run.run_id,
+            owner_token="a" * 32,
+            log_path="external.log",
+        )
+
+    def wait_process_ready(
+        self,
+        _repo_root: Path,
+        _environment: Mapping[str, str],
+        process: StartedProcess,
+        endpoint: runner.EndpointKind,
+        path: str,
+    ) -> None:
+        assert process.role == "external"
+        assert endpoint is runner.EndpointKind.EXTERNAL
+        assert path == "/health"
+
+
 def test_doctor_is_not_run_when_its_locked_tool_owners_are_absent(tmp_path: Path) -> None:
     evidence = run_workflow(
         CapabilityContext(tmp_path, Workflow.DOCTOR, ()),
@@ -399,6 +430,11 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
     tmp_path: Path,
 ) -> None:
     repo_root = tmp_path / "nexus"
+    (repo_root / "python/.venv").mkdir(parents=True)
+    _write(
+        repo_root / "python/tests/contract/test_protocol.py",
+        "def test_protocol():\n    assert provider_protocol()\n",
+    )
     checkout = tmp_path / "llm-calling"
     checkout.mkdir()
     (checkout / ".venv").mkdir()
@@ -415,8 +451,17 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
 
     assert result.evidence.status is RunStatus.PASS
     commands = _commands(repo_root)
-    assert [command["tool"] for command in commands] == ["git", "uv", "uv", "uv", "uv"]
-    assert commands[0]["argv"] == ["-C", str(checkout), "rev-parse", "HEAD"]
+    assert [command["tool"] for command in commands] == ["uv", "git", "uv", "uv", "uv", "uv"]
+    assert commands[0]["argv"] == [
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "-p",
+        "no:randomly",
+        "./tests/contract/test_protocol.py",
+    ]
+    assert commands[1]["argv"] == ["-C", str(checkout), "rev-parse", "HEAD"]
     assert commands[-1]["argv"] == [
         "run",
         "--frozen",
@@ -425,6 +470,46 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
         "-q",
         "-p",
         "no:randomly",
+    ]
+
+
+def test_exact_provider_protocol_proof_runs_only_its_local_contract_node(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "nexus"
+    (repo_root / "python/.venv").mkdir(parents=True)
+    proof_path = "python/tests/contract/test_protocol.py"
+    _write(
+        repo_root / proof_path,
+        "def test_protocol():\n    assert provider_protocol()\n\n"
+        "def test_other():\n    assert other_protocol()\n",
+    )
+    environment = _stub_tools(
+        repo_root,
+        "uv",
+        exit_status=1,
+        diagnostic=(
+            "FAILED tests/contract/test_protocol.py::test_protocol - AssertionError: protocol drift"
+        ),
+    )
+
+    result = run_proof(
+        CapabilityContext(repo_root, Workflow.FULL, ()),
+        f"pytest:{proof_path}::test_protocol",
+        environment,
+        _available_memory=lambda: 8192,
+    )
+
+    assert result.evidence.status is RunStatus.FAIL
+    assert result.detail.startswith("proof_result=behavioral_assertion_failure|")
+    assert _commands(repo_root)[0]["argv"] == [
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "-p",
+        "no:randomly",
+        "tests/contract/test_protocol.py::test_protocol",
     ]
 
 
@@ -598,7 +683,7 @@ def test_workflow_interruption_closes_the_owned_run(tmp_path: Path) -> None:
     environment = _stub_tools(tmp_path, "docker", "supabase", "uv")
     cleaned: list[str] = []
 
-    class Ports(runner._RunnerPorts):
+    class Ports(_ReadyExternalPorts):
         def prepare_run(
             self,
             _repo_root: Path,
@@ -735,7 +820,7 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
     cleaned: list[str] = []
     commands_before_heavy_lock: list[list[list[str]]] = []
 
-    class Ports(runner._RunnerPorts):
+    class Ports(_ReadyExternalPorts):
         @contextmanager
         def heavy_lock(self, _repo_root: Path) -> Iterator[Path]:
             commands_before_heavy_lock.append([command["argv"] for command in _commands(tmp_path)])
@@ -1165,7 +1250,7 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
     prepared: list[bool] = []
     cleaned: list[str] = []
 
-    class Ports(runner._RunnerPorts):
+    class Ports(_ReadyExternalPorts):
         def prepare_run(
             self,
             _root: Path,
