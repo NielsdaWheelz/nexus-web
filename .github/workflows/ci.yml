@@ -310,7 +310,7 @@ jobs:
             test-command: >-
               cd apps/android &&
               ./gradlew :app:connectedDebugAndroidTest
-              -Pandroid.testInstrumentationRunnerArguments.class=app.nexus.android.MainActivityTest#statusBarProtectionKeepsLightIconsAndAnEdgeToEdgeWebView
+              -Pandroid.testInstrumentationRunnerArguments.class=app.nexus.android.MainActivityTest#viewportFitCoverWebViewReceivesNativeInsetsWithoutLeavingFullWindowBounds
     env:
       NEXUS_GOOGLE_WEB_CLIENT_ID: ${{ vars.NEXUS_GOOGLE_WEB_CLIENT_ID || 'ci-placeholder.apps.googleusercontent.com' }}
 

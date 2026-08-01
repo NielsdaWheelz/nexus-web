@@ -23,8 +23,8 @@
   max-width: min(
     228px,
     calc(
-      100vw - max(var(--space-2), env(safe-area-inset-left)) -
-      max(var(--space-2), env(safe-area-inset-right)) - var(--space-4)
+      100vw - max(var(--space-2), var(--viewport-safe-left)) -
+      max(var(--space-2), var(--viewport-safe-right)) - var(--space-4)
     )
   );
 }

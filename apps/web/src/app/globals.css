@@ -120,8 +120,12 @@
   --pane-resource-header-height: 60px;
   --appnav-bar-height: var(--pane-resource-header-height);
   --tabsbar-height: 40px;
-  --mobile-content-bottom-clearance: env(safe-area-inset-bottom);
-  --mobile-nexus-bottom-offset: env(safe-area-inset-bottom);
+  --viewport-safe-top: env(safe-area-inset-top);
+  --viewport-safe-right: env(safe-area-inset-right);
+  --viewport-safe-bottom: env(safe-area-inset-bottom);
+  --viewport-safe-left: env(safe-area-inset-left);
+  --mobile-content-bottom-clearance: var(--viewport-safe-bottom);
+  --mobile-nexus-bottom-offset: var(--viewport-safe-bottom);
   --mobile-overlay-keyboard-inset: 0px;
   --resize-handle-width: 8px;
   --content-max-width: 700px;

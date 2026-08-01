@@ -194,11 +194,11 @@ export function MobileViewportProvider({
     const root = document.documentElement;
     root.style.setProperty(
       "--mobile-content-bottom-clearance",
-      `max(env(safe-area-inset-bottom), ${projection.contentBottomClearancePx}px)`,
+      `max(var(--viewport-safe-bottom), ${projection.contentBottomClearancePx}px)`,
     );
     root.style.setProperty(
       "--mobile-nexus-bottom-offset",
-      `max(env(safe-area-inset-bottom), ${projection.playerBottomClearancePx}px)`,
+      `max(var(--viewport-safe-bottom), ${projection.playerBottomClearancePx}px)`,
     );
     root.style.setProperty(
       "--mobile-overlay-keyboard-inset",

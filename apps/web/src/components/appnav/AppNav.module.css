@@ -426,8 +426,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  height: calc(var(--appnav-bar-height) + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) var(--space-2) 0;
+  height: calc(var(--appnav-bar-height) + var(--viewport-safe-top));
+  padding: var(--viewport-safe-top) var(--space-2) 0;
   background: var(--surface-2);
   border-bottom: 1px solid var(--edge-subtle);
   transform: translateY(calc(-100% * var(--mobile-chrome-collapse)));

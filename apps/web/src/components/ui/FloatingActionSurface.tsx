@@ -427,8 +427,7 @@ function readMobileContentBottomClearance(): number {
   probe.style.position = "fixed";
   probe.style.visibility = "hidden";
   probe.style.pointerEvents = "none";
-  probe.style.height =
-    "var(--mobile-content-bottom-clearance, env(safe-area-inset-bottom))";
+  probe.style.height = "var(--mobile-content-bottom-clearance)";
   document.body.appendChild(probe);
   const clearance = readPx(window.getComputedStyle(probe).height);
   probe.remove();
@@ -441,10 +440,10 @@ function readSafeAreaInsets(): { top: number; right: number; bottom: number; lef
   probe.style.inset = "0";
   probe.style.visibility = "hidden";
   probe.style.pointerEvents = "none";
-  probe.style.paddingTop = "env(safe-area-inset-top)";
-  probe.style.paddingRight = "env(safe-area-inset-right)";
-  probe.style.paddingBottom = "env(safe-area-inset-bottom)";
-  probe.style.paddingLeft = "env(safe-area-inset-left)";
+  probe.style.paddingTop = "var(--viewport-safe-top)";
+  probe.style.paddingRight = "var(--viewport-safe-right)";
+  probe.style.paddingBottom = "var(--viewport-safe-bottom)";
+  probe.style.paddingLeft = "var(--viewport-safe-left)";
   document.body.appendChild(probe);
 
   const computed = window.getComputedStyle(probe);

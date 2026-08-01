@@ -15,11 +15,11 @@ import { viewport } from "@/app/layout";
 
 /**
  * Verifies the root layout exports a Next.js Viewport with viewport-fit=cover.
- * Without viewport-fit=cover, env(safe-area-inset-*) returns 0 on notched
- * devices, making all safe-area padding in the app ineffective.
+ * Without viewport-fit=cover, the browser-provided safe-area values remain 0
+ * on notched devices, making the root inset adapter ineffective.
  */
 describe("Root layout viewport export", () => {
-  it("sets viewportFit to cover for safe-area-inset activation", () => {
+  it("sets viewportFit to cover for root safe-area activation", () => {
     expect(viewport.viewportFit).toBe("cover");
   });
 

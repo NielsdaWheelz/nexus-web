@@ -16,6 +16,7 @@ import android.util.Base64
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -24,15 +25,13 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import app.nexus.android.offline.OfflineMediaStore
 import app.nexus.android.offline.OfflineMediaWebCapability
 import androidx.lifecycle.Lifecycle
@@ -83,20 +82,17 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-    // justify-kotlin-override: API 26-34 require the deprecated color setter for
-    // black status-bar protection; API 35+ safely ignores it in favor of the inset overlay.
-    @Suppress("DEPRECATION")
-    private fun configureStatusBarColor() {
-        window.statusBarColor = Color.BLACK
-    }
-
     @Suppress("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.auto(
+                lightScrim = Color.BLACK,
+                darkScrim = Color.BLACK,
+                detectDarkMode = { true },
+            ),
+        )
         super.onCreate(savedInstanceState)
-
-        configureStatusBarColor()
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = false
 
         webView = WebView(this)
         NexusWebView.configure(webView)
@@ -244,14 +240,13 @@ class MainActivity : AppCompatActivity() {
                 )
             )
         }
-        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
-            statusBarProtection.layoutParams.height =
-                insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+        root.setOnApplyWindowInsetsListener { _, insets ->
+            statusBarProtection.layoutParams.height = insets.systemBarAndDisplayCutoutTop()
             statusBarProtection.requestLayout()
             insets
         }
         setContentView(root)
-        ViewCompat.requestApplyInsets(root)
+        root.requestApplyInsets()
 
         onBackPressedDispatcher.addCallback(
             this,
@@ -273,6 +268,19 @@ class MainActivity : AppCompatActivity() {
             loadUrlFromIntent(intent)
         }
     }
+
+    @Suppress("DEPRECATION")
+    private fun WindowInsets.systemBarAndDisplayCutoutTop(): Int =
+        if (Build.VERSION.SDK_INT >= 30) {
+            getInsets(
+                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
+            ).top
+        } else {
+            maxOf(
+                systemWindowInsetTop,
+                if (Build.VERSION.SDK_INT >= 28) displayCutout?.safeInsetTop ?: 0 else 0,
+            )
+        }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)

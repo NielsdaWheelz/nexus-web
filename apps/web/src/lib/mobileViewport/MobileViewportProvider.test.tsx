@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useLayoutEffect, useRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import "@/app/globals.css";
 import {
   MobileViewportProvider,
   useMobileViewport,
@@ -10,6 +11,7 @@ import {
 
 let capability: MobileViewportCapability | null = null;
 let rootTextEntryFocused = false;
+const rootLengthProbes = new Map<string, HTMLDivElement>();
 
 function CapabilityProbe() {
   capability = useMobileViewport();
@@ -43,6 +45,17 @@ function RegisteredPlayer() {
   );
 }
 
+function readRootLength(property: string): number {
+  let probe = rootLengthProbes.get(property);
+  if (!probe) {
+    probe = document.createElement("div");
+    probe.style.height = `var(${property})`;
+    document.body.append(probe);
+    rootLengthProbes.set(property, probe);
+  }
+  return Number.parseFloat(getComputedStyle(probe).height);
+}
+
 describe("MobileViewportProvider", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -57,9 +70,42 @@ describe("MobileViewportProvider", () => {
     document.documentElement.style.removeProperty(
       "--mobile-overlay-keyboard-inset",
     );
+    document.documentElement.style.removeProperty("--viewport-safe-bottom");
+    for (const probe of rootLengthProbes.values()) {
+      probe.remove();
+    }
+    rootLengthProbes.clear();
   });
 
-  it("publishes measured player and content clearance", async () => {
+  it("composes the canonical safe bottom and reveals the root defaults on teardown", () => {
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "37px");
+
+    const { unmount } = render(
+      <MobileViewportProvider>
+        <CapabilityProbe />
+      </MobileViewportProvider>,
+    );
+
+    expect(readRootLength("--mobile-content-bottom-clearance")).toBe(37);
+    expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(37);
+
+    unmount();
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-content-bottom-clearance",
+      ),
+    ).toBe("");
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-nexus-bottom-offset",
+      ),
+    ).toBe("");
+    expect(readRootLength("--mobile-content-bottom-clearance")).toBe(37);
+    expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(37);
+  });
+
+  it("composes measured Player clearance with a larger canonical safe bottom", async () => {
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "23px");
     const { unmount } = render(
       <MobileViewportProvider>
         <RegisteredPlayer />
@@ -67,17 +113,13 @@ describe("MobileViewportProvider", () => {
     );
 
     await waitFor(() => {
-      expect(
-        document.documentElement.style.getPropertyValue(
-          "--mobile-nexus-bottom-offset",
-        ),
-      ).toContain("80px");
-      expect(
-        document.documentElement.style.getPropertyValue(
-          "--mobile-content-bottom-clearance",
-        ),
-      ).toContain("80px");
+      expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(80);
+      expect(readRootLength("--mobile-content-bottom-clearance")).toBe(80);
     });
+
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "93px");
+    expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(93);
+    expect(readRootLength("--mobile-content-bottom-clearance")).toBe(93);
 
     unmount();
     expect(
@@ -112,6 +154,7 @@ describe("MobileViewportProvider", () => {
   });
 
   it("publishes the named Nexus and Player union and shrinks it on unregister", async () => {
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "23px");
     render(
       <MobileViewportProvider>
         <CapabilityProbe />
@@ -133,45 +176,26 @@ describe("MobileViewportProvider", () => {
     });
 
     await waitFor(() => {
-      expect(
-        document.documentElement.style.getPropertyValue(
-          "--mobile-content-bottom-clearance",
-        ),
-      ).toContain("150px");
-      expect(
-        document.documentElement.style.getPropertyValue(
-          "--mobile-nexus-bottom-offset",
-        ),
-      ).toContain("80px");
+      expect(readRootLength("--mobile-content-bottom-clearance")).toBe(150);
+      expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(80);
     });
 
     act(() => unregisterNexus!());
     await waitFor(() => {
-      expect(
-        document.documentElement.style.getPropertyValue(
-          "--mobile-content-bottom-clearance",
-        ),
-      ).toContain("80px");
+      expect(readRootLength("--mobile-content-bottom-clearance")).toBe(80);
     });
 
     act(() => unregisterPlayer!());
     await waitFor(() => {
-      expect(
-        document.documentElement.style.getPropertyValue(
-          "--mobile-content-bottom-clearance",
-        ),
-      ).toContain("0px");
-      expect(
-        document.documentElement.style.getPropertyValue(
-          "--mobile-nexus-bottom-offset",
-        ),
-      ).toContain("0px");
+      expect(readRootLength("--mobile-content-bottom-clearance")).toBe(23);
+      expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(23);
     });
     player.remove();
     nexus.remove();
   });
 
   it("publishes and clears the mobile overlay keyboard channel", () => {
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "37px");
     render(
       <MobileViewportProvider>
         <CapabilityProbe />
@@ -187,11 +211,7 @@ describe("MobileViewportProvider", () => {
         "--mobile-overlay-keyboard-inset",
       ),
     ).toBe("312px");
-    expect(
-      document.documentElement.style.getPropertyValue(
-        "--mobile-content-bottom-clearance",
-      ),
-    ).toContain("312px");
+    expect(readRootLength("--mobile-content-bottom-clearance")).toBe(312);
 
     act(() => release!());
     expect(
@@ -199,6 +219,7 @@ describe("MobileViewportProvider", () => {
         "--mobile-overlay-keyboard-inset",
       ),
     ).toBe("0px");
+    expect(readRootLength("--mobile-content-bottom-clearance")).toBe(37);
   });
 
   it("restores the preceding active keyboard report when the newest report releases", () => {

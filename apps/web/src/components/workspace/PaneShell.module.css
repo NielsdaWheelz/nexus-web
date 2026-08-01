@@ -146,7 +146,7 @@
   border-right: none;
   --mobile-pane-chrome-height: 0px;
   --mobile-pane-content-offset: calc(
-    env(safe-area-inset-top) + var(--appnav-bar-height) +
+    var(--viewport-safe-top) + var(--appnav-bar-height) +
       var(--mobile-pane-chrome-height) + var(--space-2)
   );
 }
@@ -159,7 +159,7 @@
 /* The pane toolbar sits below the fixed app bar and shares its retreat phase. */
 .paneShell[data-mobile="true"] .chrome {
   position: absolute;
-  top: calc(env(safe-area-inset-top) + var(--appnav-bar-height));
+  top: calc(var(--viewport-safe-top) + var(--appnav-bar-height));
   left: 0;
   right: 0;
   z-index: 11;
@@ -168,7 +168,7 @@
   transform: translateY(
     calc(
       -1 * var(--mobile-chrome-collapse) *
-        (env(safe-area-inset-top) + var(--appnav-bar-height) + var(--mobile-pane-chrome-height))
+        (var(--viewport-safe-top) + var(--appnav-bar-height) + var(--mobile-pane-chrome-height))
     )
   );
   will-change: transform;
