@@ -447,6 +447,8 @@ async function startChromeGestureRecording(scrollport: Locator): Promise<void> {
       },
       onTouchStart: () => {
         recorder.touchStartAt = performance.now();
+        recorder.touchMoveAt = null;
+        recorder.touchEndAt = null;
       },
       onTouchMove: () => {
         recorder.touchMoveAt ??= performance.now();
@@ -610,6 +612,11 @@ async function dispatchTouchDrag(
     allowTransitionDuringTouch?: boolean;
     driveWithTouchEvents?: boolean;
     expectPaneToolbar?: boolean;
+    followUpDrag?: {
+      fingerDeltaY: number;
+      steps: number;
+      afterTouchStart?: () => Promise<void>;
+    };
     stopBeforeTouchEnd?: boolean;
   } = {},
 ): Promise<ChromeGestureRecording> {
@@ -622,17 +629,21 @@ async function dispatchTouchDrag(
     width: window.innerWidth,
   }));
   const rawX = box.x + Math.min(box.width - 24, Math.max(24, box.width / 2));
-  const rawStartY =
-    fingerDeltaY < 0
-      ? box.y + Math.min(box.height - 28, Math.max(80, box.height * 0.8))
-      : box.y + Math.min(box.height - 100, Math.max(32, box.height * 0.28));
-  const roundedDeltaY = Math.round(fingerDeltaY);
-  const minStartY = 1 - Math.min(0, roundedDeltaY);
-  const maxStartY = viewport.height - 2 - Math.max(0, roundedDeltaY);
   const x = Math.round(Math.min(viewport.width - 2, Math.max(1, rawX)));
-  const startY = Math.round(
-    Math.min(maxStartY, Math.max(minStartY, rawStartY)),
-  );
+  const startYFor = (deltaY: number) => {
+    const roundedDeltaY = Math.round(deltaY);
+    const rawStartY =
+      roundedDeltaY < 0
+        ? box.y + Math.min(box.height - 28, Math.max(80, box.height * 0.8))
+        : box.y + Math.min(box.height - 100, Math.max(32, box.height * 0.28));
+    const minStartY = 1 - Math.min(0, roundedDeltaY);
+    const maxStartY = viewport.height - 2 - Math.max(0, roundedDeltaY);
+    return Math.round(
+      Math.min(maxStartY, Math.max(minStartY, rawStartY)),
+    );
+  };
+  const roundedDeltaY = Math.round(fingerDeltaY);
+  const startY = startYFor(roundedDeltaY);
   const point = (y: number, pointX = x) => [
     {
       id: 1,
@@ -682,6 +693,33 @@ async function dispatchTouchDrag(
         touchPoints: [],
       });
       touchActive = false;
+      if (options.followUpDrag) {
+        const followUpDeltaY = Math.round(options.followUpDrag.fingerDeltaY);
+        const followUpStartY = startYFor(followUpDeltaY);
+        await cdp.send("Input.dispatchTouchEvent", {
+          type: "touchStart",
+          touchPoints: point(followUpStartY),
+        });
+        touchActive = true;
+        await options.followUpDrag.afterTouchStart?.();
+        for (let step = 1; step <= options.followUpDrag.steps; step += 1) {
+          await cdp.send("Input.dispatchTouchEvent", {
+            type: "touchMove",
+            touchPoints: point(
+              followUpStartY +
+                (followUpDeltaY * step) / options.followUpDrag.steps,
+            ),
+          });
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 8);
+          });
+        }
+        await cdp.send("Input.dispatchTouchEvent", {
+          type: "touchEnd",
+          touchPoints: [],
+        });
+        touchActive = false;
+      }
     } else {
       // Headless Chromium's touch-flavored synthesizeScrollGesture emits the
       // touch boundary but no touch moves or native scroll events. Preserve
@@ -932,7 +970,10 @@ async function expectTrustedForwardRetreat(
       `computed collapse must remain synchronized; sample=${JSON.stringify(sample)}`,
     ).toBeLessThan(0.01);
     for (const surface of surfaces) {
-      expect(surface.phase).toBe("Tracking");
+      expect(
+        surface.phase,
+        `translated chrome must publish Tracking atomically with inertness and collapse progress; sample=${JSON.stringify(sample)}`,
+      ).toBe("Tracking");
       expect(surface.inert).toBe(true);
       expect(surface.ariaHidden).toBe("true");
     }
@@ -1286,6 +1327,7 @@ async function expectTrustedSettleLifecycle(
         maxComputedSpread: number;
         maxSpecifiedSpread: number;
         maxTransformError: number;
+        events: Array<{ type: string; recordedAt: number }>;
         frame: number;
         listener: EventListener;
       };
@@ -1311,6 +1353,7 @@ async function expectTrustedSettleLifecycle(
       maxComputedSpread: 0,
       maxSpecifiedSpread: 0,
       maxTransformError: 0,
+      events: [] as Array<{ type: string; recordedAt: number }>,
       frame: 0,
       listener: ((event: TransitionEvent) => {
         if (
@@ -1325,6 +1368,10 @@ async function expectTrustedSettleLifecycle(
           } else if (event.type === "transitioncancel") {
             audit.cancels += 1;
           }
+          audit.events.push({
+            type: event.type,
+            recordedAt: performance.now(),
+          });
         }
       }) as EventListener,
     };
@@ -1474,6 +1521,7 @@ async function expectTrustedSettleLifecycle(
             maxComputedSpread: number;
             maxSpecifiedSpread: number;
             maxTransformError: number;
+            events: Array<{ type: string; recordedAt: number }>;
           };
         };
         const audit = auditWindow.__nexusMobileChromeTransitionAudit;
@@ -1489,6 +1537,7 @@ async function expectTrustedSettleLifecycle(
         audit.maxComputedSpread = 0;
         audit.maxSpecifiedSpread = 0;
         audit.maxTransformError = 0;
+        audit.events = [];
       });
     const readAudit = () =>
       page.evaluate(() => {
@@ -1503,6 +1552,7 @@ async function expectTrustedSettleLifecycle(
             maxComputedSpread: number;
             maxSpecifiedSpread: number;
             maxTransformError: number;
+            events: Array<{ type: string; recordedAt: number }>;
           };
         };
         const audit = auditWindow.__nexusMobileChromeTransitionAudit;
@@ -1519,6 +1569,7 @@ async function expectTrustedSettleLifecycle(
           maxComputedSpread: audit.maxComputedSpread,
           maxSpecifiedSpread: audit.maxSpecifiedSpread,
           maxTransformError: audit.maxTransformError,
+          events: audit.events,
         };
       });
     const waitForTransitionRun = async () => {
@@ -1563,21 +1614,36 @@ async function expectTrustedSettleLifecycle(
     };
 
     await resetAudit();
-    const { samples: interruptedSamples } = await dispatchTouchDrag(
+    const interruptionRecording = await dispatchTouchDrag(
       page,
       scrollport,
-      -32,
+      proveInterruption ? -64 : -32,
       8,
       {
-        // This proof must arm the next touch immediately after touchend, before
-        // the idle settle task can start. The compositor command resolves only
-        // after that task has already been queued, so preserve explicit trusted
-        // touch boundaries for this lifecycle-only handoff.
+        // The interruption proof must arm its next touch immediately after
+        // touchend, before the idle settle task can start. Preserve explicit
+        // trusted boundaries so both gestures stay in one CDP lifecycle.
         driveWithTouchEvents: true,
         expectPaneToolbar,
+        allowTransitionDuringTouch: true,
+        ...(proveInterruption
+          ? {
+              followUpDrag: {
+                // Clear Chromium's touch slop and create native reverse
+                // scrolling without forcing either endpoint. The sampled
+                // interrupted state must remain the owner of the next settle.
+                fingerDeltaY: 24,
+                steps: 4,
+                afterTouchStart: async () => {
+                  await waitForTransitionRun();
+                },
+              },
+            }
+          : {}),
         stopBeforeTouchEnd: true,
       },
     );
+    const interruptedSamples = interruptionRecording.samples;
     expect(
       interruptedSamples.some(
         (sample) =>
@@ -1598,20 +1664,6 @@ async function expectTrustedSettleLifecycle(
       );
       return;
     }
-    const interruptionRecording = await dispatchTouchDrag(
-      page,
-      scrollport,
-      64,
-      4,
-      {
-        allowTransitionDuringTouch: true,
-        expectPaneToolbar,
-        afterTouchStart: async () => {
-          await waitForTransitionRun();
-          await waitForAnimationFrame(page);
-        },
-      },
-    );
     const { touchStartAt, touchEndAt } = interruptionRecording;
     if (touchStartAt === null || touchEndAt === null) {
       throw new Error(
@@ -1625,7 +1677,8 @@ async function expectTrustedSettleLifecycle(
       firstNativeScrollAt,
       `settle interruption must produce native scrolling; recording=${JSON.stringify(interruptionRecording)}`,
     ).toBeDefined();
-    const settleStartedAt = interruptionRecording.transitionEvents
+    const interruptionAudit = await readAudit();
+    const settleStartedAt = interruptionAudit.events
       .filter(
         ({ type, recordedAt }) =>
           type === "transitionrun" &&
@@ -1637,7 +1690,7 @@ async function expectTrustedSettleLifecycle(
       `stationary trusted touch must observe a live idle settle before native scrolling; recording=${JSON.stringify(interruptionRecording)}`,
     ).toBeDefined();
     expect(
-      interruptionRecording.transitionEvents.every(
+      interruptionAudit.events.every(
         ({ type, recordedAt }) =>
           (type !== "transitionend" && type !== "transitioncancel") ||
           settleStartedAt === undefined ||
@@ -1647,7 +1700,7 @@ async function expectTrustedSettleLifecycle(
       `the idle settle must remain live from trusted touchstart until native scrolling; recording=${JSON.stringify(interruptionRecording)}`,
     ).toBe(true);
     expect(
-      interruptionRecording.transitionEvents.some(
+      interruptionAudit.events.some(
         ({ type, recordedAt }) =>
           type === "transitioncancel" &&
           firstNativeScrollAt !== undefined &&
@@ -1671,6 +1724,43 @@ async function expectTrustedSettleLifecycle(
         ).toBe("true");
       }
     }
+    const terminalTrackingSample = interruptionRecording.samples
+      .filter(
+        (sample) =>
+          sample.recordedAt >=
+            (firstNativeScrollAt ?? Number.POSITIVE_INFINITY) &&
+          sample.recordedAt <= touchEndAt &&
+          sample.appBar.phase === "Tracking",
+      )
+      .at(-1);
+    expect(
+      terminalTrackingSample,
+      `interrupted native motion must publish a terminal tracking sample; recording=${JSON.stringify(interruptionRecording)}`,
+    ).toBeDefined();
+    const expectedEndpoint =
+      terminalTrackingSample!.appBar.progress < 0.5 ? "Visible" : "Hidden";
+    const endpoint = await expectChromePhase(
+      page,
+      scrollport,
+      expectedEndpoint,
+      expectPaneToolbar,
+    );
+    const endpointIsHidden = expectedEndpoint === "Hidden";
+    for (const surface of chromeSurfaces(endpoint, expectPaneToolbar)) {
+      expect(surface.inert).toBe(endpointIsHidden);
+      expect(surface.ariaHidden).toBe(endpointIsHidden ? "true" : null);
+    }
+    await expect
+      .poll(async () => (await readAudit()).cancels)
+      .toBeGreaterThan(0);
+    await expect.poll(async () => (await readAudit()).ends).toBeGreaterThan(0);
+    expectSynchronizedSettle(
+      await readAudit(),
+      "interrupted settle through cancellation",
+    );
+    if (endpointIsHidden) {
+      await expectTrustedWheelRecovery(page, scrollport);
+    }
     const visible = await expectChromePhase(
       page,
       scrollport,
@@ -1681,14 +1771,6 @@ async function expectTrustedSettleLifecycle(
       expect(surface.inert).toBe(false);
       expect(surface.ariaHidden).toBeNull();
     }
-    await expect
-      .poll(async () => (await readAudit()).cancels)
-      .toBeGreaterThan(0);
-    await expect.poll(async () => (await readAudit()).ends).toBeGreaterThan(0);
-    expectSynchronizedSettle(
-      await readAudit(),
-      "interrupted settle through cancellation",
-    );
 
     await resetAudit();
     const { samples: completedSamples } = await dispatchTouchDrag(

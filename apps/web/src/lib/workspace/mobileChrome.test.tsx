@@ -921,6 +921,44 @@ describe("MobileChromeProvider", () => {
     expect(progress("AppBar")).toBe("0.125");
   });
 
+  it("cancels every live collapse transition before freezing an interrupted settle", () => {
+    renderInEnvironment(
+      <MobileChromeProvider>
+        <Harness />
+      </MobileChromeProvider>,
+    );
+    startPartialSettle();
+    const unrelatedCancellations: Array<ReturnType<typeof vi.fn>> = [];
+    const cancellations = (
+      ["AppBar", "PaneToolbar", "NexusControl"] as const
+    ).map((role) => {
+      const cancel = vi.fn();
+      const unrelatedCancel = vi.fn();
+      unrelatedCancellations.push(unrelatedCancel);
+      vi.spyOn(screen.getByTestId(role), "getAnimations").mockReturnValue([
+        {
+          cancel,
+          transitionProperty: COLLAPSE_PROPERTY,
+        } as unknown as Animation,
+        {
+          cancel: unrelatedCancel,
+          transitionProperty: "opacity",
+        } as unknown as Animation,
+      ]);
+      return cancel;
+    });
+
+    fireEvent.scroll(setReaderTop(140));
+
+    for (const cancel of cancellations) {
+      expect(cancel).toHaveBeenCalledOnce();
+    }
+    for (const cancel of unrelatedCancellations) {
+      expect(cancel).not.toHaveBeenCalled();
+    }
+    expect(screen.getByTestId("phase")).toHaveTextContent("Tracking");
+  });
+
   it("accepts non-AppBar completion and restarts a cancelled settle from live progress", () => {
     renderInEnvironment(
       <MobileChromeProvider>
