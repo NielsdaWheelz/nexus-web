@@ -865,20 +865,51 @@ def test_web_source_promoted_to_journey_is_memory_admitted_before_static_web(
         SelectionReason.JOURNEY_OWNER,
         "playwright:apps/web/e2e/journeys/risk.journey.spec.ts",
     )
+    now = [0.0]
+    waits: list[float] = []
+    lock_held = [False]
+
+    class Ports(runner._RunnerPorts):
+        @contextmanager
+        def heavy_lock(self, _repo_root: Path) -> Iterator[Path]:
+            assert not lock_held[0]
+            lock_held[0] = True
+            try:
+                yield tmp_path / "heavy.lock"
+            finally:
+                lock_held[0] = False
+
+    def available_memory() -> int:
+        assert lock_held[0], "memory admission sampled outside the controller heavy lock"
+        if now[0] < 10:
+            return 512
+        if now[0] < 20:
+            return 768
+        return 1024
+
+    def wait(seconds: float) -> None:
+        waits.append(seconds)
+        now[0] += seconds
 
     evidence = run_workflow(
         CapabilityContext(tmp_path, Workflow.CHANGED, (selection,)),
         StringIO(),
         {},
         run_id="0123456789abcdef",
-        _available_memory=lambda: 512,
+        _ports=Ports(),
+        _available_memory=available_memory,
+        _monotonic=lambda: now[0],
+        _wait=wait,
     )
 
     static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)
     assert static_web.status is RunStatus.NOT_RUN
     assert static_web.detail == (
-        "heavy memory admission requires 2048 MiB available; observed 512 MiB"
+        "heavy memory admission requires 2048 MiB available; observed 1024 MiB"
     )
+    assert len(waits) == 120
+    assert sum(waits) == pytest.approx(30)
+    assert not lock_held[0]
     assert not (tmp_path / "commands.jsonl").exists()
 
 
@@ -893,18 +924,38 @@ def test_unknown_available_memory_fails_closed_before_heavy_work(tmp_path: Path)
         SelectionReason.CHANGED_TEST,
         "vitest:apps/web/src/risk.browser.test.tsx",
     )
+    lock_held = [False]
+
+    class Ports(runner._RunnerPorts):
+        @contextmanager
+        def heavy_lock(self, _repo_root: Path) -> Iterator[Path]:
+            lock_held[0] = True
+            try:
+                yield tmp_path / "heavy.lock"
+            finally:
+                lock_held[0] = False
+
+    def available_memory() -> None:
+        assert lock_held[0], "memory admission sampled outside the controller heavy lock"
+        return None
+
+    def unexpected_wait(_seconds: float) -> None:
+        raise AssertionError("unknown available memory must fail closed without waiting")
 
     evidence = run_workflow(
         CapabilityContext(tmp_path, Workflow.CHANGED, (selected,)),
         StringIO(),
         {},
         run_id="0123456789abcdef",
-        _available_memory=lambda: None,
+        _ports=Ports(),
+        _available_memory=available_memory,
+        _wait=unexpected_wait,
     )
 
     static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)
     assert static_web.status is RunStatus.NOT_RUN
     assert static_web.detail == "heavy memory admission could not determine available memory"
+    assert not lock_held[0]
 
 
 def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_only_when_selected(
@@ -1083,7 +1134,10 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
             "tests/migrations/test_owned.py",
         ],
     ]
-    assert commands_before_heavy_lock == [[command["argv"] for command in commands[:5]]]
+    assert commands_before_heavy_lock == [
+        [command["argv"] for command in commands[:3]],
+        [command["argv"] for command in commands[:5]],
+    ]
     assert all(
         "DATABASE_URL" in command["environment"] and "NEXUS_TEST_RUN_ID" in command["environment"]
         for command in (commands[5], commands[7])
@@ -1434,6 +1488,75 @@ def test_run_proof_rejects_missing_or_inexact_browser_nodes_without_preparing_ru
     assert inexact.evidence.id is Capability.POLICY
     assert missing.evidence.status is RunStatus.NOT_RUN
     assert missing.evidence.id is Capability.SERVICE
+
+
+def test_exact_proof_waits_under_heavy_lock_for_memory_recovery_and_launches_once(
+    tmp_path: Path,
+) -> None:
+    proof = "apps/web/src/recovered.browser.test.ts"
+    _write(tmp_path / proof, "export {};\n")
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    environment = _stub_tools(tmp_path, "bun")
+    samples = iter((512, 1024, 2300))
+    observed: list[int] = []
+    waits: list[float] = []
+    now = [0.0]
+    lock_held = [False]
+
+    class Ports(runner._RunnerPorts):
+        @contextmanager
+        def heavy_lock(self, _repo_root: Path) -> Iterator[Path]:
+            assert not lock_held[0]
+            lock_held[0] = True
+            try:
+                yield tmp_path / "heavy.lock"
+            finally:
+                lock_held[0] = False
+
+        def browser_installed(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+        ) -> bool:
+            assert lock_held[0], "exact proof launched outside the controller heavy lock"
+            return True
+
+    def available_memory() -> int:
+        assert lock_held[0], "memory admission sampled outside the controller heavy lock"
+        available_mib = next(samples)
+        observed.append(available_mib)
+        return available_mib
+
+    def wait(seconds: float) -> None:
+        waits.append(seconds)
+        now[0] += seconds
+
+    result = run_proof(
+        CapabilityContext(tmp_path, Workflow.CHANGED, ()),
+        f"vitest:{proof}",
+        environment,
+        _ports=Ports(),
+        _available_memory=available_memory,
+        _monotonic=lambda: now[0],
+        _wait=wait,
+    )
+
+    assert result.evidence.status is RunStatus.PASS, (
+        "transient memory recovery did not launch the exact proof: "
+        f"status={result.evidence.status.value}; detail={result.detail}"
+    )
+    assert observed == [512, 1024, 2300]
+    assert waits == [0.25, 0.25]
+    assert not lock_held[0]
+    commands = _commands(tmp_path)
+    assert len(commands) == 1, "memory recovery reran the exact proof"
+    assert commands[0]["argv"] == [
+        "run",
+        "test:browser",
+        "--",
+        "./src/recovered.browser.test.ts",
+    ]
 
 
 def test_exact_browser_component_proof_never_prepares_a_local_stack(tmp_path: Path) -> None:

@@ -162,6 +162,8 @@ _WEB_STATIC_SUFFIXES = (".cjs", ".css", ".js", ".jsx", ".mjs", ".ts", ".tsx")
 _ANDROID_HOST_PREFIX = "apps/android/app/src/test/"
 _DETERMINISTIC_PYTEST = ("-p", "no:randomly")
 _MIN_AVAILABLE_HEAVY_MIB = 2048
+_MEMORY_ADMISSION_TIMEOUT_SECONDS = 30.0
+_MEMORY_ADMISSION_POLL_SECONDS = 0.25
 _HEAVY_CAPABILITIES = frozenset(
     {
         Capability.SERVICE,
@@ -477,6 +479,8 @@ def run_workflow(
     run_id: str,
     _ports: _RunnerPorts | None = None,
     _available_memory: Callable[[], int | None] = available_memory_mib,
+    _monotonic: Callable[[], float] = time.monotonic,
+    _wait: Callable[[float], None] = time.sleep,
 ) -> WorkflowRun:
     requirements = WORKFLOW_REGISTRY[context.workflow].requirements
     required_capabilities = {requirement.capability for requirement in requirements}
@@ -504,6 +508,37 @@ def run_workflow(
     def results() -> Iterable[CapabilityResult]:
         nonlocal heavy_lock_held
         blocked_by: Capability | None = None
+
+        def run_requirement(capability: Capability) -> CapabilityResult:
+            if not _requires_memory_admission(context, capability):
+                return _run_capability(
+                    context,
+                    capability,
+                    environment,
+                    execution,
+                    heavy_lock_held=heavy_lock_held,
+                )
+
+            def admitted_run() -> CapabilityResult:
+                admission = _await_heavy_memory_admission(
+                    capability,
+                    _available_memory,
+                    monotonic=_monotonic,
+                    wait=_wait,
+                )
+                return admission or _run_capability(
+                    context,
+                    capability,
+                    environment,
+                    execution,
+                    heavy_lock_held=True,
+                )
+
+            if heavy_lock_held:
+                return admitted_run()
+            with execution.ports.heavy_lock(context.repo_root):
+                return admitted_run()
+
         try:
             for requirement in requirements:
                 if blocked_by is not None:
@@ -521,18 +556,7 @@ def run_workflow(
                     heavy_lock_held = True
                     if measures_containers:
                         workflow_sampler.enable_containers()
-                admission = (
-                    _heavy_memory_admission(requirement.capability, _available_memory())
-                    if _requires_memory_admission(context, requirement.capability)
-                    else None
-                )
-                result = admission or _run_capability(
-                    context,
-                    requirement.capability,
-                    environment,
-                    execution,
-                    heavy_lock_held=heavy_lock_held,
-                )
+                result = run_requirement(requirement.capability)
                 memory = workflow_sampler.checkpoint()
                 measured_result = CapabilityResult(
                     replace(result.evidence, peak_owned_mib=memory.total),
@@ -616,6 +640,8 @@ def run_proof(
     *,
     _ports: _RunnerPorts | None = None,
     _available_memory: Callable[[], int | None] = available_memory_mib,
+    _monotonic: Callable[[], float] = time.monotonic,
+    _wait: Callable[[float], None] = time.sleep,
 ) -> CapabilityResult:
     """Run one exact runner-qualified proof under its final ownership boundary."""
     try:
@@ -641,20 +667,27 @@ def run_proof(
         return _not_run(Capability.POLICY, f"exact proof is not executable: {error}")
     if not (context.repo_root / path).is_file():
         return _not_run(capability, f"exact proof owner is absent: {path}")
-    admission = _heavy_memory_admission(capability, _available_memory())
-    if admission is not None:
-        return admission
 
+    ports = _ports or _RunnerPorts()
     lifecycle = ExitStack()
     try:
-        if capability in _HEAVY_CAPABILITIES:
-            lifecycle.enter_context(workspace_heavy_lock(context.repo_root))
+        memory_lock_held = capability in _MEMORY_ADMITTED_CAPABILITIES
+        if memory_lock_held:
+            lifecycle.enter_context(ports.heavy_lock(context.repo_root))
+        admission = _await_heavy_memory_admission(
+            capability,
+            _available_memory,
+            monotonic=_monotonic,
+            wait=_wait,
+        )
+        if admission is not None:
+            return admission
         execution = _WorkflowExecution(
             proof_context,
             environment,
             include_migration_database=capability is Capability.MIGRATIONS,
             run_id=new_run_id(),
-            ports=_ports or _RunnerPorts(),
+            ports=ports,
         )
         lifecycle.callback(execution.close)
         match capability:
@@ -664,6 +697,7 @@ def run_proof(
                     capability,
                     environment,
                     None,
+                    heavy_lock_held=memory_lock_held,
                 )
             case Capability.SERVICE:
                 result = _run_python_heavy(
@@ -774,7 +808,38 @@ def _heavy_memory_admission(
     )
 
 
+def _await_heavy_memory_admission(
+    capability: Capability,
+    available_memory: Callable[[], int | None],
+    *,
+    monotonic: Callable[[], float],
+    wait: Callable[[float], None],
+) -> CapabilityResult | None:
+    """Wait before launch for the host-safety condition; never rerun proof work."""
+    if capability not in _MEMORY_ADMITTED_CAPABILITIES:
+        return None
+    available_mib = available_memory()
+    admission = _heavy_memory_admission(capability, available_mib)
+    if admission is None or available_mib is None:
+        return admission
+    deadline = monotonic() + _MEMORY_ADMISSION_TIMEOUT_SECONDS
+    # justify-polling: Linux MemAvailable has no event notification; sample the
+    # launch condition every 250 ms for at most 30 seconds before failing closed.
+    while available_mib < _MIN_AVAILABLE_HEAVY_MIB:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return admission
+        wait(min(_MEMORY_ADMISSION_POLL_SECONDS, remaining))
+        available_mib = available_memory()
+        admission = _heavy_memory_admission(capability, available_mib)
+        if admission is None or available_mib is None:
+            return admission
+    return admission
+
+
 def _requires_memory_admission(context: CapabilityContext, capability: Capability) -> bool:
+    if capability not in _MEMORY_ADMITTED_CAPABILITIES:
+        return False
     if capability is Capability.STATIC_WEB:
         return _scope(context, capability) is SelectionScope.COMPLETE or any(
             selection.path in _WEB_STATIC_PROMOTERS

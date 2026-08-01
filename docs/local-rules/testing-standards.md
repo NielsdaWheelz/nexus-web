@@ -387,10 +387,14 @@ not overlap unrelated heavy lanes. Build one fingerprinted strict-CSP Next
 artifact and reuse it.
 
 Before launching Node/browser/build/Gradle or other heavy proof, the controller
-requires at least 2,048 MiB of kernel-reported `MemAvailable`; otherwise the
-capability is `not_run` before launch. This is a conservative host-safety
-admission floor, not a proof-size or performance target. Change it only from
-recorded memory evidence on the 8 GiB reference host.
+acquires the single-heavy-operation lock and waits at most 30 seconds for
+kernel-reported `MemAvailable` to reach 2,048 MiB. This bounded admission wait
+only resamples host state; it never launches or reruns proof and is not an
+automatic retry. Unknown memory is immediately `not_run`; expiry below the
+floor is `not_run` before launch and reports the latest observed value. This is
+a conservative host-safety admission floor, not a proof-size or performance
+target. Change it only from recorded memory evidence on the 8 GiB reference
+host.
 
 ## 8. Repository capability contract
 

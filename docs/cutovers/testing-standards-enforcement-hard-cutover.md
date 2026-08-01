@@ -280,6 +280,12 @@ database pytest, Vitest browser, Playwright, builds, and Gradle use one, with at
 most one heavy operation active. Remove every `-n auto`, Playwright shard, and
 automatic retry. Keep failure traces with `retain-on-failure`.
 
+After acquiring the single-heavy-operation lock, the controller waits at most
+30 seconds for kernel-reported `MemAvailable` to reach 2,048 MiB. This bounded
+admission wait only resamples host state; it never launches or reruns proof and
+is not an automatic retry. Unknown memory is immediately `not_run`; expiry
+below the floor is `not_run` before launch and reports the latest observation.
+
 CI initially uses one bounded job per invoked workflow. Capabilities reuse the
 same stack, database template, and fingerprinted standalone build within that
 job. A sampler records recursive owned process-tree RSS and owned container
@@ -927,9 +933,13 @@ not supported compatibility modes.
   `confidence` targets 60–90 seconds; slower selected boundaries report their
   own duration instead of gaming those targets. Acceptance records cold/warm
   baselines, total owned process/container memory, and the resulting local/CI
-  caps. The 8 GiB reference machine completes without OOM. CI p95 becomes a
-  downward-only ratchet only after at least 20 comparable successful runs; it
-  is not an initial acceptance fiction.
+  caps. Admission proof shows transient low memory recovering to one launch,
+  sustained low memory expiring as `not_run`, unknown memory immediately
+  becoming `not_run`, the 2,048 MiB floor remaining fixed, and all admission
+  polling occurring under the heavy-operation lock. The 8 GiB reference
+  machine completes without OOM. CI p95 becomes a downward-only ratchet only
+  after at least 20 comparable successful runs; it is not an initial acceptance
+  fiction.
 - **AC7 — build/browser:** one Next build and one Chromium installation at most
   per verification workflow. Local Playwright journey and extension
   capabilities consume the same fingerprinted standalone artifact; deployment
