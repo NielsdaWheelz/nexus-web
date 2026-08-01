@@ -225,9 +225,40 @@ def _read_active_repair_jobs(db: Session) -> tuple[ActiveRepairJob, ...]:
             text(
                 """
                 SELECT id, kind, status, payload->>'media_id' AS media_id
-                FROM background_jobs
+                FROM background_jobs job
                 WHERE kind IN ('ingest_media_source', 'media_content_reindex_job')
                   AND status IN ('pending', 'running', 'failed', 'dead')
+                  AND (
+                        status <> 'dead'
+                     OR (
+                            kind = 'ingest_media_source'
+                        AND EXISTS (
+                            SELECT 1
+                            FROM media_source_attempts attempt
+                            WHERE attempt.job_id = job.id
+                              AND attempt.id = (
+                                  SELECT latest.id
+                                  FROM media_source_attempts latest
+                                  WHERE latest.media_id = attempt.media_id
+                                  ORDER BY
+                                      latest.attempt_no DESC,
+                                      latest.created_at DESC,
+                                      latest.id DESC
+                                  LIMIT 1
+                              )
+                        )
+                     )
+                     OR (
+                            kind = 'media_content_reindex_job'
+                        AND EXISTS (
+                            SELECT 1
+                            FROM content_index_states index_state
+                            WHERE index_state.owner_kind = 'media'
+                              AND index_state.owner_id::text = job.payload->>'media_id'
+                              AND index_state.revision::text = job.payload->>'revision'
+                        )
+                     )
+                  )
                 ORDER BY id
                 """
             )

@@ -65,7 +65,7 @@ def test_non_resumable_media_state_fails_closed(
         )
 
 
-def test_convergence_requires_an_empty_unresolved_job_set():
+def test_convergence_requires_an_empty_current_unresolved_job_set():
     census = CutoverCensus(
         revision="0208",
         deferred_rows=0,
