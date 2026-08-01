@@ -99,9 +99,9 @@ it("keeps virtual selection stable under result reflow until the pointer moves",
   fireEvent.pointerEnter(secondActions);
 
   expect(
-    input,
+    input.getAttribute("aria-activedescendant"),
     `Stationary-pointer reflow moved selection away from ${nexusEntryKeyValue(first.key)}.`,
-  ).toHaveAttribute("aria-activedescendant", firstPrimaryId);
+  ).toBe(firstPrimaryId);
 
   fireEvent.pointerMove(secondPrimary);
   expect(input).toHaveAttribute(
