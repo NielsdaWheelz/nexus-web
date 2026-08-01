@@ -323,10 +323,10 @@ jobs:
               ./gradlew :app:connectedDebugAndroidTest
               -Pandroid.testInstrumentationRunnerArguments.notAnnotation=app.nexus.android.RequiresWebViewM144
           - platform-api-level: 36
-            system-image-api-level: 37
+            system-image-api-level: 36-ext19
             contract: WebView M144 system insets
             sdk-channel: canary
-            ram-size: 4096M
+            ram-size: 2048M
             test-command: >-
               cd apps/android &&
               ./gradlew :app:connectedDebugAndroidTest
