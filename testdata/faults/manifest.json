@@ -267,7 +267,7 @@
     {
       "id": "document-map-pulse-early-release",
       "patch": "testdata/faults/document-map-pulse-early-release.patch",
-      "sha256": "835ef2a0f5c2b0775e30bfd646904c9bd1a08b01619db5570722d68f5e2af276",
+      "sha256": "82528e07945fac0efaf1046d365f634481b250c8161e0057e982c1c5501cf395",
       "proofs": [
         "vitest:apps/web/src/lib/reader/usePendingDocumentMapPulse.browser.test.tsx"
       ],

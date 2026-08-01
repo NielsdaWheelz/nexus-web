@@ -1,14 +1,7 @@
 diff --git a/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts b/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts
-index 5f5c26f0..241ad527 100644
 --- a/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts
 +++ b/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts
-@@ -54,13 +54,11 @@ export function usePendingDocumentMapPulse({
-     if (pending.apparatusStableKey) {
-       pendingRef.current = null;
-       focusApparatus(pending.apparatusStableKey, true);
--      dispatchPulse(pending.target);
-       return;
-     }
+@@ -59,7 +59,6 @@ export function usePendingDocumentMapPulse({
      if (pending.target.highlightId) {
 +      pendingRef.current = null;
        return scrollHighlight(pending.target.highlightId, () => {
