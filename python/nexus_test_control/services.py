@@ -30,6 +30,8 @@ from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.process import run_command, unblock_and_exec_command
 from nexus_test_control.runtime import (
     EndpointKind,
+    LedgerEntry,
+    ResourcePhase,
     RuntimeContractError,
     RuntimePorts,
     canonical_repo_root,
@@ -40,6 +42,7 @@ from nexus_test_control.runtime import (
     local_docker_host,
     migration_database_name,
     process_resource_identity,
+    read_ledger,
     read_runtime,
     record_created,
     record_planned,
@@ -164,30 +167,85 @@ def run_environment(
     """Return the exact local resource environment for proof and app processes."""
     require_test_environment(environment)
     root = canonical_repo_root(repo_root)
+    require_run_id(run.run_id)
+    ledger = read_ledger(root, run.run_id)
+    expected_database_url = _database_url(root, environment, run_database_name(run.run_id))
+    expected_migration_url = _expected_migration_database_url(
+        root,
+        environment,
+        run.run_id,
+        ledger.entries,
+    )
+    expected_bucket = run_bucket_name(run.run_id)
+    expected_supabase_url = runtime_endpoint(root, environment, EndpointKind.SUPABASE)
+    _require_created_run_resource(
+        ledger.entries,
+        Resource(ResourceKind.RUN_DATABASE, run_database_name(run.run_id)),
+    )
+    _require_created_run_resource(
+        ledger.entries,
+        Resource(ResourceKind.BUCKET, expected_bucket),
+    )
+    if (
+        run.database_url != expected_database_url
+        or run.migration_database_url != expected_migration_url
+        or run.bucket != expected_bucket
+        or run.supabase.url != expected_supabase_url
+    ):
+        raise RuntimeContractError(
+            "child process resources do not match the exact persisted local test run"
+        )
     values = {
         "APP_PUBLIC_URL": runtime_endpoint(root, environment, EndpointKind.WEB),
-        "DATABASE_URL": run.database_url,
+        "DATABASE_URL": expected_database_url,
         "FASTAPI_BASE_URL": runtime_endpoint(root, environment, EndpointKind.API),
         "NEXT_PUBLIC_SUPABASE_ANON_KEY": run.supabase.anon_key,
-        "NEXT_PUBLIC_SUPABASE_URL": run.supabase.url,
+        "NEXT_PUBLIC_SUPABASE_URL": expected_supabase_url,
         "NEXUS_EXTENSION_REDIRECT_ORIGINS": f"https://{TEST_EXTENSION_ID}.chromiumapp.org",
         "NEXUS_ENV": "test",
         "NEXUS_INTERNAL_SECRET": "nexus-test-internal-secret",
         "NEXUS_TEST_RUN_ID": run.run_id,
         "R2_ACCESS_KEY_ID": MINIO_ACCESS_KEY,
-        "R2_BUCKET": run.bucket,
+        "R2_BUCKET": expected_bucket,
         "R2_REGION": MINIO_REGION,
         "R2_S3_API_ORIGIN": runtime_endpoint(root, environment, EndpointKind.MINIO),
         "R2_SECRET_ACCESS_KEY": MINIO_SECRET_KEY,
         "STREAM_BASE_URL": runtime_endpoint(root, environment, EndpointKind.API),
         "STREAM_CORS_ORIGINS": runtime_endpoint(root, environment, EndpointKind.WEB),
         "SUPABASE_AUDIENCES": "authenticated",
-        "SUPABASE_ISSUER": f"{run.supabase.url}/auth/v1",
-        "SUPABASE_JWKS_URL": f"{run.supabase.url}/auth/v1/.well-known/jwks.json",
+        "SUPABASE_ISSUER": f"{expected_supabase_url}/auth/v1",
+        "SUPABASE_JWKS_URL": f"{expected_supabase_url}/auth/v1/.well-known/jwks.json",
     }
-    if run.migration_database_url is not None:
-        values["NEXUS_MIGRATION_DATABASE_URL"] = run.migration_database_url
+    if expected_migration_url is not None:
+        values["NEXUS_MIGRATION_DATABASE_URL"] = expected_migration_url
     return values
+
+
+def _expected_migration_database_url(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+    entries: Sequence[LedgerEntry],
+) -> str | None:
+    migration = Resource(ResourceKind.MIGRATION_DATABASE, migration_database_name(run_id))
+    matching = [entry for entry in entries if entry.resource == migration]
+    if not matching:
+        return None
+    _require_created_run_resource(entries, migration)
+    return _database_url(repo_root, environment, migration.identity)
+
+
+def _require_created_run_resource(entries: Sequence[LedgerEntry], resource: Resource) -> None:
+    for entry in entries:
+        if entry.resource == resource:
+            if entry.phase is not ResourcePhase.CREATED:
+                raise RuntimeContractError(
+                    f"child process resource is not durably created: {resource.kind.value}"
+                )
+            return
+    raise RuntimeContractError(
+        f"child process resource is absent from the exact run ledger: {resource.kind.value}"
+    )
 
 
 def new_run_id() -> str:
@@ -635,59 +693,71 @@ def clean_run(
     root = canonical_repo_root(repo_root)
     with run_lifecycle_lock(root, environment, run_id):
         candidates = cleanup_candidates(root, environment, run_id)
-        if any(item.resource.kind is ResourceKind.SUPABASE_USER for item in candidates):
-            supabase = supabase or read_supabase_credentials(root, environment)
+        failures: list[Exception] = []
         for candidate in candidates:
             resource = candidate.resource
-            if resource.kind is ResourceKind.PROCESS:
-                if candidate.external_id is None:
-                    raise RuntimeContractError("owned process lacks its pre-recorded owner token")
-                process_group_id = candidate.process_group_id
-                process_start_token = candidate.process_start_token
-                if process_group_id is None:
-                    recovered = _recover_planned_process_group(
-                        candidate.external_id,
-                        candidate.command,
-                        run_id,
-                    )
-                    if recovered is not None:
-                        process_group_id, process_start_token = recovered
-                if process_group_id is not None:
-                    _stop_process_group(
-                        process_group_id,
-                        process_start_token,
-                        candidate.command,
-                        run_id,
-                        candidate.external_id,
-                    )
-            elif resource.kind is ResourceKind.TEMPLATE_BUILD:
-                if candidate.external_id is None:
-                    raise RuntimeContractError("template build lacks its lifecycle fingerprint")
-                with template_lifecycle_lock(root, environment, candidate.external_id):
+            try:
+                if resource.kind is ResourceKind.PROCESS:
+                    if candidate.external_id is None:
+                        raise RuntimeContractError(
+                            "owned process lacks its pre-recorded owner token"
+                        )
+                    process_group_id = candidate.process_group_id
+                    process_start_token = candidate.process_start_token
+                    if process_group_id is None:
+                        recovered = _recover_planned_process_group(
+                            candidate.external_id,
+                            candidate.command,
+                            run_id,
+                        )
+                        if recovered is not None:
+                            process_group_id, process_start_token = recovered
+                    if process_group_id is not None:
+                        _stop_process_group(
+                            process_group_id,
+                            process_start_token,
+                            candidate.command,
+                            run_id,
+                            candidate.external_id,
+                        )
+                elif resource.kind is ResourceKind.TEMPLATE_BUILD:
+                    if candidate.external_id is None:
+                        raise RuntimeContractError("template build lacks its lifecycle fingerprint")
+                    with template_lifecycle_lock(root, environment, candidate.external_id):
+                        _drop_database(root, environment, resource.identity)
+                elif resource.kind in {
+                    ResourceKind.RUN_DATABASE,
+                    ResourceKind.MIGRATION_DATABASE,
+                }:
                     _drop_database(root, environment, resource.identity)
-            elif resource.kind in {
-                ResourceKind.RUN_DATABASE,
-                ResourceKind.MIGRATION_DATABASE,
-            }:
-                _drop_database(root, environment, resource.identity)
-            elif resource.kind is ResourceKind.BUCKET:
-                _delete_bucket(root, environment, resource.identity)
-            elif resource.kind is ResourceKind.SUPABASE_USER:
-                if supabase is None or candidate.external_id is None:
-                    raise RuntimeContractError("Supabase user lacks its planned exact id")
-                _delete_supabase_user(
-                    root,
-                    environment,
-                    run_id,
-                    resource.identity,
-                    candidate.external_id,
-                    supabase,
+                elif resource.kind is ResourceKind.BUCKET:
+                    _delete_bucket(root, environment, resource.identity)
+                elif resource.kind is ResourceKind.SUPABASE_USER:
+                    if candidate.external_id is None:
+                        raise RuntimeContractError("Supabase user lacks its planned exact id")
+                    if supabase is None:
+                        supabase = ensure_services(root, environment)
+                    _delete_supabase_user(
+                        root,
+                        environment,
+                        run_id,
+                        resource.identity,
+                        candidate.external_id,
+                        supabase,
+                    )
+                elif resource.kind is ResourceKind.EXTENSION_PROFILE:
+                    _delete_extension_profile(root, resource.identity)
+                else:
+                    raise RuntimeContractError(f"clean has no owner for {resource.kind.value}")
+                forget_cleaned(root, environment, run_id, resource)
+            except Exception as error:
+                failures.append(
+                    RuntimeContractError(
+                        f"{resource.kind.value} cleanup failed for {resource.identity}: {error}"
+                    )
                 )
-            elif resource.kind is ResourceKind.EXTENSION_PROFILE:
-                _delete_extension_profile(root, resource.identity)
-            else:
-                raise RuntimeContractError(f"clean has no owner for {resource.kind.value}")
-            forget_cleaned(root, environment, run_id, resource)
+        if failures:
+            raise ExceptionGroup(f"run {run_id} cleanup failed", failures)
         release_run(root, environment, run_id)
 
 
@@ -697,9 +767,14 @@ def clean_owned_runs(repo_root: Path, environment: Mapping[str, str]) -> tuple[s
     if not runtime_record_path(root).exists():
         return ()
     run_ids = read_runtime(root).owned_run_ids
-    credentials = ensure_services(root, environment) if run_ids else None
+    failures: list[Exception] = []
     for run_id in run_ids:
-        clean_run(root, environment, run_id, supabase=credentials)
+        try:
+            clean_run(root, environment, run_id)
+        except Exception as error:
+            failures.append(RuntimeContractError(f"run cleanup failed for {run_id}: {error}"))
+    if failures:
+        raise ExceptionGroup("owned run cleanup failed", failures)
     return run_ids
 
 

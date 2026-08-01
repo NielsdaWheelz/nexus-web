@@ -17,12 +17,15 @@ from nexus_test_control.evidence import (
     DiagnosticRerunEvidence,
     InvocationEvidence,
     PeakOwnedMemory,
+    ProveEvidence,
     RunEvidence,
     diagnostic_evidence_json,
     evidence_json,
     execution_input_fingerprint,
+    prove_evidence_json,
     redact_text,
     run_evidence_from_json,
+    write_evidence_json,
 )
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
@@ -51,7 +54,6 @@ from nexus_test_control.sensitivity import (
     canonical_proof,
     declared_fault_for_proof,
     prove_many,
-    sensitivity_json,
 )
 from nexus_test_control.sensitivity import (
     prove as prove_sensitivity,
@@ -261,19 +263,18 @@ def _execute_workflow(
     output: TextIO,
 ) -> int:
     started = time.monotonic_ns()
-    run_id = new_run_id()
-    results_directory = repo_root / "test-results" / "runs" / run_id
-    results_directory.mkdir(parents=True, exist_ok=False)
-    git_sha = _git_sha(repo_root, "HEAD")
+    run_id, results_directory = _claim_results_directory(repo_root)
     invocation = InvocationEvidence(
         ui=command.ui,
         input_fingerprint=execution_input_fingerprint(environment),
     )
+    git_sha: str | None = None
     base_sha: str | None = None
     selection: tuple[Selection, ...] = ()
     sensitivity: tuple[Sensitivity, ...] = ()
     failure_owner = Capability.POLICY
     try:
+        git_sha = _git_sha(repo_root, "HEAD")
         base_override = None
         if command.workflow is Workflow.PR:
             base_override = environment.get("NEXUS_TEST_BASE_SHA") or "HEAD^"
@@ -539,38 +540,53 @@ def _execute_prove(
     output: TextIO,
 ) -> int:
     started = time.monotonic_ns()
-    proof = canonical_proof(repo_root, command.proof)
-    record = prove_sensitivity(
-        repo_root,
+    run_id, _results_directory = _claim_results_directory(repo_root)
+    invocation = InvocationEvidence(
+        input_fingerprint=execution_input_fingerprint(environment),
+    )
+    git_sha: str | None = None
+    proof = command.proof
+    status = RunStatus.FAIL
+    sensitivity: tuple[Sensitivity, ...] = ()
+    detail = ""
+    try:
+        git_sha = _git_sha(repo_root, "HEAD")
+        proof = canonical_proof(repo_root, command.proof)
+        record = prove_sensitivity(
+            repo_root,
+            proof=proof,
+            changed_paths=(_proof_path(proof),),
+            method=command.method,
+            against=command.against,
+            environment=environment,
+        )
+        sensitivity = (record,)
+        status = RunStatus.PASS
+    except BaseException as error:
+        detail = f"sensitivity execution did not complete: {error}"
+    evidence = ProveEvidence(
+        repo_root=repo_root,
+        run_id=run_id,
         proof=proof,
-        changed_paths=(_proof_path(proof),),
         method=command.method,
         against=command.against,
-        environment=environment,
+        git_sha=git_sha,
+        duration_ms=(time.monotonic_ns() - started) // 1_000_000,
+        status=status,
+        sensitivity=sensitivity,
+        detail=detail,
+        invocation=invocation,
     )
-    run_id = new_run_id()
     relative = Path("test-results") / "runs" / run_id / "summary.json"
-    path = repo_root / relative
-    path.parent.mkdir(parents=True, exist_ok=False)
-    path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "command": "prove",
-                "run_id": run_id,
-                "git_sha": record.green.git_sha,
-                "status": "pass",
-                "duration_ms": (time.monotonic_ns() - started) // 1_000_000,
-                "sensitivity": [sensitivity_json(record)],
-            },
-            indent=2,
-            sort_keys=True,
+    try:
+        write_evidence_json(
+            repo_root / relative,
+            prove_evidence_json(evidence, environment_secrets(environment)),
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    output.write(f"prove: pass; summary={relative.as_posix()}\n")
-    return 0
+    except ValueError as error:
+        raise ControlPlaneError(str(error)) from error
+    output.write(f"prove: {status.value}; summary={relative.as_posix()}\n")
+    return 0 if status is RunStatus.PASS else 1
 
 
 def _workflow_sensitivity(
@@ -611,9 +627,30 @@ def write_summary(
     path = repo_root / relative
     if not path.parent.is_dir():
         raise ControlPlaneError("run evidence directory is absent")
-    with path.open("x", encoding="utf-8") as target:
-        target.write(json.dumps(evidence_json(evidence, secrets), indent=2, sort_keys=True) + "\n")
+    try:
+        write_evidence_json(path, evidence_json(evidence, secrets))
+    except ValueError as error:
+        raise ControlPlaneError(str(error)) from error
     return relative.as_posix()
+
+
+def _claim_results_directory(repo_root: Path) -> tuple[str, Path]:
+    runs = repo_root / "test-results" / "runs"
+    try:
+        runs.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise ControlPlaneError("could not create the run evidence directory") from error
+    for _attempt in range(4):
+        run_id = new_run_id()
+        directory = runs / run_id
+        try:
+            directory.mkdir()
+        except FileExistsError:
+            continue
+        except OSError as error:
+            raise ControlPlaneError("could not claim a run evidence directory") from error
+        return run_id, directory
+    raise ControlPlaneError("could not allocate a unique run evidence directory")
 
 
 def _selection(

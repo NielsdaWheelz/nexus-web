@@ -1,7 +1,9 @@
 import hashlib
 import json
 import math
+import os
 import re
+import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path, PurePosixPath
@@ -148,7 +150,7 @@ class RunEvidence:
     repo_root: InitVar[Path]
     run_id: str
     workflow: Workflow
-    git_sha: str
+    git_sha: str | None
     base_sha: str | None
     duration_ms: int
     peak_owned_mib: PeakOwnedMemory
@@ -162,8 +164,10 @@ class RunEvidence:
             raise ValueError("workflow must be a typed Workflow")
         if not isinstance(self.invocation, InvocationEvidence):
             raise ValueError("invocation must be typed evidence")
-        if not self.run_id.strip() or re.fullmatch(r"[0-9a-f]{40}", self.git_sha) is None:
-            raise ValueError("run id must not be blank and git SHA must be full and lowercase")
+        if not self.run_id.strip():
+            raise ValueError("run id must not be blank")
+        if self.git_sha is not None and re.fullmatch(r"[0-9a-f]{40}", self.git_sha) is None:
+            raise ValueError("run Git SHA must be full and lowercase when resolved")
         if self.base_sha is not None and re.fullmatch(r"[0-9a-f]{40}", self.base_sha) is None:
             raise ValueError("base Git SHA must be full and lowercase")
         _nonnegative("duration", self.duration_ms)
@@ -177,6 +181,8 @@ class RunEvidence:
             missing = sorted(capability.value for capability in required.difference(ids))
             extra = sorted(capability.value for capability in set(ids).difference(required))
             raise ValueError(f"capability evidence differs; missing={missing}, extra={extra}")
+        if self.git_sha is None and self.status is RunStatus.PASS:
+            raise ValueError("a passing run requires an exact Git SHA")
 
         selected_proofs = {item.proof for item in self.selection if item.proof is not None}
         sensitivity_by_proof = {item.proof: item for item in self.sensitivity}
@@ -211,6 +217,54 @@ class RunEvidence:
     @property
     def status(self) -> RunStatus:
         return aggregate_status(tuple(item.status for item in self.capabilities))
+
+
+@dataclass(frozen=True, slots=True)
+class ProveEvidence:
+    repo_root: InitVar[Path]
+    run_id: str
+    proof: str
+    method: SensitivityMethod
+    against: str
+    git_sha: str | None
+    duration_ms: int
+    status: RunStatus
+    sensitivity: tuple[Sensitivity, ...]
+    detail: str = ""
+    invocation: InvocationEvidence = field(default_factory=InvocationEvidence)
+
+    def __post_init__(self, repo_root: Path) -> None:
+        if _RUN_ID.fullmatch(self.run_id) is None:
+            raise ValueError("prove run id must be 16 lowercase hex characters")
+        if not self.proof.strip() or not self.against.strip():
+            raise ValueError("prove requires an exact proof and against target")
+        if not isinstance(self.method, SensitivityMethod) or not isinstance(self.status, RunStatus):
+            raise ValueError("prove method and status must be typed enums")
+        if not isinstance(self.invocation, InvocationEvidence):
+            raise ValueError("prove invocation must be typed evidence")
+        if self.git_sha is not None and re.fullmatch(r"[0-9a-f]{40}", self.git_sha) is None:
+            raise ValueError("prove Git SHA must be full and lowercase when resolved")
+        _nonnegative("prove duration", self.duration_ms)
+        if self.status is RunStatus.PASS:
+            if self.git_sha is None or len(self.sensitivity) != 1 or self.detail:
+                raise ValueError("passing prove evidence requires one result and an exact Git SHA")
+            record = self.sensitivity[0]
+            if record.proof != self.proof or record.green.git_sha != self.git_sha:
+                raise ValueError("prove sensitivity must match its exact proof and Git SHA")
+            if record.proof_digest != compute_proof_digest(
+                repo_root,
+                record.proof,
+                record.changed_paths,
+            ):
+                raise ValueError("prove sensitivity digest must match current proof contents")
+            if record.method is not self.method:
+                raise ValueError("prove sensitivity method does not match its invocation")
+            if self.method is SensitivityMethod.FAULT and record.against.fault_id != self.against:
+                raise ValueError("prove fault result does not match its invocation")
+        elif self.sensitivity or not self.detail.strip():
+            raise ValueError(
+                "unsuccessful prove evidence requires one decisive detail and no result"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,7 +343,7 @@ def run_evidence_from_json(repo_root: Path, value: object) -> RunEvidence:
         repo_root=repo_root,
         run_id=_string(payload["run_id"], "run id"),
         workflow=_enum(Workflow, payload["workflow"], "workflow"),
-        git_sha=_string(payload["git_sha"], "Git SHA"),
+        git_sha=_optional_string(payload["git_sha"], "Git SHA"),
         base_sha=_optional_string(payload["base_sha"], "base SHA"),
         duration_ms=_integer(payload["duration_ms"], "duration"),
         peak_owned_mib=peak,
@@ -302,6 +356,46 @@ def run_evidence_from_json(repo_root: Path, value: object) -> RunEvidence:
     if status is not evidence.status:
         raise ValueError("recorded run status does not match capability evidence")
     return evidence
+
+
+def prove_evidence_from_json(repo_root: Path, value: object) -> ProveEvidence:
+    payload = _exact_object(
+        value,
+        {
+            "version",
+            "command",
+            "run_id",
+            "proof",
+            "method",
+            "against",
+            "git_sha",
+            "status",
+            "duration_ms",
+            "invocation",
+            "sensitivity",
+            "detail",
+        },
+        "prove summary",
+    )
+    if type(payload["version"]) is not int or payload["version"] != 2:
+        raise ValueError("prove summary version must be exactly 2")
+    if payload["command"] != "prove":
+        raise ValueError("prove summary command must be exact")
+    return ProveEvidence(
+        repo_root=repo_root,
+        run_id=_string(payload["run_id"], "run id"),
+        proof=_string(payload["proof"], "proof"),
+        method=_enum(SensitivityMethod, payload["method"], "sensitivity method"),
+        against=_string(payload["against"], "against target"),
+        git_sha=_optional_string(payload["git_sha"], "Git SHA"),
+        duration_ms=_integer(payload["duration_ms"], "duration"),
+        status=_enum(RunStatus, payload["status"], "status"),
+        sensitivity=tuple(
+            _parse_sensitivity(item) for item in _list(payload["sensitivity"], "sensitivity")
+        ),
+        detail=_string(payload["detail"], "detail"),
+        invocation=_parse_invocation(payload["invocation"]),
+    )
 
 
 def _parse_memory(value: object) -> PeakOwnedMemory:
@@ -604,6 +698,65 @@ def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[st
         "capabilities": _capabilities_json(evidence.capabilities),
     }
     return redact_json(payload, secrets)  # type: ignore[return-value]  # justify-type-assertion: payload is a JSON object and redaction preserves its outer shape.
+
+
+def prove_evidence_json(
+    evidence: ProveEvidence, secrets: Iterable[str] = ()
+) -> dict[str, JsonValue]:
+    payload: dict[str, JsonValue] = {
+        "version": 2,
+        "command": "prove",
+        "run_id": evidence.run_id,
+        "proof": evidence.proof,
+        "method": evidence.method.value,
+        "against": evidence.against,
+        "git_sha": evidence.git_sha,
+        "status": evidence.status.value,
+        "duration_ms": evidence.duration_ms,
+        "invocation": {
+            "ui": evidence.invocation.ui,
+            "input_fingerprint": evidence.invocation.input_fingerprint,
+        },
+        "sensitivity": [_sensitivity_json(item) for item in evidence.sensitivity],
+        "detail": evidence.detail,
+    }
+    redacted = redact_json(payload, secrets)
+    if not isinstance(redacted, dict):
+        raise AssertionError("prove evidence redaction changed the object shape")
+    redacted["command"] = "prove"
+    return redacted
+
+
+def write_evidence_json(path: Path, payload: Mapping[str, JsonValue]) -> None:
+    """Publish one complete evidence object without overwriting an existing record."""
+    if not path.parent.is_dir():
+        raise ValueError("evidence directory is absent")
+    temporary: Path | None = None
+    directory_fd: int | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            delete=False,
+        ) as target:
+            temporary = Path(target.name)
+            json.dump(payload, target, indent=2, sort_keys=True)
+            target.write("\n")
+            target.flush()
+            os.fsync(target.fileno())
+        os.link(temporary, path)
+        temporary.unlink()
+        temporary = None
+        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        os.fsync(directory_fd)
+    except OSError as error:
+        raise ValueError(f"evidence could not be published: {path}") from error
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
 
 
 def diagnostic_evidence_json(

@@ -685,7 +685,7 @@ def run_proof(
                 )
             case _:
                 result = _not_run(capability, "exact proof owner has no executor")
-        return _classified_exact_result(result)
+        return _classified_exact_result(result, proof_id)
     finally:
         lifecycle.close()
 
@@ -1789,11 +1789,20 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
     raise ValueError(f"unsupported exact proof owner: {runner_name}:{node}")
 
 
-def _classified_exact_result(result: CapabilityResult) -> CapabilityResult:
+def _classified_exact_result(result: CapabilityResult, proof_id: str) -> CapabilityResult:
     if result.evidence.status is not RunStatus.FAIL:
         return result
     if result.detail.startswith("proof_result="):
-        return result
+        classification, separator, detail = result.detail.partition("|")
+        if not separator:
+            return CapabilityResult(
+                result.evidence,
+                f"proof_result=setup_or_execution_failure|proof_id={proof_id}|{result.detail}",
+            )
+        return CapabilityResult(
+            result.evidence,
+            f"{classification}|proof_id={proof_id}|{detail}",
+        )
     folded = result.detail.casefold()
     if any(
         marker in folded
@@ -1833,7 +1842,10 @@ def _classified_exact_result(result: CapabilityResult) -> CapabilityResult:
         kind = "behavioral_assertion_failure"
     else:
         kind = "setup_or_execution_failure"
-    return CapabilityResult(result.evidence, f"proof_result={kind}|{result.detail}")
+    return CapabilityResult(
+        result.evidence,
+        f"proof_result={kind}|proof_id={proof_id}|{result.detail}",
+    )
 
 
 def _heavy_environment(

@@ -1183,35 +1183,41 @@ def test_run_proof_rejects_missing_or_inexact_browser_nodes_without_preparing_ru
 
 def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behavioral() -> None:
     evidence = CapabilityEvidence(Capability.SERVICE, RunStatus.FAIL, 1, 0)
+    proof = "pytest:python/tests/service/test_owned.py::test_exact"
 
     collection = runner._classified_exact_result(
-        CapabilityResult(evidence, "ERROR collecting tests/service/test_owned.py")
+        CapabilityResult(evidence, "ERROR collecting tests/service/test_owned.py"),
+        proof,
     )
     setup = runner._classified_exact_result(
         CapabilityResult(
             evidence,
             "ERROR at setup of test_exact AssertionError: fixture invariant",
-        )
+        ),
+        proof,
     )
     assertion = runner._classified_exact_result(
         CapabilityResult(
             evidence,
             "FAILED tests/service/test_owned.py::test_exact - AssertionError: property",
-        )
+        ),
+        proof,
     )
     raises_assertion = runner._classified_exact_result(
         CapabilityResult(
             evidence,
             "FAILED tests/service/test_owned.py::test_exact\n"
             "E   Failed: DID NOT RAISE <class 'RuntimeContractError'>",
-        )
+        ),
+        proof,
     )
     browser_assertion = runner._classified_exact_result(
         CapabilityResult(
             evidence,
             "Test Files  1 failed (1)\nTests  3 failed (3)\n"
             "src/lib/reader/proof.browser.test.tsx:200:6",
-        )
+        ),
+        proof,
     )
 
     assert collection.detail.startswith("proof_result=collection_failure|")
@@ -1219,6 +1225,7 @@ def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behav
     assert assertion.detail.startswith("proof_result=behavioral_assertion_failure|")
     assert raises_assertion.detail.startswith("proof_result=behavioral_assertion_failure|")
     assert browser_assertion.detail.startswith("proof_result=behavioral_assertion_failure|")
+    assert f"proof_id={proof}|" in assertion.detail
 
 
 def test_long_command_diagnostic_preserves_the_behavioral_assertion() -> None:
@@ -1236,7 +1243,8 @@ def test_long_command_diagnostic_preserves_the_behavioral_assertion() -> None:
         CapabilityResult(
             CapabilityEvidence(Capability.MIGRATIONS, RunStatus.FAIL, 1, 0),
             detail,
-        )
+        ),
+        "pytest:python/tests/migrations/test_owned.py::test_exact",
     )
 
     assert "intended fault was observed" in detail

@@ -1,22 +1,31 @@
 import base64
 import hashlib
+import json
 import os
 import signal
 import subprocess
 import sys
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.runtime import (
     RuntimeContractError,
     RuntimePorts,
     claim_run,
+    extension_profile_identity,
     initialize_runtime,
+    migration_database_name,
     process_resource_identity,
+    read_ledger,
+    record_created,
     record_planned,
+    run_bucket_name,
+    run_database_name,
 )
 from nexus_test_control.services import (
     TEST_EXTENSION_ID,
@@ -31,6 +40,8 @@ from nexus_test_control.services import (
     clean_run,
     new_run_id,
     run_environment,
+    start_python_process,
+    start_web_process,
 )
 from nexus_test_control.services import TestRun as OwnedRun
 from nexus_test_control.services import (
@@ -46,6 +57,35 @@ RUN_ID = "0123456789abcdef"
 
 def _ports() -> RuntimePorts:
     return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000)
+
+
+def _owned_run(tmp_path: Path, *, migration: bool = True) -> OwnedRun:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    resources = [
+        Resource(ResourceKind.RUN_DATABASE, run_database_name(RUN_ID)),
+        Resource(ResourceKind.BUCKET, run_bucket_name(RUN_ID)),
+    ]
+    if migration:
+        resources.append(Resource(ResourceKind.MIGRATION_DATABASE, migration_database_name(RUN_ID)))
+    for resource in resources:
+        record_planned(tmp_path, TEST_ENV, RUN_ID, resource)
+        record_created(tmp_path, TEST_ENV, RUN_ID, resource)
+    return OwnedRun(
+        run_id=RUN_ID,
+        database_url=_database_url(tmp_path, TEST_ENV, run_database_name(RUN_ID)),
+        migration_database_url=(
+            _database_url(tmp_path, TEST_ENV, migration_database_name(RUN_ID))
+            if migration
+            else None
+        ),
+        bucket=run_bucket_name(RUN_ID),
+        supabase=SupabaseCredentials(
+            "http://127.0.0.1:25421",
+            "public-anon-key",
+            "must-not-escape",
+        ),
+    )
 
 
 def test_run_ids_are_exact_opaque_test_ownership_ids() -> None:
@@ -260,24 +300,7 @@ def test_application_database_url_selects_the_installed_psycopg_driver(tmp_path:
 def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
     tmp_path: Path,
 ) -> None:
-    initialize_runtime(tmp_path, TEST_ENV, _ports())
-    run = OwnedRun(
-        run_id="0123456789abcdef",
-        database_url=(
-            "postgresql+psycopg://127.0.0.1:15432/nexus_run_0123456789abcdef"
-            "?user=postgres&password=postgres"
-        ),
-        migration_database_url=(
-            "postgresql+psycopg://127.0.0.1:15432/nexus_migration_0123456789abcdef"
-            "?user=postgres&password=postgres"
-        ),
-        bucket="nexus-run-0123456789abcdef",
-        supabase=SupabaseCredentials(
-            "http://127.0.0.1:25421",
-            "public-anon-key",
-            "must-not-escape",
-        ),
-    )
+    run = _owned_run(tmp_path)
 
     environment = run_environment(tmp_path, TEST_ENV, run)
 
@@ -296,6 +319,132 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
         "SUPABASE_SERVICE_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
     }.intersection(environment)
+
+
+@pytest.mark.parametrize(
+    "run",
+    (
+        OwnedRun(
+            RUN_ID,
+            "postgresql+psycopg://production.example/nexus",
+            None,
+            run_bucket_name(RUN_ID),
+            SupabaseCredentials("http://127.0.0.1:25421", "anon", "admin"),
+        ),
+        OwnedRun(
+            RUN_ID,
+            "postgresql+psycopg://127.0.0.1:15432/other",
+            None,
+            "production-library",
+            SupabaseCredentials("https://production.example", "anon", "admin"),
+        ),
+    ),
+    ids=("public-database", "foreign-owned-resources"),
+)
+def test_python_child_rejects_unpersisted_or_public_run_resources_before_spawn(
+    tmp_path: Path,
+    run: OwnedRun,
+) -> None:
+    persisted = _owned_run(tmp_path, migration=False)
+    poisoned = replace(
+        run,
+        database_url=run.database_url,
+        migration_database_url=persisted.migration_database_url,
+    )
+
+    with pytest.raises(RuntimeContractError, match="exact persisted local test run"):
+        start_python_process(tmp_path, TEST_ENV, poisoned, "api")
+
+    assert not any(
+        entry.resource.kind is ResourceKind.PROCESS
+        for entry in read_ledger(tmp_path, RUN_ID).entries
+    )
+
+
+def test_web_child_rejects_public_supabase_before_recording_or_spawning_process(
+    tmp_path: Path,
+) -> None:
+    run = _owned_run(tmp_path, migration=False)
+    poisoned = replace(
+        run,
+        supabase=SupabaseCredentials("https://production.example", "anon", "admin"),
+    )
+    artifact = tmp_path / ".nexus-test/builds" / ("a" * 64)
+    artifact.mkdir(parents=True)
+    server = artifact / "server.js"
+    server.write_text("throw new Error('must not run')\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeContractError, match="exact persisted local test run"):
+        start_web_process(
+            tmp_path,
+            TEST_ENV,
+            poisoned,
+            StandaloneBuild("a" * 64, artifact, server),
+        )
+
+    assert not any(
+        entry.resource.kind is ResourceKind.PROCESS
+        for entry in read_ledger(tmp_path, RUN_ID).entries
+    )
+
+
+def test_cleanup_repairs_an_interrupted_empty_claim_and_releases_exact_ownership(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    runtime_path = tmp_path / ".nexus-test/runtime.json"
+    interrupted = json.loads(runtime_path.read_text(encoding="utf-8"))
+    interrupted["owned_run_ids"] = [RUN_ID]
+    runtime_path.write_text(json.dumps(interrupted), encoding="utf-8")
+
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    assert runtime["owned_run_ids"] == []
+    assert not (tmp_path / ".nexus-test/runs" / RUN_ID).exists()
+
+
+def test_cleanup_attempts_every_resource_and_retains_only_failed_ownership(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    recoverable = Resource(
+        ResourceKind.EXTENSION_PROFILE,
+        extension_profile_identity(RUN_ID, "recoverable"),
+    )
+    unsafe = Resource(
+        ResourceKind.EXTENSION_PROFILE,
+        extension_profile_identity(RUN_ID, "unsafe"),
+    )
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        recoverable,
+        scenario_id="recoverable",
+    )
+    record_planned(tmp_path, TEST_ENV, RUN_ID, unsafe, scenario_id="unsafe")
+    recoverable_path = tmp_path / recoverable.identity
+    recoverable_path.mkdir(parents=True)
+    foreign = tmp_path / "foreign-profile"
+    foreign.mkdir()
+    sentinel = foreign / "sentinel.txt"
+    sentinel.write_text("preserve\n", encoding="utf-8")
+    unsafe_path = tmp_path / unsafe.identity
+    unsafe_path.symlink_to(foreign, target_is_directory=True)
+
+    with pytest.raises(ExceptionGroup, match=f"run {RUN_ID} cleanup failed"):
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+    assert not recoverable_path.exists()
+    assert sentinel.read_text(encoding="utf-8") == "preserve\n"
+    assert [entry.resource for entry in read_ledger(tmp_path, RUN_ID).entries] == [unsafe]
+
+    unsafe_path.unlink()
+    unsafe_path.mkdir()
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
+    assert not (tmp_path / ".nexus-test/runs" / RUN_ID).exists()
 
 
 def test_extension_redirect_id_is_derived_from_the_staged_public_key() -> None:

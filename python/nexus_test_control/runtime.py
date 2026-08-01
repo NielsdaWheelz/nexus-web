@@ -221,7 +221,8 @@ def claim_run(repo_root: Path, environment: Mapping[str, str], run_id: str) -> R
         ledger_path = resource_ledger_path(repo_root, run_id)
         if ledger_path.exists():
             raise RuntimeContractError(f"run is already recorded: {run_id}")
-        if run_id not in record.owned_run_ids:
+        interrupted_claim = run_id in record.owned_run_ids
+        if not interrupted_claim:
             record = replace(record, owned_run_ids=tuple(sorted((*record.owned_run_ids, run_id))))
             _write_json(runtime_record_path(repo_root), _runtime_to_json(record))
         ledger = RunLedger(LEDGER_VERSION, record.repo_id, run_id, ())
@@ -354,6 +355,7 @@ def cleanup_candidates(
     require_test_environment(environment)
     require_run_id(run_id)
     with _state_lock(repo_root, f"run-{run_id}"):
+        _repair_interrupted_claim(repo_root, run_id)
         runtime = read_runtime(repo_root)
         ledger = read_ledger(repo_root, run_id)
         return tuple(
@@ -366,6 +368,23 @@ def cleanup_candidates(
                 entry.process_start_token,
             )
             for entry in reversed(ledger.entries)
+        )
+
+
+def _repair_interrupted_claim(repo_root: Path, run_id: str) -> None:
+    """Materialize the empty ledger for an ownership write interrupted before publication."""
+    ledger_path = resource_ledger_path(repo_root, run_id)
+    if ledger_path.exists():
+        return
+    with _state_lock(repo_root, "runtime"):
+        if ledger_path.exists():
+            return
+        runtime = read_runtime(repo_root)
+        if run_id not in runtime.owned_run_ids:
+            raise RuntimeContractError("run is not owned by the persisted runtime")
+        _write_json(
+            ledger_path,
+            _ledger_to_json(RunLedger(LEDGER_VERSION, runtime.repo_id, run_id, ())),
         )
 
 

@@ -148,6 +148,7 @@ def prove_many(
                     )
                 red_results[index] = behavioral_red(
                     red_result,
+                    proof=item.request.proof,
                     expected_failure=(
                         item.fault.expected_failure if item.fault is not None else None
                     ),
@@ -189,6 +190,7 @@ def prove_many(
 def behavioral_red(
     result: CapabilityResult,
     *,
+    proof: str,
     expected_failure: str | None,
 ) -> SensitivityRed:
     prefix = "proof_result=behavioral_assertion_failure|"
@@ -197,7 +199,11 @@ def behavioral_red(
             "unfixed/faulted proof did not fail at its behavioral assertion: "
             f"{result.evidence.status.value}: {result.detail}"
         )
-    detail = redact_text(result.detail.removeprefix(prefix))
+    bound_prefix = f"proof_id={proof}|"
+    bound_detail = result.detail.removeprefix(prefix)
+    if not bound_detail.startswith(bound_prefix):
+        raise SensitivityError("unfixed/faulted failure was not bound to the exact requested proof")
+    detail = redact_text(bound_detail.removeprefix(bound_prefix))
     if expected_failure is not None and expected_failure not in detail:
         raise SensitivityError(
             "faulted proof failed for a different reason; expected fingerprint "
@@ -208,7 +214,10 @@ def behavioral_red(
         if "falsifying example:" in detail.casefold()
         else SensitivityPhase.ASSERTION
     )
-    fingerprint = expected_failure or _failure_fingerprint(detail)
+    assertion_fingerprint = expected_failure or _failure_fingerprint(detail)
+    fingerprint = (
+        "sha256:" + hashlib.sha256(f"{proof}\0{assertion_fingerprint}".encode()).hexdigest()
+    )
     return SensitivityRed(phase, fingerprint)
 
 
@@ -298,28 +307,6 @@ def isolated_worktree(
             ) from error
         _git(repo_root, "worktree", "remove", "--force", str(checkout))
         shutil.rmtree(temporary)
-
-
-def sensitivity_json(value: Sensitivity) -> dict[str, object]:
-    return {
-        "proof": value.proof,
-        "changed_paths": list(value.changed_paths),
-        "proof_digest": value.proof_digest,
-        "method": value.method.value,
-        "against": {
-            "git_sha": value.against.git_sha,
-            "fault_id": value.against.fault_id,
-        },
-        "red": {
-            "status": value.red.status.value,
-            "phase": value.red.phase.value,
-            "failure_fingerprint": value.red.failure_fingerprint,
-        },
-        "green": {
-            "status": value.green.status.value,
-            "git_sha": value.green.git_sha,
-        },
-    }
 
 
 def _base_overlays(proof_path: str) -> tuple[str, ...]:

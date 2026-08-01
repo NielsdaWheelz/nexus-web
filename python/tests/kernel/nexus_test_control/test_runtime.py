@@ -155,6 +155,24 @@ def test_runtime_ports_cannot_be_replaced_after_resource_ownership_exists(tmp_pa
         initialize_runtime(tmp_path, TEST_ENV, changed)
 
 
+def test_claim_restart_repairs_ownership_persisted_before_its_empty_ledger(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    runtime_path = tmp_path / ".nexus-test/runtime.json"
+    interrupted = json.loads(runtime_path.read_text(encoding="utf-8"))
+    interrupted["owned_run_ids"] = [RUN_ID]
+    runtime_path.write_text(json.dumps(interrupted), encoding="utf-8")
+
+    ledger = claim_run(tmp_path, TEST_ENV, RUN_ID)
+
+    assert ledger.run_id == RUN_ID
+    assert ledger.entries == ()
+    assert read_ledger(tmp_path, RUN_ID) == ledger
+    with pytest.raises(RuntimeContractError, match="already recorded"):
+        claim_run(tmp_path, TEST_ENV, RUN_ID)
+
+
 def test_resource_is_persisted_as_planned_before_it_can_be_created(tmp_path: Path) -> None:
     _runtime(tmp_path)
     database = Resource(ResourceKind.RUN_DATABASE, run_database_name(RUN_ID))

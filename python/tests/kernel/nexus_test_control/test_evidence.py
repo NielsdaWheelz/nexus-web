@@ -7,10 +7,13 @@ from nexus_test_control.evidence import (
     CapabilityEvidence,
     DiagnosticRerunEvidence,
     PeakOwnedMemory,
+    ProveEvidence,
     RunEvidence,
     compute_proof_digest,
     diagnostic_evidence_json,
     evidence_json,
+    prove_evidence_from_json,
+    prove_evidence_json,
     redact_json,
     run_evidence_from_json,
 )
@@ -123,6 +126,37 @@ def test_run_summary_round_trips_through_exact_typed_loading(tmp_path: Path) -> 
 
     loaded = run_evidence_from_json(tmp_path, evidence_json(evidence))
 
+    assert loaded == evidence
+
+
+def test_prove_summary_v2_round_trips_through_its_typed_contract(tmp_path: Path) -> None:
+    relative, proof, digest = _proof(tmp_path)
+    sensitivity = Sensitivity(
+        proof=proof,
+        changed_paths=(relative,),
+        proof_digest=digest,
+        method=SensitivityMethod.FAULT,
+        against=SensitivityAgainst(git_sha=None, fault_id="wrong-value"),
+        red=SensitivityRed(SensitivityPhase.ASSERTION, "sha256:" + "c" * 64),
+        green=SensitivityGreen("a" * 40),
+    )
+    evidence = ProveEvidence(
+        repo_root=tmp_path,
+        run_id="0123456789abcdef",
+        proof=proof,
+        method=SensitivityMethod.FAULT,
+        against="wrong-value",
+        git_sha="a" * 40,
+        duration_ms=4,
+        status=RunStatus.PASS,
+        sensitivity=(sensitivity,),
+    )
+
+    payload = prove_evidence_json(evidence)
+    loaded = prove_evidence_from_json(tmp_path, payload)
+
+    assert payload["version"] == 2
+    assert payload["command"] == "prove"
     assert loaded == evidence
 
 

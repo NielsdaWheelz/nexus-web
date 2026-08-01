@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from nexus_test_control.cli import (
+    ControlPlaneError,
     DiagnoseCommand,
     ListCommand,
     ProveCommand,
@@ -23,6 +24,8 @@ from nexus_test_control.evidence import (
     PeakOwnedMemory,
     RunEvidence,
     execution_input_fingerprint,
+    prove_evidence_from_json,
+    run_evidence_from_json,
 )
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
@@ -176,6 +179,10 @@ def test_summary_coexists_with_same_run_failure_artifacts(tmp_path: Path) -> Non
     assert relative == f"test-results/runs/{run_id}/summary.json"
     assert (run_directory / "doctor-1.log").read_text(encoding="utf-8") == "diagnostic\n"
     assert (run_directory / "summary.json").is_file()
+    original = (run_directory / "summary.json").read_bytes()
+    with pytest.raises(ControlPlaneError, match="could not be published"):
+        write_summary(tmp_path, evidence)
+    assert (run_directory / "summary.json").read_bytes() == original
 
 
 def test_diagnose_replays_failed_workflow_once_but_keeps_failed_verdict(
@@ -351,6 +358,23 @@ def test_selection_failure_still_writes_a_typed_failed_run_summary(tmp_path: Pat
     policy = next(item for item in summary["capabilities"] if item["id"] == "policy")
     assert policy["status"] == "fail"
     assert "could not select changed proof" in policy["detail"]
+
+
+def test_git_preflight_failure_still_writes_typed_fail_closed_workflow_evidence(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    output = StringIO()
+
+    assert main(["doctor"], repo_root=tmp_path, environment={}, stdout=output) == 1
+
+    summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    evidence = run_evidence_from_json(tmp_path, summary)
+    assert summary["version"] == 2
+    assert evidence.git_sha is None
+    assert evidence.status is RunStatus.FAIL
+    assert "could not resolve git revision 'HEAD'" in evidence.capabilities[0].detail
 
 
 @pytest.mark.parametrize(
@@ -576,6 +600,7 @@ def test_prove_requires_a_clean_committed_checkout(tmp_path: Path) -> None:
     proof.parent.mkdir(parents=True)
     proof.write_text("def test_rule():\n    assert True\n")
     errors = StringIO()
+    output = StringIO()
 
     exit_code = main(
         [
@@ -586,13 +611,19 @@ def test_prove_requires_a_clean_committed_checkout(tmp_path: Path) -> None:
             "base:HEAD",
         ],
         repo_root=tmp_path,
+        stdout=output,
         stderr=errors,
     )
 
     assert exit_code == 1
-    assert errors.getvalue() == (
-        "test control failed: sensitivity requires a clean committed checkout\n"
-    )
+    assert errors.getvalue() == ""
+    summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    evidence = prove_evidence_from_json(tmp_path, summary)
+    assert summary["version"] == 2
+    assert summary["command"] == "prove"
+    assert evidence.status is RunStatus.FAIL
+    assert "clean committed checkout" in evidence.detail
 
 
 def test_clean_is_a_no_op_without_owned_runtime_state(tmp_path: Path) -> None:

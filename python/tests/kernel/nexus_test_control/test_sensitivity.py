@@ -30,6 +30,7 @@ from nexus_test_control.sensitivity import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+EXACT_PROOF = "pytest:python/tests/service/test_owner.py::test_owner"
 
 
 def _failure(detail: str, *, capability: Capability = Capability.SERVICE) -> CapabilityResult:
@@ -43,7 +44,8 @@ def test_behavioral_red_rejects_collection_and_setup_failures() -> None:
     for kind in ("collection_failure", "setup_or_execution_failure"):
         with pytest.raises(SensitivityError, match="behavioral assertion"):
             behavioral_red(
-                _failure(f"proof_result={kind}|unrelated harness failure"),
+                _failure(f"proof_result={kind}|proof_id={EXACT_PROOF}|unrelated harness failure"),
+                proof=EXACT_PROOF,
                 expected_failure=None,
             )
 
@@ -52,13 +54,28 @@ def test_behavioral_red_records_the_declared_fault_fingerprint_and_property_phas
     result = behavioral_red(
         _failure(
             "proof_result=behavioral_assertion_failure|"
+            f"proof_id={EXACT_PROOF}|"
             "AssertionError: exact invariant\nFalsifying example: value=0"
         ),
+        proof=EXACT_PROOF,
         expected_failure="exact invariant",
     )
 
-    assert result.failure_fingerprint == "exact invariant"
+    assert result.failure_fingerprint.startswith("sha256:")
     assert result.phase is SensitivityPhase.PROPERTY
+
+
+def test_behavioral_red_rejects_an_assertion_from_a_different_proof_node() -> None:
+    with pytest.raises(SensitivityError, match="exact requested proof"):
+        behavioral_red(
+            _failure(
+                "proof_result=behavioral_assertion_failure|"
+                "proof_id=pytest:python/tests/service/test_other.py::test_other|"
+                "AssertionError: exact invariant"
+            ),
+            proof=EXACT_PROOF,
+            expected_failure="exact invariant",
+        )
 
 
 def test_fault_lookup_requires_exact_proof_ownership(tmp_path: Path) -> None:
@@ -260,10 +277,8 @@ def test_fault_portfolio_reverses_each_fault_without_mutating_the_source_checkou
         environment=environment,
     )
 
-    assert [result.red.failure_fingerprint for result in results] == [
-        "first fault observed",
-        "second fault observed",
-    ]
+    assert all(result.red.failure_fingerprint.startswith("sha256:") for result in results)
+    assert results[0].red.failure_fingerprint != results[1].red.failure_fingerprint
     assert (owner / "values.py").read_text() == "FIRST = 1\nSECOND = 1\n"
 
 
