@@ -63,14 +63,19 @@
     {
       "id": "migration-compatibility",
       "source_globs": [
-        "migrations/alembic/**/*.py"
+        "migrations/alembic/**/*.py",
+        "python/nexus/ops/deployment_migrations.py",
+        "python/nexus/ops/epub_navigation_offsets_cutover.py"
       ],
       "proofs": [
         "pytest:python/tests/migrations/test_supported_upgrade.py::test_empty_owned_database_upgrades_to_the_single_head",
-        "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head"
+        "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head",
+        "pytest:python/tests/migrations/test_epub_navigation_offsets_migration.py::test_0208_backfills_exact_offsets_and_0209_rejects_unrepaired_projection",
+        "pytest:python/tests/kernel/test_epub_navigation_offsets_cutover.py::test_cutover_state_model_admits_only_resumable_media_and_owned_dead_work"
       ],
       "capabilities": [
-        "migrations"
+        "migrations",
+        "kernel-python"
       ]
     },
     {
@@ -126,15 +131,19 @@
         "python/nexus/services/resource_graph/citations.py",
         "python/nexus/services/agent_tools/web_search.py",
         "python/nexus/schemas/retrieval.py",
-        "apps/web/src/lib/conversations/citations.ts"
+        "apps/web/src/lib/conversations/citations.ts",
+        "apps/web/src/components/PdfReader.tsx"
       ],
       "proofs": [
         "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence",
         "pytest:python/tests/service/test_reader_document_positions.py::test_epub_navigation_and_document_map_share_exact_canonical_positions",
-        "pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
+        "pytest:python/tests/service/test_epub_structural_anchors.py::test_epub_ingest_repairs_structural_anchors_without_reordering_intervals",
+        "pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity",
+        "vitest:apps/web/src/components/PdfReader.browser.test.tsx"
       ],
       "capabilities": [
-        "service"
+        "service",
+        "component"
       ]
     },
     {

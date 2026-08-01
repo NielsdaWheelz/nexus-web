@@ -1,3 +1,8 @@
+import {
+  errors,
+  type Page,
+  type Request,
+} from "playwright/test";
 import { uniqueCanonicalReaderEpub } from "../corpus";
 import {
   expect,
@@ -10,6 +15,38 @@ import {
 import { matchesResponse, pageRequest } from "../request";
 
 test.use({ journeyId: "reader-progress-resume" });
+
+const READER_STATE_IDLE_SAVE_DEBOUNCE_MS = 500;
+// A restored reader stays under observation for two complete owned idle-save
+// windows: one for the restore publication and one for its settled follow-up.
+const RESTORE_WRITE_QUIET_WINDOW_MS = READER_STATE_IDLE_SAVE_DEBOUNCE_MS * 2;
+
+function matchesReaderStateWrite(request: Request, mediaId: string): boolean {
+  const url = new URL(request.url());
+  return (
+    url.origin === webOrigin &&
+    request.method() === "PUT" &&
+    url.pathname === `/api/media/${mediaId}/reader-state`
+  );
+}
+
+async function waitForReaderStateWrite(
+  page: Page,
+  mediaId: string,
+  timeout: number,
+): Promise<Request | null> {
+  try {
+    return await page.waitForRequest(
+      (request) => matchesReaderStateWrite(request, mediaId),
+      { timeout },
+    );
+  } catch (error) {
+    if (error instanceof errors.TimeoutError) {
+      return null;
+    }
+    throw error;
+  }
+}
 
 async function uploadCanonicalEpub(
   page: Parameters<typeof signIn>[0],
@@ -152,6 +189,34 @@ test("reader progress resumes, completes, and resets through its product actions
     )
     .toBe(target!.section_id);
 
+  let resumedDocumentCommitted = false;
+  const resumedReaderStateWriteRequests: Request[] = [];
+  const resumedReaderStateWriteFingerprints: string[] = [];
+  page.once("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) {
+      resumedDocumentCommitted = true;
+    }
+  });
+  page.on("request", (request) => {
+    if (resumedDocumentCommitted && matchesReaderStateWrite(request, mediaId)) {
+      resumedReaderStateWriteRequests.push(request);
+    }
+  });
+  page.on("response", (response) => {
+    if (
+      resumedDocumentCommitted &&
+      matchesResponse(
+        response,
+        webOrigin,
+        "PUT",
+        `/api/media/${mediaId}/reader-state`,
+      )
+    ) {
+      resumedReaderStateWriteFingerprints.push(
+        `PUT ${new URL(response.url()).pathname} -> ${response.status()}`,
+      );
+    }
+  });
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
   await expect(
     page.getByRole("heading", { name: target!.label, exact: true }),
@@ -163,6 +228,51 @@ test("reader progress resumes, completes, and resets through its product actions
     page.getByText(/Omega proves the selected section/).first(),
     `Fresh reader document for ${mediaId} resumed the label but not the Second passage.`,
   ).toBeVisible();
+
+  const awaitedRestoreWrite = await waitForReaderStateWrite(
+    page,
+    mediaId,
+    RESTORE_WRITE_QUIET_WINDOW_MS,
+  );
+  const unexpectedRestoreWrite =
+    resumedReaderStateWriteRequests[0] ?? awaitedRestoreWrite;
+  expect(
+    unexpectedRestoreWrite,
+    `Programmatic restore for ${mediaId} echoed a reader-state write within the ${RESTORE_WRITE_QUIET_WINDOW_MS}ms detection window: ${resumedReaderStateWriteFingerprints.join(", ")}.`,
+  ).toBeNull();
+
+  const targetIndex = sections.findIndex(
+    (section) => section.section_id === target!.section_id,
+  );
+  const genuineNavigationTarget = sections[targetIndex - 1];
+  expect(
+    genuineNavigationTarget,
+    `EPUB ${mediaId} did not expose a section before ${target!.section_id} for genuine navigation.`,
+  ).toBeDefined();
+  const genuineWriteRequestPromise = page.waitForRequest((request) =>
+    matchesReaderStateWrite(request, mediaId),
+  );
+  await page
+    .getByRole("button", { name: "Previous section", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: genuineNavigationTarget!.label,
+      exact: true,
+    }),
+    `Genuine reader navigation did not render ${genuineNavigationTarget!.section_id} (${genuineNavigationTarget!.label}).`,
+  ).toBeVisible();
+  const genuineWriteRequest = await genuineWriteRequestPromise;
+  const genuineWrite = await genuineWriteRequest.response();
+  expect(
+    genuineWrite,
+    `Genuine reader navigation for ${mediaId} did not receive a BFF response.`,
+  ).not.toBeNull();
+  const genuineWriteText = await genuineWrite!.text();
+  expect(
+    genuineWrite!.ok(),
+    `Genuine reader navigation for ${mediaId} failed to persist: ${genuineWrite!.status()} ${genuineWriteText}`,
+  ).toBeTruthy();
 
   await page.getByRole("button", { name: "Options", exact: true }).click();
   const completionResponsePromise = page.waitForResponse(
@@ -197,7 +307,9 @@ test("reader progress resumes, completes, and resets through its product actions
     (response) =>
       matchesResponse(response, webOrigin, "POST", "/api/consumption/commands"),
   );
-  await page.getByRole("menuitem", { name: "Reset progress", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Reset progress", exact: true })
+    .click();
   const resetResponse = await resetResponsePromise;
   expect(
     resetResponse.ok(),

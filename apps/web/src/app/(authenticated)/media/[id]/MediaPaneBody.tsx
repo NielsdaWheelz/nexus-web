@@ -166,6 +166,7 @@ import {
   usePaneRouter,
   usePaneSearchParams,
   useSetPaneLabel,
+  usePaneIsActive,
   usePaneRuntime,
   requirePaneRuntime,
 } from "@/lib/panes/paneRuntime";
@@ -671,6 +672,7 @@ function evidenceItemSnippet(item: ReaderEvidenceItem): string | null {
 
 export default function MediaPaneBody() {
   const paneRuntime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
+  const isPaneActive = usePaneIsActive();
   const activatePaneTarget = paneRuntime.activateTarget;
   const id = usePaneParam("id");
   if (!id) {
@@ -1150,7 +1152,7 @@ export default function MediaPaneBody() {
       sourceKey: id,
       enabled:
         isMobileViewport &&
-        paneRuntime.isActive &&
+        isPaneActive &&
         isTranscriptMedia &&
         canRead,
     });
@@ -1196,7 +1198,7 @@ export default function MediaPaneBody() {
   );
   const readerProgress = useReaderProgress({
     capability: readerCapability,
-    isPaneActive: paneRuntime.isActive,
+    isPaneActive,
     captureCurrentLocator: useCallback(
       () => captureCurrentLocatorRef.current(),
       [],
@@ -3089,6 +3091,14 @@ export default function MediaPaneBody() {
         ? isCanonicalTextAnchorVisible(container, cursor, resumeOffset)
         : false;
       if (restored && visible) {
+        // The scroll positioner can settle between two canonical text
+        // boundaries: the next viewport publication may therefore capture a
+        // different visible-start offset than the exact restored anchor. It is
+        // still the tail of this programmatic restore, not genuine reading
+        // movement, so seed that captured boundary without echoing a cursor
+        // write. This also fences remote handoff adoption from writing the
+        // position it just accepted back to the server.
+        mediaFindPreviewLease.armNextCaptureSuppression();
         scrollRestoreAppliedRef.current = true;
         lastSavedTextAnchorOffsetRef.current = resumeOffset;
         releaseChrome();
@@ -3136,6 +3146,7 @@ export default function MediaPaneBody() {
     readerResumePosition,
     readerLayoutReady,
     restorePhase,
+    mediaFindPreviewLease,
     mobileChromeVisibleLocks,
     readerScrollPositioner,
     settleRestoreSession,
@@ -5433,7 +5444,7 @@ export default function MediaPaneBody() {
     mediaId: id,
     observerKey: readerActivityObserverKey,
     canRead,
-    paneActive: paneRuntime.isActive,
+    paneActive: isPaneActive,
     viewport,
     readerRootRef,
     pdfViewportRef,
@@ -6594,7 +6605,7 @@ export default function MediaPaneBody() {
   //   G c       → chat (opens new pane)
   //   G e       → Evidence surface
   useEffect(() => {
-    if (!paneRuntime.isActive) return;
+    if (!isPaneActive) return;
 
     let chordPendingG = false;
     let chordTimeoutId: number | null = null;
@@ -6684,7 +6695,7 @@ export default function MediaPaneBody() {
     documentMapAvailable,
     inspectorRegionId,
     openChatForMedia,
-    paneRuntime.isActive,
+    isPaneActive,
     requestSecondarySurface,
     toggleInspector,
   ]);
@@ -7898,7 +7909,7 @@ export default function MediaPaneBody() {
       <div
         className={styles.mobileDocumentState}
         data-mobile-reader-interaction-root={
-          paneRuntime.isActive ? "true" : undefined
+          isPaneActive ? "true" : undefined
         }
         data-testid="mobile-reader-interaction-root"
       >
@@ -7912,7 +7923,7 @@ export default function MediaPaneBody() {
       <div
         className={`${styles.errorContainer} ${styles.mobileDocumentState}`}
         data-mobile-reader-interaction-root={
-          paneRuntime.isActive ? "true" : undefined
+          isPaneActive ? "true" : undefined
         }
         data-testid="mobile-reader-interaction-root"
       >
@@ -7934,7 +7945,7 @@ export default function MediaPaneBody() {
       <div
         className={`${styles.content} ${styles.mobileDocumentState}`}
         data-mobile-reader-interaction-root={
-          paneRuntime.isActive ? "true" : undefined
+          isPaneActive ? "true" : undefined
         }
         data-testid="mobile-reader-interaction-root"
       >
@@ -8132,7 +8143,7 @@ export default function MediaPaneBody() {
         data-chrome-revealed={chromeRevealed ? "true" : undefined}
         data-view-transition-part="reader"
         data-mobile-reader-interaction-root={
-          paneRuntime.isActive ? "true" : undefined
+          isPaneActive ? "true" : undefined
         }
         data-testid="mobile-reader-interaction-root"
       >
@@ -8185,7 +8196,7 @@ export default function MediaPaneBody() {
                         ? (videoSeekTargetMs ?? activeRequestedStartMs)
                         : null
                     }
-                    paneActive={paneRuntime.isActive}
+                    paneActive={isPaneActive}
                     paneInstance={paneRuntime.paneId}
                     onSeek={handleTranscriptSeek}
                   />
@@ -8253,7 +8264,7 @@ export default function MediaPaneBody() {
                   key={`${id}:${canonicalResetRevision ?? "initial"}`}
                   mediaId={id}
                   mobileChromeEnabled={
-                    isMobileViewport && paneRuntime.isActive && canRead
+                    isMobileViewport && isPaneActive && canRead
                   }
                   beforeContent={readerBanners}
                   viewportRef={pdfViewportRef}
@@ -8362,7 +8373,7 @@ export default function MediaPaneBody() {
                   : `${id}:epub`
               }
               mobileChromeEnabled={
-                isMobileViewport && paneRuntime.isActive && canRead
+                isMobileViewport && isPaneActive && canRead
               }
               scrollPositioner={readerScrollPositioner}
               beforeContent={readerBanners}
@@ -8406,7 +8417,7 @@ export default function MediaPaneBody() {
               mediaId={id}
               mobileChromeSourceKey={id}
               mobileChromeEnabled={
-                isMobileViewport && paneRuntime.isActive && canRead
+                isMobileViewport && isPaneActive && canRead
               }
               scrollPositioner={readerScrollPositioner}
               beforeContent={readerBanners}

@@ -41,6 +41,7 @@ import {
   definePaneVisitDataKey,
   requirePaneRuntime,
   useClearAllPaneVisitData,
+  usePaneIsActive,
   usePaneReturnReady,
   usePaneRuntime,
   usePaneVisitData,
@@ -80,6 +81,7 @@ function seedFromPage(
 
 export default function ConversationsPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "ConversationsPaneBody");
+  const isPaneActive = usePaneIsActive();
   const visibleRowIdsRef = useRef<readonly string[]>([]);
   const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
   const pendingFocusRafRef = useRef(0);
@@ -287,7 +289,7 @@ export default function ConversationsPaneBody() {
   );
 
   const exhaustion = useExhaustivePagination<ConversationListItem>({
-    active: runtime.isActive && controller !== null && !refreshingIndex,
+    active: isPaneActive && controller !== null && !refreshingIndex,
     chainKey: `mine:${chainEpoch}`,
     cursor: controller?.nextCursor ?? NO_CURSOR,
     collectionRevision: controller?.collectionRevision ?? ZERO_REVISION,

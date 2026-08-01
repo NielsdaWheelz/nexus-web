@@ -53,6 +53,7 @@ import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
+  usePaneIsActive,
   usePaneReturnReady,
   usePaneRouter,
   usePaneRuntime,
@@ -143,6 +144,7 @@ function encodePodcastListState(
 
 export default function PodcastsPaneBody() {
   const paneRuntime = requirePaneRuntime(usePaneRuntime(), "PodcastsPaneBody");
+  const isPaneActive = usePaneIsActive();
   const paneRouter = usePaneRouter();
   const paneSearchParams = usePaneSearchParams();
   const podcastListCodec = useMemo(
@@ -562,7 +564,7 @@ export default function PodcastsPaneBody() {
   );
   const exhaustion = useExhaustivePagination({
     active:
-      paneRuntime.isActive &&
+      isPaneActive &&
       controller !== null &&
       controller.queryIdentity === subscriptionQueryIdentity &&
       !allowInitialAdoptionRef.current,

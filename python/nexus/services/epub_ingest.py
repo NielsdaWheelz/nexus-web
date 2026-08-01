@@ -25,7 +25,7 @@ from uuid import UUID
 from xml.etree import ElementTree as ET
 
 from lxml.etree import LxmlError
-from lxml.html import HtmlElement, tostring
+from lxml.html import Element, HtmlElement, tostring
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -403,6 +403,8 @@ class _NavLocationSpec:
     fragment_idx: int
     href_path: str | None
     href_fragment: str | None
+    start_offset: int
+    end_offset: int
     source: str
 
 
@@ -646,23 +648,18 @@ def build_epub_extraction_plan(
             all_block_specs.append(parse_fragment_blocks(canonical_text))
 
         fragments = [frag for frag, _ch, _items, _edges in fragment_specs]
-        nav_locations = _materialize_nav_locations(toc_nodes, fragments, retained_hrefs)
-        previous_start_by_fragment: dict[int, int] = {}
-        for location in nav_locations:
-            start_offset = (
-                0
-                if location.href_fragment is None
-                else anchor_offsets_by_fragment[location.fragment_idx][location.href_fragment]
+        try:
+            nav_locations = _materialize_nav_locations(
+                toc_nodes,
+                fragments,
+                retained_hrefs,
+                anchor_offsets_by_fragment,
             )
-            previous_start = previous_start_by_fragment.get(location.fragment_idx, -1)
-            if start_offset < previous_start:
-                return EpubExtractionError(
-                    error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
-                    error_message=(
-                        f"EPUB navigation target {location.location_id} is out of document order"
-                    ),
-                )
-            previous_start_by_fragment[location.fragment_idx] = start_offset
+        except ValueError as exc:
+            return EpubExtractionError(
+                error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
+                error_message=str(exc),
+            )
 
         # ---- check parse-time budget ---------------------------------------
         elapsed_ms = int((time.monotonic() - t_start) * 1000)
@@ -863,6 +860,8 @@ def publish_epub_extraction_plan(
                 fragment_idx=nav.fragment_idx,
                 href_path=nav.href_path,
                 href_fragment=nav.href_fragment,
+                start_offset=nav.start_offset,
+                end_offset=nav.end_offset,
                 source=nav.source,
                 created_at=plan.now,
             )
@@ -1287,6 +1286,8 @@ def _rewrite_chapter_resources(
             f"Failed to parse EPUB chapter resources: {chapter_href}"
         ) from exc
 
+    if doc.body is not None:
+        _materialize_epub_body_anchor(doc.body)
     for element in doc.iter():
         if not isinstance(element, HtmlElement):
             continue
@@ -1642,10 +1643,33 @@ def _sanitize_epub_element(element: HtmlElement) -> None:
         return
 
     if tag not in _EPUB_ALLOWED_HTML_TAGS and tag not in _EPUB_ALLOWED_SVG_TAGS:
+        if _element_id(element) is not None:
+            element.tag = "span"
+            _sanitize_epub_attributes(element, "span")
+            return
         unwrap_element(element)
         return
 
     _sanitize_epub_attributes(element, tag)
+
+
+def _materialize_epub_body_anchor(body: HtmlElement) -> None:
+    """Move a source body ID onto a safe child before apparatus extracts its contents."""
+    body_id = _element_id(body)
+    if body_id is None:
+        return
+
+    marker = Element("span", id=body_id)
+    marker.tail = body.text
+    body.text = None
+    body.insert(0, marker)
+
+
+def _element_id(element: HtmlElement) -> str | None:
+    for attr, value in element.attrib.items():
+        if _normalized_attr_name(attr) == "id" and value.strip():
+            return value
+    return None
 
 
 def _sanitize_epub_attributes(element: HtmlElement, tag: str) -> None:
@@ -2076,6 +2100,7 @@ def _materialize_nav_locations(
     toc_nodes: list[_TocNodeSpec],
     fragments: list[Fragment],
     retained_hrefs: list[str],
+    anchor_offsets_by_fragment: dict[int, dict[str, int]],
 ) -> list[_NavLocationSpec]:
     """Build canonical section rows in fragment/spine order."""
     locations: list[_NavLocationSpec] = []
@@ -2108,6 +2133,8 @@ def _materialize_nav_locations(
                         fragment_idx=frag.idx,
                         href_path=href_path,
                         href_fragment=href_fragment,
+                        start_offset=0,
+                        end_offset=0,
                         source="toc",
                     )
                 )
@@ -2127,10 +2154,35 @@ def _materialize_nav_locations(
                 fragment_idx=frag.idx,
                 href_path=chapter_href,
                 href_fragment=None,
+                start_offset=0,
+                end_offset=0,
                 source="spine",
             )
         )
         ordinal += 1
+
+    fragments_by_idx = {fragment.idx: fragment for fragment in fragments}
+    indexes_by_fragment: dict[int, list[int]] = {}
+    for index, location in enumerate(locations):
+        location.start_offset = (
+            0
+            if location.href_fragment is None
+            else anchor_offsets_by_fragment[location.fragment_idx][location.href_fragment]
+        )
+        indexes_by_fragment.setdefault(location.fragment_idx, []).append(index)
+
+    for fragment_idx, indexes in indexes_by_fragment.items():
+        fragment = fragments_by_idx[fragment_idx]
+        ordered_starts = sorted({locations[index].start_offset for index in indexes})
+        end_by_start = {
+            start: ordered_starts[position + 1]
+            if position + 1 < len(ordered_starts)
+            else len(fragment.canonical_text)
+            for position, start in enumerate(ordered_starts)
+        }
+        for index in indexes:
+            location = locations[index]
+            location.end_offset = end_by_start[location.start_offset]
 
     return locations
 

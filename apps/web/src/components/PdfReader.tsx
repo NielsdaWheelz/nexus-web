@@ -496,6 +496,21 @@ async function loadPageHighlights(
   );
 }
 
+function upsertCommittedPageHighlight(
+  highlights: PdfHighlightOut[],
+  committed: PdfHighlightOut,
+): PdfHighlightOut[] {
+  const existingIndex = highlights.findIndex(
+    (highlight) => highlight.id === committed.id,
+  );
+  if (existingIndex < 0) {
+    return [...highlights, committed];
+  }
+  return highlights.map((highlight, index) =>
+    index === existingIndex ? committed : highlight,
+  );
+}
+
 function isTextLayerEligibleNode(
   node: Node | null,
   textLayerRoot: HTMLElement | null,
@@ -2451,6 +2466,14 @@ export default function PdfReader({
           createdHighlight = response.data;
         }
 
+        if (
+          createdHighlight?.anchor.type === "pdf_page_geometry" &&
+          createdHighlight.anchor.page_number === pageNumberRef.current
+        ) {
+          setPageHighlights((current) =>
+            upsertCommittedPageHighlight(current, createdHighlight),
+          );
+        }
         setLocalHighlightRefreshToken((value) => value + 1);
         onHighlightsMutated?.();
         clearSelection();

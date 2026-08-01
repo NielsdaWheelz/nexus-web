@@ -1,10 +1,39 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { playwright } from "@vitest/browser-playwright";
+import { readFileSync } from "node:fs";
 import path from "path";
+import type { Plugin } from "vite";
+
+function serveVendoredPdfJs(): Plugin {
+  const vendoredModules = new Map(
+    ["pdf.mjs", "pdf_viewer.mjs", "pdf.worker.min.mjs"].map((filename) => [
+      `/pdfjs/${filename}`,
+      readFileSync(path.resolve(__dirname, "public/pdfjs", filename)),
+    ]),
+  );
+
+  return {
+    name: "serve-vendored-pdfjs",
+    enforce: "pre",
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const pathname = request.url?.split("?", 1)[0] ?? "";
+        const module = vendoredModules.get(pathname);
+        if (!module) {
+          next();
+          return;
+        }
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "text/javascript; charset=utf-8");
+        response.end(module);
+      });
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [serveVendoredPdfJs(), react()],
   define: {
     "process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN": JSON.stringify(
       "http://localhost:3000",

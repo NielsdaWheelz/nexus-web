@@ -879,7 +879,11 @@ export function WorkspaceStoreProvider({
   stateRef.current = state;
   const recentlyClosedPanesRef = useRef(recentlyClosedPanes);
   recentlyClosedPanesRef.current = recentlyClosedPanes;
-  const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
+  const { primaryPaneOrder, primaryPanesById } = state;
+  const primaryPanes = useMemo(
+    () => getWorkspacePrimaryPanes({ primaryPaneOrder, primaryPanesById }),
+    [primaryPaneOrder, primaryPanesById],
+  );
   const returnMemento = usePaneReturnMementoCommands();
   const feedback = useFeedback();
 

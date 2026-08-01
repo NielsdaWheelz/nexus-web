@@ -1,0 +1,6 @@
+diff --git a/apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx b/apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx
+--- a/apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx
++++ b/apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx
+@@ -3101,2 +3101,1 @@ export default function MediaPaneBody() {
+-        mediaFindPreviewLease.armNextCaptureSuppression();
+         scrollRestoreAppliedRef.current = true;

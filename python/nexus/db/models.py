@@ -6010,6 +6010,8 @@ class EpubNavLocation(Base):
     fragment_idx: Mapped[int] = mapped_column(Integer, nullable=False)
     href_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     href_fragment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

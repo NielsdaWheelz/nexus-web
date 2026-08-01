@@ -1,0 +1,7 @@
+diff --git a/python/nexus/ops/epub_navigation_offsets_cutover.py b/python/nexus/ops/epub_navigation_offsets_cutover.py
+--- a/python/nexus/ops/epub_navigation_offsets_cutover.py
++++ b/python/nexus/ops/epub_navigation_offsets_cutover.py
+@@ -30,2 +30,2 @@ from nexus.services.media_source_ingest import (
+-_IN_FLIGHT_ATTEMPT_STATUSES = frozenset({"accepted", "queued", "running"})
++_IN_FLIGHT_ATTEMPT_STATUSES = frozenset({"accepted", "queued", "running", "failed"})
+ _UNRESOLVED_JOB_STATUSES = frozenset({"pending", "running", "failed", "dead"})

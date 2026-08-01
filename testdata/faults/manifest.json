@@ -263,6 +263,51 @@
         "vitest:apps/web/src/lib/reader/usePendingDocumentMapPulse.browser.test.tsx"
       ],
       "expected_failure": "pulses=apparatus-highlight;apparatus=source-reference-1"
+    },
+    {
+      "id": "pdf-committed-highlight-projection-bypass",
+      "patch": "testdata/faults/pdf-committed-highlight-projection-bypass.patch",
+      "sha256": "6b2f9469076ad361088bdb136785207ee8d97c90a3177aab3ce11e2905174a48",
+      "proofs": [
+        "vitest:apps/web/src/components/PdfReader.browser.test.tsx"
+      ],
+      "expected_failure": "Committed PDF highlight disappeared before BFF reconciliation completed."
+    },
+    {
+      "id": "epub-structural-anchor-preservation-bypass",
+      "patch": "testdata/faults/epub-structural-anchor-preservation-bypass.patch",
+      "sha256": "8648d13fc976360e288023344616f34819494977f82e96bbe71fc1d6c0746c35",
+      "proofs": [
+        "pytest:python/tests/service/test_epub_structural_anchors.py::test_epub_ingest_repairs_structural_anchors_without_reordering_intervals"
+      ],
+      "expected_failure": "structural-anchor EPUB did not produce an extraction plan"
+    },
+    {
+      "id": "epub-offset-interval-validation-bypass",
+      "patch": "testdata/faults/epub-offset-interval-validation-bypass.patch",
+      "sha256": "f606fca0a65bfa9207245018d785307e59eb3a5dcfc2e58ad26ef05923f6bea2",
+      "proofs": [
+        "pytest:python/tests/migrations/test_epub_navigation_offsets_migration.py::test_0208_backfills_exact_offsets_and_0209_rejects_unrepaired_projection"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "epub-cutover-failed-attempt-admission",
+      "patch": "testdata/faults/epub-cutover-failed-attempt-admission.patch",
+      "sha256": "102739e42a4d72b65b9e47c6ce8824b12a7781cf91a1c305b1ea12bf1ef759cc",
+      "proofs": [
+        "pytest:python/tests/kernel/test_epub_navigation_offsets_cutover.py::test_cutover_state_model_admits_only_resumable_media_and_owned_dead_work"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "reader-restore-write-suppression-bypass",
+      "patch": "testdata/faults/reader-restore-write-suppression-bypass.patch",
+      "sha256": "4ba2c32e5e288e7ff9b1deeb8e62dec12c1abff2a2bc0204cdeec5869356240f",
+      "proofs": [
+        "playwright:apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts"
+      ],
+      "expected_failure": "echoed a reader-state write within"
     }
   ]
 }

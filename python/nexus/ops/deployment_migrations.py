@@ -44,6 +44,11 @@ MANUAL_RELEASE_GATES = (
         workflow="PodcastFreshness",
         instructions="deployment.md#podcast-freshness-revision-0203-hard-cut",
     ),
+    ManualReleaseGate(
+        revision="0208",
+        workflow="EpubNavigationOffsets",
+        instructions="deployment.md#epub-navigation-offsets-revision-0208-hard-cut",
+    ),
 )
 
 
