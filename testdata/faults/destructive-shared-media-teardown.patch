@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/media_deletion.py b/python/nexus/services/media_deletion.py
+--- a/python/nexus/services/media_deletion.py
++++ b/python/nexus/services/media_deletion.py
+@@ -237,7 +237,7 @@ def remove_media_for_viewer(
+         from nexus.services.artifacts.dossier_types import AudienceUser
+ 
+         remaining_reference_count = _total_reference_count(db, media_id)
+-        if remaining_reference_count == 0 and media[0] in _DOCUMENT_KINDS:
++        if remaining_reference_count >= 0 and media[0] in _DOCUMENT_KINDS:
+             claim_media_teardown(db, media_id)
+             result_kind = "Deleting"
+         else:

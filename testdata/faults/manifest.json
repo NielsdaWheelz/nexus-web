@@ -10,6 +10,96 @@
         "pytest:python/tests/service/test_control_plane_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run"
       ],
       "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "auth-privacy-visibility-bypass",
+      "patch": "testdata/faults/auth-privacy-visibility-bypass.patch",
+      "sha256": "f91050004ba8c4c48c829a60c11518ff384ef993a869094f88ed5ba990a213d9",
+      "proofs": [
+        "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "destructive-shared-media-teardown",
+      "patch": "testdata/faults/destructive-shared-media-teardown.patch",
+      "sha256": "cf9428c3976c3cc22c79bfc0750b695c881e6aa852f04ec627dc8a8edfacff80",
+      "proofs": [
+        "pytest:python/tests/service/test_destructive_side_effects.py::test_viewer_removal_preserves_shared_media_database_and_object"
+      ],
+      "expected_failure": "shared media removal unexpectedly selected a destructive branch"
+    },
+    {
+      "id": "migration-head-schema-omission",
+      "patch": "testdata/faults/migration-head-schema-omission.patch",
+      "sha256": "7c2a8b14d2fb8ba149b511825150519fe4e28dd27a1663ed28b37a3d004acbb5",
+      "proofs": [
+        "pytest:python/tests/migrations/test_supported_upgrade.py::test_empty_owned_database_upgrades_to_the_single_head"
+      ],
+      "expected_failure": "head schema is missing product-spine tables"
+    },
+    {
+      "id": "migration-podcast-canonicalization-bypass",
+      "patch": "testdata/faults/migration-podcast-canonicalization-bypass.patch",
+      "sha256": "5dc618d74c0fc7b8f7f263628cf4f8d19826353de9af14b142436594c862b4de",
+      "proofs": [
+        "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head"
+      ],
+      "expected_failure": "0207 must canonicalize legacy Podcast instants"
+    },
+    {
+      "id": "costly-effects-replay-charge",
+      "patch": "testdata/faults/costly-effects-replay-charge.patch",
+      "sha256": "892bb565271651c438fa13edcdd8903ecbf589fda1b4383bf98932ee2de34541",
+      "proofs": [
+        "pytest:python/tests/service/test_costly_effects.py::test_token_budget_reservation_and_settlement_are_exactly_once"
+      ],
+      "expected_failure": "replayed settlement changed the first durable charge"
+    },
+    {
+      "id": "reading-progress-cas-bypass",
+      "patch": "testdata/faults/reading-progress-cas-bypass.patch",
+      "sha256": "f9b7b3bbe84e30bb10fec6f5aa229a1e359606874ac6d7cf2e64257706539a21",
+      "proofs": [
+        "pytest:python/tests/service/test_reading_progress.py::test_reader_cursor_cas_rejects_stale_progress_without_partial_side_effects"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "citation-canonical-locator-bypass",
+      "patch": "testdata/faults/citation-canonical-locator-bypass.patch",
+      "sha256": "ec54e76c045dc02579e820d0846cccbf59048bc0b6f4c856462abe1dffc0bf68",
+      "proofs": [
+        "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence"
+      ],
+      "expected_failure": "citation did not publish a canonical evidence locator"
+    },
+    {
+      "id": "durable-job-fence-bypass",
+      "patch": "testdata/faults/durable-job-fence-bypass.patch",
+      "sha256": "a71537f871f47b09f2e16b6726e74adf19421da696c8be0e4d251a92d7c73231",
+      "proofs": [
+        "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker"
+      ],
+      "expected_failure": "expired claimant mutated the recovered terminal job"
+    },
+    {
+      "id": "database-object-delete-obligation-bypass",
+      "patch": "testdata/faults/database-object-delete-obligation-bypass.patch",
+      "sha256": "7a90a1ebee72eaaf05c00fa3c59c8b935f13f6649414e60f4e403e808f1cb492",
+      "proofs": [
+        "pytest:python/tests/service/test_database_object_convergence.py::test_owned_object_write_and_document_delete_converge_across_postgres_and_minio"
+      ],
+      "expected_failure": "database deletion did not publish its exact object cleanup obligation"
+    },
+    {
+      "id": "llm-tool-context-authorization-bypass",
+      "patch": "testdata/faults/llm-tool-context-authorization-bypass.patch",
+      "sha256": "5655d47e5dc7c044e9ea822d9be34fe3722e1ddf8cda4a6c7ddf84af4e6a82da",
+      "proofs": [
+        "pytest:python/tests/evals/test_tool_authorization.py::test_prompt_injected_resource_reads_are_refused_without_side_effects"
+      ],
+      "expected_failure": "tool authorization baseline failures"
     }
   ]
 }

@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/agent_tools/read_resource.py b/python/nexus/services/agent_tools/read_resource.py
+--- a/python/nexus/services/agent_tools/read_resource.py
++++ b/python/nexus/services/agent_tools/read_resource.py
+@@ -158,7 +158,7 @@ def execute_read_resource(
+ ) -> ReadResourceResult:
+     """Read the exact text of a referenced resource for a chat turn."""
+ 
+-    if not _readable_in_conversation(db, conversation_id, uri):
++    if False and not _readable_in_conversation(db, conversation_id, uri):
+         return ReadResourceResult(
+             uri=uri,
+             status="error",
