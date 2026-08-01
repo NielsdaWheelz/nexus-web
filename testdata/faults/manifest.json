@@ -303,7 +303,7 @@
     {
       "id": "reader-restore-write-suppression-bypass",
       "patch": "testdata/faults/reader-restore-write-suppression-bypass.patch",
-      "sha256": "4ba2c32e5e288e7ff9b1deeb8e62dec12c1abff2a2bc0204cdeec5869356240f",
+      "sha256": "191c33c5558b60a45389d3ebccb10c55474c45f00769aebf18768aa5be933537",
       "proofs": [
         "playwright:apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts"
       ],

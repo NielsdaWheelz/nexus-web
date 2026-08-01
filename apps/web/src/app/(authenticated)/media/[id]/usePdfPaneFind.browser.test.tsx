@@ -191,7 +191,7 @@ describe("PDF Pane Find adapter", () => {
     );
     expect(focusBeforeLeaseRelease).toHaveBeenCalledTimes(1);
     expect(previewLease.isActive()).toBe(false);
-    expect(previewLease.consumeNextCaptureSuppression(false)).toBe(true);
+    expect(previewLease.consumeCaptureSuppression(false)).toBe(true);
   });
 
   it("finishes Return against a republished runtime after source access refresh", async () => {
@@ -252,7 +252,7 @@ describe("PDF Pane Find adapter", () => {
     );
     expect(refreshedRuntime.clearPresentation).toHaveBeenCalledTimes(1);
     expect(previewLease.isActive()).toBe(false);
-    expect(previewLease.consumeNextCaptureSuppression(false)).toBe(true);
+    expect(previewLease.consumeCaptureSuppression(false)).toBe(true);
   });
 
   it("maps empty page text to NoMatches and whole-document text failure to retryable copy", async () => {

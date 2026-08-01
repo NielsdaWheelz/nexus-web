@@ -3098,7 +3098,7 @@ export default function MediaPaneBody() {
         // movement, so seed that captured boundary without echoing a cursor
         // write. This also fences remote handoff adoption from writing the
         // position it just accepted back to the server.
-        mediaFindPreviewLease.armNextCaptureSuppression();
+        mediaFindPreviewLease.armCaptureSuppressionUntilGenuineInput();
         scrollRestoreAppliedRef.current = true;
         lastSavedTextAnchorOffsetRef.current = resumeOffset;
         releaseChrome();
@@ -5391,7 +5391,7 @@ export default function MediaPaneBody() {
   );
   const handleGenuineReaderInput = useCallback((): boolean => {
     documentMapPositioningRef.current = false;
-    mediaFindPreviewLease.consumeNextCaptureSuppression(true);
+    mediaFindPreviewLease.consumeCaptureSuppression(true);
     epubAdoptionCaptureSuppressionRef.current = false;
     const adoptsEpubFind = awaitingEpubFindAdoptionRef.current;
     if (adoptsEpubFind) {
@@ -5432,7 +5432,7 @@ export default function MediaPaneBody() {
       if (publishedViewport?.intent !== "Reader") {
         return;
       }
-      if (mediaFindPreviewLease.consumeNextCaptureSuppression(false)) {
+      if (mediaFindPreviewLease.consumeCaptureSuppression(false)) {
         return;
       }
       reportReaderMovement(publishedViewport.primaryLocator);
@@ -5916,7 +5916,7 @@ export default function MediaPaneBody() {
       return;
     }
     if (
-      mediaFindPreviewLease.consumeNextCaptureSuppression(
+      mediaFindPreviewLease.consumeCaptureSuppression(
         publication.trustedIntent,
       )
     ) {

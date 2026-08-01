@@ -8,7 +8,8 @@ export interface MediaFindPreviewLease {
   retire(): void;
   subscribe(listener: () => void): () => void;
   armNextCaptureSuppression(): void;
-  consumeNextCaptureSuppression(trustedIntent: boolean): boolean;
+  armCaptureSuppressionUntilGenuineInput(): void;
+  consumeCaptureSuppression(trustedIntent: boolean): boolean;
 }
 
 /**
@@ -20,6 +21,7 @@ export function createMediaFindPreviewLease(): MediaFindPreviewLease {
   let active = false;
   let retired = false;
   let suppressNextCapture = false;
+  let suppressCapturesUntilGenuineInput = false;
   const listeners = new Set<() => void>();
 
   const publish = () => {
@@ -34,24 +36,35 @@ export function createMediaFindPreviewLease(): MediaFindPreviewLease {
   return {
     isActive: () => active || retired,
     beginSource() {
-      const changed = active || retired || suppressNextCapture;
+      const changed =
+        active ||
+        retired ||
+        suppressNextCapture ||
+        suppressCapturesUntilGenuineInput;
       active = false;
       retired = false;
       suppressNextCapture = false;
+      suppressCapturesUntilGenuineInput = false;
       if (changed) publish();
     },
     acquire() {
       if (retired) return;
       suppressNextCapture = false;
+      suppressCapturesUntilGenuineInput = false;
       if (active) return;
       active = true;
       publish();
     },
-    releaseForGenuineInput: release,
+    releaseForGenuineInput() {
+      suppressNextCapture = false;
+      suppressCapturesUntilGenuineInput = false;
+      release();
+    },
     cancelUnreportedPreview: release,
     completeReturn: release,
     retire() {
       suppressNextCapture = false;
+      suppressCapturesUntilGenuineInput = false;
       if (retired) return;
       retired = true;
       publish();
@@ -63,7 +76,18 @@ export function createMediaFindPreviewLease(): MediaFindPreviewLease {
     armNextCaptureSuppression() {
       suppressNextCapture = true;
     },
-    consumeNextCaptureSuppression(trustedIntent) {
+    armCaptureSuppressionUntilGenuineInput() {
+      suppressCapturesUntilGenuineInput = true;
+    },
+    consumeCaptureSuppression(trustedIntent) {
+      if (suppressCapturesUntilGenuineInput) {
+        if (trustedIntent) {
+          suppressCapturesUntilGenuineInput = false;
+          suppressNextCapture = false;
+          return false;
+        }
+        return true;
+      }
       if (!suppressNextCapture) return false;
       suppressNextCapture = false;
       return !trustedIntent;
