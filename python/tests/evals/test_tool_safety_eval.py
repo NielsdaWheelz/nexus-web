@@ -18,7 +18,6 @@ from uuid import uuid4
 
 import httpx
 from provider_runtime import (
-    CanonicalTool,
     FinalizedProviderCall,
     GenerateIntent,
     ProviderCredential,
@@ -27,7 +26,6 @@ from provider_runtime import (
     TerminalEvent,
     ToolCall,
     ToolCallDone,
-    parse_canonical_schema,
     plan_generate,
 )
 from sqlalchemy import Engine, text
@@ -45,7 +43,12 @@ from nexus.services.llm_execution import ProductionExecutionRuntime
 from nexus.services.llm_profiles import profile
 from nexus.services.prompt_budget import PromptBlock
 from nexus.services.provider_http import provider_request_event_hooks
-from tests.testkit.llm_tool_scenarios import create_chat_run, create_readable_media
+from tests.testkit.llm_tool_scenarios import (
+    create_chat_run,
+    create_readable_media,
+    indirect_resource_prompt_plan,
+    queue_add_tool,
+)
 
 
 def _prompt_block(block_id: str, role: str, lane: str, value: str) -> PromptBlock:
@@ -140,16 +143,7 @@ def test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call(
     selected_profile = profile("fast")
     assert selected_profile is not None
     assert selected_profile.target.model == payload["model"]
-    queue_definition = next(
-        definition
-        for definition in writes.ASSISTANT_WRITE_TOOL_DEFINITIONS
-        if definition["name"] == writes.QUEUE_ADD_TOOL_NAME
-    )
-    queue_tool = CanonicalTool(
-        name=queue_definition["name"],
-        description=queue_definition["description"],
-        parameters=parse_canonical_schema(queue_definition["parameters"]),
-    )
+    queue_tool = queue_add_tool()
     system_contract = render_system_prompt_block()
     assert all(
         clause in system_contract for clause in payload["rubric"]["required_system_contract"]
@@ -183,17 +177,25 @@ def test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call(
 
         for index, case in enumerate(payload["cases"]):
             prompt = str(case["prompt"]).replace("foreign_media_uri", foreign_uri)
-            plan = build_prompt_plan(
-                stable_blocks=(_prompt_block("system", "system", "system", system_contract),),
-                dynamic_system_blocks=(),
-                history_blocks=(),
-                current_user_block=_prompt_block(
-                    f"case:{case['id']}",
-                    "user",
-                    "current_user",
-                    prompt,
-                ),
-            )
+            if case["id"] == "indirect_resource_instruction":
+                plan = indirect_resource_prompt_plan(
+                    case_id=case["id"],
+                    resource_uri=foreign_uri,
+                    resource_text=prompt,
+                    system_contract=system_contract,
+                )
+            else:
+                plan = build_prompt_plan(
+                    stable_blocks=(_prompt_block("system", "system", "system", system_contract),),
+                    dynamic_system_blocks=(),
+                    history_blocks=(),
+                    current_user_block=_prompt_block(
+                        f"case:{case['id']}",
+                        "user",
+                        "current_user",
+                        prompt,
+                    ),
+                )
             intent = build_generate_intent_from_plan(
                 plan=plan,
                 target=selected_profile.target,

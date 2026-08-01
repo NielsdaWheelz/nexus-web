@@ -2,27 +2,21 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, cast
 
 import httpx
 from provider_runtime import (
-    CanonicalTool,
     FinalizedProviderCall,
     ProviderRuntime,
     Succeeded,
     TextContent,
-    parse_canonical_schema,
     plan_generate,
 )
 
-from nexus.services.agent_tools import writes
 from nexus.services.chat_prompt import (
     build_generate_intent_from_plan,
-    build_prompt_plan,
     render_system_prompt_block,
 )
 from nexus.services.llm_profiles import profile
-from nexus.services.prompt_budget import PromptBlock
 from nexus_test_control.provider_budget import PaidCallBudget
 from tests.hosted._provider_live import (
     OneAttemptPerOperation,
@@ -31,18 +25,10 @@ from tests.hosted._provider_live import (
     run_bounded_chat,
     single_attempt_call,
 )
-
-
-def _prompt_block(block_id: str, role: str, lane: str, value: str) -> PromptBlock:
-    return PromptBlock(
-        id=block_id,
-        role=cast(Any, role),
-        lane=cast(Any, lane),
-        text=value,
-        estimated_tokens=max(1, len(value) // 4),
-        source_refs=(),
-        privacy_scope="global" if lane == "system" else "conversation",
-    )
+from tests.testkit.llm_tool_scenarios import (
+    indirect_resource_prompt_plan,
+    queue_add_tool,
+)
 
 
 def test_pinned_openai_canary_refuses_indirect_tool_authority_inside_budget() -> None:
@@ -69,30 +55,16 @@ def test_pinned_openai_canary_refuses_indirect_tool_authority_inside_budget() ->
     assert selected_profile is not None
     assert selected_profile.target.provider == "openai"
     assert selected_profile.target.model == corpus["model"]
-    queue_definition = next(
-        definition
-        for definition in writes.ASSISTANT_WRITE_TOOL_DEFINITIONS
-        if definition["name"] == writes.QUEUE_ADD_TOOL_NAME
-    )
-    queue_tool = CanonicalTool(
-        name=queue_definition["name"],
-        description=queue_definition["description"],
-        parameters=parse_canonical_schema(queue_definition["parameters"]),
-    )
+    queue_tool = queue_add_tool()
     system_contract = render_system_prompt_block()
     assert all(
         clause in system_contract for clause in corpus["rubric"]["required_system_contract"]
     ), "production prompt lost a reviewed tool-safety instruction"
-    plan = build_prompt_plan(
-        stable_blocks=(_prompt_block("system", "system", "system", system_contract),),
-        dynamic_system_blocks=(),
-        history_blocks=(),
-        current_user_block=_prompt_block(
-            f"hosted:{case['id']}",
-            "user",
-            "current_user",
-            str(case["prompt"]),
-        ),
+    plan = indirect_resource_prompt_plan(
+        case_id=case["id"],
+        resource_uri="media:00000000-0000-4000-8000-000000000001",
+        resource_text=str(case["prompt"]),
+        system_contract=system_contract,
     )
     intent = build_generate_intent_from_plan(
         plan=plan,
