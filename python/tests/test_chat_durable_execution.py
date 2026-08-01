@@ -50,6 +50,7 @@ from nexus.services.chat_run_steps import (
 )
 from nexus.services.chat_runs import (
     PublishedChatExecution,
+    SkippedChatExecution,
     cancel_chat_run,
     create_chat_run,
     execute_chat_run,
@@ -69,9 +70,7 @@ pytestmark = pytest.mark.integration
 @pytest.fixture(autouse=True)
 def _execution_dependencies(db_session: Session, monkeypatch: pytest.MonkeyPatch):
     previous_limiter = get_rate_limiter()
-    set_rate_limiter(
-        RateLimiter(session_factory=cast(Any, task_session_factory(db_session)))
-    )
+    set_rate_limiter(RateLimiter(session_factory=cast(Any, task_session_factory(db_session))))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-platform-openai")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-platform")
     clear_settings_cache()
@@ -124,6 +123,8 @@ class _TextRuntime:
                 )
             ),
         )
+
+
 class _DispatchCrashRuntime:
     def __init__(self) -> None:
         self.calls = 0
@@ -243,10 +244,7 @@ def _seed_claimed_chat(db: Session, *, worker_id: str) -> tuple[UUID, UUID, JobR
     )
     run_id = response.run.id
     job_id = db.execute(
-        text(
-            "SELECT id FROM background_jobs "
-            "WHERE kind = 'chat_run' AND dedupe_key = :dedupe_key"
-        ),
+        text("SELECT id FROM background_jobs WHERE kind = 'chat_run' AND dedupe_key = :dedupe_key"),
         {"dedupe_key": f"chat_run:{run_id}"},
     ).scalar_one()
     claimed = claim_job(
@@ -351,21 +349,91 @@ async def test_completed_generation_replays_without_second_provider_dispatch(
     )
     assert isinstance(outcome, PublishedChatExecution)
     assert no_dispatch.calls == 0
-    assert db_session.execute(
-        text("SELECT count(*) FROM llm_calls WHERE owner_kind = 'chat_run' AND owner_id = :id"),
-        {"id": run_id},
-    ).scalar_one() == 1
-    assert db_session.execute(
-        text(
-            "SELECT count(*) FROM chat_run_events "
-            "WHERE run_id = :id AND event_type = 'done'"
-        ),
-        {"id": run_id},
-    ).scalar_one() == 1
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM llm_calls WHERE owner_kind = 'chat_run' AND owner_id = :id"),
+            {"id": run_id},
+        ).scalar_one()
+        == 1
+    )
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM chat_run_events WHERE run_id = :id AND event_type = 'done'"),
+            {"id": run_id},
+        ).scalar_one()
+        == 1
+    )
     assert db_session.execute(
         text("SELECT payload FROM background_jobs WHERE id = :job_id"),
         {"job_id": first_job.id},
     ).scalar_one() == {"run_id": str(run_id)}
+
+
+async def test_committed_publication_reclaim_never_republishes(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import nexus.services.chat_runs as chat_runs
+
+    worker_id = "chat-publication-reclaim-worker"
+    _user_id, run_id, first_job = _seed_claimed_chat(db_session, worker_id=worker_id)
+    original_publish = chat_runs._publish_chat_run
+
+    def publish_then_crash(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        original_publish(*args, **kwargs)
+        raise RuntimeError("simulated crash after committed publication")
+
+    monkeypatch.setattr(chat_runs, "_publish_chat_run", publish_then_crash)
+    first_runtime = _TextRuntime("Published exactly once.")
+    with pytest.raises(RuntimeError, match="after committed publication"):
+        await _execute(
+            db_session,
+            run_id=run_id,
+            job=first_job,
+            worker_id=worker_id,
+            runtime=first_runtime,
+        )
+    assert first_runtime.calls == 1
+
+    committed_job = get_job(db_session, first_job.id)
+    assert committed_job is not None
+    assert committed_job.payload == {"run_id": str(run_id)}
+    reclaimed = _fail_and_reclaim(db_session, committed_job, worker_id=worker_id)
+    assert reclaimed.status == "running"
+
+    monkeypatch.setattr(chat_runs, "_publish_chat_run", original_publish)
+    no_dispatch = _NoDispatchRuntime()
+    outcome = await _execute(
+        db_session,
+        run_id=run_id,
+        job=reclaimed,
+        worker_id=worker_id,
+        runtime=no_dispatch,
+    )
+    assert isinstance(outcome, SkippedChatExecution)
+    assert outcome.reason == "Terminal"
+    assert no_dispatch.calls == 0
+    assert (
+        db_session.execute(
+            text(
+                "SELECT count(*) FROM chat_run_events "
+                "WHERE run_id = :run_id AND event_type = 'done'"
+            ),
+            {"run_id": run_id},
+        ).scalar_one()
+        == 1
+    )
+    assert (
+        db_session.execute(
+            text(
+                "SELECT count(*) FROM messages "
+                "WHERE id = (SELECT assistant_message_id FROM chat_runs WHERE id = :run_id) "
+                "AND status = 'complete' AND content = 'Published exactly once.'"
+            ),
+            {"run_id": run_id},
+        ).scalar_one()
+        == 1
+    )
 
 
 async def test_completed_preparation_replays_exact_snapshot_without_reassembly(
@@ -411,10 +479,13 @@ async def test_completed_preparation_replays_exact_snapshot_without_reassembly(
         runtime=_TextRuntime("Prepared snapshot answer."),
     )
     assert isinstance(outcome, PublishedChatExecution)
-    assert db_session.execute(
-        text("SELECT content FROM messages WHERE id = :message_id"),
-        {"message_id": outcome.message_id},
-    ).scalar_one() == "Prepared snapshot answer."
+    assert (
+        db_session.execute(
+            text("SELECT content FROM messages WHERE id = :message_id"),
+            {"message_id": outcome.message_id},
+        ).scalar_one()
+        == "Prepared snapshot answer."
+    )
 
 
 async def test_lost_lease_fences_stream_events_before_they_commit(
@@ -639,10 +710,13 @@ async def test_operator_attaches_reconciled_generation_without_redispatch(
     )
     assert isinstance(outcome, PublishedChatExecution)
     assert no_dispatch.calls == 0
-    assert db_session.execute(
-        text("SELECT content FROM messages WHERE id = :message_id"),
-        {"message_id": outcome.message_id},
-    ).scalar_one() == "Reconciled answer."
+    assert (
+        db_session.execute(
+            text("SELECT content FROM messages WHERE id = :message_id"),
+            {"message_id": outcome.message_id},
+        ).scalar_one()
+        == "Reconciled answer."
+    )
 
 
 async def test_completed_tool_replays_without_second_effect_or_result_event(
@@ -697,22 +771,28 @@ async def test_completed_tool_replays_without_second_effect_or_result_event(
     )
     assert isinstance(outcome, PublishedChatExecution)
     assert app_search_calls == 1
-    assert db_session.execute(
-        text(
-            "SELECT count(*) FROM message_tool_calls "
-            "WHERE assistant_message_id = "
-            "(SELECT assistant_message_id FROM chat_runs WHERE id = :run_id) "
-            "AND tool_call_index = 1"
-        ),
-        {"run_id": run_id},
-    ).scalar_one() == 1
-    assert db_session.execute(
-        text(
-            "SELECT count(*) FROM chat_run_events "
-            "WHERE run_id = :run_id AND event_type = 'tool_result'"
-        ),
-        {"run_id": run_id},
-    ).scalar_one() == 1
+    assert (
+        db_session.execute(
+            text(
+                "SELECT count(*) FROM message_tool_calls "
+                "WHERE assistant_message_id = "
+                "(SELECT assistant_message_id FROM chat_runs WHERE id = :run_id) "
+                "AND tool_call_index = 1"
+            ),
+            {"run_id": run_id},
+        ).scalar_one()
+        == 1
+    )
+    assert (
+        db_session.execute(
+            text(
+                "SELECT count(*) FROM chat_run_events "
+                "WHERE run_id = :run_id AND event_type = 'tool_result'"
+            ),
+            {"run_id": run_id},
+        ).scalar_one()
+        == 1
+    )
 
 
 async def test_cancel_requeues_suspended_job_only_to_fold_cancellation(
