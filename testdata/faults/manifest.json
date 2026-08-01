@@ -41,7 +41,7 @@
     {
       "id": "auth-chat-run-ownership-bypass",
       "patch": "testdata/faults/auth-chat-run-ownership-bypass.patch",
-      "sha256": "6f167fe765d714ed8fcec6e52dedcabbef8c11be2a8af463895f39ddb0b68e42",
+      "sha256": "eba2ac65bd74ee7a9e901892be62ead4e03bf7c524830f5755b007b2a7bf3c5e",
       "proofs": [
         "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal"
       ],
