@@ -946,24 +946,30 @@ async function expectTrustedForwardRetreat(
   expect(samples.at(-1)?.scrollTop ?? before.scrollTop).toBeGreaterThan(
     before.scrollTop,
   );
-  const firstHiddenIndex = samples.findIndex((sample) =>
+  // Progress is written directly in the provider's coalesced RAF, while the
+  // descriptive React phase can commit on the following frame under load.
+  // Prove the reducer threshold against the visual endpoint itself; the
+  // expectChromePhase assertion below independently proves that phase and
+  // accessibility state converge on Hidden.
+  const firstCollapsedIndex = samples.findIndex((sample) =>
     chromeSurfaces(sample, expectPaneToolbar).every(
       (surface) =>
-        surface.phase === "Hidden" &&
         surface.specifiedProgress === 1 &&
         surface.progress === 1,
     ),
   );
-  const firstHiddenSample =
-    firstHiddenIndex < 0 ? undefined : samples[firstHiddenIndex];
+  const firstCollapsedSample =
+    firstCollapsedIndex < 0 ? undefined : samples[firstCollapsedIndex];
   expect(
-    firstHiddenSample,
-    `expected trusted input to traverse the hidden endpoint; samples=${JSON.stringify(samples)}`,
+    firstCollapsedSample,
+    `expected trusted input to traverse the fully collapsed endpoint; samples=${JSON.stringify(samples)}`,
   ).toBeDefined();
   const thresholdWindowStartFrame =
-    firstHiddenIndex < 2 ? before : (samples[firstHiddenIndex - 2] ?? before);
-  const firstHiddenDistance =
-    (firstHiddenSample?.scrollTop ?? before.scrollTop) - before.scrollTop;
+    firstCollapsedIndex < 2
+      ? before
+      : (samples[firstCollapsedIndex - 2] ?? before);
+  const firstCollapsedDistance =
+    (firstCollapsedSample?.scrollTop ?? before.scrollTop) - before.scrollTop;
   const thresholdWindowStartDistance =
     thresholdWindowStartFrame.scrollTop - before.scrollTop;
   const earliestHiddenThresholdDistance =
@@ -971,7 +977,7 @@ async function expectTrustedForwardRetreat(
   const latestHiddenThresholdDistance =
     forwardBaseline - before.scrollTop + 8 + 64;
   expect(
-    firstHiddenDistance,
+    firstCollapsedDistance,
     hasFreshTopPinBaseline
       ? "hidden endpoint must not precede the fresh 8px dead zone plus 64px collapse travel"
       : "hidden endpoint must not precede 64px of collapse travel",
