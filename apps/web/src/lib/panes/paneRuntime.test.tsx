@@ -11,6 +11,7 @@ import {
   PaneRuntimeProvider,
   requirePaneRuntime,
   usePaneEntryDelivery,
+  usePaneIsActive,
   usePaneRuntime,
   usePaneRouter,
   useSetPaneLabel,
@@ -158,6 +159,24 @@ function RuntimeShapeProbe({ onValue }: { onValue: (value: unknown) => void }) {
   useEffect(() => {
     onValue(runtime);
   }, [onValue, runtime]);
+  return null;
+}
+
+function RuntimeActivityProbe({
+  onRuntime,
+  onActivity,
+}: {
+  onRuntime: (value: unknown) => void;
+  onActivity: (value: boolean) => void;
+}) {
+  const runtime = usePaneRuntime();
+  const isActive = usePaneIsActive();
+  useEffect(() => {
+    onRuntime(runtime);
+  }, [onRuntime, runtime]);
+  useEffect(() => {
+    onActivity(isActive);
+  }, [isActive, onActivity]);
   return null;
 }
 
@@ -358,6 +377,47 @@ describe("useSetPaneLabel", () => {
 });
 
 describe("PaneRuntimeProvider", () => {
+  it("keeps pane activity changes out of the stable runtime contract", async () => {
+    const onRuntime = vi.fn();
+    const onActivity = vi.fn();
+    const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
+    const pathParams = { id: LIBRARY_ID };
+    const stableProps = {
+      paneId: "pane-1",
+      visitId: TEST_VISIT_ID,
+      href: LIBRARY_HREF,
+      routeId: identity.routeId,
+      routeKey: identity.routeKey,
+      pathParams,
+      ...defaultNavigationProps,
+      onNavigatePane: vi.fn(),
+      onReplacePane: vi.fn(),
+    };
+
+    const { rerender } = render(
+      <TestPaneRuntimeProvider {...stableProps} isActive>
+        <RuntimeActivityProbe
+          onRuntime={onRuntime}
+          onActivity={onActivity}
+        />
+      </TestPaneRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(onActivity).toHaveBeenCalledWith(true));
+
+    rerender(
+      <TestPaneRuntimeProvider {...stableProps} isActive={false}>
+        <RuntimeActivityProbe
+          onRuntime={onRuntime}
+          onActivity={onActivity}
+        />
+      </TestPaneRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(onActivity).toHaveBeenCalledWith(false));
+    expect(onRuntime).toHaveBeenCalledTimes(1);
+  });
+
   it("delivers a queued pane entry when its visit consumer mounts later", async () => {
     const onAcknowledgePaneEntryDelivery = vi.fn();
     const onValue = vi.fn();

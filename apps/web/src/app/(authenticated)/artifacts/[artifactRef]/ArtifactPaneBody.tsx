@@ -27,6 +27,7 @@ import { artifactPaneHref } from "@/lib/dossiers/generationAdapter";
 import {
   requirePaneRuntime,
   usePaneParam,
+  usePaneIsActive,
   usePaneReturnReady,
   usePaneRouter,
   usePaneRuntime,
@@ -131,9 +132,9 @@ function ArtifactFindComposition({
   );
   const paneFindResult = usePaneFind({ capability: paneFindCapability });
   const paneFind = requireArtifactPaneFindController(paneFindResult);
+  const isActive = usePaneIsActive();
   const {
     closeTransientSecondarySurface,
-    isActive,
     previewTransientSecondaryResult,
     requestTransientSecondarySurface,
     transientSecondarySurface,
@@ -244,6 +245,7 @@ export default function ArtifactPaneBody() {
     usePaneRuntime(),
     "ArtifactPaneBody",
   );
+  const isPaneActive = usePaneIsActive();
   const activatePaneTarget = paneRuntime.activateTarget;
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
@@ -274,9 +276,9 @@ export default function ArtifactPaneBody() {
       ? findCapability
       : null;
   const findCapabilityRef = useRef(exactFindCapability);
-  const paneActiveRef = useRef(paneRuntime.isActive);
+  const paneActiveRef = useRef(isPaneActive);
   findCapabilityRef.current = exactFindCapability;
-  paneActiveRef.current = paneRuntime.isActive;
+  paneActiveRef.current = isPaneActive;
 
   const revisionRef = searchParams.get("revision");
   useEffect(() => {

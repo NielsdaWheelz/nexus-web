@@ -53,6 +53,7 @@ import {
   definePaneVisitDataKey,
   requirePaneRuntime,
   useClearAllPaneVisitData,
+  usePaneIsActive,
   usePaneRuntime,
   usePaneReturnReady,
   usePaneVisitData,
@@ -98,6 +99,7 @@ const ZERO_REVISION = 0 as CollectionRevision;
 
 export default function LibrariesPaneBody() {
   const paneRuntime = requirePaneRuntime(usePaneRuntime(), "LibrariesPaneBody");
+  const isPaneActive = usePaneIsActive();
   const visibleRowIdsRef = useRef<readonly string[]>([]);
   const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
   const pendingFocusRafRef = useRef(0);
@@ -375,7 +377,7 @@ export default function LibrariesPaneBody() {
     [],
   );
   const exhaustion = useExhaustivePagination<Library>({
-    active: paneRuntime.isActive && controller !== null && !refreshingLibraries,
+    active: isPaneActive && controller !== null && !refreshingLibraries,
     chainKey: `libraries:${chainEpoch}`,
     cursor: controller?.nextCursor ?? NO_CURSOR,
     collectionRevision: controller?.collectionRevision ?? ZERO_REVISION,

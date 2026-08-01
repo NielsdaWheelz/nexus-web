@@ -19,8 +19,8 @@ import Select from "@/components/ui/Select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import Toggle from "@/components/ui/Toggle";
 import {
+  usePaneIsActive,
   usePaneReturnReady,
-  usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
@@ -45,7 +45,7 @@ export default function SettingsReaderPaneBody() {
     retrySave,
   } = useReaderContext();
   const { suppressDedupeKey } = useFeedback();
-  const isActive = usePaneRuntime()?.isActive ?? true;
+  const isActive = usePaneIsActive();
   usePaneReturnReady(true);
 
   // While this pane is active it owns the reader-profile-save presentation:

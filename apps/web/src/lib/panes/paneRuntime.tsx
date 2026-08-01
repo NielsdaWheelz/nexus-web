@@ -97,8 +97,6 @@ export interface PaneRuntimeTransientSecondarySurface {
 export interface PaneRuntimeContextValue {
   paneId: string;
   visitId: PaneVisitId;
-  /** Workspace-host pane activity; owners use it for adoption-versus-handoff. */
-  isActive: boolean;
   href: string;
   pathname: string;
   routeId: string;
@@ -143,6 +141,7 @@ export interface PaneRuntimeContextValue {
 }
 
 const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
+const PaneActivityContext = createContext<boolean | null>(null);
 const PaneRouterNavigationContext = createContext<{
   canGoBack: boolean;
   canGoForward: boolean;
@@ -570,7 +569,6 @@ export function PaneRuntimeProvider({
     () => ({
       paneId,
       visitId,
-      isActive,
       href,
       pathname: parsed.pathname,
       routeId,
@@ -614,7 +612,6 @@ export function PaneRuntimeProvider({
       setPaneAliases,
       paneId,
       visitId,
-      isActive,
       parsed.pathname,
       parsed.searchParams,
       parsed.hash,
@@ -637,21 +634,32 @@ export function PaneRuntimeProvider({
 
   return (
     <PaneReturnVisitScope visitId={visitId} routeKey={routeKey}>
-      <PaneRuntimeContext.Provider value={value}>
-        <PaneRouterNavigationContext.Provider value={navigationState}>
-          <PaneNavigationModalityContext.Provider
-            value={recordNavigationModality}
-          >
-            {children}
-          </PaneNavigationModalityContext.Provider>
-        </PaneRouterNavigationContext.Provider>
-      </PaneRuntimeContext.Provider>
+      <PaneActivityContext.Provider value={isActive}>
+        <PaneRuntimeContext.Provider value={value}>
+          <PaneRouterNavigationContext.Provider value={navigationState}>
+            <PaneNavigationModalityContext.Provider
+              value={recordNavigationModality}
+            >
+              {children}
+            </PaneNavigationModalityContext.Provider>
+          </PaneRouterNavigationContext.Provider>
+        </PaneRuntimeContext.Provider>
+      </PaneActivityContext.Provider>
     </PaneReturnVisitScope>
   );
 }
 
 export function usePaneRuntime(): PaneRuntimeContextValue | null {
   return useContext(PaneRuntimeContext);
+}
+
+/** Workspace-host pane activity for behavior that changes with activation. */
+export function usePaneIsActive(): boolean {
+  const isActive = useContext(PaneActivityContext);
+  if (isActive === null) {
+    throw new Error("usePaneIsActive must be used inside PaneRuntimeProvider");
+  }
+  return isActive;
 }
 
 /**

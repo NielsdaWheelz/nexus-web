@@ -99,6 +99,7 @@ import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
   usePaneParam,
+  usePaneIsActive,
   usePaneReturnReady,
   usePaneRouter,
   usePaneRuntime,
@@ -380,7 +381,7 @@ export default function LibraryPaneBody() {
     paneRuntime,
     "LibraryPaneBody",
   ).activateTarget;
-  const isPaneActive = paneRuntime?.isActive ?? true;
+  const isPaneActive = usePaneIsActive();
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
   const feedback = useFeedback();
   const lectern = useLectern();

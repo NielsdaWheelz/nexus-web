@@ -36,6 +36,7 @@ import { runProgressReset } from "@/lib/consumption/progressReset";
 import { descriptorFromLecternItem } from "@/lib/player/playerSession";
 import { usePlayerCommands } from "@/lib/player/globalPlayer";
 import {
+  usePaneIsActive,
   usePaneReturnReady,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
@@ -89,7 +90,7 @@ export default function LecternPaneBody() {
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const queueSectionId = useId();
   const paneRuntime = usePaneRuntime();
-  const isPaneActive = paneRuntime?.isActive ?? true;
+  const isPaneActive = usePaneIsActive();
   const paneId = paneRuntime?.paneId ?? "lectern";
 
   // A leaf never holds a snapshot cache: it renders the provider's optimistic

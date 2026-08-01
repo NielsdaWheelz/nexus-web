@@ -114,10 +114,10 @@ vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneReturnDescendantReady: vi.fn(),
   usePaneReturnReady: vi.fn(),
   usePaneRouter: () => ({ replace: paneMocks.replace }),
+  usePaneIsActive: () => paneMocks.isActive,
   usePaneRuntime: () => ({
     paneId: "pane-1",
     routeKey: `artifact:${ARTIFACT_REF}`,
-    isActive: paneMocks.isActive,
     activateTarget: paneMocks.activateTarget,
     transientSecondarySurface: paneMocks.transientSecondarySurface,
     requestTransientSecondarySurface:

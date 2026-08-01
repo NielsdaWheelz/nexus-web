@@ -63,6 +63,7 @@ vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneReturnReady: () => {},
   usePaneReturnDescendantReady: () => {},
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
+  usePaneIsActive: () => true,
   usePaneRuntime: () => ({ activateTarget: vi.fn() }),
   requirePaneRuntime: (runtime: unknown) => runtime,
   usePaneRouter: () => ({ push: vi.fn(), replace: vi.fn() }),

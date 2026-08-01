@@ -36,6 +36,7 @@ import {
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
+  usePaneIsActive,
   usePaneParam,
   usePaneReturnReady,
   usePaneRuntime,
@@ -189,6 +190,7 @@ export default function PodcastDetailPaneBody() {
     usePaneRuntime(),
     "PodcastDetailPaneBody",
   );
+  const isPaneActive = usePaneIsActive();
   const activateTarget = paneRuntime.activateTarget;
   const paneSearchParams = usePaneSearchParams();
   const { account: billingAccount } = useBillingAccount();
@@ -716,7 +718,7 @@ export default function PodcastDetailPaneBody() {
   );
   const episodeExhaustion = useExhaustivePagination({
     active:
-      paneRuntime.isActive &&
+      isPaneActive &&
       controller !== null &&
       controller.queryIdentity === episodeQueryIdentity &&
       !reconciliationPendingRef.current,

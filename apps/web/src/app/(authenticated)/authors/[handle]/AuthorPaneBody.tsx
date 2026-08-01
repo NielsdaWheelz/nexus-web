@@ -59,6 +59,7 @@ import {
   definePaneVisitDataKey,
   type PaneResourceStatus,
   useClearAllPaneVisitData,
+  usePaneIsActive,
   usePaneParam,
   usePaneReturnReady,
   usePaneRuntime,
@@ -121,6 +122,7 @@ export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
   const paneRuntime = usePaneRuntime();
   const runtime = requirePaneRuntime(paneRuntime, "AuthorPaneBody");
+  const isPaneActive = usePaneIsActive();
   const activateTarget = runtime.activateTarget;
   const committedSnapshotRef = useRef<AuthorPaneSeed | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
@@ -315,7 +317,7 @@ export default function AuthorPaneBody() {
   );
   const exhaustion = useExhaustivePagination<ContributorWorkItem>({
     active:
-      runtime.isActive &&
+      isPaneActive &&
       data !== null &&
       data.detail.handle === handle &&
       !refreshingWorks,
