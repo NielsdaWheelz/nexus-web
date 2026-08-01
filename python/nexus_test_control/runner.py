@@ -1809,6 +1809,7 @@ def _classified_exact_result(result: CapabilityResult) -> CapabilityResult:
         kind = "setup_or_execution_failure"
     elif (
         "falsifying example:" in folded
+        or re.search(r"\btests\s+\d+\s+failed\b", folded) is not None
         or ("failed " in folded and "::" in folded and " - assertionerror" in folded)
         or ("error: expect(" in folded and " › " in folded)
         or any(

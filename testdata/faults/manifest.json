@@ -153,7 +153,7 @@
       "proofs": [
         "vitest:apps/web/src/lib/reader/usePendingDocumentMapPulse.browser.test.tsx"
       ],
-      "expected_failure": "Interrupted render did not retain the pending Document Map highlight"
+      "expected_failure": "pulses=apparatus-highlight;apparatus=source-reference-1"
     }
   ]
 }

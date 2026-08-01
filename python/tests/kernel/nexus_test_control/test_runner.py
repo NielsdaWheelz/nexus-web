@@ -1173,11 +1173,19 @@ def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behav
             "E   Failed: DID NOT RAISE <class 'RuntimeContractError'>",
         )
     )
+    browser_assertion = runner._classified_exact_result(
+        CapabilityResult(
+            evidence,
+            "Test Files  1 failed (1)\nTests  3 failed (3)\n"
+            "src/lib/reader/proof.browser.test.tsx:200:6",
+        )
+    )
 
     assert collection.detail.startswith("proof_result=collection_failure|")
     assert setup.detail.startswith("proof_result=setup_or_execution_failure|")
     assert assertion.detail.startswith("proof_result=behavioral_assertion_failure|")
     assert raises_assertion.detail.startswith("proof_result=behavioral_assertion_failure|")
+    assert browser_assertion.detail.startswith("proof_result=behavioral_assertion_failure|")
 
 
 def test_first_failure_streams_before_later_results_and_redacts_secrets() -> None:
