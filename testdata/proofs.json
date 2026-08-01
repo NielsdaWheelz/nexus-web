@@ -152,6 +152,24 @@
         "android-device",
         "android-release"
       ]
+    },
+    {
+      "id": "native-system-insets",
+      "source_globs": [
+        "apps/android/app/src/main/java/app/nexus/android/MainActivity.kt",
+        "apps/web/src/app/layout.tsx",
+        "apps/web/src/app/globals.css",
+        "apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx",
+        "apps/web/src/components/ui/FloatingActionSurface.tsx"
+      ],
+      "proofs": [
+        "vitest:apps/web/src/lib/mobileViewport/mobileSafeArea.browser.test.tsx",
+        "gradle:apps/android/app/src/androidTest/java/app/nexus/android/SystemInsetsTest.kt::nativeInsetsRemainExactAcrossPublicationClearingAndRotation"
+      ],
+      "capabilities": [
+        "component",
+        "android-device"
+      ]
     }
   ],
   "journeys": [

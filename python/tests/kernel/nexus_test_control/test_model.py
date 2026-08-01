@@ -29,6 +29,7 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         "database-object-convergence",
         "llm-tool-safety",
         "native-release-auth-handoff",
+        "native-system-insets",
     }
     pr_capabilities = {
         requirement.capability for requirement in WORKFLOW_REGISTRY[Workflow.PR].requirements

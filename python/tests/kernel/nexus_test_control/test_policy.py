@@ -635,6 +635,7 @@ def _fault_repository(root: Path) -> dict[str, Any]:
         "expected_failure": "expected value differs",
     }
     manifest = {"version": 1, "faults": [fault]}
+    _write(root, "python/tests/kernel/test_example.py", "def test_example():\n    assert True\n")
     _dump(root, "testdata/faults/manifest.json", manifest)
     return manifest
 
@@ -664,6 +665,7 @@ def test_fault_guard_allows_the_exact_controller_execution_owner(tmp_path: Path)
         ("unmanifested", "fault-unmanifested"),
         ("harness-target", "fault-product-only"),
         ("empty-patch", "fault-patch"),
+        ("missing-proof", "fault-proof"),
     ],
 )
 def test_fault_guard_rejects_each_violation(tmp_path: Path, mutation: str, rule: str) -> None:
@@ -676,6 +678,10 @@ def test_fault_guard_rejects_each_violation(tmp_path: Path, mutation: str, rule:
         manifest["faults"][0]["sha256"] = "0" * 64
     elif mutation == "unmanifested":
         manifest["faults"] = []
+    elif mutation == "missing-proof":
+        manifest["faults"][0]["proofs"] = [
+            "pytest:python/tests/kernel/test_missing.py::test_missing"
+        ]
     else:
         patch = (
             b""

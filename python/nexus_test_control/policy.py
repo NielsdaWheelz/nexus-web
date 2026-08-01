@@ -1271,6 +1271,26 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             violations.append(
                 PolicyViolation("fault-schema", location, "invalid or duplicate fault identity")
             )
+        proofs = fault.get("proofs")
+        if isinstance(proofs, list):
+            for proof in proofs:
+                if not isinstance(proof, str):
+                    continue
+                runner, separator, node = proof.partition(":")
+                proof_path = node.split("::", 1)[0]
+                if (
+                    not separator
+                    or runner not in {"gradle", "playwright", "pytest", "static", "vitest"}
+                    or not _safe_relative(proof_path)
+                    or not (repo_root / proof_path).is_file()
+                ):
+                    violations.append(
+                        PolicyViolation(
+                            "fault-proof",
+                            location,
+                            f"invalid or missing fault proof node: {proof}",
+                        )
+                    )
         seen_ids.add(fault.get("id", ""))
         patch = fault.get("patch")
         if (

@@ -97,9 +97,9 @@
       "patch": "testdata/faults/llm-tool-context-authorization-bypass.patch",
       "sha256": "5655d47e5dc7c044e9ea822d9be34fe3722e1ddf8cda4a6c7ddf84af4e6a82da",
       "proofs": [
-        "pytest:python/tests/evals/test_tool_authorization.py::test_prompt_injected_resource_reads_are_refused_without_side_effects"
+        "pytest:python/tests/evals/test_tool_safety_eval.py::test_prompt_injection_eval_refuses_scripted_adversarial_tool_calls"
       ],
-      "expected_failure": "tool authorization baseline failures"
+      "expected_failure": "tool-safety evaluation failures"
     },
     {
       "id": "dossier-citation-disposition-bypass",
@@ -127,6 +127,15 @@
         "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_exact_android_device_proof_uses_one_instrumentation_method"
       ],
       "expected_failure": "Android device executor lost exact method scoping"
+    },
+    {
+      "id": "native-system-safe-area-bypass",
+      "patch": "testdata/faults/native-system-safe-area-bypass.patch",
+      "sha256": "dbc0edbf5118c6ea2a5a1559d79be91375bb1704aa91c2cc5057e31d04be65d7",
+      "proofs": [
+        "vitest:apps/web/src/lib/mobileViewport/mobileSafeArea.browser.test.tsx"
+      ],
+      "expected_failure": "expected 0 to be 37"
     },
     {
       "id": "active-pane-reactivation-identity-corruption",

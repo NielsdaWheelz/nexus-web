@@ -200,8 +200,8 @@ shell capability.
 
 | Area | Files / action |
 | --- | --- |
-| Native setup | `apps/android/app/build.gradle.kts`; `MainActivity.kt`; `MainActivityTest.kt` |
-| CSS owner/composer | `apps/web/src/app/globals.css`; `lib/mobileViewport/MobileViewportProvider.tsx` and focused tests |
+| Native setup | `apps/android/app/build.gradle.kts`; `MainActivity.kt`; `SystemInsetsTest.kt` |
+| CSS owner/composer | `apps/web/src/app/globals.css`; `lib/mobileViewport/MobileViewportProvider.tsx`; `mobileSafeArea.browser.test.tsx` |
 | Direct-read cut | `SelectionPopover.module.css`; `AppNav.module.css`; `AddPanel.module.css`; `Nexus.module.css`; `MobileMiniPlayer.module.css`; `MobileNowPlaying.module.css`; `ShareOverlay.module.css`; `switchboard.module.css`; `FloatingActionSurface.tsx`; `HoverPreview.module.css`; `MobileSheet.module.css`; `PaneShell.module.css` |
 | Normative docs | `docs/modules/workspace.md`; update overlapping module prose only after proof |
 

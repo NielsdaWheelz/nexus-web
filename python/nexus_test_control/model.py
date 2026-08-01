@@ -70,6 +70,7 @@ class PriorityRiskId(StrEnum):
     DATABASE_OBJECT_CONVERGENCE = "database-object-convergence"
     LLM_TOOL_SAFETY = "llm-tool-safety"
     NATIVE_RELEASE_AUTH_HANDOFF = "native-release-auth-handoff"
+    NATIVE_SYSTEM_INSETS = "native-system-insets"
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
