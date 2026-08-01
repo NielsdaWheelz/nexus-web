@@ -827,7 +827,11 @@ function WorkspaceHost() {
   const secondaryReturnFocusByPaneIdRef = useRef<Map<string, HTMLElement>>(
     new Map(),
   );
-  const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
+  const { primaryPaneOrder, primaryPanesById } = state;
+  const primaryPanes = useMemo(
+    () => getWorkspacePrimaryPanes({ primaryPaneOrder, primaryPanesById }),
+    [primaryPaneOrder, primaryPanesById],
+  );
   const paneDescriptors = useMemo(
     () =>
       primaryPanes.map((pane) => ({

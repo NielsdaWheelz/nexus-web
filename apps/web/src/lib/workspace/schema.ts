@@ -132,7 +132,7 @@ export function getWorkspacePrimaryPane(
 }
 
 export function getWorkspacePrimaryPanes(
-  state: WorkspaceState,
+  state: Pick<WorkspaceState, "primaryPaneOrder" | "primaryPanesById">,
 ): WorkspacePrimaryPaneState[] {
   return state.primaryPaneOrder
     .map((paneId) => state.primaryPanesById[paneId])

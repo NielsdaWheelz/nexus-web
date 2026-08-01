@@ -67,6 +67,7 @@ function paneVisit(href: string): PaneVisit {
 
 const hostMocks = vi.hoisted(() => ({
   bodyInstanceId: 0,
+  bodyRenderCountByPaneId: new Map<string, number>(),
   mountedBodyIds: [] as number[],
   unmountedBodyIds: [] as number[],
   paneShellSnapshots: [] as {
@@ -296,6 +297,11 @@ function routeForHostTest(href: string) {
 function TestPaneBody() {
   const instanceId = useRef(++hostMocks.bodyInstanceId);
   const paneRuntime = usePaneRuntime();
+  const paneId = paneRuntime?.paneId ?? "none";
+  hostMocks.bodyRenderCountByPaneId.set(
+    paneId,
+    (hostMocks.bodyRenderCountByPaneId.get(paneId) ?? 0) + 1,
+  );
   const publishSecondary = useContext(PaneSecondaryContext);
   const publishFixedChrome = useContext(PaneFixedChromeContext);
   usePanePrimaryChrome(
@@ -745,6 +751,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
   beforeEach(() => {
     nextVisitIndex = 1;
     hostMocks.bodyInstanceId = 0;
+    hostMocks.bodyRenderCountByPaneId = new Map();
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
     hostMocks.paneShellSnapshots = [];
@@ -841,6 +848,20 @@ describe("WorkspaceHost pane route lifecycle", () => {
       fireEvent.keyDown(editor, { key: "f", ctrlKey: true }),
     ).toBe(true);
     expect(screen.queryByTestId("pane-contextual-row")).toBeNull();
+  });
+
+  it("does not rerender mounted route bodies when only the active pane changes", () => {
+    setTwoPaneHrefs("/libraries", "/stats");
+    const view = render(<WorkspaceHost />);
+    const initialRenderCounts = new Map(hostMocks.bodyRenderCountByPaneId);
+
+    hostMocks.store.state = {
+      ...hostMocks.store.state,
+      activePrimaryPaneId: "pane-1",
+    };
+    view.rerender(<WorkspaceHost />);
+
+    expect(hostMocks.bodyRenderCountByPaneId).toEqual(initialRenderCounts);
   });
 
   it("preserves the route body for same-resource location changes", () => {
