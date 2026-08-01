@@ -23,12 +23,11 @@ function navigationSection(
     fragment_idx: 0,
     level: null,
     depth: null,
-    start_offset: null,
+    start_offset: 0,
     end_offset: null,
     href_path: "chapter-1.xhtml",
     href_fragment: null,
     anchor_id: null,
-    char_count: 12,
     ...overrides,
   };
 }
@@ -85,6 +84,10 @@ describe("createEpubFindSnapshot", () => {
   it("compacts navigation to ordered unique canonical fragments", () => {
     const snapshot = createEpubFindSnapshot({
       mediaId: MEDIA_ID,
+      fragments: [
+        { fragment_id: FIRST_FRAGMENT, fragment_idx: 0, char_count: 12 },
+        { fragment_id: SECOND_FRAGMENT, fragment_idx: 1, char_count: 8 },
+      ],
       navigation: [
         navigationSection(),
         navigationSection({
@@ -93,7 +96,6 @@ describe("createEpubFindSnapshot", () => {
           ordinal: 1,
           href_fragment: "second-heading",
           anchor_id: "second-heading",
-          char_count: 0,
         }),
         navigationSection({
           section_id: "section-2",
@@ -102,7 +104,6 @@ describe("createEpubFindSnapshot", () => {
           fragment_id: SECOND_FRAGMENT,
           fragment_idx: 1,
           href_path: "chapter-2.xhtml",
-          char_count: 8,
         }),
       ],
     });
@@ -129,13 +130,16 @@ describe("createEpubFindSnapshot", () => {
 
     const relabeled = createEpubFindSnapshot({
       mediaId: MEDIA_ID,
+      fragments: [
+        { fragment_id: FIRST_FRAGMENT, fragment_idx: 0, char_count: 12 },
+        { fragment_id: SECOND_FRAGMENT, fragment_idx: 1, char_count: 8 },
+      ],
       navigation: [
         navigationSection({ label: "Relabeled chapter" }),
         navigationSection({
           section_id: "section-1-2",
           label: "Relabeled heading",
           ordinal: 1,
-          char_count: 0,
         }),
         navigationSection({
           section_id: "section-2",
@@ -143,7 +147,6 @@ describe("createEpubFindSnapshot", () => {
           ordinal: 2,
           fragment_id: SECOND_FRAGMENT,
           fragment_idx: 1,
-          char_count: 8,
         }),
       ],
     });
@@ -152,17 +155,24 @@ describe("createEpubFindSnapshot", () => {
 
   it("defects on missing or contradictory canonical navigation facts", () => {
     expect(() =>
-      createEpubFindSnapshot({ mediaId: MEDIA_ID, navigation: [] }),
-    ).toThrow(/no navigation/);
+      createEpubFindSnapshot({
+        mediaId: MEDIA_ID,
+        fragments: [],
+        navigation: [],
+      }),
+    ).toThrow(/no canonical fragments/);
     expect(() =>
       createEpubFindSnapshot({
         mediaId: MEDIA_ID,
+        fragments: [
+          { fragment_id: FIRST_FRAGMENT, fragment_idx: 0, char_count: 12 },
+        ],
         navigation: [
           navigationSection(),
           navigationSection({
             section_id: "section-2",
             ordinal: 1,
-            char_count: 12,
+            fragment_idx: 1,
           }),
         ],
       }),

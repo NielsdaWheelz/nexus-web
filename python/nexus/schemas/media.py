@@ -653,22 +653,29 @@ class MediaEvidenceResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ReaderNavigationFragmentOut(BaseModel):
+    """One unique canonical text unit in document order."""
+
+    fragment_id: UUID
+    fragment_idx: int = Field(ge=0)
+    char_count: int = Field(ge=0)
+
+
 class ReaderNavigationSectionOut(BaseModel):
     """Canonical reader navigation section target."""
 
     section_id: str
     label: str
-    ordinal: int
-    fragment_id: UUID | None = None
-    fragment_idx: int | None = None
+    ordinal: int = Field(ge=0)
+    fragment_id: UUID
+    fragment_idx: int = Field(ge=0)
     level: int | None = None
     depth: int | None = None
-    start_offset: int | None = None
-    end_offset: int | None = None
+    start_offset: int = Field(ge=0)
+    end_offset: int | None = Field(ge=0)
     href_path: str | None = None
     href_fragment: str | None = None
     anchor_id: str | None = None
-    char_count: int | None = None
 
 
 class ReaderNavigationTocNodeOut(BaseModel):
@@ -701,6 +708,7 @@ class MediaNavigationOut(BaseModel):
 
     media_id: UUID
     kind: Literal["epub", "web_article"]
+    fragments: list[ReaderNavigationFragmentOut]
     sections: list[ReaderNavigationSectionOut]
     toc_nodes: list[ReaderNavigationTocNodeOut]
     landmarks: list[ReaderNavigationLocationOut]

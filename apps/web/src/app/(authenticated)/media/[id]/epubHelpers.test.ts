@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  resolveEpubInternalLinkTarget,
-  resolveSectionAnchorId,
-  type NavigationTocNodeLike,
-} from "./epubHelpers";
+import { resolveEpubInternalLinkTarget } from "./epubHelpers";
 import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 
 const sections: ReaderNavigationSection[] = [
@@ -20,7 +16,6 @@ const sections: ReaderNavigationSection[] = [
     href_path: "Text/chapter-1.xhtml",
     href_fragment: null,
     anchor_id: null,
-    char_count: 100,
   },
   {
     section_id: "chapter-2.xhtml",
@@ -35,7 +30,6 @@ const sections: ReaderNavigationSection[] = [
     href_path: "Text/chapter-2.xhtml",
     href_fragment: null,
     anchor_id: null,
-    char_count: 100,
   },
 ];
 
@@ -81,23 +75,5 @@ describe("resolveEpubInternalLinkTarget", () => {
         sections,
       ),
     ).toBeNull();
-  });
-});
-
-describe("resolveSectionAnchorId", () => {
-  it("uses section anchors before TOC href anchors", () => {
-    expect(resolveSectionAnchorId("section-1", "explicit", [])).toBe("explicit");
-  });
-
-  it("finds the matching TOC href anchor", () => {
-    const toc: NavigationTocNodeLike[] = [
-      {
-        section_id: "section-1",
-        href: "Text/chapter-1.xhtml#toc-anchor",
-        children: [],
-      },
-    ];
-
-    expect(resolveSectionAnchorId("section-1", null, toc)).toBe("toc-anchor");
   });
 });

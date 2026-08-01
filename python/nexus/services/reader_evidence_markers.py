@@ -33,20 +33,15 @@ def build_markers(
 
     markers: list[ReaderDocumentMapMarkerOut] = []
     if navigation is not None:
-        for index, section in enumerate(navigation.sections):
-            locator = None
-            if section.fragment_id is not None:
-                locator = {
-                    "type": "web_text_offsets"
-                    if media_kind == "web_article"
-                    else "epub_fragment_offsets",
-                    "media_id": str(media_id),
-                    "fragment_id": str(section.fragment_id),
-                    "start_offset": section.start_offset or 0,
-                    "end_offset": section.end_offset
-                    or section.start_offset
-                    or max(section.char_count or 0, 1),
-                }
+        for section in navigation.sections:
+            locator = {
+                "type": "web_text_offsets"
+                if media_kind == "web_article"
+                else "epub_fragment_offsets",
+                "media_id": str(media_id),
+                "fragment_id": str(section.fragment_id),
+                "start_offset": section.start_offset,
+            }
             fraction = locator_fraction(
                 locator,
                 fragment_ranges,
@@ -54,8 +49,6 @@ def build_markers(
                 page_count,
                 pdf_page_heights,
             )
-            if fraction is None and navigation.sections:
-                fraction = (index + 0.5) / len(navigation.sections)
             if fraction is not None:
                 markers.append(
                     _marker(
@@ -149,16 +142,11 @@ def _document_embed_locator(
     media_id: UUID,
     embed: DocumentEmbedOut,
 ) -> dict[str, object] | None:
-    if (
-        embed.locator.fragment_id is None
-        or embed.locator.canonical_start_offset is None
-        or embed.locator.canonical_end_offset is None
-    ):
+    if embed.locator.fragment_id is None or embed.locator.canonical_start_offset is None:
         return None
     return {
         "type": "web_text_offsets",
         "media_id": str(media_id),
         "fragment_id": str(embed.locator.fragment_id),
         "start_offset": embed.locator.canonical_start_offset,
-        "end_offset": embed.locator.canonical_end_offset,
     }

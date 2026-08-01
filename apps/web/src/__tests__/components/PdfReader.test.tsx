@@ -705,13 +705,13 @@ describe("PdfReader selection chat destinations", () => {
     );
   });
 
-  it("publishes PDF Find, previews without resume writes, and returns to an empty-text origin page", async () => {
+  it("publishes PDF Find semantic preview and return intents from the real viewport", async () => {
     pdfRuntimeState.numPages = 2;
     pdfRuntimeState.pageWidths = [600, 600];
     pdfRuntimeState.viewportScaleMultiplier = 4 / 3;
     pdfRuntimeState.pageBorderTop = 9;
     pdfRuntimeState.pageTexts = ["", "Alpha selected quote Omega"];
-    const onResumeStateChange = vi.fn();
+    const onSemanticViewportChange = vi.fn();
     const onFindRuntimeReady = vi.fn();
     let resolveRuntime!: (runtime: PdfFindRuntime) => void;
     const runtimeReady = new Promise<PdfFindRuntime>((resolve) => {
@@ -721,7 +721,7 @@ describe("PdfReader selection chat destinations", () => {
     const view = render(
       <PdfReader
         mediaId="media-1"
-        onResumeStateChange={onResumeStateChange}
+        onSemanticViewportChange={onSemanticViewportChange}
         onFindRuntimeReady={(nextRuntime) => {
           if (nextRuntime) {
             resolveRuntime(nextRuntime);
@@ -741,13 +741,16 @@ describe("PdfReader selection chat destinations", () => {
       numPages: 2,
     });
 
+    viewport.getBoundingClientRect = () => new DOMRect(0, 0, 600, 400);
     viewport.scrollTop = 135;
     viewport.scrollLeft = 9;
     fireEvent.scroll(viewport);
     await waitFor(() => {
-      expect(onResumeStateChange).toHaveBeenCalled();
+      expect(onSemanticViewportChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({ intent: "Reader" }),
+      );
     });
-    onResumeStateChange.mockClear();
+    onSemanticViewportChange.mockClear();
     const origin = activeRuntime.captureOrigin();
     expect(origin.kind).toBe("Captured");
 
@@ -776,11 +779,18 @@ describe("PdfReader selection chat destinations", () => {
       );
     });
     expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
-    expect(onResumeStateChange).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(
+        onSemanticViewportChange.mock.calls.some(
+          ([snapshot]) => snapshot?.intent === "Preview",
+        ),
+      ).toBe(true),
+    );
 
     if (origin.kind !== "Captured") {
       throw new Error("Expected a captured PDF Find origin");
     }
+    onSemanticViewportChange.mockClear();
     await act(async () => {
       await activeRuntime.restoreOrigin(
         origin.value,
@@ -793,10 +803,109 @@ describe("PdfReader selection chat destinations", () => {
     });
     expect(viewport.scrollTop).toBe(135);
     expect(viewport.scrollLeft).toBe(9);
-    expect(onResumeStateChange).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(
+        onSemanticViewportChange.mock.calls.some(
+          ([snapshot]) => snapshot?.intent === "Return",
+        ),
+      ).toBe(true),
+    );
 
     view.unmount();
     expect(onFindRuntimeReady).toHaveBeenLastCalledWith(null);
+  });
+
+  it("captures unequal PDF pages as full page-space fractions once per frame", async () => {
+    pdfRuntimeState.numPages = 2;
+    pdfRuntimeState.pageWidths = [600, 600];
+    const onSemanticViewportChange = vi.fn();
+
+    render(
+      <PdfReader
+        mediaId="media-1"
+        onSemanticViewportChange={onSemanticViewportChange}
+      />,
+    );
+
+    const viewport = await screen.findByRole("region", {
+      name: "PDF document",
+    });
+    const firstPage = await screen.findByTestId("pdf-page-surface-1");
+    const secondPage = await screen.findByTestId("pdf-page-surface-2");
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    viewport.getBoundingClientRect = () => new DOMRect(0, 0, 600, 400);
+    firstPage.setAttribute("data-nexus-page-viewport-height", "600");
+    secondPage.setAttribute("data-nexus-page-viewport-height", "300");
+    firstPage.getBoundingClientRect = () =>
+      new DOMRect(40, -550, 600, 600);
+    secondPage.getBoundingClientRect = () =>
+      new DOMRect(40, 150, 600, 300);
+
+    fireEvent.scroll(viewport);
+    await waitFor(() =>
+      expect(onSemanticViewportChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          intent: "Reader",
+          visibleStart: expect.objectContaining({ pageFraction: 550 / 600 }),
+        }),
+      ),
+    );
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    onSemanticViewportChange.mockClear();
+    fireEvent.scroll(viewport);
+    fireEvent.scroll(viewport);
+    fireEvent.scroll(viewport);
+
+    await waitFor(() => {
+      expect(
+        onSemanticViewportChange.mock.calls.filter(
+          ([snapshot]) => snapshot !== null,
+        ),
+      ).toHaveLength(1);
+    });
+    expect(onSemanticViewportChange).toHaveBeenLastCalledWith({
+      sourceKey: expect.any(String),
+      layoutGeneration: expect.any(Number),
+      intent: "Reader",
+      primaryLocator: {
+        kind: "pdf",
+        page: 1,
+        page_progression: 550 / 600,
+        zoom: 1,
+        position: 1,
+      },
+      visibleStart: {
+        kind: "Pdf",
+        page: 1,
+        pageFraction: 550 / 600,
+      },
+      visibleEnd: {
+        kind: "Pdf",
+        page: 2,
+        pageFraction: 250 / 300,
+      },
+      atEnd: false,
+    });
+
+    onSemanticViewportChange.mockClear();
+    firstPage.getBoundingClientRect = () =>
+      new DOMRect(40, -700, 600, 600);
+    secondPage.getBoundingClientRect = () =>
+      new DOMRect(40, 500, 600, 300);
+    fireEvent.scroll(viewport);
+    await waitFor(() =>
+      expect(onSemanticViewportChange).toHaveBeenLastCalledWith(null),
+    );
   });
 
   it("refreshes expired source access without publishing a false source exit", async () => {

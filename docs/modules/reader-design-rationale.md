@@ -245,12 +245,15 @@ sync hook would blur.
 web article resume uses canonical text offsets instead of raw scroll
 pixels.
 
-- map rendered dom text to canonical codepoint offsets
-- persist the first visible canonical offset as resume state
+- map rendered DOM text to canonical codepoint offsets
+- capture first and last visible offsets once for the semantic viewport
+- persist the first offset as resume state only after genuine reader input
 - restore by mapping that offset back to dom position
 
 this makes resume resilient to font-size, line-height, and column-width
-changes.
+changes. The same viewport is projected for progress, Consumption activity,
+and the Document Map rail; those consumers do not independently infer scroll
+position.
 
 ### natural completion uses semantic end evidence
 
@@ -278,8 +281,9 @@ completion event model, observer framework, or second command.
   then anchor fallback
 - restore is one-shot and abortable; user scroll cancels any pending
   automatic restore
-- web/transcript pick explicit fragment/time targets first and fall back
-  to the saved explicit target otherwise
+- web/transcript pick fresh explicit fragment/time targets first. A saved web
+  cursor selects its fragment before exact restore; fragment one is only the
+  Empty-cursor default.
 - pdf restores saved page, intra-page progression, and zoom on open and
   persists later page changes without reopening the document file
 
@@ -294,6 +298,21 @@ replace strips only `loc`/`fragment` and preserves unrelated query state and
 hash. Ordinary scrolling never writes the URL, and pane Back/Forward is
 workspace-level traversal that never persists a cursor merely because
 history moved it.
+
+### semantic viewport and document map
+
+Position is source-coordinate truth; progress is a projection; pixels are only
+capture input. Text uses `(fragment_id, canonical codepoint offset)` over an
+ordered unique fragment list. PDF uses `(page, normalized full-page fraction)`.
+The format reader publishes both visible endpoints with a source/layout fence;
+`readerDocumentPosition.ts` only projects them. A missing exact endpoint stays
+absent rather than becoming a zero or a scrollbar estimate.
+
+Document Map markers use exact owner start locators. EPUB Contents targets are
+exact element starts; missing named anchors reject navigation. Dense rail
+targets cluster by median position and expose every destination, rather than
+choosing a first marker. Preview, Return, and restore can paint the rail but
+cannot write progress or activity.
 
 ### addressability versus history
 

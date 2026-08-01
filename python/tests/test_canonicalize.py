@@ -10,7 +10,10 @@ Canonicalization tests:
 
 import pytest
 
-from nexus.services.canonicalize import generate_canonical_text
+from nexus.services.canonicalize import (
+    generate_canonical_text,
+    generate_canonical_text_with_element_offsets,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -160,6 +163,36 @@ class TestUnicodeNormalization:
         result = generate_canonical_text(html)
         # Should be normalized to precomposed form
         assert "café" in result or "cafe\u0301" not in result
+
+
+def test_requested_element_starts_share_the_canonical_text_walk() -> None:
+    text, offsets = generate_canonical_text_with_element_offsets(
+        ('<p> Intro </p><h2 id="first">First</h2><a name="turn"></a><p>After</p>'),
+        {"first", "turn", "missing"},
+    )
+
+    assert text == "Intro\nFirst\nAfter"
+    assert offsets == {"first": 6, "turn": 12}
+
+
+def test_element_start_stays_exact_when_nfc_composes_across_its_boundary() -> None:
+    text, offsets = generate_canonical_text_with_element_offsets(
+        '<p>caf<span>e</span><span id="accent">\u0301</span>!</p>',
+        {"accent"},
+    )
+
+    assert text == "café!"
+    assert offsets == {"accent": 4}
+
+
+def test_element_start_survives_blank_line_collapse_and_line_trimming() -> None:
+    text, offsets = generate_canonical_text_with_element_offsets(
+        '<p>Before</p><br><br><div id="turn">   After   </div>',
+        {"turn"},
+    )
+
+    assert text == "Before\n\nAfter"
+    assert offsets == {"turn": 8}
 
 
 class TestComplexDocuments:

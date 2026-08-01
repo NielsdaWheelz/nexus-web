@@ -572,6 +572,54 @@ def test_document_map_exhausts_internal_graph_pages(auth_client, direct_db):
     assert len(evidence["document_items"]) == 101
 
 
+def test_document_map_counts_an_empty_fragment_as_zero_canonical_characters(
+    auth_client,
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = _bootstrap_user(auth_client, direct_db)
+    with direct_db.session() as session:
+        library_id = get_user_default_library(session, user_id)
+        assert library_id is not None
+        media_id = create_test_media_in_library(session, user_id, library_id)
+        _register_media_cleanup(direct_db, media_id)
+        target_fragment_id = create_test_fragment(session, media_id, "Exact target")
+        session.execute(
+            text("UPDATE fragments SET idx = 1 WHERE id = :fragment_id"),
+            {"fragment_id": target_fragment_id},
+        )
+        session.commit()
+        create_test_fragment(session, media_id, "")
+        highlight_id = create_test_highlight(
+            session,
+            user_id,
+            target_fragment_id,
+            exact="Exact",
+        )
+        replace_media_apparatus(
+            session,
+            media_id=media_id,
+            media_kind="web_article",
+            source_fingerprint_value=source_fingerprint("empty-fragment", media_id),
+            items=[],
+            edges=[],
+            status="empty",
+        )
+        session.commit()
+
+    response = auth_client.get(
+        f"/media/{media_id}/document-map",
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    marker = next(
+        marker
+        for marker in response.json()["data"]["markers"]
+        if marker["item_id"] == f"highlight:{highlight_id}"
+    )
+    assert marker["position"] == 0
+
+
 def test_document_map_does_not_resolve_storage_shaped_summary_locator(auth_client, direct_db):
     user_id = _bootstrap_user(auth_client, direct_db)
     chunk_id = uuid4()

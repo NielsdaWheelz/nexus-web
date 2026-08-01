@@ -11,6 +11,7 @@ from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.media import (
     MediaNavigationOut,
+    ReaderNavigationFragmentOut,
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
@@ -58,6 +59,26 @@ def get_media_navigation_for_viewer(
     if ready is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media navigation is not ready")
 
+    fragment_rows = db.execute(
+        text(
+            """
+            SELECT id, idx, char_length(canonical_text)
+            FROM fragments
+            WHERE media_id = :media_id
+            ORDER BY idx ASC
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchall()
+    fragments = [
+        ReaderNavigationFragmentOut(
+            fragment_id=row[0],
+            fragment_idx=row[1],
+            char_count=row[2],
+        )
+        for row in fragment_rows
+    ]
+
     rows = db.execute(
         text(
             """
@@ -68,6 +89,7 @@ def get_media_navigation_for_viewer(
             FROM content_blocks cb
             WHERE cb.owner_kind = 'media' AND cb.owner_id = :media_id
               AND cb.block_kind = 'heading'
+              AND cb.locator ? 'section_id'
             ORDER BY cb.block_idx ASC
             """
         ),
@@ -75,34 +97,28 @@ def get_media_navigation_for_viewer(
     ).fetchall()
 
     sections: list[ReaderNavigationSectionOut] = []
-    for fallback_ordinal, row in enumerate(rows):
-        locator = row[2] if isinstance(row[2], dict) else {}
-        metadata = row[3] if isinstance(row[3], dict) else {}
-        section_id = locator.get("section_id") or metadata.get("section_id")
-        if not isinstance(section_id, str) or not section_id:
-            continue
+    for row in rows:
+        locator = _required_mapping(row[2], "heading locator")
+        metadata = _required_mapping(row[3], "heading metadata")
         sections.append(
             ReaderNavigationSectionOut(
-                section_id=section_id,
+                section_id=_required_str(locator.get("section_id"), "heading section_id"),
                 label=str(row[0]).strip(),
-                ordinal=_int(metadata.get("ordinal"), fallback_ordinal),
-                fragment_id=locator.get("fragment_id")
-                if isinstance(locator.get("fragment_id"), str)
-                else None,
-                fragment_idx=_optional_int(locator.get("fragment_idx")),
+                ordinal=_required_int(metadata.get("ordinal"), "heading ordinal"),
+                fragment_id=UUID(_required_str(locator.get("fragment_id"), "heading fragment_id")),
+                fragment_idx=_required_int(locator.get("fragment_idx"), "heading fragment_idx"),
                 level=_optional_int(locator.get("heading_level")),
                 depth=_optional_int(metadata.get("depth")),
-                start_offset=_optional_int(locator.get("start_offset")),
-                end_offset=_optional_int(locator.get("end_offset")),
-                anchor_id=locator.get("anchor_id")
-                if isinstance(locator.get("anchor_id"), str)
-                else None,
+                start_offset=_required_int(locator.get("start_offset"), "heading start_offset"),
+                end_offset=_required_int(locator.get("end_offset"), "heading end_offset"),
+                anchor_id=_optional_str(locator.get("anchor_id")),
             )
         )
 
     return MediaNavigationOut(
         media_id=media_id,
         kind="web_article",
+        fragments=fragments,
         sections=sections,
         toc_nodes=_toc_nodes(sections),
         landmarks=[],
@@ -114,7 +130,7 @@ def _toc_nodes(sections: list[ReaderNavigationSectionOut]) -> list[ReaderNavigat
     roots: list[ReaderNavigationTocNodeOut] = []
     stack: list[tuple[int, ReaderNavigationTocNodeOut]] = []
     for section in sections:
-        depth = section.depth or 1
+        depth = section.depth if section.depth is not None else 1
         node = ReaderNavigationTocNodeOut(
             id=section.section_id,
             label=section.label,
@@ -139,5 +155,23 @@ def _optional_int(value: object) -> int | None:
     return value if isinstance(value, int) else None
 
 
-def _int(value: object, fallback: int) -> int:
-    return value if isinstance(value, int) else fallback
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _required_int(value: object, name: str) -> int:
+    if not isinstance(value, int):
+        raise RuntimeError(f"Ready web navigation is missing {name}")
+    return value
+
+
+def _required_str(value: object, name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"Ready web navigation is missing {name}")
+    return value
+
+
+def _required_mapping(value: object, name: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Ready web navigation has invalid {name}")
+    return value

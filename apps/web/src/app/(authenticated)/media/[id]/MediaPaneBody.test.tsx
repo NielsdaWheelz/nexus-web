@@ -29,6 +29,7 @@ import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
 import {
   getPublishedSecondarySurface,
   getPublishedTransientSecondarySurface,
+  type PaneFixedChromePublication,
   type PanePrimaryChromePublication,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
@@ -54,17 +55,19 @@ import type {
   PaneHeaderAction,
 } from "@/lib/ui/actionDescriptor";
 import { READER_PULSE_HIGHLIGHT } from "@/lib/reader/pulseEvent";
+import type { ReaderSemanticViewport } from "@/lib/reader/readerDocumentPosition";
 import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
 import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
 import { useEscapeKey } from "@/lib/ui/useEscapeKey";
 import { useModalLayer } from "@/lib/ui/useModalLayer";
 
 import type {
+  ReaderDocumentMapMarker,
   ReaderEvidenceConfidence,
   ReaderEvidenceSourceKind,
 } from "@/lib/reader/documentMap";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
-import MediaPaneBody from "./MediaPaneBody";
+import MediaPaneBody, { resolveActiveWebFragment } from "./MediaPaneBody";
 import styles from "./page.module.css";
 
 const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
@@ -138,6 +141,9 @@ const testState = vi.hoisted(() => ({
     | { state: "Forbidden"; failure: unknown },
   lecternItems: [] as Record<string, unknown>[],
   readerStateConflictOnce: false,
+  readerStateResponse: null as Promise<{ data: unknown }> | null,
+  pdfGoToNextPage: vi.fn(),
+  pdfPublishSemanticViewport: null as (() => void) | null,
   readerContextFns: {
     setTheme: vi.fn(),
     setFontFamily: vi.fn(),
@@ -172,10 +178,9 @@ vi.mock("@/lib/api/client", async () => {
 });
 
 vi.mock("@/lib/dossiers/generationAdapter", async () => {
-  const actual =
-    await vi.importActual<typeof import("@/lib/dossiers/generationAdapter")>(
-      "@/lib/dossiers/generationAdapter",
-    );
+  const actual = await vi.importActual<
+    typeof import("@/lib/dossiers/generationAdapter")
+  >("@/lib/dossiers/generationAdapter");
   return {
     ...actual,
     learnDossierFromHighlight: learnMocks.learnDossierFromHighlight,
@@ -233,13 +238,16 @@ const PDF_INTRINSIC_WIDTH_PX = 812;
 
 vi.mock("@/components/PdfReader", () => {
   function PdfReaderMock({
+    mediaId,
     onIntrinsicWidthChange,
     onHighlightHover,
     viewportRef,
     contentRef,
     onControlsStateChange,
     onControlsReady,
+    onSemanticViewportChange,
   }: {
+    mediaId: string;
     onIntrinsicWidthChange?: (state: {
       maxRenderedPageWidthPx: number | null;
     }) => void;
@@ -267,6 +275,9 @@ vi.mock("@/components/PdfReader", () => {
         captureResumeState: () => null;
       } | null,
     ) => void;
+    onSemanticViewportChange?: (
+      semanticViewport: ReaderSemanticViewport | null,
+    ) => void;
   }) {
     useEffect(() => {
       onControlsStateChange?.({
@@ -282,13 +293,64 @@ vi.mock("@/components/PdfReader", () => {
       });
       onControlsReady?.({
         goToPreviousPage: vi.fn(),
-        goToNextPage: vi.fn(),
+        goToNextPage: () => {
+          testState.pdfGoToNextPage();
+          onSemanticViewportChange?.({
+            sourceKey: `${mediaId}:pdf:test`,
+            layoutGeneration: 2,
+            intent: "Reader",
+            primaryLocator: {
+              kind: "pdf",
+              page: 2,
+              page_progression: null,
+              zoom: 1,
+              position: 2,
+            },
+            visibleStart: { kind: "Pdf", page: 2, pageFraction: 0 },
+            visibleEnd: { kind: "Pdf", page: 2, pageFraction: 0.75 },
+            atEnd: true,
+          });
+        },
         zoomIn: vi.fn(),
         zoomOut: vi.fn(),
         applyResumeState: () => true,
         captureResumeState: () => null,
       });
-      return () => onControlsReady?.(null);
+      testState.pdfPublishSemanticViewport = () =>
+        onSemanticViewportChange?.({
+          sourceKey: `${mediaId}:pdf:test`,
+          layoutGeneration: 2,
+          intent: "Reader",
+          primaryLocator: {
+            kind: "pdf",
+            page: 1,
+            page_progression: 0.25,
+            zoom: 1,
+            position: 1,
+          },
+          visibleStart: { kind: "Pdf", page: 1, pageFraction: 0.25 },
+          visibleEnd: { kind: "Pdf", page: 1, pageFraction: 0.75 },
+          atEnd: false,
+        });
+      onSemanticViewportChange?.({
+        sourceKey: `${mediaId}:pdf:test`,
+        layoutGeneration: 1,
+        intent: "Restore",
+        primaryLocator: {
+          kind: "pdf",
+          page: 1,
+          page_progression: 0.25,
+          zoom: 1,
+          position: 1,
+        },
+        visibleStart: { kind: "Pdf", page: 1, pageFraction: 0.25 },
+        visibleEnd: { kind: "Pdf", page: 1, pageFraction: 0.75 },
+        atEnd: false,
+      });
+      return () => {
+        testState.pdfPublishSemanticViewport = null;
+        onControlsReady?.(null);
+      };
       // The mock publishes one mounted runtime; production owns live updates.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -383,7 +445,23 @@ vi.mock("@/components/HtmlRenderer", () => ({
 }));
 
 vi.mock("@/components/reader/ReaderDocumentMapOverviewRail", () => ({
-  default: () => <div data-testid="document-map-overview-rail" />,
+  default: ({
+    markers,
+    onActivateMarker,
+  }: {
+    markers: ReaderDocumentMapMarker[];
+    onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
+  }) => (
+    <div data-testid="document-map-overview-rail">
+      <button
+        type="button"
+        data-testid="document-map-overview-rail-activate-last"
+        onClick={() => onActivateMarker(markers[markers.length - 1]!)}
+      >
+        Activate last map destination
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock("@/components/reader/MarginRail", () => ({
@@ -434,9 +512,9 @@ async function expectReaderScrollTracksChrome(
     expect(probe).toHaveAttribute("data-motion-phase", "Visible");
   });
   await waitFor(() => {
-    expect(
-      probe.style.getPropertyValue(MOBILE_CHROME_COLLAPSE_PROPERTY),
-    ).toBe("0");
+    expect(probe.style.getPropertyValue(MOBILE_CHROME_COLLAPSE_PROPERTY)).toBe(
+      "0",
+    );
   });
   viewport.scrollTop = 16;
   fireEvent.scroll(viewport);
@@ -487,6 +565,7 @@ function readerStatePutBody(call: unknown[] | undefined) {
   return JSON.parse(String(init.body)) as {
     locator: {
       kind: string;
+      page?: number;
       target: Record<string, unknown>;
       locations: {
         text_offset: number;
@@ -863,9 +942,14 @@ function readerDocumentMapResponse() {
       ...passageGroups.map((group, index) => ({
         id: group.items[0]!.id,
         item_id: group.items[0]!.id,
-        kind: "SourceReference",
+        kind: group.items[0]!.kind,
         position: (index + 1) / (passageGroups.length + 1),
-        tone: group.resolution.kind === "Resolved" ? "Citation" : "Warning",
+        tone:
+          group.resolution.kind !== "Resolved"
+            ? "Warning"
+            : group.items[0]!.kind === "Highlight"
+              ? "Highlight"
+              : "Citation",
         label: group.items[0]!.label,
         preview: group.items[0]!.excerpt,
       })),
@@ -992,6 +1076,30 @@ async function renderLatestToolbar() {
     expect(toolbar).not.toBeNull();
   });
   render(<>{toolbar}</>);
+}
+
+async function renderLatestFixedChrome(
+  onSetFixedChrome: ReturnType<typeof vi.fn>,
+) {
+  await waitFor(() => {
+    expect(latestFixedChromePublication(onSetFixedChrome)?.body).toBeDefined();
+  });
+  const publication = latestFixedChromePublication(onSetFixedChrome);
+  if (!publication) throw new Error("Expected fixed chrome publication");
+  render(<>{publication.body}</>);
+}
+
+function latestFixedChromePublication(
+  onSetFixedChrome: ReturnType<typeof vi.fn>,
+): PaneFixedChromePublication | null {
+  return ([...onSetFixedChrome.mock.calls]
+    .reverse()
+    .find(
+      ([candidate]) =>
+        typeof candidate === "object" &&
+        candidate !== null &&
+        "body" in candidate,
+    )?.[0] ?? null) as PaneFixedChromePublication | null;
 }
 
 function latestSecondaryPublication(
@@ -1168,35 +1276,35 @@ function renderMediaPane(
             <ShareControllerProvider>
               <GlobalPlayerProvider>
                 <PaneRuntimeProvider
-                paneId="pane-1"
-                visitId={TEST_VISIT_ID}
-                isActive={nextOptions.isActive ?? true}
-                href={href}
-                routeId={identity.routeId}
-                routeKey={identity.routeKey}
-                secondaryPane={nextOptions.secondaryPane ?? null}
-                transientSecondarySurface={
-                  nextOptions.transientSecondarySurface ?? null
-                }
-                canGoBack={false}
-                canGoForward={false}
-                onGoBackPane={vi.fn()}
-                onGoForwardPane={vi.fn()}
-                pathParams={{
-                  id:
-                    nextOptions.pathMediaId ??
-                    "00000000-0000-4000-8000-000000000001",
-                }}
-                onNavigatePane={onNavigatePane}
-                onReplacePane={onReplacePane}
-                onActivateWorkspaceTarget={onActivateWorkspaceTarget}
-                onSetPaneLabel={onSetPaneLabel}
-                onSetPaneLayout={onSetPaneLayout}
-                onRequestSecondarySurface={onRequestSecondarySurface}
-                onRequestTransientSecondarySurface={
-                  onRequestTransientSecondarySurface
-                }
-                onCloseSecondaryPane={onCloseSecondaryPane}
+                  paneId="pane-1"
+                  visitId={TEST_VISIT_ID}
+                  isActive={nextOptions.isActive ?? true}
+                  href={href}
+                  routeId={identity.routeId}
+                  routeKey={identity.routeKey}
+                  secondaryPane={nextOptions.secondaryPane ?? null}
+                  transientSecondarySurface={
+                    nextOptions.transientSecondarySurface ?? null
+                  }
+                  canGoBack={false}
+                  canGoForward={false}
+                  onGoBackPane={vi.fn()}
+                  onGoForwardPane={vi.fn()}
+                  pathParams={{
+                    id:
+                      nextOptions.pathMediaId ??
+                      "00000000-0000-4000-8000-000000000001",
+                  }}
+                  onNavigatePane={onNavigatePane}
+                  onReplacePane={onReplacePane}
+                  onActivateWorkspaceTarget={onActivateWorkspaceTarget}
+                  onSetPaneLabel={onSetPaneLabel}
+                  onSetPaneLayout={onSetPaneLayout}
+                  onRequestSecondarySurface={onRequestSecondarySurface}
+                  onRequestTransientSecondarySurface={
+                    onRequestTransientSecondarySurface
+                  }
+                  onCloseSecondaryPane={onCloseSecondaryPane}
                 >
                   <PaneSecondaryTestHost
                     onSetPaneSecondary={onSetPaneSecondary}
@@ -1285,6 +1393,9 @@ describe("MediaPaneBody pane sizing", () => {
     testState.readerPersistence = { state: "Clean" };
     testState.lecternItems = [];
     testState.readerStateConflictOnce = false;
+    testState.readerStateResponse = null;
+    testState.pdfGoToNextPage.mockReset();
+    testState.pdfPublishSemanticViewport = null;
     paneChromeMocks.usePanePrimaryChrome.mockReset();
     learnMocks.learnDossierFromHighlight.mockReset();
     for (const fn of Object.values(testState.readerContextFns)) {
@@ -1410,6 +1521,9 @@ describe("MediaPaneBody pane sizing", () => {
               locator: body.locator,
             });
           }
+          if (testState.readerStateResponse !== null) {
+            return testState.readerStateResponse;
+          }
           return jsonResponse({ state: "Empty", revision: 0 });
         }
         if (
@@ -1429,6 +1543,22 @@ describe("MediaPaneBody pane sizing", () => {
           return jsonResponse({
             media_id: "00000000-0000-4000-8000-000000000001",
             kind: testState.mediaKind,
+            fragments: [
+              {
+                fragment_id: "fragment-1",
+                fragment_idx: 0,
+                char_count: testState.fragmentCanonicalText.length,
+              },
+              ...(testState.includeSecondEpubSection
+                ? [
+                    {
+                      fragment_id: "fragment-2",
+                      fragment_idx: 1,
+                      char_count: testState.secondEpubCanonicalText.length,
+                    },
+                  ]
+                : []),
+            ],
             sections: [
               {
                 section_id: "section-1",
@@ -1443,7 +1573,6 @@ describe("MediaPaneBody pane sizing", () => {
                 href_path: "chapter-1.xhtml",
                 href_fragment: null,
                 anchor_id: null,
-                char_count: testState.fragmentCanonicalText.length,
               },
               ...(testState.includeSecondEpubSection
                 ? [
@@ -1456,11 +1585,10 @@ describe("MediaPaneBody pane sizing", () => {
                       level: 1,
                       depth: 0,
                       start_offset: 0,
-                      end_offset: 23,
+                      end_offset: testState.secondEpubCanonicalText.length,
                       href_path: "chapter-2.xhtml",
                       href_fragment: null,
                       anchor_id: null,
-                      char_count: testState.secondEpubCanonicalText.length,
                     },
                   ]
                 : []),
@@ -1531,8 +1659,7 @@ describe("MediaPaneBody pane sizing", () => {
           });
         }
         if (
-          path ===
-          "/api/media/00000000-0000-4000-8000-000000000001/epub-find"
+          path === "/api/media/00000000-0000-4000-8000-000000000001/epub-find"
         ) {
           const request = JSON.parse(String(init?.body)) as {
             query: string;
@@ -1590,7 +1717,7 @@ describe("MediaPaneBody pane sizing", () => {
   });
 
   it.each(["web_article", "epub"] as const)(
-    "publishes workspace primary layout and fixed chrome for %s",
+    "publishes workspace primary layout without fabricating fixed chrome for %s",
     async (kind) => {
       testState.mediaKind = kind;
       const { onSetPaneLayout, onSetFixedChrome, routeKey } = renderMediaPane();
@@ -1604,16 +1731,40 @@ describe("MediaPaneBody pane sizing", () => {
           },
         });
       });
-      await waitFor(() => {
-        expect(onSetFixedChrome).toHaveBeenCalledWith(
-          expect.objectContaining({
-            id: "reader-document-map-overview-rail",
-            widthPx: DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX,
-          }),
-        );
-      });
+      expect(
+        onSetFixedChrome.mock.calls.some(
+          ([publication]) =>
+            publication?.id === "reader-document-map-overview-rail",
+        ),
+      ).toBe(false);
     },
   );
+
+  it("defaults web reading to the first fragment only from an Empty cursor", () => {
+    const [first] = fragmentResponse();
+
+    expect(
+      resolveActiveWebFragment({
+        fragments: [first],
+        requestedFragmentId: null,
+        cursorState: "Loading",
+      }),
+    ).toBeNull();
+    expect(
+      resolveActiveWebFragment({
+        fragments: [first],
+        requestedFragmentId: null,
+        cursorState: "Positioned",
+      }),
+    ).toBeNull();
+    expect(
+      resolveActiveWebFragment({
+        fragments: [first],
+        requestedFragmentId: null,
+        cursorState: "Empty",
+      }),
+    ).toBe(first);
+  });
 
   it("finishes a final web unit only after fresh forward intent and reports it once", async () => {
     testState.mediaKind = "web_article";
@@ -1795,8 +1946,7 @@ describe("MediaPaneBody pane sizing", () => {
     }
     const publicationBeforeOpen =
       latestSecondaryPublication(onSetPaneSecondary);
-    const publicationCountBeforeOpen =
-      onSetPaneSecondary.mock.calls.length;
+    const publicationCountBeforeOpen = onSetPaneSecondary.mock.calls.length;
     act(() => current.onShowResults(null));
     expect(onRequestTransientSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
@@ -1822,9 +1972,9 @@ describe("MediaPaneBody pane sizing", () => {
     expect(onSetPaneSecondary).toHaveBeenCalledTimes(
       publicationCountBeforeOpen,
     );
-    expect(
-      latestSecondaryPublication(onSetPaneSecondary),
-    ).toBe(publicationBeforeOpen);
+    expect(latestSecondaryPublication(onSetPaneSecondary)).toBe(
+      publicationBeforeOpen,
+    );
 
     let resultsBody: ReactNode = null;
     await waitFor(() => {
@@ -2123,6 +2273,61 @@ describe("MediaPaneBody pane sizing", () => {
       );
     });
     expect(latestPrimaryChrome()?.search).toBeUndefined();
+  });
+
+  it("resumes PDF progress after a map jump when the reader uses toolbar navigation", async () => {
+    testState.mediaKind = "pdf";
+    testState.documentMapPassageGroups = [pdfHighlightPassage()];
+    const { onSetFixedChrome } = renderMediaPane();
+    await renderLatestFixedChrome(onSetFixedChrome);
+    await userEvent.click(
+      screen.getByTestId("document-map-overview-rail-activate-last"),
+    );
+
+    await renderLatestToolbar();
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+
+    expect(testState.pdfGoToNextPage).toHaveBeenCalledOnce();
+    await waitFor(
+      () => {
+        expect(
+          readerStatePutCalls().some((call) => {
+            const locator = readerStatePutBody(call).locator;
+            return locator.kind === "pdf" && locator.page === 2;
+          }),
+        ).toBe(true);
+      },
+      { timeout: 2_000 },
+    );
+  });
+
+  it("does not lifecycle-save a PDF map activation before genuine reader input", async () => {
+    testState.mediaKind = "pdf";
+    testState.documentMapPassageGroups = [pdfHighlightPassage()];
+    testState.readerStateResponse = Promise.resolve({
+      data: {
+        state: "Positioned",
+        revision: 1,
+        locator: {
+          kind: "pdf",
+          page: 1,
+          page_progression: 0.25,
+          zoom: 1,
+          position: 1,
+        },
+      },
+    });
+    const { onSetFixedChrome } = renderMediaPane();
+    await renderLatestFixedChrome(onSetFixedChrome);
+    act(() => testState.pdfPublishSemanticViewport?.());
+    expect(readerStatePutCalls()).toHaveLength(0);
+    await userEvent.click(
+      screen.getByTestId("document-map-overview-rail-activate-last"),
+    );
+
+    window.dispatchEvent(new Event("pagehide"));
+
+    expect(readerStatePutCalls()).toHaveLength(0);
   });
 
   it("publishes a grouped resource target and leaves core ownership to PaneShell", async () => {
@@ -2485,6 +2690,9 @@ describe("MediaPaneBody pane sizing", () => {
   it("activates a SourceReference target across EPUB sections using the target locator", async () => {
     testState.mediaKind = "epub";
     testState.includeSecondEpubSection = true;
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.secondEpubCanonicalText = "Cross-section evidence.";
+    testState.renderHtmlInMock = true;
     testState.documentMapPassageGroups = [crossSectionSourceReferencePassage()];
     const pulseHandler = vi.fn();
     window.addEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
@@ -2523,6 +2731,9 @@ describe("MediaPaneBody pane sizing", () => {
   it("opens a Shift-clicked SourceReference target in a new pane", async () => {
     testState.mediaKind = "epub";
     testState.includeSecondEpubSection = true;
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.secondEpubCanonicalText = "Cross-section evidence.";
+    testState.renderHtmlInMock = true;
     testState.documentMapPassageGroups = [crossSectionSourceReferencePassage()];
     const { onActivateWorkspaceTarget } = renderMediaPane({
       renderSecondarySurfaceId: "resource-evidence",
@@ -2555,6 +2766,9 @@ describe("MediaPaneBody pane sizing", () => {
   it("honors an apparatus target URL with the target locator, not its owner locator", async () => {
     testState.mediaKind = "epub";
     testState.includeSecondEpubSection = true;
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.secondEpubCanonicalText = "Cross-section evidence.";
+    testState.renderHtmlInMock = true;
     testState.documentMapPassageGroups = [crossSectionSourceReferencePassage()];
     const pulseHandler = vi.fn();
     window.addEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
@@ -2954,9 +3168,7 @@ describe("MediaPaneBody pane sizing", () => {
         target: {
           href:
             "/artifacts/" +
-            encodeURIComponent(
-              "artifact:44444444-4444-4444-8444-444444444444",
-            ),
+            encodeURIComponent("artifact:44444444-4444-4444-8444-444444444444"),
           labelHint: "Lesson",
         },
         disposition: { kind: "Adopt" },

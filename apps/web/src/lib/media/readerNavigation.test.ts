@@ -84,6 +84,7 @@ describe("MediaNavigationResponse", () => {
       data: {
         media_id: "media-1",
         kind: "web_article",
+        fragments: [],
         sections: [],
         toc_nodes: [],
         landmarks: [],
@@ -99,6 +100,13 @@ describe("MediaNavigationResponse", () => {
     const data = {
       media_id: "media-1",
       kind: "web_article",
+      fragments: [
+        {
+          fragment_id: "fragment-1",
+          fragment_idx: 0,
+          char_count: 120,
+        },
+      ],
       sections: [
         {
           section_id: "introduction",
@@ -113,7 +121,6 @@ describe("MediaNavigationResponse", () => {
           href_path: null,
           href_fragment: null,
           anchor_id: "introduction",
-          char_count: 120,
         },
       ],
       toc_nodes: [
@@ -150,6 +157,7 @@ describe("MediaNavigationResponse", () => {
     const empty = {
       media_id: "media-1",
       kind: "epub",
+      fragments: [],
       sections: [],
       toc_nodes: [],
       landmarks: [],
@@ -180,5 +188,95 @@ describe("MediaNavigationResponse", () => {
     expect(() =>
       decodeMediaNavigationResponse({ data: empty, meta: {} }),
     ).toThrow(/MediaNavigationResponse must contain exactly/);
+    expect(() =>
+      decodeMediaNavigation({
+        ...empty,
+        sections: [
+          {
+            section_id: "legacy-section",
+            label: "Legacy section length",
+            ordinal: 0,
+            fragment_id: "fragment-1",
+            fragment_idx: 0,
+            level: null,
+            depth: null,
+            start_offset: 0,
+            end_offset: null,
+            href_path: null,
+            href_fragment: null,
+            anchor_id: null,
+            char_count: 120,
+          },
+        ],
+      }),
+    ).toThrow(/sections\[0\] must contain exactly/);
+  });
+
+  it("rejects contradictory navigation relations at the transport boundary", () => {
+    const section = {
+      section_id: "section-1",
+      label: "Section",
+      ordinal: 0,
+      fragment_id: "fragment-1",
+      fragment_idx: 0,
+      level: 1,
+      depth: 0,
+      start_offset: 4,
+      end_offset: 8,
+      href_path: null,
+      href_fragment: null,
+      anchor_id: null,
+    };
+    const navigation = {
+      media_id: "media-1",
+      kind: "web_article",
+      fragments: [
+        { fragment_id: "fragment-1", fragment_idx: 0, char_count: 8 },
+      ],
+      sections: [section],
+      toc_nodes: [],
+      landmarks: [],
+      page_list: [],
+    };
+
+    expect(() =>
+      decodeMediaNavigation({
+        ...navigation,
+        fragments: [
+          ...navigation.fragments,
+          { fragment_id: "fragment-1", fragment_idx: 1, char_count: 8 },
+        ],
+      }),
+    ).toThrow(/ordered unique document units/);
+    expect(() =>
+      decodeMediaNavigation({
+        ...navigation,
+        sections: [{ ...section, fragment_id: "fragment-other" }],
+      }),
+    ).toThrow(/declared document fragment/);
+    expect(() =>
+      decodeMediaNavigation({
+        ...navigation,
+        sections: [{ ...section, end_offset: 9 }],
+      }),
+    ).toThrow(/bounded by canonical fragment length/);
+    expect(() =>
+      decodeMediaNavigation({
+        ...navigation,
+        toc_nodes: [
+          {
+            id: "toc-missing",
+            label: "Missing",
+            ordinal: 0,
+            href: null,
+            fragment_idx: 0,
+            level: 1,
+            depth: 0,
+            section_id: "missing-section",
+            children: [],
+          },
+        ],
+      }),
+    ).toThrow(/targets an absent section/);
   });
 });

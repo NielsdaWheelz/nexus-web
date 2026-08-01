@@ -837,6 +837,43 @@ class TestEpubExtractPreservesAnchorTargetsForInFragmentNavigation:
         assert 'id="sec-a"' in html
         assert 'name="named-anchor"' in html
 
+    def test_missing_named_navigation_anchor_rejects_the_source(self, db_session: Session):
+        storage = FakeStorageClient()
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[("ch1", "chapter1.xhtml", "application/xhtml+xml")],
+                    ncx_id="ncx",
+                ),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml(
+                    '<h2 id="present">Readable body.</h2>'
+                ),
+                "OEBPS/toc.ncx": """\
+<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap>
+    <navPoint id="outer" playOrder="1">
+      <navLabel><text>Present target</text></navLabel>
+      <content src="chapter1.xhtml#present"/>
+      <navPoint id="nested" playOrder="2">
+        <navLabel><text>Missing nested target</text></navLabel>
+        <content src="chapter1.xhtml#does-not-exist"/>
+      </navPoint>
+    </navPoint>
+  </navMap>
+</ncx>""",
+            }
+        )
+
+        mid = _create_media_with_epub(db_session, storage, epub)
+        result = _extract_epub_artifacts(db_session, mid, storage)
+
+        assert isinstance(result, EpubExtractionError)
+        assert result.error_code == ApiErrorCode.E_SOURCE_NOT_READABLE.value
+        assert result.error_message == (
+            "EPUB navigation target OEBPS/chapter1.xhtml#does-not-exist names a missing anchor"
+        )
+
 
 class TestEpubExtractRejectsUnsafeArchiveWithTerminalCode:
     """test_epub_extract_rejects_unsafe_archive_with_terminal_code"""

@@ -1,237 +1,115 @@
 "use client";
 
 import {
-  useCallback,
-  useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
-  type RefObject,
 } from "react";
-import HoverPreview, {
-  HOVER_PREVIEW_DELAY_MS,
-} from "@/components/ui/HoverPreview";
-import { clamp } from "@/lib/clamp";
 import type { ReaderDocumentMapMarker } from "@/lib/reader/documentMap";
+import type { ReaderDocumentOverviewRange } from "@/lib/reader/readerDocumentPosition";
 import { cx } from "@/lib/ui/cx";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
-import { findScrollParent } from "./useAnchoredReaderProjection";
 import styles from "./ReaderDocumentMapOverviewRail.module.css";
 
-export const DOCUMENT_MAP_MARKER_MIN_GAP_PX = 14;
+const MARKER_TARGET_SIZE_PX = 24;
 
 interface ReaderDocumentMapOverviewRailProps {
   markers: ReaderDocumentMapMarker[];
-  contentRef: RefObject<HTMLElement | null>;
-  documentSpan: { start: number; end: number };
+  visibleRange: ReaderDocumentOverviewRange;
   onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
 }
 
-interface Cluster {
-  center: number;
+interface MarkerCluster {
+  key: string;
+  position: number;
   members: ReaderDocumentMapMarker[];
 }
 
+type PositionedStyle = CSSProperties & { "--position": string };
+
 export default function ReaderDocumentMapOverviewRail({
   markers,
-  contentRef,
-  documentSpan,
+  visibleRange,
   onActivateMarker,
 }: ReaderDocumentMapOverviewRailProps) {
+  const listId = useId();
   const trackRef = useRef<HTMLDivElement | null>(null);
-  const hoverDelayRef = useRef<number | null>(null);
-  const scrollFrameRef = useRef<number | null>(null);
+  const railButtonsRef = useRef<Array<HTMLButtonElement | null>>([]);
+  const firstListButtonRef = useRef<HTMLButtonElement | null>(null);
   const [trackHeight, setTrackHeight] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const [previewAnchor, setPreviewAnchor] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
-  const [scrollState, setScrollState] = useState({
-    scrollTop: 0,
-    scrollHeight: 0,
-    clientHeight: 0,
-  });
+  const [openClusterKey, setOpenClusterKey] = useState<string | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const track = trackRef.current;
-    if (!track) {
-      return;
-    }
-    const observer = new ResizeObserver(() => {
-      setTrackHeight(track.getBoundingClientRect().height);
-    });
-    observer.observe(track);
-    setTrackHeight(track.getBoundingClientRect().height);
-    return () => observer.disconnect();
-  }, []);
+    if (!track) return;
 
-  useEffect(() => {
+    const measure = () => {
+      const nextHeight = track.getBoundingClientRect().height;
+      setTrackHeight((currentHeight) =>
+        currentHeight === nextHeight ? currentHeight : nextHeight,
+      );
+    };
+
+    measure();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(measure);
+    observer?.observe(track);
+    window.addEventListener("resize", measure);
     return () => {
-      if (hoverDelayRef.current != null) {
-        window.clearTimeout(hoverDelayRef.current);
-      }
-      if (scrollFrameRef.current != null) {
-        window.cancelAnimationFrame(scrollFrameRef.current);
-      }
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
     };
   }, []);
 
-  const syncScrollState = useCallback((scrollParent: HTMLElement) => {
-    setScrollState((previous) => {
-      if (
-        previous.scrollTop === scrollParent.scrollTop &&
-        previous.scrollHeight === scrollParent.scrollHeight &&
-        previous.clientHeight === scrollParent.clientHeight
-      ) {
-        return previous;
-      }
-
-      return {
-        scrollTop: scrollParent.scrollTop,
-        scrollHeight: scrollParent.scrollHeight,
-        clientHeight: scrollParent.clientHeight,
-      };
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!contentRef.current) {
-      return;
-    }
-
-    const scrollParent = findScrollParent(contentRef.current);
-    syncScrollState(scrollParent);
-
-    const handleScroll = () => {
-      if (scrollFrameRef.current != null) {
-        return;
-      }
-      scrollFrameRef.current = window.requestAnimationFrame(() => {
-        scrollFrameRef.current = null;
-        syncScrollState(scrollParent);
-      });
-    };
-
-    scrollParent.addEventListener("scroll", handleScroll, { passive: true });
-    return () => {
-      scrollParent.removeEventListener("scroll", handleScroll);
-      if (scrollFrameRef.current != null) {
-        window.cancelAnimationFrame(scrollFrameRef.current);
-        scrollFrameRef.current = null;
-      }
-    };
-  }, [contentRef, syncScrollState]);
-
-  useEffect(() => {
-    if (!contentRef.current) {
-      return;
-    }
-
-    const scrollParent = findScrollParent(contentRef.current);
-    const observer = new ResizeObserver(() => {
-      syncScrollState(scrollParent);
-    });
-
-    observer.observe(scrollParent);
-    return () => observer.disconnect();
-  }, [contentRef, syncScrollState]);
-
-  const viewportBand = useMemo(() => {
-    const { scrollTop, scrollHeight, clientHeight } = scrollState;
-    const range = documentSpan.end - documentSpan.start;
-    const startFrac = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
-    const endFrac =
-      scrollHeight > 0 ? (scrollTop + clientHeight) / scrollHeight : 1;
-    return {
-      start: clamp(documentSpan.start + startFrac * range, 0, 1),
-      end: clamp(documentSpan.start + endFrac * range, 0, 1),
-    };
-  }, [scrollState, documentSpan]);
-
-  // Merge nearby markers so every cluster has a usable hit band.
-  const clusters = useMemo<Cluster[]>(() => {
-    const out: Cluster[] = [];
-    for (const item of markers) {
-      const center = item.position * trackHeight;
-      const last = out[out.length - 1];
-      if (last && center - last.center < DOCUMENT_MAP_MARKER_MIN_GAP_PX) {
-        last.members.push(item);
-        continue;
-      }
-      out.push({ center, members: [item] });
-    }
-    return out;
-  }, [markers, trackHeight]);
-
-  useEffect(() => {
-    if (activeIndex > clusters.length - 1) {
-      setActiveIndex(Math.max(0, clusters.length - 1));
-    }
-  }, [activeIndex, clusters.length]);
-
-  const cancelHoverDelay = useCallback(() => {
-    if (hoverDelayRef.current != null) {
-      window.clearTimeout(hoverDelayRef.current);
-      hoverDelayRef.current = null;
-    }
-  }, []);
-
-  const closePreview = useCallback(() => {
-    cancelHoverDelay();
-    setPreviewIndex(null);
-    setPreviewAnchor(null);
-  }, [cancelHoverDelay]);
-
-  const showPreview = useCallback((index: number, tick: HTMLElement) => {
-    const rect = tick.getBoundingClientRect();
-    setPreviewIndex(index);
-    setPreviewAnchor({ x: rect.left + rect.width / 2, y: rect.top });
-  }, []);
-
-  const activate = useCallback(
-    (index: number) => {
-      const primary = clusters[index]?.members[0];
-      if (primary) {
-        onActivateMarker(primary);
-      }
-    },
-    [clusters, onActivateMarker],
+  const clusters = useMemo(
+    () => clusterMarkers(markers, trackHeight),
+    [markers, trackHeight],
   );
-
-  const handleKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      if (clusters.length === 0) {
-        return;
-      }
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        activate(activeIndex);
-        return;
-      }
-      const next = nextRovingIndexForKey({
-        key: event.key,
-        currentIndex: activeIndex,
-        itemCount: clusters.length,
-        orientation: "vertical",
-      });
-      if (next === null) {
-        return;
-      }
-      event.preventDefault();
-      setActiveIndex(next);
-      const tick = trackRef.current?.querySelectorAll<HTMLElement>(
-        `.${styles.tick}`,
-      )[next];
-      tick?.focus();
-    },
-    [activeIndex, activate, clusters.length],
+  const rovingIndex = activeIndex < clusters.length ? activeIndex : 0;
+  const openClusterIndex = clusters.findIndex(
+    (cluster) => cluster.key === openClusterKey,
   );
+  const openCluster =
+    openClusterIndex >= 0 ? clusters[openClusterIndex]! : null;
 
-  const previewCluster =
-    previewIndex !== null ? (clusters[previewIndex] ?? null) : null;
+  useLayoutEffect(() => {
+    if (openClusterKey !== null) firstListButtonRef.current?.focus();
+  }, [openClusterKey]);
+
+  function activate(marker: ReaderDocumentMapMarker) {
+    setOpenClusterKey(null);
+    onActivateMarker(marker);
+  }
+
+  function handleRailKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) {
+    const nextIndex = nextRovingIndexForKey({
+      key: event.key,
+      currentIndex: index,
+      itemCount: clusters.length,
+      orientation: "vertical",
+    });
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    setActiveIndex(nextIndex);
+    railButtonsRef.current[nextIndex]?.focus();
+  }
+
+  function closeCluster() {
+    if (openClusterIndex < 0) return;
+    railButtonsRef.current[openClusterIndex]?.focus();
+    setOpenClusterKey(null);
+  }
 
   return (
     <div
@@ -245,103 +123,255 @@ export default function ReaderDocumentMapOverviewRail({
         className={styles.track}
         role="toolbar"
         aria-orientation="vertical"
-        aria-label="Document Map markers"
-        onKeyDown={handleKeyDown}
+        aria-label="Document Map destinations"
       >
         <div
           className={styles.band}
           data-testid="reader-document-map-band"
+          aria-hidden="true"
           style={{
-            top: `${viewportBand.start * trackHeight}px`,
-            height: `${(viewportBand.end - viewportBand.start) * trackHeight}px`,
+            top: `${visibleRange.start * 100}%`,
+            height: `${(visibleRange.end - visibleRange.start) * 100}%`,
           }}
         />
+
         {clusters.map((cluster, index) => {
-          const primary = cluster.members[0];
-          if (!primary) {
-            return null;
-          }
-          const stacked = cluster.members.length > 1;
+          const expanded = cluster.key === openCluster?.key;
+          const previewId = `${listId}-preview-${index}`;
+          const positionStyle: PositionedStyle = {
+            "--position": `${cluster.position * 100}%`,
+          };
+          const placementClass = positionPlacementClass(cluster.position);
+
           return (
-            <button
-              key={primary.id}
-              type="button"
-              className={cx(styles.tick, stacked && styles.tickStacked)}
-              style={{
-                top: `${cluster.center}px`,
-                background: markerColor(primary),
-              }}
-              data-testid={`reader-document-map-marker-${primary.id}`}
-              tabIndex={index === activeIndex ? 0 : -1}
-              aria-label={
-                stacked
-                  ? `${cluster.members.length} Document Map markers`
-                  : primary.label
-              }
-              onClick={() => activate(index)}
-              onPointerEnter={(event) => {
-                cancelHoverDelay();
-                const tick = event.currentTarget;
-                hoverDelayRef.current = window.setTimeout(() => {
-                  hoverDelayRef.current = null;
-                  showPreview(index, tick);
-                }, HOVER_PREVIEW_DELAY_MS);
-              }}
-              onPointerLeave={closePreview}
-              onFocus={(event) => {
-                setActiveIndex(index);
-                showPreview(index, event.currentTarget);
-              }}
-              onBlur={closePreview}
-            />
+            <div
+              key={cluster.key}
+              className={styles.markerSlot}
+              style={positionStyle}
+            >
+              <button
+                ref={(button) => {
+                  railButtonsRef.current[index] = button;
+                }}
+                type="button"
+                className={styles.markerButton}
+                tabIndex={index === rovingIndex ? 0 : -1}
+                aria-label={clusterAccessibleName(cluster)}
+                aria-describedby={previewId}
+                aria-expanded={
+                  cluster.members.length > 1 ? expanded : undefined
+                }
+                aria-controls={
+                  cluster.members.length > 1 && expanded
+                    ? `${listId}-destinations`
+                    : undefined
+                }
+                onFocus={() => setActiveIndex(index)}
+                onKeyDown={(event) => handleRailKeyDown(event, index)}
+                onClick={() => {
+                  if (cluster.members.length === 1) {
+                    activate(cluster.members[0]!);
+                    return;
+                  }
+                  setOpenClusterKey(expanded ? null : cluster.key);
+                }}
+              >
+                {cluster.members.length === 1 ? (
+                  <MarkerGlyph marker={cluster.members[0]!} />
+                ) : (
+                  <span className={styles.clusterCount} aria-hidden="true">
+                    {cluster.members.length}
+                  </span>
+                )}
+              </button>
+              <div
+                id={previewId}
+                className={cx(styles.preview, placementClass)}
+                role="tooltip"
+              >
+                {cluster.members.map((marker) => (
+                  <DestinationContent key={marker.id} marker={marker} />
+                ))}
+              </div>
+            </div>
           );
         })}
+
+        {openCluster ? (
+          <ul
+            id={`${listId}-destinations`}
+            className={cx(
+              styles.destinationList,
+              positionPlacementClass(openCluster.position),
+            )}
+            style={
+              {
+                "--position": `${openCluster.position * 100}%`,
+              } as PositionedStyle
+            }
+            aria-label={clusterAccessibleName(openCluster)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              event.stopPropagation();
+              closeCluster();
+            }}
+          >
+            {openCluster.members.map((marker, index) => (
+              <li key={marker.id}>
+                <button
+                  ref={index === 0 ? firstListButtonRef : undefined}
+                  type="button"
+                  aria-label={destinationAccessibleName(marker)}
+                  onClick={() => activate(marker)}
+                >
+                  <MarkerGlyph marker={marker} />
+                  <DestinationContent marker={marker} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
-      {previewCluster && previewAnchor ? (
-        <HoverPreview anchor={previewAnchor} onClose={closePreview}>
-          <ClusterPreview members={previewCluster.members} />
-        </HoverPreview>
-      ) : null}
     </div>
   );
 }
 
-function markerColor(marker: ReaderDocumentMapMarker): string {
-  if (marker.tone === "Highlight") return "var(--highlight-yellow)";
-  if (marker.tone === "Citation") return "var(--highlight-purple)";
-  if (marker.tone === "Link") return "var(--highlight-blue)";
-  if (marker.tone === "Synapse") return "var(--highlight-green)";
-  if (marker.tone === "Warning") return "var(--highlight-pink)";
-  return "var(--edge-strong)";
+function clusterMarkers(
+  markers: ReaderDocumentMapMarker[],
+  trackHeight: number,
+): MarkerCluster[] {
+  if (trackHeight === 0) return [];
+
+  const groups: ReaderDocumentMapMarker[][] = [];
+  for (const marker of markers) {
+    const members = groups[groups.length - 1];
+    const previous = members?.[members.length - 1];
+    if (
+      previous &&
+      (marker.position - previous.position) * trackHeight <
+        MARKER_TARGET_SIZE_PX
+    ) {
+      members.push(marker);
+    } else {
+      groups.push([marker]);
+    }
+  }
+
+  return groups.map((members) => ({
+    key: JSON.stringify(members.map((marker) => marker.id)),
+    position: medianPosition(members),
+    members,
+  }));
 }
 
-function ClusterPreview({ members }: { members: ReaderDocumentMapMarker[] }) {
-  if (members.length >= 4) {
-    return <p className={styles.previewCount}>{members.length} markers</p>;
-  }
+function medianPosition(members: ReaderDocumentMapMarker[]): number {
+  const middle = Math.floor(members.length / 2);
+  if (members.length % 2 === 1) return members[middle]!.position;
+  return (members[middle - 1]!.position + members[middle]!.position) / 2;
+}
 
-  if (members.length > 1) {
-    return (
-      <ul className={styles.previewStack}>
-        {members.map((marker) => (
-          <li key={marker.id}>
-            <strong>{marker.label}</strong>
-            {marker.preview.kind === "Present" ? (
-              <span>{marker.preview.value}</span>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    );
+function destinationType(marker: ReaderDocumentMapMarker): string {
+  switch (marker.kind) {
+    case "Contents":
+      return "Contents";
+    case "Embed":
+      return "Embed";
+    case "Highlight":
+      return "Highlight";
+    case "SourceReference":
+    case "GeneratedCitation":
+      return "Citation";
+    case "Link":
+      return "Link";
+    case "Synapse":
+      return "Synapse";
   }
+}
 
-  const marker = members[0]!;
+function destinationAccessibleName(marker: ReaderDocumentMapMarker): string {
+  return `${destinationType(marker)}: ${marker.label}, ${documentPercentage(marker.position)}% through document`;
+}
+
+function clusterAccessibleName(cluster: MarkerCluster): string {
+  if (cluster.members.length === 1) {
+    return destinationAccessibleName(cluster.members[0]!);
+  }
+  return `${cluster.members.length} destinations near ${documentPercentage(cluster.position)}% through document`;
+}
+
+function documentPercentage(position: number): number {
+  return Math.round(position * 100);
+}
+
+function positionPlacementClass(position: number): string | false {
+  if (position < 0.25) return styles.placeAtStart;
+  if (position > 0.75) return styles.placeAtEnd;
+  return false;
+}
+
+function MarkerGlyph({ marker }: { marker: ReaderDocumentMapMarker }) {
   return (
-    <div className={styles.previewRich}>
-      <strong>{marker.label}</strong>
+    <span
+      className={cx(
+        styles.markerGlyph,
+        markerShapeClass(marker),
+        marker.tone === "Warning" && styles.markerWarning,
+      )}
+      style={{ "--marker-color": markerColor(marker) } as CSSProperties}
+      aria-hidden="true"
+    />
+  );
+}
+
+function markerShapeClass(marker: ReaderDocumentMapMarker): string {
+  switch (marker.kind) {
+    case "Contents":
+      return styles.markerContents;
+    case "Embed":
+      return styles.markerEmbed;
+    case "Highlight":
+      return styles.markerHighlight;
+    case "SourceReference":
+    case "GeneratedCitation":
+      return styles.markerCitation;
+    case "Link":
+    case "Synapse":
+      return styles.markerConnection;
+  }
+}
+
+function markerColor(marker: ReaderDocumentMapMarker): string {
+  switch (marker.tone) {
+    case "Highlight":
+      return "var(--highlight-yellow)";
+    case "Citation":
+      return "var(--highlight-purple)";
+    case "Link":
+      return "var(--highlight-blue)";
+    case "Synapse":
+      return "var(--highlight-green)";
+    case "Warning":
+      return "var(--highlight-pink)";
+    case "Neutral":
+      return "var(--edge-strong)";
+  }
+}
+
+function DestinationContent({ marker }: { marker: ReaderDocumentMapMarker }) {
+  return (
+    <span className={styles.destinationContent}>
+      <strong>
+        {destinationType(marker)}: {marker.label}
+      </strong>
       {marker.preview.kind === "Present" ? (
-        <p className={styles.previewNote}>{marker.preview.value}</p>
+        <span className={styles.destinationExcerpt}>
+          {marker.preview.value}
+        </span>
       ) : null}
-    </div>
+      <span className={styles.destinationPosition}>
+        {documentPercentage(marker.position)}% through document
+      </span>
+    </span>
   );
 }
