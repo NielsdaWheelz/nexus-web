@@ -36,7 +36,7 @@
   width: 80vw;
   max-width: 480px;
   padding: var(--space-3) var(--space-4);
-  margin-bottom: env(safe-area-inset-bottom);
+  margin-bottom: var(--viewport-safe-bottom);
   background: var(--surface-2);
   border: 1px solid var(--edge);
   border-top-left-radius: var(--radius-lg);

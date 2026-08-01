@@ -62,6 +62,10 @@ describe("FloatingActionSurface", () => {
 
   beforeEach(() => {
     setViewport(1280, 900);
+    document.documentElement.style.setProperty("--viewport-safe-top", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-left", "0px");
     document.documentElement.style.setProperty(
       "--mobile-content-bottom-clearance",
       "64px",
@@ -76,6 +80,10 @@ describe("FloatingActionSurface", () => {
     document.documentElement.style.removeProperty(
       "--mobile-content-bottom-clearance",
     );
+    document.documentElement.style.removeProperty("--viewport-safe-top");
+    document.documentElement.style.removeProperty("--viewport-safe-right");
+    document.documentElement.style.removeProperty("--viewport-safe-bottom");
+    document.documentElement.style.removeProperty("--viewport-safe-left");
     vi.stubGlobal("innerWidth", originalInnerWidth);
     vi.stubGlobal("innerHeight", originalInnerHeight);
     window.dispatchEvent(new Event("resize"));
@@ -153,6 +161,42 @@ describe("FloatingActionSurface", () => {
     expect(top).toBeGreaterThanOrEqual(128);
     expect(left + 160).toBeLessThanOrEqual(236);
     expect(top + 48).toBeLessThanOrEqual(312);
+  });
+
+  it("clamps mobile placement to the canonical side safe edges", async () => {
+    setViewport(390, 844);
+    mockVisualViewport({ offsetLeft: 24, offsetTop: 120, width: 220, height: 260 });
+    document.documentElement.style.setProperty("--viewport-safe-left", "19px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "13px");
+    mockSurfaceRect(new DOMRect(0, 0, 160, 48));
+    const props = {
+      open: true,
+      strategy: "text-selection" as const,
+      role: "group" as const,
+      label: "Floating actions",
+      onDismiss: vi.fn(),
+    };
+    const { rerender } = render(
+      <FloatingActionSurface
+        {...props}
+        anchor={new DOMRect(0, 180, 20, 20)}
+      >
+        <button type="button">Actions</button>
+      </FloatingActionSurface>,
+    );
+
+    await waitFor(() => expect(surfacePosition().left).toBe(51));
+
+    rerender(
+      <FloatingActionSurface
+        {...props}
+        anchor={new DOMRect(300, 180, 20, 20)}
+      >
+        <button type="button">Actions</button>
+      </FloatingActionSurface>,
+    );
+
+    await waitFor(() => expect(surfacePosition().left).toBe(63));
   });
 
   it("dismisses on outside pointerdown, Escape, and scroll when configured", async () => {

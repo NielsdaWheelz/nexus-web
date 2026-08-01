@@ -135,7 +135,7 @@
 @media (max-width: 768px) {
   .panel {
     width: auto;
-    max-height: calc(100dvh - 9rem - env(safe-area-inset-bottom));
+    max-height: calc(100dvh - 9rem - var(--viewport-safe-bottom));
   }
 
   .sectionHeading {

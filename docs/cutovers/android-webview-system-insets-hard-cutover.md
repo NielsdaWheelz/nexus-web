@@ -1,6 +1,6 @@
 # Android WebView System Insets — Hard Cutover
 
-**Status:** APPROVED DESIGN — implementation and physical-device acceptance required
+**Status:** IMPLEMENTED — physical-device acceptance required
 
 **Type:** hard cutover
 

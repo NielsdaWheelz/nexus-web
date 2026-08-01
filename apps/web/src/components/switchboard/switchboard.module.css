@@ -4,9 +4,9 @@
   min-height: 0;
   align-content: start;
   gap: var(--space-4);
-  padding: 0 max(var(--space-4), env(safe-area-inset-right))
-    max(var(--space-4), env(safe-area-inset-bottom))
-    max(var(--space-4), env(safe-area-inset-left));
+  padding: 0 max(var(--space-4), var(--viewport-safe-right))
+    max(var(--space-4), var(--viewport-safe-bottom))
+    max(var(--space-4), var(--viewport-safe-left));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -21,8 +21,8 @@
 
 .searchPage > .header {
   flex: 0 0 auto;
-  padding-inline: max(var(--space-4), env(safe-area-inset-left))
-    max(var(--space-4), env(safe-area-inset-right));
+  padding-inline: max(var(--space-4), var(--viewport-safe-left))
+    max(var(--space-4), var(--viewport-safe-right));
 }
 
 .searchScroll {
@@ -31,9 +31,9 @@
   min-height: 0;
   align-content: start;
   gap: var(--space-5);
-  padding: var(--space-3) max(var(--space-4), env(safe-area-inset-right))
-    max(var(--space-4), env(safe-area-inset-bottom))
-    max(var(--space-4), env(safe-area-inset-left));
+  padding: var(--space-3) max(var(--space-4), var(--viewport-safe-right))
+    max(var(--space-4), var(--viewport-safe-bottom))
+    max(var(--space-4), var(--viewport-safe-left));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -47,7 +47,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding-block: max(var(--space-2), env(safe-area-inset-top))
+  padding-block: max(var(--space-2), var(--viewport-safe-top))
     var(--space-2);
   background: var(--surface-canvas);
 }
@@ -101,8 +101,8 @@
   display: grid;
   flex: 0 0 auto;
   gap: var(--space-2);
-  padding: 0 max(var(--space-4), env(safe-area-inset-right))
-    var(--space-3) max(var(--space-4), env(safe-area-inset-left));
+  padding: 0 max(var(--space-4), var(--viewport-safe-right))
+    var(--space-3) max(var(--space-4), var(--viewport-safe-left));
   background: var(--surface-canvas);
 }
 
@@ -273,8 +273,8 @@
 .searchInput {
   display: block;
   flex: 0 0 auto;
-  padding: 0 max(var(--space-4), env(safe-area-inset-right))
-    var(--space-3) max(var(--space-4), env(safe-area-inset-left));
+  padding: 0 max(var(--space-4), var(--viewport-safe-right))
+    var(--space-3) max(var(--space-4), var(--viewport-safe-left));
   background: var(--surface-canvas);
 }
 
@@ -358,8 +358,8 @@
   --nexus-bottom-gap: 12px;
   position: fixed;
   z-index: var(--z-overlay);
-  right: max(16px, env(safe-area-inset-right));
-  bottom: calc(var(--mobile-nexus-bottom-offset, env(safe-area-inset-bottom)) + var(--nexus-bottom-gap));
+  right: max(16px, var(--viewport-safe-right));
+  bottom: calc(var(--mobile-nexus-bottom-offset) + var(--nexus-bottom-gap));
   width: 48px;
   height: 48px;
   pointer-events: none;
@@ -381,7 +381,7 @@
   transform: translateY(
     calc(
       var(--mobile-chrome-collapse) *
-        (100% + var(--mobile-nexus-bottom-offset, env(safe-area-inset-bottom)) + var(--nexus-bottom-gap))
+        (100% + var(--mobile-nexus-bottom-offset) + var(--nexus-bottom-gap))
     )
   );
   will-change: transform;

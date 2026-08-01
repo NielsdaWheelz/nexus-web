@@ -294,27 +294,32 @@ Reload clears the stack.
 
 ## Mobile Viewport And Fixed Obstructions
 
-`MobileViewportProvider` is the shell owner for safe-area, fixed Nexus control,
-active MiniPlayer, root text-entry focus, and active mobile-overlay keyboard
-obstruction. One document focus observer recognizes only text-entry targets
-outside modal layers. While root text entry owns focus, the mounted MiniPlayer
-is hidden/inert and its `"Player"` obstruction is unregistered; playback
-continues through system controls. Fixed controls register measured rectangles;
-`useMobileModalLifecycle` reports active sheet or full-screen-task keyboard
-insets through scoped, ordered reports, so releasing the newest modal restores
-the preceding report. Inactive mounted overlays publish nothing. The provider
-publishes
-`--mobile-content-bottom-clearance`, and every authenticated mobile primary
-scroll owner consumes it. Components do not independently recalculate safe
-area, player, Nexus, focus, or keyboard geometry.
+`globals.css` is the sole raw platform-inset adapter. It maps WebView's four
+CSS safe-area values to `--viewport-safe-{top,right,bottom,left}`.
+`MobileViewportProvider` composes the bottom token with the measured fixed
+Nexus control, active MiniPlayer, root text-entry focus, and active
+mobile-overlay keyboard obstruction. One document focus observer recognizes
+only text-entry targets outside modal layers. While root text entry owns focus,
+the mounted MiniPlayer is hidden/inert and its `"Player"` obstruction is
+unregistered; playback continues through system controls. Fixed controls
+register measured rectangles; `useMobileModalLifecycle` reports active sheet
+or full-screen-task keyboard insets through scoped, ordered reports, so
+releasing the newest modal restores the preceding report. Inactive mounted
+overlays publish nothing. The provider publishes
+`--mobile-content-bottom-clearance` and `--mobile-nexus-bottom-offset`; every
+authenticated mobile primary scroll owner consumes the composed content
+clearance. Components do not read raw safe-area values or independently
+recalculate platform, Player, Nexus, focus, or keyboard geometry.
 
-The Android shell remains edge-to-edge: its WebView fills the window and web
-chrome does not own the native status-bar inset. `MainActivity` permanently
-layers an accessibility-hidden black protection view over the status-bar
-inset, forces light status-bar icons, and also sets the native status-bar color
-to black for pre-enforced-edge-to-edge Android. Android instrumentation owns
-the contract that the protection is black and inset-sized, the icons remain
-light, and the WebView itself remains edge-to-edge.
+The Android shell remains edge-to-edge. `MainActivity` enables the platform
+edge-to-edge policy before creation, keeps the WebView at full window bounds,
+and returns the original `WindowInsets` unconsumed so System WebView M144+ can
+publish `systemBars | displayCutout` to CSS. A black,
+accessibility-hidden native overlay covers exactly the combined top inset;
+system-bar icons remain light, and Android owns three-button navigation
+contrast. Android instrumentation owns the real-WebView native-to-CSS inset,
+top-protection, icon, full-window-bound, safe-control, and stale-value-clearing
+contracts.
 
 ## Fixed Chrome
 
