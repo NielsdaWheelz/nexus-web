@@ -8,6 +8,7 @@ import ChatComposerComponent from "@/components/chat/ChatComposer";
 import { __resetChatProfilesCacheForTests } from "@/components/chat/useChatProfiles";
 import { present } from "@/lib/api/presence";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
+import type { ChatRunResponse } from "@/lib/conversations/types";
 import type { InheritedChatProfileSelection } from "@/lib/conversations/chatProfileSelection";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import type { ReaderSelectionPreview } from "@/lib/conversations/readerSelection";
@@ -109,7 +110,7 @@ function pathOf(input: RequestInfo | URL): string {
   return new URL(String(input), "http://localhost").pathname;
 }
 
-function chatRunResponse(body: ChatRunCreateRequest) {
+function chatRunResponse(body: ChatRunCreateRequest): ChatRunResponse {
   return {
     data: {
       run: {
@@ -127,6 +128,7 @@ function chatRunResponse(body: ChatRunCreateRequest) {
         support_id: { kind: "Absent" },
         publication_warning: { kind: "Absent" },
         failure: null,
+        execution: { kind: "Present", value: { phase: "Queued" } },
         cancel_requested_at: null,
         started_at: null,
         completed_at: null,
@@ -173,6 +175,16 @@ function chatRunResponse(body: ChatRunCreateRequest) {
         can_rerun: false,
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
+      },
+      stream_state: {
+        status: "queued",
+        last_event_seq: 0,
+        folded_event_seq: 0,
+        assistant_current_text: "",
+        tool_calls: [],
+        activity: null,
+        reconnectable: true,
+        terminal: false,
       },
     },
   };
@@ -517,7 +529,9 @@ describe("ChatComposer", () => {
         "Idempotency-Key": expect.any(String),
       }),
     );
-    expect(onChatRunCreated).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(onChatRunCreated).toHaveBeenCalledOnce();
+    });
   });
 
   it("selects a reasoning option on the default profile and sends it", async () => {

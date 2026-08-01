@@ -1308,6 +1308,14 @@ describe("Conversation", () => {
                 assistant_message_id: "assistant-message-1",
                 profile_id: body.profile_id,
                 reasoning_option_id: body.reasoning_option_id,
+                provider: null,
+                model_name: null,
+                reasoning_effort: null,
+                error_origin: null,
+                support_id: { kind: "Absent" },
+                publication_warning: { kind: "Absent" },
+                failure: null,
+                execution: { kind: "Absent" },
                 cancel_requested_at: null,
                 started_at: timestamp,
                 completed_at: timestamp,
@@ -1331,8 +1339,21 @@ describe("Conversation", () => {
                 "Done.",
                 "user-message-1",
               ),
+              stream_state: {
+                status: "complete",
+                last_event_seq: 0,
+                folded_event_seq: 0,
+                assistant_current_text: "Done.",
+                tool_calls: [],
+                activity: null,
+                reconnectable: false,
+                terminal: true,
+              },
             },
-          });
+          } satisfies ChatRunResponse);
+        }
+        if (path === "/api/chat-runs" && init?.method !== "POST") {
+          return jsonResponse({ data: [] });
         }
         throw new Error(`Unexpected fetch call: ${path}`);
       },
@@ -1525,6 +1546,14 @@ describe("Conversation", () => {
                 assistant_message_id: followUpAssistant.id,
                 profile_id: body.profile_id,
                 reasoning_option_id: body.reasoning_option_id,
+                provider: null,
+                model_name: null,
+                reasoning_effort: null,
+                error_origin: null,
+                support_id: { kind: "Absent" },
+                publication_warning: { kind: "Absent" },
+                failure: null,
+                execution: { kind: "Present", value: { phase: "Running" } },
                 cancel_requested_at: null,
                 started_at: timestamp,
                 completed_at: null,
@@ -1535,8 +1564,18 @@ describe("Conversation", () => {
               conversation: treeResponse().conversation,
               user_message: followUpUser,
               assistant_message: followUpAssistantWithSelection,
+              stream_state: {
+                status: "running",
+                last_event_seq: 0,
+                folded_event_seq: 0,
+                assistant_current_text: "",
+                tool_calls: [],
+                activity: null,
+                reconnectable: true,
+                terminal: false,
+              },
             },
-          });
+          } satisfies ChatRunResponse);
         }
         throw new Error(`Unexpected fetch call: ${method} ${path}`);
       },
