@@ -3625,9 +3625,12 @@ class TestGetEpubNavigationTreeOrdering:
                 text(
                     """
                     INSERT INTO epub_nav_locations
-                        (media_id, location_id, ordinal, source_node_id, label, fragment_idx, href_path, href_fragment, source)
+                        (media_id, location_id, ordinal, source_node_id, label,
+                         fragment_idx, href_path, href_fragment,
+                         start_offset, end_offset, source)
                     VALUES
-                        (:media_id, 'Text/ch0.xhtml', 0, 'child1_1', 'Chapter 1.1', 0, 'Text/ch0.xhtml', NULL, 'toc')
+                        (:media_id, 'Text/ch0.xhtml', 0, 'child1_1', 'Chapter 1.1',
+                         0, 'Text/ch0.xhtml', NULL, 0, 7, 'toc')
                     """
                 ),
                 {"media_id": media_id},

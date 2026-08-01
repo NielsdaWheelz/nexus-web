@@ -351,6 +351,8 @@ def test_db_backed_public_projection_matrix_and_bearer_reauthorization(
                         label=f"Chapter {ordinal + 1}",
                         fragment_idx=ordinal,
                         href_path=package_href,
+                        start_offset=0,
+                        end_offset=len(fragment.canonical_text),
                         source="toc",
                     ),
                     EpubFragmentSource(

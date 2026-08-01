@@ -46,13 +46,24 @@ def test_epub_navigation_counts_one_fragment_and_locates_each_named_anchor(
         session.execute(
             text(
                 """
+                UPDATE epub_nav_locations
+                SET end_offset = :end_offset
+                WHERE media_id = :media_id AND fragment_idx = 0
+                """
+            ),
+            {"media_id": media_id, "end_offset": 14},
+        )
+        session.execute(
+            text(
+                """
                 INSERT INTO epub_nav_locations (
                     media_id, location_id, ordinal, source_node_id, label,
-                    fragment_idx, href_path, href_fragment, source
+                    fragment_idx, href_path, href_fragment,
+                    start_offset, end_offset, source
                 )
                 VALUES (
                     :media_id, 'chapter.xhtml#second', 1, NULL, 'Second heading',
-                    0, 'chapter.xhtml', 'second', 'toc'
+                    0, 'chapter.xhtml', 'second', 14, 37, 'toc'
                 )
                 """
             ),
@@ -126,13 +137,24 @@ def test_epub_section_end_uses_the_next_same_fragment_anchor_across_interleaved_
         session.execute(
             text(
                 """
+                UPDATE epub_nav_locations
+                SET end_offset = :end_offset
+                WHERE media_id = :media_id AND fragment_idx = 0
+                """
+            ),
+            {"media_id": media_id, "end_offset": 14},
+        )
+        session.execute(
+            text(
+                """
                 INSERT INTO epub_nav_locations (
                     media_id, location_id, ordinal, source_node_id, label,
-                    fragment_idx, href_path, href_fragment, source
+                    fragment_idx, href_path, href_fragment,
+                    start_offset, end_offset, source
                 )
                 VALUES (
                     :media_id, 'chapter.xhtml#second', 2, NULL, 'Second heading',
-                    0, 'chapter.xhtml', 'second', 'toc'
+                    0, 'chapter.xhtml', 'second', 14, 37, 'toc'
                 )
                 """
             ),

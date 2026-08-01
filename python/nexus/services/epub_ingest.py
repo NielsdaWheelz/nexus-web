@@ -403,6 +403,8 @@ class _NavLocationSpec:
     fragment_idx: int
     href_path: str | None
     href_fragment: str | None
+    start_offset: int
+    end_offset: int
     source: str
 
 
@@ -646,23 +648,18 @@ def build_epub_extraction_plan(
             all_block_specs.append(parse_fragment_blocks(canonical_text))
 
         fragments = [frag for frag, _ch, _items, _edges in fragment_specs]
-        nav_locations = _materialize_nav_locations(toc_nodes, fragments, retained_hrefs)
-        previous_start_by_fragment: dict[int, int] = {}
-        for location in nav_locations:
-            start_offset = (
-                0
-                if location.href_fragment is None
-                else anchor_offsets_by_fragment[location.fragment_idx][location.href_fragment]
+        try:
+            nav_locations = _materialize_nav_locations(
+                toc_nodes,
+                fragments,
+                retained_hrefs,
+                anchor_offsets_by_fragment,
             )
-            previous_start = previous_start_by_fragment.get(location.fragment_idx, -1)
-            if start_offset < previous_start:
-                return EpubExtractionError(
-                    error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
-                    error_message=(
-                        f"EPUB navigation target {location.location_id} is out of document order"
-                    ),
-                )
-            previous_start_by_fragment[location.fragment_idx] = start_offset
+        except ValueError as exc:
+            return EpubExtractionError(
+                error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
+                error_message=str(exc),
+            )
 
         # ---- check parse-time budget ---------------------------------------
         elapsed_ms = int((time.monotonic() - t_start) * 1000)
@@ -863,6 +860,8 @@ def publish_epub_extraction_plan(
                 fragment_idx=nav.fragment_idx,
                 href_path=nav.href_path,
                 href_fragment=nav.href_fragment,
+                start_offset=nav.start_offset,
+                end_offset=nav.end_offset,
                 source=nav.source,
                 created_at=plan.now,
             )
@@ -2076,6 +2075,7 @@ def _materialize_nav_locations(
     toc_nodes: list[_TocNodeSpec],
     fragments: list[Fragment],
     retained_hrefs: list[str],
+    anchor_offsets_by_fragment: dict[int, dict[str, int]],
 ) -> list[_NavLocationSpec]:
     """Build canonical section rows in fragment/spine order."""
     locations: list[_NavLocationSpec] = []
@@ -2108,6 +2108,8 @@ def _materialize_nav_locations(
                         fragment_idx=frag.idx,
                         href_path=href_path,
                         href_fragment=href_fragment,
+                        start_offset=0,
+                        end_offset=0,
                         source="toc",
                     )
                 )
@@ -2127,10 +2129,43 @@ def _materialize_nav_locations(
                 fragment_idx=frag.idx,
                 href_path=chapter_href,
                 href_fragment=None,
+                start_offset=0,
+                end_offset=0,
                 source="spine",
             )
         )
         ordinal += 1
+
+    fragments_by_idx = {fragment.idx: fragment for fragment in fragments}
+    indexes_by_fragment: dict[int, list[int]] = {}
+    for index, location in enumerate(locations):
+        location.start_offset = (
+            0
+            if location.href_fragment is None
+            else anchor_offsets_by_fragment[location.fragment_idx][location.href_fragment]
+        )
+        indexes_by_fragment.setdefault(location.fragment_idx, []).append(index)
+
+    for fragment_idx, indexes in indexes_by_fragment.items():
+        fragment = fragments_by_idx[fragment_idx]
+        previous_start = -1
+        for index in indexes:
+            location = locations[index]
+            if location.start_offset < previous_start:
+                raise ValueError(
+                    f"EPUB navigation target {location.location_id} is out of document order"
+                )
+            previous_start = location.start_offset
+        for position, index in enumerate(indexes):
+            location = locations[index]
+            location.end_offset = next(
+                (
+                    locations[later].start_offset
+                    for later in indexes[position + 1 :]
+                    if locations[later].start_offset > location.start_offset
+                ),
+                len(fragment.canonical_text),
+            )
 
     return locations
 

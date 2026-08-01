@@ -837,6 +837,19 @@ class TestEpubExtractPreservesAnchorTargetsForInFragmentNavigation:
         assert 'id="sec-a"' in html
         assert 'name="named-anchor"' in html
 
+        locations = db_session.execute(
+            text(
+                """
+                SELECT href_fragment, start_offset, end_offset
+                FROM epub_nav_locations
+                WHERE media_id = :mid
+                ORDER BY ordinal
+                """
+            ),
+            {"mid": mid},
+        ).fetchall()
+        assert locations == [("sec-a", 0, 10), ("named-anchor", 10, 20)]
+
     def test_missing_named_navigation_anchor_rejects_the_source(self, db_session: Session):
         storage = FakeStorageClient()
         epub = _make_epub(

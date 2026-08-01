@@ -83,6 +83,8 @@ def _seed_media(
                         fragment_idx=fragment_idx,
                         href_path=f"{unit_id}.xhtml",
                         href_fragment=None,
+                        start_offset=0,
+                        end_offset=len(canonical_text),
                         source="spine",
                     )
                 )

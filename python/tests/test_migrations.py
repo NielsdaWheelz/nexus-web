@@ -27098,3 +27098,132 @@ class TestMigration0207CanonicalPodcastPublicationInstants:
         finally:
             reset_test_schema()
             engine.dispose()
+
+
+@MIGRATION_CI_LATE
+class TestMigration0208PersistEpubNavigationOffsets:
+    def test_backfills_exact_interleaved_offsets_and_hard_cuts_columns(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0207")
+            assert result.returncode == 0, result.stderr
+
+            media_id = uuid4()
+            first_fragment_id = uuid4()
+            second_fragment_id = uuid4()
+            first_text = "Opening line.\nSecond heading\nClosing."
+            second_text = "Other fragment."
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO media (id, kind, title, processing_status)
+                        VALUES (:id, 'epub', 'Migration EPUB', 'ready_for_reading')
+                        """
+                    ),
+                    {"id": media_id},
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO fragments (
+                            id, media_id, idx, canonical_text, html_sanitized
+                        )
+                        VALUES (
+                            :first_id,
+                            :media_id,
+                            0,
+                            :first_text,
+                            '<p id="opening">Opening line.</p><h2 id="second">Second heading</h2><p>Closing.</p>'
+                        ), (
+                            :second_id,
+                            :media_id,
+                            1,
+                            :second_text,
+                            '<p>Other fragment.</p>'
+                        )
+                        """
+                    ),
+                    {
+                        "first_id": first_fragment_id,
+                        "second_id": second_fragment_id,
+                        "media_id": media_id,
+                        "first_text": first_text,
+                        "second_text": second_text,
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO epub_nav_locations (
+                            media_id, location_id, ordinal, source_node_id, label,
+                            fragment_idx, href_path, href_fragment, source
+                        ) VALUES
+                            (:media_id, 'first.xhtml', 0, NULL, 'First',
+                             0, 'first.xhtml', NULL, 'spine'),
+                            (:media_id, 'second.xhtml', 1, NULL, 'Other',
+                             1, 'second.xhtml', NULL, 'spine'),
+                            (:media_id, 'first.xhtml#second', 2, NULL, 'Second',
+                             0, 'first.xhtml', 'second', 'toc')
+                        """
+                    ),
+                    {"media_id": media_id},
+                )
+
+            result = run_alembic_command("upgrade 0208")
+            assert result.returncode == 0, result.stderr
+
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0208"
+                offsets = connection.execute(
+                    text(
+                        """
+                        SELECT location_id, start_offset, end_offset
+                        FROM epub_nav_locations
+                        WHERE media_id = :media_id
+                        ORDER BY ordinal
+                        """
+                    ),
+                    {"media_id": media_id},
+                ).all()
+                assert offsets == [
+                    ("first.xhtml", 0, 14),
+                    ("second.xhtml", 0, len(second_text)),
+                    ("first.xhtml#second", 14, len(first_text)),
+                ]
+                columns = {
+                    row.column_name: row.is_nullable
+                    for row in connection.execute(
+                        text(
+                            """
+                            SELECT column_name, is_nullable
+                            FROM information_schema.columns
+                            WHERE table_name = 'epub_nav_locations'
+                              AND column_name IN ('start_offset', 'end_offset')
+                            """
+                        )
+                    )
+                }
+                assert columns == {"start_offset": "NO", "end_offset": "NO"}
+
+            with pytest.raises(IntegrityError) as exc_info:
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            """
+                            UPDATE epub_nav_locations
+                            SET end_offset = start_offset - 1
+                            WHERE media_id = :media_id AND ordinal = 0
+                            """
+                        ),
+                        {"media_id": media_id},
+                    )
+            assert "ck_epub_nav_locations_offsets_valid" in str(exc_info.value)
+
+            downgrade = run_alembic_command("downgrade 0207")
+            assert downgrade.returncode != 0
+            assert "0208 is a hard cutover migration" in downgrade.stderr
+        finally:
+            reset_test_schema()
+            engine.dispose()

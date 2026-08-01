@@ -156,11 +156,12 @@ class TestBasicSearch:
                 text("""
                     INSERT INTO epub_nav_locations (
                         media_id, location_id, ordinal, source_node_id, label,
-                        fragment_idx, href_path, href_fragment, source
+                        fragment_idx, href_path, href_fragment,
+                        start_offset, end_offset, source
                     )
                     VALUES (
                         :media_id, :location_id, 0, NULL, :label,
-                        0, :href_path, NULL, 'spine'
+                        0, :href_path, NULL, 0, :end_offset, 'spine'
                     )
                 """),
                 {
@@ -168,6 +169,9 @@ class TestBasicSearch:
                     "location_id": "text/chapter1.xhtml",
                     "label": "Chapter 1",
                     "href_path": "text/chapter1.xhtml",
+                    "end_offset": len(
+                        "Unique EPUB fragment needle for section deep link coverage."
+                    ),
                 },
             )
             fragment = session.get(Fragment, fragment_id)

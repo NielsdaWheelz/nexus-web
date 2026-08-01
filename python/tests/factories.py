@@ -990,6 +990,8 @@ def create_ready_epub_with_chapters(
                 fragment_idx=i,
                 href_path=href_path,
                 href_fragment=None,
+                start_offset=0,
+                end_offset=len(f"Chapter {i + 1} Title\nSentinel content for chapter {i}."),
                 source="toc" if with_toc else "spine",
             )
         )

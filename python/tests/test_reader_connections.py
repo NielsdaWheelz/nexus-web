@@ -184,6 +184,8 @@ def test_epub_fragment_connection_uses_cross_section_activation_locator(
             fragment_idx=fragment.idx,
             href_path=section_id,
             href_fragment=None,
+            start_offset=0,
+            end_offset=len(fragment.canonical_text),
             source="spine",
         )
     )
