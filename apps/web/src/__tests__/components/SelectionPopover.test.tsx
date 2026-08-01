@@ -35,7 +35,43 @@ const fetchShareSnapshotMock = vi.mocked(fetchShareSnapshot);
 
 let mobileViewport = false;
 let mobileViewportCapability: MobileViewportCapability | null = null;
-const viewportListeners = new Set<EventListenerOrEventListenerObject>();
+type MediaQueryChangeListener = NonNullable<MediaQueryList["onchange"]>;
+const viewportMediaQueries = new Set<MutableMediaQueryList>();
+
+class MutableMediaQueryList extends EventTarget implements MediaQueryList {
+  onchange: MediaQueryChangeListener | null = null;
+  readonly media: string;
+  readonly #legacyListeners = new Set<MediaQueryChangeListener>();
+
+  constructor(media: string) {
+    super();
+    this.media = media;
+  }
+
+  get matches() {
+    return mobileViewport;
+  }
+
+  addListener(listener: MediaQueryChangeListener | null) {
+    if (listener !== null) this.#legacyListeners.add(listener);
+  }
+
+  removeListener(listener: MediaQueryChangeListener | null) {
+    if (listener !== null) this.#legacyListeners.delete(listener);
+  }
+
+  publishChange() {
+    const event = new MediaQueryListEvent("change", {
+      matches: this.matches,
+      media: this.media,
+    });
+    this.dispatchEvent(event);
+    this.onchange?.call(this, event);
+    for (const listener of this.#legacyListeners) {
+      listener.call(this, event);
+    }
+  }
+}
 
 function MobileViewportCapabilityProbe() {
   mobileViewportCapability = useMobileViewport();
@@ -66,12 +102,16 @@ function setViewport(width: number, height: number) {
   mobileViewport = width <= 768;
   vi.stubGlobal("innerWidth", width);
   vi.stubGlobal("innerHeight", height);
-  const event = new Event("change");
-  for (const listener of viewportListeners) {
-    if (typeof listener === "function") listener(event);
-    else listener.handleEvent(event);
+  for (const mediaQueryList of viewportMediaQueries) {
+    mediaQueryList.publishChange();
   }
   window.dispatchEvent(new Event("resize"));
+}
+
+function createMediaQueryList(query: string): MediaQueryList {
+  const mediaQueryList = new MutableMediaQueryList(query);
+  viewportMediaQueries.add(mediaQueryList);
+  return mediaQueryList;
 }
 
 function mockVisualViewport({
@@ -187,24 +227,8 @@ describe("SelectionPopover", () => {
 
   beforeEach(() => {
     mobileViewport = false;
-    viewportListeners.clear();
-    vi.spyOn(window, "matchMedia").mockImplementation(
-      (query) =>
-        ({
-          get matches() {
-            return mobileViewport;
-          },
-          media: query,
-          onchange: null,
-          addEventListener: (_event, listener) =>
-            viewportListeners.add(listener),
-          removeEventListener: (_event, listener) =>
-            viewportListeners.delete(listener),
-          addListener: (listener) => viewportListeners.add(listener),
-          removeListener: (listener) => viewportListeners.delete(listener),
-          dispatchEvent: () => true,
-        }) as MediaQueryList,
-    );
+    viewportMediaQueries.clear();
+    vi.spyOn(window, "matchMedia").mockImplementation(createMediaQueryList);
     setViewport(1280, 900);
     Object.defineProperty(window, "visualViewport", {
       configurable: true,
