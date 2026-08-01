@@ -235,6 +235,7 @@ def test_owned_worker_replays_committed_note_index_after_process_death(
     body = "A durable worker replay must converge to one persisted index."
     with Session(engine) as db:
         db.add(User(id=user_id, email=f"worker-replay-{user_id}@example.invalid"))
+        db.flush()
         db.add(
             NoteBlock(
                 id=note_block_id,
