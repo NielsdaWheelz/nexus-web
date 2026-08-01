@@ -2173,24 +2173,16 @@ def _materialize_nav_locations(
 
     for fragment_idx, indexes in indexes_by_fragment.items():
         fragment = fragments_by_idx[fragment_idx]
-        previous_start = -1
+        ordered_starts = sorted({locations[index].start_offset for index in indexes})
+        end_by_start = {
+            start: ordered_starts[position + 1]
+            if position + 1 < len(ordered_starts)
+            else len(fragment.canonical_text)
+            for position, start in enumerate(ordered_starts)
+        }
         for index in indexes:
             location = locations[index]
-            if location.start_offset < previous_start:
-                raise ValueError(
-                    f"EPUB navigation target {location.location_id} is out of document order"
-                )
-            previous_start = location.start_offset
-        for position, index in enumerate(indexes):
-            location = locations[index]
-            location.end_offset = next(
-                (
-                    locations[later].start_offset
-                    for later in indexes[position + 1 :]
-                    if locations[later].start_offset > location.start_offset
-                ),
-                len(fragment.canonical_text),
-            )
+            location.end_offset = end_by_start[location.start_offset]
 
     return locations
 

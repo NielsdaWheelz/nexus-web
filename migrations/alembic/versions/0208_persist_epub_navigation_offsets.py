@@ -175,19 +175,13 @@ def _backfill_fragment_offsets(
         0 if row["href_fragment"] is None else anchor_offsets[str(row["href_fragment"])]
         for row in nav_rows
     ]
-    previous_start = -1
-    for start in starts:
-        if start < previous_start:
-            raise RuntimeError("0208 found EPUB navigation anchors out of document order")
-        previous_start = start
-
     fragment_length = len(persisted_canonical_text)
-    ends = [fragment_length] * len(starts)
-    next_greater_start = fragment_length
-    for index in range(len(starts) - 1, -1, -1):
-        if index + 1 < len(starts) and starts[index] < starts[index + 1]:
-            next_greater_start = starts[index + 1]
-        ends[index] = next_greater_start
+    ordered_starts = sorted(set(starts))
+    end_by_start = {
+        start: ordered_starts[index + 1] if index + 1 < len(ordered_starts) else fragment_length
+        for index, start in enumerate(ordered_starts)
+    }
+    ends = [end_by_start[start] for start in starts]
     bind.execute(
         sa.text(
             """

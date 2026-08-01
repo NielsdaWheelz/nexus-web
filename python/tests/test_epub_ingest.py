@@ -912,6 +912,51 @@ class TestEpubExtractPreservesAnchorTargetsForInFragmentNavigation:
         assert locations[2][0] == "page-target"
         assert 0 < locations[2][1] <= len(canonical_text)
 
+    def test_source_toc_order_does_not_redefine_document_intervals(self, db_session: Session):
+        storage = FakeStorageClient()
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[("ch1", "chapter1.xhtml", "application/xhtml+xml")],
+                    ncx_id="ncx",
+                ),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml(
+                    '<p id="early">Early.</p><p id="late">Later.</p>'
+                ),
+                "OEBPS/toc.ncx": _build_ncx(
+                    [
+                        ("np1", "Later", "chapter1.xhtml#late"),
+                        ("np2", "Early", "chapter1.xhtml#early"),
+                    ]
+                ),
+            }
+        )
+
+        mid = _create_media_with_epub(db_session, storage, epub)
+        result = _extract_epub_artifacts(db_session, mid, storage)
+        db_session.flush()
+
+        assert isinstance(result, EpubExtractionResult)
+        canonical_text = db_session.execute(
+            text("SELECT canonical_text FROM fragments WHERE media_id = :mid AND idx = 0"),
+            {"mid": mid},
+        ).scalar_one()
+        locations = db_session.execute(
+            text(
+                """
+                SELECT href_fragment, start_offset, end_offset
+                FROM epub_nav_locations
+                WHERE media_id = :mid
+                ORDER BY ordinal
+                """
+            ),
+            {"mid": mid},
+        ).fetchall()
+        assert [row[0] for row in locations] == ["late", "early"]
+        assert locations[0][1] > locations[1][1]
+        assert locations[0][2] == len(canonical_text)
+        assert locations[1][2] == locations[0][1]
+
     def test_missing_named_navigation_anchor_rejects_the_source(self, db_session: Session):
         storage = FakeStorageClient()
         epub = _make_epub(

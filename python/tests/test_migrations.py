@@ -27346,8 +27346,7 @@ class TestMigration0208PersistEpubNavigationOffsets:
                     text(
                         """
                         UPDATE epub_nav_locations
-                        SET start_offset = 20,
-                            end_offset = 20
+                        SET end_offset = 15
                         WHERE media_id = :media_id AND ordinal = 0
                         """
                     ),
@@ -27356,15 +27355,14 @@ class TestMigration0208PersistEpubNavigationOffsets:
 
             contract = run_alembic_command("upgrade 0209")
             assert contract.returncode != 0
-            assert "0209 found EPUB navigation offsets out of document order" in contract.stderr
+            assert "0209 found invalid EPUB navigation intervals" in contract.stderr
 
             with engine.begin() as connection:
                 connection.execute(
                     text(
                         """
                         UPDATE epub_nav_locations
-                        SET start_offset = 0,
-                            end_offset = 14
+                        SET end_offset = 14
                         WHERE media_id = :media_id AND ordinal = 0
                         """
                     ),

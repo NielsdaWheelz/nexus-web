@@ -50,24 +50,29 @@ def upgrade() -> None:
     if invalid_bounds != 0:
         raise RuntimeError("0209 found invalid EPUB navigation offset bounds")
 
-    out_of_order = bind.scalar(
+    invalid_intervals = bind.scalar(
         sa.text(
             """
             SELECT count(*)
-            FROM (
-                SELECT start_offset,
-                       lag(start_offset) OVER (
-                           PARTITION BY media_id, fragment_idx
-                           ORDER BY ordinal
-                       ) AS previous_start
-                FROM epub_nav_locations
-            ) ordered
-            WHERE start_offset < previous_start
+            FROM epub_nav_locations n
+            JOIN fragments f
+              ON f.media_id = n.media_id
+             AND f.idx = n.fragment_idx
+            WHERE n.end_offset <> coalesce(
+                (
+                    SELECT min(later.start_offset)
+                    FROM epub_nav_locations later
+                    WHERE later.media_id = n.media_id
+                      AND later.fragment_idx = n.fragment_idx
+                      AND later.start_offset > n.start_offset
+                ),
+                char_length(f.canonical_text)
+            )
             """
         )
     )
-    if out_of_order != 0:
-        raise RuntimeError("0209 found EPUB navigation offsets out of document order")
+    if invalid_intervals != 0:
+        raise RuntimeError("0209 found invalid EPUB navigation intervals")
 
     op.alter_column("epub_nav_locations", "start_offset", nullable=False)
     op.alter_column("epub_nav_locations", "end_offset", nullable=False)

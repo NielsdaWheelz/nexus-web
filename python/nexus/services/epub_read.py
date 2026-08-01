@@ -225,7 +225,7 @@ def get_epub_navigation_for_viewer(
     page_rows = _load_navigation_locations(db, media_id, "page_list")
 
     fragment_by_idx = {int(row["idx"]): row for row in fragment_rows}
-    previous_start_by_fragment: dict[int, int] = {}
+    section_rows_by_fragment: dict[int, list] = {}
     for row in section_rows:
         fragment_idx = int(row["fragment_idx"])
         fragment = fragment_by_idx.get(fragment_idx)
@@ -236,10 +236,17 @@ def get_epub_navigation_for_viewer(
         fragment_length = int(fragment["char_count"])
         if not 0 <= start_offset <= end_offset <= fragment_length:
             raise RuntimeError("Ready EPUB navigation has invalid persisted offsets")
-        previous_start = previous_start_by_fragment.get(fragment_idx, -1)
-        if start_offset < previous_start:
-            raise RuntimeError("Ready EPUB navigation anchors are not in document order")
-        previous_start_by_fragment[fragment_idx] = start_offset
+        section_rows_by_fragment.setdefault(fragment_idx, []).append(row)
+
+    for fragment_idx, rows in section_rows_by_fragment.items():
+        fragment_length = int(fragment_by_idx[fragment_idx]["char_count"])
+        ordered_starts = sorted({int(row["start_offset"]) for row in rows})
+        end_by_start = {
+            start: ordered_starts[index + 1] if index + 1 < len(ordered_starts) else fragment_length
+            for index, start in enumerate(ordered_starts)
+        }
+        if any(int(row["end_offset"]) != end_by_start[int(row["start_offset"])] for row in rows):
+            raise RuntimeError("Ready EPUB navigation has invalid persisted intervals")
 
     sections: list[ReaderNavigationSectionOut] = []
     for row in section_rows:
