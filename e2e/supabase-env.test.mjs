@@ -96,7 +96,7 @@ test("requires admin from local Supabase status SECRET_KEY", () => {
   });
 });
 
-test("reserves adjacent Supabase ports from one shared namespace", () => {
+test("reserves non-ephemeral Supabase ports from one shared namespace", () => {
   const lockRoot = mkdtempSync(
     path.join(tmpdir(), "nexus-e2e-supabase-port-locks-"),
   );
@@ -107,8 +107,8 @@ test("reserves adjacent Supabase ports from one shared namespace", () => {
       `
 set -euo pipefail
 source "$1/scripts/test_env.sh"
-test_env_resolve_port api API_PORT 54400 54410 nexus-test-supabase-port-locks API_LOCK
-test_env_resolve_port database DB_PORT 54400 54410 nexus-test-supabase-port-locks DB_LOCK
+test_env_resolve_port api API_PORT 15400 15410 nexus-test-supabase-port-locks API_LOCK
+test_env_resolve_port database DB_PORT 15400 15410 nexus-test-supabase-port-locks DB_LOCK
 printf '%s:%s\\n' "$API_PORT" "$DB_PORT"
 `,
       "supabase-port-test",
@@ -124,8 +124,8 @@ printf '%s:%s\\n' "$API_PORT" "$DB_PORT"
   );
 
   const [apiPort, databasePort] = output.trim().split(":").map(Number);
-  assert.ok(apiPort >= 54400 && apiPort <= 54410);
-  assert.ok(databasePort >= 54400 && databasePort <= 54410);
+  assert.ok(apiPort >= 15400 && apiPort <= 15410);
+  assert.ok(databasePort >= 15400 && databasePort <= 15410);
   assert.notEqual(apiPort, databasePort);
 });
 

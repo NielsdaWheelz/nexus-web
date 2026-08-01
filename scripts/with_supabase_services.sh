@@ -126,35 +126,41 @@ resolve_supabase_port() {
     fi
 }
 
+# Supabase's 5432x development defaults sit inside Linux's usual ephemeral
+# client-port range (32768-60999). A cold `supabase start` can therefore claim
+# one of those ports for an image-pull connection after our availability check
+# but before Docker publishes the local service. Keep hermetic test services in
+# a low, dynamically locked range that the kernel will not allocate to outbound
+# connections.
 resolve_supabase_port \
     "Supabase API" \
     SUPABASE_API_PORT \
     TEST_SUPABASE_API_PORT \
-    54321 \
+    15421 \
     TEST_SUPABASE_API_PORT_LOCK_DIR
 resolve_supabase_port \
     "Supabase database" \
     SUPABASE_DB_PORT \
     TEST_SUPABASE_DB_PORT \
-    54322 \
+    15422 \
     TEST_SUPABASE_DB_PORT_LOCK_DIR
 resolve_supabase_port \
     "Supabase Studio" \
     SUPABASE_STUDIO_PORT \
     TEST_SUPABASE_STUDIO_PORT \
-    54323 \
+    15423 \
     TEST_SUPABASE_STUDIO_PORT_LOCK_DIR
 resolve_supabase_port \
     "Supabase inbucket" \
     SUPABASE_INBUCKET_PORT \
     TEST_SUPABASE_INBUCKET_PORT \
-    54324 \
+    15424 \
     TEST_SUPABASE_INBUCKET_PORT_LOCK_DIR
 resolve_supabase_port \
     "Supabase shadow database" \
     SUPABASE_DB_SHADOW_PORT \
     TEST_SUPABASE_DB_SHADOW_PORT \
-    54325 \
+    15425 \
     TEST_SUPABASE_DB_SHADOW_PORT_LOCK_DIR
 
 export SUPABASE_PROJECT_ID="$supabase_project_id" SUPABASE_WORKDIR="$supabase_workdir"
