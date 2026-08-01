@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 
@@ -32,6 +32,7 @@ const last = () => screen.getByRole("button", { name: "Last" });
 describe("useDialogOverlay", () => {
   afterEach(() => {
     document.body.style.overflow = "";
+    document.body.removeAttribute("tabindex");
   });
 
   it("locks body scroll while active and restores the prior value on deactivate", async () => {
@@ -88,6 +89,28 @@ describe("useDialogOverlay", () => {
 
     rerender(<Host active={false} onDismiss={vi.fn()} />);
     expect(opener()).toHaveFocus();
+  });
+
+  it("reasserts return focus after native dismissal settles on the document", async () => {
+    const { rerender } = render(<Host active={false} onDismiss={vi.fn()} />);
+    opener().focus();
+    rerender(<Host active onDismiss={vi.fn()} />);
+    await waitFor(() => expect(first()).toHaveFocus());
+
+    rerender(<Host active={false} onDismiss={vi.fn()} />);
+    expect(opener()).toHaveFocus();
+    document.body.tabIndex = -1;
+    document.body.focus();
+    expect(document.body).toHaveFocus();
+
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
+    );
+    expect(opener()).toHaveFocus();
+    document.body.removeAttribute("tabindex");
   });
 
   it("prefers an explicit return-focus target over ambient focus", async () => {

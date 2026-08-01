@@ -182,6 +182,12 @@ interface PaneReturnMementoService extends PaneReturnMementoCommands {
     key: PaneVisitDataKey<T>;
     capture: () => T | null;
   }): () => void;
+  publishVisitData<T>(input: {
+    visitId: PaneVisitId;
+    routeKey: string;
+    key: PaneVisitDataKey<T>;
+    value: T | null;
+  }): void;
   readVisitData<T>(input: {
     visitId: PaneVisitId;
     routeKey: string;
@@ -511,6 +517,47 @@ export function PaneReturnMementoProvider({
       }
     }
   }, [removeVisitData]);
+
+  const publishVisitData = useCallback(
+    <T,>(input: {
+      visitId: PaneVisitId;
+      routeKey: string;
+      key: PaneVisitDataKey<T>;
+      value: T | null;
+    }) => {
+      const state = stateRef.current;
+      if (state.blockedCaptureVisits.has(input.visitId)) {
+        return;
+      }
+      const previous = state.visitData.get(input.visitId);
+      const slots = new Map(
+        previous?.routeKey === input.routeKey ? previous.slots : [],
+      );
+      const keyIdentity = visitDataKeyIdentity(input.key);
+      if (input.value === null) {
+        slots.delete(keyIdentity);
+      } else {
+        jsonBytes(input.value);
+        slots.set(keyIdentity, { value: input.value });
+      }
+      let bytes = 0;
+      for (const slot of slots.values()) {
+        bytes += jsonBytes(slot.value);
+      }
+      removeVisitData(input.visitId);
+      if (slots.size === 0 || bytes > MAX_PANE_VISIT_DATA_BYTES) {
+        return;
+      }
+      state.visitData.set(input.visitId, {
+        routeKey: input.routeKey,
+        slots,
+        bytes,
+      });
+      state.visitDataBytes += bytes;
+      enforceVisitDataBudget();
+    },
+    [enforceVisitDataBudget, removeVisitData],
+  );
 
   const routeIsReady = useCallback(
     (visitId: PaneVisitId, routeKey: string): boolean => {
@@ -1076,6 +1123,7 @@ export function PaneReturnMementoProvider({
       reconcileVisitTopology,
       registerScrollport,
       registerCaptureGetter,
+      publishVisitData,
       readVisitData,
       registerReadiness,
     }),
@@ -1085,6 +1133,7 @@ export function PaneReturnMementoProvider({
       clearVisit,
       readVisitData,
       reconcileVisitTopology,
+      publishVisitData,
       registerCaptureGetter,
       registerReadiness,
       registerScrollport,
@@ -1273,6 +1322,14 @@ export function usePaneVisitData<T>(
       }),
     [key, scope.routeKey, scope.visitId, service],
   );
+  useLayoutEffect(() => {
+    service.publishVisitData({
+      visitId: scope.visitId,
+      routeKey: scope.routeKey,
+      key,
+      value: committedCaptureRef.current(),
+    });
+  });
   return service.readVisitData({
     visitId: scope.visitId,
     routeKey: scope.routeKey,

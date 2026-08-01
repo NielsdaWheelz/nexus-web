@@ -12,12 +12,27 @@ export interface ReturnFocusOptions {
 
 function focusTarget(target: HTMLElement | null): boolean {
   if (!target?.isConnected) return false;
+  const focusAfterBrowserSettlement = () => {
+    requestAnimationFrame(() => {
+      if (!target.isConnected || target.closest("[inert]")) return;
+      if (
+        document.activeElement === document.body ||
+        document.activeElement === document.documentElement
+      ) {
+        target.focus();
+      }
+    });
+  };
   if (!target.closest("[inert]")) {
     target.focus();
+    focusAfterBrowserSettlement();
     return true;
   }
   requestAnimationFrame(() => {
-    if (target.isConnected && !target.closest("[inert]")) target.focus();
+    if (target.isConnected && !target.closest("[inert]")) {
+      target.focus();
+      focusAfterBrowserSettlement();
+    }
   });
   return true;
 }

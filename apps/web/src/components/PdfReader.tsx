@@ -754,6 +754,9 @@ export default function PdfReader({
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const highlightCreationInFlightRef = useRef(false);
+  const pendingCommittedHighlightsRef = useRef<Map<string, PdfHighlightOut>>(
+    new Map(),
+  );
   const [pageHighlights, setPageHighlights] = useState<PdfHighlightOut[]>([]);
   const [signedUrlRefreshToken, setSignedUrlRefreshToken] = useState(0);
   const [localHighlightRefreshToken, setLocalHighlightRefreshToken] =
@@ -847,6 +850,10 @@ export default function PdfReader({
   onHighlightTapRef.current = onHighlightTap;
   onHighlightHoverRef.current = onHighlightHover;
   isMobileRef.current = isMobile;
+
+  useEffect(() => {
+    pendingCommittedHighlightsRef.current.clear();
+  }, [mediaId]);
 
   useEffect(() => {
     return () => {
@@ -2468,11 +2475,17 @@ export default function PdfReader({
 
         if (
           createdHighlight?.anchor.type === "pdf_page_geometry" &&
-          createdHighlight.anchor.page_number === pageNumberRef.current
+          createdHighlight.anchor.media_id === mediaId
         ) {
-          setPageHighlights((current) =>
-            upsertCommittedPageHighlight(current, createdHighlight),
+          pendingCommittedHighlightsRef.current.set(
+            createdHighlight.id,
+            createdHighlight,
           );
+          if (createdHighlight.anchor.page_number === pageNumberRef.current) {
+            setPageHighlights((current) =>
+              upsertCommittedPageHighlight(current, createdHighlight),
+            );
+          }
         }
         setLocalHighlightRefreshToken((value) => value + 1);
         onHighlightsMutated?.();
@@ -2981,12 +2994,31 @@ export default function PdfReader({
       setSelectionError("Failed to load PDF highlights for this page.");
       return;
     }
-    setPageHighlights(pageHighlightsResource.data);
+    let reconciled = pageHighlightsResource.data;
+    for (const [highlightId, committed] of
+      pendingCommittedHighlightsRef.current) {
+      if (committed.anchor.media_id !== mediaId) {
+        pendingCommittedHighlightsRef.current.delete(highlightId);
+        continue;
+      }
+      if (
+        pageHighlightsResource.data.some(
+          (highlight) => highlight.id === highlightId,
+        )
+      ) {
+        pendingCommittedHighlightsRef.current.delete(highlightId);
+        continue;
+      }
+      if (committed.anchor.page_number === pageNumber) {
+        reconciled = upsertCommittedPageHighlight(reconciled, committed);
+      }
+    }
+    setPageHighlights(reconciled);
     onPageHighlightsChangeRef.current?.(
       pageNumber,
-      pageHighlightsResource.data,
+      reconciled,
     );
-  }, [pageHighlightsResource, pageNumber]);
+  }, [mediaId, pageHighlightsResource, pageNumber]);
 
   useEffect(() => {
     document.addEventListener("selectionchange", syncSelectionFromWindow);

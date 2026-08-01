@@ -12,8 +12,17 @@ import {
   type PodcastSubscriptionSettingsResponse,
 } from "@/lib/podcasts/subscriptionSettings";
 import type { PauseShorteningMode } from "@/lib/player/pauseShortening";
+import {
+  PaneReturnMementoProvider,
+  PaneReturnVisitScope,
+} from "@/lib/workspace/paneReturnMemento";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
 
 const podcastTitle = "The Podcast";
+const PODCAST_VISIT_ID = assumePaneVisitId(
+  "11111111-1111-4111-8111-111111111111",
+);
+const PODCAST_ROUTE_KEY = "podcasts:/podcasts";
 
 function buildModalState(overrides: Partial<ModalState> = {}): ModalState {
   return {
@@ -50,7 +59,7 @@ function Harness({ settingsModal }: { settingsModal: ModalState }) {
   );
 }
 
-function ControllerHarness({
+function ControllerHarnessBody({
   defaultPlaybackSpeed,
   onSaved,
 }: {
@@ -83,7 +92,32 @@ function ControllerHarness({
   );
 }
 
-function ProjectionHarness({
+function ControllerHarness({
+  defaultPlaybackSpeed,
+  onSaved,
+  generation = 0,
+}: {
+  defaultPlaybackSpeed: Presence<number>;
+  onSaved: (response: PodcastSubscriptionSettingsResponse) => void;
+  generation?: number;
+}) {
+  return (
+    <PaneReturnMementoProvider>
+      <PaneReturnVisitScope
+        visitId={PODCAST_VISIT_ID}
+        routeKey={PODCAST_ROUTE_KEY}
+      >
+        <ControllerHarnessBody
+          key={generation}
+          defaultPlaybackSpeed={defaultPlaybackSpeed}
+          onSaved={onSaved}
+        />
+      </PaneReturnVisitScope>
+    </PaneReturnMementoProvider>
+  );
+}
+
+function ProjectionHarnessBody({
   onSaved,
 }: {
   onSaved: (response: PodcastSubscriptionSettingsResponse) => void;
@@ -118,6 +152,23 @@ function ProjectionHarness({
         settingsModal={settingsModal}
       />
     </>
+  );
+}
+
+function ProjectionHarness({
+  onSaved,
+}: {
+  onSaved: (response: PodcastSubscriptionSettingsResponse) => void;
+}) {
+  return (
+    <PaneReturnMementoProvider>
+      <PaneReturnVisitScope
+        visitId={PODCAST_VISIT_ID}
+        routeKey={PODCAST_ROUTE_KEY}
+      >
+        <ProjectionHarnessBody onSaved={onSaved} />
+      </PaneReturnVisitScope>
+    </PaneReturnMementoProvider>
   );
 }
 
@@ -213,6 +264,36 @@ describe("PodcastSubscriptionSettingsModal", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it("restores an open draft across a pane composition remount", async () => {
+    const onSaved =
+      vi.fn<(response: PodcastSubscriptionSettingsResponse) => void>();
+    const view = render(
+      <ControllerHarness
+        defaultPlaybackSpeed={absent()}
+        onSaved={onSaved}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    const slider = await screen.findByRole("slider", {
+      name: "Default playback speed",
+    });
+    fireEvent.input(slider, { target: { value: "1.85" } });
+
+    view.rerender(
+      <ControllerHarness
+        defaultPlaybackSpeed={absent()}
+        onSaved={onSaved}
+        generation={1}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("slider", {
+        name: "Default playback speed",
+      }),
+    ).toHaveValue("1.85");
   });
 
   it("shows and edits an arbitrary stored rate without preset coercion", () => {

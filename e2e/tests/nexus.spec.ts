@@ -1011,10 +1011,16 @@ test.describe("mobile Nexus task", () => {
       const wrapper = page.getByTestId("nexus-wrapper");
       const mountedControl = wrapper.locator("button");
       const paneBody = activeWorkspacePane(page).getByTestId("pane-shell-body");
+      await expect
+        .poll(() =>
+          paneBody.evaluate((element) =>
+            Number.parseFloat(getComputedStyle(element).paddingBottom),
+          ),
+        )
+        .toBeGreaterThan(0);
       const closedClearance = await paneBody.evaluate((element) =>
         Number.parseFloat(getComputedStyle(element).paddingBottom),
       );
-      expect(closedClearance).toBeGreaterThan(0);
       await expect(trigger).toBeVisible();
       await trigger.tap();
 

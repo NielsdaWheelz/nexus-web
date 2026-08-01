@@ -1251,6 +1251,33 @@ describe("PaneReturnMementoProvider", () => {
     expect(screen.getByTestId("restored-data")).toHaveTextContent('"page":7');
   });
 
+  it("journals committed route data across a composition remount", () => {
+    const publish = () => undefined;
+    const view = render(
+      <MountedVisitDataFixture
+        originData={{ page: 7 }}
+        peerData={{ page: 2 }}
+        originGeneration={0}
+        peerGeneration={0}
+        publish={publish}
+      />,
+    );
+
+    view.rerender(
+      <MountedVisitDataFixture
+        originData={{ page: 1 }}
+        peerData={{ page: 2 }}
+        originGeneration={1}
+        peerGeneration={0}
+        publish={publish}
+      />,
+    );
+
+    expect(screen.getByTestId("origin-restored-data")).toHaveTextContent(
+      '"page":7',
+    );
+  });
+
   it("blocks a stale mounted peer until its own invalidation makes fresh truth capturable", async () => {
     let commands: PaneReturnMementoCommands | null = null;
     const publish = (next: PaneReturnMementoCommands) => {

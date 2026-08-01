@@ -156,6 +156,62 @@ function TaskWithDialog({
   );
 }
 
+function AtomicNestedCloseTask() {
+  const [outerActive, setOuterActive] = useState(false);
+  const [innerActive, setInnerActive] = useState(false);
+  const openerRef = useRef<HTMLButtonElement>(null);
+  const innerTriggerRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <>
+      <button
+        ref={openerRef}
+        type="button"
+        onClick={() => setOuterActive(true)}
+      >
+        Open outer task
+      </button>
+      <MobileFullScreenTask
+        active={outerActive}
+        onDismiss={() => setOuterActive(false)}
+        onDismissRequest={() => "accepted"}
+        ariaLabel="Atomic outer task"
+        initialFocus={() => innerTriggerRef.current}
+        returnFocusTo={() => openerRef.current}
+        focusKey="atomic-outer"
+      >
+        <button
+          ref={innerTriggerRef}
+          type="button"
+          onClick={() => setInnerActive(true)}
+        >
+          Open atomic confirmation
+        </button>
+        <Dialog
+          open={innerActive}
+          onClose={() => setInnerActive(false)}
+          title="Atomic confirmation"
+          returnFocusTo={() => innerTriggerRef.current}
+          initialFocus={(container) =>
+            container.querySelector<HTMLElement>("[data-confirm-atomic]")
+          }
+        >
+          <button
+            type="button"
+            data-confirm-atomic
+            onClick={() => {
+              setInnerActive(false);
+              setOuterActive(false);
+            }}
+          >
+            Confirm atomic close
+          </button>
+        </Dialog>
+      </MobileFullScreenTask>
+    </>
+  );
+}
+
 describe("MobileFullScreenTask", () => {
   let fakeState: unknown = null;
 
@@ -444,5 +500,25 @@ describe("MobileFullScreenTask", () => {
     expect(outerProjection).not.toHaveAttribute("data-suspended");
     expect(getComputedStyle(outer).backgroundColor).toBe("rgb(24, 26, 30)");
     await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("restores the external opener when nested layers close atomically", async () => {
+    render(
+      withRenderEnvironment(<AtomicNestedCloseTask />, {
+        initialViewport: "mobile",
+      }),
+    );
+    const opener = screen.getByRole("button", { name: "Open outer task" });
+    await userEvent.click(opener);
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Open atomic confirmation",
+      }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Confirm atomic close" }),
+    );
+
+    await waitFor(() => expect(opener).toHaveFocus());
   });
 });

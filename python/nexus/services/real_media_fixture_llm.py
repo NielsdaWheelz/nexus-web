@@ -297,6 +297,12 @@ async def _stream(
         if _has_citable_tool_result(intent) or _has_numbered_prompt_resource(intent)
         else REAL_MEDIA_FIXTURE_RESPONSE
     )
+    if await _await_fixture_cancel(cancel):
+        yield RuntimeStreamEvent(
+            seq=1,
+            event=TerminalEvent(outcome=_cancelled(intent)),
+        )
+        return
     parts = [
         "The source says SOFIA ",
         "helped confirm water on the Moon ",
@@ -579,6 +585,31 @@ async def _cancelled_during_fixture_delay(cancel: CancelSignal | None) -> bool:
         return True
     except TimeoutError:
         return False
+
+
+async def _await_fixture_cancel(cancel: CancelSignal | None) -> bool:
+    """Hold the final fixture turn at a real cancellation rendezvous.
+
+    This test-only mode lets browser cancellation tests synchronize on the
+    provider-runtime cancellation contract instead of racing a fixed stream
+    delay. It is intentionally bounded and fails closed when the worker does
+    not supply or receive a cancellation signal.
+    """
+
+    raw_enabled = os.environ.get("REAL_MEDIA_FIXTURE_AWAIT_CANCEL")
+    if raw_enabled is None or raw_enabled == "0":
+        return False
+    if raw_enabled != "1":
+        raise ValueError("REAL_MEDIA_FIXTURE_AWAIT_CANCEL must be exactly '0' or '1'")
+    if cancel is None:
+        raise AssertionError("real-media fixture cancellation rendezvous requires a CancelSignal")
+    try:
+        await asyncio.wait_for(cast(Awaitable[object], cancel.wait()), timeout=20)
+    except TimeoutError as error:
+        raise AssertionError(
+            "real-media fixture did not receive cancellation within 20 seconds"
+        ) from error
+    return True
 
 
 def _usage_for(intent: GenerateIntent, response: str) -> _TokenUsage:

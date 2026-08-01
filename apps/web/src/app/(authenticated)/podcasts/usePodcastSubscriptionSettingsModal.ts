@@ -13,6 +13,10 @@ import {
   type PodcastSubscriptionSettingsResponse,
 } from "@/lib/podcasts/subscriptionSettings";
 import type { PauseShorteningMode } from "@/lib/player/pauseShortening";
+import {
+  definePaneVisitDataKey,
+  usePaneVisitData,
+} from "@/lib/panes/paneRuntime";
 
 interface SubscriptionSettingsSource {
   podcast_id: string;
@@ -20,6 +24,18 @@ interface SubscriptionSettingsSource {
   pause_shortening_mode: Presence<PauseShorteningMode>;
   auto_queue: boolean;
 }
+
+interface PodcastSubscriptionSettingsDraft {
+  readonly podcastId: string;
+  readonly defaultPlaybackSpeed: Presence<number>;
+  readonly pauseShorteningMode: Presence<PauseShorteningMode>;
+  readonly autoQueue: boolean;
+}
+
+const PODCAST_SUBSCRIPTION_SETTINGS_DRAFT =
+  definePaneVisitDataKey<PodcastSubscriptionSettingsDraft>(
+    "Podcasts.SubscriptionSettingsDraft",
+  );
 
 export interface PodcastSubscriptionSettingsModal {
   /** Non-null when the modal is open; identifies the podcast being edited. */
@@ -49,15 +65,39 @@ export function usePodcastSubscriptionSettingsModal({
 }: {
   onSaved: (response: PodcastSubscriptionSettingsResponse) => void;
 }): PodcastSubscriptionSettingsModal {
-  const [podcastId, setPodcastId] = useState<string | null>(null);
+  const committedDraftRef = useRef<PodcastSubscriptionSettingsDraft | null>(
+    null,
+  );
+  const restoredDraft = usePaneVisitData(
+    PODCAST_SUBSCRIPTION_SETTINGS_DRAFT,
+    () => committedDraftRef.current,
+  );
+  const [podcastId, setPodcastId] = useState<string | null>(
+    restoredDraft?.podcastId ?? null,
+  );
   const [defaultPlaybackSpeed, setDefaultPlaybackSpeed] =
-    useState<Presence<number>>(absent());
+    useState<Presence<number>>(
+      restoredDraft?.defaultPlaybackSpeed ?? absent(),
+    );
   const [pauseShorteningMode, setPauseShorteningMode] =
-    useState<Presence<PauseShorteningMode>>(absent());
-  const [autoQueue, setAutoQueue] = useState(false);
+    useState<Presence<PauseShorteningMode>>(
+      restoredDraft?.pauseShorteningMode ?? absent(),
+    );
+  const [autoQueue, setAutoQueue] = useState(
+    restoredDraft?.autoQueue ?? false,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const busyRef = useRef(false);
+  committedDraftRef.current =
+    podcastId === null
+      ? null
+      : {
+          podcastId,
+          defaultPlaybackSpeed,
+          pauseShorteningMode,
+          autoQueue,
+        };
 
   useEffect(
     () =>

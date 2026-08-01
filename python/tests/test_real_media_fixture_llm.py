@@ -221,6 +221,32 @@ async def test_real_media_fixture_llm_cancel_event_matches_provider_contract(
     assert events[1].event.outcome.meta.model == _TARGET.model
 
 
+async def test_real_media_fixture_llm_cancel_rendezvous_waits_for_real_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REAL_MEDIA_FIXTURE_AWAIT_CANCEL", "1")
+    cancel = asyncio.Event()
+    stream_task = asyncio.create_task(
+        _stream_events(
+            _intent(
+                _user("What does this source say about SOFIA?"),
+                _tool_result('{"results":[{"n":1}]}'),
+            ),
+            cancel=cancel,
+        )
+    )
+
+    await asyncio.sleep(0)
+    assert not stream_task.done()
+
+    cancel.set()
+    events = await asyncio.wait_for(stream_task, timeout=1)
+
+    assert len(events) == 1
+    assert isinstance(events[0].event, TerminalEvent)
+    assert isinstance(events[0].event.outcome, Cancelled)
+
+
 async def test_real_media_fixture_llm_cites_tool_result() -> None:
     events = await _stream_events(
         _intent(

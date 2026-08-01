@@ -1283,7 +1283,7 @@ describe("PdfReader selection chat destinations", () => {
       rectList([new DOMRect(110, 140, 160, 20)]),
     );
 
-    render(<PdfReader mediaId="media-1" />);
+    const view = render(<PdfReader mediaId="media-1" />);
 
     await screen.findByTestId("pdf-page-text-layer-1");
     await waitFor(() => {
@@ -1301,35 +1301,36 @@ describe("PdfReader selection chat destinations", () => {
 
     const reconciliation = deferred<{ data: unknown }>();
     pdfRuntimeState.highlightListResponse = reconciliation.promise;
-    pdfRuntimeState.highlightCreateResponse = Promise.resolve({
-      data: {
-        id: "committed-highlight",
-        anchor: {
-          type: "pdf_page_geometry",
-          media_id: "media-1",
-          page_number: 1,
-          quads: [
-            {
-              x1: 70,
-              y1: 60,
-              x2: 230,
-              y2: 60,
-              x3: 230,
-              y3: 80,
-              x4: 70,
-              y4: 80,
-            },
-          ],
-        },
-        color: "green",
-        exact: "selected quote",
-        prefix: "",
-        suffix: "",
-        created_at: "2026-01-01T00:00:00.000Z",
-        updated_at: "2026-01-01T00:00:00.000Z",
-        author_user_id: "user-1",
-        is_owner: true,
+    const committedHighlight = {
+      id: "committed-highlight",
+      anchor: {
+        type: "pdf_page_geometry" as const,
+        media_id: "media-1",
+        page_number: 1,
+        quads: [
+          {
+            x1: 70,
+            y1: 60,
+            x2: 230,
+            y2: 60,
+            x3: 230,
+            y3: 80,
+            x4: 70,
+            y4: 80,
+          },
+        ],
       },
+      color: "green" as const,
+      exact: "selected quote",
+      prefix: "",
+      suffix: "",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      author_user_id: "user-1",
+      is_owner: true,
+    };
+    pdfRuntimeState.highlightCreateResponse = Promise.resolve({
+      data: committedHighlight,
     });
 
     const textNode = pdfRuntimeState.textNode;
@@ -1345,15 +1346,39 @@ describe("PdfReader selection chat destinations", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Colour" }));
     fireEvent.click(await screen.findByRole("button", { name: "Green" }));
 
-    try {
+    expect(
+      await screen.findByTestId("pdf-highlight-committed-highlight-0"),
+    ).toBeVisible();
+
+    reconciliation.resolve({
+      data: { page_number: 1, highlights: [] },
+    });
+    await waitFor(() =>
       expect(
-        await screen.findByTestId("pdf-highlight-committed-highlight-0"),
-      ).toBeVisible();
-    } finally {
-      reconciliation.resolve({
-        data: { page_number: 1, highlights: [] },
-      });
-    }
+        screen.getByTestId("pdf-highlight-committed-highlight-0"),
+      ).toBeVisible(),
+    );
+
+    pdfRuntimeState.highlightListResponse = null;
+    pdfRuntimeState.pageHighlights = [committedHighlight];
+    view.rerender(
+      <PdfReader mediaId="media-1" highlightRefreshToken={1} />,
+    );
+    await waitFor(() => {
+      expect(
+        vi
+          .mocked(apiFetch)
+          .mock.calls.filter(
+            ([path, init]) =>
+              path ===
+                "/api/media/media-1/pdf-highlights?page_number=1&mine_only=false" &&
+              (init?.method ?? "GET") === "GET",
+          ),
+      ).toHaveLength(3);
+    });
+    expect(
+      screen.getByTestId("pdf-highlight-committed-highlight-0"),
+    ).toBeVisible();
   });
 
   it("repositions from the retained PDF Range after native selection collapse", async () => {

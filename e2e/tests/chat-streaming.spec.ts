@@ -187,9 +187,11 @@ test.describe("chat streaming", () => {
       );
       worker = startE2eWorkerUntilChatRunTerminal({
         chatRunId: runId,
-        extraEnv: CHAT_FIXTURE_WORKER_ENV,
+        extraEnv: {
+          ...CHAT_FIXTURE_WORKER_ENV,
+          REAL_MEDIA_FIXTURE_AWAIT_CANCEL: "1",
+        },
       });
-      worker = expectWorkerStatus(worker, "cancelled");
 
       const activePane = activeWorkspacePane(page);
       const chatLog = activePane.getByRole("log", { name: "Chat messages" });
@@ -208,8 +210,11 @@ test.describe("chat streaming", () => {
           { timeout: 30_000 },
         )
         .toContain("This response was cancelled.");
-      await worker;
+      const workerResult = await worker;
       worker = null;
+      expect(workerResult.chatRunStatus, JSON.stringify(workerResult)).toBe(
+        "cancelled",
+      );
       await expectRunStatus(page, runId, "cancelled");
     } finally {
       if (worker) await worker.catch((error: unknown) => (workerError = error));
