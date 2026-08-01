@@ -41,7 +41,9 @@ disclosures, and responsive behavior.
 
 ### Composer
 
-- One flat writing surface.
+- One writing surface, without message-bubble or nested-control geometry. The
+  later `chat-composer-instrument-hard-cutover.md` owns its final shell radius,
+  edge, and elevation.
 - Profile/reasoning controls and send/stop actions remain in the action row.
 - Normal send-capability state consumes no visible error space.
 - Actual send errors and reconciliation remain visible.

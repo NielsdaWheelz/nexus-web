@@ -20,18 +20,26 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe("Correspondence hard-cut guards", () => {
-  it("keeps chat surfaces flat", () => {
+  it("keeps correspondence surfaces flat and the composer instrument explicit", () => {
     const cssFiles = readdirSync(join(APP_ROOT, "src/components/chat"), {
       recursive: true,
     })
       .map(String)
       .filter((name) => name.endsWith(".module.css"));
 
-    for (const name of cssFiles) {
+    for (const name of cssFiles.filter(
+      (candidate) => candidate !== "ChatComposer.module.css",
+    )) {
       const css = source(`src/components/chat/${name}`);
       expect(css, `${name} must not use --radius-xl`).not.toMatch(/radius-xl\b/);
       expect(css, `${name} must not use --radius-2xl`).not.toContain("radius-2xl");
     }
+
+    const composer = source("src/components/chat/ChatComposer.module.css");
+    expect(
+      composer.match(/border-radius:\s*var\(--radius-2xl\)/g),
+      "ChatComposer.module.css must reserve --radius-2xl for its one instrument shell",
+    ).toHaveLength(1);
 
     const messageRow = source("src/components/chat/MessageRow.module.css");
     expect(messageRow).not.toContain("margin-inline-start: auto");
