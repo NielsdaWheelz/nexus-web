@@ -561,6 +561,7 @@ class _GenerationDispatchRuntime:
         self.owner.mark_uncertain(self.path)
         return self.owner.llm_runtime.stream(intent, plan, credential, cancel=cancel)
 
+
 def decode_prepared(state: StepReplayState) -> PreparedChatRun:
     return _decode_completed(state, PreparedChatRun)
 
@@ -751,7 +752,9 @@ def _block(state: PromptBlockState) -> PromptBlock:
     stability = state.stability
     return PromptBlock(
         text=state.text,
-        stability=(Dynamic() if isinstance(stability, DynamicState) else Stable(_scope(stability.scope))),
+        stability=(
+            Dynamic() if isinstance(stability, DynamicState) else Stable(_scope(stability.scope))
+        ),
     )
 
 
