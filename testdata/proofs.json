@@ -6,10 +6,12 @@
       "source_globs": [
         "python/nexus_test_control/runtime.py",
         "python/nexus_test_control/services.py",
+        "python/nexus_test_control/process.py",
         "python/tests/testkit/**/*.py"
       ],
       "proofs": [
-        "pytest:python/tests/kernel/nexus_test_control/test_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run"
+        "pytest:python/tests/kernel/nexus_test_control/test_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run",
+        "pytest:python/tests/kernel/nexus_test_control/test_process.py::test_captured_child_output_is_drained_without_retaining_unbounded_logs"
       ],
       "capabilities": [
         "kernel-python"
@@ -50,14 +52,17 @@
       "source_globs": [
         "python/nexus/services/media_deletion.py",
         "python/nexus/services/resource_graph/cleanup.py",
-        "python/nexus/services/conversations.py"
+        "python/nexus/services/conversations.py",
+        "apps/web/src/components/chat/useForkPanel.ts"
       ],
       "proofs": [
         "pytest:python/tests/service/test_destructive_side_effects.py::test_viewer_removal_preserves_shared_media_database_and_object",
-        "pytest:python/tests/service/test_conversation_deletion.py::test_conversation_delete_removes_its_dead_chat_journal_only"
+        "pytest:python/tests/service/test_conversation_deletion.py::test_conversation_delete_removes_its_dead_chat_journal_only",
+        "vitest:apps/web/src/components/chat/ConversationForksPanel.browser.test.tsx"
       ],
       "capabilities": [
-        "service"
+        "service",
+        "component"
       ]
     },
     {

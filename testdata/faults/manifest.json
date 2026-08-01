@@ -308,6 +308,24 @@
         "playwright:apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts"
       ],
       "expected_failure": "echoed a reader-state write within"
+    },
+    {
+      "id": "conversation-fork-delete-confirmation-bypass",
+      "patch": "testdata/faults/conversation-fork-delete-confirmation-bypass.patch",
+      "sha256": "b86f9e74f78bb0275bafe1bd9322966b8fc2a5d0f5165f8ba5c6c4c65d98981a",
+      "proofs": [
+        "vitest:apps/web/src/components/chat/ConversationForksPanel.browser.test.tsx"
+      ],
+      "expected_failure": "Failed deletion left a stale destructive confirmation armed."
+    },
+    {
+      "id": "desktop-nexus-stationary-pointer-bypass",
+      "patch": "testdata/faults/desktop-nexus-stationary-pointer-bypass.patch",
+      "sha256": "4d5cc8cbc3ca7af941ac09296c9c9516993fb11b7d5f083c7647d1098c5ce146",
+      "proofs": [
+        "vitest:apps/web/src/components/nexus/desktop/DesktopNexusSelection.browser.test.tsx"
+      ],
+      "expected_failure": "Stationary-pointer reflow moved selection away from"
     }
   ]
 }

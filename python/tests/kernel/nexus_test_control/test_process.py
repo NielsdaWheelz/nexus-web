@@ -9,6 +9,39 @@ from pathlib import Path
 
 import pytest
 
+from nexus_test_control.process import run_command
+
+
+def test_captured_child_output_is_drained_without_retaining_unbounded_logs(
+    tmp_path: Path,
+) -> None:
+    command = (
+        "import sys; "
+        "sys.stdout.write('stdout-prefix' + 'x' * 200000 + 'stdout-tail'); "
+        "sys.stderr.write('stderr-prefix' + 'y' * 200000 + 'stderr-tail')"
+    )
+
+    completed = run_command(
+        (sys.executable, "-c", command),
+        cwd=tmp_path,
+        env={},
+        capture_output=True,
+        check=True,
+    )
+
+    assert completed.stdout is not None
+    assert completed.stderr is not None
+    assert len(completed.stdout.encode()) <= 64 * 1024, (
+        "captured stdout exceeded the 65536-byte diagnostic tail"
+    )
+    assert len(completed.stderr.encode()) <= 64 * 1024, (
+        "captured stderr exceeded the 65536-byte diagnostic tail"
+    )
+    assert "stdout-prefix" not in completed.stdout
+    assert "stderr-prefix" not in completed.stderr
+    assert completed.stdout.endswith("stdout-tail")
+    assert completed.stderr.endswith("stderr-tail")
+
 
 def test_sigterm_to_controller_terminates_its_current_child_process_group(
     tmp_path: Path,

@@ -4,11 +4,13 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from types import FrameType
+from typing import BinaryIO
 
 
 class CommandInterrupted(RuntimeError):
@@ -17,6 +19,7 @@ class CommandInterrupted(RuntimeError):
 
 _ACTIVE_LOCK = threading.Lock()
 _ACTIVE_PROCESS: subprocess.Popen[str] | None = None
+_CAPTURED_OUTPUT_TAIL_BYTES = 64 * 1024
 _UNBLOCK_AND_EXEC = (
     "import os, signal, sys; "
     "signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM}); "
@@ -35,8 +38,8 @@ def run_command(
     """Run one fixed command in an owned process group that cannot outlive the caller."""
     if not command or any(not isinstance(part, str) or not part for part in command):
         raise ValueError("child command must be a fixed non-empty argv")
-    stdout = subprocess.PIPE if capture_output else None
-    stderr = subprocess.PIPE if capture_output else None
+    stdout_file: BinaryIO | None = tempfile.TemporaryFile() if capture_output else None
+    stderr_file: BinaryIO | None = tempfile.TemporaryFile() if capture_output else None
     blocked = {signal.SIGINT, signal.SIGTERM}
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
     try:
@@ -44,23 +47,33 @@ def run_command(
             unblock_and_exec_command(command),
             cwd=cwd,
             env=dict(env),
-            stdout=stdout,
-            stderr=stderr,
+            stdout=stdout_file,
+            stderr=stderr_file,
             text=True,
             start_new_session=True,
         )
         _claim_process(process)
     except BaseException:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        if stdout_file is not None:
+            stdout_file.close()
+        if stderr_file is not None:
+            stderr_file.close()
         raise
     try:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
-        captured_stdout, captured_stderr = process.communicate()
+        process.wait()
+        captured_stdout = _output_tail(stdout_file)
+        captured_stderr = _output_tail(stderr_file)
     except BaseException:
         _terminate_process_group(process)
         raise
     finally:
         _release_process(process)
+        if stdout_file is not None:
+            stdout_file.close()
+        if stderr_file is not None:
+            stderr_file.close()
     completed = subprocess.CompletedProcess(
         tuple(command),
         process.returncode,
@@ -75,6 +88,15 @@ def run_command(
             stderr=completed.stderr,
         )
     return completed
+
+
+def _output_tail(output: BinaryIO | None) -> str | None:
+    if output is None:
+        return None
+    output.flush()
+    length = output.seek(0, os.SEEK_END)
+    output.seek(max(0, length - _CAPTURED_OUTPUT_TAIL_BYTES))
+    return output.read().decode("utf-8", errors="replace")
 
 
 def unblock_and_exec_command(command: Sequence[str]) -> tuple[str, ...]:

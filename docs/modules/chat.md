@@ -178,6 +178,10 @@ citations remain active. The publication warning is a quiet amber
 `AssistantDetails` owns run, usage, cost, tool/retrieval, context-reference, and
 integrity diagnostics. The deleted colophon has no compatibility replacement.
 
+Fork deletion is pessimistic. A failed DELETE keeps the fork row, presents the
+failure, and disarms the confirmation so a stale destructive action cannot be
+submitted again without a new explicit request.
+
 Ordinary prose and links wrap inside the pane. Only bounded code and table
 containers may scroll horizontally.
 
