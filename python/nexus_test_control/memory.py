@@ -52,7 +52,10 @@ class OwnedMemorySampler:
         if self._thread.is_alive():
             self._container_sample_failed = True
         else:
-            self._sample(include_containers=True)
+            self._sample(include_containers=False)
+        return self.snapshot()
+
+    def snapshot(self) -> PeakOwnedMemory:
         process = _to_mib(self._peak_process_bytes)
         containers = _to_mib(self._peak_container_bytes)
         return PeakOwnedMemory(

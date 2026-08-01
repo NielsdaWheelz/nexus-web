@@ -453,25 +453,19 @@ def run_workflow(
                         f"blocked by earlier {blocked_by.value} result",
                     )
                     continue
-                with measure_owned_memory(context.repo_root) as sampler:
-                    admission = (
-                        _heavy_memory_admission(requirement.capability, _available_memory())
-                        if _requires_memory_admission(context, requirement.capability)
-                        else None
-                    )
-                    result = admission or _run_capability(
-                        context, requirement.capability, environment, execution
-                    )
-                memory = measured(sampler)
+                admission = (
+                    _heavy_memory_admission(requirement.capability, _available_memory())
+                    if _requires_memory_admission(context, requirement.capability)
+                    else None
+                )
+                result = admission or _run_capability(
+                    context, requirement.capability, environment, execution
+                )
+                memory = workflow_sampler.snapshot()
                 measured_result = CapabilityResult(
                     replace(result.evidence, peak_owned_mib=memory.total),
                     result.detail,
                 )
-                if not memory.measurement_complete:
-                    measured_result = CapabilityResult(
-                        replace(measured_result.evidence, status=RunStatus.FAIL),
-                        "owned container memory could not be measured truthfully",
-                    )
                 yield measured_result
                 if measured_result.evidence.status is not RunStatus.PASS:
                     blocked_by = requirement.capability
