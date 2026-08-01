@@ -27110,19 +27110,24 @@ class TestMigration0208PersistEpubNavigationOffsets:
             assert result.returncode == 0, result.stderr
 
             media_id = uuid4()
+            other_media_id = uuid4()
             first_fragment_id = uuid4()
             second_fragment_id = uuid4()
+            other_fragment_id = uuid4()
             first_text = "Opening line.\nSecond heading\nClosing."
             second_text = "Other fragment."
+            other_text = "Independent EPUB."
             with engine.begin() as connection:
                 connection.execute(
                     text(
                         """
                         INSERT INTO media (id, kind, title, processing_status)
-                        VALUES (:id, 'epub', 'Migration EPUB', 'ready_for_reading')
+                        VALUES
+                            (:id, 'epub', 'Migration EPUB', 'ready_for_reading'),
+                            (:other_id, 'epub', 'Other EPUB', 'ready_for_reading')
                         """
                     ),
-                    {"id": media_id},
+                    {"id": media_id, "other_id": other_media_id},
                 )
                 connection.execute(
                     text(
@@ -27142,15 +27147,24 @@ class TestMigration0208PersistEpubNavigationOffsets:
                             1,
                             :second_text,
                             '<p>Other fragment.</p>'
+                        ), (
+                            :other_id,
+                            :other_media_id,
+                            0,
+                            :other_text,
+                            '<p>Independent EPUB.</p>'
                         )
                         """
                     ),
                     {
                         "first_id": first_fragment_id,
                         "second_id": second_fragment_id,
+                        "other_id": other_fragment_id,
                         "media_id": media_id,
+                        "other_media_id": other_media_id,
                         "first_text": first_text,
                         "second_text": second_text,
+                        "other_text": other_text,
                     },
                 )
                 connection.execute(
@@ -27169,6 +27183,20 @@ class TestMigration0208PersistEpubNavigationOffsets:
                         """
                     ),
                     {"media_id": media_id},
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO epub_nav_locations (
+                            media_id, location_id, ordinal, source_node_id, label,
+                            fragment_idx, href_path, href_fragment, source
+                        ) VALUES (
+                            :media_id, 'other.xhtml', 0, NULL, 'Other EPUB',
+                            0, 'other.xhtml', NULL, 'spine'
+                        )
+                        """
+                    ),
+                    {"media_id": other_media_id},
                 )
 
             result = run_alembic_command("upgrade 0208")
@@ -27192,6 +27220,18 @@ class TestMigration0208PersistEpubNavigationOffsets:
                     ("second.xhtml", 0, len(second_text)),
                     ("first.xhtml#second", 14, len(first_text)),
                 ]
+                other_offsets = connection.execute(
+                    text(
+                        """
+                        SELECT location_id, start_offset, end_offset
+                        FROM epub_nav_locations
+                        WHERE media_id = :media_id
+                        ORDER BY ordinal
+                        """
+                    ),
+                    {"media_id": other_media_id},
+                ).all()
+                assert other_offsets == [("other.xhtml", 0, len(other_text))]
                 columns = {
                     row.column_name: row.is_nullable
                     for row in connection.execute(

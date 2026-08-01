@@ -41,40 +41,66 @@ def _backfill_offsets() -> None:
     from nexus.services.canonicalize import generate_canonical_text_with_element_offsets
 
     bind = op.get_bind()
-    rows = (
-        bind.execute(
-            sa.text(
-                """
-                SELECT n.media_id,
-                       n.location_id,
-                       n.ordinal,
-                       n.fragment_idx,
-                       n.href_fragment,
-                       f.html_sanitized,
-                       f.canonical_text
-                FROM epub_nav_locations n
-                JOIN fragments f
-                  ON f.media_id = n.media_id
-                 AND f.idx = n.fragment_idx
-                ORDER BY n.media_id, n.ordinal
-                """
-            )
+    media_ids = bind.execute(
+        sa.text(
+            """
+            SELECT DISTINCT media_id
+            FROM epub_nav_locations
+            ORDER BY media_id
+            """
         )
-        .mappings()
-        .all()
-    )
+    ).scalars()
 
-    rows_by_media: dict[object, list[sa.RowMapping]] = {}
-    for row in rows:
-        rows_by_media.setdefault(row["media_id"], []).append(row)
+    for media_id in media_ids:
+        media_rows = (
+            bind.execute(
+                sa.text(
+                    """
+                    SELECT location_id,
+                           ordinal,
+                           fragment_idx,
+                           href_fragment
+                    FROM epub_nav_locations
+                    WHERE media_id = :media_id
+                    ORDER BY ordinal
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            .mappings()
+            .all()
+        )
+        fragment_rows = {
+            int(row["idx"]): row
+            for row in (
+                bind.execute(
+                    sa.text(
+                        """
+                        SELECT f.idx,
+                               f.html_sanitized,
+                               f.canonical_text
+                        FROM fragments f
+                        JOIN (
+                            SELECT DISTINCT fragment_idx
+                            FROM epub_nav_locations
+                            WHERE media_id = :media_id
+                        ) n ON n.fragment_idx = f.idx
+                        WHERE f.media_id = :media_id
+                        ORDER BY f.idx
+                        """
+                    ),
+                    {"media_id": media_id},
+                )
+                .mappings()
+                .all()
+            )
+        }
 
-    updates: list[dict[str, object]] = []
-    for media_id, media_rows in rows_by_media.items():
         requested_ids: dict[int, set[str]] = {}
-        fragment_rows: dict[int, sa.RowMapping] = {}
         for row in media_rows:
             fragment_idx = int(row["fragment_idx"])
-            fragment_rows.setdefault(fragment_idx, row)
+            if fragment_idx not in fragment_rows:
+                raise RuntimeError("0208 found EPUB navigation without its fragment")
             if row["href_fragment"] is not None:
                 requested_ids.setdefault(fragment_idx, set()).add(str(row["href_fragment"]))
 
@@ -118,7 +144,7 @@ def _backfill_offsets() -> None:
                     fragment_length,
                 )
 
-        updates.extend(
+        updates = [
             {
                 "media_id": media_id,
                 "location_id": row["location_id"],
@@ -126,9 +152,7 @@ def _backfill_offsets() -> None:
                 "end_offset": ends[index],
             }
             for index, row in enumerate(media_rows)
-        )
-
-    if updates:
+        ]
         bind.execute(
             sa.text(
                 """
