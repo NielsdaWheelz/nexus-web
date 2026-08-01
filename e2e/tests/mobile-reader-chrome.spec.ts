@@ -628,8 +628,7 @@ async function dispatchTouchDrag(
       : box.y + Math.min(box.height - 100, Math.max(32, box.height * 0.28));
   const roundedDeltaY = Math.round(fingerDeltaY);
   const minStartY = 1 - Math.min(0, roundedDeltaY);
-  const maxStartY =
-    viewport.height - 2 - Math.max(0, roundedDeltaY);
+  const maxStartY = viewport.height - 2 - Math.max(0, roundedDeltaY);
   const x = Math.round(Math.min(viewport.width - 2, Math.max(1, rawX)));
   const startY = Math.round(
     Math.min(maxStartY, Math.max(minStartY, rawStartY)),
@@ -953,9 +952,7 @@ async function expectTrustedForwardRetreat(
   // accessibility state converge on Hidden.
   const firstCollapsedIndex = samples.findIndex((sample) =>
     chromeSurfaces(sample, expectPaneToolbar).every(
-      (surface) =>
-        surface.specifiedProgress === 1 &&
-        surface.progress === 1,
+      (surface) => surface.specifiedProgress === 1 && surface.progress === 1,
     ),
   );
   const firstCollapsedSample =
@@ -1095,8 +1092,7 @@ async function expectTrustedReverseReveal(
   };
   const revealProgressFor = (motion: ReturnType<typeof reverseMotionAt>) =>
     motion.direction === "Up"
-      ? 1 -
-        Math.min(1, Math.max(0, (motion.reversalDistancePx - 8) / 64))
+      ? 1 - Math.min(1, Math.max(0, (motion.reversalDistancePx - 8) / 64))
       : 1;
   const reverseSamples = samples.filter(
     (sample) => sample.scrollTop < hidden.scrollTop,
@@ -1616,42 +1612,47 @@ async function expectTrustedSettleLifecycle(
         },
       },
     );
-    const settleStartedAt = interruptionRecording.transitionEvents.find(
-      ({ type, recordedAt }) =>
-        type === "transitionrun" &&
-        interruptionRecording.touchStartAt !== null &&
-        recordedAt >= interruptionRecording.touchStartAt,
-    )?.recordedAt;
-    expect(
-      settleStartedAt,
-      `stationary trusted touch must observe the idle settle; recording=${JSON.stringify(interruptionRecording)}`,
-    ).toBeDefined();
+    const { touchStartAt, touchEndAt } = interruptionRecording;
+    if (touchStartAt === null || touchEndAt === null) {
+      throw new Error(
+        `settle interruption lost its trusted touch boundaries; recording=${JSON.stringify(interruptionRecording)}`,
+      );
+    }
     const firstNativeScrollAt = interruptionRecording.scrollEvents.find(
-      ({ recordedAt }) =>
-        settleStartedAt !== undefined && recordedAt >= settleStartedAt,
+      ({ recordedAt }) => recordedAt >= touchStartAt,
     )?.recordedAt;
     expect(
       firstNativeScrollAt,
       `settle interruption must produce native scrolling; recording=${JSON.stringify(interruptionRecording)}`,
     ).toBeDefined();
-    expect(
-      interruptionRecording.transitionEvents.some(
+    const settleStartedAt = interruptionRecording.transitionEvents
+      .filter(
         ({ type, recordedAt }) =>
           type === "transitionrun" &&
-          interruptionRecording.touchStartAt !== null &&
-          recordedAt >= interruptionRecording.touchStartAt &&
-          recordedAt < (firstNativeScrollAt ?? Number.POSITIVE_INFINITY),
+          recordedAt < (firstNativeScrollAt ?? Number.NEGATIVE_INFINITY),
+      )
+      .at(-1)?.recordedAt;
+    expect(
+      settleStartedAt,
+      `stationary trusted touch must observe a live idle settle before native scrolling; recording=${JSON.stringify(interruptionRecording)}`,
+    ).toBeDefined();
+    expect(
+      interruptionRecording.transitionEvents.every(
+        ({ type, recordedAt }) =>
+          (type !== "transitionend" && type !== "transitioncancel") ||
+          settleStartedAt === undefined ||
+          recordedAt < settleStartedAt ||
+          recordedAt >= (firstNativeScrollAt ?? Number.POSITIVE_INFINITY),
       ),
-      `the live settle must begin under a stationary trusted touch and before native scrolling; recording=${JSON.stringify(interruptionRecording)}`,
+      `the idle settle must remain live from trusted touchstart until native scrolling; recording=${JSON.stringify(interruptionRecording)}`,
     ).toBe(true);
     expect(
       interruptionRecording.transitionEvents.some(
         ({ type, recordedAt }) =>
           type === "transitioncancel" &&
           firstNativeScrollAt !== undefined &&
-          interruptionRecording.touchEndAt !== null &&
           recordedAt >= firstNativeScrollAt &&
-          recordedAt <= interruptionRecording.touchEndAt,
+          recordedAt <= touchEndAt,
       ),
       `native scrolling must cancel the live CSS settle before touchend; recording=${JSON.stringify(interruptionRecording)}`,
     ).toBe(true);
@@ -1683,9 +1684,7 @@ async function expectTrustedSettleLifecycle(
     await expect
       .poll(async () => (await readAudit()).cancels)
       .toBeGreaterThan(0);
-    await expect
-      .poll(async () => (await readAudit()).ends)
-      .toBeGreaterThan(0);
+    await expect.poll(async () => (await readAudit()).ends).toBeGreaterThan(0);
     expectSynchronizedSettle(
       await readAudit(),
       "interrupted settle through cancellation",
