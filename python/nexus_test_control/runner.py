@@ -80,6 +80,7 @@ from nexus_test_control.services import (
 )
 
 _SENSITIVE_ENV_PARTS = ("credential", "key", "password", "secret", "token")
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _SAFE_HEAVY_ENV = (
     "HOME",
     "LANG",
@@ -1864,7 +1865,7 @@ def _classified_exact_result(result: CapabilityResult, proof_id: str) -> Capabil
             result.evidence,
             f"{classification}|proof_id={proof_id}|{detail}",
         )
-    folded = result.detail.casefold()
+    folded = _ANSI_ESCAPE_RE.sub("", result.detail).casefold()
     if any(
         marker in folded
         for marker in (
@@ -1890,7 +1891,7 @@ def _classified_exact_result(result: CapabilityResult, proof_id: str) -> Capabil
         or "assertionerror:" in folded
         or re.search(r"\btests\s+\d+\s+failed\b", folded) is not None
         or ("failed " in folded and "::" in folded and " - assertionerror" in folded)
-        or ("error: expect(" in folded and " › " in folded)
+        or "error: expect(" in folded
         or re.search(r"\ne\s+(?:assert|assertionerror|failed:)", folded) is not None
     ):
         kind = "behavioral_assertion_failure"
@@ -3851,7 +3852,7 @@ def _command_result_detail(
 
 
 def _decisive_output(value: str, limit: int = 1900) -> str:
-    stripped = value.strip()
+    stripped = _ANSI_ESCAPE_RE.sub("", value).strip()
     if len(stripped) <= limit:
         return stripped
     decisive = "\n".join(
