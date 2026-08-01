@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import type {
   AssistantTrustTrail,
@@ -416,6 +417,7 @@ describe("AssistantMessage", () => {
     const onReplyToAssistant = vi.fn();
 
     render(
+      withRenderEnvironment(
       <AssistantMessage
         messageOrdinal={1}
         message={assistantMessage()}
@@ -423,6 +425,7 @@ describe("AssistantMessage", () => {
         timestampLabel={timestampLabel}
         onReplyToAssistant={onReplyToAssistant}
       />,
+      ),
     );
 
     const answer = screen.getByText("Alpha beta gamma");
@@ -456,6 +459,7 @@ describe("AssistantMessage", () => {
       new DOMRect(120, 80, 60, 20),
     );
     render(
+      withRenderEnvironment(
       <AssistantMessage
         messageOrdinal={1}
         message={assistantMessage()}
@@ -463,6 +467,7 @@ describe("AssistantMessage", () => {
         timestampLabel={timestampLabel}
         onReplyToAssistant={vi.fn()}
       />,
+      ),
     );
 
     const answer = screen.getByText("Alpha beta gamma");

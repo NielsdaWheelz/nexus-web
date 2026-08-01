@@ -44,6 +44,7 @@ import {
   usePanePrimaryChrome,
 } from "@/components/workspace/PanePrimaryChrome";
 import PaneSearchBar from "@/components/workspace/PaneSearchBar";
+import paneShellStyles from "@/components/workspace/PaneShell.module.css";
 import type {
   PanePrimaryChromePublication,
   PanePrimaryChromePublicationUpdate,
@@ -77,7 +78,12 @@ function ExpandedPaneSearchHarness({ children }: { children: ReactNode }) {
   return (
     <PanePrimaryChromeProvider publish={publish}>
       {publication?.search ? (
-        <PaneSearchBar publication={publication.search} onClose={() => {}} />
+        <div
+          className={paneShellStyles.contextualRow}
+          aria-label="Pane contextual controls"
+        >
+          <PaneSearchBar publication={publication.search} onClose={() => {}} />
+        </div>
       ) : null}
       {children}
     </PanePrimaryChromeProvider>
@@ -571,7 +577,9 @@ exhaustion: "Complete",
       const host = screen.getByTestId(`library-host-${width}`);
       expect(host.clientWidth).toBe(width);
       expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
-      expect(horizontallyScrollableElements(host)).toEqual([]);
+      expect(horizontallyScrollableElements(host)).toEqual(
+        width < 480 ? ["Pane contextual controls"] : [],
+      );
       expect(screen.getByRole("list", { name: LIBRARY_NAME })).toBeVisible();
       expect(screen.queryByRole("img")).toBeNull();
       expect(screen.queryByRole("progressbar")).toBeNull();

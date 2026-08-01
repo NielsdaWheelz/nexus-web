@@ -401,11 +401,13 @@ describe("SelectionPopover", () => {
     });
     await waitFor(() => expect(surface.style.visibility).not.toBe("hidden"));
 
-    const surfaceRect = surface.getBoundingClientRect();
-    expect(surfaceRect.left).toBeGreaterThanOrEqual(8);
-    expect(surfaceRect.right).toBeLessThanOrEqual(152);
-    expect(surfaceRect.top).toBeGreaterThanOrEqual(8);
-    expect(surfaceRect.bottom).toBeLessThanOrEqual(212);
+    await waitFor(() => {
+      const surfaceRect = surface.getBoundingClientRect();
+      expect(surfaceRect.left).toBeGreaterThanOrEqual(8);
+      expect(surfaceRect.right).toBeLessThanOrEqual(152);
+      expect(surfaceRect.top).toBeGreaterThanOrEqual(8);
+      expect(surfaceRect.bottom).toBeLessThanOrEqual(212);
+    });
     expect(toolbar.scrollWidth).toBeLessThanOrEqual(toolbar.clientWidth);
     expect(toolbar.scrollHeight).toBeGreaterThan(toolbar.clientHeight);
     expect(getComputedStyle(toolbar).overflowY).toBe("auto");
