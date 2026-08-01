@@ -746,11 +746,16 @@ def test_empty_fault_manifest_is_valid() -> None:
     assert not fault_manifest_violations(REPO_ROOT)
 
 
-def test_fault_guard_allows_the_exact_controller_execution_owner(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "owner",
+    ("python/nexus_test_control/process.py", "python/nexus_test_control/runner.py"),
+)
+def test_fault_guard_allows_the_exact_controller_execution_owner(
+    tmp_path: Path,
+    owner: str,
+) -> None:
     manifest = _fault_repository(tmp_path)
-    patch = (
-        b"diff --git a/python/nexus_test_control/runner.py b/python/nexus_test_control/runner.py\n"
-    )
+    patch = f"diff --git a/{owner} b/{owner}\n".encode()
     (tmp_path / "testdata/faults/example.patch").write_bytes(patch)
     manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
     _dump(tmp_path, "testdata/faults/manifest.json", manifest)

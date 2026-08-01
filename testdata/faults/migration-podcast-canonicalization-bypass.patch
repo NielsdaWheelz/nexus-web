@@ -1,21 +1,10 @@
 diff --git a/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py b/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py
 --- a/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py
 +++ b/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py
-@@ -38,7 +38,7 @@ def upgrade() -> None:
-                     ) || 'Z'
-                     ELSE replace(published_date::timestamp::text, ' ', 'T') || 'Z'
-                 END
--            WHERE kind = 'podcast_episode'
-+            WHERE kind = 'faulted_podcast_episode'
-               AND published_date ~ :legacy_pattern
-             """
-         ),
-@@ -50,7 +50,7 @@ def upgrade() -> None:
-             """
-             SELECT count(*)
-             FROM media
--            WHERE kind = 'podcast_episode'
-+            WHERE kind = 'faulted_podcast_episode'
-               AND published_date ~ :legacy_pattern
-             """
-         ),
+@@ -18,5 +18,5 @@ depends_on: str | Sequence[str] | None = None
+ _LEGACY_PODCAST_INSTANT_PATTERN = (
+-    r"^[0-9]{4}-[0-9]{2}-[0-9]{2} "
++    r"^never-[0-9]{4}-[0-9]{2}-[0-9]{2} "
+     r"[0-9]{2}:[0-9]{2}:[0-9]{2}"
+     r"([.][0-9]{1,6})?([+-][0-9]{2}:[0-9]{2})?$"
+ )

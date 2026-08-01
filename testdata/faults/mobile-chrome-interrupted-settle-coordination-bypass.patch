@@ -1,57 +1,10 @@
 diff --git a/apps/web/src/lib/workspace/mobileChrome.tsx b/apps/web/src/lib/workspace/mobileChrome.tsx
 --- a/apps/web/src/lib/workspace/mobileChrome.tsx
 +++ b/apps/web/src/lib/workspace/mobileChrome.tsx
-@@ -13,7 +13,6 @@ import {
-   type RefCallback,
-   type RefObject,
- } from "react";
--import { flushSync } from "react-dom";
- import type {
-   ActionDescriptor,
-   PaneHeaderAction,
-@@ -198,19 +197,6 @@ function transitionDeadlineMs(surface: HTMLElement): number {
-   return Math.max(0, deadlineMs);
- }
-
--function cancelCollapseTransitions(surfaces: readonly HTMLElement[]): void {
+@@ -200,5 +200,5 @@ function transitionDeadlineMs(surface: HTMLElement): number {
+ function cancelCollapseTransitions(surfaces: readonly HTMLElement[]): void {
 -  for (const surface of surfaces) {
--    for (const animation of surface.getAnimations()) {
--      if (
--        (animation as Partial<CSSTransition>).transitionProperty ===
--        COLLAPSE_PROPERTY
--      ) {
--        animation.cancel();
--      }
--    }
--  }
--}
--
- function primaryUnmodifiedClick(event: MouseEvent): boolean {
-   return (
-     event.button === 0 &&
-@@ -290,16 +276,7 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
-   const publishPhase = useCallback((phase: MobileChromeMotionPhase) => {
-     if (samePhase(publishedPhaseRef.current, phase)) return;
-     publishedPhaseRef.current = phase;
--    if (!mountedRef.current) return;
--    const publish = () => setMotionPhase(phase);
--    if (phase.kind === "Tracking" || phase.kind === "Settling") {
--      // Collapse progress is written imperatively on the next animation frame.
--      // Commit the React-owned phase, inertness, and aria-hidden projection
--      // first so moving chrome can never paint as interactive under load.
--      flushSync(publish);
--      return;
--    }
--    publish();
-+    if (mountedRef.current) setMotionPhase(phase);
-   }, []);
-
-   const writeProgress = useCallback((progress: number) => {
-@@ -452,7 +429,6 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
-           "Mobile chrome surfaces must expose a numeric collapse progress",
-         );
-       }
--      cancelCollapseTransitions(surfaces);
-       const next = {
-         ...state,
-         phase: phaseAtProgress(state, progress),
++  for (const surface of surfaces.slice(0, 0)) {
+     for (const animation of surface.getAnimations()) {
+       if (
+         (animation as Partial<CSSTransition>).transitionProperty ===

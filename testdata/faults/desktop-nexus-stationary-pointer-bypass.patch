@@ -10,12 +10,3 @@ diff --git a/apps/web/src/components/nexus/desktop/DesktopNexusRow.tsx b/apps/we
          onClick={activatePrimary}
        >
          <span className={styles.icon} aria-hidden="true">
-@@ -256,7 +256,7 @@ export default function DesktopNexusRow({
-                 {...trigger}
-                 type="button"
-                 className={styles.rowActionsButton}
--                onPointerMove={() => selectCell("Actions")}
-+                onPointerEnter={() => selectCell("Actions")}
-                 onKeyDown={(event) => {
-                   selectCell("Actions");
-                   trigger.onKeyDown(event);

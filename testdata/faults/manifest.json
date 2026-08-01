@@ -21,11 +21,28 @@
       "expected_failure": "ephemeral client range leaked into allocated test ports"
     },
     {
-      "id": "auth-privacy-visibility-bypass",
-      "patch": "testdata/faults/auth-privacy-visibility-bypass.patch",
-      "sha256": "a38e392484381fa66d5f0aafba11b322447b273c1167e8ee5786610ac30e556a",
+      "id": "test-control-output-bounds-bypass",
+      "patch": "testdata/faults/test-control-output-bounds-bypass.patch",
+      "sha256": "e32af9f60e815bd923346b82fd874e369b8db27644cdc5d4f793cfd6a0a0356b",
       "proofs": [
-        "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked",
+        "pytest:python/tests/kernel/nexus_test_control/test_process.py::test_captured_child_output_is_drained_without_retaining_unbounded_logs"
+      ],
+      "expected_failure": "captured stdout exceeded the 65536-byte diagnostic tail"
+    },
+    {
+      "id": "auth-conversation-visibility-bypass",
+      "patch": "testdata/faults/auth-conversation-visibility-bypass.patch",
+      "sha256": "f91050004ba8c4c48c829a60c11518ff384ef993a869094f88ed5ba990a213d9",
+      "proofs": [
+        "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "auth-chat-run-ownership-bypass",
+      "patch": "testdata/faults/auth-chat-run-ownership-bypass.patch",
+      "sha256": "6f167fe765d714ed8fcec6e52dedcabbef8c11be2a8af463895f39ddb0b68e42",
+      "proofs": [
         "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal"
       ],
       "expected_failure": "DID NOT RAISE"
@@ -33,7 +50,7 @@
     {
       "id": "destructive-shared-media-teardown",
       "patch": "testdata/faults/destructive-shared-media-teardown.patch",
-      "sha256": "3af18eabe153e9524d016a9f30283ecd6338d53d10ed3b72e8d18e212cd3700d",
+      "sha256": "d37da542f809c4dbd6c9d18e6e0ce3fb80db583c9c5559cb381ebd2513102173",
       "proofs": [
         "pytest:python/tests/service/test_destructive_side_effects.py::test_viewer_removal_preserves_shared_media_database_and_object"
       ],
@@ -51,7 +68,7 @@
     {
       "id": "migration-podcast-canonicalization-bypass",
       "patch": "testdata/faults/migration-podcast-canonicalization-bypass.patch",
-      "sha256": "5dc618d74c0fc7b8f7f263628cf4f8d19826353de9af14b142436594c862b4de",
+      "sha256": "cb52b844ccb699f7ee8105d04373c75ce68380e93e9739595b28a57b34a0abb8",
       "proofs": [
         "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head"
       ],
@@ -330,7 +347,7 @@
     {
       "id": "desktop-nexus-stationary-pointer-bypass",
       "patch": "testdata/faults/desktop-nexus-stationary-pointer-bypass.patch",
-      "sha256": "4d5cc8cbc3ca7af941ac09296c9c9516993fb11b7d5f083c7647d1098c5ce146",
+      "sha256": "dc39b8091a61dd3341a573c2443ac4f42906538399476c50584cb18d5d978de5",
       "proofs": [
         "vitest:apps/web/src/components/nexus/desktop/DesktopNexusSelection.browser.test.tsx"
       ],
@@ -339,7 +356,7 @@
     {
       "id": "mobile-chrome-interrupted-settle-coordination-bypass",
       "patch": "testdata/faults/mobile-chrome-interrupted-settle-coordination-bypass.patch",
-      "sha256": "c3b75aa259b57cd13fdc8d782ec8bf6896cc5e797e5e6baae754032ca1202822",
+      "sha256": "1a5e1d8da9b5a81367fbda945491acf17898dd5b0d9b63db70369e12325e7c79",
       "proofs": [
         "vitest:apps/web/src/components/workspace/PaneShell.mobileChrome.browser.test.tsx"
       ],
