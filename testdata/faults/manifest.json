@@ -135,7 +135,7 @@
       "proofs": [
         "vitest:apps/web/src/lib/mobileViewport/mobileSafeArea.browser.test.tsx"
       ],
-      "expected_failure": "expected 0 to be 37"
+      "expected_failure": "expected +0 to be 37"
     },
     {
       "id": "active-pane-reactivation-identity-corruption",
