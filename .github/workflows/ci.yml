@@ -296,7 +296,7 @@ jobs:
         run: make check-bundle
 
   test-android:
-    name: Android instrumentation (API ${{ matrix.api-level }})
+    name: Android instrumentation (${{ matrix.contract }}, API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: static-checks
@@ -305,12 +305,26 @@ jobs:
       matrix:
         include:
           - api-level: 35
-            test-command: make test-android
-          - api-level: 34
+            contract: shell regression
+            ram-size: 2048M
             test-command: >-
               cd apps/android &&
               ./gradlew :app:connectedDebugAndroidTest
-              -Pandroid.testInstrumentationRunnerArguments.class=app.nexus.android.MainActivityTest#viewportFitCoverWebViewReceivesNativeInsetsWithoutLeavingFullWindowBounds
+              -Pandroid.testInstrumentationRunnerArguments.notAnnotation=app.nexus.android.RequiresWebViewM144
+          - api-level: 34
+            contract: shell regression
+            ram-size: 2048M
+            test-command: >-
+              cd apps/android &&
+              ./gradlew :app:connectedDebugAndroidTest
+              -Pandroid.testInstrumentationRunnerArguments.notAnnotation=app.nexus.android.RequiresWebViewM144
+          - api-level: 37
+            contract: WebView M144 system insets
+            ram-size: 4096M
+            test-command: >-
+              cd apps/android &&
+              ./gradlew :app:connectedDebugAndroidTest
+              -Pandroid.testInstrumentationRunnerArguments.annotation=app.nexus.android.RequiresWebViewM144
     env:
       NEXUS_GOOGLE_WEB_CLIENT_ID: ${{ vars.NEXUS_GOOGLE_WEB_CLIENT_ID || 'ci-placeholder.apps.googleusercontent.com' }}
 
@@ -351,6 +365,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
+          ram-size: ${{ matrix.ram-size }}
           script: ${{ matrix.test-command }}
 
   test-e2e-env:

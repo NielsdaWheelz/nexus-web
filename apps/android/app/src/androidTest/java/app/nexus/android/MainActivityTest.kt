@@ -50,6 +50,10 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.RUNTIME)
+annotation class RequiresWebViewM144
+
 @RunWith(AndroidJUnit4::class)
 class MainActivityTest {
     @After
@@ -99,6 +103,7 @@ class MainActivityTest {
     }
 
     @Test
+    @RequiresWebViewM144
     fun viewportFitCoverWebViewReceivesNativeInsetsWithoutLeavingFullWindowBounds() {
         launchWithoutInitialNavigation().use { scenario ->
             requireWebViewM144OrNewer()
@@ -148,6 +153,7 @@ class MainActivityTest {
     }
 
     @Test
+    @RequiresWebViewM144
     fun webViewClearsPreviouslyPublishedInsetsOnTheSameRenderer() {
         launchWithoutInitialNavigation().use { scenario ->
             requireWebViewM144OrNewer()
@@ -176,6 +182,7 @@ class MainActivityTest {
     }
 
     @Test
+    @RequiresWebViewM144
     fun rotationRecreatesViewportFitCoverWebViewWithCurrentInsets() {
         launchWithoutInitialNavigation().use { scenario ->
             requireWebViewM144OrNewer()
