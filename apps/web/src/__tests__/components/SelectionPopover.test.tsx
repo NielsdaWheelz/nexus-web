@@ -189,21 +189,27 @@ describe("SelectionPopover", () => {
     mobileViewport = false;
     viewportListeners.clear();
     vi.spyOn(window, "matchMedia").mockImplementation(
-      (query) =>
+      (query: string) =>
         ({
           get matches() {
             return mobileViewport;
           },
           media: query,
           onchange: null,
-          addEventListener: (_event, listener) =>
+          addEventListener: (
+            _event: string,
+            listener: EventListenerOrEventListenerObject,
+          ) => viewportListeners.add(listener),
+          removeEventListener: (
+            _event: string,
+            listener: EventListenerOrEventListenerObject,
+          ) => viewportListeners.delete(listener),
+          addListener: (listener: EventListenerOrEventListenerObject) =>
             viewportListeners.add(listener),
-          removeEventListener: (_event, listener) =>
+          removeListener: (listener: EventListenerOrEventListenerObject) =>
             viewportListeners.delete(listener),
-          addListener: (listener) => viewportListeners.add(listener),
-          removeListener: (listener) => viewportListeners.delete(listener),
           dispatchEvent: () => true,
-        }) as MediaQueryList,
+        }) as unknown as MediaQueryList,
     );
     setViewport(1280, 900);
     Object.defineProperty(window, "visualViewport", {
