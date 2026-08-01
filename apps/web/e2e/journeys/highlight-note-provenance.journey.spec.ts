@@ -147,6 +147,22 @@ test("a highlight note remains attached to the exact canonical passage after a f
     `Visible highlight note ${highlight.id} failed to persist: ${noteResponse.status()} ${await noteResponse.text()}`,
   ).toBeTruthy();
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoWithStrictCsp(page, `/media/${mediaId}`);
+  const mobilePassage = page.getByText(QUOTE, { exact: false }).first();
+  await expect(mobilePassage).toBeVisible();
+  await mobilePassage.click();
+  await expect(
+    page.getByRole("group", { name: "Highlight actions" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("banner"),
+    "A live highlight action must pin mobile reader chrome until dismissal.",
+  ).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await gotoWithStrictCsp(page, `/media/${mediaId}`);
+
   await page.getByRole("button", { name: "Companion", exact: true }).click();
   const evidenceTab = page.getByRole("tab", { name: "Evidence" });
   await evidenceTab.click();
