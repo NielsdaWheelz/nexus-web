@@ -34,6 +34,7 @@ _CHAT_EVENT_STORE_PY = _PY_ROOT / "services" / "chat_run_event_store.py"
 _RUN_KIT_PY = _PY_ROOT / "services" / "run_kit.py"
 _ORACLE_PY = _PY_ROOT / "services" / "oracle.py"
 _LI_REVISIONS_PY = _PY_ROOT / "services" / "artifacts" / "revisions.py"
+_ARTIFACT_COORDINATION_PY = _PY_ROOT / "services" / "artifacts" / "coordination.py"
 
 _FE_TEST = re.compile(r"\.test\.")
 
@@ -44,7 +45,9 @@ def _scan_files(*roots: Path) -> list[Path]:
         if root.is_file():
             files.append(root)
         elif root.is_dir():
-            files.extend(p for p in sorted(root.rglob("*")) if p.is_file())
+            files.extend(
+                p for p in sorted(root.rglob("*")) if p.is_file() and "__pycache__" not in p.parts
+            )
     return files
 
 
@@ -123,6 +126,26 @@ def test_chat_event_appends_go_only_through_the_emitter():
         _CHAT_TOOLS_PY,
     )
     assert not hits, "direct event append outside the emitter:\n" + "\n".join(hits)
+
+
+def test_durable_chat_cutover_has_no_legacy_recovery_or_web_serializers():
+    hits = _hits(
+        r"\b(has_provider_output_without_terminal|finalize_interrupted|finalize_defect|"
+        r"web_search_tool_output|retrieval_result_event)\b",
+        _PY_ROOT,
+    )
+    assert not hits, "legacy chat recovery/serialization path remains:\n" + "\n".join(hits)
+    for shared_symbol in (
+        "StepReplayState",
+        "stable_generation_id",
+        "DurableExecutionPhase",
+        "ReplayPolicy",
+    ):
+        hits = _hits(
+            rf"^\s*(class|def)\s+{shared_symbol}\b|^\s*{shared_symbol}\s*=",
+            _ARTIFACT_COORDINATION_PY,
+        )
+        assert not hits, f"artifact coordination still owns {shared_symbol}: {hits}"
 
 
 def test_oracle_and_li_drop_their_private_run_tail_queries():

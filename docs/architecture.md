@@ -999,9 +999,16 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   and no provider cache key. Attached references render as numbered `<resources>`;
   the transient `<reader_selection>` (a highlight the user is asking about) is
   bind-only and never numbered.
-- **Cancellation/crash**: cancel sets a flag the worker polls; a `delta` without a
-  `done` (crashed mid-stream) is detected and folded into the closed
-  `ExpectedChatFailure` union (`stream_interrupted`), never a bespoke retry code.
+- **Durable recovery**: the claimed job stores a strict step journal in its
+  payload. Preparation, model turns, tools, and publication have stable
+  identities and fingerprints. Retries replay `Completed` results and never
+  blindly repeat an ambiguous paid call or write. Code defects escape to queue
+  retry; exhaustion retains the same nonterminal run/job as `Suspended`.
+  Cancellation or operator reconciliation requeues that same job. Terminal
+  publication and journal clearing commit atomically.
+- **Connection is not execution**: SSE only tails committed events. Unsequenced
+  execution advisories (`Queued | Running | Recovering | Suspended`) report queue
+  liveness without advancing the event cursor or starting work.
 - **Profiles, not a catalog** (`services/llm_profiles.py`): chat sends
   `profile_id` + `reasoning_option_id` from seven code-defined, startup-validated
   product profiles (`fast`/`balanced`/`deep`/`claude`/`fable`/`gemini`/`kimi`),

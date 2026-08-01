@@ -117,6 +117,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
             dead_letter_handler=_dead_letter_chat_run,
+            never_prune_dead=True,
         ),
         # Universal dossier generation (resource-inspector-and-universal-dossiers
         # hard cutover). One job kind for all eight subject bindings, dispatched
@@ -353,13 +354,13 @@ def _run_chat_run(
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.chat_run import chat_run
 
-    return chat_run(run_id=str(payload["run_id"]))
+    return chat_run(run_id=str(payload["run_id"]), context=context)
 
 
 def _dead_letter_chat_run(db: Session, job: JobRow) -> None:
-    from nexus.tasks.chat_run import finalize_dead_lettered_chat_run
+    from nexus.tasks.chat_run import record_dead_lettered_chat_run
 
-    finalize_dead_lettered_chat_run(db, job)
+    record_dead_lettered_chat_run(db, job)
 
 
 def _run_dossier_build(

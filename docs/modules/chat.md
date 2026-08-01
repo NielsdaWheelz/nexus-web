@@ -61,6 +61,30 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 - `docs/cutovers/conversation-find-hard-cutover.md` — exact selected-path
   Conversation Find, committed-DOM projection, reversible preview, and source
   replacement safety. IMPLEMENTED.
+- `docs/cutovers/chat-durable-agent-step-journal-hard-cutover.md` — exact step
+  replay, ambiguous-effect suspension, queue-derived execution advisories, and
+  web-search identity separation. IMPLEMENTED.
+
+## Durable Execution And Recovery
+
+`chat_runs.py` composes one claimed `ChatStepRuntime`; it does not own queue
+payload JSON. `chat_run_steps.py` owns deterministic paths, strict result codecs,
+fingerprints, and tool replay policy. `durable_step_journal.py` owns the shared
+`Prepared -> Uncertain -> Completed` kernel and execution-phase projection.
+
+Completed preparation, generation, and tool results are replay input, never
+cache hints. An ambiguous paid call or write remains `Uncertain` and exhausts to
+the same retained dead job. Operator proof/reconciliation or user cancellation
+requeues that job; neither creates a replacement run. Code defects emit no
+`done`. Terminal outcomes clear journal material, and conversation deletion
+deletes every owned chat job.
+
+`ChatRunOut.execution` and trust-run `execution` are required `Presence` values.
+Nonterminal runs project `Queued | Running | Recovering | Suspended`; terminal
+runs project `Absent`. SSE sends the same value as an unsequenced
+`ExecutionAdvisory`, so it never advances the committed event cursor. Suspended
+UI retains partial text and provenance and renders `Response paused`; it offers
+neither product rerun nor network reconnect.
 
 ## Engine, View, Adapter Split
 

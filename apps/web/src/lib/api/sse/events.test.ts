@@ -48,6 +48,26 @@ describe("toChatSSEEvent", () => {
     },
   };
 
+  it("strictly decodes an unsequenced execution advisory", () => {
+    expect(toChatSSEEvent("ExecutionAdvisory", { phase: "Suspended" })).toEqual({
+      seq: 0,
+      type: "ExecutionAdvisory",
+      data: { phase: "Suspended" },
+    });
+    expect(() =>
+      toChatSSEEvent("ExecutionAdvisory", { phase: "Running" }, "12"),
+    ).toThrow("Invalid SSE payload for ExecutionAdvisory id");
+    expect(() =>
+      toChatSSEEvent("ExecutionAdvisory", {
+        phase: "Suspended",
+        retry: true,
+      }),
+    ).toThrow("Invalid SSE payload for ExecutionAdvisory fields");
+    expect(() =>
+      toChatSSEEvent("ExecutionAdvisory", { phase: "Paused" }),
+    ).toThrow("Invalid SSE payload for ExecutionAdvisory.phase");
+  });
+
   it("parses backend-shaped meta events", () => {
     const data = {
       run_id: "11111111-1111-4111-8111-111111111111",

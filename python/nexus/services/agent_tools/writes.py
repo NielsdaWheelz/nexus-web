@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
-from uuid import UUID, uuid4
+from typing import Any, Literal
+from uuid import UUID, uuid5
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -31,7 +31,6 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import ChatRun
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.highlights import CreateHighlightRequest
 from nexus.schemas.notes import DailyCaptureRequest
 from nexus.services import highlights, library_entries, notes, text_quote, users
 from nexus.services.chat_run_tools import (
@@ -242,7 +241,7 @@ class WriteToolOutcome:
     tool_call_id: UUID
     created_refs: list[dict[str, Any]]
     tool_output_json: str
-    status: str
+    status: Literal["complete", "error"]
     error_code: str | None = field(default=None)
 
     @property
@@ -263,16 +262,19 @@ def execute_write_tool(
     db: Session,
     *,
     run: ChatRun,
+    effect_id: UUID,
     tool_call_index: int,
     tool_name: str,
     args: dict[str, Any],
 ) -> WriteToolOutcome:
-    """Enforce the cap, dispatch to the handler, persist the tool row.
+    """Enforce the cap, dispatch one stable effect, and stage its tool row.
 
     Returns everything the chat loop needs to emit the trust event and append a
-    ``ToolResult``. Never raises for a domain/refusal error — those become an
-    error tool result (the model reads it and clarifies); only genuine defects
-    propagate.
+    ``ToolResult``. The caller owns the journal/event/tool-row commit. Never
+    raises for a domain/refusal error — those become an error tool result (the
+    model reads it and clarifies); only genuine defects propagate. Every write,
+    replay fact, tool row, result event, and journal completion remains in the
+    caller's one transaction.
     """
     viewer_id = run.owner_user_id
     try:
@@ -285,7 +287,13 @@ def execute_write_tool(
                 f"Write limit of {ASSISTANT_MAX_WRITES_PER_RUN} per turn reached; "
                 "no further writes this turn.",
             )
-        result = _dispatch(db, viewer_id=viewer_id, tool_name=tool_name, args=args)
+        result = _dispatch(
+            db,
+            viewer_id=viewer_id,
+            effect_id=effect_id,
+            tool_name=tool_name,
+            args=args,
+        )
     except _ToolRefusal as refusal:
         output = {"error": refusal.message, "error_code": refusal.error_code}
         tool_call_id = persist_write_tool_call(
@@ -297,7 +305,6 @@ def execute_write_tool(
             status="error",
             error_code=refusal.error_code,
         )
-        db.commit()
         return WriteToolOutcome(
             tool_call_id=tool_call_id,
             created_refs=[],
@@ -316,7 +323,6 @@ def execute_write_tool(
             status="error",
             error_code=exc.code.value,
         )
-        db.commit()
         return WriteToolOutcome(
             tool_call_id=tool_call_id,
             created_refs=[],
@@ -334,7 +340,6 @@ def execute_write_tool(
         status="complete",
         error_code=None,
     )
-    db.commit()
     return WriteToolOutcome(
         tool_call_id=tool_call_id,
         created_refs=result.created_refs,
@@ -345,19 +350,29 @@ def execute_write_tool(
 
 
 def _dispatch(
-    db: Session, *, viewer_id: UUID, tool_name: str, args: dict[str, Any]
+    db: Session,
+    *,
+    viewer_id: UUID,
+    effect_id: UUID,
+    tool_name: str,
+    args: dict[str, Any],
 ) -> _HandlerResult:
     if tool_name == ADD_TO_LIBRARY_TOOL_NAME:
         return _add_to_library(db, viewer_id, args)
     if tool_name == JOT_NOTE_TOOL_NAME:
-        return _jot_note(db, viewer_id, args)
+        return _jot_note(db, viewer_id, effect_id, args)
     if tool_name == CREATE_HIGHLIGHT_TOOL_NAME:
-        return _create_highlight(db, viewer_id, args)
+        return _create_highlight(db, viewer_id, effect_id, args)
     if tool_name == MINT_EDGE_TOOL_NAME:
         return _mint_edge(db, viewer_id, args)
     if tool_name == QUEUE_ADD_TOOL_NAME:
         return _queue_add(db, viewer_id, args)
     raise _ToolRefusal("unknown_write_tool", f"Unknown write tool {tool_name!r}")
+
+
+def _effect_uuid(effect_id: UUID, component: str) -> UUID:
+    """Derive one stable sub-effect identity from the journal-owned effect id."""
+    return uuid5(effect_id, component)
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +432,12 @@ def _add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _Hand
     library_id = _resolve_library_id(db, viewer_id, args)
 
     if ref.scheme == "media":
-        outcome = library_entries.ensure_media_in_library(db, viewer_id, library_id, ref.id)
+        outcome = library_entries.ensure_media_in_library_in_current_transaction(
+            db,
+            viewer_id=viewer_id,
+            library_id=library_id,
+            media_id=ref.id,
+        )
     else:
         outcome = library_entries.place_subscribed_podcast_in_named_library_in_current_transaction(
             db,
@@ -487,35 +507,41 @@ def _resolve_library_id(db: Session, viewer_id: UUID, args: dict[str, Any]) -> U
     return rows[0][0]
 
 
-def _jot_note(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerResult:
+def _jot_note(
+    db: Session,
+    viewer_id: UUID,
+    effect_id: UUID,
+    args: dict[str, Any],
+) -> _HandlerResult:
     markdown = _require_str(args, "markdown")
     body_pm_json = notes.pm_doc_from_markdown_projection(markdown)
+    note_id = _effect_uuid(effect_id, "jot_note:note_block")
     page_uri = _optional_str(args, "page_uri")
     if page_uri:
         page_ref = _parse_ref(page_uri, allowed=("page",))
-        block = notes.append_note_block_to_page(
-            db, viewer_id, page_id=page_ref.id, body_pm_json=body_pm_json
+        block = notes.append_note_block_to_page_in_current_transaction(
+            db,
+            viewer_id,
+            page_id=page_ref.id,
+            note_id=note_id,
+            body_pm_json=body_pm_json,
         )
         note_id = block.id
         page_label = "page"
     else:
         local_date = users.calendar_local_date(db, viewer_id)
-        # The chat loop commits before dispatch; only the write-cap read and this
-        # account-zone read are open here. Close that read-only transaction so
-        # capture_daily_page_note can select SERIALIZABLE before its first query.
-        # Keep the cap check before capture so replay and Undo retain their
-        # committed, non-reverted write-count semantics.
-        db.commit()
-        note_id = uuid4()
-        notes.capture_daily_page_note(
+        notes.capture_daily_page_note_in_current_transaction(
             db,
             viewer_id,
             local_date=local_date,
             request=DailyCaptureRequest(
                 note_id=note_id,
-                client_mutation_id=f"assistant:{uuid4()}",
+                client_mutation_id=(
+                    f"assistant:{_effect_uuid(effect_id, 'jot_note:daily_capture')}"
+                ),
                 body_pm_json=body_pm_json,
             ),
+            page_id_candidate=_effect_uuid(effect_id, "jot_note:daily_page"),
         )
         page_label = "today's note"
     created = {"kind": "note_block", "id": str(note_id), "label": page_label}
@@ -525,7 +551,12 @@ def _jot_note(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerRes
     )
 
 
-def _create_highlight(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerResult:
+def _create_highlight(
+    db: Session,
+    viewer_id: UUID,
+    effect_id: UUID,
+    args: dict[str, Any],
+) -> _HandlerResult:
     media_ref = _parse_ref(_require_str(args, "media_uri"), allowed=("media",))
     assert_ref_visible(db, viewer_id=viewer_id, ref=media_ref)
     exact = _require_str(args, "exact")
@@ -554,28 +585,29 @@ def _create_highlight(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _Ha
     assert resolution.fragment_id is not None
     assert resolution.start_offset is not None
     assert resolution.end_offset is not None
-    highlight = highlights.create_highlight_for_fragment(
+    highlight = highlights.create_fragment_highlight_in_txn(
         db,
-        viewer_id,
-        resolution.fragment_id,
-        CreateHighlightRequest(
-            start_offset=resolution.start_offset,
-            end_offset=resolution.end_offset,
-            color=color,  # type: ignore[arg-type]
-        ),
+        viewer_id=viewer_id,
+        highlight_id=_effect_uuid(effect_id, "create_highlight:highlight"),
+        fragment_id=resolution.fragment_id,
+        start_offset=resolution.start_offset,
+        end_offset=resolution.end_offset,
+        color=color,
     )
     created_refs: list[dict[str, Any]] = [
         {"kind": "highlight", "id": str(highlight.id), "label": exact}
     ]
     note = _optional_str(args, "note")
     if note and note.strip():
-        block = notes.set_highlight_note_body_pm_json(
+        block = notes.set_highlight_note_body_pm_json_in_current_transaction(
             db,
             viewer_id,
             highlight_id=highlight.id,
-            block_id=uuid4(),
+            block_id=_effect_uuid(effect_id, "create_highlight:note_block"),
             body_pm_json=notes.pm_doc_from_markdown_projection(note),
-            client_mutation_id=f"assistant:{uuid4()}",
+            client_mutation_id=(
+                f"assistant:{_effect_uuid(effect_id, 'create_highlight:note_mutation')}"
+            ),
         )
         created_refs.append({"kind": "note_block", "id": str(block.id), "label": "highlight note"})
     return _HandlerResult(
@@ -604,7 +636,6 @@ def _mint_edge(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerRe
             snapshot=CitationSnapshot(excerpt=rationale),
         ),
     )
-    db.commit()
     # Endpoint labels for the "Connected A ↔ B" trail row (§2/§7); the endpoints
     # are already proven visible by create_edge's assertions.
     labels = resolve_refs(db, viewer_id=viewer_id, refs=[source, target])
@@ -629,7 +660,11 @@ def _queue_add(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerRe
     # Trusted ensure: append the row at Last if absent, never move an existing row
     # (idempotent re-add). The item echoed for undo is the resulting Lectern row,
     # whether newly ensured or already present.
-    consumption_service.ensure_missing_items(viewer_id, [media_ref.id], source="Assistant")
+    consumption_service.ensure_missing_items_for_assistant_in_current_transaction(
+        db,
+        viewer_id=viewer_id,
+        media_ids=[media_ref.id],
+    )
     resolved = consumption_service.get_lectern_item_for_media(
         db, viewer_id=viewer_id, media_id=media_ref.id
     )

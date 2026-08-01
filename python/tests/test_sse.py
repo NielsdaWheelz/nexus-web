@@ -16,6 +16,7 @@ from nexus.api.routes._sse import (
 )
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services import run_kit
+from nexus.services.durable_step_journal import DurableExecutionPhase
 
 pytestmark = pytest.mark.unit
 
@@ -237,6 +238,51 @@ async def test_cursor_emits_changed_unsequenced_execution_advisories():
 
     assert chunks == [
         'event: ExecutionAdvisory\ndata: {"phase":"Queued"}\n\n',
+        'event: ExecutionAdvisory\ndata: {"phase":"Suspended"}\n\n',
+    ]
+    assert all("id:" not in chunk for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_cursor_factory_generalizes_the_execution_advisory_seam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    listener = _FakeListener(ticks=2)
+    phases = iter([DurableExecutionPhase.Running, DurableExecutionPhase.Suspended])
+
+    class _SessionContext:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    async def open_listener(_channel: str, _key: str):
+        return listener
+
+    monkeypatch.setattr(
+        stream_routes,
+        "get_session_factory",
+        lambda: lambda: _SessionContext(),
+    )
+    monkeypatch.setattr(stream_routes, "open_sse_listener", open_listener)
+    response = await stream_routes.make_cursor_stream_response(
+        stream_routes.CursorStreamKind(
+            run_kind=run_kit.RunStreamKind.ChatRun,
+            assert_viewer=lambda _db, _viewer_id, _entity_id: None,
+            read_after=lambda _db, _viewer_id, _entity_id, _after: ([], False),
+            read_advisory=lambda _db, _viewer_id, _entity_id: next(phases),
+        ),
+        request=_FakeRequest(),
+        entity_id=uuid4(),
+        viewer_id=uuid4(),
+        after=7,
+    )
+
+    chunks = [chunk async for chunk in response.body_iterator]
+
+    assert chunks == [
+        'event: ExecutionAdvisory\ndata: {"phase":"Running"}\n\n',
         'event: ExecutionAdvisory\ndata: {"phase":"Suspended"}\n\n',
     ]
     assert all("id:" not in chunk for chunk in chunks)

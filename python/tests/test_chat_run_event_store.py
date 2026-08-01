@@ -1,5 +1,6 @@
 """Integration contract for chat run state transitions."""
 
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 
 import nexus.services.chat_runs as chat_runs
 from nexus.db.models import ChatRun, Message
+from nexus.jobs.queue import JobExecutionContext, JobRow
 from nexus.services.chat_run_event_store import mark_running
 from nexus.services.chat_run_finalize import finalize_run
 from tests.factories import create_test_conversation, create_test_message
@@ -145,7 +147,7 @@ def test_degraded_publication_is_complete_with_one_warning_occurrence(
     }
 
 
-async def test_invariant_failure_crosses_chat_boundary_as_failed_not_degraded(
+async def test_invariant_failure_rolls_back_and_escapes_to_queue_recovery(
     db_session: Session,
     bootstrapped_user: UUID,
     monkeypatch: pytest.MonkeyPatch,
@@ -167,21 +169,47 @@ async def test_invariant_failure_crosses_chat_boundary_as_failed_not_degraded(
 
     monkeypatch.setattr(chat_runs, "_execute_chat_run", raise_graph_invariant)
 
-    outcome = await chat_runs.execute_chat_run(
-        db_session,
-        run_id=run.id,
-        session_factory=cast(Any, object()),
-        runtime=cast(Any, object()),
-        settings=cast(Any, object()),
+    job_id = uuid4()
+    now = datetime.now(UTC)
+    job = JobRow(
+        id=job_id,
+        kind="chat_run",
+        payload={"run_id": str(run.id)},
+        status="running",
+        priority=50,
+        attempts=1,
+        max_attempts=3,
+        available_at=now,
+        lease_expires_at=now + timedelta(minutes=1),
+        claimed_by="test-worker",
+        dedupe_key=f"chat_run:{run.id}",
+        error_code=None,
+        last_error=None,
+        result=None,
+        started_at=now,
+        finished_at=None,
+        created_at=now,
+        updated_at=now,
     )
+    with pytest.raises(AssertionError, match="resource graph invariant"):
+        await chat_runs.execute_chat_run(
+            db_session,
+            run_id=run.id,
+            job=job,
+            execution_context=JobExecutionContext(
+                job_id=job_id,
+                worker_id="test-worker",
+                attempt_no=1,
+            ),
+            session_factory=cast(Any, object()),
+            runtime=cast(Any, object()),
+            settings=cast(Any, object()),
+        )
 
     db_session.refresh(run)
-    assert isinstance(outcome, chat_runs.FailedChatExecution)
-    assert outcome.error_code.kind == "Absent"
-    assert outcome.support_id.kind == "Present"
-    assert run.status == "error"
+    assert run.status == "queued"
     assert run.error_code is None
-    assert run.support_id == outcome.support_id.value
+    assert run.support_id is None
     assert run.publication_warning_code is None
     assert (
         db_session.execute(

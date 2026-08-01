@@ -27,6 +27,7 @@ function trustRun(overrides: Partial<TrustRun> = {}): TrustRun {
     error_code: null,
     error_origin: null,
     failure: null,
+    execution: absent(),
     reasoning_effort: present("medium"),
     support_id: absent(),
     publication_warning: absent(),
@@ -148,6 +149,53 @@ describe("AssistantMessage", () => {
     };
     return message;
   }
+
+  it("keeps partial work and provenance visible under the exact suspended card", () => {
+    const message = assistantMessage("A completed partial answer.");
+    message.status = "pending";
+    message.can_rerun = true;
+    message.trust_trail = {
+      ...message.trust_trail!,
+      status: "running",
+      run: trustRun({
+        status: "running",
+        execution: present({ phase: "Suspended" }),
+      }),
+      tool_calls: [
+        writeToolCall({
+          tool_name: "add_to_library",
+          result_refs: [{ label: "Saved source" }],
+        }),
+      ],
+    };
+
+    render(
+      <AssistantMessage
+        messageOrdinal={1}
+        message={message}
+        forkOptions={[]}
+        timestampLabel={timestampLabel}
+        onRerunAssistantResponse={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("A completed partial answer.")).toBeInTheDocument();
+    expect(screen.getByText("Filed to")).toBeInTheDocument();
+    expect(screen.getByText("Saved source")).toBeInTheDocument();
+    expect(screen.getByText("Response paused")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Nexus saved the completed work but could not safely continue.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("streaming-cue")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Run again" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reconnect" }),
+    ).not.toBeInTheDocument();
+  });
 
   it("renders a Run again action on a rerunnable failure and fires the rerun", () => {
     const onRerunAssistantResponse = vi.fn();

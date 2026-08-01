@@ -53,6 +53,7 @@ function trustTrail(failure: ExpectedChatFailure): AssistantTrustTrail {
       error_code: failure.code,
       error_origin: null,
       failure,
+      execution: absent(),
       reasoning_effort: absent(),
       support_id: absent(),
       publication_warning: absent(),

@@ -29,6 +29,7 @@ from nexus.auth.permissions import (
 from nexus.coerce import parse_uuid
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
+from nexus.schemas.conversation import MESSAGE_TOOL_STATUSES, ChatRunToolResultEventPayload
 from nexus.schemas.retrieval import (
     retrieval_context_ref_json,
     retrieval_result_ref_json,
@@ -173,39 +174,33 @@ class AppSearchRun:
     context_text: str
     context_chars: int
     latency_ms: int
-    status: str
+    status: MESSAGE_TOOL_STATUSES
     error_code: str | None = None
     filters: dict[str, Any] = field(default_factory=dict)
     empty_status: str | None = None
     tool_call_id: UUID | None = None
     tool_call_index: int = 0
 
-    def tool_call_event(self) -> dict[str, Any]:
-        return {
-            "tool_call_id": str(self.tool_call_id) if self.tool_call_id else None,
-            "assistant_message_id": str(self.assistant_message_id),
-            "tool_name": APP_SEARCH_TOOL_NAME,
-            "tool_call_index": self.tool_call_index,
-            "status": "running",
-            "scope": self.scope,
-            "types": self.requested_types,
-            "filters": self.filters,
-        }
-
-    def retrieval_result_event(self) -> dict[str, Any]:
-        return {
-            "tool_call_id": str(self.tool_call_id) if self.tool_call_id else None,
-            "assistant_message_id": str(self.assistant_message_id),
-            "tool_name": APP_SEARCH_TOOL_NAME,
-            "tool_call_index": self.tool_call_index,
-            "status": self.status,
-            "error_code": self.error_code,
-            "result_count": len(self.citations),
-            "selected_count": len(self.selected_citations),
-            "latency_ms": self.latency_ms,
-            "filters": self.filters,
-            "results": [citation.result_ref_json() for citation in self.citations],
-        }
+    def result_event(self) -> ChatRunToolResultEventPayload:
+        if self.tool_call_id is None:
+            raise AssertionError("app search result event requires a persisted tool row")
+        return ChatRunToolResultEventPayload.model_validate(
+            {
+                "tool_call_id": self.tool_call_id,
+                "assistant_message_id": self.assistant_message_id,
+                "tool_name": APP_SEARCH_TOOL_NAME,
+                "tool_call_index": self.tool_call_index,
+                "status": self.status,
+                "scope": self.scope,
+                "types": self.requested_types,
+                "filters": self.filters,
+                "error_code": self.error_code,
+                "result_count": len(self.citations),
+                "selected_count": len(self.selected_citations),
+                "latency_ms": self.latency_ms,
+                "results": [citation.result_ref_json() for citation in self.citations],
+            }
+        )
 
 
 class InvalidScopeError(Exception):
@@ -252,7 +247,7 @@ def execute_app_search(
     }
     requested_types: list[str] = []
     start = time.monotonic()
-    status = "complete"
+    status: MESSAGE_TOOL_STATUSES = "complete"
     error_code = None
     empty_status: str | None = None
 
@@ -670,7 +665,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
     # Trim over-count rows from a previous attempt, cleaning their citation edges
     # too.
     prune_tool_call_retrievals(db, tool_call_id=tool_call_id, min_ordinal=persisted_count)
-    db.commit()
 
 
 def render_retrieved_context_blocks(

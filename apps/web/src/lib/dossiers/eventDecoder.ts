@@ -13,18 +13,17 @@
 import { isRecord } from "@/lib/validation";
 import { decodePresence } from "@/lib/api/presence";
 import {
+  decodeExecutionAdvisory,
+  EXECUTION_ADVISORY_EVENT_TYPE,
+  type DurableExecutionPhase,
+} from "@/lib/api/executionAdvisory";
+import {
   decodeFailureCode,
 } from "@/lib/dossiers/dossierWire";
 import type {
   DossierCancelledFacts,
-  DossierExecutionPhase,
   DossierFailedFacts,
 } from "@/lib/dossiers/dossierControllerTypes";
-
-/** SSE `event:` type for the unsequenced execution advisory. SEAM: this MUST
- * match the string the backend artifact-build stream route emits for the
- * queue/coordination advisory frame (not yet landed at authoring time). */
-export const DOSSIER_ADVISORY_EVENT_TYPE = "ExecutionAdvisory";
 
 export type DossierStreamEvent =
   | {
@@ -36,7 +35,7 @@ export type DossierStreamEvent =
   | { kind: "Succeeded"; artifactRevisionRef: string }
   | { kind: "Failed"; facts: DossierFailedFacts }
   | { kind: "Cancelled"; facts: DossierCancelledFacts }
-  | { kind: "Advisory"; phase: DossierExecutionPhase };
+  | { kind: "Advisory"; phase: DurableExecutionPhase };
 
 function fail(what: string): never {
   throw new Error(`Invalid SSE payload for ${what}`);
@@ -58,18 +57,6 @@ function hasExactKeys(
   );
 }
 
-function decodeExecutionPhase(value: unknown): DossierExecutionPhase {
-  if (
-    value === "Queued" ||
-    value === "Running" ||
-    value === "Recovering" ||
-    value === "Suspended"
-  ) {
-    return value;
-  }
-  return fail("advisory phase");
-}
-
 /**
  * Decode one SSE frame (`type` = event name, `data` = payload) into a typed
  * `DossierStreamEvent`. Throws on any unknown type or malformed payload.
@@ -77,6 +64,7 @@ function decodeExecutionPhase(value: unknown): DossierExecutionPhase {
 export function decodeDossierStreamEvent(
   type: string,
   data: unknown,
+  id = "",
 ): DossierStreamEvent {
   if (!isRecord(data)) fail(type || "message");
   switch (type) {
@@ -135,11 +123,11 @@ export function decodeDossierStreamEvent(
           at: str(data.at, "Cancelled.at"),
         },
       };
-    case DOSSIER_ADVISORY_EVENT_TYPE:
-      if (!hasExactKeys(data, ["phase"])) {
-        fail("ExecutionAdvisory fields");
-      }
-      return { kind: "Advisory", phase: decodeExecutionPhase(data.phase) };
+    case EXECUTION_ADVISORY_EVENT_TYPE:
+      return {
+        kind: "Advisory",
+        phase: decodeExecutionAdvisory(data, id).phase,
+      };
     default:
       throw new Error(`Unknown SSE event type: ${type || "message"}`);
   }

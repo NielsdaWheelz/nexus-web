@@ -29,8 +29,8 @@ from nexus.db.models import LLMCall
 from nexus.errors import InvalidRequestError
 from nexus.jobs.queue import JobExecutionContext, claim_next_job, get_job
 from nexus.schemas.presence import Present as PresencePresent
+from nexus.services import durable_step_journal as step_journal
 from nexus.services import media_intelligence
-from nexus.services.artifacts import coordination
 from nexus.services.artifacts.bindings.library import BINDING as LIBRARY_BINDING
 from nexus.services.artifacts.dossier_types import AudienceLibrary, DossierBuildFailureCode
 from nexus.services.artifacts.subject_policy import ResolvedResourceSubject
@@ -776,7 +776,7 @@ class TestRunMediaUnitBuild:
         runtime = _ScriptedRuntime(
             outcome=_succeeded_unit_outcome(summary_md="prepared replay", claims=[("claim", 0)])
         )
-        real_checkpoint = coordination.checkpoint_step_state
+        real_checkpoint = step_journal.checkpoint_step_state
         checkpoint_calls = 0
 
         def crash_before_uncertain(*args, **kwargs):  # noqa: ANN002, ANN003
@@ -786,7 +786,7 @@ class TestRunMediaUnitBuild:
                 raise RuntimeError("crash after Prepared")
             return real_checkpoint(*args, **kwargs)
 
-        monkeypatch.setattr(coordination, "checkpoint_step_state", crash_before_uncertain)
+        monkeypatch.setattr(step_journal, "checkpoint_step_state", crash_before_uncertain)
         with pytest.raises(RuntimeError, match="crash after Prepared"):
             asyncio.run(
                 run_media_unit_build(
@@ -800,11 +800,11 @@ class TestRunMediaUnitBuild:
         assert runtime.calls == []
         job = get_job(db_session, ctx.job_id)
         assert job is not None
-        state = coordination.read_step_states(job)["synthesis"]
-        assert state.dispatch_phase is coordination.Prepared
+        state = step_journal.read_step_states(job)["synthesis"]
+        assert state.dispatch_phase is step_journal.Prepared
 
         db_session.rollback()
-        monkeypatch.setattr(coordination, "checkpoint_step_state", real_checkpoint)
+        monkeypatch.setattr(step_journal, "checkpoint_step_state", real_checkpoint)
         asyncio.run(
             run_media_unit_build(
                 db_session,
@@ -836,8 +836,8 @@ class TestRunMediaUnitBuild:
         assert first.calls == ["generate"]
         job = get_job(db_session, ctx.job_id)
         assert job is not None
-        state = coordination.read_step_states(job)["synthesis"]
-        assert state.dispatch_phase is coordination.Uncertain
+        state = step_journal.read_step_states(job)["synthesis"]
+        assert state.dispatch_phase is step_journal.Uncertain
 
         second = _ScriptedRuntime(
             outcome=_succeeded_unit_outcome(summary_md="must not land", claims=[])
@@ -883,8 +883,8 @@ class TestRunMediaUnitBuild:
         assert first.calls == ["generate"]
         job = get_job(db_session, ctx.job_id)
         assert job is not None
-        state = coordination.read_step_states(job)["synthesis"]
-        assert state.dispatch_phase is coordination.Completed
+        state = step_journal.read_step_states(job)["synthesis"]
+        assert state.dispatch_phase is step_journal.Completed
         assert isinstance(state.terminal_result, PresencePresent)
         assert json.loads(state.terminal_result.value)["outcome"] == "success"
         assert get_media_unit(db_session, media_id=media_id) is NotReady.Building
@@ -961,14 +961,14 @@ class TestRunMediaUnitBuild:
             db_session,
             media_id=media_id,
             content_fingerprint=fingerprint,
-            resolution=coordination.ProveNotDispatched(),
+            resolution=step_journal.ProveNotDispatched(),
         )
         repaired_job = get_job(db_session, job_id)
         assert repaired_job is not None
         assert repaired_job.status == "pending"
         assert repaired_job.attempts == 0
-        repaired_state = coordination.read_step_states(repaired_job)["synthesis"]
-        assert repaired_state.dispatch_phase is coordination.Prepared
+        repaired_state = step_journal.read_step_states(repaired_job)["synthesis"]
+        assert repaired_state.dispatch_phase is step_journal.Prepared
         assert (
             read_single(
                 db_session,
@@ -1044,7 +1044,7 @@ class TestRunMediaUnitBuild:
                 db_session,
                 media_id=media_id,
                 content_fingerprint=fingerprint,
-                resolution=coordination.AttachReconciledResult(
+                resolution=step_journal.AttachReconciledResult(
                     terminal_result=json.dumps(
                         {
                             "outcome": "success",
@@ -1059,8 +1059,8 @@ class TestRunMediaUnitBuild:
         assert rejected_job is not None
         assert rejected_job.status == "dead"
         assert (
-            coordination.read_step_states(rejected_job)["synthesis"].dispatch_phase
-            is coordination.Uncertain
+            step_journal.read_step_states(rejected_job)["synthesis"].dispatch_phase
+            is step_journal.Uncertain
         )
 
         other_media_id = _seed_unit_media(db_session)
@@ -1077,7 +1077,7 @@ class TestRunMediaUnitBuild:
                 db_session,
                 media_id=media_id,
                 content_fingerprint=fingerprint,
-                resolution=coordination.AttachReconciledResult(
+                resolution=step_journal.AttachReconciledResult(
                     terminal_result=json.dumps(
                         {
                             "outcome": "success",
@@ -1098,21 +1098,21 @@ class TestRunMediaUnitBuild:
         assert rejected_job is not None
         assert rejected_job.status == "dead"
         assert (
-            coordination.read_step_states(rejected_job)["synthesis"].dispatch_phase
-            is coordination.Uncertain
+            step_journal.read_step_states(rejected_job)["synthesis"].dispatch_phase
+            is step_journal.Uncertain
         )
 
         reconcile_uncertain_media_unit(
             db_session,
             media_id=media_id,
             content_fingerprint=fingerprint,
-            resolution=coordination.AttachReconciledResult(terminal_result=json.dumps(recovered)),
+            resolution=step_journal.AttachReconciledResult(terminal_result=json.dumps(recovered)),
         )
         repaired_job = get_job(db_session, job_id)
         assert repaired_job is not None
         assert repaired_job.status == "pending"
-        state = coordination.read_step_states(repaired_job)["synthesis"]
-        assert state.dispatch_phase is coordination.Completed
+        state = step_journal.read_step_states(repaired_job)["synthesis"]
+        assert state.dispatch_phase is step_journal.Completed
         assert isinstance(state.terminal_result, PresencePresent)
         assert json.loads(state.terminal_result.value) == recovered
 

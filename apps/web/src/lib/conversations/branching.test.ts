@@ -81,6 +81,7 @@ function runData(parentMessageId: string): ChatRunResponse["data"] {
       support_id: { kind: "Absent" },
       publication_warning: { kind: "Absent" },
       failure: null,
+      execution: { kind: "Present", value: { phase: "Running" } },
       cancel_requested_at: null,
       started_at: null,
       completed_at: null,

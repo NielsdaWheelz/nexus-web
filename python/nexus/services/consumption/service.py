@@ -1654,6 +1654,20 @@ def ensure_missing_items_in_txn(
     )
 
 
+def ensure_missing_items_for_assistant_in_current_transaction(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> list[tuple[UUID, UUID]]:
+    """Append assistant items under the queue's viewer-lock invariant.
+
+    The caller owns the transaction so the queue effect can commit with its
+    durable assistant-step record and completed tool row.
+    """
+    _lock_viewer(db, viewer_id)
+    return _lectern_store.ensure_missing_in_txn(
+        db, viewer_id=viewer_id, media_ids=media_ids, source="Assistant"
+    )
+
+
 def remove_lectern_item(viewer_id: UUID, item_id: UUID) -> None:
     """Remove one viewer Lectern row, tolerating an already-removed item.
 

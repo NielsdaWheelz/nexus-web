@@ -7,10 +7,11 @@ the chat run-state transitions (running, cancel-checks, terminal accounting).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
@@ -52,9 +53,20 @@ class ChatRunEventEmitter:
     leaving the commit to the executor's existing batch boundary.
     """
 
-    def __init__(self, db: Session, run: ChatRun) -> None:
+    def __init__(
+        self,
+        db: Session,
+        run: ChatRun,
+        *,
+        lease_fence: Callable[[], None] | None = None,
+    ) -> None:
         self._db = db
         self._run = run
+        self._lease_fence = lease_fence
+
+    def _fence(self) -> None:
+        if self._lease_fence is not None:
+            self._lease_fence()
 
     # -- Streaming events: typed, commit inline (SSE visibility) --------------
 
@@ -65,6 +77,7 @@ class ChatRunEventEmitter:
         provider_event_seq_start: int,
         provider_event_seq_end: int,
     ) -> None:
+        self._fence()
         append_and_commit(
             self._db,
             self._run.id,
@@ -84,6 +97,7 @@ class ChatRunEventEmitter:
         provider_event_seq_start: int,
         provider_event_seq_end: int,
     ) -> None:
+        self._fence()
         append_and_commit(
             self._db,
             self._run.id,
@@ -106,6 +120,7 @@ class ChatRunEventEmitter:
         provider_event_seq_start: int,
         provider_event_seq_end: int,
     ) -> None:
+        self._fence()
         append_and_commit(
             self._db,
             self._run.id,
@@ -132,6 +147,7 @@ class ChatRunEventEmitter:
         provider_event_seq_start: int,
         provider_event_seq_end: int,
     ) -> None:
+        self._fence()
         append_and_commit(
             self._db,
             self._run.id,
@@ -159,6 +175,7 @@ class ChatRunEventEmitter:
         provider_event_seq_start: int,
         provider_event_seq_end: int,
     ) -> None:
+        self._fence()
         append_and_commit(
             self._db,
             self._run.id,
@@ -178,15 +195,19 @@ class ChatRunEventEmitter:
     # -- Batch events: pre-built payload, defer commit to the caller ----------
 
     def meta(self, payload: dict[str, Any]) -> None:
+        self._fence()
         append_run_event(self._db, self._run, "meta", payload)
 
     def tool_result(self, payload: dict[str, Any]) -> None:
+        self._fence()
         append_run_event(self._db, self._run, "tool_result", payload)
 
     def citation_index(self, payload: dict[str, Any]) -> None:
+        self._fence()
         append_run_event(self._db, self._run, "citation_index", payload)
 
     def context_ref_added(self, payload: dict[str, Any]) -> None:
+        self._fence()
         append_run_event(self._db, self._run, "context_ref_added", payload)
 
 
@@ -224,38 +245,3 @@ def is_cancel_requested(db: Session, run_id: UUID) -> bool:
         select(ChatRun.cancel_requested_at).where(ChatRun.id == run_id)
     ).scalar_one_or_none()
     return cancelled_at is not None
-
-
-def has_provider_output_without_terminal(db: Session, run_id: UUID) -> bool:
-    rows = db.execute(
-        text(
-            """
-            SELECT event_type
-            FROM chat_run_events
-            WHERE run_id = :run_id
-              AND event_type IN (
-                'assistant_activity',
-                'assistant_text_delta',
-                'tool_call_start',
-                'tool_call_delta',
-                'tool_call_done',
-                'done'
-              )
-            """
-        ),
-        {"run_id": run_id},
-    ).fetchall()
-    event_types = {row[0] for row in rows}
-    return (
-        bool(
-            event_types
-            & {
-                "assistant_activity",
-                "assistant_text_delta",
-                "tool_call_start",
-                "tool_call_delta",
-                "tool_call_done",
-            }
-        )
-        and "done" not in event_types
-    )

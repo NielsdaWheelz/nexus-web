@@ -34,13 +34,18 @@ from nexus.schemas.conversation import (
     chat_run_event_payload_json,
 )
 from nexus.schemas.retrieval import retrieval_result_ref_json
-from nexus.services.agent_tools.web_search import WebSearchCitation
+from nexus.services.agent_tools.web_search import (
+    ExternalSnapshotId,
+    PersistedWebSearchCitation,
+    ProviderResultRef,
+    WebSearchCitation,
+)
 from nexus.services.retrieval_citation import RetrievalCitation
 
 
 def _web_citation(rank: int = 1) -> WebSearchCitation:
     return WebSearchCitation(
-        result_ref="web:example",
+        result_ref=ProviderResultRef("web:example"),
         title="External source",
         url="https://example.test/source",
         display_url="example.test/source",
@@ -69,14 +74,20 @@ def test_web_result_result_ref_json_round_trips_through_validator() -> None:
     Web results remain a *telemetry* result_type (``message_retrievals``); the
     compact ``RetrievalCitation`` does not carry web-only fields
     (extra_snippets/published_at/source_name/...), so the branch passes the full
-    ``WebSearchCitation.to_json()`` shape straight through and the validated
+    persisted citation shape straight through and the validated
     ``WebRetrievalResultRef`` keeps them.
     """
     cit = _web_citation(rank=3)
-    snapshot_id = str(uuid4())
+    snapshot_id = uuid4()
+    persisted = PersistedWebSearchCitation.from_provider_citation(
+        cit,
+        external_snapshot_id=ExternalSnapshotId(snapshot_id),
+        selected=True,
+    )
+    result_ref = persisted.retrieval_result_ref_json()
     citation = RetrievalCitation(
         result_type="web_result",
-        source_id=snapshot_id,
+        source_id=str(snapshot_id),
         title=cit.title,
         source_label=None,
         snippet=cit.snippet,
@@ -89,7 +100,7 @@ def test_web_result_result_ref_json_round_trips_through_validator() -> None:
         media_id=None,
         media_kind=None,
         score=1.0 / 3,
-        result_ref=cit.to_json(source_id=snapshot_id),
+        result_ref=result_ref,
         selected=True,
     )
 
@@ -102,8 +113,8 @@ def test_web_result_result_ref_json_round_trips_through_validator() -> None:
     assert serialized["extra_snippets"] == ["more context"]
     assert serialized["published_at"] == "2026-01-01"
     assert serialized["locator"]["type"] == "external_url"
-    assert serialized["source_id"] == snapshot_id
-    assert serialized["context_ref"] == {"type": "web_result", "id": snapshot_id}
+    assert serialized["source_id"] == str(snapshot_id)
+    assert serialized["context_ref"] == {"type": "web_result", "id": str(snapshot_id)}
 
 
 def test_citation_index_payload_carries_backend_built_citations() -> None:

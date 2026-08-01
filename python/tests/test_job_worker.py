@@ -14,7 +14,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Message
-from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, enqueue_job, fail_job
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobRow,
+    RescheduleRequested,
+    enqueue_job,
+    fail_job,
+)
 from nexus.jobs.registry import JobDefinition
 from nexus.jobs.worker import JobWorker
 from tests.factories import create_test_conversation, create_test_message
@@ -50,6 +56,67 @@ def _fetch_job_row(db: Session, job_id: UUID) -> dict[str, object]:
         .one()
     )
     return dict(row)
+
+
+def _seed_exhausted_chat_job(
+    db: Session,
+    *,
+    owner_user_id: UUID,
+    run_id: UUID,
+    cancel_requested_at: datetime | None = None,
+) -> tuple[JobRow, UUID]:
+    conversation_id = create_test_conversation(db, owner_user_id)
+    user_message_id = create_test_message(
+        db,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="Start a response",
+    )
+    assistant_message_id = create_test_message(
+        db,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+        parent_message_id=user_message_id,
+    )
+    db.add(
+        ChatRun(
+            id=run_id,
+            owner_user_id=owner_user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            idempotency_key=f"dead-letter-{uuid4()}",
+            payload_hash="dead-letter-payload",
+            status="running",
+            cancel_requested_at=cancel_requested_at,
+        )
+    )
+    job = enqueue_job(
+        db,
+        kind="chat_run",
+        payload={"run_id": str(run_id), "coordination": {}},
+        max_attempts=1,
+    )
+    db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET
+                status = 'running',
+                attempts = 1,
+                claimed_by = 'dead-worker',
+                lease_expires_at = now() - interval '1 minute'
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": job.id},
+    )
+    db.commit()
+    return job, assistant_message_id
 
 
 def test_worker_run_once_executes_handler_and_marks_job_completed(db_session: Session):
@@ -246,63 +313,16 @@ def test_worker_runs_dead_letter_handler_for_exhausted_expired_lease(
     assert handled == [(str(job.id), "E_JOB_LEASE_EXPIRED")]
 
 
-def test_chat_run_dead_letter_finalizes_run_in_worker_transaction(
+def test_chat_run_dead_letter_suspends_without_terminalizing(
     db_session: Session,
     bootstrapped_user: UUID,
 ):
-    conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    user_message_id = create_test_message(
-        db_session,
-        conversation_id,
-        seq=1,
-        role="user",
-        content="Start a response",
-    )
-    assistant_message_id = create_test_message(
-        db_session,
-        conversation_id,
-        seq=2,
-        role="assistant",
-        content="",
-        status="pending",
-        parent_message_id=user_message_id,
-    )
     run_id = uuid4()
-    db_session.add(
-        ChatRun(
-            id=run_id,
-            owner_user_id=bootstrapped_user,
-            conversation_id=conversation_id,
-            user_message_id=user_message_id,
-            assistant_message_id=assistant_message_id,
-            idempotency_key=f"dead-letter-{uuid4()}",
-            payload_hash="dead-letter-payload",
-            status="running",
-        )
-    )
-    db_session.commit()
-
-    job = enqueue_job(
+    job, assistant_message_id = _seed_exhausted_chat_job(
         db_session,
-        kind="chat_run",
-        payload={"run_id": str(run_id)},
-        max_attempts=1,
+        owner_user_id=bootstrapped_user,
+        run_id=run_id,
     )
-    db_session.execute(
-        text(
-            """
-            UPDATE background_jobs
-            SET
-                status = 'running',
-                attempts = 1,
-                claimed_by = 'dead-worker',
-                lease_expires_at = now() - interval '1 minute'
-            WHERE id = :job_id
-            """
-        ),
-        {"job_id": job.id},
-    )
-    db_session.commit()
 
     worker = JobWorker(
         session_factory=task_session_factory(db_session),
@@ -316,46 +336,86 @@ def test_chat_run_dead_letter_finalizes_run_in_worker_transaction(
     row = _fetch_job_row(db_session, job.id)
     assert row["status"] == "dead"
     assert row["error_code"] == "E_JOB_LEASE_EXPIRED"
+    assert row["payload"] == {"run_id": str(run_id), "coordination": {}}
 
-    # Dead-letter finalization is a generic defect (§10 taxonomy): no closed
-    # error_code / error_origin and no synthesized prose — the exhausted-job
-    # reason is surfaced only via error_detail plus a fresh support_id for
-    # operator correlation. The job row still carries the queue's own code.
     run = db_session.get(ChatRun, run_id)
     assert run is not None
-    assert run.status == "error"
+    assert run.status == "running"
+    assert run.cancel_requested_at is None
     assert run.error_code is None
     assert run.error_origin is None
-    assert run.support_id is not None
-    assert run.error_detail is not None
+    assert run.support_id is None
+    assert run.error_detail is None
 
     assistant_message = db_session.get(Message, assistant_message_id)
     assert assistant_message is not None
-    assert assistant_message.status == "error"
+    assert assistant_message.status == "pending"
     assert assistant_message.content == ""
 
-    done_payload = db_session.execute(
-        text(
-            """
-            SELECT payload
-            FROM chat_run_events
-            WHERE run_id = :run_id AND event_type = 'done'
-            ORDER BY seq DESC
-            LIMIT 1
-            """
-        ),
-        {"run_id": run_id},
-    ).scalar_one()
-    assert done_payload == {
-        "status": "error",
-        "error_code": {"kind": "Absent"},
-        "support_id": {"kind": "Present", "value": run.support_id},
-        "publication_warning": {"kind": "Absent"},
-        "usage": None,
-        "final_chars": None,
-        "last_provider_event_seq": None,
-        "cancelled": False,
-    }
+    assert (
+        db_session.execute(
+            text(
+                "SELECT count(*) FROM chat_run_events "
+                "WHERE run_id = :run_id AND event_type = 'done'"
+            ),
+            {"run_id": run_id},
+        ).scalar_one()
+        == 0
+    )
+
+
+def test_chat_run_dead_letter_requeues_prior_cancellation_on_same_job(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    run_id = uuid4()
+    cancel_requested_at = datetime.now(UTC)
+    job, assistant_message_id = _seed_exhausted_chat_job(
+        db_session,
+        owner_user_id=bootstrapped_user,
+        run_id=run_id,
+        cancel_requested_at=cancel_requested_at,
+    )
+
+    worker = JobWorker(
+        session_factory=task_session_factory(db_session),
+        worker_id="worker-chat-run-cancel-race",
+        allowed_kinds=("chat_run",),
+    )
+
+    assert worker.run_once() is True
+
+    db_session.expire_all()
+    row = _fetch_job_row(db_session, job.id)
+    assert row["status"] == "pending"
+    assert row["attempts"] == 0
+    assert row["claimed_by"] is None
+    assert row["error_code"] == "E_JOB_LEASE_EXPIRED"
+    assert row["payload"] == {"run_id": str(run_id), "coordination": {}}
+
+    run = db_session.get(ChatRun, run_id)
+    assert run is not None
+    assert run.status == "running"
+    assert run.cancel_requested_at == cancel_requested_at
+    assert run.error_code is None
+    assert run.error_origin is None
+    assert run.support_id is None
+    assert run.error_detail is None
+
+    assistant_message = db_session.get(Message, assistant_message_id)
+    assert assistant_message is not None
+    assert assistant_message.status == "pending"
+    assert assistant_message.content == ""
+    assert (
+        db_session.execute(
+            text(
+                "SELECT count(*) FROM chat_run_events "
+                "WHERE run_id = :run_id AND event_type = 'done'"
+            ),
+            {"run_id": run_id},
+        ).scalar_one()
+        == 0
+    )
 
 
 def test_worker_run_once_skips_handler_when_start_heartbeat_loses_ownership(

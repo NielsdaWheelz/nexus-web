@@ -27,13 +27,13 @@ from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.artifacts.dossier_types import (
     ArtifactBuildEventType,
     CancelledEventPayload,
-    DossierBuildExecutionPhase,
     FailedEventPayload,
     ProgressEventPayload,
     StartedEventPayload,
     SucceededEventPayload,
 )
 from nexus.services.artifacts.manifests import InputManifestOut, MediaDisposition
+from nexus.services.durable_step_journal import DurableExecutionPhase
 
 
 class ArtifactSchemaModel(BaseModel):
@@ -88,12 +88,12 @@ LearnDossierOut = Annotated[
 
 class DossierBuildExecution(ArtifactSchemaModel):
     """The advisory-only queue/coordination liveness for an active build
-    (A8/A9). Wraps `DossierBuildExecutionPhase` so the wire shape matches A15's
+    (A8/A9). Wraps `DurableExecutionPhase` so the wire shape matches A15's
     nested ``DossierBuild{execution: Queued|Running|Recovering|Suspended}`` —
     never a persisted event, never a failure, cannot legalize a second Generate.
     """
 
-    phase: DossierBuildExecutionPhase
+    phase: DurableExecutionPhase
 
 
 class DossierBuildSummary(ArtifactSchemaModel):

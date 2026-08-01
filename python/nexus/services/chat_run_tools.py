@@ -2,7 +2,7 @@
 
 Sole owner of the ``message_tool_calls`` lifecycle (start / error / trace) and of
 the provider-tool-event binding plus the tool-output rendering for
-``app_search`` / ``web_search``. Extracted verbatim from ``chat_runs.py`` (the
+``app_search``. Extracted verbatim from ``chat_runs.py`` (the
 executor calls into here); behavior — SQL, commit handling, event payload shapes
 — is unchanged.
 
@@ -45,37 +45,6 @@ def app_search_tool_output(
             "snippet": citation.snippet,
             "kind": citation.result_type,
             "source_label": citation.source_label,
-        }
-        if numbered.candidate_ordinal is not None:
-            item["n"] = numbered.candidate_ordinal
-        results.append(item)
-    return json.dumps(
-        {
-            "results": results,
-            "total_candidates": len(run_result.citations),
-            "status": run_result.status,
-            "error_code": run_result.error_code,
-        },
-        default=str,
-    )
-
-
-def web_search_tool_output(
-    run_result: Any,
-    numbering: CitationCandidateNumbering,
-) -> str:
-    results = []
-    for citation, numbered in zip(
-        run_result.selected_citations,
-        numbering.rows,
-        strict=True,
-    ):
-        item = {
-            "title": citation.title,
-            "url": citation.url,
-            "snippet": citation.snippet,
-            "source": citation.source_name,
-            "published_at": citation.published_at,
         }
         if numbered.candidate_ordinal is not None:
             item["n"] = numbered.candidate_ordinal
@@ -229,29 +198,6 @@ def bind_provider_tool_call_events(
     )
 
 
-def tool_start_event(
-    *,
-    run: ChatRun,
-    tool_call_id: UUID,
-    tool_call_index: int,
-    tool_name: str,
-    scope: str,
-    types: list[str],
-    filters: dict[str, object],
-) -> dict[str, object]:
-    return {
-        "tool_call_id": str(tool_call_id),
-        "assistant_message_id": str(run.assistant_message_id),
-        "tool_name": tool_name,
-        "tool_call_index": tool_call_index,
-        "status": "running",
-        "scope": scope,
-        "types": types,
-        "filters": filters,
-        "error_code": None,
-    }
-
-
 def persist_tool_call_trace(
     db: Session,
     *,
@@ -357,15 +303,11 @@ def persist_write_tool_call(
     status: str,
     error_code: str | None,
 ) -> UUID:
-    """Persist an assistant write tool call, recording its created refs.
+    """Stage an assistant write tool call and its created refs.
 
-    Sibling of ``persist_tool_call_trace`` (D-8), not a fork: the payload is a
-    list of created refs (``[{kind, id, ...}]``) rather than the read
-    ``{uri, status, body_chars}`` object, and — because
-    ``create_highlight_for_fragment`` commits internally — this row is written
-    *after* an intervening commit (the two-commit window, R-3). It shares the
-    same ``FOR UPDATE`` re-arm-on-retry pattern so a re-driven turn overwrites
-    the prior attempt's refs rather than duplicating them.
+    The caller owns the atomic journal/event/tool-row commit. Stable effect IDs
+    make any concern-owned commit that must still precede this row convergent;
+    the existing row is re-armed when a prior attempt is deliberately retried.
     """
     params = {
         "conversation_id": run.conversation_id,

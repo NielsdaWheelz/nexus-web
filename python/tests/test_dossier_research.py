@@ -24,17 +24,7 @@ from nexus.services.agent_tools.web_page_read import (
     _terminal_omission_reason,
     omitted_web_search_result,
 )
-from nexus.services.artifacts.coordination import (
-    Completed,
-    DossierBuildRuntime,
-    DossierResearchPending,
-    ReplayPolicy,
-    StepReplayState,
-    Uncertain,
-    decode_step_states,
-    encode_step_result,
-    stable_generation_id,
-)
+from nexus.services.artifacts.coordination import DossierBuildRuntime, DossierResearchPending
 from nexus.services.artifacts.idea_identity import idea_key_from_selection
 from nexus.services.artifacts.research import (
     NexusSearchResult,
@@ -44,6 +34,15 @@ from nexus.services.artifacts.research import (
     idea_research_queries,
 )
 from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
+from nexus.services.durable_step_journal import (
+    Completed,
+    ReplayPolicy,
+    StepReplayState,
+    Uncertain,
+    decode_step_states,
+    encode_step_result,
+    stable_generation_id,
+)
 from nexus.services.media_read_map import DocumentRead
 from nexus.services.media_source_ingest import _is_terminal_source_failure
 

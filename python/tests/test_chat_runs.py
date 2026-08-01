@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import (
@@ -175,11 +176,16 @@ def _seed_ai_plus_billing(direct_db: DirectSessionManager, user_id: UUID) -> Non
 def _assert_create_shape(data: dict) -> None:
     assert data["run"]["id"], f"Missing run id in response: {data}"
     assert data["run"]["status"] == "queued", f"Run should start queued: {data}"
+    assert data["run"]["execution"] == {
+        "kind": "Present",
+        "value": {"phase": "Queued"},
+    }
     assert data["conversation"]["id"], f"Missing conversation id in response: {data}"
     assert data["user_message"]["role"] == "user", f"Unexpected user message: {data}"
     assert data["user_message"]["status"] == "complete", f"Unexpected user message: {data}"
     assert data["assistant_message"]["role"] == "assistant", f"Unexpected assistant: {data}"
     assert data["assistant_message"]["status"] == "pending", f"Unexpected assistant: {data}"
+    assert data["assistant_message"]["trust_trail"]["run"]["execution"] == data["run"]["execution"]
 
 
 def _register_run_cleanup(
@@ -1867,6 +1873,8 @@ class TestCitationPublication:
         user_message_id: UUID,
         assistant_message_id: UUID,
     ) -> UUID:
+        from nexus.jobs.queue import enqueue_job
+
         run_id = uuid4()
         with direct_db.session() as session:
             session.add(
@@ -1882,6 +1890,19 @@ class TestCitationPublication:
                     profile_id="balanced",
                     reasoning_option_id="medium",
                 )
+            )
+            job = enqueue_job(
+                session,
+                kind="chat_run",
+                payload={"run_id": str(run_id)},
+                max_attempts=3,
+                dedupe_key=f"chat_run:{run_id}",
+            )
+            session.execute(
+                text(
+                    "UPDATE background_jobs SET status = 'running', attempts = 1 WHERE id = :job_id"
+                ),
+                {"job_id": job.id},
             )
             session.commit()
         return run_id
@@ -3008,16 +3029,18 @@ class TestCitationPublication:
             requested_domains={"allowed": [], "blocked": []},
             citations=[cited, uncited],
             selected_citations=[cited],
-            context_text="<web_search_result/>",
-            context_chars=20,
             latency_ms=5,
             status="complete",
             tool_call_index=1,
         )
         with direct_db.session() as session:
-            persist_web_search_run(session, web_run)
-        tool_call_id = web_run.tool_call_id
-        assert tool_call_id is not None
+            persisted_web_run = persist_web_search_run(
+                session,
+                web_run,
+                start_citation_ordinal=1,
+            )
+            session.commit()
+        tool_call_id = persisted_web_run.tool_call_id
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
         direct_db.register_cleanup("resource_external_snapshots", "user_id", user_id)
         direct_db.register_cleanup("message_retrievals", "tool_call_id", tool_call_id)
@@ -3503,7 +3526,7 @@ class TestCitationPublication:
         ], f"GET messages must replay the citation field-for-field; got {assistant['citations']}"
         assert messages[str(user_message_id)]["citations"] == []
 
-    def test_reexecuted_web_search_replaces_prepublication_candidates_and_snapshots(
+    def test_reexecuted_web_search_cannot_replace_canonical_candidates_and_snapshots(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
@@ -3562,8 +3585,6 @@ class TestCitationPublication:
                 requested_domains={"allowed": [], "blocked": []},
                 citations=citations,
                 selected_citations=citations,
-                context_text="<web_search_result/>",
-                context_chars=20,
                 latency_ms=5,
                 status="complete",
                 tool_call_index=1,
@@ -3571,7 +3592,12 @@ class TestCitationPublication:
 
         # Attempt 1: two model candidates and two retrieval-owned snapshots.
         with direct_db.session() as session:
-            persist_web_search_run(session, web_run([web_citation(1), web_citation(2)]))
+            persist_web_search_run(
+                session,
+                web_run([web_citation(1), web_citation(2)]),
+                start_citation_ordinal=1,
+            )
+            session.commit()
         tool_call_id = self._tool_call_index_1_id(direct_db, assistant_message_id)
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
         direct_db.register_cleanup("resource_external_snapshots", "user_id", user_id)
@@ -3616,18 +3642,15 @@ class TestCitationPublication:
             ).all()
             assert rows == [(1, None), (2, None)]
 
-        # Attempt 2: replacement remains pre-publication and drops the stale row.
+        # Attempt 2 cannot invent new canonical identities for this completed step.
         with direct_db.session() as session:
-            persist_web_search_run(session, web_run([web_citation(1)]))
-            run = session.get(ChatRunModel, run_id)
-            assert run is not None
-            numbering = number_tool_citation_candidates(
-                session,
-                tool_call_id=tool_call_id,
-                start_ordinal=1,
-            )
-            assert numbering.next_ordinal == 2
-            session.commit()
+            with pytest.raises(IntegrityError):
+                persist_web_search_run(
+                    session,
+                    web_run([web_citation(1)]),
+                    start_citation_ordinal=1,
+                )
+            session.rollback()
 
         with direct_db.session() as session:
             assert (
@@ -3641,16 +3664,16 @@ class TestCitationPublication:
                 .filter(ResourceExternalSnapshot.user_id == user_id)
                 .all()
             )
-            assert len(snapshots) == 1
-            row = session.execute(
+            assert len(snapshots) == 2
+            rows = session.execute(
                 text(
                     "SELECT citation_candidate_ordinal, cited_edge_id "
-                    "FROM message_retrievals "
-                    "WHERE tool_call_id = :tcid AND ordinal = 0"
+                    "FROM message_retrievals WHERE tool_call_id = :tcid "
+                    "ORDER BY ordinal"
                 ),
                 {"tcid": tool_call_id},
-            ).one()
-            assert row == (1, None)
+            ).all()
+            assert rows == [(1, None), (2, None)]
 
     def _tool_call_index_1_id(
         self, direct_db: DirectSessionManager, assistant_message_id: UUID

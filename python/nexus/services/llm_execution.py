@@ -490,8 +490,8 @@ def _reservation_defect_facts(exc: ApiError) -> tuple[FailureOrigin, str, str]:
     cause. Only a real quota denial is ``budget_exceeded`` — a rate-limiter
     outage or a billing gate must never be mislabelled as quota-exhaustion
     (which the chat surface would render as "Monthly AI token quota exceeded").
-    For chat these non-budget codes route through ``finalize_defect`` (generic
-    non-rerunnable card); no ``ExpectedChatFailure`` variant asserts on them."""
+    Chat treats only quota exhaustion as an expected terminal result; other
+    reservation defects escape into queue retry and suspension."""
     if exc.code == ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED:
         return "budget", "budget_exceeded", "token budget reservation denied"
     if exc.code == ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE:

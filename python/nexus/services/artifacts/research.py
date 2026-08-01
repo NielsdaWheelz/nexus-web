@@ -28,9 +28,11 @@ from nexus.services.agent_tools.web_page_read import (
     read_web_page,
 )
 from nexus.services.agent_tools.web_search import search_web_readonly
-from nexus.services.artifacts.coordination import (
+from nexus.services.artifacts.coordination import DossierBuildRuntime
+from nexus.services.artifacts.idea_seeds import list_idea_seed_highlight_ids
+from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
+from nexus.services.durable_step_journal import (
     Completed,
-    DossierBuildRuntime,
     Prepared,
     ReplayPolicy,
     StepReplayState,
@@ -39,8 +41,6 @@ from nexus.services.artifacts.coordination import (
     encode_step_result,
     stable_generation_id,
 )
-from nexus.services.artifacts.idea_seeds import list_idea_seed_highlight_ids
-from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
 from nexus.services.media_read_map import load_media_document
 from nexus.services.resource_graph.refs import (
     ResourceRef,

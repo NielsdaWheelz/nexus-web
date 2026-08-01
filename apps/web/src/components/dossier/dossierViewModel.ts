@@ -5,10 +5,10 @@
 // so `DossierSurface` renders without ad-hoc `?.`/truthiness ladders and this
 // core is unit-testable in isolation.
 import { dossierBuildFailureMessage } from "@/lib/dossiers/dossierErrorMessage";
+import type { DurableExecutionPhase } from "@/lib/api/executionAdvisory";
 import type {
   DossierBuildFailureCode,
   DossierControllerState,
-  DossierExecutionPhase,
   DossierFreshness,
   DossierHistoryStatus,
   DossierPendingAction,
@@ -53,7 +53,7 @@ export type DossierActivityView =
   | { kind: "Disconnected" }
   | {
       kind: "Building";
-      phase: DossierExecutionPhase;
+      phase: DurableExecutionPhase;
       regenerating: boolean;
       progress: string | null;
     }
@@ -190,7 +190,7 @@ export function deriveDossierViewModel(
       : null;
   const hasTerminalOutcome = terminalOutcome !== null;
   const hasEffectiveActive = hasActive && !hasTerminalOutcome;
-  const activePhase: DossierExecutionPhase | null =
+  const activePhase: DurableExecutionPhase | null =
     ready.activeBuild.kind === "Present" &&
     ready.activeBuild.value.execution.kind === "Present"
       ? ready.activeBuild.value.execution.value.phase

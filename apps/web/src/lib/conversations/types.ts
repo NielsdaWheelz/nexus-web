@@ -10,6 +10,7 @@ import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { Presence } from "@/lib/api/presence";
+import type { DurableExecution } from "@/lib/api/executionAdvisory";
 
 export interface ConversationSummary {
   id: string;
@@ -268,6 +269,7 @@ export interface AssistantTrustTrail {
     error_code: string | null;
     error_origin: string | null;
     failure: ExpectedChatFailure | null;
+    execution: Presence<DurableExecution>;
     reasoning_effort: Presence<string>;
     support_id: Presence<string>;
     publication_warning: Presence<ChatPublicationWarning>;
@@ -517,6 +519,7 @@ export interface ChatRun {
    * card-bearing failure (still running, or a defect with no stored closed
    * code — render the generic defect card via chatFailureMessage(null)). */
   failure: ExpectedChatFailure | null;
+  execution: Presence<DurableExecution>;
   cancel_requested_at: string | null;
   started_at: string | null;
   completed_at: string | null;

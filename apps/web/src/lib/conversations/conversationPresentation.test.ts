@@ -35,6 +35,7 @@ function message(
             origin: "provider_stream",
             can_rerun: false,
           },
+          execution: absent(),
           reasoning_effort: absent(),
           support_id: absent(),
           publication_warning: absent(),

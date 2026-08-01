@@ -26,11 +26,9 @@ def test_public_api_surface() -> None:
     """The executor-called names are public on the extracted module."""
     for name in (
         "app_search_tool_output",
-        "web_search_tool_output",
         "persist_tool_call_start",
         "persist_tool_call_error",
         "bind_provider_tool_call_events",
-        "tool_start_event",
         "persist_tool_call_trace",
         "tool_trace_event",
     ):
@@ -90,79 +88,6 @@ def test_app_search_tool_output_numbers_only_citable_rows() -> None:
     assert payload["total_candidates"] == 3
     assert payload["status"] == "complete"
     assert payload["error_code"] is None
-
-
-def test_web_search_tool_output_dense_ordinals_from_start() -> None:
-    """Web results take a contiguous ``n`` block starting at ``start_ordinal``."""
-    run_result = SimpleNamespace(
-        selected_citations=[
-            SimpleNamespace(
-                title="A",
-                url="https://a",
-                snippet="sa",
-                source_name="SrcA",
-                published_at="2026-01-01",
-            ),
-            SimpleNamespace(
-                title="B",
-                url="https://b",
-                snippet="sb",
-                source_name="SrcB",
-                published_at=None,
-            ),
-        ],
-        citations=[1, 2],
-        status="complete",
-        error_code=None,
-    )
-    payload = json.loads(
-        chat_run_tools.web_search_tool_output(
-            run_result,
-            CitationCandidateNumbering(
-                rows=(
-                    NumberedCitationCandidate(uuid4(), 0, 5),
-                    NumberedCitationCandidate(uuid4(), 1, 6),
-                ),
-                next_ordinal=7,
-            ),
-        )
-    )
-    assert [r["n"] for r in payload["results"]] == [5, 6]
-    assert payload["results"][0] == {
-        "n": 5,
-        "title": "A",
-        "url": "https://a",
-        "snippet": "sa",
-        "source": "SrcA",
-        "published_at": "2026-01-01",
-    }
-    assert payload["results"][1]["published_at"] is None
-
-
-def test_tool_start_event_shape() -> None:
-    tool_call_id = uuid4()
-    assistant_message_id = uuid4()
-    run = SimpleNamespace(assistant_message_id=assistant_message_id)
-    event = chat_run_tools.tool_start_event(
-        run=run,
-        tool_call_id=tool_call_id,
-        tool_call_index=3,
-        tool_name="app_search",
-        scope="all",
-        types=["media"],
-        filters={"k": "v"},
-    )
-    assert event == {
-        "tool_call_id": str(tool_call_id),
-        "assistant_message_id": str(assistant_message_id),
-        "tool_name": "app_search",
-        "tool_call_index": 3,
-        "status": "running",
-        "scope": "all",
-        "types": ["media"],
-        "filters": {"k": "v"},
-        "error_code": None,
-    }
 
 
 def test_tool_trace_event_maps_error_status_and_uri_filter() -> None:

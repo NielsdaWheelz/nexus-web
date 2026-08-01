@@ -43,7 +43,9 @@ application code; tests assert behavior; superseded paths are deleted.
 
 ## Non-goals
 
-- No `Generated -> Published` durable phase or publication replay.
+- No separate publication table or product status. Superseded for chat execution
+  by `chat-durable-agent-step-journal-hard-cutover.md`: publication is the final
+  database-atomic journal step, so a reclaimed job cannot republish it.
 - No FinalAnswer IR, claim verifier, evidence registry, or answer grader.
 - No generic job-result framework or queue-schema redesign.
 - No OpenTelemetry deployment, dashboards, paging, or formal SLO system.

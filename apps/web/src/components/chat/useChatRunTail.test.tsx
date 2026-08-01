@@ -122,6 +122,7 @@ function chatRunData(foldedSeq = 0): ChatRunResponse["data"] {
       support_id: { kind: "Absent" },
       publication_warning: { kind: "Absent" },
       failure: null,
+      execution: { kind: "Present", value: { phase: "Running" } },
       cancel_requested_at: null,
       started_at: timestamp,
       completed_at: null,
@@ -313,6 +314,64 @@ describe("useChatRunTail", () => {
     expect(assistant?.status).toBe("complete");
   });
 
+  it("folds unsequenced suspended and recovery advisories without moving the cursor", async () => {
+    const data = chatRunData(9);
+    data.assistant_message.trust_trail = {
+      ...data.assistant_message.trust_trail!,
+      chat_run_id: RUN_ID,
+      run: {
+        run_id: RUN_ID,
+        profile_id: "balanced",
+        reasoning_option_id: "default",
+        provider: null,
+        model_name: null,
+        status: "running",
+        usage: null,
+        error_code: null,
+        error_origin: null,
+        failure: null,
+        execution: { kind: "Present", value: { phase: "Running" } },
+        reasoning_effort: { kind: "Absent" },
+        support_id: { kind: "Absent" },
+        publication_warning: { kind: "Absent" },
+        final_chars: null,
+        started_at: timestamp,
+        completed_at: null,
+        total_cost_usd_micros: null,
+      },
+    };
+    const { result } = renderHook(() => useHarness({}));
+    await act(async () => {
+      await result.current.tailChatRun(data);
+    });
+
+    const sse = lastSse();
+    act(() => {
+      sse.onEvent({
+        seq: 0,
+        type: "ExecutionAdvisory",
+        data: { phase: "Suspended" },
+      });
+    });
+    expect(
+      result.current.messages.find((item) => item.id === ASSISTANT_ID)
+        ?.trust_trail?.run?.execution,
+    ).toEqual({ kind: "Present", value: { phase: "Suspended" } });
+
+    act(() => {
+      sse.onEvent({
+        seq: 0,
+        type: "ExecutionAdvisory",
+        data: { phase: "Recovering" },
+      });
+    });
+    expect(
+      result.current.messages.find((item) => item.id === ASSISTANT_ID)
+        ?.trust_trail?.run?.execution,
+    ).toEqual({ kind: "Present", value: { phase: "Recovering" } });
+    expect(sse.initialAfter).toBe("9");
+  });
+
   it("reconciles a degraded terminal draft to canonical persisted prose and run facts", async () => {
     const persisted = chatRunData(4);
     persisted.run = {
@@ -346,6 +405,7 @@ describe("useChatRunTail", () => {
         error_code: null,
         error_origin: null,
         failure: null,
+        execution: { kind: "Absent" },
         reasoning_effort: { kind: "Present", value: "medium" },
         support_id: { kind: "Present", value: "sup-citations" },
         publication_warning: {

@@ -131,6 +131,7 @@ function forkRunData(parentMessageId: string): ChatRunResponse["data"] {
       support_id: { kind: "Absent" },
       publication_warning: { kind: "Absent" },
       failure: null,
+      execution: { kind: "Present", value: { phase: "Running" } },
       cancel_requested_at: null,
       started_at: null,
       completed_at: null,
@@ -385,6 +386,63 @@ describe("messageUpdateReducer", () => {
     });
     expect(next[1].status).toBe("error");
     expect(next[1].trust_trail?.status).toBe("error");
+  });
+
+  it("folds execution advisories without replacing partial text or run identity", () => {
+    const state = forkRunData("u1").assistant_message;
+    const withPartial: ConversationMessage = {
+      ...state,
+      id: "a1",
+      message_document: {
+        type: "message_document" as const,
+        blocks: [
+          { type: "text" as const, format: "markdown" as const, text: "Partial" },
+        ],
+      },
+      trust_trail: {
+        ...state.trust_trail!,
+        chat_run_id: "run-1",
+        run: {
+          run_id: "run-1",
+          profile_id: "balanced",
+          reasoning_option_id: "medium",
+          provider: null,
+          model_name: null,
+          status: "running" as const,
+          usage: null,
+          error_code: null,
+          error_origin: null,
+          failure: null,
+          execution: present({ phase: "Running" as const }),
+          reasoning_effort: absent(),
+          support_id: absent(),
+          publication_warning: absent(),
+          final_chars: null,
+          started_at: null,
+          completed_at: null,
+          total_cost_usd_micros: null,
+        },
+      },
+    };
+    const suspended = messageUpdateReducer([withPartial], {
+      type: "apply_execution_advisory",
+      assistantId: "a1",
+      execution: { phase: "Suspended" },
+    });
+    expect(conversationMessageText(suspended[0])).toBe("Partial");
+    expect(suspended[0].trust_trail?.run?.run_id).toBe("run-1");
+    expect(suspended[0].trust_trail?.run?.execution).toEqual(
+      present({ phase: "Suspended" }),
+    );
+
+    const recovering = messageUpdateReducer(suspended, {
+      type: "apply_execution_advisory",
+      assistantId: "a1",
+      execution: { phase: "Recovering" },
+    });
+    expect(recovering[0].trust_trail?.run?.execution).toEqual(
+      present({ phase: "Recovering" }),
+    );
   });
 
   it("set_all carries a server user message's reader_selection snapshot", () => {

@@ -743,7 +743,7 @@ def test_scoped_app_search_persists_no_indexed_evidence_as_empty_tool_result(
         assert run.tool_call_id is not None
         assert run.citations == []
         assert run.empty_status == "no_indexed_evidence"
-        assert run.retrieval_result_event()["results"] == []
+        assert run.result_event().results == []
         assert 'status="no_indexed_evidence"' in run.context_text
 
         tool_row = session.execute(
@@ -817,7 +817,7 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
         assert run.tool_call_id is not None
         assert run.citations == []
         assert run.empty_status == "no_results"
-        assert run.retrieval_result_event()["results"] == []
+        assert run.result_event().results == []
         assert 'status="no_results"' in run.context_text
         assert 'status="no_indexed_evidence"' not in run.context_text
         assert 'filters="{}"' in run.context_text

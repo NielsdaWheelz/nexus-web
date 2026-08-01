@@ -11,12 +11,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 from sqlalchemy import text
 
 from nexus.errors import ApiError, InvalidRequestError
+from nexus.schemas.notes import CreatePageRequest
 from nexus.services import bootstrap, library_governance, text_quote
 from nexus.services.agent_tools import writes
 from nexus.services.resource_graph.policy import validate_edge_shape
@@ -234,6 +235,7 @@ def test_mint_edge_creates_assistant_origin_edge(direct_db):
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.MINT_EDGE_TOOL_NAME,
             args={
@@ -281,6 +283,7 @@ def test_add_to_library_files_entry(direct_db):
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
             args={"resource_uri": f"media:{media_id}", "library_name": "Criticism"},
@@ -294,6 +297,46 @@ def test_add_to_library_files_entry(direct_db):
         ).scalar_one()
         assert count == 1
 
+        with direct_db.session() as observer:
+            assert (
+                observer.scalar(
+                    text(
+                        "SELECT count(*) FROM library_entries "
+                        "WHERE library_id = :lib AND media_id = :media"
+                    ),
+                    {"lib": target_library, "media": media_id},
+                )
+                == 0
+            )
+            assert (
+                observer.scalar(
+                    text("SELECT count(*) FROM message_tool_calls WHERE id = :tool_call_id"),
+                    {"tool_call_id": outcome.tool_call_id},
+                )
+                == 0
+            )
+
+        session.commit()
+
+    with direct_db.session() as observer:
+        assert (
+            observer.scalar(
+                text(
+                    "SELECT count(*) FROM library_entries "
+                    "WHERE library_id = :lib AND media_id = :media"
+                ),
+                {"lib": target_library, "media": media_id},
+            )
+            == 1
+        )
+        assert (
+            observer.scalar(
+                text("SELECT count(*) FROM message_tool_calls WHERE id = :tool_call_id"),
+                {"tool_call_id": outcome.tool_call_id},
+            )
+            == 1
+        )
+
 
 def test_create_highlight_unique_and_ambiguous(direct_db):
     user_id = _seed_user(direct_db)
@@ -305,6 +348,7 @@ def test_create_highlight_unique_and_ambiguous(direct_db):
         ok = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.CREATE_HIGHLIGHT_TOOL_NAME,
             args={"media_uri": f"media:{media_id}", "exact": "entropy of the system"},
@@ -318,6 +362,7 @@ def test_create_highlight_unique_and_ambiguous(direct_db):
         refused = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=1,
             tool_name=writes.CREATE_HIGHLIGHT_TOOL_NAME,
             args={"media_uri": f"media:{media_id}", "exact": "The cat sat"},
@@ -345,18 +390,21 @@ def test_jot_note_uses_account_local_date_and_undo_preserves_daily_page(
     direct_db.register_cleanup("note_blocks", "user_id", user_id)
     direct_db.register_cleanup("pages", "user_id", user_id)
     monkeypatch.setattr("nexus.services.users.datetime", BoundaryDateTime)
-    capture_daily_page_note = writes.notes.capture_daily_page_note
+    capture_daily_page_note = writes.notes.capture_daily_page_note_in_current_transaction
 
-    def capture_with_clean_transaction_entry(*args, **kwargs):
+    def capture_inside_journal_transaction(*args, **kwargs):
         session = args[0]
-        assert not session.in_transaction()
+        assert session.in_transaction()
         return capture_daily_page_note(*args, **kwargs)
 
     monkeypatch.setattr(
         writes.notes,
-        "capture_daily_page_note",
-        capture_with_clean_transaction_entry,
+        "capture_daily_page_note_in_current_transaction",
+        capture_inside_journal_transaction,
     )
+    effect_id = UUID("11111111-1111-7111-8111-111111111111")
+    expected_note_id = uuid5(effect_id, "jot_note:note_block")
+    expected_mutation_id = f"assistant:{uuid5(effect_id, 'jot_note:daily_capture')}"
 
     with direct_db.session() as session:
         session.execute(
@@ -367,12 +415,14 @@ def test_jot_note_uses_account_local_date_and_undo_preserves_daily_page(
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=effect_id,
             tool_call_index=0,
             tool_name=writes.JOT_NOTE_TOOL_NAME,
             args={"markdown": "remember this"},
         )
         assert not outcome.is_error
         note_id = UUID(str(outcome.created_refs[0]["id"]))
+        assert note_id == expected_note_id
         binding = session.execute(
             text("SELECT local_date, page_id FROM daily_page_bindings WHERE user_id = :user_id"),
             {"user_id": user_id},
@@ -386,6 +436,32 @@ def test_jot_note_uses_account_local_date_and_undo_preserves_daily_page(
             )
             == 1
         )
+        assert (
+            session.scalar(
+                text(
+                    "SELECT client_mutation_id FROM resource_mutations "
+                    "WHERE user_id = :user_id AND mutation_scope = 'daily:capture'"
+                ),
+                {"user_id": user_id},
+            )
+            == expected_mutation_id
+        )
+        with direct_db.session() as observer:
+            assert (
+                observer.scalar(
+                    text("SELECT count(*) FROM note_blocks WHERE id = :note_id"),
+                    {"note_id": note_id},
+                )
+                == 0
+            )
+            assert (
+                observer.scalar(
+                    text("SELECT count(*) FROM message_tool_calls WHERE id = :tool_call_id"),
+                    {"tool_call_id": outcome.tool_call_id},
+                )
+                == 0
+            )
+        session.commit()
         assert (
             session.scalar(
                 text(
@@ -472,6 +548,86 @@ def test_jot_note_uses_account_local_date_and_undo_preserves_daily_page(
         )
 
 
+def test_jot_note_explicit_page_stages_stable_effect_and_tool_row_atomically(direct_db) -> None:
+    user_id = _seed_user(direct_db)
+    run = _seed_run(direct_db, user_id)
+    page_id = uuid4()
+    effect_id = UUID("22222222-2222-7222-8222-222222222222")
+    expected_note_id = uuid5(effect_id, "jot_note:note_block")
+    direct_db.register_cleanup("note_blocks", "user_id", user_id)
+    direct_db.register_cleanup("pages", "user_id", user_id)
+
+    with direct_db.session() as session:
+        writes.notes.create_page(
+            session,
+            user_id,
+            CreatePageRequest(page_id=page_id, title="Atomic assistant notes"),
+        )
+
+    with direct_db.session() as session:
+        outcome = writes.execute_write_tool(
+            session,
+            run=run,
+            effect_id=effect_id,
+            tool_call_index=0,
+            tool_name=writes.JOT_NOTE_TOOL_NAME,
+            args={"markdown": "one durable step", "page_uri": f"page:{page_id}"},
+        )
+
+        assert not outcome.is_error
+        assert outcome.created_refs == [
+            {"kind": "note_block", "id": str(expected_note_id), "label": "page"}
+        ]
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM note_blocks WHERE id = :note_id"),
+                {"note_id": expected_note_id},
+            )
+            == 1
+        )
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM message_tool_calls WHERE id = :tool_call_id"),
+                {"tool_call_id": outcome.tool_call_id},
+            )
+            == 1
+        )
+
+        with direct_db.session() as observer:
+            assert (
+                observer.scalar(
+                    text("SELECT count(*) FROM note_blocks WHERE id = :note_id"),
+                    {"note_id": expected_note_id},
+                )
+                == 0
+            )
+            assert (
+                observer.scalar(
+                    text("SELECT count(*) FROM message_tool_calls WHERE id = :tool_call_id"),
+                    {"tool_call_id": outcome.tool_call_id},
+                )
+                == 0
+            )
+
+        session.commit()
+
+    with direct_db.session() as observer:
+        assert (
+            observer.scalar(
+                text("SELECT count(*) FROM note_blocks WHERE id = :note_id"),
+                {"note_id": expected_note_id},
+            )
+            == 1
+        )
+        assert (
+            observer.scalar(
+                text("SELECT count(*) FROM message_tool_calls WHERE id = :tool_call_id"),
+                {"tool_call_id": outcome.tool_call_id},
+            )
+            == 1
+        )
+
+
 def test_queue_add_marks_assistant_source(direct_db):
     user_id = _seed_user(direct_db)
     run = _seed_run(direct_db, user_id)
@@ -480,16 +636,54 @@ def test_queue_add_marks_assistant_source(direct_db):
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.QUEUE_ADD_TOOL_NAME,
             args={"media_uri": f"media:{media_id}"},
         )
         assert not outcome.is_error
-        source = session.execute(
-            text("SELECT source FROM consumption_queue_items WHERE user_id = :u AND media_id = :m"),
+        item_id, source = session.execute(
+            text(
+                "SELECT id, source FROM consumption_queue_items "
+                "WHERE user_id = :u AND media_id = :m"
+            ),
             {"u": user_id, "m": media_id},
-        ).scalar_one()
+        ).one()
         assert source == "assistant"
+
+        with direct_db.session() as observer:
+            assert (
+                observer.scalar(
+                    text("SELECT count(*) FROM consumption_queue_items WHERE id = :item_id"),
+                    {"item_id": item_id},
+                )
+                == 0
+            )
+            assert (
+                observer.scalar(
+                    text("SELECT count(*) FROM message_tool_calls WHERE id = :tool_call_id"),
+                    {"tool_call_id": outcome.tool_call_id},
+                )
+                == 0
+            )
+
+        session.commit()
+
+    with direct_db.session() as observer:
+        assert (
+            observer.scalar(
+                text("SELECT source FROM consumption_queue_items WHERE id = :item_id"),
+                {"item_id": item_id},
+            )
+            == "assistant"
+        )
+        assert (
+            observer.scalar(
+                text("SELECT count(*) FROM message_tool_calls WHERE id = :tool_call_id"),
+                {"tool_call_id": outcome.tool_call_id},
+            )
+            == 1
+        )
 
 
 def test_undo_reverts_edge_and_is_idempotent(direct_db):
@@ -502,6 +696,7 @@ def test_undo_reverts_edge_and_is_idempotent(direct_db):
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.MINT_EDGE_TOOL_NAME,
             args={
@@ -511,6 +706,7 @@ def test_undo_reverts_edge_and_is_idempotent(direct_db):
             },
         )
         tool_call_id = outcome.tool_call_id
+        session.commit()
 
     with direct_db.session() as session:
         writes.undo_tool_call(
@@ -552,6 +748,7 @@ def test_cap_enforced_and_reclaimed_by_undo(direct_db):
             outcome = writes.execute_write_tool(
                 session,
                 run=run,
+                effect_id=uuid4(),
                 tool_call_index=index,
                 tool_name=writes.JOT_NOTE_TOOL_NAME,
                 args={"markdown": f"note {index}"},
@@ -563,12 +760,14 @@ def test_cap_enforced_and_reclaimed_by_undo(direct_db):
         capped = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=99,
             tool_name=writes.JOT_NOTE_TOOL_NAME,
             args={"markdown": "over the line"},
         )
         assert capped.is_error
         assert capped.error_code == "write_cap_reached"
+        session.commit()
 
     # Undo one committed write; the ninth now succeeds (budget reclaimed).
     with direct_db.session() as session:
@@ -582,6 +781,7 @@ def test_cap_enforced_and_reclaimed_by_undo(direct_db):
         after = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=100,
             tool_name=writes.JOT_NOTE_TOOL_NAME,
             args={"markdown": "now allowed"},
@@ -591,13 +791,16 @@ def test_cap_enforced_and_reclaimed_by_undo(direct_db):
 
 def _file_to_library(direct_db, run, media_id, library_id) -> object:
     with direct_db.session() as session:
-        return writes.execute_write_tool(
+        outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
             args={"resource_uri": f"media:{media_id}", "library_id": str(library_id)},
         )
+        session.commit()
+        return outcome
 
 
 def test_undo_removes_assistant_entry(direct_db):
@@ -686,6 +889,7 @@ def test_add_to_library_rejects_system_library_destination(direct_db):
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
             args={"resource_uri": f"media:{media_id}", "library_id": str(system_library_id)},
@@ -712,6 +916,7 @@ def test_add_to_library_rejects_podcast_into_default(direct_db):
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
             args={"resource_uri": f"podcast:{podcast_id}", "library_id": str(default_library_id)},
@@ -736,6 +941,7 @@ def test_add_to_library_rejects_podcast_without_active_subscription(direct_db):
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
             args={"resource_uri": f"podcast:{podcast_id}", "library_id": str(target_library)},
@@ -764,6 +970,7 @@ def test_add_to_library_files_subscribed_podcast_and_undo_removes_only_agent_ent
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
             args={
@@ -771,6 +978,7 @@ def test_add_to_library_files_subscribed_podcast_and_undo_removes_only_agent_ent
                 "library_id": str(target_library),
             },
         )
+        session.commit()
     assert not outcome.is_error
     assert outcome.created_refs == [
         {
@@ -852,10 +1060,12 @@ def test_add_to_library_restores_tombstoned_media_and_clears_tombstone(direct_db
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
             args={"resource_uri": f"media:{media_id}", "library_id": str(target_library)},
         )
+        session.commit()
     assert not outcome.is_error
 
     with direct_db.session() as session:
@@ -873,11 +1083,16 @@ def test_undo_reverts_highlight_and_attached_note(direct_db):
     direct_db.register_cleanup("pages", "user_id", user_id)
     canonical = "The entropy of the system rose."
     media_id, _ = _seed_readable_media(direct_db, user_id, title="H", canonical_text=canonical)
+    effect_id = UUID("33333333-3333-7333-8333-333333333333")
+    expected_highlight_id = uuid5(effect_id, "create_highlight:highlight")
+    expected_note_id = uuid5(effect_id, "create_highlight:note_block")
+    expected_mutation_id = f"assistant:{uuid5(effect_id, 'create_highlight:note_mutation')}"
 
     with direct_db.session() as session:
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=effect_id,
             tool_call_index=0,
             tool_name=writes.CREATE_HIGHLIGHT_TOOL_NAME,
             args={
@@ -888,6 +1103,36 @@ def test_undo_reverts_highlight_and_attached_note(direct_db):
         )
         assert not outcome.is_error
         assert {ref["kind"] for ref in outcome.created_refs} == {"highlight", "note_block"}
+        assert {UUID(str(ref["id"])) for ref in outcome.created_refs} == {
+            expected_highlight_id,
+            expected_note_id,
+        }
+        assert (
+            session.scalar(
+                text(
+                    "SELECT client_mutation_id FROM resource_mutations "
+                    "WHERE user_id = :user_id AND mutation_scope = :scope"
+                ),
+                {"user_id": user_id, "scope": f"highlight_note:{expected_highlight_id}"},
+            )
+            == expected_mutation_id
+        )
+        with direct_db.session() as observer:
+            assert (
+                observer.scalar(
+                    text("SELECT count(*) FROM highlights WHERE id = :highlight_id"),
+                    {"highlight_id": expected_highlight_id},
+                )
+                == 0
+            )
+            assert (
+                observer.scalar(
+                    text("SELECT count(*) FROM note_blocks WHERE id = :note_id"),
+                    {"note_id": expected_note_id},
+                )
+                == 0
+            )
+        session.commit()
 
     with direct_db.session() as session:
         writes.undo_tool_call(
@@ -915,11 +1160,13 @@ def test_undo_reverts_queue_item(direct_db):
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.QUEUE_ADD_TOOL_NAME,
             args={"media_uri": f"media:{media_id}"},
         )
         assert not outcome.is_error
+        session.commit()
 
     with direct_db.session() as session:
         writes.undo_tool_call(
@@ -948,6 +1195,7 @@ def test_undo_rejects_tool_call_of_another_conversation(direct_db):
         outcome = writes.execute_write_tool(
             session,
             run=run,
+            effect_id=uuid4(),
             tool_call_index=0,
             tool_name=writes.MINT_EDGE_TOOL_NAME,
             args={
@@ -956,6 +1204,7 @@ def test_undo_rejects_tool_call_of_another_conversation(direct_db):
                 "rationale": "linked",
             },
         )
+        session.commit()
 
     with direct_db.session() as session:
         with pytest.raises(ApiError):

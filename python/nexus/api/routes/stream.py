@@ -32,12 +32,18 @@ from nexus.api.routes._sse import (
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.schemas.execution import (
+    EXECUTION_ADVISORY_EVENT_TYPE,
+    DurableExecutionOut,
+)
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import media as media_service
 from nexus.services import oracle as oracle_service
 from nexus.services import run_kit
 from nexus.services.artifacts import engine as artifact_engine
 from nexus.services.artifacts.handles import unseal_artifact_build
+from nexus.services.chat_run_execution import chat_run_execution_phase
+from nexus.services.durable_step_journal import DurableExecutionPhase
 from nexus.services.podcasts import refresh as podcast_refresh_service
 from nexus.services.podcasts.handles import (
     PodcastRefreshRunHandle,
@@ -65,6 +71,7 @@ class CursorStreamKind:
     run_kind: run_kit.RunStreamKind
     assert_viewer: Callable[[Session, UUID, UUID], None]
     read_after: Callable[[Session, UUID, UUID, int], tuple[Sequence[Any], bool]]
+    read_advisory: Callable[[Session, UUID, UUID], DurableExecutionPhase | None] | None = None
 
 
 _CHAT_RUN_KIND = CursorStreamKind(
@@ -75,6 +82,7 @@ _CHAT_RUN_KIND = CursorStreamKind(
     read_after=lambda db, viewer_id, run_id, after: run_kit.get_run_events(
         db, run_kit.RunStreamKind.ChatRun, run_id, after
     ),
+    read_advisory=lambda db, viewer_id, run_id: chat_run_execution_phase(db, run_id=run_id),
 )
 
 _ORACLE_READING_KIND = CursorStreamKind(
@@ -95,6 +103,9 @@ _ARTIFACT_BUILD_KIND = CursorStreamKind(
     read_after=lambda db, viewer_id, build_id, after: run_kit.get_run_events(
         db, run_kit.RunStreamKind.ArtifactBuild, build_id, after
     ),
+    read_advisory=lambda db, viewer_id, build_id: artifact_engine.build_execution_phase(
+        db, build_id=build_id, viewer_id=viewer_id
+    ),
 )
 
 
@@ -112,10 +123,27 @@ async def make_cursor_stream_response(
             kind.assert_viewer(db, viewer_id, entity_id)
             return kind.read_after(db, viewer_id, entity_id, after)
 
+    def read_advisory() -> tuple[str, dict[str, Any]] | None:
+        if kind.read_advisory is None:
+            return None
+        with get_session_factory()() as db:
+            kind.assert_viewer(db, viewer_id, entity_id)
+            phase = kind.read_advisory(db, viewer_id, entity_id)
+            if phase is None:
+                return None
+            payload = DurableExecutionOut(phase=phase).model_dump(mode="json")
+            return EXECUTION_ADVISORY_EVENT_TYPE, payload
+
     await run_in_threadpool(assert_viewer)
     listener = await open_sse_listener(run_kit.notify_channel(kind.run_kind), str(entity_id))
     return StreamingResponse(
-        tail_cursor_stream(request=request, listener=listener, after=after, read_after=read_after),
+        tail_cursor_stream(
+            request=request,
+            listener=listener,
+            after=after,
+            read_after=read_after,
+            read_advisory=read_advisory if kind.read_advisory is not None else None,
+        ),
         media_type="text/event-stream; charset=utf-8",
         headers=_SSE_HEADERS,
     )
@@ -176,37 +204,12 @@ async def stream_artifact_build_events(
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
     build_id = unseal_artifact_build(artifact_build_handle)
-
-    def assert_viewer() -> None:
-        with get_session_factory()() as db:
-            _ARTIFACT_BUILD_KIND.assert_viewer(db, viewer_id, build_id)
-
-    def read_after(after: int) -> tuple[Sequence[Any], bool]:
-        with get_session_factory()() as db:
-            _ARTIFACT_BUILD_KIND.assert_viewer(db, viewer_id, build_id)
-            return _ARTIFACT_BUILD_KIND.read_after(db, viewer_id, build_id, after)
-
-    def read_advisory() -> tuple[str, dict[str, Any]]:
-        with get_session_factory()() as db:
-            phase = artifact_engine.build_execution_phase(
-                db, build_id=build_id, viewer_id=viewer_id
-            )
-            return "ExecutionAdvisory", {"phase": phase.value}
-
-    await run_in_threadpool(assert_viewer)
-    listener = await open_sse_listener(
-        run_kit.notify_channel(run_kit.RunStreamKind.ArtifactBuild), str(build_id)
-    )
-    return StreamingResponse(
-        tail_cursor_stream(
-            request=request,
-            listener=listener,
-            after=cursor,
-            read_after=read_after,
-            read_advisory=read_advisory,
-        ),
-        media_type="text/event-stream; charset=utf-8",
-        headers=_SSE_HEADERS,
+    return await make_cursor_stream_response(
+        _ARTIFACT_BUILD_KIND,
+        request=request,
+        entity_id=build_id,
+        viewer_id=viewer_id,
+        after=cursor,
     )
 
 

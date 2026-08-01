@@ -502,6 +502,14 @@ def test_retrieval_ref_json_rejects_web_result_source_version():
     assert "source_version" not in serialized
     with pytest.raises(ValidationError):
         retrieval_result_ref_json({**valid_ref, "source_version": "web:v1"})
+    provider_ref = "provider-result:not-a-uuid"
+    for identity_drift in (
+        {"id": provider_ref},
+        {"source_id": provider_ref},
+        {"context_ref": {"type": "web_result", "id": provider_ref}},
+    ):
+        with pytest.raises(ValidationError):
+            retrieval_result_ref_json({**valid_ref, **identity_drift})
 
 
 def test_retrieval_ref_json_requires_media_context_for_episode_and_video_results():

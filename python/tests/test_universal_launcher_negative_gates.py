@@ -31,6 +31,16 @@ def test_web_search_persistence_owner_is_the_chat_tool_path() -> None:
     assert "def persist_web_search_run(" in service_src, (
         "persist_web_search_run must remain defined in the chat web_search service"
     )
-    assert "persist_web_search_run(db, run)" in service_src, (
+    assert "return persist_web_search_run(" in service_src, (
         "execute_web_search must remain the sole caller of persist_web_search_run"
     )
+
+
+def test_web_search_persistence_has_one_canonical_identity_path() -> None:
+    """Raw provider citations cannot serialize events or commit the caller's step."""
+    service_src = _WEB_SEARCH_SERVICE.read_text(encoding="utf-8")
+    assert "def retrieval_result_event(" not in service_src
+    assert "def to_json(" not in service_src
+    assert "source_id or self.result_ref" not in service_src
+    assert "db.commit()" not in service_src
+    assert "UPDATE message_tool_calls" not in service_src

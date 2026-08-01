@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NewType
 from uuid import UUID
 
 from pydantic import (
@@ -13,6 +13,9 @@ from pydantic import (
     TypeAdapter,
     model_validator,
 )
+
+ProviderResultRef = NewType("ProviderResultRef", str)
+ExternalSnapshotId = NewType("ExternalSnapshotId", UUID)
 
 
 class RetrievalContextRef(BaseModel):
@@ -346,10 +349,10 @@ class MessageRetrievalResultRef(BaseModel):
 
 class WebRetrievalResultRef(BaseModel):
     type: Literal["web_result"]
-    id: str
+    id: ExternalSnapshotId
     result_type: Literal["web_result"]
-    result_ref: str
-    source_id: str
+    result_ref: ProviderResultRef
+    source_id: ExternalSnapshotId
     title: str
     url: str
     display_url: str | None = None
@@ -375,13 +378,9 @@ class WebRetrievalResultRef(BaseModel):
     def validate_web_ref(self) -> WebRetrievalResultRef:
         if self.context_ref.type != "web_result":
             raise ValueError("web context_ref.type must be web_result")
-        try:
-            UUID(self.source_id)
-        except ValueError as exc:
-            raise ValueError("web_result source_id must be an external_snapshot UUID") from exc
         if self.id != self.source_id:
             raise ValueError("web_result id must match source_id")
-        if str(self.context_ref.id) != self.source_id:
+        if str(self.context_ref.id) != str(self.source_id):
             raise ValueError("web_result context_ref.id must match source_id")
         if self.locator.type != "external_url":
             raise ValueError("web_result locator must be external_url")

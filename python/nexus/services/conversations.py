@@ -35,6 +35,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
+from nexus.jobs.queue import revoke_jobs_by_dedupe_keys
 from nexus.logging import get_logger
 from nexus.schemas.chat_reader_selection import ReaderSelectionOut
 from nexus.schemas.citation import CitationOut
@@ -1076,6 +1077,11 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
 
     chat_run_ids = _chat_run_ids_for_messages(db, message_ids)
     if chat_run_ids:
+        revoke_jobs_by_dedupe_keys(
+            db,
+            kind="chat_run",
+            dedupe_keys=[f"chat_run:{run_id}" for run_id in chat_run_ids],
+        )
         db.execute(
             text("DELETE FROM chat_run_events WHERE run_id = ANY(:chat_run_ids)"),
             {"chat_run_ids": chat_run_ids},

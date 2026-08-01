@@ -197,12 +197,53 @@ describe("decodeConversationMessage", () => {
       unresolvedReason: null,
     });
   });
+
+  it("strictly decodes the required trust-run execution presence", () => {
+    const wire = {
+      ...userMessageBase,
+      id: "a1",
+      role: "assistant",
+      trust_trail: {
+        run: {
+          execution: {
+            kind: "Present",
+            value: { phase: "Recovering" },
+          },
+        },
+        citations: [],
+        context_refs_added: [],
+      },
+    } as unknown as ConversationMessage;
+    expect(
+      decodeConversationMessage(wire).trust_trail?.run?.execution,
+    ).toEqual(present({ phase: "Recovering" }));
+
+    const missing = {
+      ...wire,
+      trust_trail: { ...wire.trust_trail, run: {} },
+    } as unknown as ConversationMessage;
+    expect(() => decodeConversationMessage(missing)).toThrow();
+
+    const extra = {
+      ...wire,
+      trust_trail: {
+        ...wire.trust_trail,
+        run: {
+          execution: {
+            kind: "Present",
+            value: { phase: "Recovering", retry: true },
+          },
+        },
+      },
+    } as unknown as ConversationMessage;
+    expect(() => decodeConversationMessage(extra)).toThrow();
+  });
 });
 
 describe("decodeChatRunData", () => {
   it("decodes the user_message snapshot and leaves the assistant Absent", () => {
     const runData = {
-      run: {},
+      run: { execution: { kind: "Absent" } },
       conversation: {},
       user_message: {
         ...userMessageBase,
@@ -221,5 +262,31 @@ describe("decodeChatRunData", () => {
       present(decodedSnapshot),
     );
     expect(decoded.assistant_message.reader_selection).toEqual(absent());
+  });
+
+  it("rejects a missing or unknown top-level run execution", () => {
+    const base = {
+      run: { execution: { kind: "Present", value: { phase: "Running" } } },
+      conversation: {},
+      user_message: { ...userMessageBase, id: "u1" },
+      assistant_message: {
+        ...userMessageBase,
+        id: "a1",
+        role: "assistant",
+      },
+      stream_state: {},
+    } as unknown as ChatRunResponse["data"];
+    expect(decodeChatRunData(base).run.execution).toEqual(
+      present({ phase: "Running" }),
+    );
+    expect(() =>
+      decodeChatRunData({ ...base, run: {} } as unknown as ChatRunResponse["data"]),
+    ).toThrow();
+    expect(() =>
+      decodeChatRunData({
+        ...base,
+        run: { execution: { kind: "Present", value: { phase: "Paused" } } },
+      } as unknown as ChatRunResponse["data"]),
+    ).toThrow();
   });
 });

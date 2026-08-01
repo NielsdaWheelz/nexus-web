@@ -21,6 +21,7 @@ from nexus.db.models import (
     ConversationBranch,
     Message,
 )
+from nexus.jobs.queue import enqueue_job
 from nexus.services.conversations import (
     DEFAULT_CONVERSATION_TITLE,
     MAX_CONVERSATION_TITLE_LENGTH,
@@ -679,9 +680,10 @@ class TestDeleteConversation:
                     active_leaf_message_id=pending_assistant_id,
                 )
             )
+            run_id = uuid4()
             session.add(
                 ChatRun(
-                    id=uuid4(),
+                    id=run_id,
                     owner_user_id=user_id,
                     conversation_id=conversation_id,
                     user_message_id=branch_user_id,
@@ -691,11 +693,21 @@ class TestDeleteConversation:
                     status="running",
                 )
             )
+            enqueue_job(
+                session,
+                kind="chat_run",
+                payload={
+                    "run_id": str(run_id),
+                    "coordination": {"sensitive": {"terminal_result": "must be deleted"}},
+                },
+                dedupe_key=f"chat_run:{run_id}",
+            )
             session.commit()
 
         direct_db.register_cleanup("conversation_active_paths", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversation_branches", "conversation_id", conversation_id)
         direct_db.register_cleanup("chat_runs", "conversation_id", conversation_id)
+        direct_db.register_cleanup("background_jobs", "dedupe_key", f"chat_run:{run_id}")
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
@@ -717,6 +729,13 @@ class TestDeleteConversation:
                     {"id": conversation_id},
                 )
                 assert result.scalar() == 0, table
+            assert (
+                session.execute(
+                    text("SELECT count(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
+                    {"dedupe_key": f"chat_run:{run_id}"},
+                ).scalar_one()
+                == 0
+            )
 
 
 # =============================================================================

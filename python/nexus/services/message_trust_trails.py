@@ -40,6 +40,7 @@ from nexus.services.chat_failure import (
     compute_has_write_tool_attempt,
     compute_terminal_attempts,
 )
+from nexus.services.chat_run_execution import project_chat_run_executions
 from nexus.services.resource_graph.citations import build_citation_outs_for_sources
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -112,6 +113,10 @@ def build_assistant_trust_trails(
         runs_by_message.setdefault(run.assistant_message_id, run)
 
     run_ids = [run.id for run in runs_by_message.values()]
+    execution_by_run = project_chat_run_executions(
+        db,
+        list(runs_by_message.values()),
+    )
     done_payloads: dict[UUID, dict[str, Any]] = {}
     if run_ids:
         for event in db.scalars(
@@ -437,6 +442,7 @@ def build_assistant_trust_trails(
                         has_write_tool_attempt=compute_has_write_tool_attempt(db, run),
                         attempts=compute_terminal_attempts(db, run),
                     ),
+                    execution=execution_by_run[run.id],
                     final_chars=cast(int | None, done_payload.get("final_chars")),
                     started_at=run.started_at,
                     completed_at=run.completed_at,

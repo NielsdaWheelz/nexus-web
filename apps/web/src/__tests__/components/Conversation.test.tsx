@@ -170,6 +170,12 @@ function assistantWithProfileSelection(
         error_code: null,
         error_origin: null,
         failure: null,
+        execution:
+          assistant.status === "complete" ||
+          assistant.status === "error" ||
+          assistant.status === "cancelled"
+            ? { kind: "Absent" }
+            : { kind: "Present", value: { phase: "Running" } },
         reasoning_effort: { kind: "Absent" },
         support_id: { kind: "Absent" },
         publication_warning: { kind: "Absent" },
@@ -323,6 +329,7 @@ function activeBranchBRun(): ChatRunResponse["data"] {
       support_id: { kind: "Absent" },
       publication_warning: { kind: "Absent" },
       failure: null,
+      execution: { kind: "Present", value: { phase: "Running" } },
       cancel_requested_at: null,
       started_at: timestamp,
       completed_at: null,
@@ -446,6 +453,7 @@ function retryRun(): ChatRunResponse["data"] {
       support_id: { kind: "Absent" },
       publication_warning: { kind: "Absent" },
       failure: null,
+      execution: { kind: "Present", value: { phase: "Queued" } },
       cancel_requested_at: null,
       started_at: null,
       completed_at: null,

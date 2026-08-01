@@ -27,6 +27,7 @@ from provider_runtime import (
     TokenUsage,
     ToolCallStart,
 )
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -37,18 +38,11 @@ from nexus.jobs.queue import (
 )
 from nexus.schemas.presence import absent as replay_absent
 from nexus.schemas.presence import present as replay_present
-from nexus.services.artifacts import coordination
+from nexus.services import durable_step_journal as step_journal
 from nexus.services.artifacts import engine as artifact_engine
-from nexus.services.artifacts.coordination import (
-    AttachReconciledResult,
-    Completed,
-    Prepared,
-    ProveNotDispatched,
-    Uncertain,
-)
+from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.dossier_types import (
     ArtifactBuildEventType,
-    DossierBuildExecutionPhase,
     DossierBuildFailureCode,
     DossierGenerationInProgress,
     SubjectResource,
@@ -65,6 +59,14 @@ from nexus.services.artifacts.engine import (
 )
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.durable_step_journal import (
+    AttachReconciledResult,
+    Completed,
+    DurableExecutionPhase,
+    Prepared,
+    ProveNotDispatched,
+    Uncertain,
+)
 from nexus.services.library_governance import (
     remove_library_member,
     transfer_library_ownership,
@@ -416,7 +418,7 @@ async def _run_dossier_build(
         db,
         build_id=build_id,
         ctx=ctx,
-        runtime=coordination.DossierBuildRuntime(
+        runtime=DossierBuildRuntime(
             build_id=build_id,
             artifact_id=UUID(str(artifact_id)),
             job=job,
@@ -514,7 +516,8 @@ def _dead_uncertain_dossier_build(
     db.execute(
         text(
             "UPDATE background_jobs SET status = 'dead', claimed_by = NULL, "
-            "lease_expires_at = NULL, finished_at = now() WHERE id = :job_id"
+            "lease_expires_at = NULL, finished_at = now(), "
+            "error_code = 'E_TEST_CRASH' WHERE id = :job_id"
         ),
         {"job_id": claimed.id},
     )
@@ -526,14 +529,14 @@ def _dead_uncertain_dossier_build(
 
 
 def test_coordination_replay_states_are_distinct() -> None:
-    """B4: coordination.py owns the per-step Prepared|Uncertain|Completed machine."""
+    """B4: the shared journal owns the Prepared|Uncertain|Completed machine."""
     assert Prepared is not Uncertain
     assert Uncertain is not Completed
     assert Prepared is not Completed
 
 
 def test_execution_phase_advisory_enum_is_closed() -> None:
-    assert {p.value for p in DossierBuildExecutionPhase} == {
+    assert {p.value for p in DurableExecutionPhase} == {
         "Queued",
         "Running",
         "Recovering",
@@ -573,7 +576,7 @@ def test_lease_expiry_below_budget_recovers_same_build(db_session: Session) -> N
     assert reclaimed.status == "running"
     assert reclaimed.attempts == 2
     head = read_head(db_session, locator=loc, requester_user_id=uid)
-    assert head.active_build.execution == DossierBuildExecutionPhase.Recovering
+    assert head.active_build.execution == DurableExecutionPhase.Recovering
 
 
 # --- Suspended: dead-letter leaves a suspended prefix, no synth Failed --------
@@ -609,7 +612,7 @@ def test_dead_letter_suspends_without_synthesizing_failed(db_session: Session) -
     ).scalar_one()
     assert fails == 0
     head = read_head(db_session, locator=loc, requester_user_id=uid)
-    assert head.active_build.execution == DossierBuildExecutionPhase.Suspended
+    assert head.active_build.execution == DurableExecutionPhase.Suspended
     # A suspended build does NOT unlock a regeneration.
     with pytest.raises(DossierGenerationInProgress):
         regenerate_artifact(
@@ -744,7 +747,7 @@ def test_prepared_replay_reuses_progress_before_uncertain_dispatch(
         worker_id="w-prepared-progress-replay",
         attempt_no=claimed.attempts,
     )
-    original_checkpoint = coordination.checkpoint_step_state
+    original_checkpoint = step_journal.checkpoint_step_state
     crashed = False
 
     def crash_before_uncertain(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
@@ -756,7 +759,7 @@ def test_prepared_replay_reuses_progress_before_uncertain_dispatch(
         return original_checkpoint(*args, **kwargs)
 
     monkeypatch.setattr(
-        coordination,
+        step_journal,
         "checkpoint_step_state",
         crash_before_uncertain,
     )
@@ -782,7 +785,7 @@ def test_prepared_replay_reuses_progress_before_uncertain_dispatch(
     ) == ["Started", "Progress"]
 
     monkeypatch.setattr(
-        coordination,
+        step_journal,
         "checkpoint_step_state",
         original_checkpoint,
     )
@@ -839,7 +842,7 @@ def test_runtime_rejects_changed_replay_generation_identity(db_session: Session)
     assert job is not None
     payload = dict(job.payload)
     raw_states = dict(payload["coordination"])
-    state = coordination.StepReplayState.model_validate(raw_states["synthesis"])
+    state = step_journal.StepReplayState.model_validate(raw_states["synthesis"])
     raw_states["synthesis"] = state.model_copy(update={"generation_id": uuid4()}).model_dump(
         mode="json"
     )
@@ -920,17 +923,22 @@ def test_provider_target_is_part_of_replay_request_fingerprint(
 
 
 @pytest.mark.parametrize(
-    ("corruption", "expected_error"),
+    ("corruption", "expected_exception", "expected_error"),
     [
-        ("payload", "payload identity changed"),
-        ("generation", "generation identity changed"),
-        ("request", "no request fingerprint"),
-        ("terminal", "already has a terminal result"),
+        ("payload", AssertionError, "payload identity changed"),
+        ("generation", AssertionError, "generation identity changed"),
+        ("request", ValidationError, "request fingerprint must be present"),
+        (
+            "terminal",
+            ValidationError,
+            "Uncertain durable step cannot have a terminal result",
+        ),
     ],
 )
 def test_operator_reconcile_rejects_corrupt_replay_evidence(
     db_session: Session,
     corruption: str,
+    expected_exception: type[Exception],
     expected_error: str,
 ) -> None:
     build_id, job_id = _dead_uncertain_dossier_build(
@@ -944,7 +952,7 @@ def test_operator_reconcile_rejects_corrupt_replay_evidence(
         payload["build_id"] = str(uuid4())
     else:
         raw_states = dict(payload["coordination"])
-        state = coordination.StepReplayState.model_validate(raw_states["synthesis"])
+        state = step_journal.StepReplayState.model_validate(raw_states["synthesis"])
         if corruption == "generation":
             state = state.model_copy(update={"generation_id": uuid4()})
         elif corruption == "request":
@@ -959,7 +967,7 @@ def test_operator_reconcile_rejects_corrupt_replay_evidence(
     )
     db_session.commit()
 
-    with pytest.raises(AssertionError, match=expected_error):
+    with pytest.raises(expected_exception, match=expected_error):
         reconcile_uncertain_build(
             db_session,
             build_id=build_id,
@@ -1660,11 +1668,14 @@ def test_operator_reconciles_uncertain_build_without_automatic_redispatch(
     db_session.execute(
         text(
             "UPDATE background_jobs SET status = 'dead', claimed_by = NULL, "
-            "lease_expires_at = NULL, finished_at = now() WHERE id = :job_id"
+            "lease_expires_at = NULL, finished_at = now(), "
+            "error_code = 'E_TEST_CRASH' WHERE id = :job_id"
         ),
         {"job_id": claimed.id},
     )
     db_session.commit()
+    suspended = read_head(db_session, locator=locator, requester_user_id=uid)
+    assert suspended.active_build.execution == DurableExecutionPhase.Suspended
 
     payload = {
         "content_html": (
@@ -1684,12 +1695,22 @@ def test_operator_reconciles_uncertain_build_without_automatic_redispatch(
         build_id=ticket.build_id,
         resolution=resolution,
     )
+    repaired_job = get_job(db_session, claimed.id)
+    assert repaired_job is not None
+    assert repaired_job.status == "pending"
+    assert repaired_job.attempts == 0
+    assert repaired_job.error_code == "E_TEST_CRASH"
+    recovering = read_head(db_session, locator=locator, requester_user_id=uid)
+    assert recovering.active_build.execution == DurableExecutionPhase.Recovering
     repaired = claim_dossier_build_job(
         db_session,
         build_id=ticket.build_id,
         worker_id="w-repaired",
     )
-    assert repaired.id == claimed.id
+    assert repaired.id == claimed.id and repaired.attempts == 1
+    assert repaired.error_code == "E_TEST_CRASH"
+    recovering = read_head(db_session, locator=locator, requester_user_id=uid)
+    assert recovering.active_build.execution == DurableExecutionPhase.Recovering
     replay_ctx = JobExecutionContext(
         job_id=repaired.id,
         worker_id="w-repaired",
@@ -1943,7 +1964,7 @@ def test_execution_advisory_is_not_persisted_as_a_build_event(db_session: Sessio
     )
     head = read_head(db_session, locator=loc, requester_user_id=uid)
     assert head.active_build is not None
-    assert isinstance(head.active_build.execution, DossierBuildExecutionPhase)
+    assert isinstance(head.active_build.execution, DurableExecutionPhase)
     # The advisory phase never lands as a persisted event_type (it does not
     # advance the cursor); every persisted event is a real ArtifactBuildEventType.
     persisted = list(
@@ -1954,4 +1975,4 @@ def test_execution_advisory_is_not_persisted_as_a_build_event(db_session: Sessio
     )
     valid = {e.value for e in ArtifactBuildEventType}
     assert all(t in valid for t in persisted)
-    assert not (valid & {p.value for p in DossierBuildExecutionPhase})
+    assert not (valid & {p.value for p in DurableExecutionPhase})
