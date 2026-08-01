@@ -596,7 +596,8 @@ Write ignored `test-results/runs/<run_id>/summary.json`:
   "peak_owned_mib": {
     "process_tree_rss": 0,
     "container_working_set": 0,
-    "total": 0
+    "total": 0,
+    "measurement_complete": true
   },
   "selection": [{
     "path": "path",
@@ -861,9 +862,10 @@ not supported compatibility modes.
   downward-only ratchet only after at least 20 comparable successful runs; it
   is not an initial acceptance fiction.
 - **AC7 — build/browser:** one Next build and one Chromium installation at most
-  per verification workflow; all browser capabilities consume the same
-  fingerprinted standalone artifact; all journeys use strict CSP and no
-  disable escape.
+  per verification workflow; Playwright journey, extension, and deployment-smoke
+  capabilities consume the same fingerprinted standalone artifact, while
+  Vitest browser components retain their Vite component boundary; all journeys
+  use strict CSP and no disable escape.
 - **AC8 — portfolio:** every risk id in the in-scope typed floor has an
   independent, sensitive proof;
   the typed minimum risk floor cannot be lowered through `proofs.json`;

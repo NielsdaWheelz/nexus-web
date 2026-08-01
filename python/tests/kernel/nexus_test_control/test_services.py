@@ -9,11 +9,14 @@ from pathlib import Path
 
 import pytest
 
+from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.runtime import (
     RuntimeContractError,
     RuntimePorts,
     claim_run,
     initialize_runtime,
+    process_resource_identity,
+    record_planned,
 )
 from nexus_test_control.services import (
     TEST_EXTENSION_ID,
@@ -91,6 +94,43 @@ def test_owned_process_unblocks_sigterm_before_exec_and_stops_gracefully(
             os.killpg(started.process_group_id, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+
+def test_clean_recovers_a_process_killed_between_spawn_and_created_record(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    owner_token = "a" * 32
+    command = (sys.executable, "-c", "import signal; signal.pause()")
+    resource = Resource(ResourceKind.PROCESS, process_resource_identity(RUN_ID, "api"))
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        resource,
+        external_id=owner_token,
+        command=command,
+    )
+    process = subprocess.Popen(
+        command,
+        env={
+            **os.environ,
+            "NEXUS_ENV": "test",
+            "NEXUS_TEST_PROCESS_OWNER": owner_token,
+            "NEXUS_TEST_RUN_ID": RUN_ID,
+        },
+        start_new_session=True,
+    )
+    try:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        process.wait(timeout=3)
+        assert not (tmp_path / ".nexus-test/runs" / RUN_ID).exists()
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
 
 
 def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs() -> None:

@@ -7,6 +7,7 @@ import httpx
 from provider_runtime import CATALOG, Present, ProviderCredential, ProviderRuntime
 
 from nexus.services.llm_profiles import PROFILES
+from nexus_test_control.provider_budget import PaidCallBudget
 from tests.hosted._provider_live import (
     OneAttemptPerOperation,
     atomic_evidence,
@@ -47,6 +48,10 @@ def test_active_nexus_provider_surface_is_release_certified() -> None:
 
     async def run() -> None:
         guard = OneAttemptPerOperation()
+        budget = PaidCallBudget(
+            call_limit=CALL_LIMIT,
+            cost_limit_usd_micros=int(COST_LIMIT_USD * 1_000_000),
+        )
         results: list[dict[str, object]] = []
         actual_cost_micros = 0
         exposure_micros = 0
@@ -58,21 +63,18 @@ def test_active_nexus_provider_surface_is_release_certified() -> None:
             for profile in PROFILES:
                 target = profile.target
 
-                def record_exposure(plan) -> None:
-                    nonlocal exposure_micros
-                    exposure_micros += plan.accounting.maximum_cost_estimate_usd_micros
-
                 try:
                     result = await certify_chat(
                         runtime,
                         guard,
+                        budget,
                         target,
                         REASONING[target.provider],
                         os.environ[KEY_ENV[target.provider]],
                         max_output_tokens=MAX_OUTPUT[target.provider],
-                        on_plan=record_exposure,
                     )
                     actual_cost_micros += result.estimated_cost_usd_micros
+                    exposure_micros = budget.reserved_cost_usd_micros
                     results.append(
                         {
                             "target": result.target,
@@ -90,7 +92,15 @@ def test_active_nexus_provider_surface_is_release_certified() -> None:
 
             embedding = embedding_call()
             embedding_id = f"embed:openai/{embedding.model}"
-            exposure_micros = int(COST_LIMIT_USD * 1_000_000)
+            embedding_contract = CATALOG.embeddings[0]
+            embedding_exposure = non_generation_cost_usd_micros(
+                sum(len(value.encode("utf-8")) for value in embedding.inputs),
+                0,
+                embedding_contract.input_rate,
+                0,
+            )
+            budget.reserve(embedding_id, embedding_exposure)
+            exposure_micros = budget.reserved_cost_usd_micros
             try:
                 with guard.operation(embedding_id):
                     embedded = await runtime.embed(
@@ -102,12 +112,12 @@ def test_active_nexus_provider_surface_is_release_certified() -> None:
                 assert guard.attempts[embedding_id] == 1
                 assert len(embedded.embeddings) == 1 and embedded.embeddings[0]
                 embedding_usage = usage_counts(embedded.usage)
-                embedding_contract = CATALOG.embeddings[0]
                 embedding_cost = non_generation_cost_usd_micros(
                     *embedding_usage,
                     embedding_contract.input_rate,
                     0,
                 )
+                budget.settle(embedding_id, embedding_cost)
                 actual_cost_micros += embedding_cost
                 results.append(
                     {
@@ -134,6 +144,16 @@ def test_active_nexus_provider_surface_is_release_certified() -> None:
 
             transcription = transcription_call()
             transcription_id = f"transcribe:openai/{transcription.model}"
+            transcription_contract = CATALOG.transcriptions[0]
+            transcription_token_ceiling = len(transcription.content)
+            transcription_exposure = non_generation_cost_usd_micros(
+                transcription_token_ceiling,
+                transcription_token_ceiling,
+                transcription_contract.input_rate,
+                transcription_contract.output_rate,
+            )
+            budget.reserve(transcription_id, transcription_exposure)
+            exposure_micros = budget.reserved_cost_usd_micros
             try:
                 with guard.operation(transcription_id):
                     transcribed = await runtime.transcribe(
@@ -146,12 +166,12 @@ def test_active_nexus_provider_surface_is_release_certified() -> None:
                 assert isinstance(transcribed.text, str)
                 assert isinstance(transcribed.usage, Present)
                 transcription_usage = usage_counts(transcribed.usage)
-                transcription_contract = CATALOG.transcriptions[0]
                 transcription_cost = non_generation_cost_usd_micros(
                     *transcription_usage,
                     transcription_contract.input_rate,
                     transcription_contract.output_rate,
                 )
+                budget.settle(transcription_id, transcription_cost)
                 actual_cost_micros += transcription_cost
                 results.append(
                     {
@@ -177,7 +197,9 @@ def test_active_nexus_provider_surface_is_release_certified() -> None:
                 )
 
         assert sum(guard.attempts.values()) == CALL_LIMIT
-        assert actual_cost_micros <= int(COST_LIMIT_USD * 1_000_000)
+        assert budget.admitted_calls == CALL_LIMIT
+        assert budget.reserved_cost_usd_micros <= int(COST_LIMIT_USD * 1_000_000)
+        assert actual_cost_micros == budget.actual_cost_usd_micros
 
     asyncio.run(run())
 

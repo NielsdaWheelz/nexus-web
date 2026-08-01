@@ -98,6 +98,7 @@ _CALLER_RESOURCE_ENV = frozenset(
         "DATABASE_URL_TEST",
         "DATABASE_URL_TEST_MIGRATIONS",
         "NEXT_PUBLIC_SUPABASE_URL",
+        "NEXUS_TEST_PROCESS_OWNER",
         "PGDATABASE",
         "PGHOST",
         "PGPASSFILE",
@@ -464,10 +465,8 @@ def start_python_process(
     runtime = read_runtime(root)
     if role == "api":
         command = (
-            "uv",
-            "run",
-            "--project",
-            str(root / "python"),
+            str(root / "python/.venv/bin/python"),
+            "-m",
             "uvicorn",
             "apps.api.main:app",
             "--host",
@@ -477,11 +476,7 @@ def start_python_process(
         )
     elif role in {"worker-interactive", "worker-background"}:
         command = (
-            "uv",
-            "run",
-            "--project",
-            str(root / "python"),
-            "python",
+            str(root / "python/.venv/bin/python"),
             "-m",
             "apps.worker.main",
         )
@@ -578,10 +573,20 @@ def _start_owned_process(
     process_environment: Mapping[str, str],
 ) -> StartedProcess:
     resource = Resource(ResourceKind.PROCESS, process_resource_identity(run_id, role))
-    record_planned(root, environment, run_id, resource, command=command)
+    owner_token = secrets.token_hex(16)
+    record_planned(
+        root,
+        environment,
+        run_id,
+        resource,
+        external_id=owner_token,
+        command=command,
+    )
     log_path = root / "test-results" / "runs" / run_id / f"{role}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    child_environment = _child_environment(process_environment)
+    child_environment = _child_environment(
+        {**process_environment, "NEXUS_TEST_PROCESS_OWNER": owner_token}
+    )
     blocked_signals = {signal.SIGINT, signal.SIGTERM}
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
     process: subprocess.Popen[str] | None = None
@@ -635,12 +640,25 @@ def clean_run(
         for candidate in candidates:
             resource = candidate.resource
             if resource.kind is ResourceKind.PROCESS:
-                if candidate.process_group_id is not None:
-                    _stop_process_group(
-                        candidate.process_group_id,
-                        candidate.process_start_token,
+                if candidate.external_id is None:
+                    raise RuntimeContractError("owned process lacks its pre-recorded owner token")
+                process_group_id = candidate.process_group_id
+                process_start_token = candidate.process_start_token
+                if process_group_id is None:
+                    recovered = _recover_planned_process_group(
+                        candidate.external_id,
                         candidate.command,
                         run_id,
+                    )
+                    if recovered is not None:
+                        process_group_id, process_start_token = recovered
+                if process_group_id is not None:
+                    _stop_process_group(
+                        process_group_id,
+                        process_start_token,
+                        candidate.command,
+                        run_id,
+                        candidate.external_id,
                     )
             elif resource.kind is ResourceKind.TEMPLATE_BUILD:
                 if candidate.external_id is None:
@@ -1088,6 +1106,7 @@ def _stop_process_group(
     process_start_token: str | None,
     command: tuple[str, ...] | None,
     run_id: str,
+    owner_token: str,
 ) -> None:
     process_root = Path("/proc") / str(process_group_id)
     if not process_root.exists():
@@ -1105,9 +1124,9 @@ def _stop_process_group(
         raise RuntimeContractError("owned process identity could not be read") from exc
     if (
         actual_start_token != process_start_token
-        or not actual_command
-        or not command
+        or actual_command != command
         or f"NEXUS_TEST_RUN_ID={run_id}".encode() not in process_environment
+        or f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode() not in process_environment
     ):
         raise RuntimeContractError("process group no longer belongs to the exact test run")
     try:
@@ -1130,6 +1149,46 @@ def _stop_process_group(
         os.waitpid(process_group_id, 0)
     except ChildProcessError:
         pass
+
+
+def _recover_planned_process_group(
+    owner_token: str,
+    command: tuple[str, ...] | None,
+    run_id: str,
+) -> tuple[int, str] | None:
+    if not re.fullmatch(r"[0-9a-f]{32}", owner_token) or not command:
+        raise RuntimeContractError("planned process lacks its exact ownership contract")
+    expected_owner = f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode()
+    expected_run = f"NEXUS_TEST_RUN_ID={run_id}".encode()
+    matches: list[tuple[int, str]] = []
+    for process_root in Path("/proc").iterdir():
+        if not process_root.name.isdecimal():
+            continue
+        try:
+            if process_root.stat().st_uid != os.getuid():
+                continue
+            environment = (process_root / "environ").read_bytes().split(b"\0")
+            if expected_owner not in environment or expected_run not in environment:
+                continue
+            actual_command = tuple(
+                part.decode()
+                for part in (process_root / "cmdline").read_bytes().split(b"\0")
+                if part
+            )
+            process_id = int(process_root.name)
+            if actual_command != command or os.getpgid(process_id) != process_id:
+                raise RuntimeContractError(
+                    "planned process token no longer identifies its exact command group"
+                )
+            start_token = _process_start_token(process_id)
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise RuntimeContractError("planned process identity could not be read") from exc
+        matches.append((process_id, start_token))
+    if len(matches) > 1:
+        raise RuntimeContractError("planned process token identifies multiple process groups")
+    return matches[0] if matches else None
 
 
 def _process_start_token(process_id: int) -> str:

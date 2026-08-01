@@ -53,10 +53,7 @@ export function extensionId(): string {
 
 export async function launchExtension(): Promise<BrowserContext> {
   const extensionDirectory = ownedPath("NEXUS_TEST_EXTENSION_DIR");
-  const profile = process.env.NEXUS_TEST_EXTENSION_PROFILE;
-  if (!profile) {
-    throw new Error("NEXUS_TEST_EXTENSION_PROFILE is required.");
-  }
+  const profile = ownedPath("NEXUS_TEST_EXTENSION_PROFILE");
   const context = await chromium.launchPersistentContext(profile, {
     channel: "chromium",
     headless: true,

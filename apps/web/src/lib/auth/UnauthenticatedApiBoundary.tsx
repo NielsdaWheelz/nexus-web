@@ -33,10 +33,6 @@ export function handleUnauthenticatedApiError(error: unknown): boolean {
   return false;
 }
 
-export function __resetUnauthenticatedApiRedirectForTests(): void {
-  unauthenticatedApiRedirectStarted = false;
-}
-
 export function useUnauthenticatedApiHandler(): (error: unknown) => boolean {
   return useContext(UnauthenticatedApiContext);
 }

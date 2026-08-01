@@ -4,7 +4,7 @@ import json
 import os
 import struct
 import wave
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from decimal import ROUND_HALF_UP, Decimal
@@ -38,6 +38,8 @@ from provider_runtime import (
     cost_from_accounting,
     plan_generate,
 )
+
+from nexus_test_control.provider_budget import PaidCallBudget
 
 USD_MICROS = Decimal(1_000_000)
 
@@ -119,17 +121,16 @@ def single_attempt_plan(
 async def certify_chat(
     runtime: ProviderRuntime,
     guard: OneAttemptPerOperation,
+    budget: PaidCallBudget,
     target: ProviderTarget,
     reasoning: str,
     key: str,
     *,
     max_output_tokens: int,
-    on_plan: Callable[[FinalizedProviderCall], None] | None = None,
 ) -> ChatResult:
     plan = single_attempt_plan(target, reasoning, max_output_tokens=max_output_tokens)
-    if on_plan is not None:
-        on_plan(plan)
     operation_id = f"generate:{target.provider}/{target.model}"
+    budget.reserve(operation_id, plan.accounting.maximum_cost_estimate_usd_micros)
     with guard.operation(operation_id):
         outcome = await runtime.generate(
             plan,
@@ -154,6 +155,7 @@ async def certify_chat(
         assert outcome.reason == "max_output_tokens"
         status = "incomplete_max_output_tokens"
     cost = cost_from_accounting(plan.accounting, usage)
+    budget.settle(operation_id, cost.total_cost_usd_micros)
     return ChatResult(
         target=f"{target.provider}/{target.model}",
         status=status,

@@ -463,11 +463,17 @@ def run_workflow(
                         context, requirement.capability, environment, execution
                     )
                 memory = measured(sampler)
-                yield CapabilityResult(
+                measured_result = CapabilityResult(
                     replace(result.evidence, peak_owned_mib=memory.total),
                     result.detail,
                 )
-                if result.evidence.status is not RunStatus.PASS:
+                if not memory.measurement_complete:
+                    measured_result = CapabilityResult(
+                        replace(measured_result.evidence, status=RunStatus.FAIL),
+                        "owned container memory could not be measured truthfully",
+                    )
+                yield measured_result
+                if measured_result.evidence.status is not RunStatus.PASS:
                     blocked_by = requirement.capability
         finally:
             execution.close()
@@ -477,7 +483,20 @@ def run_workflow(
             result.evidence
             for result in stream_first_failure(results(), stream, environment_secrets(environment))
         )
-    return WorkflowRun(capabilities, measured(workflow_sampler))
+    workflow_memory = measured(workflow_sampler)
+    if not workflow_memory.measurement_complete and all(
+        item.status is RunStatus.PASS for item in capabilities
+    ):
+        last = capabilities[-1]
+        capabilities = (
+            *capabilities[:-1],
+            replace(
+                last,
+                status=RunStatus.FAIL,
+                detail="owned container memory could not be measured truthfully",
+            ),
+        )
+    return WorkflowRun(capabilities, workflow_memory)
 
 
 def stream_first_failure(
@@ -612,7 +631,7 @@ def run_proof(
             case Capability.ANDROID_HOST:
                 result = _run_android_host(proof_context, environment)
             case Capability.AUDIT:
-                result = _run_audit(proof_context, environment, exact=True)
+                result = _run_audit(proof_context, environment, execution, exact=True)
             case Capability.HOSTED:
                 result = _run_hosted(
                     proof_context,
@@ -746,7 +765,7 @@ def _run_capability_unlocked(
         case Capability.ANDROID_HOST:
             return _run_android_host(context, caller_environment)
         case Capability.AUDIT:
-            return _run_audit(context, caller_environment)
+            return _run_audit(context, caller_environment, execution)
         case Capability.HOSTED:
             return _run_hosted(context, caller_environment, execution)
         case Capability.ANDROID_DEVICE:
@@ -1608,7 +1627,7 @@ def _ensure_browser_processes(
 
 
 def _stage_extension(repo_root: Path, run_id: str) -> tuple[Path, Path]:
-    scenario_id = "extension"
+    scenario_id = "capture"
     identity = extension_profile_identity(run_id, scenario_id)
     resource = Resource(ResourceKind.EXTENSION_PROFILE, identity)
     environment = {"NEXUS_ENV": "test"}
@@ -1880,6 +1899,7 @@ def _run_corpus(context: CapabilityContext) -> CapabilityResult:
 def _run_audit(
     context: CapabilityContext,
     environment: Mapping[str, str],
+    execution: _WorkflowExecution | None = None,
     *,
     exact: bool = False,
 ) -> CapabilityResult:
@@ -1902,6 +1922,26 @@ def _run_audit(
         return _pass(capability, "no selected audit proof")
     child_environment = _child_environment(environment)
     child_environment["NEXUS_ENV"] = "test"
+    if not exact:
+        service_owner = python_root / "tests/service"
+        service_tests = tuple(sorted(service_owner.rglob("test_*.py")))
+        if len(service_tests) < 2:
+            return _not_run(capability, "randomized audit needs a meaningful service portfolio")
+        prepared = _prepared_run(execution, capability)
+        if isinstance(prepared, CapabilityResult):
+            return prepared
+        if execution is None:
+            raise AssertionError("randomized audit prepared without workflow execution")
+        child_environment = _heavy_environment(
+            context,
+            environment,
+            prepared,
+            execution.ports,
+        )
+        targets = (
+            *targets,
+            *(f"./{path.relative_to(python_root).as_posix()}" for path in service_tests),
+        )
     seeds = ("15485863",) if exact else ("15485863", "32452843")
     commands: tuple[FixedCommand, ...] = tuple(
         (
@@ -1920,7 +1960,11 @@ def _run_audit(
         )
         for seed in seeds
     )
-    return _run_owned_commands(capability, commands, child_environment, ("uv",))
+    result = _run_owned_commands(capability, commands, child_environment, ("uv",))
+    return CapabilityResult(
+        result.evidence,
+        f"seeds={','.join(seeds)}; {result.detail}",
+    )
 
 
 def _run_hosted(
@@ -3010,6 +3054,78 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
         return _not_run(
             Capability.DOCTOR, f"locked tool owners are absent: {', '.join(missing_paths)}"
         )
+
+    dependency_commands: tuple[FixedCommand, ...] = (
+        (
+            (
+                "uv",
+                "sync",
+                "--all-extras",
+                "--locked",
+                "--dry-run",
+                "--offline",
+            ),
+            context.repo_root / "python",
+        ),
+        (
+            (
+                "bun",
+                "install",
+                "--frozen-lockfile",
+                "--dry-run",
+                "--offline",
+                "--ignore-scripts",
+            ),
+            context.repo_root / "apps/web",
+        ),
+        (
+            (
+                str(context.repo_root / "python/.venv/bin/python"),
+                "-c",
+                "import provider_runtime",
+            ),
+            context.repo_root,
+        ),
+    )
+    for command, cwd in dependency_commands:
+        try:
+            checked = run_command(
+                command,
+                cwd=cwd,
+                env=child_environment,
+                capture_output=True,
+                check=False,
+            )
+        except OSError as error:
+            return _not_run(
+                Capability.DOCTOR,
+                f"locked dependency check could not start: {error.strerror or error}",
+            )
+        output = f"{checked.stdout or ''}\n{checked.stderr or ''}"
+        if checked.returncode != 0:
+            return _fail(Capability.DOCTOR, "locked dependency coherence check failed")
+        if command[0] == "uv" and re.search(r"(?m)^Would (?:download|install|uninstall) ", output):
+            return _fail(Capability.DOCTOR, "locked Python environment is stale")
+
+    try:
+        expected_provider_revision = _provider_runtime_pin(context.repo_root)
+        provider_checkout = context.repo_root.parent / "llm-calling"
+        provider_revision = run_command(
+            ("git", "-C", str(provider_checkout), "rev-parse", "HEAD"),
+            cwd=context.repo_root,
+            env=child_environment,
+            capture_output=True,
+            check=False,
+        )
+    except (OSError, RuntimeContractError):
+        return _not_run(Capability.DOCTOR, "pinned provider-runtime checkout is unavailable")
+    if (
+        provider_revision.returncode != 0
+        or (provider_revision.stdout or "").strip() != expected_provider_revision
+        or not (provider_checkout / ".venv").is_dir()
+    ):
+        return _not_run(Capability.DOCTOR, "pinned provider-runtime checkout is not ready")
+
     if not _android_sdk_available(context.repo_root / "apps/android", environment):
         return _not_run(Capability.DOCTOR, "the Android SDK is absent")
     if not _browser_installed(context.repo_root, environment):
@@ -3035,6 +3151,17 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
                 duration_ms,
                 f"recorded {owner} endpoint is not healthy",
             )
+
+    try:
+        with httpx.Client(trust_env=False, timeout=1, follow_redirects=False) as client:
+            minio_health = client.get(f"http://127.0.0.1:{runtime.ports.minio}/minio/health/live")
+            supabase_health = client.get(
+                f"http://127.0.0.1:{runtime.ports.supabase_api}/auth/v1/health"
+            )
+    except httpx.HTTPError:
+        return _fail(Capability.DOCTOR, "local service semantic health check failed")
+    if minio_health.status_code != 200 or supabase_health.status_code != 200:
+        return _fail(Capability.DOCTOR, "local service semantic health check failed")
 
     expected_template = template_database_name(_repository_template_fingerprint(context.repo_root))
     try:
@@ -3068,11 +3195,31 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
             duration_ms,
             "fingerprinted PostgreSQL template is absent or connectable",
         )
+    protected_missing: list[str] = []
+    if environment.get("NEXUS_HOSTED_CANARY") == "1" and not environment.get("OPENAI_API_KEY"):
+        protected_missing.append("nightly:OPENAI_API_KEY")
+    if environment.get("NEXUS_PROVIDER_CERTIFICATION") == "1":
+        protected_missing.extend(
+            f"release:{name}"
+            for name in (
+                "OPENAI_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "GEMINI_API_KEY",
+                "MOONSHOT_API_KEY",
+                "NEXUS_FABLE_RETENTION_ACCEPTED_AT",
+            )
+            if not environment.get(name)
+        )
+    if protected_missing:
+        return _not_run(
+            Capability.DOCTOR,
+            "enabled protected workflows lack inputs: " + ", ".join(protected_missing),
+        )
     return _result(
         Capability.DOCTOR,
         RunStatus.PASS,
         duration_ms,
-        "tools, locks, browser, services, ports, and template are ready",
+        "tools, locked dependencies, browser, services, ports, template, and enabled workflow inputs are ready",
     )
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 from provider_runtime import ProviderRuntime, ProviderTarget
 
+from nexus_test_control.provider_budget import PaidCallBudget
 from tests.hosted._provider_live import (
     OneAttemptPerOperation,
     atomic_evidence,
@@ -23,6 +24,10 @@ def test_pinned_openai_canary_stays_inside_the_declared_cost_ceiling() -> None:
 
     async def run() -> None:
         guard = OneAttemptPerOperation()
+        budget = PaidCallBudget(
+            call_limit=1,
+            cost_limit_usd_micros=int(maximum_cost * 1_000_000),
+        )
         async with httpx.AsyncClient(
             trust_env=False,
             event_hooks={"request": [guard.on_request]},
@@ -30,6 +35,7 @@ def test_pinned_openai_canary_stays_inside_the_declared_cost_ceiling() -> None:
             result = await certify_chat(
                 ProviderRuntime(client),
                 guard,
+                budget,
                 ProviderTarget(provider="openai", model=expected_model.removeprefix("openai/")),
                 "none",
                 os.environ["OPENAI_API_KEY"],
@@ -37,7 +43,7 @@ def test_pinned_openai_canary_stays_inside_the_declared_cost_ceiling() -> None:
             )
         evidence["provider_calls"] = 1
         evidence["estimated_cost_usd"] = result.estimated_cost_usd_micros / 1_000_000
-        evidence["conservative_exposure_usd"] = result.conservative_exposure_usd_micros / 1_000_000
+        evidence["conservative_exposure_usd"] = budget.reserved_cost_usd_micros / 1_000_000
         evidence["results"] = [
             {
                 "target": result.target,
@@ -52,4 +58,6 @@ def test_pinned_openai_canary_stays_inside_the_declared_cost_ceiling() -> None:
 
     asyncio.run(run())
     assert evidence["provider_calls"] == 1
-    assert 0 <= float(evidence["estimated_cost_usd"]) <= maximum_cost
+    estimated_cost = evidence["estimated_cost_usd"]
+    assert isinstance(estimated_cost, int | float)
+    assert 0 <= float(estimated_cost) <= maximum_cost

@@ -295,7 +295,15 @@ def test_processes_use_fixed_roles_and_record_the_group_before_cleanup(tmp_path:
     for role in ("worker-interactive", "worker-background"):
         process = Resource(ResourceKind.PROCESS, process_resource_identity(RUN_ID, role))
         command = ("python", "-m", "apps.worker.main", role)
-        record_planned(tmp_path, TEST_ENV, RUN_ID, process, command=command)
+        owner_token = ("1" if role == "worker-interactive" else "2") * 32
+        record_planned(
+            tmp_path,
+            TEST_ENV,
+            RUN_ID,
+            process,
+            external_id=owner_token,
+            command=command,
+        )
         with pytest.raises(RuntimeContractError, match="process-group"):
             record_created(tmp_path, TEST_ENV, RUN_ID, process)
         record_created(
@@ -313,6 +321,34 @@ def test_processes_use_fixed_roles_and_record_the_group_before_cleanup(tmp_path:
         12017,
         12018,
     ]
+
+
+def test_process_owner_is_recorded_before_creation_and_cannot_change(tmp_path: Path) -> None:
+    _runtime(tmp_path)
+    process = Resource(ResourceKind.PROCESS, process_resource_identity(RUN_ID, "api"))
+    command = ("python", "-m", "apps.api.main")
+
+    with pytest.raises(RuntimeContractError, match="owner token"):
+        record_planned(tmp_path, TEST_ENV, RUN_ID, process, command=command)
+
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        process,
+        external_id="a" * 32,
+        command=command,
+    )
+    with pytest.raises(RuntimeContractError, match="changed after planning"):
+        record_created(
+            tmp_path,
+            TEST_ENV,
+            RUN_ID,
+            process,
+            process_group_id=12345,
+            process_start_token="67890",
+            external_id="b" * 32,
+        )
     with pytest.raises(RuntimeContractError, match="unknown process role"):
         process_resource_identity(RUN_ID, "worker")
 

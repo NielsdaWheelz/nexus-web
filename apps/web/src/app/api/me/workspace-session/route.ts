@@ -16,7 +16,7 @@ export const runtime = "nodejs";
 // into the body. The PUT boundary accepts only the exact client-owned `{ state }`
 // envelope, so a client-supplied device id is rejected rather than ignored. The app shell restores on the
 // server (bootstrap.server.ts), so the production client never calls GET; it remains for
-// read-back/debugging and is the seam the e2e suite reads capture through.
+// authenticated read-back and operational debugging.
 
 // The cookie is minted in middleware on the authenticated page load that necessarily precedes
 // any workspace-session call, so its absence on an authenticated request here is a broken

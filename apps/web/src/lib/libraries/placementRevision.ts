@@ -28,7 +28,7 @@ interface LoggedPlacementChange {
 }
 
 let current: LibraryPlacementChange = INITIAL;
-let log: LoggedPlacementChange[] = [];
+const log: LoggedPlacementChange[] = [];
 const listeners = new Set<() => void>();
 
 export function publishLibraryPlacementChange(
@@ -75,12 +75,4 @@ export function useLibraryPlacementRevision(): LibraryPlacementChange {
     libraryPlacementSnapshot,
     () => INITIAL,
   );
-}
-
-// Test-only reset. The store is module-global and vitest shares module state
-// across a spec file's `it` blocks, so a prior publish would otherwise leak a
-// non-zero revision into the pane's bootstrap-seed claim.
-export function resetLibraryPlacementRevisionForTest(): void {
-  current = INITIAL;
-  log = [];
 }

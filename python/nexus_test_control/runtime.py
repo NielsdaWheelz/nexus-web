@@ -26,6 +26,7 @@ _REPO_ID = re.compile(r"[0-9a-f]{16}\Z")
 _FINGERPRINT = re.compile(r"[0-9a-f]{40}\Z")
 _SCENARIO_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\Z")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z")
+_PROCESS_OWNER = re.compile(r"[0-9a-f]{32}\Z")
 _PROCESS_ROLES = frozenset({"api", "web", "worker-interactive", "worker-background"})
 
 
@@ -265,12 +266,15 @@ def record_planned(
         if resource.kind is ResourceKind.PROCESS:
             if not normalized_command or any(not part for part in normalized_command):
                 raise RuntimeContractError("planned process requires its exact command")
+            _require_match(external_id, _PROCESS_OWNER, "planned process owner token")
         elif normalized_command is not None:
             raise RuntimeContractError("only a process can record a command")
         if resource.kind is ResourceKind.SUPABASE_USER:
             _require_match(external_id, _UUID, "planned Supabase admin user id")
         elif resource.kind is ResourceKind.TEMPLATE_BUILD:
             _require_match(external_id, _FINGERPRINT, "template build fingerprint")
+        elif resource.kind is ResourceKind.PROCESS:
+            pass
         elif external_id is not None:
             raise RuntimeContractError("resource kind cannot record an external id while planned")
         entry = LedgerEntry(
@@ -316,7 +320,11 @@ def record_created(
         elif process_start_token is not None:
             raise RuntimeContractError("only a process can record a birth token")
         resolved_external_id = external_id if external_id is not None else entry.external_id
-        if resource.kind is ResourceKind.SUPABASE_USER:
+        if resource.kind is ResourceKind.PROCESS:
+            _require_match(resolved_external_id, _PROCESS_OWNER, "process owner token")
+            if resolved_external_id != entry.external_id:
+                raise RuntimeContractError("created process owner changed after planning")
+        elif resource.kind is ResourceKind.SUPABASE_USER:
             _require_match(resolved_external_id, _UUID, "Supabase admin user id")
             if resolved_external_id != entry.external_id:
                 raise RuntimeContractError("created Supabase user id changed after planning")
@@ -606,11 +614,14 @@ def _validate_ledger(ledger: RunLedger) -> None:
                 entry.process_group_id is not None or entry.process_start_token is not None
             ):
                 raise RuntimeContractError("planned process already has a runtime identity")
+            _require_match(entry.external_id, _PROCESS_OWNER, "process owner token")
         elif entry.process_group_id is not None:
             raise RuntimeContractError("non-process resource has a process-group id")
         elif entry.command is not None or entry.process_start_token is not None:
             raise RuntimeContractError("non-process resource has process state")
-        if entry.resource.kind is ResourceKind.SUPABASE_USER:
+        if entry.resource.kind is ResourceKind.PROCESS:
+            _require_match(entry.external_id, _PROCESS_OWNER, "process owner token")
+        elif entry.resource.kind is ResourceKind.SUPABASE_USER:
             _require_match(entry.external_id, _UUID, "Supabase admin user id")
         elif entry.resource.kind is ResourceKind.TEMPLATE_BUILD:
             _require_match(entry.external_id, _FINGERPRINT, "template build fingerprint")

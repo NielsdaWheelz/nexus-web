@@ -42,12 +42,15 @@ class PeakOwnedMemory:
     process_tree_rss: int
     container_working_set: int
     total: int
+    measurement_complete: bool = True
 
     def __post_init__(self) -> None:
         _nonnegative("process tree RSS", self.process_tree_rss)
         _nonnegative("container working set", self.container_working_set)
         if self.total != self.process_tree_rss + self.container_working_set:
             raise ValueError("total owned memory must equal its recorded owners")
+        if not isinstance(self.measurement_complete, bool):
+            raise ValueError("owned memory measurement state must be boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +229,7 @@ def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[st
             "process_tree_rss": evidence.peak_owned_mib.process_tree_rss,
             "container_working_set": evidence.peak_owned_mib.container_working_set,
             "total": evidence.peak_owned_mib.total,
+            "measurement_complete": evidence.peak_owned_mib.measurement_complete,
         },
         "selection": [
             {

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -12,9 +11,13 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from nexus_test_control.evidence import PeakOwnedMemory
-from nexus_test_control.runtime import RuntimeContractError, local_docker_host
+from nexus_test_control.runtime import (
+    RuntimeContractError,
+    compose_project_name,
+    local_docker_host,
+    repo_id_for,
+)
 
-_COMPOSE_PROJECT = re.compile(r"nexus-test-[0-9a-f]{16}\Z")
 _MEMORY = re.compile(r"([0-9]+(?:\.[0-9]+)?)(B|kB|KiB|MB|MiB|GB|GiB)\Z")
 _MIB = 1024 * 1024
 
@@ -34,6 +37,8 @@ class OwnedMemorySampler:
         self._stop = threading.Event()
         self._peak_process_bytes = 0
         self._peak_container_bytes = 0
+        self._container_sampled = False
+        self._container_sample_failed = False
         self._thread = threading.Thread(target=self._sample_until_stopped, daemon=True)
         self.evidence: PeakOwnedMemory | None = None
 
@@ -47,7 +52,12 @@ class OwnedMemorySampler:
         self._sample(include_containers=True)
         process = _to_mib(self._peak_process_bytes)
         containers = _to_mib(self._peak_container_bytes)
-        return PeakOwnedMemory(process, containers, process + containers)
+        return PeakOwnedMemory(
+            process,
+            containers,
+            process + containers,
+            measurement_complete=(self._container_sampled and not self._container_sample_failed),
+        )
 
     def _sample_until_stopped(self) -> None:
         next_container_sample = time.monotonic() + 1
@@ -61,10 +71,13 @@ class OwnedMemorySampler:
     def _sample(self, *, include_containers: bool) -> None:
         self._peak_process_bytes = max(self._peak_process_bytes, _process_tree_rss(os.getpid()))
         if include_containers:
-            self._peak_container_bytes = max(
-                self._peak_container_bytes,
-                _owned_container_working_set(self._repo_root),
-            )
+            try:
+                observed = _owned_container_working_set(self._repo_root)
+            except (OSError, RuntimeContractError, subprocess.SubprocessError):
+                self._container_sample_failed = True
+            else:
+                self._container_sampled = True
+                self._peak_container_bytes = max(self._peak_container_bytes, observed)
 
 
 @contextmanager
@@ -109,9 +122,8 @@ def _process_tree_rss(root_pid: int) -> int:
 
 def _owned_container_working_set(repo_root: Path) -> int:
     docker = shutil.which("docker")
-    runtime_path = repo_root / ".nexus-test/runtime.json"
-    if docker is None or not runtime_path.is_file():
-        return 0
+    if docker is None:
+        raise RuntimeContractError("Docker is unavailable for owned-memory measurement")
     try:
         docker_environment = {
             "DOCKER_CONTEXT": "default",
@@ -119,10 +131,7 @@ def _owned_container_working_set(repo_root: Path) -> int:
         }
         if path := os.environ.get("PATH"):
             docker_environment["PATH"] = path
-        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
-        project = runtime["compose_project"]
-        if not isinstance(project, str) or _COMPOSE_PROJECT.fullmatch(project) is None:
-            return 0
+        project = compose_project_name(repo_id_for(repo_root))
         listed = subprocess.run(
             (
                 docker,
@@ -138,8 +147,10 @@ def _owned_container_working_set(repo_root: Path) -> int:
             timeout=1,
             env=docker_environment,
         )
+        if listed.returncode != 0:
+            raise RuntimeContractError("owned container enumeration failed")
         ids = tuple(line for line in listed.stdout.splitlines() if line)
-        if listed.returncode != 0 or not ids:
+        if not ids:
             return 0
         stats = subprocess.run(
             (docker, "stats", "--no-stream", "--format", "{{.MemUsage}}", *ids),
@@ -151,22 +162,19 @@ def _owned_container_working_set(repo_root: Path) -> int:
         )
     except (
         OSError,
-        KeyError,
-        TypeError,
         RuntimeContractError,
-        json.JSONDecodeError,
         subprocess.TimeoutExpired,
-    ):
-        return 0
+    ) as error:
+        raise RuntimeContractError("owned container measurement failed") from error
     if stats.returncode != 0:
-        return 0
+        raise RuntimeContractError("owned container statistics failed")
     return sum(_memory_bytes(line.split("/", 1)[0].strip()) for line in stats.stdout.splitlines())
 
 
 def _memory_bytes(value: str) -> int:
     match = _MEMORY.fullmatch(value)
     if match is None:
-        return 0
+        raise RuntimeContractError(f"invalid Docker memory value: {value!r}")
     amount = float(match.group(1))
     multiplier = {
         "B": 1,

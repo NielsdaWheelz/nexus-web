@@ -25,13 +25,6 @@ let profilesLoadPromise: Promise<LlmProfilesOut> | null = null;
 let profilesCacheEpoch = 0;
 const profilesCacheListeners = new Set<() => void>();
 
-export function __resetChatProfilesCacheForTests(): void {
-  cachedProfiles = null;
-  profilesLoadPromise = null;
-  profilesCacheEpoch = 0;
-  profilesCacheListeners.clear();
-}
-
 export function invalidateChatProfilesCache(): void {
   cachedProfiles = null;
   profilesLoadPromise = null;
