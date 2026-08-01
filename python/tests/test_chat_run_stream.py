@@ -20,6 +20,7 @@ from nexus.auth.middleware import AuthMiddleware
 from nexus.db.listen import StreamListenCapacityError
 from nexus.db.models import ChatRun
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.jobs.queue import enqueue_job
 from nexus.middleware.stream_cors import StreamCORSMiddleware
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
@@ -428,6 +429,19 @@ class TestChatRunEventStream:
                 ),
                 {"assistant_message_id": assistant_message_id},
             )
+            job = enqueue_job(
+                session,
+                kind="chat_run",
+                payload={"run_id": str(run_id)},
+                max_attempts=3,
+                dedupe_key=f"chat_run:{run_id}",
+            )
+            session.execute(
+                text(
+                    "UPDATE background_jobs SET status = 'running', attempts = 1 WHERE id = :job_id"
+                ),
+                {"job_id": job.id},
+            )
             session.commit()
         return run_id, conversation_id, assistant_message_id
 
@@ -449,7 +463,7 @@ class TestChatRunEventStream:
             sse_attempt="0",
         )
         assert response.status_code == 200
-        read_task = asyncio.create_task(_read_streaming_response_events(response, 1))
+        read_task = asyncio.create_task(_read_streaming_response_events(response, 2))
         await asyncio.sleep(0)
         with direct_db.session() as session:
             run = session.get(ChatRun, run_id)
@@ -468,7 +482,8 @@ class TestChatRunEventStream:
             session.commit()
         events = await read_task
         assert time.monotonic() - first_opened_at < _sse.KEEPALIVE_INTERVAL_SECONDS
-        assert [(event["id"], event["event"]) for event in events] == [
+        assert events[0] == {"event": "ExecutionAdvisory", "data": {"phase": "Running"}}
+        assert [(event["id"], event["event"]) for event in events[1:]] == [
             ("1", "assistant_text_delta")
         ]
 
