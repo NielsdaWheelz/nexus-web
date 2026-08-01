@@ -1,4 +1,4 @@
-"""Persist exact EPUB navigation offsets computed at ingest.
+"""Expand EPUB navigation rows with nullable exact-offset storage.
 
 Revision ID: 0208
 Revises: 0207
@@ -32,14 +32,6 @@ def upgrade() -> None:
 
     _backfill_offsets()
 
-    op.alter_column("epub_nav_locations", "start_offset", nullable=False)
-    op.alter_column("epub_nav_locations", "end_offset", nullable=False)
-    op.create_check_constraint(
-        "ck_epub_nav_locations_offsets_valid",
-        "epub_nav_locations",
-        "start_offset >= 0 AND end_offset >= start_offset",
-    )
-
 
 def _backfill_offsets() -> None:
     from nexus.services.canonicalize import generate_canonical_text_with_element_offsets
@@ -47,24 +39,31 @@ def _backfill_offsets() -> None:
     bind = op.get_bind()
     last_media_id: object | None = None
     last_fragment_idx = -1
+    deferred_rows = 0
+    deferred_fragments = 0
 
     while True:
         if last_media_id is None:
-            fragment_keys = bind.execute(
-                sa.text(
-                    """
+            fragment_keys = (
+                bind.execute(
+                    sa.text(
+                        """
                     SELECT DISTINCT n.media_id, n.fragment_idx
                     FROM epub_nav_locations n
                     ORDER BY n.media_id, n.fragment_idx
                     LIMIT :limit
                     """
-                ),
-                {"limit": _FRAGMENT_KEY_BATCH_SIZE},
-            ).mappings().all()
+                    ),
+                    {"limit": _FRAGMENT_KEY_BATCH_SIZE},
+                )
+                .mappings()
+                .all()
+            )
         else:
-            fragment_keys = bind.execute(
-                sa.text(
-                    """
+            fragment_keys = (
+                bind.execute(
+                    sa.text(
+                        """
                     SELECT DISTINCT n.media_id, n.fragment_idx
                     FROM epub_nav_locations n
                     WHERE n.media_id > :last_media_id
@@ -75,24 +74,30 @@ def _backfill_offsets() -> None:
                     ORDER BY n.media_id, n.fragment_idx
                     LIMIT :limit
                     """
-                ),
-                {
-                    "last_media_id": last_media_id,
-                    "last_fragment_idx": last_fragment_idx,
-                    "limit": _FRAGMENT_KEY_BATCH_SIZE,
-                },
-            ).mappings().all()
+                    ),
+                    {
+                        "last_media_id": last_media_id,
+                        "last_fragment_idx": last_fragment_idx,
+                        "limit": _FRAGMENT_KEY_BATCH_SIZE,
+                    },
+                )
+                .mappings()
+                .all()
+            )
 
         if not fragment_keys:
             break
 
         for fragment_key in fragment_keys:
-            _backfill_fragment_offsets(
+            unresolved_rows = _backfill_fragment_offsets(
                 bind,
                 media_id=fragment_key["media_id"],
                 fragment_idx=int(fragment_key["fragment_idx"]),
                 generate_offsets=generate_canonical_text_with_element_offsets,
             )
+            if unresolved_rows:
+                deferred_rows += unresolved_rows
+                deferred_fragments += 1
 
         last_key = fragment_keys[-1]
         last_media_id = last_key["media_id"]
@@ -107,8 +112,11 @@ def _backfill_offsets() -> None:
             """
         )
     )
-    if remaining != 0:
-        raise RuntimeError("0208 failed to backfill every EPUB navigation offset")
+    if remaining != deferred_rows:
+        raise RuntimeError("0208 EPUB navigation deferred-row census drifted")
+    print(
+        f"0208: deferred {deferred_rows} navigation row(s) across {deferred_fragments} fragment(s)"
+    )
 
 
 def _backfill_fragment_offsets(
@@ -117,7 +125,7 @@ def _backfill_fragment_offsets(
     media_id: object,
     fragment_idx: int,
     generate_offsets: Callable[[str, set[str]], tuple[str, dict[str, int]]],
-) -> None:
+) -> int:
     fragment = (
         bind.execute(
             sa.text(
@@ -150,9 +158,7 @@ def _backfill_fragment_offsets(
         .all()
     )
     element_ids = {
-        str(row["href_fragment"])
-        for row in nav_rows
-        if row["href_fragment"] is not None
+        str(row["href_fragment"]) for row in nav_rows if row["href_fragment"] is not None
     }
     canonical_text, anchor_offsets = generate_offsets(
         str(fragment["html_sanitized"]),
@@ -163,12 +169,10 @@ def _backfill_fragment_offsets(
         raise RuntimeError("0208 found canonical text drift in ready EPUB navigation")
     missing = element_ids - anchor_offsets.keys()
     if missing:
-        raise RuntimeError(f"0208 found missing EPUB navigation anchor {min(missing)!r}")
+        return len(nav_rows)
 
     starts = [
-        0
-        if row["href_fragment"] is None
-        else anchor_offsets[str(row["href_fragment"])]
+        0 if row["href_fragment"] is None else anchor_offsets[str(row["href_fragment"])]
         for row in nav_rows
     ]
     previous_start = -1
@@ -204,6 +208,7 @@ def _backfill_fragment_offsets(
             for index, row in enumerate(nav_rows)
         ],
     )
+    return 0
 
 
 def downgrade() -> None:

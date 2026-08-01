@@ -27121,7 +27121,7 @@ class TestMigration0207CanonicalPodcastPublicationInstants:
 
 @MIGRATION_CI_LATE
 class TestMigration0208PersistEpubNavigationOffsets:
-    def test_backfills_exact_interleaved_offsets_and_hard_cuts_columns(self):
+    def test_expands_backfills_and_contracts_after_exact_projection_repair(self):
         reset_test_schema()
         engine = create_engine(get_test_database_url())
         try:
@@ -27130,12 +27130,15 @@ class TestMigration0208PersistEpubNavigationOffsets:
 
             media_id = uuid4()
             other_media_id = uuid4()
+            missing_media_id = uuid4()
             first_fragment_id = uuid4()
             second_fragment_id = uuid4()
             other_fragment_id = uuid4()
+            missing_fragment_id = uuid4()
             first_text = "Opening line.\nSecond heading\nClosing."
             second_text = "Other fragment."
             other_text = "Independent EPUB."
+            missing_text = "Projection requiring repair."
             with engine.begin() as connection:
                 connection.execute(
                     text(
@@ -27143,10 +27146,15 @@ class TestMigration0208PersistEpubNavigationOffsets:
                         INSERT INTO media (id, kind, title, processing_status)
                         VALUES
                             (:id, 'epub', 'Migration EPUB', 'ready_for_reading'),
-                            (:other_id, 'epub', 'Other EPUB', 'ready_for_reading')
+                            (:other_id, 'epub', 'Other EPUB', 'ready_for_reading'),
+                            (:missing_id, 'epub', 'Repair EPUB', 'ready_for_reading')
                         """
                     ),
-                    {"id": media_id, "other_id": other_media_id},
+                    {
+                        "id": media_id,
+                        "other_id": other_media_id,
+                        "missing_id": missing_media_id,
+                    },
                 )
                 connection.execute(
                     text(
@@ -27172,6 +27180,12 @@ class TestMigration0208PersistEpubNavigationOffsets:
                             0,
                             :other_text,
                             '<p>Independent EPUB.</p>'
+                        ), (
+                            :missing_id,
+                            :missing_media_id,
+                            0,
+                            :missing_text,
+                            '<p>Projection requiring repair.</p>'
                         )
                         """
                     ),
@@ -27179,11 +27193,14 @@ class TestMigration0208PersistEpubNavigationOffsets:
                         "first_id": first_fragment_id,
                         "second_id": second_fragment_id,
                         "other_id": other_fragment_id,
+                        "missing_id": missing_fragment_id,
                         "media_id": media_id,
                         "other_media_id": other_media_id,
+                        "missing_media_id": missing_media_id,
                         "first_text": first_text,
                         "second_text": second_text,
                         "other_text": other_text,
+                        "missing_text": missing_text,
                     },
                 )
                 connection.execute(
@@ -27216,6 +27233,20 @@ class TestMigration0208PersistEpubNavigationOffsets:
                         """
                     ),
                     {"media_id": other_media_id},
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO epub_nav_locations (
+                            media_id, location_id, ordinal, source_node_id, label,
+                            fragment_idx, href_path, href_fragment, source
+                        ) VALUES (
+                            :media_id, 'repair.xhtml#source-anchor', 0, NULL, 'Repair',
+                            0, 'repair.xhtml', 'source-anchor', 'toc'
+                        )
+                        """
+                    ),
+                    {"media_id": missing_media_id},
                 )
 
             result = run_alembic_command("upgrade 0208")
@@ -27264,25 +27295,104 @@ class TestMigration0208PersistEpubNavigationOffsets:
                         )
                     )
                 }
-                assert columns == {"start_offset": "NO", "end_offset": "NO"}
+                assert columns == {"start_offset": "YES", "end_offset": "YES"}
+                assert connection.execute(
+                    text(
+                        """
+                        SELECT start_offset, end_offset
+                        FROM epub_nav_locations
+                        WHERE media_id = :media_id
+                        """
+                    ),
+                    {"media_id": missing_media_id},
+                ).one() == (None, None)
 
-            with pytest.raises(IntegrityError) as exc_info:
-                with engine.begin() as connection:
-                    connection.execute(
+            contract = run_alembic_command("upgrade 0209")
+            assert contract.returncode != 0
+            assert "0209 requires every EPUB navigation projection" in contract.stderr
+
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        UPDATE epub_nav_locations
+                        SET start_offset = 0,
+                            end_offset = :end_offset
+                        WHERE media_id = :media_id
+                        """
+                    ),
+                    {"media_id": missing_media_id, "end_offset": len(missing_text) + 1},
+                )
+
+            contract = run_alembic_command("upgrade 0209")
+            assert contract.returncode != 0
+            assert "0209 found invalid EPUB navigation offset bounds" in contract.stderr
+
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        UPDATE epub_nav_locations
+                        SET end_offset = :end_offset
+                        WHERE media_id = :missing_media_id
+                        """
+                    ),
+                    {
+                        "missing_media_id": missing_media_id,
+                        "end_offset": len(missing_text),
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        UPDATE epub_nav_locations
+                        SET start_offset = 20,
+                            end_offset = 20
+                        WHERE media_id = :media_id AND ordinal = 0
+                        """
+                    ),
+                    {"media_id": media_id},
+                )
+
+            contract = run_alembic_command("upgrade 0209")
+            assert contract.returncode != 0
+            assert "0209 found EPUB navigation offsets out of document order" in contract.stderr
+
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        UPDATE epub_nav_locations
+                        SET start_offset = 0,
+                            end_offset = 14
+                        WHERE media_id = :media_id AND ordinal = 0
+                        """
+                    ),
+                    {"media_id": media_id},
+                )
+
+            contract = run_alembic_command("upgrade 0209")
+            assert contract.returncode == 0, contract.stderr
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0209"
+                columns = {
+                    row.column_name: row.is_nullable
+                    for row in connection.execute(
                         text(
                             """
-                            UPDATE epub_nav_locations
-                            SET end_offset = start_offset - 1
-                            WHERE media_id = :media_id AND ordinal = 0
+                            SELECT column_name, is_nullable
+                            FROM information_schema.columns
+                            WHERE table_name = 'epub_nav_locations'
+                              AND column_name IN ('start_offset', 'end_offset')
                             """
-                        ),
-                        {"media_id": media_id},
+                        )
                     )
-            assert "ck_epub_nav_locations_offsets_valid" in str(exc_info.value)
+                }
+                assert columns == {"start_offset": "NO", "end_offset": "NO"}
 
-            downgrade = run_alembic_command("downgrade 0207")
+            downgrade = run_alembic_command("downgrade 0208")
             assert downgrade.returncode != 0
-            assert "0208 is a hard cutover migration" in downgrade.stderr
+            assert "0209 is a hard cutover migration" in downgrade.stderr
         finally:
             reset_test_schema()
             engine.dispose()

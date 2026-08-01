@@ -6037,10 +6037,6 @@ class EpubNavLocation(Base):
             name="ck_epub_nav_locations_ordinal_nonneg",
         ),
         CheckConstraint(
-            "start_offset >= 0 AND end_offset >= start_offset",
-            name="ck_epub_nav_locations_offsets_valid",
-        ),
-        CheckConstraint(
             "source IN ('toc', 'spine')",
             name="ck_epub_nav_locations_source_valid",
         ),
