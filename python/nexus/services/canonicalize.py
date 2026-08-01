@@ -23,6 +23,7 @@ After ready_for_reading, canonical_text is immutable.
 
 import re
 import unicodedata
+from bisect import bisect_left
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from xml.dom import Node
@@ -120,10 +121,9 @@ def generate_canonical_text_with_element_offsets(
     _walk_element(root, tokens, element_ids, raw_offsets)
     final_tokens = _canonical_tokens(tokens)
     text = "".join(token.char for token in final_tokens)
+    source_starts = sorted(min(token.sources) for token in final_tokens)
     offsets = {
-        element_id: sum(
-            any(source < raw_offset for source in token.sources) for token in final_tokens
-        )
+        element_id: bisect_left(source_starts, raw_offset)
         for element_id, raw_offset in raw_offsets.items()
     }
     return text, offsets

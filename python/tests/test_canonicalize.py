@@ -195,6 +195,21 @@ def test_element_start_survives_blank_line_collapse_and_line_trimming() -> None:
     assert offsets == {"turn": 8}
 
 
+def test_many_element_starts_share_one_indexed_canonical_walk() -> None:
+    element_count = 500
+    html = "".join(
+        f'<span id="anchor-{index}">{index:04d} </span>' for index in range(element_count)
+    )
+
+    text, offsets = generate_canonical_text_with_element_offsets(
+        html,
+        {f"anchor-{index}" for index in range(element_count)},
+    )
+
+    assert text == "".join(f"{index:04d} " for index in range(element_count)).rstrip()
+    assert offsets == {f"anchor-{index}": index * 5 for index in range(element_count)}
+
+
 class TestComplexDocuments:
     """Tests for realistic document structures."""
 
