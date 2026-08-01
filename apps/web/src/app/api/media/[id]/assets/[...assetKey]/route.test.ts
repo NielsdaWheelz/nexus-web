@@ -163,7 +163,7 @@ describe("GET /api/media/:id/assets/:assetKey*", () => {
     expect(response.headers.get("content-range")).toBeNull();
   });
 
-  it("recomputes content-length from the rebuilt response body", async () => {
+  it("forwards upstream content-length while preserving the streamed body", async () => {
     const body = JSON.stringify({ data: [{ name: "Library A" }] });
     const fetchMock = vi.fn<typeof fetch>(
       async () =>
@@ -194,9 +194,7 @@ describe("GET /api/media/:id/assets/:assetKey*", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-length")).toBe(
-      String(new TextEncoder().encode(body).byteLength)
-    );
+    expect(response.headers.get("content-length")).toBe("7");
     expect(await response.json()).toEqual({ data: [{ name: "Library A" }] });
   });
 });

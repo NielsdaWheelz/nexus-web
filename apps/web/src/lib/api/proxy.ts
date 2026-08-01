@@ -67,6 +67,7 @@ const BLOCKED_REQUEST_HEADERS = new Set([
 const ALLOWED_RESPONSE_HEADERS = new Set([
   "x-request-id",
   "content-type",
+  "content-length",
   "cache-control",
   "etag",
   "vary",
@@ -189,12 +190,6 @@ function shouldForwardRequestHeader(headerName: string): boolean {
   return ALLOWED_REQUEST_HEADERS.has(lowerName);
 }
 
-function isTextContentType(contentType: string | null): boolean {
-  if (!contentType) return false;
-  const lower = contentType.toLowerCase();
-  return lower.includes("application/json") || lower.includes("text/");
-}
-
 type TimedFetchController = {
   signal: AbortSignal;
   timedOut: () => boolean;
@@ -251,30 +246,6 @@ function upstreamUnavailableResponse(requestId: string): NextResponse {
     },
     { status: 502, headers: { [REQUEST_ID_HEADER]: requestId } }
   );
-}
-
-/**
- * Read the backend response body in the right shape for the request:
- * - null for HEAD/204/205/304 (body forbidden)
- * - text for JSON/text content types (preserves encoding)
- * - ArrayBuffer for everything else (preserves bytes)
- */
-async function readProxiedBody(
-  response: Response,
-  request: Request
-): Promise<string | ArrayBuffer | null> {
-  if (
-    request.method === "HEAD" ||
-    response.status === 204 ||
-    response.status === 205 ||
-    response.status === 304
-  ) {
-    return null;
-  }
-  if (isTextContentType(response.headers.get("content-type"))) {
-    return await response.text();
-  }
-  return await response.arrayBuffer();
 }
 
 async function createDefaultDeps(): Promise<ProxyDeps> {
@@ -464,7 +435,8 @@ export async function proxyToFastAPIWithDeps(
       signal: ctl.signal,
     });
 
-    // Build filtered response headers (non-streaming path)
+    // The body is forwarded unchanged, so its framing metadata remains exact.
+    // Filtering still prevents private upstream headers from reaching clients.
     const responseHeaders = new Headers();
     response.headers.forEach((value, key) => {
       if (shouldForwardResponseHeader(key)) {
@@ -844,7 +816,14 @@ export async function proxyExtensionToFastAPI(
       responseHeaders.set("Content-Type", responseContentType);
     }
 
-    return new Response(await readProxiedBody(response, request), {
+    const responseBody =
+      request.method === "HEAD" ||
+      response.status === 204 ||
+      response.status === 205 ||
+      response.status === 304
+        ? null
+        : response.body;
+    return new Response(responseBody, {
       status: response.status,
       statusText: response.statusText,
       headers: responseHeaders,
