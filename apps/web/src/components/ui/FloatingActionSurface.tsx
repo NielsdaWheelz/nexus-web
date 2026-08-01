@@ -129,7 +129,10 @@ export default function FloatingActionSurface({
     surface.dataset.reflowWidth = reflowWidth ? "true" : "false";
     const compactWidth = contentMaxWidth < 240;
     surface.dataset.compactWidth = compactWidth ? "true" : "false";
-    const surfaceRect = surface.getBoundingClientRect();
+    const surfaceRect = DOMRect.fromRect({
+      width: surface.offsetWidth,
+      height: surface.offsetHeight,
+    });
     const constrain = (
       next: FloatingActionPosition,
     ): FloatingActionPosition => ({

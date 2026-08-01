@@ -189,14 +189,16 @@ describe("mobile safe-area composition", () => {
       onDismiss: () => undefined,
     };
     const { rerender } = render(
-      <FloatingActionSurface
-        {...props}
-        anchor={new DOMRect(0, 180, 20, 20)}
-      >
-        <button type="button" style={{ width: 160, height: 48 }}>
-          Actions
-        </button>
-      </FloatingActionSurface>,
+      <MobileViewportProvider>
+        <FloatingActionSurface
+          {...props}
+          anchor={new DOMRect(0, 180, 20, 20)}
+        >
+          <button type="button" style={{ width: 160, height: 48 }}>
+            Actions
+          </button>
+        </FloatingActionSurface>
+      </MobileViewportProvider>,
     );
     const surface = await screen.findByRole("group", {
       name: "Floating actions",
@@ -207,14 +209,16 @@ describe("mobile safe-area composition", () => {
     });
 
     rerender(
-      <FloatingActionSurface
-        {...props}
-        anchor={new DOMRect(370, 180, 20, 20)}
-      >
-        <button type="button" style={{ width: 160, height: 48 }}>
-          Actions
-        </button>
-      </FloatingActionSurface>,
+      <MobileViewportProvider>
+        <FloatingActionSurface
+          {...props}
+          anchor={new DOMRect(370, 180, 20, 20)}
+        >
+          <button type="button" style={{ width: 160, height: 48 }}>
+            Actions
+          </button>
+        </FloatingActionSurface>
+      </MobileViewportProvider>,
     );
     await waitFor(() => {
       expect(surface.getBoundingClientRect().right).toBeLessThanOrEqual(369);
