@@ -8,8 +8,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
-def expire_claim_and_handoff_code(db: Session, *, job_id: UUID, user_id: UUID) -> None:
-    """Model a worker crash after claim and an already-expired one-use auth code."""
+def expire_job_claim(db: Session, *, job_id: UUID) -> None:
+    """Model passage of a dead worker's lease without waiting in a proof."""
     db.execute(
         text(
             """
@@ -20,6 +20,11 @@ def expire_claim_and_handoff_code(db: Session, *, job_id: UUID, user_id: UUID) -
         ),
         {"job_id": job_id},
     )
+
+
+def expire_claim_and_handoff_code(db: Session, *, job_id: UUID, user_id: UUID) -> None:
+    """Model a worker crash after claim and an already-expired one-use auth code."""
+    expire_job_claim(db, job_id=job_id)
     db.execute(
         text(
             """

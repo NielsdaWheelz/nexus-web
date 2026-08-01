@@ -121,7 +121,8 @@
         "python/nexus/services/chat_run_idempotency.py"
       ],
       "proofs": [
-        "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker"
+        "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker",
+        "pytest:python/tests/service/test_durable_job_replay.py::test_owned_worker_replays_committed_note_index_after_process_death"
       ],
       "capabilities": [
         "service"
