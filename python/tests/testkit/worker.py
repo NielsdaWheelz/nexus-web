@@ -28,7 +28,7 @@ def controller_run() -> test_services.TestRun:
     return test_services.TestRun(
         run_id=run_id,
         database_url=database_url,
-        migration_database_url=None,
+        migration_database_url=os.environ.get("NEXUS_MIGRATION_DATABASE_URL"),
         bucket=bucket,
         supabase=test_services.ensure_services(_REPO_ROOT, _TEST_ENV),
     )

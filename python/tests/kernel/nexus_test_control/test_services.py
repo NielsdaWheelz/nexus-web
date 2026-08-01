@@ -36,6 +36,7 @@ from nexus_test_control.services import (
     _database_url,
     _parse_supabase_status,
     _start_owned_process,
+    _startup_identity_pending,
     _supabase_credentials_from_status,
     _write_supabase_config,
     clean_owned_runtime,
@@ -266,6 +267,12 @@ def test_readiness_rejects_listener_outside_owned_process_group(tmp_path: Path) 
             except ProcessLookupError:
                 pass
             stale.wait()
+
+
+def test_readiness_grace_requires_immutable_birth_identity_and_time() -> None:
+    assert _startup_identity_pending(birth_matches=True, now=1, deadline=2)
+    assert not _startup_identity_pending(birth_matches=False, now=1, deadline=2)
+    assert not _startup_identity_pending(birth_matches=True, now=2, deadline=2)
 
 
 def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs() -> None:

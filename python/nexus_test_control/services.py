@@ -641,6 +641,7 @@ def wait_process_ready(
     if port is None:
         raise RuntimeContractError("process readiness endpoint has no port")
     deadline = time.monotonic() + timeout_seconds
+    identity_deadline = min(deadline, time.monotonic() + 2)
     with httpx.Client(trust_env=False, timeout=1, follow_redirects=False) as client:
         while time.monotonic() < deadline:
             if not _owned_process_identity_matches(
@@ -649,6 +650,16 @@ def wait_process_ready(
                 process.run_id,
                 process.owner_token,
             ):
+                if _startup_identity_pending(
+                    birth_matches=_process_birth_identity_matches(
+                        process.process_group_id,
+                        process.process_start_token,
+                    ),
+                    now=time.monotonic(),
+                    deadline=identity_deadline,
+                ):
+                    time.sleep(0.01)
+                    continue
                 raise RuntimeContractError(
                     f"owned {process.role} process exited or changed identity before readiness"
                 )
@@ -1338,6 +1349,25 @@ def _owned_process_identity_matches(
         and f"NEXUS_TEST_RUN_ID={run_id}".encode() in process_environment
         and f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode() in process_environment
     )
+
+
+def _process_birth_identity_matches(process_group_id: int, process_start_token: str) -> bool:
+    process_root = Path("/proc") / str(process_group_id)
+    try:
+        if (
+            process_root.stat().st_uid != os.getuid()
+            or os.getpgid(process_group_id) != process_group_id
+        ):
+            return False
+        stat = (process_root / "stat").read_text(encoding="utf-8")
+        actual_start_token = stat[stat.rindex(")") + 2 :].split()[19]
+    except (OSError, ProcessLookupError, ValueError, IndexError):
+        return False
+    return actual_start_token == process_start_token
+
+
+def _startup_identity_pending(*, birth_matches: bool, now: float, deadline: float) -> bool:
+    return birth_matches and now < deadline
 
 
 def _process_group_owns_listener(process_group_id: int, port: int) -> bool:
