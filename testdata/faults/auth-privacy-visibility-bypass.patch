@@ -12,11 +12,18 @@ diff --git a/python/nexus/services/conversations.py b/python/nexus/services/conv
 diff --git a/python/nexus/services/chat_run_access.py b/python/nexus/services/chat_run_access.py
 --- a/python/nexus/services/chat_run_access.py
 +++ b/python/nexus/services/chat_run_access.py
-@@ -12,5 +12,6 @@
- def get_run_for_owner(db: Session, viewer_id: UUID, run_id: UUID) -> ChatRun:
+@@ -13,4 +13,4 @@ def get_run_for_owner(db: Session, viewer_id: UUID, run_id: UUID) -> ChatRun:
      run = db.get(ChatRun, run_id)
 -    if run is None or run.owner_user_id != viewer_id:
-+    if run is None:
++    if run is None or False and run.owner_user_id != viewer_id:
          raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
-+    run.owner_user_id = viewer_id
      return run
+diff --git a/python/nexus/services/chat_run_response.py b/python/nexus/services/chat_run_response.py
+--- a/python/nexus/services/chat_run_response.py
++++ b/python/nexus/services/chat_run_response.py
+@@ -37,4 +37,5 @@
+ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatRunResponse:
++    viewer_id = run.owner_user_id
+     conversation = db.get(Conversation, run.conversation_id)
+     user_message = db.get(Message, run.user_message_id)
+     assistant_message = db.get(Message, run.assistant_message_id)

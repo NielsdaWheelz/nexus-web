@@ -14,7 +14,7 @@
     {
       "id": "auth-privacy-visibility-bypass",
       "patch": "testdata/faults/auth-privacy-visibility-bypass.patch",
-      "sha256": "a8e4cb2df79ca47b1effc9b0b0e08325bf8bb428aaae14deadf8db66b30ab742",
+      "sha256": "a38e392484381fa66d5f0aafba11b322447b273c1167e8ee5786610ac30e556a",
       "proofs": [
         "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked",
         "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal"
