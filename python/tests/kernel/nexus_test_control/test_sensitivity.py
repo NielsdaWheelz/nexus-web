@@ -65,6 +65,22 @@ def test_behavioral_red_records_the_declared_fault_fingerprint_and_property_phas
     assert result.phase is SensitivityPhase.PROPERTY
 
 
+def test_behavioral_red_reports_the_observed_assertion_on_fingerprint_mismatch() -> None:
+    with pytest.raises(
+        SensitivityError,
+        match="observed AssertionError: assertion fired elsewhere",
+    ):
+        behavioral_red(
+            _failure(
+                "proof_result=behavioral_assertion_failure|"
+                f"proof_id={EXACT_PROOF}|"
+                "AssertionError: assertion fired elsewhere"
+            ),
+            proof=EXACT_PROOF,
+            expected_failure="exact invariant",
+        )
+
+
 def test_behavioral_red_rejects_an_assertion_from_a_different_proof_node() -> None:
     with pytest.raises(SensitivityError, match="exact requested proof"):
         behavioral_red(

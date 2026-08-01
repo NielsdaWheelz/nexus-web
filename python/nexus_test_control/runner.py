@@ -3867,8 +3867,8 @@ def _decisive_output(value: str, limit: int = 1900) -> str:
             re.IGNORECASE,
         ):
             decisive_lines.add(index)
-            if "expect(locator)." in line.casefold() and index > 0:
-                decisive_lines.add(index - 1)
+            if "expect(locator)." in line.casefold():
+                decisive_lines.update(range(max(0, index - 4), index))
     decisive = "\n".join(lines[index] for index in sorted(decisive_lines))
     return (decisive or stripped)[-limit:]
 

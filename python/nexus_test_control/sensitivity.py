@@ -207,7 +207,7 @@ def behavioral_red(
     if expected_failure is not None and expected_failure not in detail:
         raise SensitivityError(
             "faulted proof failed for a different reason; expected fingerprint "
-            f"{expected_failure!r}"
+            f"{expected_failure!r}; observed {detail}"
         )
     phase = (
         SensitivityPhase.PROPERTY

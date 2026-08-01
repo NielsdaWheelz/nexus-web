@@ -1563,6 +1563,8 @@ def test_long_ansi_playwright_diagnostic_preserves_the_behavioral_assertion() ->
         1,
         "build log\n" * 400
         + "Error: exact mobile lock failed\n"
+        + "\n"
+        + "Locator: getByRole('banner')\n"
         + "\x1b[2mexpect(\x1b[22mlocator\x1b[2m).\x1b[22m"
         + "toHaveAttribute\x1b[2m(\x1b[22m\x1b[2m)\x1b[22m failed\n"
         + "source footer\n" * 400,
