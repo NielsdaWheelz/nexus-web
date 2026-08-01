@@ -32,6 +32,7 @@ const PAGE_REF_DELIVERY: PaneEntryDelivery = {
     kind: "AppendNote",
     noteId: DRAFT_NOTE_ID,
     clientMutationId: "daily-page-ref-capture",
+    initialText: "Captured thought",
   },
 };
 

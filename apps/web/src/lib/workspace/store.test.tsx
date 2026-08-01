@@ -42,6 +42,7 @@ const PANE_ENTRY_A = {
     kind: "AppendNote" as const,
     noteId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     clientMutationId: "mutation-a",
+    initialText: "Alpha",
   },
 };
 const PANE_ENTRY_B = {
@@ -50,6 +51,7 @@ const PANE_ENTRY_B = {
     kind: "AppendNote" as const,
     noteId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
     clientMutationId: "mutation-b",
+    initialText: "Beta",
   },
 };
 

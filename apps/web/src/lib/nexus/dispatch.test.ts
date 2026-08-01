@@ -9,9 +9,9 @@ import {
   dispatchNexusTarget,
   materializeNexusTarget,
   PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
+  type MaterializedNexusTarget,
   type NexusDispatchCtx,
 } from "./dispatch";
-import type { NexusTarget } from "./model";
 
 function context(input?: {
   result?: WorkspaceTargetActivationResult;
@@ -175,7 +175,7 @@ describe("Nexus dispatch", () => {
       disposition: { kind: "Fork" as const },
       modality: "Keyboard" as const,
     };
-    const workflows: NexusTarget[] = [
+    const workflows: MaterializedNexusTarget[] = [
       {
         kind: "OpenAdd",
         seed: {

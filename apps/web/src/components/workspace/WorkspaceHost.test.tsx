@@ -1144,6 +1144,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
             kind: "AppendNote",
             noteId: "44444444-4444-4444-8444-444444444444",
             clientMutationId: "daily-capture-1",
+            initialText: "Captured thought",
           },
         },
       ],
