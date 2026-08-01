@@ -14,7 +14,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import type { ResourceItem, ResourceSurface, ResourceSurfaceOccurrence } from "@/lib/resources/resourceItems";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { isRecord } from "@/lib/validation";
-import { captureDailySurface, createDailyDraft, dailyDraftBodyChanged, draftNoteRef, loadDailySurface, pendingDailyBody, surfaceContainsDailyDraft, type DailySurfaceSessionOptions } from "@/lib/resourceSurface/dailySurfacePersistence";
+import { appendDailyDraftText, captureDailySurface, createDailyDraft, dailyDraftBodyChanged, draftNoteRef, loadDailySurface, pendingDailyBody, surfaceContainsDailyDraft, type DailySurfaceSessionOptions } from "@/lib/resourceSurface/dailySurfacePersistence";
 import { acknowledgeDailyDraftHandoff, clearDailyDraft, readDailyDraft, writeDailyDraft, type DailyDraft, type DailyDraftHandoff } from "@/lib/notes/dailyDraftStore";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 
@@ -794,11 +794,25 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     let draft = dailyDraftRef.current;
     if (!draft) {
       draft = createDailyDraft(currentInput.daily, delivery.entry.noteId, delivery.entry.clientMutationId);
-      dailyDraftRef.current = draft; recoveredPausedRef.current = false;
-      dailyCapturedRef.current = false; captureSnapshotRef.current = null;
-      bodiesRef.current.set(draftNoteRef(draft.noteId), pendingDailyBody(draft, resourceSurfaceCommandId()));
-      store();
+    } else if (
+      draft.noteId !== delivery.entry.noteId ||
+      draft.clientMutationId !== delivery.entry.clientMutationId
+    ) {
+      // justify-defect: one prepared daily activation owns one exact draft.
+      throw new Error("AppendNote delivery identity does not match the daily draft");
     }
+    if (draft.handoff.kind !== "Buffered") {
+      const appended = appendDailyDraftText(draft, delivery.entry.initialText);
+      if (appended.kind === "Unavailable") {
+        // justify-defect: seeded atomic drafts are rejected before dispatch.
+        throw new Error("AppendNote delivery cannot append to an atomic daily draft");
+      }
+      draft = appended.draft;
+    }
+    dailyDraftRef.current = draft; recoveredPausedRef.current = false;
+    dailyCapturedRef.current = false; captureSnapshotRef.current = null;
+    bodiesRef.current.set(draftNoteRef(draft.noteId), pendingDailyBody(draft, resourceSurfaceCommandId()));
+    store();
     currentInput.onDeliveryClaimed?.(delivery, draft.noteId);
   }, [delivery, store]);
 

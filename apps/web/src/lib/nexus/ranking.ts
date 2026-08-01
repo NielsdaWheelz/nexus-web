@@ -1,18 +1,17 @@
-import type {
-  NexusEntry,
-  NexusEntryKey,
-  NexusRankTier,
+import {
+  nexusEntryKeyValue,
+  type NexusEntry,
+  type NexusEntryKey,
+  type NexusRankTier,
 } from "./model";
 
 const TIER_ORDER: Record<NexusRankTier, number> = {
-  Exact: 0,
-  Prefix: 1,
-  Token: 2,
-  Alias: 3,
-  OpenContext: 4,
-  FuzzyTitle: 5,
-  Metadata: 6,
-  FullText: 7,
+  ExplicitIntent: 0,
+  Exact: 1,
+  PrefixOrToken: 2,
+  CurrentContext: 3,
+  FuzzyOrSynonym: 4,
+  MetadataOrFullText: 5,
 };
 
 const SOURCE_ORDER: Record<NexusEntryKey["kind"], number> = {
@@ -22,7 +21,9 @@ const SOURCE_ORDER: Record<NexusEntryKey["kind"], number> = {
   Resource: 3,
   QuickAction: 4,
   ImportUrl: 5,
-  Continuation: 6,
+  Intent: 6,
+  ManageTabs: 7,
+  Continuation: 8,
 };
 
 function normalizedRankValue(
@@ -33,41 +34,18 @@ function normalizedRankValue(
   if (!Number.isFinite(value) || value < 0 || value > 1) {
     // justify-defect: rank inputs are same-system normalized contract values.
     throw new TypeError(
-      `Nexus ${field} must be finite and normalized for ${serializeNexusEntryKey(entry.key)}`,
+      `Nexus ${field} must be finite and normalized for ${nexusEntryKeyValue(entry.key)}`,
     );
   }
   return value;
 }
 
-export function serializeNexusEntryKey(key: NexusEntryKey): string {
-  switch (key.kind) {
-    case "Pane":
-      return `Pane:${key.paneId}`;
-    case "PaneSearch":
-      return "PaneSearch";
-    case "Destination":
-      return `Destination:${key.destinationId}`;
-    case "Resource":
-      return `Resource:${key.occurrenceRef}`;
-    case "QuickAction":
-      return `QuickAction:${key.actionId}`;
-    case "ImportUrl":
-      return `ImportUrl:${key.normalizedUrl}`;
-    case "Continuation":
-      return `Continuation:${key.id}`;
-  }
-}
-
-export function compareNexusEntries(
-  left: NexusEntry,
-  right: NexusEntry,
-): number {
-  const leftKey = serializeNexusEntryKey(left.key);
-  const rightKey = serializeNexusEntryKey(right.key);
+export function compareNexusEntries(left: NexusEntry, right: NexusEntry): number {
+  const leftKey = nexusEntryKeyValue(left.key);
+  const rightKey = nexusEntryKeyValue(right.key);
   return (
     TIER_ORDER[left.rank.tier] - TIER_ORDER[right.rank.tier] ||
-    normalizedRankValue(right, "score") -
-      normalizedRankValue(left, "score") ||
+    normalizedRankValue(right, "score") - normalizedRankValue(left, "score") ||
     normalizedRankValue(right, "frecency") -
       normalizedRankValue(left, "frecency") ||
     SOURCE_ORDER[left.key.kind] - SOURCE_ORDER[right.key.kind] ||
@@ -75,9 +53,7 @@ export function compareNexusEntries(
   );
 }
 
-export function rankNexusEntries(
-  entries: readonly NexusEntry[],
-): NexusEntry[] {
+export function rankNexusEntries(entries: readonly NexusEntry[]): NexusEntry[] {
   for (const entry of entries) {
     normalizedRankValue(entry, "score");
     normalizedRankValue(entry, "frecency");
@@ -99,36 +75,43 @@ function isOrderedSubsequence(query: string, candidate: string): boolean {
   return true;
 }
 
+function prefixOrToken(query: string, candidate: string): boolean {
+  return (
+    candidate.startsWith(query) ||
+    candidate.split(/\s+/).some((token) => token.startsWith(query))
+  );
+}
+
+function fuzzy(query: string, candidate: string): boolean {
+  return candidate.includes(query) || isOrderedSubsequence(query, candidate);
+}
+
 export function nexusTextRankTier(input: {
   readonly query: string;
   readonly label: string;
   readonly aliases?: readonly string[];
-  readonly openContext?: boolean;
-  readonly fallback: "Metadata" | "FullText";
+  readonly metadata?: readonly string[];
+  readonly currentContext?: boolean;
+  readonly fullText?: boolean;
+  readonly explicitIntent?: boolean;
 }): NexusRankTier | null {
   const query = normalized(input.query);
-  if (!query) return input.openContext ? "OpenContext" : input.fallback;
+  if (!query) return null;
+  if (input.explicitIntent) return "ExplicitIntent";
+
   const label = normalized(input.label);
   if (label === query) return "Exact";
-  if (label.startsWith(query)) return "Prefix";
-  if (label.split(/\s+/).some((token) => token.startsWith(query))) {
-    return "Token";
-  }
+  if (prefixOrToken(query, label)) return "PrefixOrToken";
+
   const aliases = (input.aliases ?? []).map(normalized);
-  if (
-    aliases.some(
-      (alias) =>
-        alias === query ||
-        alias.startsWith(query) ||
-        alias.split(/\s+/).some((token) => token.startsWith(query)),
-    )
-  ) {
-    return "Alias";
+  if (aliases.some((alias) => prefixOrToken(query, alias) || fuzzy(query, alias))) {
+    return input.currentContext ? "CurrentContext" : "FuzzyOrSynonym";
   }
-  if (input.openContext) return "OpenContext";
-  if (label.includes(query) || isOrderedSubsequence(query, label)) {
-    return "FuzzyTitle";
+  if (fuzzy(query, label)) {
+    return input.currentContext ? "CurrentContext" : "FuzzyOrSynonym";
   }
-  if (aliases.some((alias) => alias.includes(query))) return "Metadata";
-  return input.fallback === "FullText" ? "FullText" : null;
+  if ((input.metadata ?? []).map(normalized).some((value) => fuzzy(query, value))) {
+    return "MetadataOrFullText";
+  }
+  return input.fullText ? "MetadataOrFullText" : null;
 }

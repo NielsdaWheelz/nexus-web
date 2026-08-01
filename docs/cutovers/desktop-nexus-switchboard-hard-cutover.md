@@ -4,7 +4,14 @@ Status: IMPLEMENTED — repository and real-stack verification complete —
 production deployment pending — 2026-07-29
 Type: hard cutover
 
-**Follow-up authority (2026-07-30):**
+**Superseded Nexus contract (2026-07-31):**
+[`nexus-intent-router-hard-cutover.md`](nexus-intent-router-hard-cutover.md)
+replaces this document's shared five-row zero-state cap, exactly four actions,
+no Continue/Library exclusion, unrelated OpenContext matches, listbox/footer
+Actions model, `SearchWeb`, continuation placement, and separate mobile result
+ownership. This file is implementation history for all replaced clauses.
+
+**Historical follow-up authority (2026-07-30):**
 [`daily-pages-quick-capture-hard-cutover.md`](daily-pages-quick-capture-hard-cutover.md)
 replaces “New Note reuses Today Capture” with the pane-native `Quick Note`
 entry and deletes Today Capture. The desktop Nexus zero state remains exactly

@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 describe("Nexus URL intent", () => {
-  it("accepts Root and registered QuickAction shapes and retires WebSearch links", () => {
+  it("accepts Root and registered QuickAction shapes and retires unknown links", () => {
     expect(
       parseNexusUrlIntent(
         new URLSearchParams("nexus=1&intent=Root"),

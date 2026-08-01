@@ -1,31 +1,23 @@
-import { useRef, useState } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useRef } from "react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import {
   readDailyDraft,
   writeDailyDraft,
 } from "@/lib/notes/dailyDraftStore";
 import {
-  createDefaultWorkspaceState,
-  getWorkspacePrimaryPanes,
-  MAX_PANES,
-} from "@/lib/workspace/schema";
-import {
-  useWorkspaceStore,
-  WorkspaceStoreProvider,
-} from "@/lib/workspace/store";
-import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
-import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
-import {
   createNoteBodyDoc,
-  emptyNoteBody,
   noteBodyValueFromDoc,
 } from "@/lib/notes/prosemirror/schema";
-import { formatLocalDateInTimeZone } from "@/lib/localDate";
-import { useOpenDailyPage } from "@/lib/notes/openDailyPage";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
+import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import MobileQuickNoteHandoff, {
+  type DailyTextHandoffAccepted,
+  type MaterializedDailyTextHandoffTarget,
   type MobileQuickNoteHandoffHandle,
 } from "./MobileQuickNoteHandoff";
 
@@ -33,99 +25,50 @@ const metrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
   primaryDefaultWidthPx: 684,
 };
+const localDate = "2026-07-31";
 
-function Harness() {
+function target(initialText: string): MaterializedDailyTextHandoffTarget {
+  return {
+    kind: "OpenDailyPage",
+    date: { kind: "LocalDate", value: localDate },
+    entry: {
+      kind: "AppendNote",
+      initialText,
+      noteId: "11111111-1111-4111-8111-111111111111",
+      clientMutationId: "mutation-1",
+    },
+  };
+}
+
+const accepted: DailyTextHandoffAccepted = {
+  kind: "DailyPageAccepted",
+  activationId: "activation-1",
+  localDate,
+};
+
+function Harness({ initialText }: { initialText: string }) {
   const handoffRef = useRef<MobileQuickNoteHandoffHandle>(null);
-  const [taskClosed, setTaskClosed] = useState(false);
-  const {
-    state,
-    activateWorkspaceTarget,
-    closePane,
-    pendingPaneEntryDeliveryByPaneId,
-  } = useWorkspaceStore();
-  const openDailyPage = useOpenDailyPage();
-  const panes = getWorkspacePrimaryPanes(state);
-  const activePane = panes.find((pane) => pane.id === state.activePrimaryPaneId);
-  const delivery =
-    Array.from(pendingPaneEntryDeliveryByPaneId.values())[0] ?? null;
-
   return (
     <>
       <button
         type="button"
-        onClick={(event) =>
-          handoffRef.current?.begin(event.currentTarget)
-        }
-      >
-        Begin Quick Note
-      </button>
-      <button
-        type="button"
         onClick={() => {
-          for (let index = panes.length; index < MAX_PANES; index += 1) {
-            activateWorkspaceTarget({
-              originPaneId: state.activePrimaryPaneId,
-              target: { href: `/libraries?fork=${index}` },
-              disposition: { kind: "Fork" },
-              modality: "Pointer",
-            });
-          }
+          const handoff = handoffRef.current;
+          if (!handoff) throw new Error("Handoff is not mounted");
+          const prepared = target(initialText);
+          handoff.focus();
+          handoff.prepare(prepared);
+          handoff.accept(prepared, accepted);
         }}
       >
-        Fill panes
+        Add to Today
       </button>
-      <button
-        type="button"
-        onClick={() => {
-          const candidate = getWorkspacePrimaryPanes(state).find(
-            (pane) => pane.id !== state.activePrimaryPaneId,
-          );
-          if (candidate) closePane(candidate.id);
-        }}
-      >
-        Free pane
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          if (activePane) closePane(activePane.id);
-        }}
-      >
-        Close active pane
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          openDailyPage(
-            {
-              kind: "OpenDailyPage",
-              localDate: "Today",
-              entry: { kind: "View" },
-            },
-            {
-              disposition: { kind: "Adopt" },
-              modality: "Pointer",
-            },
-          )
-        }
-      >
-        Today
-      </button>
-      <output aria-label="Task closed">{String(taskClosed)}</output>
-      <output aria-label="Pane count">{panes.length}</output>
-      <output aria-label="Active href">{activePane?.currentVisit.href}</output>
-      <output aria-label="Pending entry">
-        {delivery ? JSON.stringify(delivery.entry) : "none"}
-      </output>
-      <MobileQuickNoteHandoff
-        ref={handoffRef}
-        onNavigationAccepted={() => setTaskClosed(true)}
-      />
+      <MobileQuickNoteHandoff ref={handoffRef} />
     </>
   );
 }
 
-function renderHandoff() {
+function renderHandoff(initialText: string) {
   return render(
     <AuthenticatedAccountProvider
       account={{ accountId: "account-1", calendarTimeZone: "UTC" }}
@@ -136,7 +79,7 @@ function renderHandoff() {
             workspacePrimaryMetrics={metrics}
             initialState={createDefaultWorkspaceState("/libraries", metrics)}
           >
-            <Harness />
+            <Harness initialText={initialText} />
           </WorkspaceStoreProvider>
         </PaneReturnMementoProvider>
       </FeedbackProvider>
@@ -144,155 +87,91 @@ function renderHandoff() {
   );
 }
 
-function today(): string {
-  return formatLocalDateInTimeZone(new Date(), "UTC");
+function writePlainDraft(bodyText: string) {
+  writeDailyDraft({
+    version: 1,
+    accountId: "account-1",
+    localDate,
+    noteId: "11111111-1111-4111-8111-111111111111",
+    clientMutationId: "mutation-1",
+    ...noteBodyValueFromDoc(createNoteBodyDoc({ fallbackBodyText: bodyText })),
+    handoff: { kind: "None" },
+  });
 }
 
-describe("MobileQuickNoteHandoff browser boundary", () => {
+describe("Mobile daily text handoff", () => {
   beforeEach(() => {
     localStorage.clear();
   });
 
-  it("dispatches a recovered draft identity and keeps buffering after task close", async () => {
-    const localDate = today();
-    writeDailyDraft({
-      version: 1,
-      accountId: "account-1",
-      localDate,
-      noteId: "11111111-1111-4111-8111-111111111111",
-      clientMutationId: "mutation-recovered",
-      ...noteBodyValueFromDoc(
-        createNoteBodyDoc({ fallbackBodyText: "Recovered" }),
-      ),
-      handoff: { kind: "None" },
-    });
-    renderHandoff();
+  it("appends the seeded tail through the daily owner and keeps buffering against the prepared identity", () => {
+    writePlainDraft("Recovered");
+    renderHandoff(" Project Ideas");
 
-    fireEvent.click(screen.getByRole("button", { name: "Begin Quick Note" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to Today" }));
 
-    const input = screen.getByLabelText("Quick Note input handoff");
+    const input = screen.getByLabelText(
+      "Daily note input handoff",
+    ) as HTMLTextAreaElement;
     expect(input).toHaveFocus();
-    expect(input).toHaveValue("Recovered");
+    expect(input).toHaveValue(" Project Ideas");
     expect(getComputedStyle(input).fontSize).toBe("16px");
-    expect(screen.getByLabelText("Task closed")).toHaveTextContent("true");
-    expect(screen.getByLabelText("Pending entry")).toHaveTextContent(
-      '"noteId":"11111111-1111-4111-8111-111111111111"',
-    );
-    expect(screen.getByLabelText("Pending entry")).toHaveTextContent(
-      '"clientMutationId":"mutation-recovered"',
-    );
+    expect(readDailyDraft("account-1", localDate)).toMatchObject({
+      noteId: "11111111-1111-4111-8111-111111111111",
+      clientMutationId: "mutation-1",
+      bodyText: "Recovered Project Ideas",
+      handoff: {
+        kind: "Buffered",
+        text: "Recovered Project Ideas",
+        selectionStart: 23,
+        selectionEnd: 23,
+      },
+    });
 
-    fireEvent.input(input, { target: { value: "Recovered after close" } });
+    fireEvent.input(input, { target: { value: " Project Ideas and Tasks" } });
 
-    await waitFor(() => {
-      expect(readDailyDraft("account-1", localDate)?.bodyText).toBe(
-        "Recovered after close",
-      );
+    expect(readDailyDraft("account-1", localDate)).toMatchObject({
+      bodyText: "Recovered Project Ideas and Tasks",
+      handoff: {
+        kind: "Buffered",
+        text: "Recovered Project Ideas and Tasks",
+      },
     });
   });
 
-  it("checkpoints selection, paste input, and IME composition in one draft", () => {
-    renderHandoff();
-    fireEvent.click(screen.getByRole("button", { name: "Begin Quick Note" }));
+  it("checkpoints selection and IME composition in the one prepared draft", () => {
+    renderHandoff("Seed");
+    fireEvent.click(screen.getByRole("button", { name: "Add to Today" }));
     const input = screen.getByLabelText(
-      "Quick Note input handoff",
+      "Daily note input handoff",
     ) as HTMLTextAreaElement;
 
-    const clipboardData = new DataTransfer();
-    clipboardData.setData("text/plain", "pasted");
-    fireEvent.paste(input, { clipboardData });
-    fireEvent.input(input, { target: { value: "pasted" } });
-    input.setSelectionRange(1, 4);
+    input.setSelectionRange(1, 3);
     fireEvent.select(input);
-    expect(readDailyDraft("account-1", today())?.handoff).toMatchObject({
+    expect(readDailyDraft("account-1", localDate)?.handoff).toMatchObject({
       kind: "Buffered",
-      text: "pasted",
       selectionStart: 1,
-      selectionEnd: 4,
+      selectionEnd: 3,
       composition: "Complete",
     });
 
     fireEvent.compositionStart(input);
-    fireEvent.input(input, { target: { value: "pasted入力" } });
-    expect(readDailyDraft("account-1", today())?.handoff).toMatchObject({
+    fireEvent.input(input, { target: { value: "Seed入力" } });
+    expect(readDailyDraft("account-1", localDate)?.handoff).toMatchObject({
       kind: "Buffered",
-      text: "pasted入力",
+      text: "Seed入力",
       composition: "Composing",
     });
 
     fireEvent.compositionEnd(input);
-    expect(readDailyDraft("account-1", today())?.handoff).toMatchObject({
+    expect(readDailyDraft("account-1", localDate)?.handoff).toMatchObject({
       kind: "Buffered",
-      text: "pasted入力",
+      text: "Seed入力",
       composition: "Complete",
     });
   });
 
-  it("appends gesture-time text without flattening a recovered rich draft", () => {
-    const localDate = today();
-    const richBodyPmJson = {
-      type: "paragraph",
-      content: [
-        {
-          type: "text",
-          text: "Bold",
-          marks: [{ type: "strong" }],
-        },
-        {
-          type: "object_ref",
-          attrs: {
-            objectType: "page",
-            objectId: "11111111-1111-4111-8111-111111111111",
-            label: "Project",
-          },
-        },
-      ],
-    };
-    writeDailyDraft({
-      version: 1,
-      accountId: "account-1",
-      localDate,
-      noteId: "33333333-3333-4333-8333-333333333333",
-      clientMutationId: "mutation-rich",
-      bodyPmJson: richBodyPmJson,
-      bodyText: "Bold",
-      handoff: { kind: "None" },
-    });
-    renderHandoff();
-
-    fireEvent.click(screen.getByRole("button", { name: "Begin Quick Note" }));
-    const input = screen.getByLabelText(
-      "Quick Note input handoff",
-    ) as HTMLTextAreaElement;
-    expect(input).toHaveValue("");
-    expect(readDailyDraft("account-1", localDate)?.handoff).toMatchObject({
-      kind: "Buffered",
-      text: "Bold",
-      selectionStart: 4,
-      selectionEnd: 4,
-    });
-
-    fireEvent.input(input, { target: { value: " added" } });
-
-    const recovered = readDailyDraft("account-1", localDate);
-    expect(recovered?.bodyPmJson).toEqual({
-      ...richBodyPmJson,
-      content: [
-        ...(richBodyPmJson.content ?? []),
-        { type: "text", text: " added" },
-      ],
-    });
-    expect(recovered?.bodyText).toBe("Bold added");
-    expect(recovered?.handoff).toMatchObject({
-      kind: "Buffered",
-      text: "Bold added",
-      selectionStart: 10,
-      selectionEnd: 10,
-    });
-  });
-
-  it("opens a recovered atomic body without flattening it through the gesture input", () => {
-    const localDate = today();
+  it("opens an existing atomic draft without installing an empty hidden buffer", () => {
     const bodyPmJson = {
       type: "object_embed",
       attrs: {
@@ -307,117 +186,58 @@ describe("MobileQuickNoteHandoff browser boundary", () => {
       version: 1,
       accountId: "account-1",
       localDate,
-      noteId: "44444444-4444-4444-8444-444444444444",
-      clientMutationId: "mutation-atomic",
+      noteId: "11111111-1111-4111-8111-111111111111",
+      clientMutationId: "mutation-1",
       bodyPmJson,
       bodyText: "",
       handoff: { kind: "None" },
     });
-    renderHandoff();
+    renderHandoff("");
 
-    fireEvent.click(screen.getByRole("button", { name: "Begin Quick Note" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to Today" }));
 
-    expect(screen.getByLabelText("Quick Note input handoff")).not.toHaveFocus();
+    expect(screen.getByLabelText("Daily note input handoff")).not.toHaveFocus();
     expect(readDailyDraft("account-1", localDate)).toMatchObject({
       bodyPmJson,
       bodyText: "",
       handoff: { kind: "None" },
     });
-    expect(screen.getByLabelText("Task closed")).toHaveTextContent("true");
   });
 
-  it("releases an accepted handoff when its exact pane delivery is closed", async () => {
-    renderHandoff();
-    fireEvent.click(screen.getByRole("button", { name: "Begin Quick Note" }));
-    const input = screen.getByLabelText(
-      "Quick Note input handoff",
-    ) as HTMLTextAreaElement;
-    fireEvent.input(input, { target: { value: "Keep after close" } });
-    expect(input).toHaveFocus();
-
-    fireEvent.click(screen.getByRole("button", { name: "Close active pane" }));
-
-    await waitFor(() => expect(input).not.toHaveFocus());
-    expect(readDailyDraft("account-1", today())).toMatchObject({
-      bodyText: "Keep after close",
-      handoff: { kind: "None" },
-    });
-    expect(screen.getByLabelText("Pending entry")).toHaveTextContent("none");
-  });
-
-  it("retires the exact prior bridge before a newer Quick Note supersedes it", async () => {
-    renderHandoff();
-    const begin = screen.getByRole("button", { name: "Begin Quick Note" });
-    fireEvent.click(begin);
-    const input = screen.getByLabelText(
-      "Quick Note input handoff",
-    ) as HTMLTextAreaElement;
-    fireEvent.input(input, { target: { value: "First buffer" } });
-    const first = readDailyDraft("account-1", today());
+  it("retires the exact prior handoff before a newer seed supersedes it", () => {
+    const view = renderHandoff(" First");
+    const trigger = screen.getByRole("button", { name: "Add to Today" });
+    fireEvent.click(trigger);
+    const first = readDailyDraft("account-1", localDate);
     if (first?.handoff.kind !== "Buffered") {
-      throw new Error("Expected the first handoff to be buffered");
+      throw new Error("Expected the first daily handoff to be buffered");
     }
 
-    fireEvent.click(begin);
+    view.rerender(
+      <AuthenticatedAccountProvider
+        account={{ accountId: "account-1", calendarTimeZone: "UTC" }}
+      >
+        <FeedbackProvider>
+          <PaneReturnMementoProvider>
+            <WorkspaceStoreProvider
+              workspacePrimaryMetrics={metrics}
+              initialState={createDefaultWorkspaceState("/libraries", metrics)}
+            >
+              <Harness initialText=" Second" />
+            </WorkspaceStoreProvider>
+          </PaneReturnMementoProvider>
+        </FeedbackProvider>
+      </AuthenticatedAccountProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add to Today" }));
 
-    await waitFor(() => expect(input).toHaveFocus());
-    const replacement = readDailyDraft("account-1", today());
-    expect(replacement).toMatchObject({
-      bodyText: "First buffer",
-      handoff: { kind: "Buffered", text: "First buffer" },
+    const second = readDailyDraft("account-1", localDate);
+    expect(second).toMatchObject({
+      bodyText: "First Second",
+      handoff: { kind: "Buffered", text: "First Second" },
     });
-    expect(replacement?.handoff).not.toMatchObject({
+    expect(second?.handoff).not.toMatchObject({
       handoffId: first.handoff.handoffId,
     });
-
-    fireEvent.click(screen.getByRole("button", { name: "Close active pane" }));
-    await waitFor(() => expect(input).not.toHaveFocus());
-    expect(readDailyDraft("account-1", today())?.handoff).toEqual({
-      kind: "None",
-    });
-  });
-
-  it("cancels a rejected handoff before a later Today view activation", async () => {
-    const localDate = today();
-    const existingDraft = {
-      version: 1 as const,
-      accountId: "account-1",
-      localDate,
-      noteId: "22222222-2222-4222-8222-222222222222",
-      clientMutationId: "mutation-before-rejection",
-      ...emptyNoteBody(),
-      bodyText: "Keep this draft",
-      handoff: { kind: "None" as const },
-    };
-    writeDailyDraft(existingDraft);
-    renderHandoff();
-    fireEvent.click(screen.getByRole("button", { name: "Fill panes" }));
-    await waitFor(() => {
-      expect(screen.getByLabelText("Pane count")).toHaveTextContent(
-        String(MAX_PANES),
-      );
-    });
-
-    const quickNote = screen.getByRole("button", {
-      name: "Begin Quick Note",
-    });
-    quickNote.focus();
-    fireEvent.click(quickNote);
-
-    expect(quickNote).toHaveFocus();
-    expect(readDailyDraft("account-1", localDate)).toEqual(existingDraft);
-    expect(screen.getByLabelText("Task closed")).toHaveTextContent("false");
-    expect(screen.getByLabelText("Pending entry")).toHaveTextContent("none");
-
-    fireEvent.click(screen.getByRole("button", { name: "Free pane" }));
-    fireEvent.click(screen.getByRole("button", { name: "Today" }));
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Active href")).toHaveTextContent(
-        `/daily/${today()}`,
-      );
-    });
-    expect(screen.getByLabelText("Pending entry")).toHaveTextContent("none");
-    expect(readDailyDraft("account-1", localDate)).toEqual(existingDraft);
   });
 });

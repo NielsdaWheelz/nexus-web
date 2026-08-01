@@ -16,7 +16,8 @@ function projectCatalogAction(
     id: catalog.id,
     label: catalog.label,
     icon: catalog.icon,
-    target,
+    activation: { kind: "Standard" },
+    availability: { kind: "Available", target },
   };
 }
 

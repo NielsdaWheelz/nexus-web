@@ -6,11 +6,11 @@ import {
   type ResourceItem,
 } from "@/lib/resources/resourceItems";
 import {
-  beginSwitchboardPerformance,
-  cancelSwitchboardPerformance,
-  markSwitchboardPerformanceDecoded,
+  beginNexusPerformance,
+  cancelNexusPerformance,
+  markNexusPerformanceDecoded,
   NEXUS_OPENABLES_PERFORMANCE,
-} from "@/lib/switchboard/performance";
+} from "@/lib/nexus/performance";
 import { expectArray, expectExactRecord } from "@/lib/validation";
 
 export interface ResourceOpenableSearchRequest {
@@ -33,7 +33,7 @@ export class ResourceOpenablesContractDefect extends Error {
 export async function searchOpenableResources(
   request: ResourceOpenableSearchRequest,
 ): Promise<ResourceOpenableSearchResponse> {
-  const performanceRun = beginSwitchboardPerformance(
+  const performanceRun = beginNexusPerformance(
     NEXUS_OPENABLES_PERFORMANCE,
   );
   try {
@@ -65,13 +65,13 @@ export async function searchOpenableResources(
       }
       throw error;
     }
-    markSwitchboardPerformanceDecoded(
+    markNexusPerformanceDecoded(
       NEXUS_OPENABLES_PERFORMANCE,
       performanceRun,
     );
     return result;
   } catch (error) {
-    cancelSwitchboardPerformance(
+    cancelNexusPerformance(
       NEXUS_OPENABLES_PERFORMANCE,
       performanceRun,
     );

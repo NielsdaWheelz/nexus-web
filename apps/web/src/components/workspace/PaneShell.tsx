@@ -92,8 +92,7 @@ import {
   findPaneLandmarkFocusTarget,
   findPaneSearchFocusTarget,
 } from "@/lib/workspace/paneDom";
-import { SwitchboardPanePerformanceContext } from "@/lib/switchboard/performance";
-import { NexusDesktopPanePerformanceContext } from "@/lib/nexus/performance";
+import { NexusPanePerformanceContext } from "@/lib/nexus/performance";
 import { isAbortError } from "@/lib/errors";
 import styles from "./PaneShell.module.css";
 
@@ -1160,15 +1159,13 @@ export default function PaneShell({
             }
             style={bodyStyle}
           >
-            <SwitchboardPanePerformanceContext.Provider
+            <NexusPanePerformanceContext.Provider
               value={panePerformance}
             >
-              <NexusDesktopPanePerformanceContext.Provider value={panePerformance}>
-                <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
-                  {children}
-                </PanePrimaryChromeProvider>
-              </NexusDesktopPanePerformanceContext.Provider>
-            </SwitchboardPanePerformanceContext.Provider>
+              <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
+                {children}
+              </PanePrimaryChromeProvider>
+            </NexusPanePerformanceContext.Provider>
             <div
               className={styles.refreshIndicator}
               data-testid="pane-refresh-indicator"

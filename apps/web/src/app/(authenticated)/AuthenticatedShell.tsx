@@ -134,22 +134,22 @@ function AuthenticatedWorkspace({
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
                     <OfflineMediaProvider accountId={accountId}>
-                      <Nexus />
-                      <div
-                        className={styles.layout}
-                        data-hydrated={hydrated || undefined}
-                      >
-                        <AppNav />
-                        <main className={styles.main}>
-                          <GlobalPlayerProvider accountId={accountId}>
+                      <GlobalPlayerProvider accountId={accountId}>
+                        <Nexus />
+                        <div
+                          className={styles.layout}
+                          data-hydrated={hydrated || undefined}
+                        >
+                          <AppNav />
+                          <main className={styles.main}>
                             <WalknoteSessionProvider>
                               <WorkspaceHost />
                               <LecternMutationNotice />
                               <GlobalPlayerSurfaces />
                             </WalknoteSessionProvider>
-                          </GlobalPlayerProvider>
-                        </main>
-                      </div>
+                          </main>
+                        </div>
+                      </GlobalPlayerProvider>
                     </OfflineMediaProvider>
                   </ShareControllerProvider>
                 </LibraryPlacementControllerProvider>

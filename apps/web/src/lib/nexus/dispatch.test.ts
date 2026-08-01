@@ -7,6 +7,7 @@ import type {
 } from "@/lib/workspace/targetActivation";
 import {
   dispatchNexusTarget,
+  materializeNexusTarget,
   PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
   type NexusDispatchCtx,
 } from "./dispatch";
@@ -42,7 +43,7 @@ function context(input?: {
     openShare: vi.fn(),
     openDailyPage: vi.fn((target, _activation) => ({
       localDate:
-        target.localDate === "Today" ? "2026-07-30" : target.localDate,
+        target.date.kind === "LocalDate" ? target.date.value : "2026-07-30",
       activationId: "daily-activation",
       activation:
         input?.result ??
@@ -52,6 +53,7 @@ function context(input?: {
       returnFocusTo: () => null,
       returnFocusFallback: { kind: "Absent" },
     }),
+    resumeCurrentPlayback: vi.fn(),
   };
 }
 
@@ -182,8 +184,11 @@ describe("Nexus dispatch", () => {
           initialDestinations: [],
         },
       },
-      { kind: "CreatePage" },
-      { kind: "CreateLibrary" },
+      { kind: "CreatePage", titleDraft: "" },
+      { kind: "CreateLibrary", nameDraft: "" },
+      { kind: "ChooseCreate", initialDraft: "Project Ideas" },
+      { kind: "ChooseBrowse", query: "Project Ideas" },
+      { kind: "ManageTabs" },
     ];
     for (const target of workflows) {
       await expect(
@@ -205,20 +210,20 @@ describe("Nexus dispatch", () => {
     };
 
     await dispatchNexusTarget(
-      {
+      materializeNexusTarget({
         kind: "OpenDailyPage",
-        localDate: "Today",
+        date: { kind: "LocalDate", value: "2026-07-30" },
         entry: { kind: "View" },
-      },
+      }, { accountId: "account-1", calendarTimeZone: "UTC" }),
       ctx,
       activation,
     );
     await dispatchNexusTarget(
-      {
+      materializeNexusTarget({
         kind: "OpenDailyPage",
-        localDate: "Today",
-        entry: { kind: "AppendNote" },
-      },
+        date: { kind: "LocalDate", value: "2026-07-30" },
+        entry: { kind: "AppendNote", initialText: "Project Ideas" },
+      }, { accountId: "account-1", calendarTimeZone: "UTC" }),
       ctx,
       activation,
     );
@@ -227,7 +232,7 @@ describe("Nexus dispatch", () => {
       1,
       {
         kind: "OpenDailyPage",
-        localDate: "Today",
+        date: { kind: "LocalDate", value: "2026-07-30" },
         entry: { kind: "View" },
       },
       activation,
@@ -236,9 +241,10 @@ describe("Nexus dispatch", () => {
       2,
       {
         kind: "OpenDailyPage",
-        localDate: "Today",
+        date: { kind: "LocalDate", value: "2026-07-30" },
         entry: {
           kind: "AppendNote",
+          initialText: "Project Ideas",
           noteId: expect.any(String),
           clientMutationId: expect.any(String),
         },
@@ -256,12 +262,16 @@ describe("Nexus dispatch", () => {
       modality: "Programmatic" as const,
     };
 
-    const outcome = await dispatchNexusTarget(
+    const target = materializeNexusTarget(
       {
         kind: "OpenDailyPage",
-        localDate: "Today",
-        entry: { kind: "AppendNote" },
+        date: { kind: "LocalDate", value: "2026-07-30" },
+        entry: { kind: "AppendNote", initialText: "Project Ideas" },
       },
+      { accountId: "account-1", calendarTimeZone: "UTC" },
+    );
+    const outcome = await dispatchNexusTarget(
+      target,
       rejected,
       activation,
     );
@@ -270,9 +280,10 @@ describe("Nexus dispatch", () => {
       kind: "NavigationRejected",
       target: {
         kind: "OpenDailyPage",
-        localDate: "2026-07-30",
+        date: { kind: "LocalDate", value: "2026-07-30" },
         entry: {
           kind: "AppendNote",
+          initialText: "Project Ideas",
           noteId: expect.any(String),
           clientMutationId: expect.any(String),
         },
@@ -288,6 +299,42 @@ describe("Nexus dispatch", () => {
     expect(accepted.openDailyPage).toHaveBeenCalledWith(
       outcome.target,
       activation,
+    );
+  });
+
+  it("materializes one AppendNote replay identity and reuses it through dispatch", async () => {
+    vi.spyOn(crypto, "randomUUID")
+      .mockReturnValueOnce("11111111-1111-4111-8111-111111111111")
+      .mockReturnValueOnce("22222222-2222-4222-8222-222222222222");
+    const target = materializeNexusTarget(
+      {
+        kind: "OpenDailyPage",
+        date: { kind: "LocalDate", value: "2026-07-30" },
+        entry: { kind: "AppendNote", initialText: "Project Ideas" },
+      },
+      { accountId: "account-1", calendarTimeZone: "UTC" },
+    );
+    const ctx = context();
+
+    await dispatchNexusTarget(
+      target,
+      ctx,
+      PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
+    );
+
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(2);
+    expect(ctx.openDailyPage).toHaveBeenCalledWith(
+      {
+        kind: "OpenDailyPage",
+        date: { kind: "LocalDate", value: "2026-07-30" },
+        entry: {
+          kind: "AppendNote",
+          initialText: "Project Ideas",
+          noteId: "11111111-1111-4111-8111-111111111111",
+          clientMutationId: "22222222-2222-4222-8222-222222222222",
+        },
+      },
+      PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
     );
   });
 
@@ -377,5 +424,35 @@ describe("Nexus dispatch", () => {
     });
     expect(ctx.openShare).toHaveBeenCalledTimes(1);
     expect(ctx.closePane).toHaveBeenCalledWith("pane-a");
+  });
+
+  it("routes a typed Browse kind and resumes only through the player owner", async () => {
+    const ctx = context();
+    await dispatchNexusTarget(
+      {
+        kind: "Browse",
+        query: "design systems",
+        browseKind: "Podcast",
+      },
+      ctx,
+      PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
+    );
+    await expect(
+      dispatchNexusTarget(
+        { kind: "ResumeCurrentPlayback" },
+        ctx,
+        PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
+      ),
+    ).resolves.toEqual({ kind: "Stayed" });
+
+    expect(ctx.activateWorkspaceTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: {
+          href: "/browse?q=design+systems&kind=Podcast",
+          labelHint: "Browse",
+        },
+      }),
+    );
+    expect(ctx.resumeCurrentPlayback).toHaveBeenCalledTimes(1);
   });
 });

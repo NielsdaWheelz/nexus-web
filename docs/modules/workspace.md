@@ -37,7 +37,7 @@ Mobile mode:
 - renders no pane resize handle
 - presents secondary content only through `MobileSecondaryPaneHost`
 - presents global pane switching and recently closed restoration through the
-  shell-mounted full-screen Nexus `SwitchboardTask`
+  shell-mounted full-screen Nexus task and its dedicated Manage Tabs page
 
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
@@ -239,7 +239,9 @@ activation.
 Accepted activation may carry one pane-entry delivery addressed to the chosen
 `paneId` plus its current `visitId`. Lazy body mounting queues that delivery
 until the visit subscribes; an already-mounted visit receives it immediately.
-Each activation ID is consumed once for the workspace-provider lifetime. A
+Each AppendNote delivery carries its initial text and replay-safe note and
+client-mutation identities. Each activation ID is consumed once for the
+workspace-provider lifetime. A
 visit holds at most one unclaimed delivery: a newer accepted entry explicitly
 supersedes it, while View cancels it. Acknowledgement names the exact claimed
 delivery, so a stale acknowledgement cannot clear its replacement. Rejected,
@@ -247,9 +249,12 @@ closed, or `ActivationBlocked` activation leaves no ambient intent for a later
 pane.
 
 The planner derives `daily:{localDate}` and `page:{pageId}` aliases from their
-routes and unions them with aliases published by Page panes. Quick Note and
+routes and unions them with aliases published by Page panes. Quick Note,
+query-seeded Add to Today, and
 ordinary Page opens therefore reuse an open `/pages/{pageId}` daily pane or
-`/daily/{localDate}` pane and deliver append to that exact visit. A latent
+`/daily/{localDate}` pane and deliver append to that exact visit. The daily
+surface owner appends seed text to an appendable draft and rejects a seeded
+atomic draft before navigation. A latent
 daily visit adopts its returned persistence ref without replacing the visit
 href or mount identity.
 

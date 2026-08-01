@@ -5,7 +5,7 @@ App navigation has two projections with distinct jobs:
 - the desktop rail is a small, fixed projection of Nexus's highest-frequency
   destinations;
 - mobile has one Nexus entrance. Its opaque full-screen `SwitchboardTask`
-  exposes the bounded Places projection defined below.
+  renders the mobile projection of the shared Nexus intent router.
 
 Neither is a directory of every feature.
 
@@ -17,42 +17,41 @@ Neither is a directory of every feature.
   but do not displace discovery, listening, and conversation tasks.
 - **Desktop rail order is exact and flat:** Lectern, Libraries, Browse, Podcasts,
   Chats, Notes, Stats, Atlas, Oracle.
-- **Mobile Places order is exact and flat:** Today, Lectern, Libraries, Browse,
-  Podcasts, Chats, Notes. Stats, Atlas, and Oracle remain retrievable through
-  Find.
+- **Mobile Places order is exact:** Lectern, Libraries, Browse, Podcasts,
+  Chats, Notes. Stats, Atlas, and Oracle remain retrievable through Nexus.
 - **Fixed navigation is not customizable.** Pinning is not part of this
   contract. Personalized retrieval belongs in the Lectern Reading Slate and
   Nexus, where it can scale without destabilizing spatial memory.
 
-On desktop, Account, Nexus, Quick Note, and Today are rail actions outside the
-ordered destination list; Quick Note and Today form one compact action group
-below the command bar. On mobile, Account, Find, Quick Note, Add/Create, open
-panes, and recently closed panes live inside the Nexus task, while Today is a
-Place. Search, Authors, settings subpages, and other valid destinations remain
+On desktop, Account and Nexus remain rail actions. Quick Note and Today exist
+only in Nexus. Both Nexus projections expose the same commands, results,
+targets, workflows, history, and dispatch; the shared composer owns section
+membership, order, caps, and the declared desktop/mobile layout policy.
+Search, Authors, settings subpages, and other valid destinations remain
 retrievable without becoming permanent navigation items.
 
-Desktop Nexus presents Quick Note, New Chat, New Page, and Import as its exact
-four direct actions, not as an Add lane or mode chooser. Quick Note dispatches
-the same dated Page append target as the rail. Mobile Import opens the same
-source-first Add workbench from Nexus Quick; an editable non-default
-Library may still seed its full destination object.
-
-Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Its
-Root, Find, Actions, Create, Add, and recovery pages replace
-one another inside one opaque viewport-fixed dialog. The task adds no second
-header or toolbar; each page retains its sole header and content scroll owner.
-There is no outside-click or drag dismissal.
+Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Root
+owns the autofocused query; Choose Create, Choose Browse, Manage Tabs, Add, and
+recovery pages replace one another inside one opaque viewport-fixed dialog.
+There is no separate Find page, scope state, outside-click, or drag dismissal.
 
 Compact presentation covers widths through 768 px and coarse-pointer landscape
 phones through 900 px. Fine-pointer short desktop windows remain desktop.
 
-## Desktop Nexus content grammar
+## Nexus content grammar
 
-Desktop Nexus is a one-column workspace switchboard, not a typed command
-language. Its input is always labelled and placeholdered **Find anything…**.
-The zero state shows only an `Open` run of existing/recent internal targets and
-four explicit actions: **Quick Note**, **New Chat**, **New Page**, and
-**Import**. Places are retrievable; they are not a permanent button wall.
+Nexus is one typed intent router with platform-native renderers. Its input is
+always labelled and placeholdered **Find anything…**. Blank desktop order is
+Open, optional Continue, Recent, Quick Actions. Blank mobile order is Open,
+Quick Actions, optional Continue, Recent, Places; mobile groups use compact
+rails. Independent caps prevent one group from erasing another. Quick Actions
+are Quick Note, Today, New Chat, New Page, New Library, and Import.
+
+Typing removes blank groups. The shared composer admits at most eight owned
+results, then exposes Ask Nexus, Add to Today, Browse, Create, and See All as
+one fixed Query Actions group. Reserved verbs and slash aliases compile to
+explicit typed intent; incomplete or unknown command text remains retrieval.
+Selection is always required.
 
 A result has one required primary label. It may add only facts already carried
 by its projection, in this hierarchy:
@@ -66,16 +65,17 @@ The primary label remains dominant. Nexus never invents a summary, confidence,
 activity state, or type decoration merely to fill a row. Search-source failures
 say either **Couldn’t search your resources** or **Couldn’t search inside your
 library**, retain successful rows, and expose a source-specific **Retry** outside
-the listbox. External retrieval leaves Nexus through an explicit Browse href.
-“Search the web…” targets `/browse?kind=WebArticle&q={query}` and Podcast
-discovery targets `/browse?kind=Podcast`; neither invokes a provider-spending
-bare All query. Browse candidates open owned content directly or a read-only
-Preview. They are never silently ingested.
+the Results grid. External retrieval leaves Nexus through a typed Browse target.
+Article and Podcast discovery target their explicit Browse kinds; no ambiguous
+query invokes a provider-spending bare All query. Browse candidates open owned
+content directly or a read-only Preview. They are never silently ingested.
 
-The listbox has no nested controls: one result equals one primary activation.
-The selected result's **Actions** control is outside it and remains pointer
-reachable at every desktop width. `Enter`/click is Follow; `Shift+Enter`/
-Shift+click is Fork.
+Desktop uses a combobox with a grid popup. DOM focus remains in the input;
+Up/Down changes rows, Left/Right changes primary versus Actions cells, Enter
+invokes the active cell, and Shift+Enter Forks a primary result. Each applicable
+row has one pointer Actions button backed by the shared `ActionMenu`. Mobile
+keeps a sibling action button and 48 px targets. Renderers never infer command,
+ranking, target, or workflow meaning from copy or identifiers.
 
 Desktop Nexus publishes named user-timing measures at input-ready, local rows
 committed, accepted pane paint, and first usable provider rows. The benchmark
@@ -90,15 +90,16 @@ labels a warmed provider loop as cold. The p95 gates are respectively under
 | Authenticated home href                                           | `apps/web/src/lib/routes/defaults.ts`                                                                             |
 | Destination identity (`id`, label, href, keywords, optional icon) | `apps/web/src/lib/navigation/destinations.ts`                                                                     |
 | Fixed-nav membership, order, and decoration                       | `apps/web/src/components/appnav/navModel.ts`                                                                      |
-| Mobile Places membership and order                               | `SWITCHBOARD_PLACE_IDS` in `apps/web/src/lib/switchboard/places.ts`                                                |
+| Nexus commands and typed intent                                  | `apps/web/src/lib/nexus/commands.ts` and `apps/web/src/lib/nexus/intent.ts`                                        |
+| Nexus sections, Places projection, ranking, caps, and stability  | `apps/web/src/lib/nexus/results.ts` and `apps/web/src/lib/nexus/ranking.ts`                                        |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
 | Desktop rail projection and pane dispatch                         | `apps/web/src/components/appnav/AppNav.tsx`                                                                       |
-| Mobile global-access projection                                  | `apps/web/src/components/switchboard/SwitchboardTask.tsx` and sibling page components                             |
 | Internal-link gesture policy                                      | `apps/web/src/lib/panes/targetLinkActivation.ts`                                                                  |
 | Target selection, restoration, creation, and activation           | `activateWorkspaceTarget` in `apps/web/src/lib/workspace/store.tsx`                                               |
 | Server-restored deep-link merge                                   | `apps/web/src/lib/workspace/workspaceRestore.ts`                                                                  |
-| Desktop Nexus projection                                         | `apps/web/src/lib/nexus/model.ts`, `apps/web/src/lib/nexus/ranking.ts`, and `apps/web/src/components/nexus/desktop/` |
-| Mobile quick-action projection                                   | `apps/web/src/lib/nexus/quickActions.ts`                                                                          |
+| Nexus semantic contract                                          | `apps/web/src/lib/nexus/model.ts`                                                                                  |
+| Desktop Nexus renderer                                           | `apps/web/src/components/nexus/desktop/`                                                                           |
+| Mobile Nexus renderer                                            | `apps/web/src/components/switchboard/SwitchboardTask.tsx` and sibling presentation components                    |
 | Nexus ingress and direct action session                          | `apps/web/src/lib/nexus/events.ts` and `apps/web/src/components/nexus/useNexusController.ts`                      |
 | Daily Page location and append entry                             | `apps/web/src/lib/notes/openDailyPage.ts` and workspace pane-entry delivery                                       |
 | Keybinding projection                                             | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx`                                   |
@@ -198,8 +199,9 @@ When adding or changing a destination:
    `sectionDestinationId`.
 4. If the backend records Nexus history for the href, update its canonical
    allowlist and integration coverage.
-5. Add a destination to mobile Places only by changing
-   `SWITCHBOARD_PLACE_IDS`; do not duplicate its identity.
+5. Add a destination to mobile Places only through the closed projection in
+   `lib/nexus/results.ts`; do not duplicate its identity outside
+   `DESTINATION_REGISTRY`.
 6. Verify desktop and mobile projection membership separately, semantic
    detail-route activity, native modified clicks,
    exact-pane reuse, minimized-pane restoration, and focus handoff.

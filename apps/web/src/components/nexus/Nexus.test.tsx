@@ -19,8 +19,8 @@ import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
-import { PANE_SEARCH_REQUESTED_EVENT } from "@/lib/panes/paneSearchEvents";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import {
@@ -306,10 +306,12 @@ function renderNexus(input: {
                   }
                 >
                   <LecternProvider>
-                    <ShareControllerProvider>
-                      <WorkspaceProbe />
-                      <Nexus />
-                    </ShareControllerProvider>
+                    <GlobalPlayerProvider>
+                      <ShareControllerProvider>
+                        <WorkspaceProbe />
+                        <Nexus />
+                      </ShareControllerProvider>
+                    </GlobalPlayerProvider>
                   </LecternProvider>
                 </WorkspaceStoreProvider>
               </PaneReturnMementoProvider>
@@ -384,28 +386,7 @@ describe("Nexus shell contracts", () => {
     expect(window.location.hash).toBe("#reader");
   });
 
-  it("consumes a retired WebSearch URL intent into explicit recovery", async () => {
-    window.history.replaceState(
-      {},
-      "",
-      "/?nexus=1&intent=WebSearch&q=design%20systems",
-    );
-
-    renderNexus();
-
-    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
-    expect(
-      within(dialog).getByRole("heading", {
-        name: "This link is no longer supported",
-      }),
-    ).toBeVisible();
-    expect(
-      within(dialog).getByRole("button", { name: "Open Browse" }),
-    ).toBeVisible();
-    expect(window.location.search).toBe("");
-  });
-
-  it("does not recover the old WebSearch query or call its provider on mobile", async () => {
+  it("routes a retired WebSearch URL to query-free recovery", async () => {
     window.history.replaceState(
       {},
       "",
@@ -421,40 +402,55 @@ describe("Nexus shell contracts", () => {
       }),
     ).toBeVisible();
     expect(within(dialog).queryByText("epistemology")).not.toBeInTheDocument();
+    expect(window.location.search).toBe("");
   });
 
-  it("uses Nexus.Open to open the shell, enter available actions, and no-op without actions", async () => {
+  it("records an accepted mobile href selection through the shared history owner", async () => {
+    renderNexus({ mobile: true });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Nexus, 1 tab" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /^Notes Place$/ }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
+    );
+    await waitFor(() => expect(selectionRequests()).toHaveLength(1));
+    expect(selectionRequests()[0]!.body).toMatchObject({
+      query: null,
+      target_href: "/notes",
+      label_snapshot: "Notes",
+      source: "Static",
+    });
+  });
+
+  it("uses Nexus.Open to open the inline row menu and no-ops without row actions", async () => {
     renderNexus();
 
     openWithKeyboard();
     let dialog = await screen.findByRole("dialog", { name: "Nexus" });
     expect(
-      within(dialog).getByRole("combobox", { name: "Find anything" }),
+      within(dialog).getByRole("combobox", { name: "Find anything…" }),
     ).toHaveFocus();
 
     openWithKeyboard();
     expect(
-      await within(dialog).findByRole("heading", {
-        name: /Actions for Libraries/,
-      }),
+      await within(dialog).findByRole("menuitem", { name: "Close tab" }),
     ).toBeVisible();
     expect(
-      within(dialog).getByRole("menuitem", { name: "Close tab" }),
-    ).toBeVisible();
+      within(dialog).queryByRole("heading", { name: /Actions for/ }),
+    ).toBeNull();
 
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: "Back to Nexus" }),
-    );
+    await userEvent.keyboard("{Escape}");
     const input = await within(dialog).findByRole("combobox", {
-      name: "Find anything",
+      name: "Find anything…",
     });
-    await userEvent.type(input, "notes");
-    fireEvent.keyDown(input, { key: "ArrowDown" });
-    await waitFor(() =>
-      expect(
-        within(dialog).getByRole("option", { name: /^Notes\b/ }),
-      ).toHaveAttribute("aria-selected", "true"),
-    );
+    expect(input).toHaveFocus();
+    await userEvent.type(input, "zzzz-no-actions");
 
     openWithKeyboard();
     dialog = screen.getByRole("dialog", { name: "Nexus" });
@@ -462,36 +458,8 @@ describe("Nexus shell contracts", () => {
       within(dialog).queryByRole("heading", { name: /Actions for/ }),
     ).toBeNull();
     expect(
-      within(dialog).getByRole("combobox", { name: "Find anything" }),
-    ).toHaveValue("notes");
-  });
-
-  it("teaches the current pane Search binding and closes only after consumption", async () => {
-    renderNexus();
-    openWithKeyboard();
-    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
-    const input = within(dialog).getByRole("combobox", {
-      name: "Find anything",
-    });
-    fireEvent.change(input, { target: { value: "search this pane" } });
-    await within(dialog).findByRole("option", {
-      name: /^Search this pane\. Ctrl\+F\. Command$/,
-    });
-    const consume = vi.fn((event: Event) => event.preventDefault());
-    window.addEventListener(PANE_SEARCH_REQUESTED_EVENT, consume, {
-      once: true,
-    });
-
-    fireEvent.click(
-      within(dialog).getByRole("option", {
-        name: /^Search this pane\. Ctrl\+F\. Command$/,
-      }),
-    );
-
-    expect(consume).toHaveBeenCalledOnce();
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
-    );
+      within(dialog).getByRole("combobox", { name: "Find anything…" }),
+    ).toHaveValue("zzzz-no-actions");
   });
 
   it("executes the committed key when a provider arrives and logs only the accepted target", async () => {
@@ -507,18 +475,20 @@ describe("Nexus shell contracts", () => {
     renderNexus();
     act(() => requestNexusOpen({ kind: "Root" }));
     const input = await screen.findByRole("combobox", {
-      name: "Find anything",
+      name: "Find anything…",
     });
-    await userEvent.type(input, "alpha");
+    await userEvent.type(input, "libraries");
     await openablesStarted;
     await waitFor(() =>
-      expect(
-        screen.getByRole("option", { name: /^Libraries\b/ }),
-      ).toHaveAttribute("aria-selected", "true"),
+      expect(input.getAttribute("aria-activedescendant")).not.toBeNull(),
     );
+    const committedKey = input.getAttribute("aria-activedescendant");
 
     resolveOpenables(
       jsonResponse({ data: { items: [openablePageResult()] } }),
+    );
+    await waitFor(() =>
+      expect(input).toHaveAttribute("aria-activedescendant", committedKey),
     );
     fireEvent.keyDown(input, { key: "Enter" });
 
@@ -531,7 +501,7 @@ describe("Nexus shell contracts", () => {
     );
     await waitFor(() => expect(selectionRequests()).toHaveLength(1));
     expect(selectionRequests()[0]!.body).toMatchObject({
-      query: "alpha",
+      query: "libraries",
       target_href: "/libraries",
       label_snapshot: "Libraries",
       source: "Workspace",
@@ -570,7 +540,7 @@ describe("Nexus shell contracts", () => {
     renderNexus();
     act(() => requestNexusOpen({ kind: "Root" }));
     const input = await screen.findByRole("combobox", {
-      name: "Find anything",
+      name: "Find anything…",
     });
     await userEvent.type(input, "alpha");
     await alphaStarted;
@@ -583,10 +553,43 @@ describe("Nexus shell contracts", () => {
     );
     await waitFor(() => expect(input).toHaveValue("beta"));
     expect(
-      screen.queryByRole("option", { name: /^Alpha\b/ }),
+      screen.queryByRole("gridcell", { name: /^Alpha\b/ }),
     ).toBeNull();
 
     resolveBeta(jsonResponse({ data: { items: [] } }));
+  });
+
+  it("keeps a moved query-action identity outside progressive result merges", async () => {
+    let resolveOpenables!: (response: Response) => void;
+    const openablesStarted = new Promise<void>((resolve) => {
+      openablesResponse = () => {
+        resolve();
+        return new Promise<Response>((resolveResponse) => {
+          resolveOpenables = resolveResponse;
+        });
+      };
+    });
+    renderNexus();
+    act(() => requestNexusOpen({ kind: "Root" }));
+    const input = await screen.findByRole("combobox", {
+      name: "Find anything…",
+    });
+    await userEvent.type(input, "alpha");
+    await openablesStarted;
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    const stabilizedAction = input.getAttribute("aria-activedescendant");
+    expect(stabilizedAction).toMatch(/Continuation%3AAddToToday$/);
+
+    resolveOpenables(
+      jsonResponse({ data: { items: [openablePageResult()] } }),
+    );
+    await waitFor(() =>
+      expect(input).toHaveAttribute(
+        "aria-activedescendant",
+        stabilizedAction,
+      ),
+    );
   });
 
   it("invalidates same-query Openables after a Nexus-owned mutation", async () => {
@@ -611,11 +614,11 @@ describe("Nexus shell contracts", () => {
     renderNexus({ state: maxPaneState() });
     act(() => requestNexusOpen({ kind: "Root" }));
     let input = await screen.findByRole("combobox", {
-      name: "Find anything",
+      name: "Find anything…",
     });
     await userEvent.type(input, "page");
     expect(
-      await screen.findByRole("option", {
+      await screen.findByRole("gridcell", {
         name: /^Page before mutation\b/,
       }),
     ).toBeVisible();
@@ -623,7 +626,7 @@ describe("Nexus shell contracts", () => {
 
     mutationCompleted = true;
     fireEvent.click(
-      screen.getByRole("option", { name: /^Page\. Create$/ }),
+      screen.getByRole("gridcell", { name: /^New Page\b/ }),
       { shiftKey: true },
     );
     expect(
@@ -632,11 +635,11 @@ describe("Nexus shell contracts", () => {
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     input = await screen.findByRole("combobox", {
-      name: "Find anything",
+      name: "Find anything…",
     });
     expect(input).toHaveValue("page");
     expect(
-      await screen.findByRole("option", {
+      await screen.findByRole("gridcell", {
         name: /^Page after mutation\b/,
       }),
     ).toBeVisible();
@@ -647,7 +650,7 @@ describe("Nexus shell contracts", () => {
     renderNexus();
     act(() => requestNexusOpen({ kind: "Root" }));
     const input = await screen.findByRole("combobox", {
-      name: "Find anything",
+      name: "Find anything…",
     });
 
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
@@ -667,7 +670,7 @@ describe("Nexus shell contracts", () => {
     renderNexus({ state: maxPaneState() });
     act(() => requestNexusOpen({ kind: "Root" }));
     const input = await screen.findByRole("combobox", {
-      name: "Find anything",
+      name: "Find anything…",
     });
 
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
@@ -691,15 +694,13 @@ describe("Nexus shell contracts", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Manage tabs" }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Done" }));
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
-    );
-    act(() => requestNexusOpen({ kind: "Root" }));
     expect(
-      await screen.findByRole("heading", { name: "Ready to open" }),
+      await screen.findByRole("heading", { name: "Manage tabs" }),
     ).toBeVisible();
-
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("heading", { name: "Tab limit reached" }),
+    ).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     act(() =>
       requestNexusOpen({
@@ -707,17 +708,12 @@ describe("Nexus shell contracts", () => {
         actionId: "Nexus.Quick.Page",
       }),
     );
-    expect(await screen.findByText("Creating page…")).toBeVisible();
     expect(
       await screen.findByText(/Your page was created\./),
     ).toBeVisible();
     expect(selectionRequests()).toHaveLength(0);
 
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
-    );
-    act(() => requestNexusOpen({ kind: "Root" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open" }));
     expect(
       await screen.findByText(/Your page was created\./),
     ).toBeVisible();
@@ -747,12 +743,9 @@ describe("Nexus shell contracts", () => {
       screen.getByRole("button", { name: "Manage tabs" }),
     );
     await userEvent.click(
-      screen.getAllByRole("button", { name: "Actions for Libraries" })[0]!,
+      screen.getAllByRole("button", { name: "Close Libraries" })[0]!,
     );
-    await userEvent.click(
-      screen.getByRole("menuitem", { name: "Close Libraries" }),
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Open" }));
+    await userEvent.click(screen.getByRole("button", { name: "Retry open" }));
 
     await waitFor(() =>
       expect(screen.getByTestId("workspace-active-href")).toHaveTextContent(
@@ -779,7 +772,7 @@ describe("Nexus shell contracts", () => {
       name: "Nexus",
     });
     await userEvent.click(
-      within(mobileDialog).getByRole("button", { name: "Import" }),
+      within(mobileDialog).getByRole("button", { name: /^Import\b/ }),
     );
     const links = await within(mobileDialog).findByRole("textbox", {
       name: "Links",
@@ -800,7 +793,9 @@ describe("Nexus shell contracts", () => {
 
     viewport.setMobile(true);
 
-    const mobileAgain = await screen.findByRole("dialog", { name: "Nexus" });
+    const mobileAgain = await screen.findByRole("dialog", {
+      name: "Add content",
+    });
     expect(
       within(mobileAgain).getByRole("heading", { name: "Add content" }),
     ).toBeVisible();
@@ -818,7 +813,7 @@ describe("Nexus shell contracts", () => {
     await userEvent.click(trigger);
     const nexus = await screen.findByRole("dialog", { name: "Nexus" });
     await userEvent.click(
-      within(nexus).getByRole("button", { name: "Import" }),
+      within(nexus).getByRole("button", { name: /^Import\b/ }),
     );
     const links = await within(nexus).findByRole("textbox", {
       name: "Links",
@@ -830,9 +825,9 @@ describe("Nexus shell contracts", () => {
     await userEvent.click(
       await within(nexus).findByRole("button", { name: "Add 1 item" }),
     );
-    expect(await within(nexus).findByRole("status")).toHaveTextContent(
-      "Adding 1 item…",
-    );
+    expect(
+      await within(nexus).findAllByText("Adding 1 item…"),
+    ).not.toHaveLength(0);
 
     fireEvent.keyDown(document, { key: "Escape" });
     let confirmation = await screen.findByRole("dialog", {
@@ -848,9 +843,7 @@ describe("Nexus shell contracts", () => {
       ).toBeNull(),
     );
     expect(nexus).toBeVisible();
-    expect(within(nexus).getByRole("status")).toHaveTextContent(
-      "Adding 1 item…",
-    );
+    expect(within(nexus).getAllByText("Adding 1 item…")).not.toHaveLength(0);
 
     await userEvent.click(
       within(nexus).getByRole("button", { name: "Close Add content" }),
@@ -956,10 +949,12 @@ describe("Nexus shell contracts", () => {
     await userEvent.click(button);
 
     const dialog = await screen.findByRole("dialog", { name: "Nexus" });
-    const heading = within(dialog).getByRole("heading", { name: "Nexus" });
-    await waitFor(() => expect(heading).toHaveFocus());
+    const search = within(dialog).getByRole("searchbox", {
+      name: "Find anything…",
+    });
+    await waitFor(() => expect(search).toHaveFocus());
     expect(
-      within(dialog).queryByRole("combobox", { name: "Find anything" }),
+      within(dialog).queryByRole("combobox", { name: "Find anything…" }),
     ).toBeNull();
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the unpainted modal projection is intentionally role=presentation and has no user-facing label
     const projection = dialog.parentElement as HTMLElement;
@@ -994,27 +989,23 @@ describe("Nexus shell contracts", () => {
     expect(wrapper.getBoundingClientRect().height).toBeCloseTo(before.height, 1);
   });
 
-  it("focuses Find explicitly and lets Escape pop once before dismissing Root", async () => {
+  it("focuses mobile search on open and clears before dismissing Root", async () => {
     renderNexus({ mobile: true });
     const button = screen.getByRole("button", {
       name: "Open Nexus, 1 tab",
     });
     await userEvent.click(button);
     const dialog = await screen.findByRole("dialog", { name: "Nexus" });
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: "Find anything…" }),
-    );
     const input = within(dialog).getByRole("searchbox", {
-      name: "Find anything",
+      name: "Find anything…",
     });
     await waitFor(() => expect(input).toHaveFocus());
+    await userEvent.type(input, "Project Ideas");
 
     fireEvent.keyDown(document, { key: "Escape" });
-    const heading = await within(dialog).findByRole("heading", {
-      name: "Nexus",
-    });
     expect(dialog).toBeVisible();
-    await waitFor(() => expect(heading).toHaveFocus());
+    expect(input).toHaveValue("");
+    expect(input).toHaveFocus();
 
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() =>
@@ -1023,7 +1014,7 @@ describe("Nexus shell contracts", () => {
     await waitFor(() => expect(button).toHaveFocus());
   });
 
-  it("keeps mobile Find and creation fields at the iOS no-zoom size", async () => {
+  it("keeps mobile search and creation fields at the iOS no-zoom size", async () => {
     document.documentElement.style.setProperty("--text-md", "16px");
     document.body.style.fontSize = "15px";
     renderNexus({ mobile: true });
@@ -1032,20 +1023,14 @@ describe("Nexus shell contracts", () => {
     );
     const dialog = await screen.findByRole("dialog", { name: "Nexus" });
 
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: "Find anything…" }),
-    );
     expect(
       getComputedStyle(
-        within(dialog).getByRole("searchbox", { name: "Find anything" }),
+        within(dialog).getByRole("searchbox", { name: "Find anything…" }),
       ).fontSize,
     ).toBe("16px");
 
     await userEvent.click(
-      within(dialog).getByRole("button", { name: "Back" }),
-    );
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: "Library" }),
+      within(dialog).getByRole("button", { name: /^New Library\b/ }),
     );
     expect(
       getComputedStyle(

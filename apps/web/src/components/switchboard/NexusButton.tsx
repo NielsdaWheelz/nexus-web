@@ -1,6 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef } from "react";
+import { flushSync } from "react-dom";
 import AsterismMark from "@/components/AsterismMark";
 import { useMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
 import {
@@ -8,9 +9,9 @@ import {
   useMobileChromeSurface,
 } from "@/lib/workspace/mobileChrome";
 import {
-  beginSwitchboardPerformance,
+  beginNexusPerformance,
   NEXUS_OPEN_PERFORMANCE,
-} from "@/lib/switchboard/performance";
+} from "@/lib/nexus/performance";
 import styles from "./switchboard.module.css";
 
 export default function NexusButton({
@@ -44,6 +45,7 @@ export default function NexusButton({
     >
       <button
         ref={buttonRef}
+        data-nexus-return-focus
         type="button"
         className={styles.nexusButton}
         aria-label={label}
@@ -53,8 +55,8 @@ export default function NexusButton({
         data-switchboard-open={switchboardOpen || undefined}
         data-mobile-chrome-phase={motionPhase.kind}
         onClick={() => {
-          beginSwitchboardPerformance(NEXUS_OPEN_PERFORMANCE);
-          onOpen();
+          beginNexusPerformance(NEXUS_OPEN_PERFORMANCE);
+          flushSync(onOpen);
         }}
       >
         <span className={styles.nexusFace}>

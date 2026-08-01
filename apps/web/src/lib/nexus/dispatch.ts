@@ -3,13 +3,16 @@
 import type { useFeedback } from "@/components/feedback/Feedback";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import {
-  createDailyAppendNoteEntry,
   type OpenDailyPageResult,
   type OpenDailyPageTarget,
+  resolveDailyLocalDate,
 } from "@/lib/notes/openDailyPage";
+import { readDailyDraft } from "@/lib/notes/dailyDraftStore";
+import { browseHref } from "@/lib/browse/query";
 import { parseMediaId } from "@/lib/lectern/contract";
 import type { LecternCapability } from "@/lib/lectern/LecternProvider";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
+import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import {
   executeResourceChat,
   executeResourceOpen,
@@ -27,10 +30,52 @@ import type {
   WorkspaceTargetActivationResult,
 } from "@/lib/workspace/targetActivation";
 import type {
+  MaterializedOpenDailyPageTarget,
   NexusTarget,
   NexusTargetActivation,
   RetainedNexusTarget,
 } from "./model";
+import {
+  beginNexusPerformance,
+  cancelNexusPerformance,
+  NEXUS_PANE_ACTIVATE_PERFORMANCE,
+} from "./performance";
+
+export type MaterializedNexusTarget =
+  | Exclude<NexusTarget, { kind: "OpenDailyPage" }>
+  | MaterializedOpenDailyPageTarget;
+
+export function materializeNexusTarget(
+  target: NexusTarget,
+  context: {
+    readonly accountId: string;
+    readonly calendarTimeZone: string;
+  },
+): MaterializedNexusTarget {
+  if (target.kind !== "OpenDailyPage") return target;
+  const localDate = resolveDailyLocalDate(
+    target.date,
+    context.calendarTimeZone,
+  );
+  if (target.entry.kind === "View") {
+    return {
+      kind: "OpenDailyPage",
+      date: { kind: "LocalDate", value: localDate },
+      entry: { kind: "View" },
+    };
+  }
+  const draft = readDailyDraft(context.accountId, localDate);
+  return {
+    kind: "OpenDailyPage",
+    date: { kind: "LocalDate", value: localDate },
+    entry: {
+      kind: "AppendNote",
+      initialText: target.entry.initialText,
+      noteId: draft?.noteId ?? crypto.randomUUID(),
+      clientMutationId: draft?.clientMutationId ?? crypto.randomUUID(),
+    },
+  };
+}
 
 export function isAndroidShellRestrictedHref(
   href: string,
@@ -62,6 +107,11 @@ export type NexusDispatchOutcome =
   | { kind: "Stayed" }
   | { kind: "NavigationAccepted" }
   | {
+      kind: "DailyPageAccepted";
+      activationId: string;
+      localDate: string;
+    }
+  | {
       kind: "NavigationRejected";
       reason: "PaneLimitReached";
       target: RetainedNexusTarget;
@@ -74,7 +124,10 @@ export type NexusDispatchOutcome =
           kind:
             | "OpenAdd"
             | "CreatePage"
-            | "CreateLibrary";
+            | "CreateLibrary"
+            | "ChooseCreate"
+            | "ChooseBrowse"
+            | "ManageTabs";
         }
       >;
       activation: NexusTargetActivation;
@@ -106,6 +159,7 @@ export interface NexusDispatchCtx {
     target: OpenDailyPageTarget,
     activation: NexusTargetActivation,
   ): OpenDailyPageResult;
+  resumeCurrentPlayback(): void;
 }
 
 function activationOutcome(
@@ -121,6 +175,21 @@ function activationOutcome(
     : { kind: "NavigationAccepted" };
 }
 
+function activateMeasuredWorkspaceTarget(
+  target: WorkspaceTarget,
+  context: NexusDispatchCtx,
+  request: WorkspaceTargetActivationRequest,
+): WorkspaceTargetActivationResult {
+  const run = beginNexusPerformance(NEXUS_PANE_ACTIVATE_PERFORMANCE, {
+    targetId: resolveWorkspaceActivationRouteId(target.href),
+  });
+  const result = context.activateWorkspaceTarget(request);
+  if (result.kind === "Rejected") {
+    cancelNexusPerformance(NEXUS_PANE_ACTIVATE_PERFORMANCE, run);
+  }
+  return result;
+}
+
 function activateTarget(
   target: WorkspaceTarget,
   context: NexusDispatchCtx,
@@ -132,7 +201,7 @@ function activateTarget(
       href: target.href,
       labelHint: target.labelHint,
     },
-    context.activateWorkspaceTarget({
+    activateMeasuredWorkspaceTarget(target, context, {
       originPaneId: context.activePaneId,
       target,
       disposition: activation.disposition,
@@ -152,6 +221,7 @@ export function nexusTargetNavigates(target: NexusTarget): boolean {
     case "Share":
     case "PaneOpen":
     case "OpenDailyPage":
+    case "Browse":
       return true;
     case "QueueAdd":
     case "CopyExternalLink":
@@ -160,12 +230,16 @@ export function nexusTargetNavigates(target: NexusTarget): boolean {
     case "OpenAdd":
     case "CreatePage":
     case "CreateLibrary":
+    case "ChooseCreate":
+    case "ChooseBrowse":
+    case "ResumeCurrentPlayback":
+    case "ManageTabs":
       return false;
   }
 }
 
 export async function dispatchNexusTarget(
-  target: NexusTarget,
+  target: MaterializedNexusTarget,
   context: NexusDispatchCtx,
   activation: NexusTargetActivation,
 ): Promise<NexusDispatchOutcome> {
@@ -212,7 +286,7 @@ export async function dispatchNexusTarget(
                 href: workspaceTarget.href,
                 labelHint: workspaceTarget.labelHint,
               },
-              context.activateWorkspaceTarget({
+              activateMeasuredWorkspaceTarget(workspaceTarget, context, {
                 originPaneId: context.activePaneId,
                 target: workspaceTarget,
                 disposition,
@@ -248,7 +322,7 @@ export async function dispatchNexusTarget(
               href: workspaceTarget.href,
               labelHint: workspaceTarget.labelHint,
             },
-            context.activateWorkspaceTarget({
+            activateMeasuredWorkspaceTarget(workspaceTarget, context, {
               originPaneId: context.activePaneId,
               target: workspaceTarget,
               disposition: activation.disposition,
@@ -289,6 +363,23 @@ export async function dispatchNexusTarget(
         context,
         activation,
       );
+    case "Browse":
+      return activateTarget(
+        {
+          href: browseHref({
+            text: target.query,
+            kind: target.browseKind,
+            source: null,
+            sort: "Relevance",
+          }),
+          labelHint: "Browse",
+        },
+        context,
+        activation,
+      );
+    case "ResumeCurrentPlayback":
+      context.resumeCurrentPlayback();
+      return { kind: "Stayed" };
     case "Share":
       context.openShare(target.target, context.shareOptions());
       return { kind: "NavigationAccepted" };
@@ -310,6 +401,11 @@ export async function dispatchNexusTarget(
           activation,
         );
       }
+      if (pane.id !== context.activePaneId) {
+        beginNexusPerformance(NEXUS_PANE_ACTIVATE_PERFORMANCE, {
+          targetId: resolveWorkspaceActivationRouteId(pane.href),
+        });
+      }
       if (pane.visibility === "minimized") context.restorePane(pane.id);
       else context.activatePane(pane.id);
       return { kind: "NavigationAccepted" };
@@ -322,39 +418,29 @@ export async function dispatchNexusTarget(
         ? { kind: "NavigationAccepted" }
         : { kind: "Stayed" };
     case "OpenDailyPage": {
-      const entry: OpenDailyPageTarget["entry"] =
-        target.entry.kind === "View"
-          ? { kind: "View" }
-          : "noteId" in target.entry &&
-              typeof target.entry.noteId === "string" &&
-              "clientMutationId" in target.entry &&
-              typeof target.entry.clientMutationId === "string"
-            ? {
-                kind: "AppendNote",
-                noteId: target.entry.noteId,
-                clientMutationId: target.entry.clientMutationId,
-              }
-            : createDailyAppendNoteEntry();
-      const opened = context.openDailyPage(
-        {
-          kind: "OpenDailyPage",
-          localDate: target.localDate,
-          entry,
-        },
-        activation,
-      );
-      return activationOutcome(
-        {
-          kind: "OpenDailyPage",
-          localDate: opened.localDate,
-          entry,
-        },
-        opened.activation,
-      );
+      const opened = context.openDailyPage(target, activation);
+      if (opened.activation.kind === "Rejected") {
+        return {
+          kind: "NavigationRejected",
+          reason: opened.activation.reason,
+          target: {
+            ...target,
+            date: { kind: "LocalDate", value: opened.localDate },
+          },
+        };
+      }
+      return {
+        kind: "DailyPageAccepted",
+        activationId: opened.activationId,
+        localDate: opened.localDate,
+      };
     }
     case "OpenAdd":
     case "CreatePage":
     case "CreateLibrary":
+    case "ChooseCreate":
+    case "ChooseBrowse":
+    case "ManageTabs":
       return { kind: "WorkflowRequested", target, activation };
   }
 }

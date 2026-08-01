@@ -2,9 +2,15 @@ import {
   devices,
   test,
   expect,
+  type APIRequestContext,
   type Locator,
   type Page,
 } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { stateChangingApiHeaders } from "./api";
+import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
 import {
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
@@ -25,8 +31,8 @@ function desktopNexusInput(root: Page | Locator): Locator {
   return root.getByRole("combobox", { name: "Find anything" });
 }
 
-function desktopNexusListbox(root: Page | Locator): Locator {
-  return root.getByRole("listbox");
+function desktopNexusGrid(root: Page | Locator): Locator {
+  return root.getByRole("grid");
 }
 
 function workspaceWithNotesAndSearchPanes(): WorkspaceState {
@@ -37,6 +43,159 @@ function workspaceWithNotesAndSearchPanes(): WorkspaceState {
     ],
     { activePrimaryPaneId: "pane-notes" },
   );
+}
+
+function workspaceAtPaneLimit(): WorkspaceState {
+  const panes = Array.from({ length: 12 }, (_, index) =>
+    makeWorkspacePane(`pane-limit-${index}`, "/libraries"),
+  );
+  return makeWorkspaceState(panes, {
+    activePrimaryPaneId: panes.at(-1)!.id,
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readE2eSeed<T>(name: string): T {
+  return JSON.parse(
+    readFileSync(path.join(__dirname, "..", ".seed", name), "utf-8"),
+  ) as T;
+}
+
+async function expectOk(
+  response: {
+    ok(): boolean;
+    status(): number;
+    statusText(): string;
+    text(): Promise<string>;
+  },
+  label: string,
+): Promise<void> {
+  if (response.ok()) return;
+  throw new Error(
+    `${label} failed: ${response.status()} ${response.statusText()} ${await response.text()}`,
+  );
+}
+
+async function openDesktopNexus(
+  page: Page,
+): Promise<{ dialog: Locator; input: Locator }> {
+  await page.getByRole("button", { name: "Search or ask anything" }).click();
+  const dialog = desktopNexusDialog(page);
+  const input = desktopNexusInput(dialog);
+  await expect(dialog).toBeVisible();
+  await expect(input).toBeFocused();
+  return { dialog, input };
+}
+
+function desktopNexusGroup(dialog: Locator, id: string): Locator {
+  return dialog.locator(
+    `[role="rowgroup"][aria-labelledby="desktop-nexus-section-${id}"]`,
+  );
+}
+
+async function makeRoomAndRetry(dialog: Locator): Promise<void> {
+  await dialog.getByRole("button", { name: "Manage tabs" }).click();
+  await expect(
+    dialog.getByRole("heading", { name: "Manage tabs" }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: /^Close / }).first().click();
+  await dialog.getByRole("button", { name: "Retry open" }).click();
+  await expect(dialog).toBeHidden();
+}
+
+interface NexusSearchSeed {
+  readonly media_id: string;
+  readonly quote_exact: string;
+}
+
+interface NexusAudioSeed {
+  readonly media_id: string;
+  readonly title: string;
+  readonly stream_path: string;
+  readonly duration_seconds: number;
+}
+
+interface NexusLecternItem {
+  readonly itemId: string;
+  readonly mediaId: string;
+}
+
+function toneWav(durationSeconds: number): Buffer {
+  const sampleRate = 8_000;
+  const dataSize = sampleRate * durationSeconds;
+  const bytes = Buffer.alloc(44 + dataSize);
+  bytes.write("RIFF", 0, "ascii");
+  bytes.writeUInt32LE(36 + dataSize, 4);
+  bytes.write("WAVE", 8, "ascii");
+  bytes.write("fmt ", 12, "ascii");
+  bytes.writeUInt32LE(16, 16);
+  bytes.writeUInt16LE(1, 20);
+  bytes.writeUInt16LE(1, 22);
+  bytes.writeUInt32LE(sampleRate, 24);
+  bytes.writeUInt32LE(sampleRate, 28);
+  bytes.writeUInt16LE(1, 32);
+  bytes.writeUInt16LE(8, 34);
+  bytes.write("data", 36, "ascii");
+  bytes.writeUInt32LE(dataSize, 40);
+  for (let sample = 0; sample < dataSize; sample += 1) {
+    bytes[44 + sample] =
+      128 +
+      Math.round(Math.sin((2 * Math.PI * 440 * sample) / sampleRate) * 48);
+  }
+  return bytes;
+}
+
+async function removeMediaFromLectern(
+  request: APIRequestContext,
+  mediaId: string,
+): Promise<void> {
+  const response = await request.get("/api/lectern");
+  await expectOk(response, "Read Lectern");
+  const payload = (await response.json()) as {
+    data: { items: NexusLecternItem[] };
+  };
+  for (const item of payload.data.items.filter(
+    (candidate) => candidate.mediaId === mediaId,
+  )) {
+    const removed = await request.post("/api/lectern/commands", {
+      headers: stateChangingApiHeaders(),
+      data: {
+        kind: "RemoveItem",
+        clientMutationId: randomUUID(),
+        itemId: item.itemId,
+      },
+    });
+    await expectOk(removed, `Remove Lectern item ${item.itemId}`);
+  }
+}
+
+async function resetAndPlaceAudio(
+  request: APIRequestContext,
+  mediaId: string,
+): Promise<void> {
+  await removeMediaFromLectern(request, mediaId);
+  const reset = await request.post("/api/consumption/commands", {
+    headers: stateChangingApiHeaders(),
+    data: {
+      kind: "ResetProgress",
+      clientMutationId: randomUUID(),
+      mediaId,
+    },
+  });
+  await expectOk(reset, `Reset audio ${mediaId}`);
+  const placed = await request.post("/api/lectern/commands", {
+    headers: stateChangingApiHeaders(),
+    data: {
+      kind: "PlaceItems",
+      clientMutationId: randomUUID(),
+      mediaIds: [mediaId],
+      placement: { kind: "Last" },
+    },
+  });
+  await expectOk(placed, `Place audio ${mediaId}`);
 }
 
 test.describe("desktop Nexus", () => {
@@ -58,10 +217,14 @@ test.describe("desktop Nexus", () => {
     });
     await expect(searchActions).toBeVisible();
     await expect(
-      desktopNexusListbox(dialog).getByRole("button", {
-        name: "Actions for Notes",
+      desktopNexusGrid(dialog).getByRole("gridcell", {
+        name: /Actions for Notes\. Shortcut /,
       }),
-    ).toHaveCount(0);
+    ).toBeVisible();
+    await expect(desktopNexusGrid(dialog)).toHaveAttribute(
+      "aria-label",
+      "Nexus options",
+    );
 
     await expect(workspacePaneButton(page, /^Notes\b/)).toHaveAttribute(
       "aria-current",
@@ -123,7 +286,7 @@ test.describe("desktop Nexus", () => {
     });
   }
 
-  test("Home and End remain input-owned while the listbox has no nested controls", async ({
+  test("Home and End remain input-owned while the grid exposes sibling action cells", async ({
     page,
   }) => {
     await page.goto("/libraries?nexus=1&intent=Root");
@@ -132,8 +295,8 @@ test.describe("desktop Nexus", () => {
     const input = desktopNexusInput(dialog);
     await expect(input).toBeFocused();
     await input.fill("Find");
-    const listbox = desktopNexusListbox(dialog);
-    await expect(listbox.getByRole("option").first()).toBeVisible();
+    const grid = desktopNexusGrid(dialog);
+    await expect(grid.getByRole("row").nth(1)).toBeVisible();
     const activeBefore = await input.getAttribute("aria-activedescendant");
     await input.press("Home");
     await expect(input).toHaveJSProperty("selectionStart", 0);
@@ -147,341 +310,384 @@ test.describe("desktop Nexus", () => {
       "aria-activedescendant",
       activeBefore ?? "",
     );
-    await expect(listbox.getByRole("option").getByRole("button")).toHaveCount(
-      0,
-    );
-    await expect(listbox.getByRole("option").getByRole("menuitem")).toHaveCount(
-      0,
-    );
+    await expect(grid.getByRole("option")).toHaveCount(0);
+    await expect(grid.getByRole("gridcell").first()).toBeVisible();
   });
 });
 
-const DESKTOP_PERFORMANCE_SAMPLE_COUNT = 20;
-const DESKTOP_OPEN_INPUT_READY_BUDGET_MS = 50;
-const DESKTOP_LOCAL_ROWS_BUDGET_MS = 50;
-const DESKTOP_PANE_ACTIVATE_BUDGET_MS = 100;
-const DESKTOP_PROVIDERS_BUDGET_MS = 250;
-const DESKTOP_PERFORMANCE_TIMEOUT_MS = 180_000;
-const DESKTOP_OPEN_INPUT_READY_MEASURE = "nexus-desktop-open-input-ready";
-const DESKTOP_LOCAL_ROWS_MEASURE = "nexus-desktop-local-rows";
-const DESKTOP_PANE_ACTIVATE_MEASURE = "nexus-desktop-pane-activate";
-const DESKTOP_PROVIDERS_MEASURE = "nexus-desktop-providers-first-usable";
-
-type DesktopPerformanceSample = {
-  readonly duration: number;
-  readonly phase: "Cold" | "Warm" | null;
-  readonly source: "Openables" | "Owned" | null;
-};
-
-async function desktopMeasureSamples(
-  page: Page,
-  name: string,
-): Promise<DesktopPerformanceSample[]> {
-  return page.evaluate(
-    (measureName) =>
-      performance.getEntriesByName(measureName, "measure").map((entry) => {
-        const detail = (entry as PerformanceMeasure).detail as
-          | {
-              phase?: "Cold" | "Warm";
-              source?: "Openables" | "Owned";
-            }
-          | undefined;
-        return {
-          duration: entry.duration,
-          phase: detail?.phase ?? null,
-          source: detail?.source ?? null,
-        };
-      }),
-    name,
-  );
-}
-
-async function waitForDesktopMeasureCount(
-  page: Page,
-  name: string,
-  count: number,
-): Promise<void> {
-  await expect
-    .poll(
-      () =>
-        page.evaluate(
-          (measureName) =>
-            performance.getEntriesByName(measureName, "measure").length,
-          name,
-        ),
-      { message: `expected ${count} ${name} user-timing samples` },
-    )
-    .toBe(count);
-}
-
-test.describe("desktop Nexus performance", () => {
-  test("reports truthful cold and warm p95 gates", async ({
+test.describe("Nexus real-stack journeys", () => {
+  test("replays one created Page after pane-limit recovery", async ({
     page,
   }, testInfo) => {
-    test.setTimeout(DESKTOP_PERFORMANCE_TIMEOUT_MS);
+    test.slow();
+    const title = `Nexus replay Page ${randomUUID()}`;
+    let createdId: string | null = null;
+    let productError: unknown = null;
+    let createRequests = 0;
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        new URL(request.url()).pathname === "/api/notes/pages"
+      ) {
+        createRequests += 1;
+      }
+    });
+
+    try {
+      await gotoWithWorkspaceSession(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-nexus-page-replay"),
+        workspaceAtPaneLimit(),
+        "/libraries",
+      );
+      const { dialog, input } = await openDesktopNexus(page);
+      await input.fill(`/p ${title}`);
+      const createResponsePromise = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname === "/api/notes/pages",
+      );
+      await desktopNexusGroup(dialog, "Results")
+        .getByRole("gridcell", { name: /^New Page\b/ })
+        .click();
+      const createResponse = await createResponsePromise;
+      await expectOk(createResponse, "Create Page through Nexus");
+      const created = (await createResponse.json()) as {
+        data: { id: string };
+      };
+      createdId = created.data.id;
+
+      await expect(
+        dialog.getByRole("heading", { name: "Tab limit reached" }),
+      ).toBeVisible();
+      await expect(dialog.getByText("Your page was created.")).toBeVisible();
+      await makeRoomAndRetry(dialog);
+      await expect(page).toHaveURL(new RegExp(`/pages/${createdId}$`));
+      expect(createRequests).toBe(1);
+    } catch (error) {
+      productError = error;
+      throw error;
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      if (createdId) {
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/notes/pages/${createdId}`,
+            `Nexus replay Page ${createdId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      throwE2eCleanupFailures(
+        "Nexus Page replay",
+        productError,
+        cleanupErrors,
+      );
+    }
+  });
+
+  test("replays one created Library after pane-limit recovery", async ({
+    page,
+  }, testInfo) => {
+    test.slow();
+    const name = `Nexus replay Library ${randomUUID()}`;
+    let createdId: string | null = null;
+    let productError: unknown = null;
+    let createRequests = 0;
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        new URL(request.url()).pathname === "/api/libraries"
+      ) {
+        createRequests += 1;
+      }
+    });
+
+    try {
+      await gotoWithWorkspaceSession(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-nexus-library-replay"),
+        workspaceAtPaneLimit(),
+        "/libraries",
+      );
+      const { dialog, input } = await openDesktopNexus(page);
+      await input.fill(`/l ${name}`);
+      await desktopNexusGroup(dialog, "Results")
+        .getByRole("gridcell", { name: /^New Library\b/ })
+        .click();
+      await expect(
+        dialog.getByRole("heading", { name: "New library" }),
+      ).toBeVisible();
+      await expect(dialog.getByRole("textbox", { name: "Name" })).toHaveValue(
+        name,
+      );
+
+      const createResponsePromise = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname === "/api/libraries",
+      );
+      await dialog.getByRole("button", { name: "Create" }).click();
+      const createResponse = await createResponsePromise;
+      await expectOk(createResponse, "Create Library through Nexus");
+      const created = (await createResponse.json()) as {
+        data: { id: string };
+      };
+      createdId = created.data.id;
+
+      await expect(
+        dialog.getByRole("heading", { name: "Tab limit reached" }),
+      ).toBeVisible();
+      await expect(dialog.getByText("Your library was created.")).toBeVisible();
+      await makeRoomAndRetry(dialog);
+      await expect(page).toHaveURL(new RegExp(`/libraries/${createdId}$`));
+      expect(createRequests).toBe(1);
+    } catch (error) {
+      productError = error;
+      throw error;
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      if (createdId) {
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/libraries/${createdId}`,
+            `Nexus replay Library ${createdId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      throwE2eCleanupFailures(
+        "Nexus Library replay",
+        productError,
+        cleanupErrors,
+      );
+    }
+  });
+
+  test("routes Browse for a typed query through the canonical Browse owner", async ({
+    page,
+  }, testInfo) => {
+    const query = `frontier systems ${randomUUID()}`;
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-nexus-browse"),
+      "/libraries",
+    );
+    const { dialog, input } = await openDesktopNexus(page);
+    await input.fill(query);
+    await desktopNexusGroup(dialog, "QueryActions")
+      .getByRole("gridcell", {
+        name: new RegExp(`^Browse for .${escapeRegExp(query)}.`),
+      })
+      .click();
+    await expect(
+      dialog.getByRole("heading", { name: `Browse for “${query}”` }),
+    ).toBeVisible();
+    await dialog.getByRole("button", { name: "Articles" }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(page).toHaveURL((url) => {
+      return (
+        url.pathname === "/browse" &&
+        url.searchParams.get("kind") === "WebArticle" &&
+        url.searchParams.get("q") === query
+      );
+    });
+  });
+
+  test("projects real canonical Search and Openables responses", async ({
+    page,
+  }, testInfo) => {
+    test.slow();
+    const searchSeed = readE2eSeed<NexusSearchSeed>("non-pdf-media.json");
+    const pageTitle = `Nexus Openable ${randomUUID()}`;
+    const pageId = randomUUID();
+    let ownsPage = false;
+    let productError: unknown = null;
+
+    try {
+      const createdPage = await page.request.post("/api/notes/pages", {
+        headers: stateChangingApiHeaders(),
+        data: { page_id: pageId, title: pageTitle },
+      });
+      await expectOk(createdPage, "Create Openables Page fixture");
+      ownsPage = true;
+
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-nexus-providers"),
+        "/libraries",
+      );
+      const { dialog, input } = await openDesktopNexus(page);
+
+      const searchResponsePromise = page.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" &&
+          new URL(response.url()).pathname === "/api/search",
+      );
+      await input.fill(searchSeed.quote_exact);
+      const searchResponse = await searchResponsePromise;
+      await expectOk(searchResponse, "Nexus canonical Search");
+      expect(await searchResponse.text()).toContain(searchSeed.media_id);
+      await expect(
+        desktopNexusGroup(dialog, "Results")
+          .getByRole("gridcell", {
+            name: new RegExp(escapeRegExp(searchSeed.quote_exact), "i"),
+          })
+          .first(),
+      ).toBeVisible({ timeout: 15_000 });
+
+      const openablesResponsePromise = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname ===
+            "/api/resource-items/openables/search",
+      );
+      await input.fill(pageTitle);
+      const openablesResponse = await openablesResponsePromise;
+      await expectOk(openablesResponse, "Nexus Openables");
+      expect(await openablesResponse.text()).toContain(pageId);
+      await desktopNexusGroup(dialog, "Results")
+        .getByRole("gridcell", {
+          name: new RegExp(`^${escapeRegExp(pageTitle)}\\b`),
+        })
+        .click();
+      await expect(dialog).toBeHidden();
+      await expect(page).toHaveURL(new RegExp(`/pages/${pageId}$`));
+    } catch (error) {
+      productError = error;
+      throw error;
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      if (ownsPage) {
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/notes/pages/${pageId}`,
+            `Nexus Openables Page ${pageId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      throwE2eCleanupFailures(
+        "Nexus Search and Openables",
+        productError,
+        cleanupErrors,
+      );
+    }
+  });
+
+  test("resumes the one paused shell player session from Continue", async ({
+    page,
+  }, testInfo) => {
+    test.slow();
+    const audio = readE2eSeed<NexusAudioSeed>("activity-audio-media.json");
+    let productError: unknown = null;
+    await page.route(new RegExp(`${escapeRegExp(audio.stream_path)}$`), (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "audio/wav",
+        body: toneWav(audio.duration_seconds),
+      }),
+    );
+
+    try {
+      await resetAndPlaceAudio(page.request, audio.media_id);
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-nexus-continue"),
+        "/lectern",
+      );
+      await activeWorkspacePane(page)
+        .getByRole("button", { name: `Play ${audio.title}` })
+        .click();
+      const player = page.getByRole("region", { name: "Media player" });
+      const audioElement = page.locator('audio[aria-label="Media player audio"]');
+      await expect(player).toBeVisible();
+      await expect(audioElement).toHaveJSProperty("paused", false);
+      await player.getByRole("button", { name: "Pause media player" }).click();
+      await expect(audioElement).toHaveJSProperty("paused", true);
+
+      const { dialog } = await openDesktopNexus(page);
+      await expect(
+        desktopNexusGroup(dialog, "Continue").getByRole("gridcell", {
+          name: new RegExp(`^${escapeRegExp(audio.title)}\\b`),
+        }),
+      ).toBeVisible();
+      await desktopNexusGroup(dialog, "Continue")
+        .getByRole("gridcell", {
+          name: new RegExp(`^${escapeRegExp(audio.title)}\\b`),
+        })
+        .click();
+      await expect(dialog).toBeHidden();
+      await expect(audioElement).toHaveJSProperty("paused", false);
+    } catch (error) {
+      productError = error;
+      throw error;
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      try {
+        await removeMediaFromLectern(page.request, audio.media_id);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      throwE2eCleanupFailures(
+        "Nexus Continue player",
+        productError,
+        cleanupErrors,
+      );
+    }
+  });
+});
+
+test.describe("desktop Nexus performance", () => {
+  test("publishes the shared generic Nexus measures", async ({
+    page,
+  }, testInfo) => {
     await gotoWithWorkspaceSession(
       page,
       workspaceE2eDeviceId(testInfo, "e2e-desktop-nexus-performance"),
       workspaceWithNotesAndSearchPanes(),
       "/notes",
     );
-    const trigger = page.getByRole("button", {
-      name: "Search or ask anything",
-    });
-
-    await trigger.click();
-    await expect(desktopNexusDialog(page)).toBeVisible();
-    await expect(desktopNexusInput(desktopNexusDialog(page))).toBeFocused();
-    await waitForDesktopMeasureCount(page, DESKTOP_OPEN_INPUT_READY_MEASURE, 1);
-    await page.keyboard.press("Escape");
-    await expect(desktopNexusDialog(page)).toBeHidden();
-    await page.evaluate(
-      (name) => performance.clearMeasures(name),
-      DESKTOP_OPEN_INPUT_READY_MEASURE,
-    );
-
-    for (
-      let sample = 1;
-      sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT;
-      sample += 1
-    ) {
-      await trigger.click();
-      await waitForDesktopMeasureCount(
-        page,
-        DESKTOP_OPEN_INPUT_READY_MEASURE,
-        sample,
-      );
-      await page.keyboard.press("Escape");
-      await expect(desktopNexusDialog(page)).toBeHidden();
-    }
-    const openSamples = await desktopMeasureSamples(
-      page,
-      DESKTOP_OPEN_INPUT_READY_MEASURE,
-    );
-
-    await trigger.click();
-    const dialog = desktopNexusDialog(page);
-    const input = desktopNexusInput(dialog);
-    await input.fill("n");
-    await waitForDesktopMeasureCount(page, DESKTOP_LOCAL_ROWS_MEASURE, 1);
-    await waitForDesktopMeasureCount(page, DESKTOP_PROVIDERS_MEASURE, 1);
-    const [firstColdProviderSample] = await desktopMeasureSamples(
-      page,
-      DESKTOP_PROVIDERS_MEASURE,
-    );
-    expect(firstColdProviderSample).toMatchObject({
-      phase: "Cold",
-      source: "Openables",
-    });
-    const coldProviderSamples = [firstColdProviderSample];
-    for (
-      let sample = 1;
-      sample < DESKTOP_PERFORMANCE_SAMPLE_COUNT;
-      sample += 1
-    ) {
-      const coldPage = await page.context().newPage();
-      try {
-        await coldPage.goto("/notes");
-        await coldPage.waitForLoadState("networkidle");
-        await coldPage
-          .getByRole("button", { name: "Search or ask anything" })
-          .click();
-        const coldDialog = desktopNexusDialog(coldPage);
-        await expect(coldDialog).toBeVisible();
-        await desktopNexusInput(coldDialog).fill(
-          String.fromCharCode(97 + (sample % 26)),
-        );
-        await waitForDesktopMeasureCount(
-          coldPage,
-          DESKTOP_PROVIDERS_MEASURE,
-          1,
-        );
-        const [coldSample] = await desktopMeasureSamples(
-          coldPage,
-          DESKTOP_PROVIDERS_MEASURE,
-        );
-        expect(coldSample).toMatchObject({
-          phase: "Cold",
-          source: "Openables",
-        });
-        coldProviderSamples.push(coldSample);
-      } finally {
-        await coldPage.close();
+    await page.evaluate(() => {
+      for (const name of [
+        "nexus-open",
+        "nexus-local-find",
+        "nexus-openables",
+        "nexus-pane-activate",
+      ]) {
+        performance.clearMeasures(name);
       }
-    }
-    await page.evaluate(
-      (name) => performance.clearMeasures(name),
-      DESKTOP_LOCAL_ROWS_MEASURE,
-    );
-    for (
-      let sample = 1;
-      sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT;
-      sample += 1
-    ) {
-      await input.fill(`nexus-local-${sample}`);
-      await waitForDesktopMeasureCount(
-        page,
-        DESKTOP_LOCAL_ROWS_MEASURE,
-        sample,
-      );
-    }
-    const localSamples = await desktopMeasureSamples(
-      page,
-      DESKTOP_LOCAL_ROWS_MEASURE,
-    );
-    await input.fill("");
-    await waitForDesktopMeasureCount(
-      page,
-      DESKTOP_LOCAL_ROWS_MEASURE,
-      DESKTOP_PERFORMANCE_SAMPLE_COUNT + 1,
-    );
-    const setupProviderSampleCount = (
-      await desktopMeasureSamples(page, DESKTOP_PROVIDERS_MEASURE)
-    ).length;
+    });
+
+    const { dialog, input } = await openDesktopNexus(page);
+    await waitForMeasureCount(page, "nexus-open", 1);
+
     await input.fill("notes");
-    await waitForDesktopMeasureCount(
-      page,
-      DESKTOP_PROVIDERS_MEASURE,
-      setupProviderSampleCount + 1,
-    );
-    await input.fill("libraries");
-    await waitForDesktopMeasureCount(
-      page,
-      DESKTOP_PROVIDERS_MEASURE,
-      setupProviderSampleCount + 2,
-    );
-    await input.fill("");
-    await page.evaluate(
-      (name) => performance.clearMeasures(name),
-      DESKTOP_PROVIDERS_MEASURE,
-    );
-    for (
-      let sample = 1;
-      sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT;
-      sample += 1
-    ) {
-      await input.fill(sample % 2 === 0 ? "notes" : "libraries");
-      await waitForDesktopMeasureCount(page, DESKTOP_PROVIDERS_MEASURE, sample);
-    }
-    const warmProviderSamples = await desktopMeasureSamples(
-      page,
-      DESKTOP_PROVIDERS_MEASURE,
-    );
-    expect(warmProviderSamples.every((sample) => sample.phase === "Warm")).toBe(
-      true,
-    );
-    const warmOpenablesSamples = warmProviderSamples.filter(
-      (sample) => sample.source === "Openables",
-    );
-    const warmOwnedSamples = warmProviderSamples.filter(
-      (sample) => sample.source === "Owned",
-    );
+    await waitForMeasureCount(page, "nexus-local-find", 1);
+    await waitForMeasureCount(page, "nexus-openables", 1);
 
     await input.fill("");
-    await expect(
-      dialog.getByRole("option", { name: /^Search\b/ }),
-    ).toBeVisible();
-    for (
-      let sample = 1;
-      sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT;
-      sample += 1
-    ) {
-      const target = sample % 2 === 0 ? /^Notes\b/ : /^Search\b/;
-      await desktopNexusDialog(page)
-        .getByRole("option", { name: target })
-        .click();
-      await expect(desktopNexusDialog(page)).toBeHidden();
-      await waitForDesktopMeasureCount(
-        page,
-        DESKTOP_PANE_ACTIVATE_MEASURE,
-        sample,
-      );
-      if (sample < DESKTOP_PERFORMANCE_SAMPLE_COUNT) {
-        await trigger.click();
-        await expect(desktopNexusDialog(page)).toBeVisible();
-      }
+    await desktopNexusGrid(dialog)
+      .getByRole("gridcell", { name: /^Search\b/ })
+      .click();
+    await expect(dialog).toBeHidden();
+    await waitForMeasureCount(page, "nexus-pane-activate", 1);
+
+    for (const name of [
+      "nexus-desktop-open-input-ready",
+      "nexus-desktop-local-rows",
+      "nexus-desktop-pane-activate",
+      "nexus-desktop-providers-first-usable",
+    ]) {
+      expect(await measureCount(page, name)).toBe(0);
     }
-    const paneSamples = await desktopMeasureSamples(
-      page,
-      DESKTOP_PANE_ACTIVATE_MEASURE,
-    );
-
-    const performanceSummary = {
-      conditions: {
-        browser: "lockfile Chromium",
-        coldProviderSamples: {
-          total: coldProviderSamples.length,
-          winner: "Openables",
-        },
-        warmProviderSamples: {
-          total: warmProviderSamples.length,
-          openables: warmOpenablesSamples.length,
-          owned: warmOwnedSamples.length,
-        },
-        sampleSizePerPhase: DESKTOP_PERFORMANCE_SAMPLE_COUNT,
-      },
-      measures: {
-        "nexus-desktop-open-input-ready": {
-          budgetMs: DESKTOP_OPEN_INPUT_READY_BUDGET_MS,
-          p95Ms: p95(openSamples.map((sample) => sample.duration)),
-          samples: openSamples.length,
-        },
-        "nexus-desktop-local-rows": {
-          budgetMs: DESKTOP_LOCAL_ROWS_BUDGET_MS,
-          p95Ms: p95(localSamples.map((sample) => sample.duration)),
-          samples: localSamples.length,
-        },
-        "nexus-desktop-pane-activate": {
-          budgetMs: DESKTOP_PANE_ACTIVATE_BUDGET_MS,
-          p95Ms: p95(paneSamples.map((sample) => sample.duration)),
-          samples: paneSamples.length,
-        },
-        "nexus-desktop-providers-first-usable": {
-          cold: {
-            budgetMs: DESKTOP_PROVIDERS_BUDGET_MS,
-            p95Ms: p95(coldProviderSamples.map((sample) => sample.duration)),
-            samples: coldProviderSamples.length,
-          },
-          warm: {
-            budgetMs: DESKTOP_PROVIDERS_BUDGET_MS,
-            p95Ms: p95(warmProviderSamples.map((sample) => sample.duration)),
-            samples: warmProviderSamples.length,
-            winningSources: {
-              openables: warmOpenablesSamples.length,
-              owned: warmOwnedSamples.length,
-            },
-          },
-        },
-      },
-    };
-    await testInfo.attach("nexus-desktop-performance.json", {
-      body: JSON.stringify(performanceSummary, null, 2),
-      contentType: "application/json",
-    });
-    console.info(
-      `NEXUS_DESKTOP_PERFORMANCE_RESULT ${JSON.stringify(performanceSummary)}`,
-    );
-
-    expect(openSamples).toHaveLength(DESKTOP_PERFORMANCE_SAMPLE_COUNT);
-    expect(localSamples).toHaveLength(DESKTOP_PERFORMANCE_SAMPLE_COUNT);
-    expect(paneSamples).toHaveLength(DESKTOP_PERFORMANCE_SAMPLE_COUNT);
-    expect(coldProviderSamples).toHaveLength(DESKTOP_PERFORMANCE_SAMPLE_COUNT);
-    expect(warmProviderSamples).toHaveLength(DESKTOP_PERFORMANCE_SAMPLE_COUNT);
-    expect(p95(openSamples.map((sample) => sample.duration))).toBeLessThan(
-      DESKTOP_OPEN_INPUT_READY_BUDGET_MS,
-    );
-    expect(p95(localSamples.map((sample) => sample.duration))).toBeLessThan(
-      DESKTOP_LOCAL_ROWS_BUDGET_MS,
-    );
-    expect(p95(paneSamples.map((sample) => sample.duration))).toBeLessThan(
-      DESKTOP_PANE_ACTIVATE_BUDGET_MS,
-    );
-    expect(
-      p95(coldProviderSamples.map((sample) => sample.duration)),
-    ).toBeLessThan(DESKTOP_PROVIDERS_BUDGET_MS);
-    expect(
-      p95(warmProviderSamples.map((sample) => sample.duration)),
-    ).toBeLessThan(DESKTOP_PROVIDERS_BUDGET_MS);
   });
 });
 
@@ -701,15 +907,22 @@ test.describe("mobile Nexus task", () => {
   test("switches, closes, and restores exact panes from one local-first root", async ({
     page,
   }, testInfo) => {
+    const panes = [
+      makeWorkspacePane("pane-notes", "/notes"),
+      makeWorkspacePane("pane-search", "/search"),
+      ...Array.from({ length: 4 }, (_, index) =>
+        makeWorkspacePane(`pane-library-${index}`, "/libraries"),
+      ),
+    ];
     await gotoWithWorkspaceSession(
       page,
       workspaceE2eDeviceId(testInfo, "e2e-nexus-tabs"),
-      workspaceWithNotesAndSearchPanes(),
+      makeWorkspaceState(panes, { activePrimaryPaneId: "pane-notes" }),
       "/notes",
     );
 
     const trigger = page.getByRole("button", {
-      name: "Open Nexus, 2 tabs",
+      name: "Open Nexus, 6 tabs",
     });
     const paneBody = activeWorkspacePane(page).getByTestId("pane-shell-body");
     await expect
@@ -731,10 +944,15 @@ test.describe("mobile Nexus task", () => {
         ),
       )
       .toBe(0);
-    await expect(dialog.getByRole("heading", { name: "Nexus" })).toBeFocused();
-    await expect(dialog.getByRole("searchbox")).toHaveCount(0);
+    const search = dialog.getByRole("searchbox", { name: "Find anything" });
+    await expect(search).toBeFocused();
+    await expect(
+      dialog.getByRole("button", { name: "Find anything…" }),
+    ).toHaveCount(0);
     await expect(dialog.getByRole("heading", { name: "Places" })).toBeVisible();
-    await expect(dialog.getByRole("heading", { name: "Quick" })).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "Quick Actions" }),
+    ).toBeVisible();
     await expect(dialog.getByRole("heading", { name: "Open" })).toBeVisible();
 
     await dialog.getByRole("button", { name: "Search Open tab" }).tap();
@@ -744,29 +962,25 @@ test.describe("mobile Nexus task", () => {
       activeWorkspacePane(page).getByTestId("pane-shell-root"),
     ).toBeFocused();
 
-    await page.getByRole("button", { name: "Open Nexus, 2 tabs" }).tap();
-    await nexusDialog(page)
-      .getByRole("button", { name: "Actions for Search" })
-      .tap();
-    await page.getByRole("menuitem", { name: "Close Search" }).tap();
-
+    await page.getByRole("button", { name: "Open Nexus, 6 tabs" }).tap();
     const openDialog = nexusDialog(page);
-    await expect(openDialog).toBeVisible();
+    await openDialog.getByRole("button", { name: "Manage tabs…" }).tap();
+    await openDialog.getByRole("button", { name: "Close Search" }).tap();
     await expect(
       openDialog.getByRole("heading", { name: "Recently closed" }),
     ).toBeVisible();
     await expect(
-      openDialog.getByRole("button", { name: "Search Closed tab" }),
+      openDialog.getByRole("button", { name: "Search", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Open Nexus, 1 tab" }),
+      page.getByRole("button", { name: "Open Nexus, 5 tabs" }),
     ).toBeHidden();
 
-    await openDialog.getByRole("button", { name: "Search Closed tab" }).tap();
+    await openDialog.getByRole("button", { name: "Search", exact: true }).tap();
     await expect(openDialog).toBeHidden();
     await expect(page).toHaveURL(/\/search$/);
     await expect(
-      page.getByRole("button", { name: "Open Nexus, 2 tabs" }),
+      page.getByRole("button", { name: "Open Nexus, 6 tabs" }),
     ).toBeVisible();
   });
 
@@ -854,23 +1068,25 @@ test.describe("mobile Nexus task", () => {
         await page.emulateMedia({ forcedColors: "none" });
       }
 
-      const findButton = dialog.getByRole("button", {
-        name: "Find anything…",
+      const searchInput = dialog.getByRole("searchbox", {
+        name: "Find anything",
       });
-      const finalOpenPaneRow = dialog
-        .locator('[data-switchboard-row-id^="OpenPane:"]')
-        .last();
-      await finalOpenPaneRow.scrollIntoViewIfNeeded();
-      await expect(finalOpenPaneRow).toBeVisible();
-      await expect(findButton).toBeVisible();
-      const [rowBox, findBox] = await Promise.all([
-        finalOpenPaneRow.boundingBox(),
-        findButton.boundingBox(),
+      await expect(searchInput).toBeFocused();
+      await expect(
+        dialog.getByRole("button", { name: "Find anything…" }),
+      ).toHaveCount(0);
+      const searchScroll = dialog.getByTestId("switchboard-search-scroll");
+      const [scrollBox, dialogBox] = await Promise.all([
+        searchScroll.boundingBox(),
+        dialog.boundingBox(),
       ]);
-      if (!rowBox || !findBox) {
-        throw new Error("Visible Nexus rows and Find require bounding boxes.");
+      if (!scrollBox || !dialogBox) {
+        throw new Error("Visible Nexus task and scroll owner require bounds.");
       }
-      expect(rowBox.y + rowBox.height).toBeLessThanOrEqual(findBox.y + 1);
+      expect(scrollBox.y).toBeGreaterThanOrEqual(dialogBox.y);
+      expect(scrollBox.y + scrollBox.height).toBeLessThanOrEqual(
+        dialogBox.y + dialogBox.height + 1,
+      );
 
       const box = await dialog.boundingBox();
       if (!box) throw new Error("Visible Nexus task requires a bounding box.");
@@ -936,7 +1152,7 @@ test.describe("mobile Nexus task", () => {
     await expect(actions).toBeFocused();
   });
 
-  test("browser Back pops one Nexus page before dismissing Root", async ({
+  test("browser Back clears typed Root before dismissing blank Root", async ({
     page,
   }, testInfo) => {
     await gotoSinglePaneWorkspace(
@@ -951,18 +1167,15 @@ test.describe("mobile Nexus task", () => {
     await trigger.tap();
     const dialog = nexusDialog(page);
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "Find anything…" }).tap();
-    await expect(dialog.getByRole("heading", { name: "Find" })).toBeVisible();
-    await dialog
-      .getByRole("searchbox", { name: "Find anything" })
-      .fill("stats");
+    const input = dialog.getByRole("searchbox", { name: "Find anything" });
+    await expect(input).toBeFocused();
+    await input.fill("stats");
 
     const urlBeforeBack = page.url();
     await page.goBack();
 
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("heading", { name: "Nexus" })).toBeVisible();
-    await expect(dialog.getByRole("heading", { name: "Find" })).toHaveCount(0);
+    await expect(input).toHaveValue("");
     await expect(page).toHaveURL(urlBeforeBack);
 
     await page.goBack();
@@ -1060,7 +1273,7 @@ test.describe("mobile Nexus task", () => {
     await expect(page).toHaveURL(urlBeforeExit);
   });
 
-  test("rotation and mobile-desktop breakpoint changes preserve Find and query", async ({
+  test("rotation and mobile-desktop breakpoint changes preserve Root query", async ({
     page,
   }, testInfo) => {
     await gotoSinglePaneWorkspace(
@@ -1070,7 +1283,6 @@ test.describe("mobile Nexus task", () => {
     );
     await page.getByRole("button", { name: "Open Nexus, 1 tab" }).tap();
     const nexus = nexusDialog(page);
-    await nexus.getByRole("button", { name: "Find anything…" }).tap();
     await nexus.getByRole("searchbox", { name: "Find anything" }).fill("stats");
 
     await page.setViewportSize({ width: 568, height: 320 });
@@ -1094,7 +1306,7 @@ test.describe("mobile Nexus task", () => {
     ).toHaveValue("stats");
   });
 
-  test("Find is explicit, focuses on entry, and retrieves Find-only Places", async ({
+  test("autofocused Root retrieves canonical Places without scopes", async ({
     page,
   }, testInfo) => {
     await gotoSinglePaneWorkspace(
@@ -1105,19 +1317,19 @@ test.describe("mobile Nexus task", () => {
     await page.getByRole("button", { name: "Open Nexus, 1 tab" }).tap();
 
     const dialog = nexusDialog(page);
-    await dialog.getByRole("button", { name: "Find anything…" }).tap();
     const input = dialog.getByRole("searchbox", { name: "Find anything" });
     await expect(input).toBeFocused();
 
-    await input.fill("s");
+    await input.fill("stats");
     await expect(
-      dialog.getByRole("button", { name: "Stats Place" }),
+      dialog.getByRole("button", { name: /^Stats\b/ }),
     ).toBeVisible();
     await expect(
       dialog.getByRole("button", { name: "All", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
+    ).toHaveCount(0);
+    await expect(dialog.getByRole("heading", { name: "Find" })).toHaveCount(0);
 
-    await dialog.getByRole("button", { name: "Stats Place" }).tap();
+    await dialog.getByRole("button", { name: /^Stats\b/ }).tap();
     await expect(dialog).toBeHidden();
     await expect(page).toHaveURL((url) => {
       const params = url.searchParams;
@@ -1230,8 +1442,8 @@ test.describe("mobile Nexus task", () => {
 
       await trigger.tap();
       const dialog = nexusDialog(page);
-      await dialog.getByRole("button", { name: "Find anything…" }).tap();
       const input = dialog.getByRole("searchbox", { name: "Find anything" });
+      await expect(input).toBeFocused();
       for (
         let iteration = 0;
         iteration < PERFORMANCE_SETUP_ITERATIONS;
@@ -1268,7 +1480,7 @@ test.describe("mobile Nexus task", () => {
       }
       const openablesSamples = await measureDurations(page, "nexus-openables");
 
-      await dialog.getByRole("button", { name: "Back", exact: true }).tap();
+      await input.fill("");
       await dialog.getByRole("button", { name: "Done" }).tap();
 
       for (

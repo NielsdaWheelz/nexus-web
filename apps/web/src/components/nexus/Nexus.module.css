@@ -5,3 +5,149 @@
   flex-direction: column;
   overflow: hidden;
 }
+
+.workflowPage {
+  display: grid;
+  min-height: 0;
+  align-content: start;
+  gap: var(--space-4);
+  padding: max(var(--space-4), env(safe-area-inset-top))
+    max(var(--space-4), env(safe-area-inset-right))
+    max(var(--space-4), env(safe-area-inset-bottom))
+    max(var(--space-4), env(safe-area-inset-left));
+  overflow-y: auto;
+}
+
+.workflowHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.workflowHeader h2,
+.workflowHeader p,
+.recoveryNotice p,
+.tabSection h3 {
+  margin: 0;
+}
+
+.workflowHeader p,
+.tabSection small {
+  color: var(--ink-muted);
+}
+
+.workflowHeader > button,
+.workflowChoices button,
+.recoveryNotice button,
+.tabSection button {
+  min-height: 48px;
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.workflowHeader > button {
+  display: grid;
+  min-width: 48px;
+  place-items: center;
+}
+
+.workflowChoices {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.workflowChoices button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-inline: var(--space-3);
+  text-align: start;
+}
+
+.workflowChoices button[aria-disabled="true"] {
+  color: var(--ink-muted);
+}
+
+.workflowChoices button span {
+  display: grid;
+  gap: 2px;
+}
+
+.workflowChoices button small {
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.recoveryNotice {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-muted);
+}
+
+.recoveryNotice > div {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.recoveryNotice button {
+  padding-inline: var(--space-3);
+}
+
+.tabSection {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.tabSection ul {
+  display: grid;
+  gap: 1px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--edge-subtle);
+  overflow: hidden;
+  list-style: none;
+}
+
+.tabSection li {
+  display: flex;
+  background: var(--surface-2);
+}
+
+.tabSection li[data-current="true"] {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.tabSection li > button:first-child {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  padding-inline: var(--space-3);
+  border: 0;
+  border-radius: 0;
+  text-align: start;
+}
+
+.tabSection li > button:first-child span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabSection li > button:last-child:not(:first-child) {
+  display: grid;
+  min-width: 48px;
+  place-items: center;
+  border-block: 0;
+  border-inline-end: 0;
+  border-radius: 0;
+}

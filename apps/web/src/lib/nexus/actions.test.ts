@@ -19,10 +19,13 @@ describe("Nexus resource actions", () => {
       { id: "ResourceAction.Share", label: "Share…" },
       { id: "ResourceAction.Chat", label: "Chat about this resource" },
     ]);
-    expect(actions[0]?.target).toEqual({
-      kind: "ResourceOpen",
-      subject,
-      labelHint: "A resource",
+    expect(actions[0]?.availability).toEqual({
+      kind: "Available",
+      target: {
+        kind: "ResourceOpen",
+        subject,
+        labelHint: "A resource",
+      },
     });
   });
 
@@ -43,8 +46,11 @@ describe("Nexus resource actions", () => {
       "A contributor",
     );
 
-    expect(actions.map((action) => action.target)).toEqual([
-      { kind: "ResourceChat", ref },
+    expect(actions.map((action) => action.availability)).toEqual([
+      {
+        kind: "Available",
+        target: { kind: "ResourceChat", ref },
+      },
     ]);
   });
 });
