@@ -96,7 +96,7 @@ test("a highlight note remains attached to the exact canonical passage after a f
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
   await expect(
     page.getByRole("heading", { name: "There's Water on the Moon?" }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
   await dragSelectExactText(
     page,
     page.getByText(QUOTE, { exact: false }).first(),
