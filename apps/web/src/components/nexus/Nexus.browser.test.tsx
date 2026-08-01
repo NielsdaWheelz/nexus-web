@@ -16,7 +16,10 @@ import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
-import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
+import {
+  createDefaultWorkspaceState,
+  getWorkspacePrimaryPanes,
+} from "@/lib/workspace/schema";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import {
   useWorkspaceStore,
@@ -118,6 +121,10 @@ function renderNexus(initialViewport: "desktop" | "mobile") {
             <FeedbackProvider>
               <PaneReturnMementoProvider>
                 <WorkspaceStoreProvider
+                  initialState={createDefaultWorkspaceState(
+                    "/libraries",
+                    workspacePrimaryMetrics,
+                  )}
                   workspacePrimaryMetrics={workspacePrimaryMetrics}
                 >
                   <LecternProvider>
