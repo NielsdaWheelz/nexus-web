@@ -26,7 +26,7 @@ realtime synchronization.
 | Range input changes | Update pixels now; when writer is idle, flush after 400 ms idle and within 5 s maximum. |
 | A changes, then B while A saves | Render B continuously; acknowledge A, then send the latest merged B patch. |
 | Save fails | Keep desired pixels; show one keyed error presentation—Settings inline while active, otherwise global. Retryable failures keep controls enabled and offer Retry; Forbidden disables profile controls. |
-| Reload after a theme choice | The keepalive PATCH has already started; journey proof waits only for browser request admission, never response or persistence. |
+| Reload after a theme choice | Journey proof chooses the opposite of the rendered control's committed value, then waits only for browser request admission—never response or persistence—before reload. |
 | Clean tab resumes | Re-fetch and adopt server state only if no intervening local intent exists. |
 | Multiple tabs/devices | Distinct-field partial writes compose; same-field writes are serialization-order last-write-wins. Tabs do not update live; a clean resume converges to server truth. |
 | Stale in-flight save | A 35 s wall-clock watchdog converts a wedged logical attempt into retryable failure; the watchdog itself starts no replacement. |

@@ -75,7 +75,6 @@ function nextReaderProfilePatch(page: Page) {
 test.describe("reader settings", () => {
   test("reader settings persist and survive reload", async ({ page }, testInfo) => {
     const baseline = await fetchReaderProfile(page.request);
-    const targetTheme = baseline.theme === "light" ? "dark" : "light";
 
     try {
       await gotoSinglePaneWorkspace(
@@ -85,6 +84,18 @@ test.describe("reader settings", () => {
       );
       const themeSelect = activeWorkspacePane(page).locator("#theme");
       await expect(themeSelect).toBeVisible();
+
+      // Choose from the rendered owner's committed value, not the earlier API
+      // cleanup snapshot. Those reads are not one atomic snapshot, and using
+      // the API value can accidentally select the value already on screen — a
+      // no-op that cannot prove browser dispatch or keepalive handoff.
+      const renderedTheme = await themeSelect.inputValue();
+      if (renderedTheme !== "light" && renderedTheme !== "dark") {
+        throw new Error(
+          `Reader theme control exposed an invalid value: ${JSON.stringify(renderedTheme)}`,
+        );
+      }
+      const targetTheme = renderedTheme === "light" ? "dark" : "light";
 
       const patchStarted = nextReaderProfilePatch(page);
       await themeSelect.selectOption(targetTheme);
