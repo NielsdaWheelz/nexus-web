@@ -25,7 +25,7 @@ from uuid import UUID
 from xml.etree import ElementTree as ET
 
 from lxml.etree import LxmlError
-from lxml.html import HtmlElement, tostring
+from lxml.html import Element, HtmlElement, tostring
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -1286,6 +1286,8 @@ def _rewrite_chapter_resources(
             f"Failed to parse EPUB chapter resources: {chapter_href}"
         ) from exc
 
+    if doc.body is not None:
+        _materialize_epub_body_anchor(doc.body)
     for element in doc.iter():
         if not isinstance(element, HtmlElement):
             continue
@@ -1641,10 +1643,33 @@ def _sanitize_epub_element(element: HtmlElement) -> None:
         return
 
     if tag not in _EPUB_ALLOWED_HTML_TAGS and tag not in _EPUB_ALLOWED_SVG_TAGS:
+        if _element_id(element) is not None:
+            element.tag = "span"
+            _sanitize_epub_attributes(element, "span")
+            return
         unwrap_element(element)
         return
 
     _sanitize_epub_attributes(element, tag)
+
+
+def _materialize_epub_body_anchor(body: HtmlElement) -> None:
+    """Move a source body ID onto a safe child before apparatus extracts its contents."""
+    body_id = _element_id(body)
+    if body_id is None:
+        return
+
+    marker = Element("span", id=body_id)
+    marker.tail = body.text
+    body.text = None
+    body.insert(0, marker)
+
+
+def _element_id(element: HtmlElement) -> str | None:
+    for attr, value in element.attrib.items():
+        if _normalized_attr_name(attr) == "id" and value.strip():
+            return value
+    return None
 
 
 def _sanitize_epub_attributes(element: HtmlElement, tag: str) -> None:

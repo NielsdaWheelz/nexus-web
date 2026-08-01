@@ -850,6 +850,68 @@ class TestEpubExtractPreservesAnchorTargetsForInFragmentNavigation:
         ).fetchall()
         assert locations == [("sec-a", 0, 10), ("named-anchor", 10, 20)]
 
+    def test_body_and_unsupported_element_ids_become_safe_anchors(self, db_session: Session):
+        storage = FakeStorageClient()
+        chapter_html = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Chapter</title></head>
+<body id="chapter-start"><center id="center-target" class="layout" style="color:red" onclick="alert(1)">Centered target.</center><pagebreak id="page-target"></pagebreak><p>Tail.</p></body>
+</html>"""
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[("ch1", "chapter1.xhtml", "application/xhtml+xml")],
+                    ncx_id="ncx",
+                ),
+                "OEBPS/chapter1.xhtml": chapter_html,
+                "OEBPS/toc.ncx": _build_ncx(
+                    [
+                        ("np1", "Chapter", "chapter1.xhtml#chapter-start"),
+                        ("np2", "Centered", "chapter1.xhtml#center-target"),
+                        ("np3", "Page", "chapter1.xhtml#page-target"),
+                    ]
+                ),
+            }
+        )
+
+        mid = _create_media_with_epub(db_session, storage, epub)
+        result = _extract_epub_artifacts(db_session, mid, storage)
+        db_session.flush()
+
+        assert isinstance(result, EpubExtractionResult)
+        html, canonical_text = db_session.execute(
+            text(
+                "SELECT html_sanitized, canonical_text "
+                "FROM fragments WHERE media_id = :mid AND idx = 0"
+            ),
+            {"mid": mid},
+        ).one()
+        assert '<span id="chapter-start"></span>' in html
+        assert '<span id="center-target">Centered target.</span>' in html
+        assert '<span id="page-target"></span>' in html
+        assert "<center" not in html
+        assert "<pagebreak" not in html
+        assert "onclick" not in html
+        assert "color:red" not in html
+        assert 'class="layout"' not in html
+
+        locations = db_session.execute(
+            text(
+                """
+                SELECT href_fragment, start_offset, end_offset
+                FROM epub_nav_locations
+                WHERE media_id = :mid
+                ORDER BY ordinal
+                """
+            ),
+            {"mid": mid},
+        ).fetchall()
+        assert locations[0][0:2] == ("chapter-start", 0)
+        assert locations[1][0:2] == ("center-target", 0)
+        assert locations[2][0] == "page-target"
+        assert 0 < locations[2][1] <= len(canonical_text)
+
     def test_missing_named_navigation_anchor_rejects_the_source(self, db_session: Session):
         storage = FakeStorageClient()
         epub = _make_epub(
