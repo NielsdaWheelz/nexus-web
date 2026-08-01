@@ -5,7 +5,7 @@
  * route (e.g. /settings/local-vault → routeId "settingsLocalVault") are silently
  * dropped from Nexus when running inside the Android shell, while
  * non-restricted recents (e.g. /settings/billing) are still shown. This is the
- * This is the shared Nexus projection equivalent of the route guard; the
+ * shared Nexus projection equivalent of the route guard; the
  * dispatch-time guard lives in lib/nexus/dispatch.ts.
  *
  * Uses REAL providers — no vi.mock of internal modules; only the fetch boundary is stubbed.
@@ -18,6 +18,7 @@ import { requestNexusOpen } from "@/lib/nexus/events";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
@@ -83,15 +84,17 @@ function renderNexus() {
             <FeedbackProvider>
               <ShareControllerProvider>
                 <LecternProvider>
-                  <WorkspaceStoreProvider
-                    workspacePrimaryMetrics={workspacePrimaryMetrics}
-                    initialState={createDefaultWorkspaceState(
-                      "/libraries",
-                      workspacePrimaryMetrics,
-                    )}
-                  >
-                    <Nexus />
-                  </WorkspaceStoreProvider>
+                  <GlobalPlayerProvider accountId="account-1">
+                    <WorkspaceStoreProvider
+                      workspacePrimaryMetrics={workspacePrimaryMetrics}
+                      initialState={createDefaultWorkspaceState(
+                        "/libraries",
+                        workspacePrimaryMetrics,
+                      )}
+                    >
+                      <Nexus />
+                    </WorkspaceStoreProvider>
+                  </GlobalPlayerProvider>
                 </LecternProvider>
               </ShareControllerProvider>
             </FeedbackProvider>
@@ -146,10 +149,10 @@ describe("Android-shell gating — Nexus recents", () => {
 
     // "Billing" is a non-restricted recent → present in the list.
     await waitFor(() => {
-      expect(screen.getByRole("option", { name: /Billing/i })).toBeInTheDocument();
+      expect(screen.getByRole("gridcell", { name: /Billing/i })).toBeInTheDocument();
     });
 
     // "Local Vault" maps to the Android-restricted routeId → must be absent / not offered.
-    expect(screen.queryByRole("option", { name: /Local Vault/i })).toBeNull();
+    expect(screen.queryByRole("gridcell", { name: /Local Vault/i })).toBeNull();
   });
 });
