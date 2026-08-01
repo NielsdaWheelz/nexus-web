@@ -266,6 +266,65 @@ End maintenance only after all five checks pass. Never purge while an old
 writer can run, restart the opaque backend before the strict BFF is live, or
 deploy the strict frontend against unpurged sessions.
 
+### EPUB navigation offsets revision 0208 hard cut
+
+Revision `0208` expands the exact-offset projection but deliberately defers any
+legacy EPUB whose navigation references an anchor removed by historical
+sanitization. Revision `0209` enforces the final non-null contract. The ordinary
+deploy gate refuses to cross `0208`; complete this stopped-world repair first.
+
+1. Wait for the exact `main` revision to pass CI and for its Vercel production
+   deployment to report Ready. Run `./deploy/hetzner/deploy.sh` once from a clean
+   checkout at that revision. It builds the exact backend images, then exits at
+   the `EpubNavigationOffsets` manual gate without stopping the current release.
+2. Stop `api`, `worker-interactive`, and `worker-background`. Prove there are no
+   active `ingest_media_source` or `media_content_reindex_job` rows, then take a
+   stopped-writer custom-format Postgres backup. Write through a `.partial`
+   path, require non-zero bytes, validate it with `pg_restore --list`, record its
+   SHA-256 and byte count, and atomically rename it into
+   `/var/backups/nexus/epub-navigation-offsets-<CUTOVER_SHA>.dump`.
+3. With the exact staged API image, run `alembic upgrade 0208`, then inspect the
+   bounded census:
+
+   ```bash
+   cd /opt/nexus-web
+   export CUTOVER_SHA=<full-exact-main-sha>
+
+   docker compose --env-file /etc/nexus/nexus.env \
+     -f deploy/hetzner/docker-compose.yml run -T --rm api \
+     sh -c 'cd /app/migrations && /app/.venv/bin/alembic upgrade 0208'
+
+   docker compose --env-file /etc/nexus/nexus.env \
+     -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps api \
+     /app/.venv/bin/python -m nexus.ops.epub_navigation_offsets_cutover census
+   ```
+
+4. Keep all normal writers stopped and run the owned repair. It refreshes only
+   census-selected EPUBs from their durable original files, creates audited
+   source attempts, and drains only the canonical ingest/reindex job kinds.
+   It is resumable for already queued/running cutover attempts and fails closed
+   on foreign active jobs, failed source state, or any remaining nullable row.
+
+   ```bash
+   docker compose --env-file /etc/nexus/nexus.env \
+     -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps api \
+     /app/.venv/bin/python -m nexus.ops.epub_navigation_offsets_cutover repair
+   ```
+
+   Rerun `census`; it must report revision `0208`, `deferred_rows: 0`, no media,
+   and no active jobs. Do not manufacture offsets or advance the migration by
+   hand if the repair does not converge.
+5. From the same exact clean checkout, run the ordinary deploy again. Because
+   the database is now at `0208`, the manual gate is satisfied; the deploy
+   validates and applies `0209`, seeds/checks the Oracle Corpus, starts the exact
+   API and worker images, and verifies their `CUTOVER_SHA`. Finish with the
+   standard unauthenticated and auth-redirect production smokes.
+
+On any failure, keep writers stopped and preserve the backup plus command
+output. The old application is schema-compatible with the additive `0208`
+columns, but restarting it is an explicit recovery decision; never bypass
+`0209`, drop the nullable rows, or substitute guessed offsets.
+
 ### Podcast freshness revision 0203 hard cut
 
 Revision `0203` requires one maintenance window. Do not mix an old API or
