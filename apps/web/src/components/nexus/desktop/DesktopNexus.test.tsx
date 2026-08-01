@@ -264,6 +264,37 @@ describe("DesktopNexus", () => {
     expect(value.activatePrimary).toHaveBeenCalledTimes(2);
   });
 
+  it("requires pointer movement before reflow can change virtual selection", () => {
+    const first = entry();
+    const second = entry({
+      key: { kind: "Pane", paneId: "two" },
+      label: "Project notes",
+    });
+    const value = controller({
+      projection: projection(
+        [group("Results", "Results", [first, second])],
+        first.key,
+      ),
+    });
+    render(<DesktopNexus controller={value} />);
+    const secondPrimary = screen.getByRole("gridcell", {
+      name: /^Project notes\./,
+    });
+    const secondActions = screen.getByRole("button", {
+      name: "Actions for Project notes",
+    });
+
+    fireEvent.pointerEnter(secondPrimary);
+    fireEvent.pointerEnter(secondActions);
+    expect(value.setActiveEntry).not.toHaveBeenCalled();
+
+    fireEvent.pointerMove(secondPrimary);
+    expect(value.setActiveEntry).toHaveBeenLastCalledWith(second.key);
+
+    fireEvent.pointerMove(secondActions);
+    expect(value.setActiveEntry).toHaveBeenLastCalledWith(second.key);
+  });
+
   it("leaves composition keys with the IME and clears before dismissing Root", () => {
     const value = controller({ query: "かな" });
     const view = render(<DesktopNexus controller={value} />);

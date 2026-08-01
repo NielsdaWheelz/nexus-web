@@ -203,7 +203,7 @@ export default function DesktopNexusRow({
         data-virtual-active={
           selected && activeCell === "Primary" ? "true" : undefined
         }
-        onPointerEnter={() => selectCell("Primary")}
+        onPointerMove={() => selectCell("Primary")}
         onClick={activatePrimary}
       >
         <span className={styles.icon} aria-hidden="true">
@@ -256,7 +256,7 @@ export default function DesktopNexusRow({
                 {...trigger}
                 type="button"
                 className={styles.rowActionsButton}
-                onPointerEnter={() => selectCell("Actions")}
+                onPointerMove={() => selectCell("Actions")}
                 onKeyDown={(event) => {
                   selectCell("Actions");
                   trigger.onKeyDown(event);
