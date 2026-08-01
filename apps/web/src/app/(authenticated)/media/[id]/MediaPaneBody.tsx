@@ -1473,6 +1473,11 @@ export default function MediaPaneBody() {
     highlightId: string;
     rect: DOMRect;
   } | null>(null);
+  const highlightActionId = highlightActionAnchor?.highlightId ?? null;
+  useEffect(() => {
+    if (!highlightActionId) return;
+    return mobileChromeVisibleLocks.acquire("action-menu");
+  }, [highlightActionId, mobileChromeVisibleLocks]);
   // The quick-note composer session (selection note verb, `n` chord, or the
   // click popover's Add/Edit note action). Null = composer closed.
   const [quickNote, setQuickNote] = useState<QuickNoteSession | null>(null);

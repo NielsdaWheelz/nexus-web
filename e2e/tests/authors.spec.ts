@@ -361,7 +361,9 @@ test.describe("author journeys", () => {
     await expect(
       paneStrip.getByTitle(targetMedia.title, { exact: true }),
     ).toHaveCount(1);
-    await expect(paneStrip.getByText(existingName, { exact: true })).toHaveCount(0);
+    await expect(
+      paneStrip.getByText(existingName, { exact: true }),
+    ).toHaveCount(0);
     await expect(paneStrip.getByText(newName, { exact: true })).toHaveCount(0);
 
     // Persistent chrome exposes the bounded ordered prefix as pane-native links;
@@ -400,11 +402,11 @@ test.describe("author journeys", () => {
     await page.getByRole("menuitem", { name: "Credits…" }).click();
     const credits = page.getByRole("dialog", { name: "Credits" });
     await expect(credits).toBeVisible();
-    expect(
-      await credits.evaluate((dialog) =>
-        dialog.contains(document.activeElement),
-      ),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        credits.evaluate((dialog) => dialog.contains(document.activeElement)),
+      )
+      .toBe(true);
     await expect(credits.getByText(existingName)).toBeVisible();
     await expect(credits.getByText(newName)).toBeVisible();
     await page.keyboard.press("Escape");
@@ -600,9 +602,7 @@ test.describe("author journeys", () => {
       await expect(lastCredit).toHaveCount(1);
       await expect
         .poll(() =>
-          credits.evaluate((dialog) =>
-            dialog.contains(document.activeElement),
-          ),
+          credits.evaluate((dialog) => dialog.contains(document.activeElement)),
         )
         .toBe(true);
 

@@ -634,10 +634,10 @@ async function dispatchTouchDrag(
   const startY = Math.round(
     Math.min(maxStartY, Math.max(minStartY, rawStartY)),
   );
-  const point = (y: number) => [
+  const point = (y: number, pointX = x) => [
     {
       id: 1,
-      x,
+      x: pointX,
       y,
       radiusX: 1,
       radiusY: 1,
@@ -714,10 +714,10 @@ async function dispatchTouchDrag(
       // classifies the lift as a tap and dispatches a click that reveals the
       // reader chrome. Cross the platform touch slop after the compositor
       // stream, and prove that Chromium observed the move before lifting.
-      const touchSlopDeltaY = 48 * Math.sign(roundedDeltaY);
+      const touchSlopDeltaX = x <= viewport.width / 2 ? 48 : -48;
       await cdp.send("Input.dispatchTouchEvent", {
         type: "touchMove",
-        touchPoints: point(startY + touchSlopDeltaY),
+        touchPoints: point(startY, x + touchSlopDeltaX),
       });
       const touchMoveHandle = await page.waitForFunction(
         () => {
@@ -802,7 +802,7 @@ async function expectTrustedForwardRetreat(
     scrollport,
     -128,
     requireFreshTopPin ? 64 : 24,
-    { expectPaneToolbar },
+    { driveWithTouchEvents: true, expectPaneToolbar },
   );
   const { samples, scrollEvents } = recording;
   const tracking = samples
@@ -1027,8 +1027,8 @@ async function expectTrustedHandledAnnotationTap(
   await expect(
     page.getByRole("group", { name: "Highlight actions" }),
   ).toBeVisible();
-  const visible = await expectChromePhase(page, scrollport, "Visible");
-  for (const surface of chromeSurfaces(visible)) {
+  const pinned = await expectChromePhase(page, scrollport, "Pinned");
+  for (const surface of chromeSurfaces(pinned)) {
     expect(surface.progress).toBe(0);
     expect(surface.inert).toBe(false);
     expect(surface.ariaHidden).toBeNull();
@@ -1061,7 +1061,7 @@ async function expectTrustedReverseReveal(
     scrollport,
     128,
     64,
-    { expectPaneToolbar },
+    { driveWithTouchEvents: true, expectPaneToolbar },
   );
   const reverseMotionAt = (recordedAt: number) => {
     let lastScrollTop = hidden.scrollTop;
