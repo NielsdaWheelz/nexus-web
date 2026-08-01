@@ -54,6 +54,7 @@ export function usePendingDocumentMapPulse({
     if (pending.apparatusStableKey) {
       pendingRef.current = null;
       focusApparatus(pending.apparatusStableKey, true);
+      dispatchPulse(pending.target);
       return;
     }
     if (pending.target.highlightId) {

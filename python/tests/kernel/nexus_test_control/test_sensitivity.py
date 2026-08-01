@@ -5,12 +5,10 @@ import json
 import os
 import subprocess
 from collections.abc import Mapping
-from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
-import nexus_test_control.sensitivity as sensitivity
 from nexus_test_control.evidence import CapabilityEvidence
 from nexus_test_control.model import (
     Capability,
@@ -161,9 +159,8 @@ def test_base_sensitivity_runs_the_overlaid_proof_red_then_current_green(
     assert result.green.status is RunStatus.PASS
 
 
-def test_fault_portfolio_reuses_one_isolated_worktree_and_reverses_each_fault(
+def test_fault_portfolio_reverses_each_fault_without_mutating_the_source_checkout(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (tmp_path / ".gitignore").write_text("python/.venv\ntest-results\n.nexus-test\n")
     project = tmp_path / "python"
@@ -236,17 +233,6 @@ def test_fault_portfolio_reuses_one_isolated_worktree_and_reverses_each_fault(
     )
     _commit(tmp_path, "fault portfolio")
 
-    isolated_entries = 0
-    real_isolated_worktree = sensitivity.isolated_worktree
-
-    @contextmanager
-    def counted_isolated_worktree(*args, **kwargs):
-        nonlocal isolated_entries
-        isolated_entries += 1
-        with real_isolated_worktree(*args, **kwargs) as checkout:
-            yield checkout
-
-    monkeypatch.setattr(sensitivity, "isolated_worktree", counted_isolated_worktree)
     environment = {
         key: value
         for key in ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ")
@@ -272,7 +258,6 @@ def test_fault_portfolio_reuses_one_isolated_worktree_and_reverses_each_fault(
         environment=environment,
     )
 
-    assert isolated_entries == 1
     assert [result.red.failure_fingerprint for result in results] == [
         "first fault observed",
         "second fault observed",

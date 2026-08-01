@@ -29,6 +29,7 @@ function PendingPulseHarness() {
   const cancellationsRef = useRef(0);
   const completionsRef = useRef<Array<() => void>>([]);
   const pulsesRef = useRef<string[]>([]);
+  const apparatusRef = useRef<string[]>([]);
 
   const publish = useCallback(() => {
     if (!outputRef.current) return;
@@ -36,6 +37,7 @@ function PendingPulseHarness() {
       `attempts=${attemptsRef.current}`,
       `cancellations=${cancellationsRef.current}`,
       `pulses=${pulsesRef.current.join(",") || "none"}`,
+      `apparatus=${apparatusRef.current.join(",") || "none"}`,
     ].join(";");
   }, []);
 
@@ -58,9 +60,13 @@ function PendingPulseHarness() {
     },
     [publish],
   );
-  const focusApparatus = useCallback(() => {
-    throw new Error("Highlight navigation unexpectedly used the apparatus path");
-  }, []);
+  const focusApparatus = useCallback(
+    (stableKey: string) => {
+      apparatusRef.current.push(stableKey);
+      publish();
+    },
+    [publish],
+  );
   const queue = usePendingDocumentMapPulse({
     activeFragmentId,
     loading: false,
@@ -79,6 +85,16 @@ function PendingPulseHarness() {
     setRenderRevision((revision) => revision + 1);
   };
 
+  const activateApparatus = () => {
+    queue({
+      fragmentId: "fragment-target",
+      target: pulseTarget("apparatus-highlight"),
+      apparatusStableKey: "source-reference-1",
+    });
+    setActiveFragmentId("fragment-target");
+    setRenderRevision((revision) => revision + 1);
+  };
+
   return (
     <>
       <button type="button" onClick={() => activate("highlight-1")}>
@@ -86,6 +102,9 @@ function PendingPulseHarness() {
       </button>
       <button type="button" onClick={() => activate("highlight-2")}>
         Replace with second highlight
+      </button>
+      <button type="button" onClick={activateApparatus}>
+        Activate source reference
       </button>
       <button
         type="button"
@@ -103,7 +122,7 @@ function PendingPulseHarness() {
         Complete latest attempt
       </button>
       <output ref={outputRef} aria-label="Pending pulse telemetry">
-        attempts=0;cancellations=0;pulses=none
+        attempts=0;cancellations=0;pulses=none;apparatus=none
       </output>
     </>
   );
@@ -166,5 +185,20 @@ it("ignores a cancelled completion after a newer highlight takes ownership", asy
   fireEvent.click(screen.getByRole("button", { name: "Complete latest attempt" }));
   expect(screen.getByLabelText("Pending pulse telemetry")).toHaveTextContent(
     "pulses=highlight-2",
+  );
+});
+
+it("focuses and pulses a queued source reference after its fragment commits", async () => {
+  render(<PendingPulseHarness />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Activate source reference" }));
+
+  await waitFor(() =>
+    expect(
+      screen.getByLabelText("Pending pulse telemetry"),
+      "Queued source-reference activation did not complete both visible effects",
+    ).toHaveTextContent(
+      "pulses=apparatus-highlight;apparatus=source-reference-1",
+    ),
   );
 });

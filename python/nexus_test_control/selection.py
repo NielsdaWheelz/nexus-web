@@ -56,6 +56,7 @@ class SelectionIndex:
 
 
 EMPTY_SELECTION_INDEX = SelectionIndex()
+_WEB_TEST_LOOKING = re.compile(r"(?:^|[._-])(?:test|spec)\.[cm]?[jt]sx?\Z", re.I)
 
 
 SelectionResolver = Callable[[str], Iterable[SelectionTarget]]
@@ -227,7 +228,12 @@ def select_changed(
 ) -> tuple[Selection, ...]:
     selections: list[Selection] = []
     routed: set[tuple[str, Capability, str | None]] = set()
+    expanded_changes: list[ChangedPath] = []
     for change in changes:
+        if change.kind is GitChangeKind.RENAMED and change.previous_path is not None:
+            expanded_changes.append(ChangedPath(GitChangeKind.DELETED, change.previous_path))
+        expanded_changes.append(change)
+    for change in expanded_changes:
         routes = [
             IndexedRoute(change.path, target, SelectionReason.PROMOTED_CAPABILITY)
             for target in _promoted_targets(change.path)
@@ -337,6 +343,8 @@ def _promoted_targets(path: str) -> tuple[SelectionTarget, ...]:
                 Capability.COMPONENT,
             )
         )
+    if path.startswith("apps/web/src/") and _WEB_TEST_LOOKING.search(path):
+        return (SelectionTarget(Capability.POLICY),)
     if path == "apps/web/next.config.ts" or (
         path.startswith("apps/web/e2e/")
         and not path.endswith((".journey.spec.ts", ".extension.spec.ts"))

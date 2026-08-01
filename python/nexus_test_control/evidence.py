@@ -1,8 +1,9 @@
 import hashlib
+import json
 import math
 import re
-from collections.abc import Iterable
-from dataclasses import InitVar, dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import InitVar, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -38,6 +39,35 @@ _SENSITIVE_KEY_PARTS = (
 )
 _BEARER = re.compile(r"(?i)\bbearer\s+[^\s,;]+")
 _RUN_ID = re.compile(r"[0-9a-f]{16}\Z")
+_FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
+_EXACT_EXECUTION_INPUTS = frozenset(
+    {
+        "ANDROID_HOME",
+        "ANDROID_RELEASE_TAG",
+        "ANDROID_SDK_ROOT",
+        "ANTHROPIC_API_KEY",
+        "CI",
+        "DOCKER_CONTEXT",
+        "DOCKER_HOST",
+        "GEMINI_API_KEY",
+        "GRADLE_USER_HOME",
+        "HOME",
+        "JAVA_HOME",
+        "LANG",
+        "LC_ALL",
+        "NO_COLOR",
+        "MOONSHOT_API_KEY",
+        "OPENAI_API_KEY",
+        "PATH",
+        "PLAYWRIGHT_BROWSERS_PATH",
+        "TERM",
+        "TMPDIR",
+        "TZ",
+        "UV_CACHE_DIR",
+        "XDG_CACHE_HOME",
+    }
+)
+_IGNORED_EXECUTION_INPUTS = frozenset({"NEXUS_TEST_RESULTS_DIR", "NEXUS_TEST_RUN_ID"})
 
 
 def _nonnegative(name: str, value: int | float) -> None:
@@ -86,6 +116,34 @@ class CapabilityEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class InvocationEvidence:
+    ui: bool = False
+    input_fingerprint: str = hashlib.sha256(b"{}").hexdigest()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ui, bool):
+            raise ValueError("invocation UI mode must be boolean")
+        if _FINGERPRINT.fullmatch(self.input_fingerprint) is None:
+            raise ValueError("invocation input fingerprint must be SHA-256")
+
+
+def execution_input_fingerprint(environment: Mapping[str, str]) -> str:
+    inputs: dict[str, str | bool] = {}
+    for key, value in sorted(environment.items()):
+        if key in _IGNORED_EXECUTION_INPUTS:
+            continue
+        if key not in _EXACT_EXECUTION_INPUTS and not key.startswith("NEXUS_"):
+            continue
+        normalized = re.sub(r"[^a-z]", "", key.casefold())
+        if any(part in normalized for part in _SENSITIVE_KEY_PARTS):
+            inputs[key] = bool(value)
+        else:
+            inputs[key] = value
+    encoded = json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
 class RunEvidence:
     repo_root: InitVar[Path]
     run_id: str
@@ -97,10 +155,13 @@ class RunEvidence:
     selection: tuple[Selection, ...]
     sensitivity: tuple[Sensitivity, ...]
     capabilities: tuple[CapabilityEvidence, ...]
+    invocation: InvocationEvidence = field(default_factory=InvocationEvidence)
 
     def __post_init__(self, repo_root: Path) -> None:
         if not isinstance(self.workflow, Workflow):
             raise ValueError("workflow must be a typed Workflow")
+        if not isinstance(self.invocation, InvocationEvidence):
+            raise ValueError("invocation must be typed evidence")
         if not self.run_id.strip() or re.fullmatch(r"[0-9a-f]{40}", self.git_sha) is None:
             raise ValueError("run id must not be blank and git SHA must be full and lowercase")
         if self.base_sha is not None and re.fullmatch(r"[0-9a-f]{40}", self.base_sha) is None:
@@ -139,7 +200,10 @@ class RunEvidence:
                 for item in self.selection
                 if item.sensitivity_required and item.proof not in sensitivity_by_proof
             ]
-            if missing_sensitivity:
+            sensitivity_capability = next(
+                item for item in self.capabilities if item.id is Capability.SENSITIVITY
+            )
+            if missing_sensitivity and sensitivity_capability.status is RunStatus.PASS:
                 raise ValueError(
                     f"materially changed proofs lack sensitivity: {missing_sensitivity}"
                 )
@@ -158,10 +222,13 @@ class DiagnosticRerunEvidence:
     duration_ms: int
     peak_owned_mib: PeakOwnedMemory
     capabilities: tuple[CapabilityEvidence, ...]
+    invocation: InvocationEvidence = field(default_factory=InvocationEvidence)
 
     def __post_init__(self) -> None:
         if not isinstance(self.workflow, Workflow):
             raise ValueError("diagnostic workflow must be typed")
+        if not isinstance(self.invocation, InvocationEvidence):
+            raise ValueError("diagnostic invocation must be typed evidence")
         if (
             _RUN_ID.fullmatch(self.run_id) is None
             or _RUN_ID.fullmatch(self.diagnostic_of_run_id) is None
@@ -200,14 +267,16 @@ def run_evidence_from_json(repo_root: Path, value: object) -> RunEvidence:
             "status",
             "duration_ms",
             "peak_owned_mib",
+            "invocation",
             "selection",
             "sensitivity",
             "capabilities",
         },
         "run summary",
     )
-    if type(payload["version"]) is not int or payload["version"] != 1:
-        raise ValueError("run summary version must be exactly 1")
+    if type(payload["version"]) is not int or payload["version"] != 2:
+        raise ValueError("run summary version must be exactly 2")
+    invocation = _parse_invocation(payload["invocation"])
     peak = _parse_memory(payload["peak_owned_mib"])
     selection = tuple(_parse_selection(item) for item in _list(payload["selection"], "selection"))
     sensitivity = tuple(
@@ -227,6 +296,7 @@ def run_evidence_from_json(repo_root: Path, value: object) -> RunEvidence:
         selection=selection,
         sensitivity=sensitivity,
         capabilities=capabilities,
+        invocation=invocation,
     )
     status = _enum(RunStatus, payload["status"], "status")
     if status is not evidence.status:
@@ -248,6 +318,17 @@ def _parse_memory(value: object) -> PeakOwnedMemory:
         _integer(payload["container_working_set"], "container working set"),
         _integer(payload["total"], "total owned memory"),
         measurement_complete,
+    )
+
+
+def _parse_invocation(value: object) -> InvocationEvidence:
+    payload = _exact_object(value, {"ui", "input_fingerprint"}, "invocation")
+    ui = payload["ui"]
+    if type(ui) is not bool:
+        raise ValueError("invocation UI mode must be boolean")
+    return InvocationEvidence(
+        ui=ui,
+        input_fingerprint=_string(payload["input_fingerprint"], "input fingerprint"),
     )
 
 
@@ -494,7 +575,7 @@ def _capabilities_json(
 
 def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[str, JsonValue]:
     payload: dict[str, JsonValue] = {
-        "version": 1,
+        "version": 2,
         "run_id": evidence.run_id,
         "workflow": evidence.workflow.value,
         "git_sha": evidence.git_sha,
@@ -502,6 +583,10 @@ def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[st
         "status": evidence.status.value,
         "duration_ms": evidence.duration_ms,
         "peak_owned_mib": _memory_json(evidence.peak_owned_mib),
+        "invocation": {
+            "ui": evidence.invocation.ui,
+            "input_fingerprint": evidence.invocation.input_fingerprint,
+        },
         "selection": [
             {
                 "path": selection.path,
@@ -528,12 +613,16 @@ def diagnostic_evidence_json(
         PurePosixPath("test-results/runs") / evidence.diagnostic_of_run_id / "summary.json"
     )
     payload: dict[str, JsonValue] = {
-        "version": 1,
+        "version": 2,
         "command": "diagnose",
         "run_id": evidence.run_id,
         "workflow": evidence.workflow.value,
         "git_sha": evidence.git_sha,
         "status": evidence.status.value,
+        "invocation": {
+            "ui": evidence.invocation.ui,
+            "input_fingerprint": evidence.invocation.input_fingerprint,
+        },
         "diagnostic_of": {
             "run_id": evidence.diagnostic_of_run_id,
             "status": RunStatus.FAIL.value,

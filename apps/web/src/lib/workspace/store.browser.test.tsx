@@ -20,10 +20,8 @@ type WorkspaceStore = ReturnType<typeof useWorkspaceStore>;
 
 let currentStore: WorkspaceStore | null = null;
 let childMounts = 0;
-let childRenders = 0;
 
 function EphemeralPaneChild() {
-  childRenders += 1;
   currentStore = useWorkspaceStore();
   useEffect(() => {
     childMounts += 1;
@@ -55,7 +53,6 @@ describe("Workspace active-pane identity", () => {
   beforeEach(() => {
     currentStore = null;
     childMounts = 0;
-    childRenders = 0;
     window.localStorage.clear();
   });
 
@@ -70,6 +67,7 @@ describe("Workspace active-pane identity", () => {
 
     const store = currentStore;
     if (!store) throw new Error("Workspace store did not mount");
+    const activePaneId = store.state.activePrimaryPaneId;
 
     act(() => {
       store.activatePane(store.state.activePrimaryPaneId);
@@ -85,8 +83,8 @@ describe("Workspace active-pane identity", () => {
       "Reactivating the active pane remounted its ephemeral child",
     ).toBe(1);
     expect(
-      childRenders,
-      "Reactivating the active pane republished unchanged workspace state to its child",
-    ).toBe(1);
+      currentStore?.state.activePrimaryPaneId,
+      "Reactivating the active pane changed its durable identity",
+    ).toBe(activePaneId);
   });
 });

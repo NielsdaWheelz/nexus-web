@@ -134,10 +134,10 @@ Rules:
 - Exit zero means every required selected capability passed. Missing tools,
   secrets, device, or provider execution is `not_run`, never pass.
 - Every gate fails when a required selected capability is `not_run`.
-- Gates have zero automatic retries. `diagnose --of` MAY replay one failed v1
-  workflow at the same clean committed `HEAD` for richer artifacts. It records
-  separate linked evidence, retains top-level `fail`, exits nonzero, and is
-  forbidden in CI and Agency gates.
+- Gates have zero automatic retries. `diagnose --of` MAY replay one failed v2
+  workflow at the same clean committed `HEAD` and exact recorded invocation
+  inputs for richer artifacts. It records separate linked evidence, retains
+  top-level `fail`, exits nonzero, and is forbidden in CI and Agency gates.
 
 | Workflow | Required composition |
 |---|---|
@@ -539,8 +539,11 @@ date-bounded, visible as `not_run`, and rejected after expiry. Source-level
 
 Sensitivity is enforced by the control plane, not by PR prose:
 
-1. Git rename detection excludes pure moves and deletions. Any added or
-   otherwise edited proof in a configured test glob is materially changed.
+1. Git rename detection routes both old and new owners and excludes pure moves
+   and deletions from sensitivity. An added or edited locally eligible proof is
+   mechanically sensitivity-required when it owns a priority-risk node or
+   declares a targeted fault. Ordinary independent-oracle proof remains review
+   governed; file novelty alone does not justify fake mutation ceremony.
 2. `pr` invokes `prove`; it owns the red/green pair and does not rerun the green
    proof elsewhere. The default `base:<ref>` mode creates an isolated base
    worktree and overlays only the current proof, proof-owned testkit, and corpus
@@ -557,8 +560,8 @@ Sensitivity is enforced by the control plane, not by PR prose:
    its expected behavioral assertion or property. Import, collection, build,
    service-readiness, and unrelated-test failures do not count.
 6. The current proof must then pass at the intended real boundary. `pr` fails
-   when any materially changed proof lacks a valid same-run red/green
-   sensitivity object.
+   when any sensitivity-required changed proof lacks a valid same-run
+   red/green sensitivity object.
 
 Paid hosted and physical-device proofs never enter PR sensitivity because PR
 must remain offline and device-independent. Their local parsers/executors have
@@ -592,7 +595,7 @@ Write ignored `test-results/runs/<run_id>/summary.json`:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "run_id": "16 lowercase hex",
   "workflow": "pr",
   "git_sha": "full sha",
@@ -604,6 +607,10 @@ Write ignored `test-results/runs/<run_id>/summary.json`:
     "container_working_set": 0,
     "total": 0,
     "measurement_complete": true
+  },
+  "invocation": {
+    "ui": false,
+    "input_fingerprint": "sha256"
   },
   "selection": [{
     "path": "path",
@@ -648,12 +655,16 @@ first run:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "command": "diagnose",
   "run_id": "new 16-hex id",
   "workflow": "pr",
   "git_sha": "same full sha",
   "status": "fail",
+  "invocation": {
+    "ui": false,
+    "input_fingerprint": "same sha256"
+  },
   "diagnostic_of": {
     "run_id": "failed 16-hex id",
     "status": "fail",
@@ -672,7 +683,10 @@ Redact environment and command values. Stream the first decisive failure
 immediately. Preserve pytest output, browser trace/screenshot, process logs,
 database/template identity, last job state, red/green sensitivity, explicit
 diagnostic-rerun linkage, and provider usage only when applicable. A summary
-with a diagnostic pass remains failed when its first run failed.
+with a diagnostic pass remains failed when its first run failed. The run
+fingerprint includes outcome-affecting non-secret inputs and only presence for
+secret inputs. A diagnostic claim is durably `started` before execution and
+becomes `terminal` only after its linked summary exists.
 
 ## Production-isolation boundary
 
@@ -839,8 +853,9 @@ to repair before the public cut, not reasons to restore the escape.
    capabilities, and 10–15 journeys from product contracts rather than legacy
    structure. Keep the existing public gate blocking during replacement.
 5. Run machine sensitivity for every priority-risk replacement and every
-   materially changed proof. Replay known regressions. Priority legacy proof
-   remains blocking until its replacement passes the intended new gate.
+   changed proof with a declared fault. Replay known regressions. Priority
+   legacy proof remains blocking until its replacement passes the intended new
+   gate.
 6. Run the exact final `full` command locally, then once in a remote candidate
    branch using the exact final runner image/actions/workflow. A PR or manual
    branch trigger is acceptable; the requirement is the real final gate, not a
@@ -870,9 +885,9 @@ not supported compatibility modes.
 - **AC2 — guard and proof sensitivity:** injected internal mock, sleep, external
   network, skip, automatic retry, excessive worker count, expired exception,
   risk-id deletion, doc drift, and fixture checksum fault each fail a standing
-  `pr` policy self-test. A changed proof without a valid executed-assertion red
-  and current green sensitivity object fails `pr`; collection/build failure is
-  rejected as evidence.
+  `pr` policy self-test. A sensitivity-required changed proof without a valid
+  executed-assertion red and current green sensitivity object fails `pr`;
+  collection/build failure is rejected as evidence.
 - **AC3 — reuse:** two consecutive workflows retain identical infrastructure
   container ids and browser install; the second creates no service stack.
 - **AC4 — isolation:** every run gets a distinct database/bucket; every journey

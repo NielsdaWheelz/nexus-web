@@ -644,6 +644,31 @@ def test_web_source_promoted_to_journey_is_memory_admitted_before_static_web(
     assert not (tmp_path / "commands.jsonl").exists()
 
 
+def test_unknown_available_memory_fails_closed_before_heavy_work(tmp_path: Path) -> None:
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    (tmp_path / "python/.venv").mkdir()
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    selected = Selection(
+        "apps/web/src/risk.browser.test.tsx",
+        Capability.COMPONENT,
+        SelectionReason.CHANGED_TEST,
+        "vitest:apps/web/src/risk.browser.test.tsx",
+    )
+
+    evidence = run_workflow(
+        CapabilityContext(tmp_path, Workflow.CHANGED, (selected,)),
+        StringIO(),
+        {},
+        run_id="0123456789abcdef",
+        _available_memory=lambda: None,
+    )
+
+    static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)
+    assert static_web.status is RunStatus.NOT_RUN
+    assert static_web.detail == "heavy memory admission could not determine available memory"
+
+
 def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_only_when_selected(
     tmp_path: Path,
 ) -> None:

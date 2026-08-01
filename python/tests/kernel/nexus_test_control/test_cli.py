@@ -10,13 +10,20 @@ from nexus_test_control.cli import (
     ListCommand,
     ProveCommand,
     WorkflowCommand,
+    _canonical_selection,
     _focus_selections,
     _route_selection_for_workflow,
     main,
     parse_command,
     write_summary,
 )
-from nexus_test_control.evidence import CapabilityEvidence, PeakOwnedMemory, RunEvidence
+from nexus_test_control.evidence import (
+    CapabilityEvidence,
+    InvocationEvidence,
+    PeakOwnedMemory,
+    RunEvidence,
+    execution_input_fingerprint,
+)
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
     Capability,
@@ -226,6 +233,8 @@ def test_diagnose_replays_failed_workflow_once_but_keeps_failed_verdict(
     assert summary["diagnostic_of"]["run_id"] == original_id
     claim = json.loads((original_directory / "diagnostic-rerun.json").read_text())
     assert claim["summary"] == summary_path.relative_to(tmp_path).as_posix()
+    assert claim["state"] == "terminal"
+    assert claim["diagnostic_status"] == "not_run"
 
     errors = StringIO()
     assert (
@@ -275,6 +284,73 @@ def test_diagnose_requires_the_same_clean_committed_head(tmp_path: Path) -> None
     assert main(["diagnose", "--of", original_id], repo_root=tmp_path, stderr=errors) == 1
     assert "clean committed checkout" in errors.getvalue()
     assert not (original_directory / "diagnostic-rerun.json").exists()
+
+
+def test_diagnose_rejects_changed_execution_inputs_before_claiming_the_attempt(
+    tmp_path: Path,
+) -> None:
+    _git_repository(tmp_path)
+    git_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    run_id = "0123456789abcdef"
+    run_directory = tmp_path / "test-results/runs" / run_id
+    run_directory.mkdir(parents=True)
+    write_summary(
+        tmp_path,
+        RunEvidence(
+            repo_root=tmp_path,
+            run_id=run_id,
+            workflow=Workflow.DOCTOR,
+            git_sha=git_sha,
+            base_sha=None,
+            duration_ms=1,
+            peak_owned_mib=PeakOwnedMemory(1, 0, 1),
+            selection=(),
+            sensitivity=(),
+            capabilities=(
+                CapabilityEvidence(Capability.DOCTOR, RunStatus.FAIL, 1, 1, detail="failed"),
+            ),
+            invocation=InvocationEvidence(
+                input_fingerprint=execution_input_fingerprint({"TZ": "UTC"})
+            ),
+        ),
+    )
+    errors = StringIO()
+
+    assert (
+        main(
+            ["diagnose", "--of", run_id],
+            repo_root=tmp_path,
+            environment={"TZ": "America/Los_Angeles"},
+            stderr=errors,
+        )
+        == 1
+    )
+    assert "original execution inputs" in errors.getvalue()
+    assert not (run_directory / "diagnostic-rerun.json").exists()
+
+
+def test_selection_failure_still_writes_a_typed_failed_run_summary(tmp_path: Path) -> None:
+    _git_repository(tmp_path)
+    manifest = tmp_path / "testdata/proofs.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text("not-json\n", encoding="utf-8")
+    output = StringIO()
+
+    assert main(["changed"], repo_root=tmp_path, environment={}, stdout=output) == 1
+
+    summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["version"] == 2
+    assert summary["status"] == "fail"
+    policy = next(item for item in summary["capabilities"] if item["id"] == "policy")
+    assert policy["status"] == "fail"
+    assert "could not select changed proof" in policy["detail"]
 
 
 @pytest.mark.parametrize(
@@ -364,7 +440,7 @@ def test_plain_focus_keeps_every_manifest_owned_journey_route(tmp_path: Path) ->
     source.parent.mkdir(parents=True)
     source.write_text("export const registry = {}\n")
     manifest = tmp_path / "testdata/proofs.json"
-    manifest.parent.mkdir(parents=True)
+    manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text(
         json.dumps(
             {
@@ -452,6 +528,46 @@ def test_pr_records_later_cadence_selection_without_dispatching_it() -> None:
         ),
     )
     assert confidence[0].deferred_to is Workflow.PR
+
+
+def test_machine_sensitivity_is_reserved_for_declared_risk_or_fault_owners(
+    tmp_path: Path,
+) -> None:
+    path = "python/tests/service/test_risk.py"
+    file_proof = f"pytest:{path}"
+    selection = Selection(
+        path,
+        Capability.SERVICE,
+        SelectionReason.CHANGED_TEST,
+        file_proof,
+        sensitivity_required=True,
+    )
+    fault_manifest = tmp_path / "testdata/faults/manifest.json"
+    fault_manifest.parent.mkdir(parents=True)
+    fault_manifest.write_text('{"version":1,"faults":[]}\n', encoding="utf-8")
+
+    ordinary = _canonical_selection(tmp_path, selection)
+
+    assert ordinary.proof == file_proof
+    assert ordinary.sensitivity_required is False
+
+    manifest = tmp_path / "testdata/proofs.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    exact_proof = f"{file_proof}::test_priority_risk"
+    manifest.write_text(
+        json.dumps(
+            {
+                "priority_risks": [{"proofs": [exact_proof]}],
+                "journeys": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    priority = _canonical_selection(tmp_path, selection)
+
+    assert priority.proof == exact_proof
+    assert priority.sensitivity_required is True
 
 
 def test_prove_requires_a_clean_committed_checkout(tmp_path: Path) -> None:

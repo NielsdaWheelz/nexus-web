@@ -136,6 +136,15 @@ test("a highlight note remains attached to the exact canonical passage after a f
     evidence.getByText(noteText, { exact: true }),
     `Evidence for highlight ${highlight.id} did not retain its linked note.`,
   ).toBeVisible();
+  await page.getByRole("button", { name: new RegExp(`^Jump to .*${QUOTE}`) }).click();
+  const activatedPassage = page.locator(
+    `[data-active-highlight-ids~="${highlight.id}"]`,
+  );
+  await expect(
+    activatedPassage,
+    `Document Map activation did not render and reveal highlight ${highlight.id} in its owned reader fragment.`,
+  ).toBeVisible();
+  await expect(activatedPassage).toContainText(QUOTE);
 
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
   await page.getByRole("button", { name: "Companion", exact: true }).click();

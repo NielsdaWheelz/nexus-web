@@ -84,7 +84,7 @@ def prove_many(
     requests: Sequence[SensitivityRequest],
     environment: Mapping[str, str],
 ) -> tuple[Sensitivity, ...]:
-    """Demonstrate several proofs while reusing one isolated runtime per revision."""
+    """Demonstrate several proofs while reusing one isolated checkout per revision."""
     root = repo_root.resolve(strict=True)
     _require_clean_checkout(root)
     if not requests:

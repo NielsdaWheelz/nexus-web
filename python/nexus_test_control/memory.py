@@ -32,18 +32,24 @@ def available_memory_mib(meminfo: Path = Path("/proc/meminfo")) -> int | None:
 
 
 class OwnedMemorySampler:
-    def __init__(self, repo_root: Path) -> None:
+    def __init__(self, repo_root: Path, *, include_containers: bool) -> None:
         self._repo_root = repo_root
+        self._include_containers = include_containers
         self._stop = threading.Event()
+        self._lock = threading.Lock()
         self._peak_process_bytes = 0
         self._peak_container_bytes = 0
-        self._container_sampled = False
+        self._interval_process_bytes = 0
+        self._interval_container_bytes = 0
+        self._current_process_bytes = 0
+        self._current_container_bytes = 0
+        self._container_sampled = not include_containers
         self._container_sample_failed = False
         self._thread = threading.Thread(target=self._sample_until_stopped, daemon=True)
         self.evidence: PeakOwnedMemory | None = None
 
     def start(self) -> None:
-        self._sample(include_containers=True)
+        self._sample(include_containers=self._include_containers)
         self._thread.start()
 
     def stop(self) -> PeakOwnedMemory:
@@ -53,42 +59,73 @@ class OwnedMemorySampler:
             self._container_sample_failed = True
         else:
             self._sample(include_containers=False)
-        return self.snapshot()
+        return self._snapshot(interval=False)
 
     def snapshot(self) -> PeakOwnedMemory:
-        process = _to_mib(self._peak_process_bytes)
-        containers = _to_mib(self._peak_container_bytes)
+        return self._snapshot(interval=False)
+
+    def checkpoint(self) -> PeakOwnedMemory:
+        self._sample(include_containers=False)
+        evidence = self._snapshot(interval=True)
+        with self._lock:
+            self._interval_process_bytes = self._current_process_bytes
+            self._interval_container_bytes = self._current_container_bytes
+        return evidence
+
+    def _snapshot(self, *, interval: bool) -> PeakOwnedMemory:
+        with self._lock:
+            process_bytes = self._interval_process_bytes if interval else self._peak_process_bytes
+            container_bytes = (
+                self._interval_container_bytes if interval else self._peak_container_bytes
+            )
+            measurement_complete = self._container_sampled and not self._container_sample_failed
+        process = _to_mib(process_bytes)
+        containers = _to_mib(container_bytes)
         return PeakOwnedMemory(
             process,
             containers,
             process + containers,
-            measurement_complete=(self._container_sampled and not self._container_sample_failed),
+            measurement_complete=measurement_complete,
         )
 
     def _sample_until_stopped(self) -> None:
         next_container_sample = time.monotonic() + 1
         while not self._stop.wait(0.1):
             now = time.monotonic()
-            include_containers = now >= next_container_sample
+            include_containers = self._include_containers and now >= next_container_sample
             self._sample(include_containers=include_containers)
             if include_containers:
                 next_container_sample = time.monotonic() + 1
 
     def _sample(self, *, include_containers: bool) -> None:
-        self._peak_process_bytes = max(self._peak_process_bytes, _process_tree_rss(os.getpid()))
+        process_bytes = _process_tree_rss(os.getpid())
+        container_bytes: int | None = None
+        container_failed = False
         if include_containers:
             try:
-                observed = _owned_container_working_set(self._repo_root)
+                container_bytes = _owned_container_working_set(self._repo_root)
             except (OSError, RuntimeContractError, subprocess.SubprocessError):
+                container_failed = True
+        with self._lock:
+            self._current_process_bytes = process_bytes
+            self._peak_process_bytes = max(self._peak_process_bytes, process_bytes)
+            self._interval_process_bytes = max(self._interval_process_bytes, process_bytes)
+            if container_failed:
                 self._container_sample_failed = True
-            else:
+            elif container_bytes is not None:
                 self._container_sampled = True
-                self._peak_container_bytes = max(self._peak_container_bytes, observed)
+                self._current_container_bytes = container_bytes
+                self._peak_container_bytes = max(self._peak_container_bytes, container_bytes)
+                self._interval_container_bytes = max(
+                    self._interval_container_bytes, container_bytes
+                )
 
 
 @contextmanager
-def measure_owned_memory(repo_root: Path) -> Iterator[OwnedMemorySampler]:
-    sampler = OwnedMemorySampler(repo_root)
+def measure_owned_memory(
+    repo_root: Path, *, include_containers: bool
+) -> Iterator[OwnedMemorySampler]:
+    sampler = OwnedMemorySampler(repo_root, include_containers=include_containers)
     sampler.start()
     try:
         yield sampler

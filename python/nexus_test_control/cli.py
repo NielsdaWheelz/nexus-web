@@ -13,10 +13,14 @@ from pathlib import Path, PurePosixPath
 from typing import TextIO
 
 from nexus_test_control.evidence import (
+    CapabilityEvidence,
     DiagnosticRerunEvidence,
+    InvocationEvidence,
+    PeakOwnedMemory,
     RunEvidence,
     diagnostic_evidence_json,
     evidence_json,
+    execution_input_fingerprint,
     redact_text,
     run_evidence_from_json,
 )
@@ -261,39 +265,47 @@ def _execute_workflow(
     results_directory = repo_root / "test-results" / "runs" / run_id
     results_directory.mkdir(parents=True, exist_ok=False)
     git_sha = _git_sha(repo_root, "HEAD")
-    base_override = None
-    if command.workflow is Workflow.PR:
-        base_override = environment.get("NEXUS_TEST_BASE_SHA") or "HEAD^"
-    base_sha, selection = _selection(repo_root, command, base_override=base_override)
-    selected = tuple(
-        Selection(
-            item.path,
-            item.capability,
-            item.reason,
-            canonical_proof(repo_root, item.proof)
-            if item.sensitivity_required and item.proof is not None
-            else item.proof,
-            item.sensitivity_required,
-            item.deferred_to,
+    invocation = InvocationEvidence(
+        ui=command.ui,
+        input_fingerprint=execution_input_fingerprint(environment),
+    )
+    base_sha: str | None = None
+    selection: tuple[Selection, ...] = ()
+    sensitivity: tuple[Sensitivity, ...] = ()
+    failure_owner = Capability.POLICY
+    try:
+        base_override = None
+        if command.workflow is Workflow.PR:
+            base_override = environment.get("NEXUS_TEST_BASE_SHA") or "HEAD^"
+        base_sha, selection = _selection(repo_root, command, base_override=base_override)
+        selected = tuple(_canonical_selection(repo_root, item) for item in selection)
+        selection = _route_selection_for_workflow(command.workflow, selected)
+        active_selection = tuple(item for item in selection if item.deferred_to is None)
+        failure_owner = Capability.SENSITIVITY
+        sensitivity = _workflow_sensitivity(repo_root, command, environment, base_sha, selection)
+        context = CapabilityContext(
+            repo_root,
+            command.workflow,
+            active_selection,
+            command.ui,
+            frozenset(item.proof for item in sensitivity),
         )
-        for item in selection
-    )
-    selection = _route_selection_for_workflow(command.workflow, selected)
-    active_selection = tuple(item for item in selection if item.deferred_to is None)
-    sensitivity = _workflow_sensitivity(repo_root, command, environment, base_sha, selection)
-    context = CapabilityContext(
-        repo_root,
-        command.workflow,
-        active_selection,
-        command.ui,
-        frozenset(item.proof for item in sensitivity),
-    )
-    owned_environment = {
-        **environment,
-        "NEXUS_TEST_RESULTS_DIR": str(results_directory),
-        "NEXUS_TEST_RUN_ID": run_id,
-    }
-    workflow_run = run_workflow(context, output, owned_environment, run_id=run_id)
+        owned_environment = {
+            **environment,
+            "NEXUS_TEST_RESULTS_DIR": str(results_directory),
+            "NEXUS_TEST_RUN_ID": run_id,
+        }
+        failure_owner = WORKFLOW_REGISTRY[command.workflow].requirements[0].capability
+        workflow_run = run_workflow(context, output, owned_environment, run_id=run_id)
+        capabilities = workflow_run.capabilities
+        peak_owned_mib = workflow_run.peak_owned_mib
+    except BaseException as error:
+        capabilities = _failed_capabilities(
+            command.workflow,
+            failure_owner,
+            f"controller execution did not complete: {error}",
+        )
+        peak_owned_mib = PeakOwnedMemory(0, 0, 0, measurement_complete=False)
     duration_ms = (time.monotonic_ns() - started) // 1_000_000
     evidence = RunEvidence(
         repo_root=repo_root,
@@ -302,10 +314,11 @@ def _execute_workflow(
         git_sha=git_sha,
         base_sha=base_sha,
         duration_ms=duration_ms,
-        peak_owned_mib=workflow_run.peak_owned_mib,
+        peak_owned_mib=peak_owned_mib,
         selection=selection,
         sensitivity=sensitivity,
-        capabilities=workflow_run.capabilities,
+        capabilities=capabilities,
+        invocation=invocation,
     )
     relative_summary = write_summary(repo_root, evidence, environment_secrets(environment))
     output.write(f"{command.workflow.value}: {evidence.status.value}; summary={relative_summary}\n")
@@ -323,38 +336,44 @@ def _execute_diagnose(
     if original.git_sha != git_sha:
         raise ControlPlaneError("diagnostic rerun requires the original committed HEAD")
     _require_clean_checkout(repo_root)
+    input_fingerprint = execution_input_fingerprint(environment)
+    if original.invocation.input_fingerprint != input_fingerprint:
+        raise ControlPlaneError("diagnostic rerun requires the original execution inputs")
 
     run_id = new_run_id()
     original_directory = repo_root / "test-results" / "runs" / original.run_id
     claim = original_directory / "diagnostic-rerun.json"
     relative_summary = Path("test-results") / "runs" / run_id / "summary.json"
+    absolute_results_directory = repo_root / relative_summary.parent
+    absolute_results_directory.mkdir(parents=True, exist_ok=False)
     try:
         with claim.open("x", encoding="utf-8") as target:
             target.write(
                 json.dumps(
                     {
-                        "version": 1,
+                        "version": 2,
                         "command": "diagnose",
                         "diagnostic_run_id": run_id,
                         "summary": relative_summary.as_posix(),
+                        "state": "started",
                     },
                     indent=2,
                     sort_keys=True,
                 )
                 + "\n"
             )
+            target.flush()
+            os.fsync(target.fileno())
     except FileExistsError as error:
+        absolute_results_directory.rmdir()
         raise ControlPlaneError("failed run already has a formal diagnostic rerun") from error
 
     started = time.monotonic_ns()
-    results_directory = relative_summary.parent
-    absolute_results_directory = repo_root / results_directory
-    absolute_results_directory.mkdir(parents=True, exist_ok=False)
     context = CapabilityContext(
         repo_root,
         original.workflow,
         tuple(item for item in original.selection if item.deferred_to is None),
-        False,
+        original.invocation.ui,
         frozenset(item.proof for item in original.sensitivity),
     )
     owned_environment = {
@@ -362,31 +381,91 @@ def _execute_diagnose(
         "NEXUS_TEST_RESULTS_DIR": str(absolute_results_directory),
         "NEXUS_TEST_RUN_ID": run_id,
     }
-    workflow_run = run_workflow(context, output, owned_environment, run_id=run_id)
+    try:
+        workflow_run = run_workflow(context, output, owned_environment, run_id=run_id)
+        peak_owned_mib = workflow_run.peak_owned_mib
+        capabilities = workflow_run.capabilities
+    except BaseException as error:
+        peak_owned_mib = PeakOwnedMemory(0, 0, 0, measurement_complete=False)
+        capabilities = _aborted_capabilities(
+            original.workflow,
+            f"diagnostic execution did not complete: {error}",
+        )
     evidence = DiagnosticRerunEvidence(
         run_id=run_id,
         workflow=original.workflow,
         git_sha=git_sha,
         diagnostic_of_run_id=original.run_id,
         duration_ms=(time.monotonic_ns() - started) // 1_000_000,
-        peak_owned_mib=workflow_run.peak_owned_mib,
-        capabilities=workflow_run.capabilities,
+        peak_owned_mib=peak_owned_mib,
+        capabilities=capabilities,
+        invocation=original.invocation,
     )
+    summary_payload = diagnostic_evidence_json(evidence, environment_secrets(environment))
     with (repo_root / relative_summary).open("x", encoding="utf-8") as target:
-        target.write(
-            json.dumps(
-                diagnostic_evidence_json(evidence, environment_secrets(environment)),
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n"
-        )
+        target.write(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n")
+        target.flush()
+        os.fsync(target.fileno())
+    terminal_claim = {
+        "version": 2,
+        "command": "diagnose",
+        "diagnostic_run_id": run_id,
+        "summary": relative_summary.as_posix(),
+        "state": "terminal",
+        "diagnostic_status": evidence.diagnostic_status.value,
+    }
+    claim_update = claim.with_suffix(".json.tmp")
+    with claim_update.open("x", encoding="utf-8") as target:
+        target.write(json.dumps(terminal_claim, indent=2, sort_keys=True) + "\n")
+        target.flush()
+        os.fsync(target.fileno())
+    os.replace(claim_update, claim)
     output.write(
         "diagnose: first=fail; "
         f"diagnostic={evidence.diagnostic_status.value}; verdict=fail; "
         f"summary={relative_summary.as_posix()}\n"
     )
     return 1
+
+
+def _aborted_capabilities(
+    workflow: Workflow,
+    detail: str,
+) -> tuple[CapabilityEvidence, ...]:
+    return tuple(
+        CapabilityEvidence(
+            requirement.capability,
+            RunStatus.NOT_RUN,
+            0,
+            0,
+            detail=detail if index == 0 else "blocked by controller interruption",
+        )
+        for index, requirement in enumerate(WORKFLOW_REGISTRY[workflow].requirements)
+    )
+
+
+def _failed_capabilities(
+    workflow: Workflow,
+    owner: Capability,
+    detail: str,
+) -> tuple[CapabilityEvidence, ...]:
+    required = WORKFLOW_REGISTRY[workflow].requirements
+    if owner not in {requirement.capability for requirement in required}:
+        owner = required[0].capability
+    return tuple(
+        CapabilityEvidence(
+            requirement.capability,
+            RunStatus.FAIL if requirement.capability is owner else RunStatus.NOT_RUN,
+            0,
+            0,
+            detail=(
+                detail
+                if requirement.capability is owner
+                else f"blocked by controller failure in {owner.value}"
+            ),
+        )
+        for requirement in required
+    )
 
 
 def _load_failed_run(repo_root: Path, run_id: str) -> RunEvidence:
@@ -437,6 +516,20 @@ def _route_selection_for_workflow(
             )
         routed.append(replace(item, deferred_to=owner))
     return tuple(routed)
+
+
+def _canonical_selection(repo_root: Path, item: Selection) -> Selection:
+    if not item.sensitivity_required or item.proof is None:
+        return item
+    proof = canonical_proof(repo_root, item.proof)
+    requires_machine_sensitivity = (
+        proof != item.proof or declared_fault_for_proof(repo_root, proof) is not None
+    )
+    return replace(
+        item,
+        proof=proof,
+        sensitivity_required=requires_machine_sensitivity,
+    )
 
 
 def _execute_prove(
@@ -531,7 +624,8 @@ def _selection(
 ) -> tuple[str | None, tuple[Selection, ...]]:
     if command.workflow not in {Workflow.CHANGED, Workflow.CONFIDENCE, Workflow.PR}:
         return None, ()
-    base = command.base or base_override or "HEAD"
+    default_base = "HEAD^" if command.workflow is Workflow.CONFIDENCE else "HEAD"
+    base = command.base or base_override or default_base
     base_sha = _git_sha(repo_root, base)
     if command.focus:
         try:

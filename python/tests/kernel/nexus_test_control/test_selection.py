@@ -28,6 +28,11 @@ def test_pure_rename_routes_new_path_and_deletion_routes_owner_not_missing_test(
         SelectionIndex(
             routes=(
                 IndexedRoute(
+                    "python/tests/kernel/old.py",
+                    SelectionTarget(Capability.SERVICE, "old-owner"),
+                    SelectionReason.PYTHON_OWNER,
+                ),
+                IndexedRoute(
                     "python/tests/kernel/deleted.py",
                     SelectionTarget(Capability.SERVICE, "owner"),
                     SelectionReason.PYTHON_OWNER,
@@ -37,15 +42,25 @@ def test_pure_rename_routes_new_path_and_deletion_routes_owner_not_missing_test(
     )
 
     assert [selection.path for selection in selections] == [
+        "python/tests/kernel/old.py",
         "python/tests/kernel/new.py",
         "python/tests/kernel/deleted.py",
+        "python/tests/kernel/edited_old.py",
         "python/tests/kernel/edited_new.py",
     ]
     assert changes[0].requires_sensitivity is False
     assert changes[1].requires_sensitivity is False
     assert changes[2].requires_sensitivity is True
-    assert selections[0].sensitivity_required is False
-    assert selections[2].sensitivity_required is True
+    assert selections[1].sensitivity_required is False
+    assert selections[4].sensitivity_required is True
+
+
+def test_test_looking_web_source_always_selects_repository_discovery_policy() -> None:
+    path = "apps/web/src/lib/reader/not-discoverable.test.tsx"
+
+    selections = select_changed(parse_git_name_status(f"M\0{path}\0".encode()))
+
+    assert any(selection.capability is Capability.POLICY for selection in selections)
 
 
 def test_lazy_pane_index_maps_dynamic_source_when_static_related_has_no_edge() -> None:
@@ -136,7 +151,7 @@ def test_direct_extension_does_not_also_select_all_journeys() -> None:
     assert [item.capability for item in selections] == [Capability.EXTENSION]
 
 
-def test_direct_test_does_not_expand_matching_product_source_routes() -> None:
+def test_direct_test_selects_discovery_policy_without_product_source_routes() -> None:
     path = "apps/web/src/lib/player/playerSession.unit.test.ts"
     selections = select_changed(
         (ChangedPath(GitChangeKind.MODIFIED, path),),
@@ -155,7 +170,8 @@ def test_direct_test_does_not_expand_matching_product_source_routes() -> None:
     )
 
     assert [(selection.capability, selection.proof) for selection in selections] == [
-        (Capability.KERNEL_WEB, f"vitest:{path}")
+        (Capability.POLICY, None),
+        (Capability.KERNEL_WEB, f"vitest:{path}"),
     ]
 
 

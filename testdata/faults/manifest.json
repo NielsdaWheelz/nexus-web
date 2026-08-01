@@ -129,13 +129,13 @@
       "expected_failure": "Android device executor lost exact method scoping"
     },
     {
-      "id": "active-pane-reactivation-republication",
-      "patch": "testdata/faults/active-pane-reactivation-republication.patch",
-      "sha256": "401603a7d845ba2ad8e0f9fcc529ae53e8f9da969a151e624ab9459bf9cc2866",
+      "id": "active-pane-reactivation-identity-corruption",
+      "patch": "testdata/faults/active-pane-reactivation-identity-corruption.patch",
+      "sha256": "e86cef935f92ecde978a77876cef95aa4a96dc68067b1b2040619c2b1b5e0563",
       "proofs": [
         "vitest:apps/web/src/lib/workspace/store.browser.test.tsx"
       ],
-      "expected_failure": "Reactivating the active pane republished unchanged workspace state to its child"
+      "expected_failure": "Reactivating the active pane changed its durable identity"
     },
     {
       "id": "nexus-desktop-fork-disposition-bypass",
@@ -149,7 +149,7 @@
     {
       "id": "document-map-pulse-early-release",
       "patch": "testdata/faults/document-map-pulse-early-release.patch",
-      "sha256": "5269bb930e15943ecb9d5ad94321ebbe63c066cf67c4470205f540cccdc4ddcb",
+      "sha256": "835ef2a0f5c2b0775e30bfd646904c9bd1a08b01619db5570722d68f5e2af276",
       "proofs": [
         "vitest:apps/web/src/lib/reader/usePendingDocumentMapPulse.browser.test.tsx"
       ],

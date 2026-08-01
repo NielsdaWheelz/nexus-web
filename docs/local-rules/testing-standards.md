@@ -341,9 +341,10 @@ Never copy a deleted legacy helper or generalize unrelated endpoint shapes.
 - Automatic retries are forbidden in every blocking workflow. A diagnostic
   rerun is a separate, explicitly requested run and never changes the first
   verdict. Use `./scripts/test diagnose --of <16-hex-run-id>` only for a failed
-  v1 workflow summary at the same clean committed `HEAD`; the controller allows
-  one formal replay, links separate evidence, keeps top-level `status: fail`,
-  and exits nonzero. CI and Agency gates MUST NOT invoke it.
+  v2 workflow summary at the same clean committed `HEAD` and exact recorded
+  invocation inputs; the controller allows one formal replay, links separate
+  evidence, keeps top-level `status: fail`, and exits nonzero. CI and Agency
+  gates MUST NOT invoke it.
 - Never use silent retry, indefinite skip, quarantine-to-green, or timeout
   inflation.
 - Fix, replace, or delete a flake according to its unique risk signal.
@@ -404,7 +405,7 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and
 MUST NOT dispatch it early or reject the current gate. Deferral MUST NOT clear
-locally eligible changed-proof sensitivity: only paid hosted-provider and
+declared priority-risk or fault sensitivity: only paid hosted-provider and
 physical-device boundaries are excluded. The owning `full`, `nightly`, or
 `release` workflow remains fail-closed.
 
@@ -727,7 +728,7 @@ The paved road enforces the mechanically decidable part of this contract:
 | Deterministic execution | zero automatic retries, one Playwright worker, fixed audit seeds, one heavy-process lock |
 | Fixture provenance | `testdata/manifest.json` path, provenance, and SHA-256 validation |
 | Priority-risk and journey routing | `testdata/proofs.json` schema, source owners, minimum risk IDs, exact journey selection, and sensitivity records |
-| Falsifiability | `prove` red/green evidence plus PR policy for changed proof globs |
+| Falsifiability | `prove` red/green evidence plus PR policy for changed priority-risk and declared-fault proof |
 | Evidence integrity | versioned run summary schema, `pass|fail|not_run`, fail-on-`not_run`, bounded artifacts |
 | Corpus/policy self-protection | policy capability runs in every blocking workflow and has adversarial kernel proof |
 
@@ -860,8 +861,11 @@ Failure artifacts include, as applicable:
 
 Formal diagnostic evidence names `command: diagnose`, the original failed run
 and summary, and a nested `diagnostic_result`. Its top-level status remains
-`fail` regardless of the replay result. Direct runner debugging remains
-unlinked, non-gate evidence.
+`fail` regardless of the replay result. The v2 run summary records UI mode and
+a secret-safe fingerprint of outcome-affecting execution inputs; replay rejects
+any mismatch. Its exclusive attempt record moves durably from `started` to
+`terminal` only after the linked summary exists. Direct runner debugging
+remains unlinked, non-gate evidence.
 
 Never capture secrets, auth tokens, provider credentials, or personal production
 content.

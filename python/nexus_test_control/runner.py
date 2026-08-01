@@ -185,6 +185,19 @@ _MEMORY_ADMITTED_CAPABILITIES = _HEAVY_CAPABILITIES | {
     Capability.STATIC_WEB,
     Capability.KERNEL_WEB,
 }
+_LOCAL_RUNTIME_CAPABILITIES = frozenset(
+    {
+        Capability.SERVICE,
+        Capability.COMPONENT,
+        Capability.MIGRATIONS,
+        Capability.BUNDLE,
+        Capability.JOURNEYS_CRITICAL,
+        Capability.JOURNEYS_ALL,
+        Capability.LLM_EVAL,
+        Capability.EXTENSION,
+        Capability.AUDIT,
+    }
+)
 _TEST_GOOGLE_CLIENT_ID = "nexus-test.apps.googleusercontent.com"
 _CRITICAL_JOURNEY_IDS = frozenset(
     {
@@ -459,9 +472,13 @@ def run_workflow(
                     else None
                 )
                 result = admission or _run_capability(
-                    context, requirement.capability, environment, execution
+                    context,
+                    requirement.capability,
+                    environment,
+                    execution,
+                    heavy_lock_held=holds_heavy_lease,
                 )
-                memory = workflow_sampler.snapshot()
+                memory = workflow_sampler.checkpoint()
                 measured_result = CapabilityResult(
                     replace(result.evidence, peak_owned_mib=memory.total),
                     result.detail,
@@ -472,22 +489,41 @@ def run_workflow(
         finally:
             execution.close()
 
-    with measure_owned_memory(context.repo_root) as workflow_sampler:
-        capabilities = tuple(
-            result.evidence
-            for result in stream_first_failure(results(), stream, environment_secrets(environment))
-        )
+    holds_heavy_lease = any(
+        capability in _HEAVY_CAPABILITIES and _capability_is_selected(context, capability)
+        for capability in required_capabilities
+    )
+    measures_containers = any(
+        capability in _LOCAL_RUNTIME_CAPABILITIES and _capability_is_selected(context, capability)
+        for capability in required_capabilities
+    )
+    with ExitStack() as workflow_lifecycle:
+        if holds_heavy_lease:
+            workflow_lifecycle.enter_context(workspace_heavy_lock(context.repo_root))
+        with measure_owned_memory(
+            context.repo_root,
+            include_containers=measures_containers,
+        ) as workflow_sampler:
+            capabilities = tuple(
+                result.evidence
+                for result in stream_first_failure(
+                    results(), stream, environment_secrets(environment)
+                )
+            )
     workflow_memory = measured(workflow_sampler)
     if not workflow_memory.measurement_complete and all(
         item.status is RunStatus.PASS for item in capabilities
     ):
+        detail = "owned container memory could not be measured truthfully"
+        stream.write(f"memory: {detail}\n")
+        stream.flush()
         last = capabilities[-1]
         capabilities = (
             *capabilities[:-1],
             replace(
                 last,
                 status=RunStatus.FAIL,
-                detail="owned container memory could not be measured truthfully",
+                detail=detail,
             ),
         )
     return WorkflowRun(capabilities, workflow_memory)
@@ -651,8 +687,10 @@ def _run_capability(
     capability: Capability,
     environment: Mapping[str, str],
     execution: _WorkflowExecution | None,
+    *,
+    heavy_lock_held: bool = False,
 ) -> CapabilityResult:
-    if capability in _MEMORY_ADMITTED_CAPABILITIES:
+    if capability in _MEMORY_ADMITTED_CAPABILITIES and not heavy_lock_held:
         with workspace_heavy_lock(context.repo_root):
             return _run_capability_unlocked(context, capability, environment, execution)
     return _run_capability_unlocked(context, capability, environment, execution)
@@ -661,11 +699,14 @@ def _run_capability(
 def _heavy_memory_admission(
     capability: Capability, available_mib: int | None
 ) -> CapabilityResult | None:
-    if (
-        capability not in _MEMORY_ADMITTED_CAPABILITIES
-        or available_mib is None
-        or available_mib >= _MIN_AVAILABLE_HEAVY_MIB
-    ):
+    if capability not in _MEMORY_ADMITTED_CAPABILITIES:
+        return None
+    if available_mib is None:
+        return _not_run(
+            capability,
+            "heavy memory admission could not determine available memory",
+        )
+    if available_mib >= _MIN_AVAILABLE_HEAVY_MIB:
         return None
     return _not_run(
         capability,
@@ -1071,6 +1112,7 @@ def _run_kernel_python(
         ((argv, python_root),),
         environment,
         ("uv",),
+        pythonpath=python_root,
     )
 
 
@@ -1797,6 +1839,7 @@ def _heavy_environment(
         for key in _SAFE_HEAVY_ENV
         if (value := caller_environment.get(key)) is not None and value != ""
     }
+    child["PYTHONPATH"] = str(context.repo_root / "python")
     owned = ports.run_environment(context.repo_root, {"NEXUS_ENV": "test"}, run)
     child.update(
         {key: value for key, value in owned.items() if not browser or key in _BROWSER_RUN_ENV}
@@ -3537,8 +3580,11 @@ def _run_fixed_commands(
     required_tools: tuple[str, ...],
     *,
     elapsed_ms: int = 0,
+    pythonpath: Path | None = None,
 ) -> CapabilityResult:
     child_environment = _child_environment(environment)
+    if pythonpath is not None:
+        child_environment["PYTHONPATH"] = str(pythonpath)
     missing = tuple(
         tool
         for tool in required_tools

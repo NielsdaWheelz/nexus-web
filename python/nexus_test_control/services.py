@@ -633,7 +633,7 @@ def clean_run(
     """Delete only exact resources persisted in one run ledger, in reverse order."""
     require_test_environment(environment)
     root = canonical_repo_root(repo_root)
-    with run_lifecycle_lock(root, environment, run_id) as lifecycle_lock:
+    with run_lifecycle_lock(root, environment, run_id):
         candidates = cleanup_candidates(root, environment, run_id)
         if any(item.resource.kind is ResourceKind.SUPABASE_USER for item in candidates):
             supabase = supabase or read_supabase_credentials(root, environment)
@@ -689,7 +689,6 @@ def clean_run(
                 raise RuntimeContractError(f"clean has no owner for {resource.kind.value}")
             forget_cleaned(root, environment, run_id, resource)
         release_run(root, environment, run_id)
-    lifecycle_lock.unlink(missing_ok=True)
 
 
 def clean_owned_runs(repo_root: Path, environment: Mapping[str, str]) -> tuple[str, ...]:

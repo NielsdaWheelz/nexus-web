@@ -2,7 +2,11 @@ diff --git a/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts b/apps/web/sr
 index 5f5c26f0..241ad527 100644
 --- a/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts
 +++ b/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts
-@@ -54,9 +54,8 @@ export function usePendingDocumentMapPulse({
+@@ -54,13 +54,11 @@ export function usePendingDocumentMapPulse({
+     if (pending.apparatusStableKey) {
+       pendingRef.current = null;
+       focusApparatus(pending.apparatusStableKey, true);
+-      dispatchPulse(pending.target);
        return;
      }
      if (pending.target.highlightId) {

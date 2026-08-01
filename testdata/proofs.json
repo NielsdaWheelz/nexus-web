@@ -186,6 +186,9 @@
       "source_globs": [
         "python/nexus/services/highlights.py",
         "apps/web/src/components/highlights/**/*",
+        "apps/web/src/components/reader/document-map/**/*",
+        "apps/web/src/lib/reader/usePendingDocumentMapPulse.ts",
+        "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
       "risks": [

@@ -89,7 +89,7 @@ def test_evidence_matches_schema_and_preserves_not_run(tmp_path: Path) -> None:
 
     payload = evidence_json(evidence)
 
-    assert payload["version"] == 1
+    assert payload["version"] == 2
     assert payload["status"] == "not_run"
     assert payload["peak_owned_mib"]["measurement_complete"] is True  # type: ignore[index]  # justify-type-assertion: exact JSON schema shape is under proof.
     assert payload["selection"] == [
