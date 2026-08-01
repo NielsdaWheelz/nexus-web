@@ -199,9 +199,9 @@ test.describe("author journeys", () => {
       name: "Find anything",
     });
     await nexusInput.fill("Authors");
-    const authorsCommand = nexus
-      .getByRole("listbox")
-      .getByRole("option", { name: /^Authors\b/ });
+    const authorsCommand = nexus.getByRole("gridcell", {
+      name: /^Authors\b/,
+    });
     await expect(authorsCommand).toBeVisible();
     await authorsCommand.click();
 

@@ -208,21 +208,27 @@ test.describe("mobile app navigation", () => {
 
     await page.getByRole("button", { name: "Open Nexus, 2 tabs" }).tap();
     const sheet = page.getByRole("dialog", { name: "Nexus" });
+    await expect(
+      sheet
+        .getByRole("region", { name: "Quick Actions" })
+        .getByRole("button", { name: "Today Place" }),
+    ).toBeVisible();
     const places = sheet.getByRole("region", { name: "Places" });
     expect(
       await places
         .getByRole("button")
         .evaluateAll((buttons) =>
-          buttons.map((button) => button.textContent?.trim()),
+          buttons.map((button) =>
+            button.innerText.replace(/\s+/g, " ").trim(),
+          ),
         ),
     ).toEqual([
-      "Today",
-      "Lectern",
-      "Libraries",
-      "Browse",
-      "Podcasts",
-      "Chats",
-      "Notes",
+      "Lectern Place",
+      "Libraries Place",
+      "Browse Place",
+      "Podcasts Place",
+      "Chats Place",
+      "Notes Place",
     ]);
     await expect(places.getByRole("button", { name: "Stats" })).toHaveCount(0);
     await expect(places.getByRole("button", { name: "Atlas" })).toHaveCount(0);
@@ -236,7 +242,7 @@ test.describe("mobile app navigation", () => {
     await expect(activeMobilePane).toHaveAttribute("data-mobile", "true");
     await expect(
       page.getByRole("button", {
-        name: "Open Nexus, 3 tabs",
+        name: "Open Nexus, 2 tabs",
       }),
     ).toBeVisible();
   });

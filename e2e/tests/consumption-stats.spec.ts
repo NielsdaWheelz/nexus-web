@@ -465,10 +465,36 @@ playbackRateTest("inherits podcast playback speed and resumes an episode overrid
   await expect(audioElement).toHaveJSProperty("playbackRate", 1.75);
   await page.keyboard.press("Escape");
 
+  await expect
+    .poll(() =>
+      audioElement.evaluate(
+        (element) => (element as HTMLAudioElement).currentTime,
+      ),
+    )
+    .toBeGreaterThan(1);
+  const persistedPosition = page.waitForResponse((response) => {
+    if (
+      response.request().method() !== "PUT" ||
+      new URL(response.url()).pathname !==
+        `/api/media/${audio.playback_media_id}/listening-state`
+    ) {
+      return false;
+    }
+    const body = response.request().postDataJSON() as {
+      positionMs?: number;
+    };
+    return (body.positionMs ?? 0) > 1_000;
+  });
+  await page
+    .getByRole("region", { name: "Media player" })
+    .getByRole("button", { name: "Pause media player" })
+    .click();
+  expect((await persistedPosition).ok()).toBeTruthy();
+
   await page.reload({ waitUntil: "domcontentloaded" });
   await waitForWorkspaceHydration(page);
   await activeWorkspacePane(page)
-    .getByRole("button", { name: `Play ${audio.playback_title}` })
+    .getByRole("button", { name: `Resume ${audio.playback_title}` })
     .click();
   await expect(audioElement).toHaveJSProperty("playbackRate", 1.75);
 

@@ -1092,6 +1092,10 @@ async function expectTrustedReverseDeadZone(
   await expect
     .poll(() => scrollport.evaluate((element) => element.scrollTop))
     .toBeLessThan(before.scrollTop);
+  // A wheel tick may publish across more than one compositor frame. Sample
+  // only after it is still so the carried reversal distance and the next
+  // trusted drag share one exact scroll baseline.
+  await waitForScrollportSettle(scrollport);
   const sample = await readChromeSample(page, scrollport);
   chromeSurfaces(sample, expectPaneToolbar);
   const reverseDistance = before.scrollTop - sample.scrollTop;

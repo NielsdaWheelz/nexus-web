@@ -349,7 +349,7 @@ test.describe("Nexus real-stack journeys", () => {
       );
       await desktopNexusGroup(dialog, "Results")
         .getByRole("gridcell", { name: /^New Page\b/ })
-        .click();
+        .click({ modifiers: ["Shift"] });
       const createResponse = await createResponsePromise;
       await expectOk(createResponse, "Create Page through Nexus");
       const created = (await createResponse.json()) as {
@@ -416,7 +416,7 @@ test.describe("Nexus real-stack journeys", () => {
       await input.fill(`/l ${name}`);
       await desktopNexusGroup(dialog, "Results")
         .getByRole("gridcell", { name: /^New Library\b/ })
-        .click();
+        .click({ modifiers: ["Shift"] });
       await expect(
         dialog.getByRole("heading", { name: "New library" }),
       ).toBeVisible();
@@ -955,7 +955,10 @@ test.describe("mobile Nexus task", () => {
     ).toBeVisible();
     await expect(dialog.getByRole("heading", { name: "Open" })).toBeVisible();
 
-    await dialog.getByRole("button", { name: "Search Open tab" }).tap();
+    await dialog
+      .getByRole("region", { name: "Open" })
+      .getByRole("button", { name: /^Search\b/ })
+      .tap();
     await expect(dialog).toBeHidden();
     await expect(page).toHaveURL(/\/search$/);
     await expect(
@@ -1198,9 +1201,9 @@ test.describe("mobile Nexus task", () => {
       name: "Open Nexus, 1 tab",
     });
     await trigger.tap();
-    const nexus = nexusDialog(page);
-    await nexus.getByRole("button", { name: "Import" }).tap();
-    const links = nexus.getByRole("textbox", { name: "Links" });
+    await nexusDialog(page).getByRole("button", { name: "Import" }).tap();
+    const addTask = page.getByRole("dialog", { name: "Add content" });
+    const links = addTask.getByRole("textbox", { name: "Links" });
     await links.fill("https://example.com/article");
 
     const confirmation = page.getByRole("dialog", {
@@ -1210,16 +1213,18 @@ test.describe("mobile Nexus task", () => {
 
     await page.goBack();
     await expect(confirmation).toBeVisible();
-    const suspendedNexus = page.locator('[role="dialog"][aria-label="Nexus"]');
-    await expect(suspendedNexus).toHaveAttribute("inert", "");
-    await expect(suspendedNexus).not.toHaveAttribute("aria-modal");
-    await expect(suspendedNexus.locator("..")).toHaveAttribute(
+    const suspendedTask = page.locator(
+      '[role="dialog"][aria-label="Add content"]',
+    );
+    await expect(suspendedTask).toHaveAttribute("inert", "");
+    await expect(suspendedTask).not.toHaveAttribute("aria-modal");
+    await expect(suspendedTask.locator("..")).toHaveAttribute(
       "data-suspended",
       "true",
     );
     await expect
       .poll(() =>
-        suspendedNexus.evaluate(
+        suspendedTask.evaluate(
           (element) =>
             getComputedStyle(element).backgroundColor !== "rgba(0, 0, 0, 0)",
         ),
@@ -1240,8 +1245,8 @@ test.describe("mobile Nexus task", () => {
 
     await confirmation.getByRole("button", { name: "Keep working" }).tap();
     await expect(confirmation).toBeHidden();
-    await expect(nexus).toBeVisible();
-    await expect(nexus).toHaveAttribute("aria-modal", "true");
+    await expect(addTask).toBeVisible();
+    await expect(addTask).toHaveAttribute("aria-modal", "true");
     await expect(links).toHaveValue("https://example.com/article");
     await expect(page).toHaveURL(urlBeforeExit);
 
@@ -1249,26 +1254,26 @@ test.describe("mobile Nexus task", () => {
     await expect(confirmation).toBeVisible();
     await confirmation.getByRole("button", { name: "Keep working" }).tap();
     await expect(confirmation).toBeHidden();
-    await expect(nexus).toBeVisible();
-    await expect(nexus).toHaveAttribute("aria-modal", "true");
+    await expect(addTask).toBeVisible();
+    await expect(addTask).toHaveAttribute("aria-modal", "true");
     await expect(links).toHaveValue("https://example.com/article");
     await expect(page).toHaveURL(urlBeforeExit);
 
-    await nexus.getByRole("button", { name: "Back", exact: true }).tap();
+    await addTask.getByRole("button", { name: "Back", exact: true }).tap();
     await expect(confirmation).toBeVisible();
     await confirmation.getByRole("button", { name: "Keep working" }).tap();
     await expect(confirmation).toBeHidden();
-    await expect(nexus).toBeVisible();
-    await expect(nexus).toHaveAttribute("aria-modal", "true");
+    await expect(addTask).toBeVisible();
+    await expect(addTask).toHaveAttribute("aria-modal", "true");
     await expect(links).toHaveValue("https://example.com/article");
     await expect(page).toHaveURL(urlBeforeExit);
 
-    await nexus.getByRole("button", { name: "Close Add content" }).tap();
+    await addTask.getByRole("button", { name: "Close Add content" }).tap();
     await page
       .getByRole("dialog", { name: "Discard unfinished work?" })
       .getByRole("button", { name: "Discard" })
       .tap();
-    await expect(nexus).toBeHidden();
+    await expect(addTask).toBeHidden();
     await expect(trigger).toBeFocused();
     await expect(page).toHaveURL(urlBeforeExit);
   });
@@ -1470,12 +1475,12 @@ test.describe("mobile Nexus task", () => {
         iteration < PERFORMANCE_SETUP_ITERATIONS;
         iteration += 1
       ) {
-        await input.fill(iteration % 2 === 0 ? "n" : "l");
+        await input.fill(`openables-warmup-${iteration}`);
         await waitForMeasureCount(page, "nexus-openables", iteration + 1);
       }
       await page.evaluate(() => performance.clearMeasures("nexus-openables"));
       for (let sample = 1; sample <= OPENABLES_SAMPLE_COUNT; sample += 1) {
-        await input.fill(sample % 2 === 0 ? "n" : "l");
+        await input.fill(`openables-sample-${sample}`);
         await waitForMeasureCount(page, "nexus-openables", sample);
       }
       const openablesSamples = await measureDurations(page, "nexus-openables");
@@ -1490,7 +1495,8 @@ test.describe("mobile Nexus task", () => {
       ) {
         await trigger.tap();
         await nexusDialog(page)
-          .getByRole("button", { name: /^(Notes|Libraries) Open tab$/ })
+          .getByRole("region", { name: "Open" })
+          .getByRole("button", { name: /^(Notes|Libraries)\b.*\bOpen tab\b/ })
           .tap();
         await expect(nexusDialog(page)).toBeHidden();
         await waitForMeasureCount(page, "nexus-pane-activate", iteration + 1);
@@ -1501,7 +1507,8 @@ test.describe("mobile Nexus task", () => {
       for (let sample = 1; sample <= PERFORMANCE_SAMPLE_COUNT; sample += 1) {
         await trigger.tap();
         await nexusDialog(page)
-          .getByRole("button", { name: /^(Notes|Libraries) Open tab$/ })
+          .getByRole("region", { name: "Open" })
+          .getByRole("button", { name: /^(Notes|Libraries)\b.*\bOpen tab\b/ })
           .tap();
         await expect(nexusDialog(page)).toBeHidden();
         await waitForMeasureCount(page, "nexus-pane-activate", sample);
