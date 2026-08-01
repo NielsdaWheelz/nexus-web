@@ -80,6 +80,9 @@ def test_behavioral_red_rejects_an_assertion_from_a_different_proof_node() -> No
 
 def test_fault_lookup_requires_exact_proof_ownership(tmp_path: Path) -> None:
     proof = "pytest:python/tests/service/test_owner.py::test_owner"
+    owner = tmp_path / "python/tests/service/test_owner.py"
+    owner.parent.mkdir(parents=True)
+    owner.write_text("def test_owner():\n    assert True\n")
     patch = tmp_path / "testdata/faults/owner.patch"
     patch.parent.mkdir(parents=True)
     patch.write_text(
