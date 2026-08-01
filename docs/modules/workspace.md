@@ -128,6 +128,10 @@ Nexus wrapper remains the fixed-obstruction measurement surface, so content
 clearance, content offset, and reader `scrollTop` remain fixed. Downward scroll
 collapses, upward scroll reveals after the direction dead zone, and idle partial
 progress settles to the nearest endpoint.
+Phase, inertness, and accessibility state commit before collapse motion. A new
+reader sample interrupts settlement by sampling once, cancelling every owned
+collapse transition, freezing all three surfaces at that progress, and fencing
+stale completion events.
 
 The provider resets fully shown when the active `(paneId, routeKey)`, semantic
 reader source, EPUB unit, or mobile mode changes. Reflow, lazy media, zoom,

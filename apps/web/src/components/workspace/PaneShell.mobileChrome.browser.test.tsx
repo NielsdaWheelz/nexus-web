@@ -4,10 +4,12 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { Profiler, useCallback, useEffect, useRef, useState } from "react";
 import { page } from "vitest/browser";
 import { describe, expect, it } from "vitest";
+import "@/app/globals.css";
 import MobilePaneBar from "@/components/appnav/MobilePaneBar";
 import NexusButton from "@/components/switchboard/NexusButton";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
@@ -232,6 +234,21 @@ describe("PaneShell mobile Find chrome composition", () => {
       screen.getByRole("group", { name: "Reader controls" }),
     ).toBe(contextualRow);
     const options = screen.getByRole("button", { name: "Pane options" });
+    const nexusControl = within(
+      screen.getByTestId("nexus-wrapper"),
+    ).getByRole("button", { hidden: true });
+    const movingSurfaces = [appBar, paneChrome, nexusControl];
+    const settlingStarted = new Promise<void>((resolve) => {
+      const observer = new MutationObserver(() => {
+        if (appBar.dataset.mobileChromePhase !== "Settling") return;
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(appBar, {
+        attributes: true,
+        attributeFilter: ["data-mobile-chrome-phase"],
+      });
+    });
 
     await scrollReaderTo(24);
     await waitFor(() => {
@@ -263,6 +280,78 @@ describe("PaneShell mobile Find chrome composition", () => {
     expect(paneShellRenders).toBe(rendersAtFirstTrackingSample.paneShell);
     expect(nexusRenders).toBe(rendersAtFirstTrackingSample.nexus);
     expect(readerRenders).toBe(rendersAtFirstTrackingSample.reader);
+
+    await settlingStarted;
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
+    const settlingTransitions = movingSurfaces.flatMap((surface) =>
+      surface
+        .getAnimations()
+        .filter(
+          (animation): animation is CSSTransition =>
+            (animation as Partial<CSSTransition>).transitionProperty ===
+            "--mobile-chrome-collapse",
+        ),
+    );
+    expect(
+      movingSurfaces.map((surface) => surface.dataset.mobileChromePhase),
+    ).toEqual(["Settling", "Settling", "Settling"]);
+    expect(settlingTransitions).toHaveLength(3);
+
+    const interruptionObservation: {
+      phases: Array<string | undefined>;
+      inert: boolean[];
+      ariaHidden: Array<string | null>;
+      transitionStates: AnimationPlayState[];
+      progress: number[];
+    } = {
+      phases: [],
+      inert: [],
+      ariaHidden: [],
+      transitionStates: [],
+      progress: [],
+    };
+    scrollport.addEventListener(
+      "scroll",
+      () => {
+        Object.assign(interruptionObservation, {
+          phases: movingSurfaces.map(
+            (surface) => surface.dataset.mobileChromePhase,
+          ),
+          inert: movingSurfaces.map((surface) =>
+            surface.hasAttribute("inert"),
+          ),
+          ariaHidden: movingSurfaces.map((surface) =>
+            surface.getAttribute("aria-hidden"),
+          ),
+          transitionStates: settlingTransitions.map(
+            (transition) => transition.playState,
+          ),
+          progress: movingSurfaces.map(collapseProgress),
+        });
+      },
+      { once: true },
+    );
+    scrollport.scrollTop = 56;
+    scrollport.dispatchEvent(new Event("scroll"));
+
+    const interruptedProgress = interruptionObservation.progress;
+    const interruptionWasAtomic =
+      interruptionObservation.phases.every((phase) => phase === "Tracking") &&
+      interruptionObservation.inert.every(Boolean) &&
+      interruptionObservation.ariaHidden.every((value) => value === "true") &&
+      interruptionObservation.transitionStates.every(
+        (state) => state === "idle",
+      ) &&
+      interruptedProgress.length === 3 &&
+      interruptedProgress.every(
+        (progress) => Math.abs(progress - interruptedProgress[0]!) < 0.001,
+      );
+    expect(
+      interruptionWasAtomic,
+      `Interrupted reader motion retained stale collapse transitions or exposed non-atomic interactive chrome: ${JSON.stringify(interruptionObservation)}`,
+    ).toBe(true);
 
     await scrollReaderTo(160);
     await waitFor(() => {

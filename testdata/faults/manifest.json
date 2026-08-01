@@ -335,6 +335,15 @@
         "vitest:apps/web/src/components/nexus/desktop/DesktopNexusSelection.browser.test.tsx"
       ],
       "expected_failure": "Stationary-pointer reflow moved selection away from"
+    },
+    {
+      "id": "mobile-chrome-interrupted-settle-coordination-bypass",
+      "patch": "testdata/faults/mobile-chrome-interrupted-settle-coordination-bypass.patch",
+      "sha256": "c3b75aa259b57cd13fdc8d782ec8bf6896cc5e797e5e6baae754032ca1202822",
+      "proofs": [
+        "vitest:apps/web/src/components/workspace/PaneShell.mobileChrome.browser.test.tsx"
+      ],
+      "expected_failure": "Interrupted reader motion retained stale collapse transitions or exposed non-atomic interactive chrome:"
     }
   ]
 }

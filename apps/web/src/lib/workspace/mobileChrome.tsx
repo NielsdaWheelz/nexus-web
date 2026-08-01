@@ -13,6 +13,7 @@ import {
   type RefCallback,
   type RefObject,
 } from "react";
+import { flushSync } from "react-dom";
 import type {
   ActionDescriptor,
   PaneHeaderAction,
@@ -197,6 +198,19 @@ function transitionDeadlineMs(surface: HTMLElement): number {
   return Math.max(0, deadlineMs);
 }
 
+function cancelCollapseTransitions(surfaces: readonly HTMLElement[]): void {
+  for (const surface of surfaces) {
+    for (const animation of surface.getAnimations()) {
+      if (
+        (animation as Partial<CSSTransition>).transitionProperty ===
+        COLLAPSE_PROPERTY
+      ) {
+        animation.cancel();
+      }
+    }
+  }
+}
+
 function primaryUnmodifiedClick(event: MouseEvent): boolean {
   return (
     event.button === 0 &&
@@ -276,7 +290,16 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
   const publishPhase = useCallback((phase: MobileChromeMotionPhase) => {
     if (samePhase(publishedPhaseRef.current, phase)) return;
     publishedPhaseRef.current = phase;
-    if (mountedRef.current) setMotionPhase(phase);
+    if (!mountedRef.current) return;
+    const publish = () => setMotionPhase(phase);
+    if (phase.kind === "Tracking" || phase.kind === "Settling") {
+      // Collapse progress is written imperatively on the next animation frame.
+      // Commit the React-owned phase, inertness, and aria-hidden projection
+      // first so moving chrome can never paint as interactive under load.
+      flushSync(publish);
+      return;
+    }
+    publish();
   }, []);
 
   const writeProgress = useCallback((progress: number) => {
@@ -429,6 +452,7 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
           "Mobile chrome surfaces must expose a numeric collapse progress",
         );
       }
+      cancelCollapseTransitions(surfaces);
       const next = {
         ...state,
         phase: phaseAtProgress(state, progress),
