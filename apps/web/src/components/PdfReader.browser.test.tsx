@@ -185,10 +185,14 @@ it("keeps a committed PDF highlight visible while BFF reconciliation is pending"
     );
     await bff.reconciliationStarted;
 
+    const committedOverlay = screen.queryByTestId(
+      "pdf-highlight-committed-highlight-0",
+    );
     expect(
-      await screen.findByTestId("pdf-highlight-committed-highlight-0"),
+      committedOverlay,
       "Committed PDF highlight disappeared before BFF reconciliation completed.",
-    ).toBeVisible();
+    ).not.toBeNull();
+    expect(committedOverlay!).toBeVisible();
   } finally {
     bff.finishReconciliation();
     URL.revokeObjectURL(pdfUrl);
