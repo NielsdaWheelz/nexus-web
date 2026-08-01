@@ -387,7 +387,7 @@ Create:
 - `python/nexus/services/chat_run_execution.py`
 - `python/tests/kernel/test_durable_step_journal.py`
 - `python/tests/service/test_durable_job_replay.py`
-- `python/tests/service/test_auth_privacy.py`
+- `python/tests/service/test_chat_execution_privacy.py`
 - `python/tests/service/test_citation_provenance.py`
 - `apps/web/src/components/chat/ChatComposer.browser.test.tsx`
 - `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts`

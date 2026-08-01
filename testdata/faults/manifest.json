@@ -17,7 +17,7 @@
       "sha256": "18b85a5c6691b1d5a791639267af02930d9bb851797dc721945f0acc006df4c6",
       "proofs": [
         "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked",
-        "pytest:python/tests/service/test_auth_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal"
+        "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal"
       ],
       "expected_failure": "DID NOT RAISE"
     },

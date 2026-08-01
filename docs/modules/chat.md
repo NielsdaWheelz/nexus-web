@@ -527,6 +527,7 @@ Keep these tests aligned with this module contract:
 - `python/tests/service/test_citation_provenance.py`
 - `python/tests/service/test_durable_job_replay.py`
 - `python/tests/service/test_auth_privacy.py`
+- `python/tests/service/test_chat_execution_privacy.py`
 - `python/tests/service/test_llm_tool_safety.py`
 - `python/tests/evals/test_tool_safety_eval.py`
 - `apps/web/src/components/chat/ChatComposer.browser.test.tsx`
