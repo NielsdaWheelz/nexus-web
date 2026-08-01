@@ -668,24 +668,37 @@ async function dispatchTouchDrag(
       });
       touchActive = false;
     } else {
-      // Keep the trusted gesture on Chromium's compositor timeline. Issuing
-      // each move through a Node/CDP round trip can pause longer than the
-      // product's 120 ms idle boundary under host load, manufacturing a settle
-      // that no continuous physical drag contains.
+      // Headless Chromium's touch-flavored synthesizeScrollGesture emits the
+      // touch boundary but no touch moves or native scroll events. Preserve
+      // the trusted touch lifecycle explicitly, then let Chromium's compositor
+      // publish the continuous scroll stream. Issuing each move through a
+      // Node/CDP round trip can pause longer than the product's 120 ms idle
+      // boundary under host load, manufacturing a settle that no continuous
+      // physical drag contains.
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchStart",
+        touchPoints: point(startY),
+      });
+      touchActive = true;
       await cdp.send("Input.synthesizeScrollGesture", {
         x,
         y: startY,
-        // CDP synthesizes the touch path itself, so its distance has the same
-        // sign as the finger delta. Inverting a retreat drag at the reader top
-        // requests an impossible upward scroll and emits no native events.
+        // Mouse-source scroll distance has the same sign as the equivalent
+        // finger delta: a negative distance advances the document, while a
+        // positive distance reverses toward the top.
         yDistance: roundedDeltaY,
         speed: Math.max(
           1,
           Math.round(Math.abs(roundedDeltaY) / (steps * 0.008)),
         ),
-        gestureSourceType: "touch",
+        gestureSourceType: "mouse",
         preventFling: true,
       });
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchEnd",
+        touchPoints: [],
+      });
+      touchActive = false;
     }
     const touchEndHandle = await page.waitForFunction(
       () => {
