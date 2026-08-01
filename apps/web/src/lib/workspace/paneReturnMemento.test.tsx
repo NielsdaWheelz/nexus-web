@@ -1263,6 +1263,20 @@ describe("PaneReturnMementoProvider", () => {
       />,
     );
 
+    expect(screen.getByTestId("origin-restored-data")).toHaveTextContent("none");
+
+    view.rerender(
+      <MountedVisitDataFixture
+        originData={{ page: 8 }}
+        peerData={{ page: 2 }}
+        originGeneration={0}
+        peerGeneration={0}
+        publish={publish}
+      />,
+    );
+
+    expect(screen.getByTestId("origin-restored-data")).toHaveTextContent("none");
+
     view.rerender(
       <MountedVisitDataFixture
         originData={{ page: 1 }}
@@ -1274,7 +1288,7 @@ describe("PaneReturnMementoProvider", () => {
     );
 
     expect(screen.getByTestId("origin-restored-data")).toHaveTextContent(
-      '"page":7',
+      '"page":8',
     );
   });
 
@@ -1286,7 +1300,7 @@ describe("PaneReturnMementoProvider", () => {
     let originData = { page: 1 };
     let peerData = { page: 2 };
     let originGeneration = 0;
-    const peerGeneration = 0;
+    let peerGeneration = 0;
     const fixture = () => (
       <MountedVisitDataFixture
         originData={originData}
@@ -1335,6 +1349,12 @@ describe("PaneReturnMementoProvider", () => {
 
     view.rerender(fixture());
 
+    expect(screen.getByTestId("origin-restored-data")).toHaveTextContent("none");
+    expect(screen.getByTestId("peer-restored-data")).toHaveTextContent("none");
+
+    originGeneration += 1;
+    view.rerender(fixture());
+
     expect(screen.getByTestId("origin-restored-data")).toHaveTextContent(
       '"page":10',
     );
@@ -1361,7 +1381,14 @@ describe("PaneReturnMementoProvider", () => {
     });
     view.rerender(fixture());
 
-    expect(screen.getByTestId("origin-restored-data")).toHaveTextContent("none");
+    expect(screen.getByTestId("origin-restored-data")).toHaveTextContent(
+      '"page":10',
+    );
+    expect(screen.getByTestId("peer-restored-data")).toHaveTextContent("none");
+
+    peerGeneration += 1;
+    view.rerender(fixture());
+
     expect(screen.getByTestId("peer-restored-data")).toHaveTextContent(
       '"page":20',
     );
@@ -1369,14 +1396,9 @@ describe("PaneReturnMementoProvider", () => {
     originData = { page: 30 };
     originGeneration += 1;
     view.rerender(fixture());
-    act(() => {
-      commands?.capturePane({
-        paneId: "pane-origin",
-        visitId: VISIT_1,
-        routeKey: ROUTE_KEY,
-        modality: "Programmatic",
-      });
-    });
+    expect(screen.getByTestId("origin-restored-data")).toHaveTextContent("none");
+
+    originGeneration += 1;
     view.rerender(fixture());
 
     expect(screen.getByTestId("origin-restored-data")).toHaveTextContent(

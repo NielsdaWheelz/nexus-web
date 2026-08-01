@@ -1302,12 +1302,45 @@ export function usePaneReturnDescendantReady(input: {
   ]);
 }
 
+/**
+ * Returns the restoration sampled for this exact mounted ownership epoch.
+ * Live publications remain available to a later composition remount without
+ * feeding the owner's current commit back as a new restoration event.
+ */
 export function usePaneVisitData<T>(
   key: PaneVisitDataKey<T>,
   captureCommitted: () => T | null,
 ): T | null {
   const service = usePaneReturnMementoService();
   const scope = usePaneReturnVisitScope();
+  const restorationRef = useRef<{
+    readonly service: PaneReturnMementoService;
+    readonly visitId: PaneVisitId;
+    readonly routeKey: string;
+    readonly key: PaneVisitDataKey<T>;
+    readonly value: T | null;
+  } | null>(null);
+  let restoration = restorationRef.current;
+  if (
+    restoration === null ||
+    restoration.service !== service ||
+    restoration.visitId !== scope.visitId ||
+    restoration.routeKey !== scope.routeKey ||
+    restoration.key !== key
+  ) {
+    restoration = {
+      service,
+      visitId: scope.visitId,
+      routeKey: scope.routeKey,
+      key,
+      value: service.readVisitData({
+        visitId: scope.visitId,
+        routeKey: scope.routeKey,
+        key,
+      }),
+    };
+    restorationRef.current = restoration;
+  }
   const committedCaptureRef = useRef(captureCommitted);
   useLayoutEffect(() => {
     committedCaptureRef.current = captureCommitted;
@@ -1330,11 +1363,7 @@ export function usePaneVisitData<T>(
       value: committedCaptureRef.current(),
     });
   });
-  return service.readVisitData({
-    visitId: scope.visitId,
-    routeKey: scope.routeKey,
-    key,
-  });
+  return restoration.value;
 }
 
 export function useClearAllPaneVisitData(): () => void {
