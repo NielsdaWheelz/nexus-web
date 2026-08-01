@@ -1120,21 +1120,53 @@ async function expectTrustedReverseDeadZone(
   if (!box) {
     throw new Error("Reader scrollport has no visible bounding box.");
   }
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.wheel(0, -4);
-  await expect
-    .poll(() => scrollport.evaluate((element) => element.scrollTop))
-    .toBeLessThan(before.scrollTop);
-  // A wheel tick may publish across more than one compositor frame. Sample
-  // only after it is still so the carried reversal distance and the next
-  // trusted drag share one exact scroll baseline.
-  await waitForScrollportSettle(scrollport);
+  await startChromeGestureRecording(scrollport);
+  let recording: ChromeGestureRecording | null = null;
+  try {
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, -4);
+    await expect
+      .poll(() => scrollport.evaluate((element) => element.scrollTop))
+      .toBeLessThan(before.scrollTop);
+    // A wheel tick may publish across more than one compositor frame. Sample
+    // only after it is still so the carried reversal distance and the next
+    // trusted drag share one exact scroll baseline.
+    await waitForScrollportSettle(scrollport);
+  } finally {
+    recording = await stopChromeGestureRecording(scrollport);
+  }
+  if (!recording) {
+    throw new Error("Trusted wheel recording was not captured.");
+  }
   const sample = await readChromeSample(page, scrollport);
   chromeSurfaces(sample, expectPaneToolbar);
-  const reverseDistance = before.scrollTop - sample.scrollTop;
+  let lastScrollTop = before.scrollTop;
+  let direction: "Up" | "Down" | null = "Down";
+  let reverseDistance = 0;
+  for (const event of recording.scrollEvents) {
+    if (event.scrollTop <= 8) {
+      lastScrollTop = event.scrollTop;
+      direction = null;
+      reverseDistance = 0;
+      continue;
+    }
+    const delta = event.scrollTop - lastScrollTop;
+    if (Math.abs(delta) < 1) continue;
+    const nextDirection = delta > 0 ? "Down" : "Up";
+    reverseDistance =
+      direction === nextDirection
+        ? reverseDistance + Math.abs(delta)
+        : Math.abs(delta);
+    direction = nextDirection;
+    lastScrollTop = event.scrollTop;
+  }
+  expect(
+    direction,
+    `trusted wheel must finish upward; recording=${JSON.stringify(recording)}`,
+  ).toBe("Up");
   expect(
     reverseDistance,
-    `trusted wheel must produce a measurable delta inside the 8px dead zone; before=${JSON.stringify(before)} sample=${JSON.stringify(sample)}`,
+    `trusted wheel must produce measurable reducer-path distance inside the 8px dead zone; before=${JSON.stringify(before)} sample=${JSON.stringify(sample)} recording=${JSON.stringify(recording)}`,
   ).toBeGreaterThan(0);
   expect(reverseDistance).toBeLessThanOrEqual(8);
   expect(sample.appBar.phase).toBe("Hidden");
