@@ -108,6 +108,16 @@ async function openUnlinkConnectionAction(
   return unlink;
 }
 
+async function openRelationshipDisclosure(relationshipRow: Locator): Promise<void> {
+  const disclosure = relationshipRow.getByRole("button", {
+    name: "1 linked object",
+  });
+  if ((await disclosure.getAttribute("aria-expanded")) !== "true") {
+    await disclosure.click();
+  }
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+}
+
 /** The Link action lives in the reader selection popup / highlight action bar as
  * a plain button whose accessible name is the "Link…" descriptor
  * (highlightActions.tsx). */
@@ -375,9 +385,7 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
       evidence,
       secondSelectedText,
     );
-    await secondHighlightRow
-      .getByRole("button", { name: "1 linked object" })
-      .click();
+    await openRelationshipDisclosure(secondHighlightRow);
     const unlink = await openUnlinkConnectionAction(page, secondHighlightRow);
     await page.keyboard.press("Escape");
     await expect(unlink).toBeHidden();
@@ -390,9 +398,7 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
       evidenceAfterDismiss,
       secondSelectedText,
     );
-    await secondHighlightRowAfterDismiss
-      .getByRole("button", { name: "1 linked object" })
-      .click();
+    await openRelationshipDisclosure(secondHighlightRowAfterDismiss);
     const targetButton = secondHighlightRowAfterDismiss.getByRole("button", {
       name: `Open target in reader for ${targetTitle}`,
     });
@@ -409,9 +415,7 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
       evidenceAgain,
       secondSelectedText,
     );
-    await secondHighlightRowAgain
-      .getByRole("button", { name: "1 linked object" })
-      .click();
+    await openRelationshipDisclosure(secondHighlightRowAgain);
     const unlinkAgain = await openUnlinkConnectionAction(
       page,
       secondHighlightRowAgain,
@@ -556,9 +560,7 @@ test("@real-media reflowable Link: cancel writes nothing, a Connections row appe
       evidence,
       linkedSelectionText,
     );
-    await linkedHighlightRow
-      .getByRole("button", { name: "1 linked object" })
-      .click();
+    await openRelationshipDisclosure(linkedHighlightRow);
     const unlink = await openUnlinkConnectionAction(page, linkedHighlightRow);
     await page.keyboard.press("Escape");
     await expect(unlink).toBeHidden();
