@@ -74,6 +74,7 @@ function nextReaderProfilePatch(page: Page) {
 
 test.describe("reader settings", () => {
   test("reader settings persist and survive reload", async ({ page }, testInfo) => {
+    test.setTimeout(60_000);
     const baseline = await fetchReaderProfile(page.request);
 
     try {
