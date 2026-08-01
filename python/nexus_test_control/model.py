@@ -74,6 +74,9 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
+PRIORITY_SOURCE_OWNERSHIP_SHA256 = (
+    "972ec827f252a514660ec1a17b8816a5017032c3e2b1e7bf6982b88abd8f9bf9"
+)
 
 
 class ResourceKind(StrEnum):
@@ -294,17 +297,7 @@ _CHANGED_AFFECTED = (
     Capability.SERVICE,
     Capability.COMPONENT,
     Capability.MIGRATIONS,
-    Capability.BUNDLE,
-    Capability.CORPUS,
-    Capability.PROVIDER_RUNTIME,
-    Capability.LLM_EVAL,
-    Capability.ANDROID_HOST,
-    Capability.AUDIT,
-    Capability.HOSTED,
-    Capability.PROVIDER_CERTIFICATION,
-    Capability.ANDROID_DEVICE,
     Capability.JOURNEYS_ALL,
-    Capability.EXTENSION,
 )
 
 WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(

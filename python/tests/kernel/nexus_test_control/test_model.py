@@ -52,8 +52,27 @@ def test_confidence_keeps_real_stack_affected_and_skips_build_and_journeys() -> 
     assert Capability.JOURNEYS_ALL not in by_capability
 
 
+def test_changed_owns_only_directly_affected_edit_loop_proofs() -> None:
+    requirements = WORKFLOW_REGISTRY[Workflow.CHANGED].requirements
+    by_capability = {requirement.capability: requirement.scope for requirement in requirements}
+
+    assert {
+        capability
+        for capability, scope in by_capability.items()
+        if scope is SelectionScope.AFFECTED
+    } == {
+        Capability.POLICY_SELF_TESTS,
+        Capability.KERNEL_PYTHON,
+        Capability.KERNEL_WEB,
+        Capability.SERVICE,
+        Capability.COMPONENT,
+        Capability.MIGRATIONS,
+        Capability.JOURNEYS_ALL,
+    }
+
+
 def test_persistent_browser_processes_are_the_final_contiguous_heavy_block() -> None:
-    for workflow in (Workflow.CHANGED, Workflow.FULL, Workflow.NIGHTLY, Workflow.RELEASE):
+    for workflow in (Workflow.FULL, Workflow.NIGHTLY, Workflow.RELEASE):
         capabilities = tuple(
             requirement.capability for requirement in WORKFLOW_REGISTRY[workflow].requirements
         )

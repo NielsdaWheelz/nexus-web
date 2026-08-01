@@ -888,6 +888,14 @@ def _string_list(value: Any, *, allow_empty: bool) -> bool:
     )
 
 
+def _source_glob_has_owner(repo_root: Path, pattern: str) -> bool:
+    pathlib_pattern = "".join(
+        "[[]" if character == "[" else "[]]" if character == "]" else character
+        for character in pattern
+    )
+    return any(path.is_file() for path in repo_root.glob(pathlib_pattern))
+
+
 def proof_manifest_schema_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     relative = "testdata/proofs.json"
     data, violations = _load_json(repo_root, relative, "proof-schema")
@@ -976,7 +984,22 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     if schema:
         return _sorted(schema)
     data = json.loads((repo_root / "testdata/proofs.json").read_text(encoding="utf-8"))
+    from nexus_test_control.model import PRIORITY_SOURCE_OWNERSHIP_SHA256
+    from nexus_test_control.selection import proof_target
+
     violations: list[PolicyViolation] = []
+    source_ownership = {risk["id"]: sorted(risk["source_globs"]) for risk in data["priority_risks"]}
+    source_digest = hashlib.sha256(
+        json.dumps(source_ownership, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if source_digest != PRIORITY_SOURCE_OWNERSHIP_SHA256:
+        violations.append(
+            PolicyViolation(
+                "proof-source-floor",
+                "testdata/proofs.json",
+                "priority source ownership differs from the independently frozen floor",
+            )
+        )
     proof_owners: dict[str, str] = {}
     for risk in data["priority_risks"]:
         location = f"testdata/proofs.json#{risk['id']}"
@@ -987,21 +1010,17 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 PolicyViolation("proof-incomplete", location, "risk has no capability")
             )
         for pattern in risk["source_globs"]:
-            if not any(path.is_file() for path in repo_root.glob(pattern)):
+            if not _source_glob_has_owner(repo_root, pattern):
                 violations.append(
                     PolicyViolation(
                         "proof-source-owner", location, f"source glob matches no file: {pattern}"
                     )
                 )
+        proof_capabilities: set[str] = set()
         for proof in risk["proofs"]:
-            runner, separator, node = proof.partition(":")
-            proof_path = node.split("::", 1)[0]
-            if (
-                not separator
-                or runner not in {"gradle", "playwright", "pytest", "static", "vitest"}
-                or not _safe_relative(proof_path)
-                or not (repo_root / proof_path).is_file()
-            ):
+            try:
+                proof_capabilities.add(proof_target(repo_root, proof).capability.value)
+            except (OSError, UnicodeDecodeError, ValueError):
                 violations.append(
                     PolicyViolation(
                         "proof-node", location, f"invalid or missing proof node: {proof}"
@@ -1014,6 +1033,14 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                         "proof-unique-owner", location, f"proof is already owned by {previous}"
                     )
                 )
+        if set(risk["capabilities"]) != proof_capabilities:
+            violations.append(
+                PolicyViolation(
+                    "proof-capability-owner",
+                    location,
+                    "declared capabilities must exactly equal the executable proof owners",
+                )
+            )
     if not 10 <= len(data["journeys"]) <= 15:
         violations.append(
             PolicyViolation(
@@ -1039,7 +1066,7 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     for journey in data["journeys"]:
         location = f"testdata/proofs.json#{journey['id']}"
         for pattern in journey["source_globs"]:
-            if not any(path.is_file() for path in repo_root.glob(pattern)):
+            if not _source_glob_has_owner(repo_root, pattern):
                 violations.append(
                     PolicyViolation(
                         "proof-source-owner", location, f"source glob matches no file: {pattern}"

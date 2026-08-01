@@ -407,17 +407,25 @@ def test_repository_guard_rejects_broken_normative_link(tmp_path: Path) -> None:
 
 
 def _complete_proof_repository(root: Path) -> dict[str, Any]:
+    source_floor = {
+        risk["id"]: risk["source_globs"]
+        for risk in json.loads((REPO_ROOT / "testdata/proofs.json").read_text(encoding="utf-8"))[
+            "priority_risks"
+        ]
+    }
     risks: list[dict[str, Any]] = []
     risk_ids = sorted(risk.value for risk in PRIORITY_RISK_FLOOR)
     for index, risk_id in enumerate(risk_ids):
-        source = f"src/owner_{index}.py"
+        source_globs = source_floor[risk_id]
         proof_path = f"python/tests/kernel/test_risk_{index}.py"
-        _write(root, source, "OWNER = True\n")
+        for source_glob in source_globs:
+            source = source_glob.replace("**/", "").replace("*", "owner").replace("?", "q")
+            _write(root, source, "OWNER = True\n")
         _write(root, proof_path, "def test_risk():\n    assert owner_behavior()\n")
         risks.append(
             {
                 "id": risk_id,
-                "source_globs": [source],
+                "source_globs": source_globs,
                 "proofs": [f"pytest:{proof_path}::test_risk"],
                 "capabilities": ["kernel-python"],
             }
@@ -475,6 +483,33 @@ def test_proof_schema_rejects_unknown_capability(tmp_path: Path) -> None:
     manifest["priority_risks"][0]["capabilities"] = ["wishful"]
     _dump(tmp_path, "testdata/proofs.json", manifest)
     assert "proof-schema" in _rules(proof_manifest_schema_violations(tmp_path))
+
+
+def test_proof_contract_rejects_priority_source_self_routing(tmp_path: Path) -> None:
+    manifest = _complete_proof_repository(tmp_path)
+    manifest["priority_risks"][0]["source_globs"] = ["README.md"]
+    _write(tmp_path, "README.md", "# harmless owner\n")
+    _dump(tmp_path, "testdata/proofs.json", manifest)
+
+    assert "proof-source-floor" in _rules(proof_contract_violations(tmp_path))
+
+
+def test_proof_contract_rejects_a_nonexistent_exact_node(tmp_path: Path) -> None:
+    manifest = _complete_proof_repository(tmp_path)
+    manifest["priority_risks"][0]["proofs"][0] += "_missing"
+    _dump(tmp_path, "testdata/proofs.json", manifest)
+
+    assert "proof-node" in _rules(proof_contract_violations(tmp_path))
+
+
+def test_proof_contract_rejects_declared_capability_without_a_proof_owner(
+    tmp_path: Path,
+) -> None:
+    manifest = _complete_proof_repository(tmp_path)
+    manifest["priority_risks"][0]["capabilities"].append("android-release")
+    _dump(tmp_path, "testdata/proofs.json", manifest)
+
+    assert "proof-capability-owner" in _rules(proof_contract_violations(tmp_path))
 
 
 @pytest.mark.parametrize(

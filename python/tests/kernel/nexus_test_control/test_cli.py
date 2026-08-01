@@ -463,6 +463,10 @@ def test_plain_focus_keeps_every_manifest_owned_journey_route(tmp_path: Path) ->
     source = tmp_path / "apps/web/src/lib/panes/paneRenderRegistry.tsx"
     source.parent.mkdir(parents=True)
     source.write_text("export const registry = {}\n")
+    for journey in ("reader-open", "search-open"):
+        proof = tmp_path / f"apps/web/e2e/journeys/{journey}.journey.spec.ts"
+        proof.parent.mkdir(parents=True, exist_ok=True)
+        proof.write_text("test('journey', () => {});\n")
     manifest = tmp_path / "testdata/proofs.json"
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text(
@@ -552,6 +556,33 @@ def test_pr_records_later_cadence_selection_without_dispatching_it() -> None:
         ),
     )
     assert confidence[0].deferred_to is Workflow.PR
+
+
+def test_changed_records_protected_capabilities_at_their_owning_cadence() -> None:
+    cases = (
+        (Capability.BUNDLE, Workflow.PR),
+        (Capability.CORPUS, Workflow.FULL),
+        (Capability.PROVIDER_RUNTIME, Workflow.FULL),
+        (Capability.LLM_EVAL, Workflow.FULL),
+        (Capability.ANDROID_HOST, Workflow.FULL),
+        (Capability.EXTENSION, Workflow.FULL),
+        (Capability.AUDIT, Workflow.NIGHTLY),
+        (Capability.HOSTED, Workflow.NIGHTLY),
+        (Capability.ANDROID_DEVICE, Workflow.NIGHTLY),
+        (Capability.PROVIDER_CERTIFICATION, Workflow.RELEASE),
+    )
+    selection = tuple(
+        Selection(
+            f"selected/{capability.value}",
+            capability,
+            SelectionReason.PROMOTED_CAPABILITY,
+        )
+        for capability, _owner in cases
+    )
+
+    routed = _route_selection_for_workflow(Workflow.CHANGED, selection)
+
+    assert [item.deferred_to for item in routed] == [owner for _capability, owner in cases]
 
 
 def test_machine_sensitivity_is_reserved_for_declared_risk_or_fault_owners(

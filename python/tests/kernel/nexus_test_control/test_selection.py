@@ -192,6 +192,9 @@ def test_paid_and_device_proof_never_enters_pr_sensitivity(path: str) -> None:
 def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
     tmp_path: Path,
 ) -> None:
+    proof = tmp_path / "python/tests/service/test_auth_privacy.py"
+    proof.parent.mkdir(parents=True)
+    proof.write_text("def test_privacy():\n    pass\n")
     manifest = tmp_path / "testdata/proofs.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
@@ -230,6 +233,9 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
 def test_journey_manifest_routes_lazy_pane_source_to_its_exact_browser_proof(
     tmp_path: Path,
 ) -> None:
+    proof = tmp_path / "apps/web/e2e/journeys/nexus-search-open-restore.journey.spec.ts"
+    proof.parent.mkdir(parents=True)
+    proof.write_text("test('open', () => {});\n")
     manifest = tmp_path / "testdata/proofs.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
@@ -262,3 +268,59 @@ def test_journey_manifest_routes_lazy_pane_source_to_its_exact_browser_proof(
         and selection.reason is SelectionReason.JOURNEY_OWNER
         for selection in selections
     )
+
+
+def test_priority_manifest_rejects_a_missing_exact_pytest_node(tmp_path: Path) -> None:
+    proof = tmp_path / "python/tests/service/test_auth_privacy.py"
+    proof.parent.mkdir(parents=True)
+    proof.write_text("def test_real():\n    pass\n")
+    manifest = tmp_path / "testdata/proofs.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "priority_risks": [
+                    {
+                        "id": "auth-privacy-secrets",
+                        "source_globs": ["python/nexus/auth/**/*.py"],
+                        "proofs": [
+                            "pytest:python/tests/service/test_auth_privacy.py::test_missing"
+                        ],
+                        "capabilities": ["service"],
+                    }
+                ],
+                "journeys": [],
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="no exact pytest node"):
+        load_selection_index(tmp_path)
+
+
+def test_priority_manifest_capabilities_must_equal_executable_owners(tmp_path: Path) -> None:
+    proof = tmp_path / "python/tests/service/test_auth_privacy.py"
+    proof.parent.mkdir(parents=True)
+    proof.write_text("def test_privacy():\n    pass\n")
+    manifest = tmp_path / "testdata/proofs.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "priority_risks": [
+                    {
+                        "id": "auth-privacy-secrets",
+                        "source_globs": ["python/nexus/auth/**/*.py"],
+                        "proofs": [
+                            "pytest:python/tests/service/test_auth_privacy.py::test_privacy"
+                        ],
+                        "capabilities": ["service", "android-release"],
+                    }
+                ],
+                "journeys": [],
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="exactly equal"):
+        load_selection_index(tmp_path)
