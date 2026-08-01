@@ -419,6 +419,23 @@ class DirectSessionManager:
                             {"value": value},
                         )
 
+                if table == "fragments" and column == "media_id":
+                    # Inline embeds retain a non-cascading provenance link to
+                    # their source fragment. Failed source pipelines can leave
+                    # that partial artifact behind, so release the child rows
+                    # before generic media cleanup removes the fragments.
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM document_embeds
+                            WHERE fragment_id IN (
+                                SELECT id FROM fragments WHERE media_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+
                 if value is None:
                     session.execute(text(f"DELETE FROM {table} WHERE {column} IS NULL"))
                     continue

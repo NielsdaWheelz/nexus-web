@@ -39,6 +39,7 @@ from nexus.services.media_source_ingest import (
 )
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
 from tests.helpers import auth_headers, create_test_user_id
+from tests.real_media.conftest import register_media_cleanup
 from tests.support.source_jobs import run_queued_source_attempt
 from tests.utils.db import DirectSessionManager
 
@@ -142,6 +143,55 @@ def _occurrence(
         canonical_end_offset=len(placeholder),
         target=target,
     )
+
+
+def test_direct_media_cleanup_removes_embed_children_before_fragments(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+    direct_db.register_cleanup("users", "id", user_id)
+
+    with direct_db.session() as session:
+        ensure_user_and_default_library(session, user_id)
+        parent = _media(session, owner_id=user_id, title="Cleanup parent")
+        register_media_cleanup(direct_db, parent.id)
+        attempt = _attempt(session, media=parent, owner_id=user_id)
+        fragment = _fragment(session, media=parent, idx=0, text="Embed 0")
+        replace_document_embed_artifact(
+            session,
+            owner_user_id=user_id,
+            media_id=parent.id,
+            source_attempt_id=attempt.id,
+            occurrences=[
+                _occurrence(
+                    fragment=fragment,
+                    ordinal=0,
+                    occurrence_key="cleanup:0",
+                    target=DocumentEmbedTargetTerminal(
+                        status="unsupported",
+                        error_code=None,
+                        error_message=None,
+                    ),
+                )
+            ],
+            extraction_error_code=None,
+            extraction_error_message=None,
+            request_id="cleanup",
+            locked_existing_target_media_ids=frozenset(),
+        )
+        media_id = parent.id
+        fragment_id = fragment.id
+        session.commit()
+
+    direct_db.cleanup()
+
+    with direct_db.session() as session:
+        assert (
+            session.scalar(select(DocumentEmbed.id).where(DocumentEmbed.fragment_id == fragment_id))
+            is None
+        )
+        assert session.get(Fragment, fragment_id) is None
+        assert session.get(Media, media_id) is None
 
 
 def test_batch_replacement_owns_all_fragments_counts_edges_and_current_state(
