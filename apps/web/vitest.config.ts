@@ -7,9 +7,13 @@ import type { Plugin } from "vite";
 
 function serveVendoredPdfJs(): Plugin {
   const vendoredModules = new Map(
-    ["pdf.mjs", "pdf_viewer.mjs", "pdf.worker.min.mjs"].map((filename) => [
+    [
+      ["pdf.mjs", "build/pdf.mjs"],
+      ["pdf_viewer.mjs", "web/pdf_viewer.mjs"],
+      ["pdf.worker.min.mjs", "build/pdf.worker.min.mjs"],
+    ].map(([filename, source]) => [
       `/pdfjs/${filename}`,
-      readFileSync(path.resolve(__dirname, "public/pdfjs", filename)),
+      readFileSync(path.resolve(__dirname, "node_modules/pdfjs-dist", source)),
     ]),
   );
 
@@ -19,14 +23,14 @@ function serveVendoredPdfJs(): Plugin {
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
         const pathname = request.url?.split("?", 1)[0] ?? "";
-        const module = vendoredModules.get(pathname);
-        if (!module) {
+        const servedModule = vendoredModules.get(pathname);
+        if (!servedModule) {
           next();
           return;
         }
         response.statusCode = 200;
         response.setHeader("Content-Type", "text/javascript; charset=utf-8");
-        response.end(module);
+        response.end(servedModule);
       });
     },
   };

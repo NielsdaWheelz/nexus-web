@@ -21,6 +21,32 @@ const READER_STATE_IDLE_SAVE_DEBOUNCE_MS = 500;
 // windows: one for the restore publication and one for its settled follow-up.
 const RESTORE_WRITE_QUIET_WINDOW_MS = READER_STATE_IDLE_SAVE_DEBOUNCE_MS * 2;
 
+interface EpubReaderLocator {
+  kind: "epub";
+  target: {
+    section_id: string;
+    href_path: string;
+    anchor_id: string | null;
+  };
+  locations: {
+    text_offset: number | null;
+    progression: number | null;
+    total_progression: number | null;
+    position: number | null;
+  };
+  text: {
+    quote: string | null;
+    quote_prefix: string | null;
+    quote_suffix: string | null;
+  };
+}
+
+interface PositionedEpubReaderSnapshot {
+  state: "Positioned";
+  revision: number;
+  locator: EpubReaderLocator;
+}
+
 function matchesReaderStateWrite(request: Request, mediaId: string): boolean {
   const url = new URL(request.url());
   return (
@@ -134,6 +160,8 @@ test("reader progress resumes, completes, and resets through its product actions
           section_id: string;
           label: string;
           href_path: string | null;
+          start_offset: number;
+          end_offset: number | null;
         }>;
       };
     }
@@ -188,6 +216,85 @@ test("reader progress resumes, completes, and resets through its product actions
       },
     )
     .toBe(target!.section_id);
+
+  expect(
+    target!.end_offset,
+    `EPUB ${mediaId} did not expose a closed canonical interval for section ${target!.section_id}.`,
+  ).not.toBeNull();
+  const interiorOffset = target!.end_offset! - 1;
+  expect(
+    interiorOffset,
+    `EPUB ${mediaId} section ${target!.section_id} has no interior canonical cursor between ${target!.start_offset} and ${target!.end_offset}.`,
+  ).toBeGreaterThan(target!.start_offset);
+
+  const persistedResponse = await api.get(
+    `/api/media/${mediaId}/reader-state`,
+  );
+  const persistedText = await persistedResponse.text();
+  expect(
+    persistedResponse.ok(),
+    `Persisted reader snapshot for ${mediaId} failed: ${persistedResponse.status()} ${persistedText.slice(0, 500)}`,
+  ).toBeTruthy();
+  const persisted = (JSON.parse(persistedText) as {
+    data: PositionedEpubReaderSnapshot;
+  }).data;
+  expect(
+    persisted,
+    `Reader snapshot for ${mediaId} was not the exact positioned EPUB cursor selected through Chromium.`,
+  ).toMatchObject({
+    state: "Positioned",
+    revision: expect.any(Number),
+    locator: {
+      kind: "epub",
+      target: { section_id: target!.section_id },
+    },
+  });
+  expect(persisted.revision).toBeGreaterThan(0);
+  expect(
+    persisted.locator.locations.text_offset,
+    `Chromium already persisted the sensitivity cursor ${interiorOffset}; the reload would not prove a distinct restored position.`,
+  ).not.toBe(interiorOffset);
+
+  const interiorLocator: EpubReaderLocator = {
+    ...persisted.locator,
+    locations: {
+      text_offset: interiorOffset,
+      progression: null,
+      total_progression: null,
+      position: null,
+    },
+    text: {
+      quote: null,
+      quote_prefix: null,
+      quote_suffix: null,
+    },
+  };
+  const interiorWriteResponse = await api.put(
+    `/api/media/${mediaId}/reader-state`,
+    {
+      headers: { origin: webOrigin },
+      data: {
+        locator: interiorLocator,
+        base_revision: persisted.revision,
+      },
+    },
+  );
+  const interiorWriteText = await interiorWriteResponse.text();
+  expect(
+    interiorWriteResponse.ok(),
+    `Interior reader cursor for ${mediaId} failed: ${interiorWriteResponse.status()} ${interiorWriteText.slice(0, 500)}`,
+  ).toBeTruthy();
+  const interiorSnapshot = (JSON.parse(interiorWriteText) as {
+    data: PositionedEpubReaderSnapshot;
+  }).data;
+  expect(
+    interiorSnapshot,
+    `Reader BFF did not durably install the interior cursor for ${mediaId}.`,
+  ).toStrictEqual({
+    state: "Positioned",
+    revision: persisted.revision + 1,
+    locator: interiorLocator,
+  });
 
   let resumedDocumentCommitted = false;
   const resumedReaderStateWriteRequests: Request[] = [];
