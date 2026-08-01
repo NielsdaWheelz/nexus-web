@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import resource
 import subprocess
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -41,16 +42,29 @@ def get_migrations_dir() -> str:
     return os.path.join(repo_root, "migrations")
 
 
-def run_alembic_command(command: str) -> subprocess.CompletedProcess:
+def run_alembic_command(
+    command: str,
+    *,
+    address_space_limit_bytes: int | None = None,
+) -> subprocess.CompletedProcess:
     """Run an alembic command and return the result."""
     migrations_dir = get_migrations_dir()
     python_dir = os.path.join(os.path.dirname(migrations_dir), "python")
+
+    def apply_address_space_limit() -> None:
+        if address_space_limit_bytes is not None:
+            resource.setrlimit(
+                resource.RLIMIT_AS,
+                (address_space_limit_bytes, address_space_limit_bytes),
+            )
+
     result = subprocess.run(
         ["uv", "run", "--project", python_dir, "alembic"] + command.split(),
         capture_output=True,
         text=True,
         env={**os.environ},
         cwd=migrations_dir,
+        preexec_fn=apply_address_space_limit if address_space_limit_bytes else None,
     )
     return result
 
@@ -27264,6 +27278,103 @@ class TestMigration0208PersistEpubNavigationOffsets:
             downgrade = run_alembic_command("downgrade 0207")
             assert downgrade.returncode != 0
             assert "0208 is a hard cutover migration" in downgrade.stderr
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_backfill_memory_is_bounded_by_one_fragment(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0207")
+            assert result.returncode == 0, result.stderr
+
+            media_id = uuid4()
+            fragment_count = 8
+            anchors_per_fragment = 128
+            fragment_text = "x" * (256 * 1024)
+            anchors = "".join(
+                f'<span id="anchor-{anchor_index}"></span>'
+                for anchor_index in range(anchors_per_fragment)
+            )
+            fragment_html = f"{anchors}<p>{fragment_text}</p>"
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO media (id, kind, title, processing_status)
+                        VALUES (:id, 'epub', 'Large Navigation Migration EPUB', 'ready_for_reading')
+                        """
+                    ),
+                    {"id": media_id},
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO fragments (
+                            id, media_id, idx, canonical_text, html_sanitized
+                        ) VALUES (
+                            :id, :media_id, :idx, :canonical_text, :html_sanitized
+                        )
+                        """
+                    ),
+                    [
+                        {
+                            "id": uuid4(),
+                            "media_id": media_id,
+                            "idx": fragment_idx,
+                            "canonical_text": fragment_text,
+                            "html_sanitized": fragment_html,
+                        }
+                        for fragment_idx in range(fragment_count)
+                    ],
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO epub_nav_locations (
+                            media_id, location_id, ordinal, source_node_id, label,
+                            fragment_idx, href_path, href_fragment, source
+                        ) VALUES (
+                            :media_id, :location_id, :ordinal, NULL, :label,
+                            :fragment_idx, :href_path, :href_fragment, 'toc'
+                        )
+                        """
+                    ),
+                    [
+                        {
+                            "media_id": media_id,
+                            "location_id": f"fragment-{fragment_idx}.xhtml#anchor-{anchor_index}",
+                            "ordinal": fragment_idx * anchors_per_fragment + anchor_index,
+                            "label": f"Anchor {fragment_idx}-{anchor_index}",
+                            "fragment_idx": fragment_idx,
+                            "href_path": f"fragment-{fragment_idx}.xhtml",
+                            "href_fragment": f"anchor-{anchor_index}",
+                        }
+                        for fragment_idx in range(fragment_count)
+                        for anchor_index in range(anchors_per_fragment)
+                    ],
+                )
+
+            result = run_alembic_command(
+                "upgrade 0208",
+                address_space_limit_bytes=700 * 1024 * 1024,
+            )
+            assert result.returncode == 0, result.stderr
+
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0208"
+                assert connection.scalar(
+                    text(
+                        """
+                        SELECT count(*)
+                        FROM epub_nav_locations
+                        WHERE start_offset = 0
+                          AND end_offset = :fragment_length
+                        """
+                    ),
+                    {"fragment_length": len(fragment_text)},
+                ) == fragment_count * anchors_per_fragment
         finally:
             reset_test_schema()
             engine.dispose()
