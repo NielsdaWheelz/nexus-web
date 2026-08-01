@@ -238,8 +238,30 @@ def select_changed(
                 routes.append(IndexedRoute(change.path, direct, SelectionReason.CHANGED_TEST))
             else:
                 routes.extend(index.for_path(change.path))
+                if _frontend_source(change.path) and not any(
+                    route.target.capability is Capability.COMPONENT
+                    or route.reason is SelectionReason.LAZY_PANE
+                    for route in routes
+                ):
+                    routes.append(
+                        IndexedRoute(
+                            change.path,
+                            SelectionTarget(Capability.COMPONENT),
+                            SelectionReason.FRONTEND_RELATED,
+                        )
+                    )
         else:
             routes.extend(index.for_path(change.path))
+            if _frontend_source(change.path) and not any(
+                route.target.capability is Capability.COMPONENT for route in routes
+            ):
+                routes.append(
+                    IndexedRoute(
+                        change.path,
+                        SelectionTarget(Capability.COMPONENT),
+                        SelectionReason.PROMOTED_CAPABILITY,
+                    )
+                )
         if not routes:
             routes.append(
                 IndexedRoute(
@@ -277,6 +299,10 @@ def _pr_sensitivity_eligible(path: str) -> bool:
             "apps/android/app/src/androidTest/",
         )
     )
+
+
+def _frontend_source(path: str) -> bool:
+    return path.startswith("apps/web/src/") and path.endswith((".ts", ".tsx"))
 
 
 def _promoted_targets(path: str) -> tuple[SelectionTarget, ...]:

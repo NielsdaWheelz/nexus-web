@@ -1201,11 +1201,36 @@ def _run_component(
     if not owners or not (web_root / "node_modules").is_dir():
         return _not_run(capability, "web component proof owner is absent")
     nodes, promoted = _selected_proof_nodes(context, capability, "vitest")
+    argv: tuple[str, ...] | None = None
+    related = _frontend_related_paths(context)
+    nonrelated_promotion = any(
+        selection.capability is capability
+        and selection.proof is None
+        and selection.reason is not SelectionReason.FRONTEND_RELATED
+        for selection in context.selection
+    )
     proven_paths = {node.split("::", 1)[0] for node in _proven_nodes(context, capability, "vitest")}
     if exact:
         if not nodes or promoted:
             raise ValueError("exact web component proof must name one Vitest path")
         targets = tuple(_web_component_path(node) for node in nodes)
+    elif (
+        _scope(context, capability) is SelectionScope.AFFECTED
+        and related
+        and not nonrelated_promotion
+    ):
+        filters = tuple(dict.fromkeys((*related, *(_web_component_path(node) for node in nodes))))
+        targets = ()
+        argv = (
+            "bunx",
+            "--no-install",
+            "vitest",
+            "related",
+            "--run",
+            "--project",
+            "browser",
+            *filters,
+        )
     elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
         targets = tuple(
             f"./{path.relative_to(web_root).as_posix()}"
@@ -1226,14 +1251,15 @@ def _run_component(
         return prepared
     if execution is None:
         raise AssertionError("prepared run exists without workflow execution")
-    argv = ("bun", "run", "test:browser")
-    if targets:
-        argv = (*argv, "--", *targets)
+    if argv is None:
+        argv = ("bun", "run", "test:browser")
+        if targets:
+            argv = (*argv, "--", *targets)
     return _run_owned_commands(
         capability,
         ((argv, web_root),),
         _heavy_environment(context, environment, prepared, execution.ports, browser=True),
-        ("bun",),
+        (argv[0],),
     )
 
 
@@ -3274,6 +3300,32 @@ def _selected_proof_nodes(
             raise ValueError(f"invalid {runner} proof selection: {selection.proof}")
         nodes.add(node)
     return tuple(sorted(nodes)), promoted
+
+
+def _frontend_related_paths(context: CapabilityContext) -> tuple[str, ...]:
+    root = context.repo_root.resolve(strict=True)
+    paths: set[str] = set()
+    for selection in context.selection:
+        if (
+            selection.capability is not Capability.COMPONENT
+            or selection.reason is not SelectionReason.FRONTEND_RELATED
+        ):
+            continue
+        path = selection.path
+        candidate = (root / path).resolve(strict=False)
+        try:
+            relative = candidate.relative_to(root).as_posix()
+        except ValueError as error:
+            raise ValueError(f"selected frontend path leaves the repository: {path}") from error
+        if (
+            relative != path
+            or not path.startswith("apps/web/src/")
+            or not path.endswith((".ts", ".tsx"))
+            or not candidate.is_file()
+        ):
+            raise ValueError(f"selected frontend path is not exact: {path}")
+        paths.add(f"./{Path(path).relative_to('apps/web').as_posix()}")
+    return tuple(sorted(paths))
 
 
 def _proven_nodes(

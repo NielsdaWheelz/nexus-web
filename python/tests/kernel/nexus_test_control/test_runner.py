@@ -811,6 +811,65 @@ def test_affected_heavy_capabilities_with_no_selection_do_not_prepare_runtime(
     assert not (tmp_path / ".nexus-test").exists()
 
 
+def test_affected_frontend_source_uses_vitest_related_in_the_browser_project(
+    tmp_path: Path,
+) -> None:
+    source = "apps/web/src/components/nexus/Nexus.tsx"
+    _write(tmp_path / source, "export const Nexus = true;\n")
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    _write(
+        tmp_path / "apps/web/src/components/nexus/Nexus.browser.test.tsx",
+        "export {};\n",
+    )
+    environment = _stub_tools(tmp_path, "bunx")
+
+    class Ports(runner._RunnerPorts):
+        def browser_installed(self, _repo_root: Path, _environment: Mapping[str, str]) -> bool:
+            return True
+
+        def run_environment(
+            self,
+            repo_root: Path,
+            environment: Mapping[str, str],
+            run: OwnedTestRun,
+        ) -> dict[str, str]:
+            return _stub_run_environment(repo_root, dict(environment), run)
+
+    context = CapabilityContext(
+        tmp_path,
+        Workflow.CHANGED,
+        (
+            Selection(
+                source,
+                Capability.COMPONENT,
+                SelectionReason.FRONTEND_RELATED,
+            ),
+        ),
+    )
+    execution = runner._WorkflowExecution(
+        context,
+        environment,
+        include_migration_database=False,
+        run_id="0123456789abcdef",
+        ports=Ports(),
+        run=_test_run(include_migration_database=False),
+    )
+
+    result = runner._run_component(context, environment, execution)
+
+    assert result.evidence.status is RunStatus.PASS
+    assert _commands(tmp_path)[-1]["argv"] == [
+        "--no-install",
+        "vitest",
+        "related",
+        "--run",
+        "--project",
+        "browser",
+        "./src/components/nexus/Nexus.tsx",
+    ]
+
+
 def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_processes(
     tmp_path: Path,
 ) -> None:

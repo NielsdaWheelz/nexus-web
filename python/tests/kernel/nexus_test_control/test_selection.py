@@ -70,6 +70,39 @@ def test_lazy_pane_index_maps_dynamic_source_when_static_related_has_no_edge() -
     assert selections[0].reason is SelectionReason.LAZY_PANE
 
 
+def test_frontend_source_selects_static_related_component_and_manifest_journey() -> None:
+    path = "apps/web/src/components/nexus/Nexus.tsx"
+    selections = select_changed(
+        parse_git_name_status(f"M\0{path}\0".encode()),
+        SelectionIndex(
+            routes=(
+                IndexedRoute(
+                    "apps/web/src/components/nexus/**/*",
+                    SelectionTarget(
+                        Capability.JOURNEYS_ALL,
+                        "playwright:apps/web/e2e/journeys/nexus-search-open-restore.journey.spec.ts",
+                    ),
+                    SelectionReason.JOURNEY_OWNER,
+                ),
+            )
+        ),
+    )
+
+    assert [(selection.capability, selection.reason) for selection in selections] == [
+        (Capability.JOURNEYS_ALL, SelectionReason.JOURNEY_OWNER),
+        (Capability.COMPONENT, SelectionReason.FRONTEND_RELATED),
+    ]
+
+
+def test_deleted_frontend_source_promotes_complete_component_proof() -> None:
+    path = "apps/web/src/components/nexus/Removed.tsx"
+    selections = select_changed(parse_git_name_status(f"D\0{path}\0".encode()))
+
+    assert [(selection.capability, selection.reason) for selection in selections] == [
+        (Capability.COMPONENT, SelectionReason.PROMOTED_CAPABILITY)
+    ]
+
+
 def test_explicit_focus_fails_closed_when_target_does_not_resolve() -> None:
     with pytest.raises(ValueError, match="did not resolve"):
         select_explicit_focus(("unknown::proof",), lambda _focus: ())
