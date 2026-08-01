@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { page } from "vitest/browser";
 import { useEffect } from "react";
 import {
   act,
@@ -7,6 +8,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import "@/app/globals.css";
 import MobilePaneBar from "./MobilePaneBar";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import {
@@ -93,11 +95,15 @@ function PublishActiveFilterChrome() {
 
 function PublishResourceChrome({
   activateIdentityAnchor = noopActivateIdentityAnchor,
+  canGoBack = false,
+  title = "The Left Hand of Darkness",
 }: {
   activateIdentityAnchor?: (
     event: TargetLinkMouseEvent,
     anchor: HTMLAnchorElement,
   ) => void;
+  canGoBack?: boolean;
+  title?: string;
 }) {
   const { setPaneChrome } = useMobileChrome();
   useEffect(() => {
@@ -109,7 +115,7 @@ function PublishResourceChrome({
         kind: "resource",
         resource: {
           status: "ready",
-          title: "The Left Hand of Darkness",
+          title,
           creditGroups: [
             {
               kind: "authors",
@@ -125,7 +131,7 @@ function PublishResourceChrome({
       },
       activateIdentityAnchor,
       navigation: {
-        canGoBack: false,
+        canGoBack,
         canGoForward: false,
         onBack: () => {},
         onForward: () => {},
@@ -149,7 +155,7 @@ function PublishResourceChrome({
       ],
     });
     return () => setPaneChrome(null);
-  }, [activateIdentityAnchor, setPaneChrome]);
+  }, [activateIdentityAnchor, canGoBack, setPaneChrome, title]);
   return null;
 }
 
@@ -326,6 +332,92 @@ describe("MobilePaneBar", () => {
     const bar = screen.getByRole("banner");
     expect(bar).toHaveAttribute("data-header-kind", "resource");
     expect(bar).toHaveAttribute("data-pane-chrome-for", "pane-media");
+  });
+
+  it("reserves equal 48px mobile rails so identity does not move with Back", async () => {
+    await page.viewport(320, 720);
+    try {
+      const renderFrame = (canGoBack: boolean) =>
+        render(
+          <MobileChromeProvider>
+            <PublishResourceChrome
+              canGoBack={canGoBack}
+              title="The Left Hand of Darkness Across an Extremely Long Mobile Identity"
+            />
+            <MobilePaneBar />
+          </MobileChromeProvider>,
+        );
+      const observeFrame = async () => {
+        const title = await screen.findByRole("heading", {
+          name: "The Left Hand of Darkness Across an Extremely Long Mobile Identity",
+        });
+        const bar = screen.getByRole("banner");
+        const [leading, trailing] = screen.getAllByTestId("top-bar-controls");
+        const options = screen.getByRole("button", { name: "Pane options" });
+        const titleRect = title.getBoundingClientRect();
+        const leadingRect = leading!.getBoundingClientRect();
+        const trailingRect = trailing!.getBoundingClientRect();
+        return {
+          barHeight: Math.round(bar.getBoundingClientRect().height),
+          leadingWidth: Math.round(leadingRect.width),
+          trailingWidth: Math.round(trailingRect.width),
+          optionsWidth: Math.round(options.getBoundingClientRect().width),
+          optionsHeight: Math.round(options.getBoundingClientRect().height),
+          titleLeft: Math.round(titleRect.left),
+          overlapsRail:
+            titleRect.left < leadingRect.right ||
+            titleRect.right > trailingRect.left,
+        };
+      };
+
+      const { unmount: unmountWithoutBack } = renderFrame(false);
+      const withoutBack = await observeFrame();
+      unmountWithoutBack();
+
+      const { unmount: unmountWithBack } = renderFrame(true);
+      const withBack = await observeFrame();
+      unmountWithBack();
+
+      expect({
+        withoutBack: {
+          barHeight: withoutBack.barHeight,
+          leadingWidth: withoutBack.leadingWidth,
+          trailingWidth: withoutBack.trailingWidth,
+          optionsWidth: withoutBack.optionsWidth,
+          optionsHeight: withoutBack.optionsHeight,
+          overlapsRail: withoutBack.overlapsRail,
+        },
+        withBack: {
+          barHeight: withBack.barHeight,
+          leadingWidth: withBack.leadingWidth,
+          trailingWidth: withBack.trailingWidth,
+          optionsWidth: withBack.optionsWidth,
+          optionsHeight: withBack.optionsHeight,
+          overlapsRail: withBack.overlapsRail,
+        },
+        identityShift: Math.abs(withoutBack.titleLeft - withBack.titleLeft),
+      }).toEqual({
+        withoutBack: {
+          barHeight: 60,
+          leadingWidth: 48,
+          trailingWidth: 48,
+          optionsWidth: 48,
+          optionsHeight: 48,
+          overlapsRail: false,
+        },
+        withBack: {
+          barHeight: 60,
+          leadingWidth: 48,
+          trailingWidth: 48,
+          optionsWidth: 48,
+          optionsHeight: 48,
+          overlapsRail: false,
+        },
+        identityShift: 0,
+      });
+    } finally {
+      await page.viewport(1_280, 720);
+    }
   });
 
   it("delegates identity-link activation to the active pane", () => {

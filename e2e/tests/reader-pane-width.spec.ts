@@ -117,9 +117,9 @@ test.describe("reader pane width floor", () => {
       primaryWidthPx: 320,
     });
     let activePane = activeWorkspacePane(page);
-    await expect(activePane.getByRole("toolbar", { name: "PDF controls" })).toBeVisible({
-      timeout: 20_000,
-    });
+    await expect(
+      activePane.getByRole("group", { name: "PDF controls" }),
+    ).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(() => numericAttribute(resizeHandle(activePane), "aria-valuemin"))
       .toBeGreaterThan(320);

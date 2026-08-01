@@ -327,6 +327,7 @@ import {
   type ResolvedHighlightReaderTarget,
 } from "@/lib/reader/readerTargetHash";
 import Button from "@/components/ui/Button";
+import PaneToolbar from "@/components/ui/PaneToolbar";
 import Select from "@/components/ui/Select";
 import { mediaKindIcon } from "@/lib/resources/resourceKind";
 import { buildReaderSurfaceStyle } from "@/lib/reader/readerSurfaceStyle";
@@ -6440,148 +6441,159 @@ export default function MediaPaneBody() {
     [],
   );
 
-  const mediaToolbar = useMemo(
-    () =>
-      isPdf && canRead && pdfControlsState ? (
-        <div
-          className={styles.mediaToolbar}
-          role="toolbar"
-          aria-label="PDF controls"
-        >
-          <div className={styles.mediaToolbarRow}>
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              onClick={() => pdfControlsRef.current?.goToPreviousPage()}
-              disabled={!pdfControlsState.canGoPrev}
-              aria-label="Previous page"
-            >
-              <ChevronLeft size={16} aria-hidden="true" />
-            </Button>
-            <span
-              className={styles.mediaToolbarStatus}
-              aria-label={`Page ${pdfControlsState.pageNumber} of ${pdfControlsState.numPages || 0}`}
-            >
-              {pdfControlsState.pageNumber} / {pdfControlsState.numPages || 0}
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              onClick={() => pdfControlsRef.current?.goToNextPage()}
-              disabled={!pdfControlsState.canGoNext}
-              aria-label="Next page"
-            >
-              <ChevronRight size={16} aria-hidden="true" />
-            </Button>
-            <ActionMenu
-              label="More actions"
-              onOpenChange={handlePdfActionMenuOpenChange}
-              options={[
-                {
-                  kind: "command",
-                  id: "zoom-out",
-                  label: "Zoom out",
-                  disabled: !pdfControlsState.canZoomOut,
-                  onSelect: () => pdfControlsRef.current?.zoomOut(),
-                },
-                {
-                  kind: "command",
-                  id: "zoom-in",
-                  label: "Zoom in",
-                  disabled: !pdfControlsState.canZoomIn,
-                  onSelect: () => pdfControlsRef.current?.zoomIn(),
-                },
-              ]}
-            />
-          </div>
-        </div>
-      ) : isEpub && canRead ? (
-        <div
-          className={styles.mediaToolbar}
-          role="toolbar"
-          aria-label="EPUB controls"
-        >
-          <div className={styles.mediaToolbarRow}>
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              onClick={() => {
-                if (prevSection) {
-                  navigateToEpubSection(prevSection.section_id);
-                }
-              }}
-              disabled={!prevSection}
-              aria-label="Previous section"
-            >
-              <ChevronLeft size={16} aria-hidden="true" />
-            </Button>
-            {activeSectionPosition >= 0 && epubSections ? (
-              <span
-                className={`${styles.mediaToolbarStatus} ${styles.mediaToolbarSectionStatus}`}
-                aria-label={`Section ${activeSectionPosition + 1} of ${epubSections.length}`}
-              >
-                {activeSectionPosition + 1} / {epubSections.length}
-              </span>
-            ) : null}
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              onClick={() => {
-                if (nextSection) {
-                  navigateToEpubSection(nextSection.section_id);
-                }
-              }}
-              disabled={!nextSection}
-              aria-label="Next section"
-            >
-              <ChevronRight size={16} aria-hidden="true" />
-            </Button>
-            {epubSections ? (
-              <Select
-                className={styles.mediaToolbarSectionSelect}
-                size="sm"
-                value={renderedEpubSection?.section_id ?? ""}
-                onChange={(event) => {
-                  if (event.target.value) {
-                    navigateToEpubSection(event.target.value);
-                  }
-                }}
-                aria-label="Select section"
-                title={
-                  epubSections.find(
-                    (section) =>
-                      section.section_id === renderedEpubSection?.section_id,
-                  )?.label
-                }
-              >
-                {epubSections.map((section) => (
-                  <option key={section.section_id} value={section.section_id}>
-                    {section.label}
-                  </option>
-                ))}
-              </Select>
-            ) : null}
-          </div>
-        </div>
-      ) : null,
-    [
-      activeSectionPosition,
-      canRead,
-      epubSections,
-      handlePdfActionMenuOpenChange,
-      isEpub,
-      isPdf,
-      navigateToEpubSection,
-      nextSection,
-      pdfControlsState,
-      prevSection,
-      renderedEpubSection?.section_id,
-    ],
-  );
+  const mediaInstrument = useMemo(() => {
+    if (isPdf && canRead && pdfControlsState) {
+      return {
+        label: "PDF controls",
+        content: (
+          <PaneToolbar
+            controls={
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  onClick={() => pdfControlsRef.current?.goToPreviousPage()}
+                  disabled={!pdfControlsState.canGoPrev}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft size={16} aria-hidden="true" />
+                </Button>
+                <span
+                  className={styles.mediaInstrumentStatus}
+                  aria-label={`Page ${pdfControlsState.pageNumber} of ${pdfControlsState.numPages || 0}`}
+                >
+                  {pdfControlsState.pageNumber} /{" "}
+                  {pdfControlsState.numPages || 0}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  onClick={() => pdfControlsRef.current?.goToNextPage()}
+                  disabled={!pdfControlsState.canGoNext}
+                  aria-label="Next page"
+                >
+                  <ChevronRight size={16} aria-hidden="true" />
+                </Button>
+                <ActionMenu
+                  label="More actions"
+                  onOpenChange={handlePdfActionMenuOpenChange}
+                  options={[
+                    {
+                      kind: "command",
+                      id: "zoom-out",
+                      label: "Zoom out",
+                      disabled: !pdfControlsState.canZoomOut,
+                      onSelect: () => pdfControlsRef.current?.zoomOut(),
+                    },
+                    {
+                      kind: "command",
+                      id: "zoom-in",
+                      label: "Zoom in",
+                      disabled: !pdfControlsState.canZoomIn,
+                      onSelect: () => pdfControlsRef.current?.zoomIn(),
+                    },
+                  ]}
+                />
+              </>
+            }
+          />
+        ),
+      };
+    }
+    if (isEpub && canRead) {
+      return {
+        label: "EPUB controls",
+        content: (
+          <PaneToolbar
+            controls={
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  onClick={() => {
+                    if (prevSection) {
+                      navigateToEpubSection(prevSection.section_id);
+                    }
+                  }}
+                  disabled={!prevSection}
+                  aria-label="Previous section"
+                >
+                  <ChevronLeft size={16} aria-hidden="true" />
+                </Button>
+                {activeSectionPosition >= 0 && epubSections ? (
+                  <span
+                    className={`${styles.mediaInstrumentStatus} ${styles.mediaInstrumentSectionStatus}`}
+                    aria-label={`Section ${activeSectionPosition + 1} of ${epubSections.length}`}
+                  >
+                    {activeSectionPosition + 1} / {epubSections.length}
+                  </span>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  onClick={() => {
+                    if (nextSection) {
+                      navigateToEpubSection(nextSection.section_id);
+                    }
+                  }}
+                  disabled={!nextSection}
+                  aria-label="Next section"
+                >
+                  <ChevronRight size={16} aria-hidden="true" />
+                </Button>
+                {epubSections ? (
+                  <Select
+                    className={styles.mediaInstrumentSectionSelect}
+                    size="sm"
+                    value={renderedEpubSection?.section_id ?? ""}
+                    onChange={(event) => {
+                      if (event.target.value) {
+                        navigateToEpubSection(event.target.value);
+                      }
+                    }}
+                    aria-label="Select section"
+                    title={
+                      epubSections.find(
+                        (section) =>
+                          section.section_id ===
+                          renderedEpubSection?.section_id,
+                      )?.label
+                    }
+                  >
+                    {epubSections.map((section) => (
+                      <option
+                        key={section.section_id}
+                        value={section.section_id}
+                      >
+                        {section.label}
+                      </option>
+                    ))}
+                  </Select>
+                ) : null}
+              </>
+            }
+          />
+        ),
+      };
+    }
+    return null;
+  }, [
+    activeSectionPosition,
+    canRead,
+    epubSections,
+    handlePdfActionMenuOpenChange,
+    isEpub,
+    isPdf,
+    navigateToEpubSection,
+    nextSection,
+    pdfControlsState,
+    prevSection,
+    renderedEpubSection?.section_id,
+  ]);
   useEffect(() => {
     setVideoSeekTargetMs(null);
   }, [
@@ -7566,7 +7578,7 @@ export default function MediaPaneBody() {
             },
           }
         : {}),
-      ...(mediaToolbar ? { toolbar: mediaToolbar } : {}),
+      ...(mediaInstrument ? { instrument: mediaInstrument } : {}),
       search: findPublication ?? undefined,
       actions: companionAction ? [companionAction] : [],
       menu: media
@@ -7588,7 +7600,7 @@ export default function MediaPaneBody() {
       media,
       mediaHeaderGroups,
       mediaResourceHeader,
-      mediaToolbar,
+      mediaInstrument,
     ],
   );
   usePanePrimaryChrome(primaryChromePublication);

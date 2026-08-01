@@ -1043,13 +1043,17 @@ function publishedMenuActions(
   ];
 }
 
-async function renderLatestToolbar() {
-  let toolbar: ReactNode = null;
+async function renderLatestInstrument(
+  expectedLabel: "PDF controls" | "EPUB controls",
+) {
   await waitFor(() => {
-    toolbar = latestPrimaryChrome()?.toolbar ?? null;
-    expect(toolbar).not.toBeNull();
+    expect(latestPrimaryChrome()?.instrument?.label).toBe(expectedLabel);
   });
-  render(<>{toolbar}</>);
+  const instrument = latestPrimaryChrome()?.instrument;
+  if (!instrument) {
+    throw new Error(`Expected ${expectedLabel} instrument publication`);
+  }
+  render(<>{instrument.content}</>);
 }
 
 function latestSecondaryPublication(
@@ -2525,7 +2529,7 @@ describe("MediaPaneBody pane sizing", () => {
       ),
     ).toBe(false);
 
-    await renderLatestToolbar();
+    await renderLatestInstrument("EPUB controls");
     await user.click(screen.getByRole("button", { name: "Next section" }));
     await screen.findByText("End of book");
     const finalViewport = setTextViewportGeometry({
@@ -2860,7 +2864,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaKind = "pdf";
     testState.isMobileViewport = true;
     renderMediaPane();
-    await renderLatestToolbar();
+    await renderLatestInstrument("PDF controls");
     const probe = screen.getByTestId("mobile-chrome-behavior-probe");
     expect(probe).toHaveAttribute("data-motion-phase", "Visible");
 
@@ -2915,7 +2919,7 @@ describe("MediaPaneBody pane sizing", () => {
     const probe = screen.getByTestId("mobile-chrome-behavior-probe");
     expect(probe).toHaveAttribute("data-motion-phase", "Hidden");
 
-    await renderLatestToolbar();
+    await renderLatestInstrument("EPUB controls");
     await userEvent.click(screen.getByRole("button", { name: "Next section" }));
     await screen.findByText("Cross-section evidence.");
     await waitFor(() => {
@@ -3855,7 +3859,7 @@ describe("MediaPaneBody pane sizing", () => {
     }
   });
 
-  it("publishes one collapsed Companion command with no toolbar or Options duplicate", async () => {
+  it("publishes one collapsed Companion command with no instrument or Options duplicate", async () => {
     testState.mediaKind = "epub";
     testState.includeToc = true;
     testState.readerFocusMode = "paragraph";
@@ -3891,7 +3895,7 @@ describe("MediaPaneBody pane sizing", () => {
       ),
     ).toBe(false);
 
-    await renderLatestToolbar();
+    await renderLatestInstrument("EPUB controls");
     expect(
       screen.queryByRole("button", { name: "Companion" }),
     ).not.toBeInTheDocument();

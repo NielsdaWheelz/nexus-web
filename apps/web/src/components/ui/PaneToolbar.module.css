@@ -1,26 +1,46 @@
 .toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-2);
+  width: 100%;
   min-width: 0;
 }
 
 .search {
   flex: 1 1 200px;
-  min-width: 0;
+  min-inline-size: 8rem;
 }
 
 .filters {
   display: flex;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: var(--space-2);
-  min-width: 0;
+  white-space: nowrap;
 }
 
 .controls {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
   margin-inline-start: auto;
+  white-space: nowrap;
+}
+
+.controls:only-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-inline-start: 0;
+}
+
+.toolbar :where(button, [role="button"]) {
+  min-inline-size: var(--size-md);
+  min-block-size: var(--size-md);
+}
+
+.toolbar :where(input, select) {
+  min-block-size: var(--size-md);
 }

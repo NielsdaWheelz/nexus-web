@@ -50,7 +50,10 @@ function Reader() {
         creditGroups: [],
       },
     },
-    toolbar: <button type="button">Reader controls</button>,
+    instrument: {
+      label: "Reader controls",
+      content: <button type="button">Reader controls</button>,
+    },
     search: {
       kind: "FindOccurrences",
       query: "",
@@ -224,7 +227,10 @@ describe("PaneShell mobile Find chrome composition", () => {
     await screen.findByRole("button", { name: "Reader controls" });
     const appBar = screen.getByRole("banner");
     const paneChrome = screen.getByTestId("pane-shell-chrome");
-    const paneToolbar = screen.getByTestId("pane-shell-toolbar");
+    const contextualRow = screen.getByTestId("pane-contextual-row");
+    expect(
+      screen.getByRole("group", { name: "Reader controls" }),
+    ).toBe(contextualRow);
     const options = screen.getByRole("button", { name: "Pane options" });
 
     await scrollReaderTo(24);
@@ -287,9 +293,12 @@ describe("PaneShell mobile Find chrome composition", () => {
     expect(appBar).not.toHaveAttribute("inert");
     expect(paneChrome).not.toHaveAttribute("aria-hidden");
     expect(paneChrome).not.toHaveAttribute("inert");
-    expect(screen.getByTestId("pane-search-toolbar")).not.toHaveAttribute(
+    expect(screen.getByTestId("pane-contextual-row")).not.toHaveAttribute(
       "inert",
     );
+    expect(
+      screen.queryByRole("group", { name: "Reader controls" }),
+    ).not.toBeInTheDocument();
 
     await scrollReaderTo(360);
     await waitFor(() => {
@@ -298,7 +307,7 @@ describe("PaneShell mobile Find chrome composition", () => {
       expect(collapseProgress(appBar)).toBe(0);
       expect(collapseProgress(paneChrome)).toBe(0);
     });
-    expect(paneToolbar).not.toHaveAttribute("inert");
+    expect(contextualRow).not.toHaveAttribute("inert");
 
     fireEvent.click(screen.getByRole("button", { name: "Close search" }));
     await waitFor(() => {
@@ -307,6 +316,9 @@ describe("PaneShell mobile Find chrome composition", () => {
       ).not.toBeInTheDocument();
       expect(options).toHaveFocus();
     });
+    expect(
+      await screen.findByRole("group", { name: "Reader controls" }),
+    ).toBe(contextualRow);
     fireEvent.pointerDown(screen.getByTestId("reader-scrollport"), {
       button: 0,
       isPrimary: true,

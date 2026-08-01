@@ -657,21 +657,27 @@ export default function PaneShell({
     [label, labelPending, primaryChromeRecord, routeHeader, routeKey],
   );
   const accessibleName = paneHeaderAccessibleName(header);
-  const effectiveToolbar = acceptedPrimaryChrome?.toolbar;
-  const hasMobileToolbarSurface =
-    isMobile && Boolean(effectiveToolbar || searchExpanded);
+  const effectiveInstrument = acceptedPrimaryChrome?.instrument;
+  const effectiveContextualRow =
+    searchExpanded && acceptedSearch
+      ? { kind: "Search" as const, publication: acceptedSearch }
+      : effectiveInstrument
+        ? { kind: "Instrument" as const, publication: effectiveInstrument }
+        : null;
+  const hasMobileContextualSurface =
+    isMobile && effectiveContextualRow !== null;
   useMobileChromeSurface(
     chromeRef,
     "PaneToolbar",
-    isActive && hasMobileToolbarSurface,
+    isActive && hasMobileContextualSurface,
   );
   const effectiveActions =
     acceptedPrimaryChrome?.actions ?? EMPTY_HEADER_ACTIONS;
   const effectiveMenu = acceptedPrimaryChrome?.menu;
-  const toolbarInteractive =
+  const contextualSurfaceInteractive =
     motionPhase.kind === "Visible" || motionPhase.kind === "Pinned";
-  const toolbarUnavailable =
-    hasMobileToolbarSurface && !toolbarInteractive;
+  const contextualSurfaceUnavailable =
+    hasMobileContextualSurface && !contextualSurfaceInteractive;
   const resolvePaneReturnFocusFallback = useCallback(
     () => findPaneLandmarkFocusTarget(paneId),
     [paneId],
@@ -801,7 +807,7 @@ export default function PaneShell({
     const observer = new ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [effectiveToolbar, isMobile, searchExpanded]);
+  }, [effectiveInstrument, isMobile, searchExpanded]);
 
   const chatBusyRefs = useRef(new Set<string>());
   const [chatBusySubjects, setChatBusySubjects] = useState<
@@ -1104,11 +1110,11 @@ export default function PaneShell({
           data-testid="pane-shell-chrome"
           data-pane-chrome-focus={!isMobile ? "true" : undefined}
           data-mobile-chrome-phase={motionPhase.kind}
-          aria-hidden={toolbarUnavailable || undefined}
-          inert={toolbarUnavailable || undefined}
+          aria-hidden={contextualSurfaceUnavailable || undefined}
+          inert={contextualSurfaceUnavailable || undefined}
           tabIndex={-1}
           style={{
-            pointerEvents: toolbarUnavailable ? "none" : undefined,
+            pointerEvents: contextualSurfaceUnavailable ? "none" : undefined,
           }}
           onMouseDown={onChromeMouseDown}
         >
@@ -1121,25 +1127,35 @@ export default function PaneShell({
               navigation={navigation}
             />
           ) : null}
-          {searchExpanded && acceptedSearch ? (
+          {effectiveContextualRow ? (
             <div
-              id={searchRowId}
-              className={styles.toolbar}
-              data-testid="pane-search-toolbar"
+              id={
+                effectiveContextualRow.kind === "Search"
+                  ? searchRowId
+                  : undefined
+              }
+              className={styles.contextualRow}
+              data-testid="pane-contextual-row"
+              role={
+                effectiveContextualRow.kind === "Instrument"
+                  ? "group"
+                  : undefined
+              }
+              aria-label={
+                effectiveContextualRow.kind === "Instrument"
+                  ? effectiveContextualRow.publication.label
+                  : undefined
+              }
             >
-              <PaneSearchBar
-                ref={searchInputRef}
-                publication={acceptedSearch}
-                onClose={closeSearch}
-              />
-            </div>
-          ) : null}
-          {effectiveToolbar ? (
-            <div
-              className={styles.toolbar}
-              data-testid="pane-shell-toolbar"
-            >
-              {effectiveToolbar}
+              {effectiveContextualRow.kind === "Search" ? (
+                <PaneSearchBar
+                  ref={searchInputRef}
+                  publication={effectiveContextualRow.publication}
+                  onClose={closeSearch}
+                />
+              ) : (
+                effectiveContextualRow.publication.content
+              )}
             </div>
           ) : null}
         </div>

@@ -381,23 +381,25 @@ async function wheelReaderToTarget(
   return target;
 }
 
-function pdfControlsToolbar(page: Page) {
+function pdfControlsInstrument(page: Page) {
   return activeWorkspacePane(page)
-    .getByRole("toolbar", { name: "PDF controls" })
+    .getByRole("group", { name: "PDF controls" })
     .first();
 }
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
-  return pdfControlsToolbar(page)
+  return pdfControlsInstrument(page)
     .locator(`[aria-label="Page ${pageNumber} of ${pageCount}"]`)
     .first();
 }
 
 async function clickPdfControl(page: Page, ariaLabel: string): Promise<void> {
-  const toolbar = pdfControlsToolbar(page);
-  await expect(toolbar).toBeVisible();
+  const instrument = pdfControlsInstrument(page);
+  await expect(instrument).toBeVisible();
 
-  const inlineButton = toolbar.getByRole("button", { name: ariaLabel }).first();
+  const inlineButton = instrument
+    .getByRole("button", { name: ariaLabel })
+    .first();
   if (
     (await inlineButton.count()) > 0 &&
     (await inlineButton.isVisible().catch(() => false))
@@ -407,7 +409,7 @@ async function clickPdfControl(page: Page, ariaLabel: string): Promise<void> {
     return;
   }
 
-  const overflowToggle = toolbar
+  const overflowToggle = instrument
     .getByRole("button", { name: "More actions" })
     .first();
   await expect(overflowToggle).toBeVisible();

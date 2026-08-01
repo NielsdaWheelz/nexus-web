@@ -388,27 +388,27 @@ async function expectMobilePaneShellInvariants(page: Page): Promise<void> {
   await expectActivePaneShellContainedByViewport(page);
 }
 
-async function expectToolbarToFitPaneChrome(
+async function expectInstrumentToFitPaneChrome(
   page: Page,
-  toolbarLabel: "PDF controls" | "EPUB controls",
+  instrumentLabel: "PDF controls" | "EPUB controls",
 ): Promise<void> {
-  const toolbar = activeWorkspacePane(page).getByRole("toolbar", {
-    name: toolbarLabel,
+  const instrument = activeWorkspacePane(page).getByRole("group", {
+    name: instrumentLabel,
   });
-  await expect(toolbar).toBeVisible();
-  const fits = await toolbar.evaluate((element) => {
+  await expect(instrument).toBeVisible();
+  const fits = await instrument.evaluate((element) => {
     const chrome = element.closest<HTMLElement>(
       '[data-testid="pane-shell-chrome"]',
     );
     if (!chrome) {
       return false;
     }
-    const toolbarRect = element.getBoundingClientRect();
+    const instrumentRect = element.getBoundingClientRect();
     const chromeRect = chrome.getBoundingClientRect();
     return (
       element.scrollWidth <= chrome.clientWidth + 1 &&
-      toolbarRect.left >= chromeRect.left - 1 &&
-      toolbarRect.right <= chromeRect.right + 1
+      instrumentRect.left >= chromeRect.left - 1 &&
+      instrumentRect.right <= chromeRect.right + 1
     );
   });
   expect(fits).toBe(true);
@@ -493,8 +493,8 @@ test.describe("pane chrome", () => {
       await expect(
         activePane.locator('[data-surface-header="true"]'),
       ).toHaveAttribute("data-header-kind", "section");
-      expect(await surfaceHeaderHeight(activePane)).toBe(44);
-      expect(await paneChromeTrackHeight(activePane)).toBe(44);
+      expect(await surfaceHeaderHeight(activePane)).toBe(60);
+      expect(await paneChromeTrackHeight(activePane)).toBe(60);
 
       activePane = await gotoPaneChromePath(
         page,
@@ -660,7 +660,7 @@ test.describe("pane chrome", () => {
     ).toHaveCount(0);
   });
 
-  test("clears reader toolbar when same-pane navigation leaves media", async ({
+  test("clears the reader instrument when same-pane navigation leaves media", async ({
     page,
   }, testInfo) => {
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
@@ -671,18 +671,18 @@ test.describe("pane chrome", () => {
       `/media/${pdfSeed.media_id}`,
     );
     await expect(
-      activePane.getByRole("toolbar", { name: "PDF controls" }),
+      activePane.getByRole("group", { name: "PDF controls" }),
     ).toBeVisible();
 
     await page.locator("nav").getByRole("link", { name: "Notes" }).click();
 
     await expect(page).toHaveURL(/\/notes/);
     await expect(
-      activeWorkspacePane(page).getByRole("toolbar", { name: "PDF controls" }),
+      activeWorkspacePane(page).getByRole("group", { name: "PDF controls" }),
     ).toHaveCount(0);
   });
 
-  test("keeps reader toolbar inside a narrow pane", async ({
+  test("keeps the reader instrument inside a narrow pane", async ({
     page,
   }, testInfo) => {
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
@@ -701,46 +701,46 @@ test.describe("pane chrome", () => {
     await paneResizeHandle.focus();
     await paneResizeHandle.press("End");
 
-    const pdfToolbar = activePane.getByRole("toolbar", {
+    const pdfInstrument = activePane.getByRole("group", {
       name: "PDF controls",
     });
-    await expect(pdfToolbar).toBeVisible({ timeout: 20_000 });
+    await expect(pdfInstrument).toBeVisible({ timeout: 20_000 });
     await expect(
-      pdfToolbar.getByRole("button", { name: "Previous page" }),
+      pdfInstrument.getByRole("button", { name: "Previous page" }),
     ).toBeVisible({ timeout: 20_000 });
     await expect(
-      pdfToolbar.getByRole("button", { name: "Next page" }),
+      pdfInstrument.getByRole("button", { name: "Next page" }),
     ).toBeVisible();
     await expect(
-      pdfToolbar.getByRole("button", { name: "Highlight selection" }),
+      pdfInstrument.getByRole("button", { name: "Highlight selection" }),
     ).toHaveCount(0);
     await expect(
-      pdfToolbar.getByRole("button", { name: "More actions" }),
+      pdfInstrument.getByRole("button", { name: "More actions" }),
     ).toBeVisible();
-    await expectToolbarToFitPaneChrome(page, "PDF controls");
+    await expectInstrumentToFitPaneChrome(page, "PDF controls");
 
     activePane = await gotoPaneChromePath(
       page,
       testInfo,
       `/media/${readerResumeSeed.epub_media_id}`,
     );
-    const epubToolbar = activePane.getByRole("toolbar", {
+    const epubInstrument = activePane.getByRole("group", {
       name: "EPUB controls",
     });
-    await expect(epubToolbar).toBeVisible({ timeout: 20_000 });
+    await expect(epubInstrument).toBeVisible({ timeout: 20_000 });
     await expect(
-      epubToolbar.getByRole("button", { name: "Previous section" }),
+      epubInstrument.getByRole("button", { name: "Previous section" }),
     ).toBeVisible({ timeout: 20_000 });
     await expect(
-      epubToolbar.getByRole("button", { name: "Next section" }),
+      epubInstrument.getByRole("button", { name: "Next section" }),
     ).toBeVisible();
-    await expect(epubToolbar.getByLabel("Select section")).toBeVisible();
-    await expectToolbarToFitPaneChrome(page, "EPUB controls");
+    await expect(epubInstrument.getByLabel("Select section")).toBeVisible();
+    await expectInstrumentToFitPaneChrome(page, "EPUB controls");
     await expect
       .poll(() =>
-        epubToolbar.evaluate((toolbar) => {
+        epubInstrument.evaluate((instrument) => {
           const controls = Array.from(
-            toolbar.querySelectorAll<HTMLElement>("button, select"),
+            instrument.querySelectorAll<HTMLElement>("button, select"),
           ).filter((element) => element.getBoundingClientRect().width > 0);
           return new Set(
             controls.map((element) =>

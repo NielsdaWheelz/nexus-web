@@ -48,10 +48,15 @@ export interface PaneRefreshPublication {
   }) => Promise<PaneRefreshResult>;
 }
 
+export interface PaneInstrumentPublication {
+  readonly label: string;
+  readonly content: ReactNode;
+}
+
 export interface PanePrimaryChromePublication {
   readonly header?: PaneHeaderPublication;
-  readonly toolbar?: ReactNode;
   readonly search?: PaneSearchPublication;
+  readonly instrument?: PaneInstrumentPublication;
   readonly actions?: readonly PaneHeaderAction[];
   readonly menu?: ActionPublication;
   readonly refresh?: PaneRefreshPublication;
@@ -274,6 +279,15 @@ function arePaneHeaderPublicationsEqual(
   }
 }
 
+function arePaneInstrumentPublicationsEqual(
+  left: PaneInstrumentPublication | undefined,
+  right: PaneInstrumentPublication | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.label === right.label && left.content === right.content;
+}
+
 export function arePanePrimaryChromePublicationsEqual(
   left: PanePrimaryChromePublication | null,
   right: PanePrimaryChromePublication | null,
@@ -282,8 +296,8 @@ export function arePanePrimaryChromePublicationsEqual(
   if (!left || !right) return false;
   return (
     arePaneHeaderPublicationsEqual(left.header, right.header) &&
-    left.toolbar === right.toolbar &&
     arePaneSearchPublicationsEqual(left.search, right.search) &&
+    arePaneInstrumentPublicationsEqual(left.instrument, right.instrument) &&
     areActionDescriptorListsEqual(left.actions, right.actions) &&
     areActionPublicationsEqual(left.menu, right.menu) &&
     arePaneRefreshPublicationsEqual(left.refresh, right.refresh)

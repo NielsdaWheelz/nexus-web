@@ -173,14 +173,14 @@ async function openFindResults(
 
 async function returnToReadingPosition(pane: Locator): Promise<void> {
   await pane
-    .getByTestId("pane-search-toolbar")
+    .getByTestId("pane-contextual-row")
     .getByRole("button", { name: "Go back to reading position" })
     .click();
 }
 
 async function closeFind(pane: Locator): Promise<void> {
   await pane
-    .getByTestId("pane-search-toolbar")
+    .getByTestId("pane-contextual-row")
     .getByRole("button", { name: "Close search", exact: true })
     .click();
 }

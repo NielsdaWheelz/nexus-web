@@ -13,6 +13,7 @@
 .primaryPane {
   position: relative;
   display: grid;
+  container: primaryPane / inline-size;
   flex: 0 0 auto;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
@@ -21,8 +22,15 @@
   background: var(--surface-canvas);
 }
 
-.paneShell[data-active="true"][data-mobile="false"] {
-  box-shadow: inset 0 0 0 1px var(--ring);
+.paneShell[data-active="true"][data-mobile="false"] .primaryPane::before {
+  position: absolute;
+  z-index: 12;
+  inset-block-start: 0;
+  inset-inline: 0;
+  block-size: var(--stroke-hairline);
+  background: var(--accent);
+  content: "";
+  pointer-events: none;
 }
 
 .chrome {
@@ -30,21 +38,39 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--surface-canvas);
+  background: var(--surface-2);
   cursor: grab;
 }
 
-.toolbar {
+.contextualRow {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: nowrap;
+  flex: 0 0 var(--pane-chrome-instrument-height);
   min-width: 0;
-  min-height: var(--size-lg);
+  block-size: var(--pane-chrome-instrument-height);
+  min-block-size: var(--pane-chrome-instrument-height);
   overflow-x: auto;
   overflow-y: hidden;
-  padding: var(--space-1) var(--space-3);
-  border-bottom: 1px solid var(--edge-subtle);
+  overscroll-behavior-inline: contain;
+  padding-inline: var(--space-4);
+  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
+  background: var(--surface-2);
+}
+
+.contextualRow > * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.contextualRow :where(button, [role="button"]) {
+  min-inline-size: var(--size-md);
+  min-block-size: var(--size-md);
+}
+
+.contextualRow :where(input, select) {
+  min-block-size: var(--size-md);
 }
 
 .searchActionIcon {
@@ -58,7 +84,7 @@
   right: calc(-1 * var(--stroke-hairline));
   width: calc(var(--space-1) + 2 * var(--stroke-hairline));
   height: calc(var(--space-1) + 2 * var(--stroke-hairline));
-  border: var(--stroke-hairline) solid var(--surface-canvas);
+  border: var(--stroke-hairline) solid var(--surface-2);
   border-radius: 50%;
   background: var(--accent);
 }
@@ -144,22 +170,32 @@
 
 .paneShell[data-mobile="true"] {
   border-right: none;
+  --pane-chrome-instrument-height: max(48px, 3rem);
   --mobile-pane-chrome-height: 0px;
   --mobile-pane-content-offset: calc(
-    var(--viewport-safe-top) + var(--appnav-bar-height) +
+    var(--viewport-safe-top) + var(--pane-chrome-header-height) +
       var(--mobile-pane-chrome-height) + var(--space-2)
   );
 }
 
-.paneShell[data-mobile="true"] .toolbar {
+.paneShell[data-mobile="true"] .contextualRow {
   gap: var(--space-1);
-  padding: var(--space-1) var(--space-2);
+  padding-inline: var(--space-2);
 }
 
-/* The pane toolbar sits below the fixed app bar and shares its retreat phase. */
+.paneShell[data-mobile="true"] .contextualRow :where(button, [role="button"]) {
+  min-inline-size: var(--size-xl);
+  min-block-size: var(--size-xl);
+}
+
+.paneShell[data-mobile="true"] .contextualRow :where(input, select) {
+  min-block-size: var(--size-xl);
+}
+
+/* The contextual row sits below the fixed app bar and shares its retreat phase. */
 .paneShell[data-mobile="true"] .chrome {
   position: absolute;
-  top: calc(var(--viewport-safe-top) + var(--appnav-bar-height));
+  top: calc(var(--viewport-safe-top) + var(--pane-chrome-header-height));
   left: 0;
   right: 0;
   z-index: 11;
@@ -168,7 +204,7 @@
   transform: translateY(
     calc(
       -1 * var(--mobile-chrome-collapse) *
-        (var(--viewport-safe-top) + var(--appnav-bar-height) + var(--mobile-pane-chrome-height))
+        (var(--viewport-safe-top) + var(--pane-chrome-header-height) + var(--mobile-pane-chrome-height))
     )
   );
   will-change: transform;
@@ -190,6 +226,41 @@
 .paneShell[data-mobile="true"] .body[data-body-mode="standard"] {
   padding-bottom: var(--mobile-content-bottom-clearance);
   scroll-padding-bottom: var(--mobile-content-bottom-clearance);
+}
+
+@container primaryPane (max-width: 479px) {
+  .paneShell[data-mobile="false"] .contextualRow {
+    gap: var(--space-1);
+    padding-inline: var(--space-3);
+  }
+}
+
+@container primaryPane (max-width: 359px) {
+  .paneShell[data-mobile="false"] .contextualRow {
+    padding-inline: var(--space-2);
+  }
+}
+
+@media (forced-colors: active) {
+  .chrome,
+  .contextualRow {
+    background: Canvas;
+  }
+
+  .contextualRow {
+    border-block-end-color: CanvasText;
+  }
+
+  .paneShell[data-active="true"][data-mobile="false"] .primaryPane::before {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+
+  .searchActionMarker {
+    border-color: Canvas;
+    background: Highlight;
+    forced-color-adjust: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

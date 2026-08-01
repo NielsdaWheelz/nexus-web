@@ -1,32 +1,25 @@
 .header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  height: var(--pane-section-header-height);
-  min-height: var(--pane-section-header-height);
-  padding: 0 var(--space-4);
-  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
+  column-gap: var(--space-3);
+  block-size: var(--pane-chrome-header-height);
+  min-block-size: var(--pane-chrome-header-height);
+  padding-inline: var(--space-4);
+  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
   background: var(--surface-2);
 }
 
-.header[data-header-kind="resource"] {
-  height: var(--pane-resource-header-height);
-  min-height: var(--pane-resource-header-height);
-}
-
-.leading {
+.identity {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
   min-width: 0;
-  flex: 1;
 }
 
 .navigationControls {
   display: inline-flex;
   align-items: center;
-  flex-shrink: 0;
+  inline-size: 64px;
 }
 
 .navigationButton {
@@ -56,8 +49,8 @@
 }
 
 .navigationButton:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: calc(-1 * var(--focus-ring-offset));
 }
 
 .navigationButton:disabled {
@@ -81,4 +74,47 @@
 
 .optionsContainer {
   position: relative;
+}
+
+.optionsContainer > button:focus-visible {
+  outline-color: var(--ring);
+}
+
+@container primaryPane (max-width: 479px) {
+  .header {
+    column-gap: var(--space-2);
+    padding-inline: var(--space-3);
+  }
+
+  .trailing,
+  .actions {
+    gap: var(--space-1);
+  }
+}
+
+@container primaryPane (max-width: 359px) {
+  .header {
+    column-gap: var(--space-1);
+    padding-inline: var(--space-2);
+  }
+}
+
+@media (forced-colors: active) {
+  .header {
+    border-block-end-color: CanvasText;
+    background: Canvas;
+  }
+
+  .navigationButton {
+    color: ButtonText;
+  }
+
+  .navigationButton:disabled {
+    color: GrayText;
+  }
+
+  .navigationButton:focus-visible,
+  .optionsContainer > button:focus-visible {
+    outline-color: Highlight;
+  }
 }

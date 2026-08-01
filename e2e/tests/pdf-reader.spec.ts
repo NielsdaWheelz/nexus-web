@@ -207,20 +207,22 @@ function activeTextLayer(page: Page) {
     .last();
 }
 
-function pdfControlsToolbar(page: Page) {
+function pdfControlsInstrument(page: Page) {
   return activeWorkspacePane(page)
-    .getByRole("toolbar", { name: "PDF controls" })
+    .getByRole("group", { name: "PDF controls" })
     .first();
 }
 
-async function clickToolbarButtonByAriaLabel(
+async function clickPdfControlByAriaLabel(
   page: Page,
   ariaLabel: string,
 ): Promise<void> {
-  const toolbar = pdfControlsToolbar(page);
-  await expect(toolbar).toBeVisible();
+  const instrument = pdfControlsInstrument(page);
+  await expect(instrument).toBeVisible();
 
-  const inlineButton = toolbar.getByRole("button", { name: ariaLabel }).first();
+  const inlineButton = instrument
+    .getByRole("button", { name: ariaLabel })
+    .first();
   if (
     (await inlineButton.count()) > 0 &&
     (await inlineButton.isVisible().catch(() => false))
@@ -230,7 +232,7 @@ async function clickToolbarButtonByAriaLabel(
     return;
   }
 
-  const overflowToggle = toolbar
+  const overflowToggle = instrument
     .getByRole("button", { name: "More actions" })
     .first();
   if (
@@ -291,7 +293,7 @@ async function expectConversationPaneOpened(page: Page): Promise<void> {
 }
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
-  return pdfControlsToolbar(page)
+  return pdfControlsInstrument(page)
     .locator(`[aria-label="Page ${pageNumber} of ${pageCount}"]`)
     .first();
 }
@@ -300,7 +302,7 @@ async function readCurrentPageNumber(
   page: Page,
   pageCount: number,
 ): Promise<number | null> {
-  const indicator = pdfControlsToolbar(page)
+  const indicator = pdfControlsInstrument(page)
     .locator(`[aria-label^="Page "][aria-label$=" of ${pageCount}"]`)
     .first();
   const label = (await indicator.getAttribute("aria-label")) ?? "";
@@ -317,7 +319,7 @@ async function ensureOnPage(
   targetPage: number,
   pageCount: number,
 ): Promise<void> {
-  const anyIndicator = pdfControlsToolbar(page)
+  const anyIndicator = pdfControlsInstrument(page)
     .locator(`[aria-label^="Page "][aria-label$=" of ${pageCount}"]`)
     .first();
   await expect(anyIndicator).toBeVisible({ timeout: 20_000 });
@@ -344,7 +346,7 @@ async function ensureOnPage(
         continue;
       }
     }
-    await clickToolbarButtonByAriaLabel(
+    await clickPdfControlByAriaLabel(
       page,
       current < targetPage ? "Next page" : "Previous page",
     );
@@ -486,7 +488,7 @@ test.describe("pdf reader", () => {
       ).toBeVisible();
 
       await pane
-        .getByTestId("pane-search-toolbar")
+        .getByTestId("pane-contextual-row")
         .getByRole("button", { name: "Close search", exact: true })
         .click();
       await expect(pane.locator(".textLayer .highlight")).toHaveCount(0);
@@ -563,7 +565,9 @@ test.describe("pdf reader", () => {
       uploadedMediaId = readMediaIdFromUrl(page.url());
       expect(uploadedMediaId).not.toBe(seeded.media_id);
       await waitForPdfMediaReady(page, uploadedMediaId);
-      await expect(pdfControlsToolbar(page)).toBeVisible({ timeout: 20_000 });
+      await expect(pdfControlsInstrument(page)).toBeVisible({
+        timeout: 20_000,
+      });
       await expect(activeTextLayer(page)).toBeVisible();
       // Normalize route after the explicit Open to avoid pane-runtime churn.
       // affecting subsequent viewer assertions under parallel workers.
@@ -579,7 +583,7 @@ test.describe("pdf reader", () => {
       await expect(activeTextLayer(page)).toBeVisible();
 
       // Keep this flow on page 2 so page-scoping assertions stay isolated.
-      await clickToolbarButtonByAriaLabel(page, "Next page");
+      await clickPdfControlByAriaLabel(page, "Next page");
       await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
       await expect(activeTextLayer(page)).toBeVisible();
 
@@ -933,7 +937,7 @@ test.describe("pdf reader", () => {
     const seeded = readSeededPdfMedia();
     const deviceId = workspaceE2eDeviceId(testInfo, "e2e-pdf-reader");
     await gotoSinglePaneWorkspace(page, deviceId, `/media/${seeded.media_id}`);
-    await expect(pdfControlsToolbar(page)).toBeVisible({ timeout: 20_000 });
+    await expect(pdfControlsInstrument(page)).toBeVisible({ timeout: 20_000 });
 
     const optionsTrigger = activeWorkspacePane(page)
       .getByRole("button", { name: "Options" })

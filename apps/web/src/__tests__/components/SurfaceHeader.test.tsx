@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import type { ComponentProps } from "react";
+import "@/app/globals.css";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 
 function navigation(
@@ -24,6 +25,63 @@ const sectionHeader = {
 } as const;
 
 describe("SurfaceHeader", () => {
+  it("keeps section and resource identity on the same 60px desktop track", () => {
+    render(
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "400px 400px",
+        }}
+      >
+        <SurfaceHeader
+          header={sectionHeader}
+          identityId="section-identity"
+          navigation={navigation()}
+        />
+        <SurfaceHeader
+          header={{
+            kind: "resource",
+            resource: {
+              status: "ready",
+              title: "The Dispossessed",
+              creditGroups: [
+                { kind: "authors", credits: [{ label: "Ursula K. Le Guin" }] },
+              ],
+            },
+          }}
+          identityId="resource-identity"
+          navigation={navigation()}
+        />
+      </div>,
+    );
+
+    const [section, resource] = screen.getAllByRole("banner");
+    expect({
+      sectionHeight: Math.round(section!.getBoundingClientRect().height),
+      resourceHeight: Math.round(resource!.getBoundingClientRect().height),
+    }).toEqual({
+      sectionHeight: 60,
+      resourceHeight: 60,
+    });
+
+    document.documentElement.style.fontSize = "200%";
+    try {
+      expect({
+        aligned:
+          Math.round(section!.getBoundingClientRect().height) ===
+          Math.round(resource!.getBoundingClientRect().height),
+        sectionContainsContent: section!.scrollHeight <= section!.clientHeight,
+        resourceContainsContent: resource!.scrollHeight <= resource!.clientHeight,
+      }).toEqual({
+        aligned: true,
+        sectionContainsContent: true,
+        resourceContainsContent: true,
+      });
+    } finally {
+      document.documentElement.style.removeProperty("font-size");
+    }
+  });
+
   it("renders section identity and the options menu", async () => {
     const user = userEvent.setup();
     const onDelete = vi.fn();

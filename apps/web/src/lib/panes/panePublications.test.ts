@@ -25,7 +25,7 @@ const OTHER_RESOURCE_REF = assumeCanonicalResourceRef(
 describe("panePublications", () => {
   it("compares primary chrome structurally except for React and callback identities", () => {
     const icon = createElement("span");
-    const toolbar = createElement("div");
+    const instrumentContent = createElement("button", null, "Next page");
     const onSelect = () => {};
     const executeRefresh = async () => ({
       kind: "Complete" as const,
@@ -43,7 +43,10 @@ describe("panePublications", () => {
           }],
         },
       },
-      toolbar,
+      instrument: {
+        label: "PDF controls",
+        content: instrumentContent,
+      },
       actions: [{
         kind: "command",
         id: "companion",
@@ -93,10 +96,24 @@ describe("panePublications", () => {
         sourceKey: "media:1",
         execute: executeRefresh,
       },
+      instrument: {
+        label: "PDF controls",
+        content: instrumentContent,
+      },
     })).toBe(true);
     expect(arePanePrimaryChromePublicationsEqual(publication, {
       ...publication,
-      toolbar: createElement("div"),
+      instrument: {
+        label: "EPUB controls",
+        content: instrumentContent,
+      },
+    })).toBe(false);
+    expect(arePanePrimaryChromePublicationsEqual(publication, {
+      ...publication,
+      instrument: {
+        label: "PDF controls",
+        content: createElement("button", null, "Next page"),
+      },
     })).toBe(false);
     expect(arePanePrimaryChromePublicationsEqual(publication, {
       ...publication,

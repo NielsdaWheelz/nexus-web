@@ -55,33 +55,34 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
         data-surface-header="true"
         data-header-kind={header.kind}
       >
-        <div className={styles.leading}>
-          <div className={styles.navigationControls}>
-            <button
-              type="button"
-              className={styles.navigationButton}
-              onClick={(event) =>
-                navigation.onBack(event.detail === 0 ? "Keyboard" : "Pointer")
-              }
-              disabled={!navigation.canGoBack}
-              aria-label="Go back in this pane"
-            >
-              <ChevronLeft size={20} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className={styles.navigationButton}
-              onClick={(event) =>
-                navigation.onForward(
-                  event.detail === 0 ? "Keyboard" : "Pointer",
-                )
-              }
-              disabled={!navigation.canGoForward}
-              aria-label="Go forward in this pane"
-            >
-              <ChevronRight size={20} aria-hidden="true" />
-            </button>
-          </div>
+        <div className={styles.navigationControls}>
+          <button
+            type="button"
+            className={styles.navigationButton}
+            onClick={(event) =>
+              navigation.onBack(event.detail === 0 ? "Keyboard" : "Pointer")
+            }
+            disabled={!navigation.canGoBack}
+            aria-label="Go back in this pane"
+          >
+            <ChevronLeft size={20} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={styles.navigationButton}
+            onClick={(event) =>
+              navigation.onForward(
+                event.detail === 0 ? "Keyboard" : "Pointer",
+              )
+            }
+            disabled={!navigation.canGoForward}
+            aria-label="Go forward in this pane"
+          >
+            <ChevronRight size={20} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className={styles.identity}>
           <PaneHeaderIdentity
             id={identityId}
             model={header}

@@ -189,7 +189,7 @@ async function confirmTarget(
 async function navigateToPdfSelectionPage(page: Page): Promise<number> {
   const targetPageNumber =
     FRESH_REAL_MEDIA_FIXTURES.pdfSvms.selectionPageNumber;
-  const controls = activeWorkspacePane(page).getByRole("toolbar", {
+  const controls = activeWorkspacePane(page).getByRole("group", {
     name: "PDF controls",
   });
   await expect(controls).toBeVisible({ timeout: 15_000 });

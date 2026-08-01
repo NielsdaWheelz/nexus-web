@@ -2333,7 +2333,7 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
           .poll(() => scrollport.evaluate((element) => element.scrollTop))
           .toBeGreaterThan(readingOrigin + 64);
         await pane
-          .getByTestId("pane-search-toolbar")
+          .getByTestId("pane-contextual-row")
           .getByRole("button", { name: "Go back to reading position" })
           .click();
         await expectChromePhase(page, scrollport, "Pinned");
@@ -2346,7 +2346,7 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
           )
           .toBeLessThanOrEqual(1);
         await pane
-          .getByTestId("pane-search-toolbar")
+          .getByTestId("pane-contextual-row")
           .getByRole("button", { name: "Close search", exact: true })
           .click();
         await expectFocusOnVisibleChromeOrLandmark(page);

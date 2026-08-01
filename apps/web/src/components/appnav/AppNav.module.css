@@ -423,13 +423,14 @@
   left: 0;
   right: 0;
   z-index: var(--z-overlay);
-  display: flex;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 48px;
   align-items: center;
-  gap: var(--space-1);
-  height: calc(var(--appnav-bar-height) + var(--viewport-safe-top));
+  block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
+  min-block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
   padding: var(--viewport-safe-top) var(--space-2) 0;
   background: var(--surface-2);
-  border-bottom: 1px solid var(--edge-subtle);
+  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
   transform: translateY(calc(-100% * var(--mobile-chrome-collapse)));
   will-change: transform;
 }
@@ -441,15 +442,17 @@
 .topBarControls {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  justify-content: center;
+  inline-size: 48px;
+  min-width: 0;
 }
 
 .topBarButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 48px;
+  inline-size: 48px;
+  block-size: 48px;
   flex-shrink: 0;
   border: none;
   border-radius: var(--radius-md);
@@ -469,6 +472,11 @@
   color: var(--ink-faint);
   opacity: 0.5;
   cursor: default;
+}
+
+.topBarButton:focus-visible,
+.topBarOptions > button:focus-visible {
+  outline-color: var(--ring);
 }
 
 .topBarOptions > button {
@@ -492,15 +500,32 @@
   display: flex;
   align-self: stretch;
   align-items: center;
-  flex: 1;
   min-width: 0;
 }
 
+@media (forced-colors: active) {
+  .topBar {
+    border-block-end-color: CanvasText;
+    background: Canvas;
+  }
 
-@media (max-width: 303px) {
-  .topBar,
-  .topBarControls {
-    gap: 0;
+  .topBarButton {
+    color: ButtonText;
+  }
+
+  .topBarButton:disabled {
+    color: GrayText;
+  }
+
+  .topBarButton:focus-visible,
+  .topBarOptions > button:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .topBarFilterMarker {
+    border-color: Canvas;
+    background: Highlight;
+    forced-color-adjust: none;
   }
 }
 

@@ -164,7 +164,7 @@ test.describe("major routes load with zero CSP violations (enforced)", () => {
     );
     const pane = activeWorkspacePane(page);
     await expect(
-      pane.getByRole("toolbar", { name: "PDF controls" }).first(),
+      pane.getByRole("group", { name: "PDF controls" }).first(),
     ).toBeVisible({ timeout: 20_000 });
     await expect(
       pane

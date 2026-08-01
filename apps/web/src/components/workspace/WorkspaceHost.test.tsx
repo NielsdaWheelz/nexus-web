@@ -840,7 +840,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     expect(
       fireEvent.keyDown(editor, { key: "f", ctrlKey: true }),
     ).toBe(true);
-    expect(screen.queryByTestId("pane-search-toolbar")).toBeNull();
+    expect(screen.queryByTestId("pane-contextual-row")).toBeNull();
   });
 
   it("preserves the route body for same-resource location changes", () => {
@@ -1027,7 +1027,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
         "data-instance-id",
         firstInstance,
       );
-      expect(screen.queryByTestId("pane-search-toolbar")).toBeNull();
+      expect(screen.queryByTestId("pane-contextual-row")).toBeNull();
       expect(hostMocks.mountedBodyIds).toHaveLength(2);
       expect(hostMocks.unmountedBodyIds).toEqual([Number(firstInstance)]);
     },
@@ -1062,7 +1062,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
 
   it.each([
     [
-      "without a PaneToolbar",
+      "without an instrument",
       {
         menu: {
           kind: "FlatMenu" as const,
@@ -1078,8 +1078,13 @@ describe("WorkspaceHost pane route lifecycle", () => {
       },
     ],
     [
-      "with a PaneToolbar",
-      { toolbar: <button type="button">PDF reader controls</button> },
+      "with an instrument",
+      {
+        instrument: {
+          label: "PDF controls",
+          content: <button type="button">PDF reader controls</button>,
+        },
+      },
     ],
   ])(
     "normal mobile activation %s focuses the stable pane landmark",
@@ -1214,13 +1219,19 @@ describe("WorkspaceHost pane route lifecycle", () => {
       [
         "pane-1",
         {
-          toolbar: <button type="button">First reader controls</button>,
+          instrument: {
+            label: "First reader controls",
+            content: <button type="button">First reader controls</button>,
+          },
         },
       ],
       [
         "pane-2",
         {
-          toolbar: <button type="button">Second reader controls</button>,
+          instrument: {
+            label: "Second reader controls",
+            content: <button type="button">Second reader controls</button>,
+          },
         },
       ],
     ]);

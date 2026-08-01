@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import Link from "next/link";
+import "@/app/globals.css";
 import {
   act,
   fireEvent,
@@ -15,7 +16,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cdp, page } from "vitest/browser";
+import { cdp, page, userEvent } from "vitest/browser";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneShell from "@/components/workspace/PaneShell";
@@ -38,6 +39,8 @@ import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { routeShareTarget } from "@/lib/sharing/targets";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
+import PaneToolbar from "@/components/ui/PaneToolbar";
 import {
   MobileChromeProvider,
   useMobileChrome,
@@ -380,6 +383,193 @@ afterEach(async () => {
 });
 
 describe("PaneShell", () => {
+  it("renders one shell-owned labelled instrument group with native button order", async () => {
+    const user = userEvent.setup();
+    render(
+      paneTree({
+        routeHeader: resourceHeader,
+        routeShareIdentity: null,
+        label: "Media",
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              header: readyResource("Document title").header,
+              instrument: {
+                label: "PDF controls",
+                content: (
+                  <PaneToolbar
+                    controls={(
+                      <>
+                        <Button type="button" variant="ghost" size="sm">
+                          Previous page
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm">
+                          Next page
+                        </Button>
+                      </>
+                    )}
+                  />
+                ),
+              },
+            }}
+          />
+        ),
+      }),
+    );
+
+    const controls = await screen.findByRole("group", {
+      name: "PDF controls",
+    });
+    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(Math.round(controls.getBoundingClientRect().height)).toBe(40);
+
+    const previous = within(controls).getByRole("button", {
+      name: "Previous page",
+    });
+    const next = within(controls).getByRole("button", { name: "Next page" });
+    previous.focus();
+    await user.tab();
+    expect(next).toHaveFocus();
+  });
+
+  it("gives expanded Find exclusive occupancy and restores the instrument on close", async () => {
+    const user = userEvent.setup();
+    const onDismiss = vi.fn();
+    render(
+      paneTree({
+        routeHeader: resourceHeader,
+        routeShareIdentity: null,
+        label: "Media",
+        isActive: true,
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              header: readyResource("Document title").header,
+              instrument: {
+                label: "PDF controls",
+                content: (
+                  <PaneToolbar
+                    controls={<Button type="button">Next page</Button>}
+                  />
+                ),
+              },
+              search: {
+                kind: "FindOccurrences",
+                query: "",
+                inputLabel: "Find in document",
+                placeholder: "Find",
+                onOpen: vi.fn(),
+                onQueryChange: vi.fn(),
+                onDismiss,
+                result: { kind: "Idle" },
+                scope: { kind: "EntireResource" },
+                matchCase: false,
+                wholeWord: false,
+                onMatchCaseChange: vi.fn(),
+                onWholeWordChange: vi.fn(),
+                onStep: vi.fn(),
+                onActivate: vi.fn(),
+                onShowResults: vi.fn(),
+                resultsExpanded: false,
+                returnToReadingPosition: { kind: "Unavailable" },
+              },
+            }}
+          />
+        ),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("group", { name: "PDF controls" }),
+    ).toBeVisible();
+    expect(screen.getAllByTestId("pane-contextual-row")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Find" }));
+
+    const input = await screen.findByRole("searchbox", {
+      name: "Find in document",
+    });
+    expect(screen.queryByRole("group", { name: "PDF controls" })).toBeNull();
+    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(screen.getAllByTestId("pane-contextual-row")).toHaveLength(1);
+
+    await user.type(input, "{Escape}");
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByRole("group", { name: "PDF controls" }),
+    ).toBeVisible();
+    expect(screen.getAllByTestId("pane-contextual-row")).toHaveLength(1);
+    expect(screen.queryByRole("searchbox", { name: "Find in document" }))
+      .toBeNull();
+  });
+
+  it("keeps mobile instrument controls in a 48px row with 44px targets", async () => {
+    await useMobileTestViewport();
+    render(
+      paneTree({
+        routeHeader: resourceHeader,
+        routeShareIdentity: null,
+        label: "Media",
+        isActive: true,
+        isMobile: true,
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              header: readyResource("Document title").header,
+              instrument: {
+                label: "EPUB controls",
+                content: (
+                  <PaneToolbar
+                    controls={(
+                      <>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          iconOnly
+                          aria-label="Previous section"
+                        >
+                          <span aria-hidden="true">‹</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          iconOnly
+                          aria-label="Next section"
+                        >
+                          <span aria-hidden="true">›</span>
+                        </Button>
+                      </>
+                    )}
+                  />
+                ),
+              },
+            }}
+          />
+        ),
+      }),
+    );
+
+    const controls = await screen.findByRole("group", {
+      name: "EPUB controls",
+    });
+    const targets = within(controls).getAllByRole("button");
+    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(Math.round(controls.getBoundingClientRect().height)).toBe(48);
+    expect(
+      targets.map((target) => {
+        const rect = target.getBoundingClientRect();
+        return {
+          widthAtLeast44: rect.width >= 44,
+          heightAtLeast44: rect.height >= 44,
+        };
+      }),
+    ).toEqual([
+      { widthAtLeast44: true, heightAtLeast44: true },
+      { widthAtLeast44: true, heightAtLeast44: true },
+    ]);
+  });
+
   it("opens and focuses the active pane Filter through its action and shared request", async () => {
     const onQueryChange = vi.fn();
     const onDismiss = vi.fn();
@@ -442,7 +632,7 @@ describe("PaneShell", () => {
     expect(onQueryChange).toHaveBeenCalledWith("next");
     fireEvent.keyDown(input, { key: "Escape" });
     expect(onDismiss).toHaveBeenCalledTimes(1);
-    expect(screen.queryByTestId("pane-search-toolbar")).toBeNull();
+    expect(screen.queryByTestId("pane-contextual-row")).toBeNull();
     await waitFor(() =>
       expect(
         within(paneActions).getByRole("button", { name: "Filter" }),
@@ -1660,9 +1850,9 @@ describe("PaneShell", () => {
     expect(runtimeNavigation.activateWorkspaceTarget).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the pane landmark available while the whole moving toolbar is noninteractive outside visible phases", async () => {
+  it("keeps the pane landmark available while the whole moving contextual row is noninteractive outside visible phases", async () => {
     await useMobileTestViewport();
-    const mobileToolbar = {
+    const mobileInstrument = {
       routeHeader: resourceHeader,
       routeShareIdentity: null,
       label: "Media",
@@ -1671,13 +1861,16 @@ describe("PaneShell", () => {
         <PrimaryChromeProbe
           publication={{
             ...readyResource("Document title"),
-            toolbar: <button type="button">Reader controls</button>,
+            instrument: {
+              label: "Reader controls",
+              content: <button type="button">Reader controls</button>,
+            },
           }}
         />
       ),
     } satisfies Partial<PaneProps>;
     render(
-      paneTree(mobileToolbar, "/media/media-1", {
+      paneTree(mobileInstrument, "/media/media-1", {
         readerScrollport: true,
       }),
     );
@@ -1688,7 +1881,7 @@ describe("PaneShell", () => {
     const landmark = screen.getByTestId("pane-shell-root");
     const chrome = screen.getByTestId("pane-shell-chrome");
     const body = screen.getByTestId("pane-shell-body");
-    const toolbar = screen.getByTestId("pane-shell-toolbar");
+    const contextualRow = screen.getByTestId("pane-contextual-row");
     expect(landmark).toHaveAttribute("data-pane-focus-landmark", "true");
     expect(landmark).toHaveAttribute("tabindex", "-1");
     expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Visible");
@@ -1728,13 +1921,13 @@ describe("PaneShell", () => {
     expect(chrome).toHaveAttribute("aria-hidden", "true");
     expect(chrome).toHaveAttribute("inert");
     expect(chrome).toHaveStyle({ pointerEvents: "none" });
-    expect(toolbar).not.toHaveAttribute("aria-hidden");
-    expect(toolbar).not.toHaveAttribute("inert");
+    expect(contextualRow).not.toHaveAttribute("aria-hidden");
+    expect(contextualRow).not.toHaveAttribute("inert");
     expect(screen.queryByRole("button", { name: "Reader controls" })).toBeNull();
     expect(screen.getByTestId("pane-shell-body")).toBe(body);
   });
 
-  it("leaves the pane toolbar surface empty when the reader publishes no toolbar", async () => {
+  it("leaves the contextual row absent when the reader publishes no instrument", async () => {
     await useMobileTestViewport();
     render(
       paneTree(
