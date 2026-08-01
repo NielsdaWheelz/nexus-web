@@ -82,7 +82,11 @@ def require_converged(census: CutoverCensus) -> None:
         )
 
 
-def read_census(db: Session) -> CutoverCensus:
+def read_census(
+    db: Session,
+    *,
+    relevant_dead_media_ids: frozenset[UUID] | None = None,
+) -> CutoverCensus:
     db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
     db.execute(text("SET TRANSACTION READ ONLY"))
     revision = db.scalar(text("SELECT version_num FROM alembic_version"))
@@ -146,7 +150,15 @@ def read_census(db: Session) -> CutoverCensus:
             )
         )
 
-    active_jobs = _read_active_repair_jobs(db)
+    dead_media_ids = (
+        frozenset(item.media_id for item in media)
+        if relevant_dead_media_ids is None
+        else relevant_dead_media_ids
+    )
+    active_jobs = scope_repair_jobs(
+        _read_active_repair_jobs(db),
+        relevant_dead_media_ids=dead_media_ids,
+    )
     return CutoverCensus(
         revision=str(revision),
         deferred_rows=deferred_rows,
@@ -214,7 +226,10 @@ def repair_deferred_media() -> CutoverCensus:
         pass
 
     with session_factory() as db:
-        after = read_census(db)
+        after = read_census(
+            db,
+            relevant_dead_media_ids=frozenset(affected_media_ids),
+        )
     require_converged(after)
     return after
 
@@ -286,6 +301,23 @@ def _read_active_repair_jobs(db: Session) -> tuple[ActiveRepairJob, ...]:
             )
         )
     return tuple(jobs)
+
+
+def scope_repair_jobs(
+    jobs: tuple[ActiveRepairJob, ...],
+    *,
+    relevant_dead_media_ids: frozenset[UUID],
+) -> tuple[ActiveRepairJob, ...]:
+    """Keep claimable global work and dead operations owned by this repair.
+
+    The dedicated worker can claim any pending/running/failed ingest or reindex
+    row, so those jobs remain a global isolation concern. Dead rows are not
+    claimable. They matter only when they still fence one of the EPUBs selected
+    by this cutover, including after its nullable navigation rows disappear.
+    """
+    return tuple(
+        job for job in jobs if job.status != "dead" or job.media_id in relevant_dead_media_ids
+    )
 
 
 def _report(census: CutoverCensus) -> None:

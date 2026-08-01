@@ -10,6 +10,7 @@ from nexus.ops.epub_navigation_offsets_cutover import (
     DeferredMedia,
     classify_repair_action,
     require_converged,
+    scope_repair_jobs,
 )
 
 pytestmark = pytest.mark.unit
@@ -93,3 +94,31 @@ def test_convergence_accepts_only_the_empty_repaired_census():
     )
 
     require_converged(census)
+
+
+def test_job_scope_keeps_claimable_foreign_work_and_only_relevant_dead_jobs():
+    affected_media_id = uuid4()
+    foreign_media_id = uuid4()
+    affected_dead = ActiveRepairJob(
+        job_id=uuid4(),
+        kind="media_content_reindex_job",
+        status="dead",
+        media_id=affected_media_id,
+    )
+    foreign_dead = ActiveRepairJob(
+        job_id=uuid4(),
+        kind="media_content_reindex_job",
+        status="dead",
+        media_id=foreign_media_id,
+    )
+    foreign_pending = ActiveRepairJob(
+        job_id=uuid4(),
+        kind="ingest_media_source",
+        status="pending",
+        media_id=foreign_media_id,
+    )
+
+    assert scope_repair_jobs(
+        (affected_dead, foreign_dead, foreign_pending),
+        relevant_dead_media_ids=frozenset({affected_media_id}),
+    ) == (affected_dead, foreign_pending)
