@@ -142,7 +142,10 @@ def test_published_citation_reconstructs_locator_from_canonical_evidence(
     assert persisted is not None, "citation edge lost its display snapshot"
 
     assert "locator" not in persisted, f"citation edge duplicated target position: {persisted!r}"
-    assert citation.media_id == media_id
+    assert citation.media_id == media_id, (
+        "citation did not publish a canonical evidence locator: "
+        f"expected media {media_id}, observed {citation.media_id}"
+    )
     assert citation.locator is not None, "citation did not publish a canonical evidence locator"
     assert citation.locator.model_dump(mode="json") == {
         "type": "web_text_offsets",
