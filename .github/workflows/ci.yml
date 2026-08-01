@@ -13,6 +13,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  UV_VERSION: "0.12.1"
+
 jobs:
   static-checks:
     runs-on: ubuntu-latest
@@ -37,6 +40,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           prune-cache: true
           cache-dependency-glob: python/uv.lock
@@ -97,6 +101,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           prune-cache: true
           cache-dependency-glob: llm-calling/uv.lock
@@ -119,6 +124,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           prune-cache: true
           cache-dependency-glob: python/uv.lock
@@ -147,6 +153,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           prune-cache: true
           cache-dependency-glob: python/uv.lock
@@ -186,6 +193,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           prune-cache: true
           cache-dependency-glob: python/uv.lock
@@ -392,6 +400,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           prune-cache: true
           cache-dependency-glob: python/uv.lock
@@ -463,6 +472,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           prune-cache: true
           cache-dependency-glob: python/uv.lock
@@ -535,6 +545,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           prune-cache: true
           cache-dependency-glob: python/uv.lock
@@ -646,6 +657,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           prune-cache: true
           cache-dependency-glob: python/uv.lock
@@ -771,6 +783,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           prune-cache: true
           cache-dependency-glob: llm-calling/uv.lock
