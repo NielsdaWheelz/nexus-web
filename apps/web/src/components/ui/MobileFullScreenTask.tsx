@@ -44,6 +44,10 @@ export default function MobileFullScreenTask({
   focusKey,
 }: MobileFullScreenTaskProps) {
   const panelRef = useRef<HTMLElement>(null);
+  const hasOpenedRef = useRef(false);
+  if (active) {
+    hasOpenedRef.current = true;
+  }
   const lifecycle = useMobileModalLifecycle({
     panelRef,
     active,
@@ -55,13 +59,15 @@ export default function MobileFullScreenTask({
     focusKey,
   });
 
-  if (!active) return null;
+  if (!hasOpenedRef.current) return null;
   return createPortal(
     <ModalLayerProvider token={lifecycle.layerToken}>
       <div
         className={styles.projection}
         {...modalBackdropProjection(lifecycle.isTopmost)}
         role="presentation"
+        hidden={!active}
+        inert={!active ? true : undefined}
         style={{
           top: `${lifecycle.visualViewportTopPx}px`,
           bottom: `${lifecycle.keyboardBottomInsetPx}px`,

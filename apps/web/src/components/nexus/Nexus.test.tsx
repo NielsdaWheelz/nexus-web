@@ -65,6 +65,7 @@ let openablesResponse:
   | ((init: RequestInit | undefined) => Promise<Response>);
 let mediaFromUrlResponse: Promise<Response> | null;
 let viewport: ReturnType<typeof mockViewport>;
+let allowWorkspaceSessionWrite = false;
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -142,6 +143,13 @@ function mockApi() {
       if (
         url.pathname === "/api/me/nexus-selections" &&
         init?.method === "POST"
+      ) {
+        return jsonResponse({ data: null });
+      }
+      if (
+        allowWorkspaceSessionWrite &&
+        url.pathname === "/api/me/workspace-session" &&
+        init?.method === "PUT"
       ) {
         return jsonResponse({ data: null });
       }
@@ -359,6 +367,7 @@ beforeEach(() => {
   localStorage.clear();
   window.history.replaceState({}, "", "/");
   requests = [];
+  allowWorkspaceSessionWrite = false;
   mockApi();
 });
 
@@ -411,6 +420,12 @@ describe("Nexus shell contracts", () => {
       screen.getByRole("button", { name: "Open Nexus, 1 tab" }),
     );
     const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    const frameCallbacks: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
 
     await userEvent.click(
       within(dialog).getByRole("button", { name: /^Notes Place$/ }),
@@ -419,6 +434,16 @@ describe("Nexus shell contracts", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
     );
+    expect(selectionRequests()).toHaveLength(0);
+    const firstFrame = frameCallbacks.splice(0);
+    act(() => {
+      for (const callback of firstFrame) callback(performance.now());
+    });
+    expect(selectionRequests()).toHaveLength(0);
+    const secondFrame = frameCallbacks.splice(0);
+    act(() => {
+      for (const callback of secondFrame) callback(performance.now());
+    });
     await waitFor(() => expect(selectionRequests()).toHaveLength(1));
     expect(selectionRequests()[0]!.body).toMatchObject({
       query: null,
@@ -426,6 +451,43 @@ describe("Nexus shell contracts", () => {
       label_snapshot: "Notes",
       source: "Static",
     });
+    expect(selectionRequests()[0]!.init?.keepalive).toBe(true);
+  });
+
+  it("flushes one accepted selection on page hide before its deferred frames", async () => {
+    allowWorkspaceSessionWrite = true;
+    renderNexus({ mobile: true });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Nexus, 1 tab" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    const frameCallbacks: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /^Notes Place$/ }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
+    );
+    expect(selectionRequests()).toHaveLength(0);
+
+    fireEvent(window, new Event("pagehide"));
+    await waitFor(() => expect(selectionRequests()).toHaveLength(1));
+    act(() => {
+      for (const callback of frameCallbacks.splice(0)) {
+        callback(performance.now());
+      }
+      for (const callback of frameCallbacks.splice(0)) {
+        callback(performance.now());
+      }
+    });
+    expect(selectionRequests()).toHaveLength(1);
+    expect(selectionRequests()[0]!.init?.keepalive).toBe(true);
   });
 
   it("uses Nexus.Open to open the inline row menu and no-ops without row actions", async () => {
@@ -634,8 +696,9 @@ describe("Nexus shell contracts", () => {
       screen.getByRole("gridcell", { name: /^New Page\b/ }),
       { shiftKey: true },
     );
+    const recoveryDialog = await screen.findByRole("dialog", { name: "Nexus" });
     expect(
-      await screen.findByText(/Your page was created\./),
+      await within(recoveryDialog).findByText(/Your page was created\./),
     ).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -649,6 +712,38 @@ describe("Nexus shell contracts", () => {
       }),
     ).toBeVisible();
     expect(openablesCalls).toBeGreaterThan(callsBeforeMutation);
+  });
+
+  it("bounds Openables responses within one visible Nexus session", async () => {
+    let openablesCalls = 0;
+    openablesResponse = async (init) => {
+      openablesCalls += 1;
+      const query = String(requestBody(init)?.q);
+      return jsonResponse({
+        data: {
+          items: [{ ...openablePageResult(), label: `Result ${query}` }],
+        },
+      });
+    };
+
+    renderNexus();
+    act(() => requestNexusOpen({ kind: "Root" }));
+    const input = await screen.findByRole("combobox", {
+      name: "Find anything…",
+    });
+
+    for (let index = 0; index <= 32; index += 1) {
+      fireEvent.change(input, { target: { value: `cache-${index}` } });
+      await waitFor(() => expect(openablesCalls).toBe(index + 1));
+      expect(
+        await screen.findByRole("gridcell", {
+          name: new RegExp(`^Result cache-${index}\\b`),
+        }),
+      ).toBeVisible();
+    }
+
+    fireEvent.change(input, { target: { value: "cache-0" } });
+    await waitFor(() => expect(openablesCalls).toBe(34));
   });
 
   it("carries Shift+Enter Fork through the shell and records the accepted new tab", async () => {
@@ -713,14 +808,16 @@ describe("Nexus shell contracts", () => {
         actionId: "Nexus.Quick.Page",
       }),
     );
+    let recoveryDialog = await screen.findByRole("dialog", { name: "Nexus" });
     expect(
-      await screen.findByText(/Your page was created\./),
+      await within(recoveryDialog).findByText(/Your page was created\./),
     ).toBeVisible();
     expect(selectionRequests()).toHaveLength(0);
 
     await userEvent.click(screen.getByRole("button", { name: "Open" }));
+    recoveryDialog = await screen.findByRole("dialog", { name: "Nexus" });
     expect(
-      await screen.findByText(/Your page was created\./),
+      within(recoveryDialog).getByText(/Your page was created\./),
     ).toBeVisible();
     expect(
       requests.filter(

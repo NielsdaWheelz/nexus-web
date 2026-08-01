@@ -174,14 +174,23 @@ interface PaneRouteErrorBoundaryProps {
 
 class PaneRouteErrorBoundary extends Component<
   PaneRouteErrorBoundaryProps,
-  { hasError: boolean }
+  { hasError: boolean; resetKey: string }
 > {
   constructor(props: PaneRouteErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, resetKey: props.resetKey };
   }
 
-  static getDerivedStateFromError(): { hasError: boolean } {
+  static getDerivedStateFromProps(
+    props: PaneRouteErrorBoundaryProps,
+    state: { hasError: boolean; resetKey: string },
+  ): { hasError: false; resetKey: string } | null {
+    return props.resetKey === state.resetKey
+      ? null
+      : { hasError: false, resetKey: props.resetKey };
+  }
+
+  static getDerivedStateFromError(): { hasError: true } {
     return { hasError: true };
   }
 
@@ -192,12 +201,6 @@ class PaneRouteErrorBoundary extends Component<
       `Workspace pane ${this.props.paneId} failed to render:`,
       error,
     );
-  }
-
-  componentDidUpdate(prevProps: PaneRouteErrorBoundaryProps): void {
-    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
-      this.setState({ hasError: false });
-    }
   }
 
   render() {
@@ -1727,7 +1730,7 @@ function WorkspaceHost() {
         <div ref={canvasRef} className={styles.paneCanvas} onWheel={onWheel}>
           {renderedPanes.map((pane) => (
             <div
-              key={pane.paneId}
+              key={isMobile ? "mobile-active-pane" : pane.paneId}
               className={styles.paneWrap}
               data-pane-id={pane.paneId}
               data-active={pane.isActive ? "true" : "false"}

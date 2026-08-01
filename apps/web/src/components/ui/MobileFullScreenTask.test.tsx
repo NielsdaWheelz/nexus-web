@@ -1,4 +1,4 @@
-import { useRef, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { cdp, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -89,6 +89,17 @@ function OpenCloseTask() {
       </MobileFullScreenTask>
     </>
   );
+}
+
+function RetainedTaskContent({
+  label,
+  onUnmount,
+}: {
+  label: string;
+  onUnmount(): void;
+}) {
+  useEffect(() => onUnmount, [onUnmount]);
+  return <p>{label}</p>;
 }
 
 function TaskWithDialog({
@@ -194,6 +205,61 @@ describe("MobileFullScreenTask", () => {
       screen.queryByRole("dialog", { name: "Inactive task" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Inactive content")).not.toBeInTheDocument();
+  });
+
+  it("retains a previously opened task subtree while inactive", () => {
+    const onUnmount = vi.fn();
+    const view = render(
+      withRenderEnvironment(
+        <MobileFullScreenTask
+          active
+          onDismiss={noop}
+          onDismissRequest={() => "accepted"}
+          ariaLabel="Retained task"
+          initialFocus={() => null}
+          focusKey="retained"
+        >
+          <RetainedTaskContent
+            label="Retained task content"
+            onUnmount={onUnmount}
+          />
+        </MobileFullScreenTask>,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    const content = screen.getByText("Retained task content");
+    view.rerender(
+      withRenderEnvironment(
+        <MobileFullScreenTask
+          active={false}
+          onDismiss={noop}
+          onDismissRequest={() => "accepted"}
+          ariaLabel="Retained task"
+          initialFocus={() => null}
+          focusKey="retained"
+        >
+          <RetainedTaskContent
+            label="Updated retained task content"
+            onUnmount={onUnmount}
+          />
+        </MobileFullScreenTask>,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    expect(onUnmount).not.toHaveBeenCalled();
+    expect(content).toBeInTheDocument();
+    expect(content).toHaveTextContent("Updated retained task content");
+    expect(content).not.toBeVisible();
+    const retainedProjection = screen.getByRole("presentation", {
+      hidden: true,
+    });
+    expect(retainedProjection).toHaveAttribute("hidden");
+    expect(getComputedStyle(retainedProjection).display).toBe("none");
+    expect(
+      screen.queryByRole("dialog", { name: "Retained task" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders an unpainted Nexus projection around one opaque dialog frame", () => {

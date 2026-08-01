@@ -1415,6 +1415,7 @@ test.describe("mobile Nexus task", () => {
       ),
       "/notes",
     );
+    await page.evaluate(() => performance.setResourceTimingBufferSize(1_000));
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("Emulation.setCPUThrottlingRate", {
       rate: PERFORMANCE_CPU_SLOWDOWN,
@@ -1484,6 +1485,67 @@ test.describe("mobile Nexus task", () => {
         await waitForMeasureCount(page, "nexus-openables", sample);
       }
       const openablesSamples = await measureDurations(page, "nexus-openables");
+      const openablesResourceTimings = await page.evaluate((sampleCount) => {
+        const entries = performance
+          .getEntriesByType("resource")
+          .filter(
+            (entry): entry is PerformanceResourceTiming =>
+              entry instanceof PerformanceResourceTiming &&
+              new URL(entry.name).pathname ===
+                "/api/resource-items/openables/search",
+          )
+          .slice(-sampleCount);
+        return entries.map((entry) => ({
+          durationMs: entry.duration,
+          apiDurationMs:
+            entry.serverTiming.find((timing) => timing.name === "nexus_api")
+              ?.duration ?? null,
+          authDurationMs:
+            entry.serverTiming.find((timing) => timing.name === "nexus_auth")
+              ?.duration ?? null,
+          openablesDurationMs:
+            entry.serverTiming.find(
+              (timing) => timing.name === "nexus_openables",
+            )?.duration ?? null,
+          bffDurationMs:
+            entry.serverTiming.find((timing) => timing.name === "nexus_bff")
+              ?.duration ?? null,
+        }));
+      }, OPENABLES_SAMPLE_COUNT);
+      expect(openablesResourceTimings).toHaveLength(OPENABLES_SAMPLE_COUNT);
+      const apiSamples = openablesResourceTimings.flatMap((timing) =>
+        timing.apiDurationMs === null ? [] : [timing.apiDurationMs],
+      );
+      const bffSamples = openablesResourceTimings.flatMap((timing) =>
+        timing.bffDurationMs === null ? [] : [timing.bffDurationMs],
+      );
+      const authSamples = openablesResourceTimings.flatMap((timing) =>
+        timing.authDurationMs === null ? [] : [timing.authDurationMs],
+      );
+      const openablesServiceSamples = openablesResourceTimings.flatMap(
+        (timing) =>
+          timing.openablesDurationMs === null
+            ? []
+            : [timing.openablesDurationMs],
+      );
+      expect(apiSamples).toHaveLength(OPENABLES_SAMPLE_COUNT);
+      expect(bffSamples).toHaveLength(OPENABLES_SAMPLE_COUNT);
+      expect(authSamples).toHaveLength(OPENABLES_SAMPLE_COUNT);
+      expect(openablesServiceSamples).toHaveLength(OPENABLES_SAMPLE_COUNT);
+      const apiOverheadSamples = apiSamples.map(
+        (duration, index) =>
+          duration - authSamples[index]! - openablesServiceSamples[index]!,
+      );
+      const bffOverheadSamples = bffSamples.map(
+        (duration, index) => duration - apiSamples[index]!,
+      );
+      const responseTransferSamples = openablesResourceTimings.map(
+        (timing, index) => timing.durationMs - bffSamples[index]!,
+      );
+      const clientCommitSamples = openablesSamples.map(
+        (duration, index) =>
+          duration - openablesResourceTimings[index]!.durationMs,
+      );
 
       await input.fill("");
       await dialog.getByRole("button", { name: "Done" }).tap();
@@ -1545,6 +1607,18 @@ test.describe("mobile Nexus task", () => {
             budgetMs: NEXUS_INTERACTION_BUDGET_MS,
             p95Ms: p95(activateSamples),
             samples: activateSamples.length,
+          },
+        },
+        diagnostics: {
+          "nexus-openables": {
+            apiP95Ms: p95(apiSamples),
+            authP95Ms: p95(authSamples),
+            openablesServiceP95Ms: p95(openablesServiceSamples),
+            apiOverheadP95Ms: p95(apiOverheadSamples),
+            bffHeaderP95Ms: p95(bffSamples),
+            bffOverheadP95Ms: p95(bffOverheadSamples),
+            responseTransferP95Ms: p95(responseTransferSamples),
+            clientCommitP95Ms: p95(clientCommitSamples),
           },
         },
       };

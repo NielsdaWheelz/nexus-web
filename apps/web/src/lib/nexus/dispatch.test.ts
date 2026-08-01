@@ -63,6 +63,19 @@ afterEach(() => {
 });
 
 describe("Nexus dispatch", () => {
+  it("settles exact-pane activation in the initiating event", () => {
+    const ctx = context();
+
+    const result = dispatchNexusTarget(
+      { kind: "PaneOpen", paneId: "pane-a" },
+      ctx,
+      { disposition: { kind: "Follow" }, modality: "Pointer" },
+    );
+
+    expect(result).toEqual({ kind: "NavigationAccepted" });
+    expect(ctx.activatePane).toHaveBeenCalledWith("pane-a");
+  });
+
   it("carries Follow and Fork through internal and exact-pane activation", async () => {
     const ctx = context();
     await dispatchNexusTarget(
@@ -98,8 +111,8 @@ describe("Nexus dispatch", () => {
     const ctx = context({
       result: { kind: "Rejected", reason: "PaneLimitReached" },
     });
-    await expect(
-      dispatchNexusTarget(
+    expect(
+      await dispatchNexusTarget(
         {
           kind: "InternalHref",
           href: "/libraries",
@@ -108,7 +121,7 @@ describe("Nexus dispatch", () => {
         ctx,
         { disposition: { kind: "Adopt" }, modality: "Programmatic" },
       ),
-    ).resolves.toEqual({
+    ).toEqual({
       kind: "NavigationRejected",
       reason: "PaneLimitReached",
       target: {
@@ -160,13 +173,13 @@ describe("Nexus dispatch", () => {
     });
     const ctx = context();
 
-    await expect(
-      dispatchNexusTarget(
+    expect(
+      await dispatchNexusTarget(
         { kind: "ResourceOpen", subject, labelHint: "A resource" },
         ctx,
         PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
       ),
-    ).resolves.toEqual({ kind: "NavigationAccepted" });
+    ).toEqual({ kind: "NavigationAccepted" });
   });
 
   it("routes workflow targets through the controller without side effects in components", async () => {
@@ -191,9 +204,7 @@ describe("Nexus dispatch", () => {
       { kind: "ManageTabs" },
     ];
     for (const target of workflows) {
-      await expect(
-        dispatchNexusTarget(target, ctx, activation),
-      ).resolves.toEqual({
+      expect(await dispatchNexusTarget(target, ctx, activation)).toEqual({
         kind: "WorkflowRequested",
         target,
         activation,
@@ -344,20 +355,20 @@ describe("Nexus dispatch", () => {
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(true);
 
-    await expect(
-      dispatchNexusTarget(
+    expect(
+      await dispatchNexusTarget(
         { kind: "PaneSearch" },
         ctx,
         PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
       ),
-    ).resolves.toEqual({ kind: "Stayed" });
-    await expect(
-      dispatchNexusTarget(
+    ).toEqual({ kind: "Stayed" });
+    expect(
+      await dispatchNexusTarget(
         { kind: "PaneSearch" },
         ctx,
         PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
       ),
-    ).resolves.toEqual({ kind: "NavigationAccepted" });
+    ).toEqual({ kind: "NavigationAccepted" });
   });
 
   it("keeps conversation, queue, share, and pane mutations in the dispatch owner", async () => {
@@ -437,13 +448,13 @@ describe("Nexus dispatch", () => {
       ctx,
       PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
     );
-    await expect(
-      dispatchNexusTarget(
+    expect(
+      await dispatchNexusTarget(
         { kind: "ResumeCurrentPlayback" },
         ctx,
         PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
       ),
-    ).resolves.toEqual({ kind: "Stayed" });
+    ).toEqual({ kind: "Stayed" });
 
     expect(ctx.activateWorkspaceTarget).toHaveBeenCalledWith(
       expect.objectContaining({

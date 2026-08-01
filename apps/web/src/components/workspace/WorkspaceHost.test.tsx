@@ -67,9 +67,12 @@ function paneVisit(href: string): PaneVisit {
 
 const hostMocks = vi.hoisted(() => ({
   bodyInstanceId: 0,
+  paneShellInstanceId: 0,
   bodyRenderCountByPaneId: new Map<string, number>(),
   mountedBodyIds: [] as number[],
   unmountedBodyIds: [] as number[],
+  mountedPaneShellIds: [] as number[],
+  unmountedPaneShellIds: [] as number[],
   paneShellSnapshots: [] as {
     fixedChromeWidthPx: number;
     secondarySurfaces: string;
@@ -486,6 +489,18 @@ vi.mock("@/components/workspace/PaneShell", async () => {
       props: ComponentProps<typeof ActualPaneShell>,
     ) {
       const router = usePaneRouter();
+      const instanceId = useRef(0);
+      if (instanceId.current === 0) {
+        hostMocks.paneShellInstanceId += 1;
+        instanceId.current = hostMocks.paneShellInstanceId;
+      }
+      useEffect(() => {
+        const id = instanceId.current;
+        hostMocks.mountedPaneShellIds.push(id);
+        return () => {
+          hostMocks.unmountedPaneShellIds.push(id);
+        };
+      }, []);
       if (hostMocks.useActualPaneShell) {
         return <ActualPaneShell {...props} />;
       }
@@ -513,6 +528,7 @@ vi.mock("@/components/workspace/PaneShell", async () => {
       return (
         <section
           data-testid="pane-shell"
+          data-instance-id={instanceId.current}
           data-min-width-px={sizing.primaryMinWidthPx}
           data-fixed-chrome-width-px={fixedChromePublication?.widthPx ?? 0}
           data-secondary-width-px={secondarySizing?.widthPx ?? 0}
@@ -751,9 +767,12 @@ describe("WorkspaceHost pane route lifecycle", () => {
   beforeEach(() => {
     nextVisitIndex = 1;
     hostMocks.bodyInstanceId = 0;
+    hostMocks.paneShellInstanceId = 0;
     hostMocks.bodyRenderCountByPaneId = new Map();
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
+    hostMocks.mountedPaneShellIds = [];
+    hostMocks.unmountedPaneShellIds = [];
     hostMocks.paneShellSnapshots = [];
     hostMocks.mobileSecondaryInputs = [];
     hostMocks.useActualPaneShell = false;
@@ -862,6 +881,44 @@ describe("WorkspaceHost pane route lifecycle", () => {
     view.rerender(<WorkspaceHost />);
 
     expect(hostMocks.bodyRenderCountByPaneId).toEqual(initialRenderCounts);
+  });
+
+  it("keeps one mobile pane shell while replacing the active route body", () => {
+    hostMocks.isMobile = true;
+    setTwoPaneHrefs(MEDIA_HREF_1, MEDIA_HREF_2);
+    const view = render(<WorkspaceHost />);
+    const firstShellInstance =
+      screen.getByTestId("pane-shell").dataset.instanceId;
+    const firstBodyInstance =
+      screen.getByTestId("route-body").dataset.instanceId;
+
+    hostMocks.store.state = {
+      ...hostMocks.store.state,
+      activePrimaryPaneId: "pane-1",
+    };
+    view.rerender(<WorkspaceHost />);
+
+    expect(screen.getAllByTestId("pane-shell")).toHaveLength(1);
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-instance-id",
+      firstShellInstance,
+    );
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-pane-id-contract",
+      "pane-1",
+    );
+    expect(screen.getByTestId("route-body")).not.toHaveAttribute(
+      "data-instance-id",
+      firstBodyInstance,
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-pane-id",
+      "pane-1",
+    );
+    expect(hostMocks.mountedPaneShellIds).toHaveLength(1);
+    expect(hostMocks.unmountedPaneShellIds).toEqual([]);
+    expect(hostMocks.mountedBodyIds).toHaveLength(2);
+    expect(hostMocks.unmountedBodyIds).toEqual([Number(firstBodyInstance)]);
   });
 
   it("preserves the route body for same-resource location changes", () => {

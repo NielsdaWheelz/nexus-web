@@ -238,11 +238,25 @@ export function nexusTargetNavigates(target: NexusTarget): boolean {
   }
 }
 
-export async function dispatchNexusTarget(
+export type NexusDispatchResult =
+  | NexusDispatchOutcome
+  | Promise<NexusDispatchOutcome>;
+
+export function settleNexusDispatch(
+  run: () => NexusDispatchResult,
+): Promise<NexusDispatchOutcome> {
+  try {
+    return Promise.resolve(run());
+  } catch (error: unknown) {
+    return Promise.reject(error);
+  }
+}
+
+export function dispatchNexusTarget(
   target: MaterializedNexusTarget,
   context: NexusDispatchCtx,
   activation: NexusTargetActivation,
-): Promise<NexusDispatchOutcome> {
+): NexusDispatchResult {
   const blockedByAndroid = (href: string): boolean => {
     if (!isAndroidShellRestrictedHref(href, context.androidShell)) {
       return false;
@@ -309,7 +323,7 @@ export async function dispatchNexusTarget(
       return { kind: "NavigationAccepted" };
     case "ResourceChat": {
       let outcome: NexusDispatchOutcome = { kind: "Stayed" };
-      await executeResourceChat({
+      return executeResourceChat({
         ref: target.ref,
         openConversation: (conversationId) => {
           const workspaceTarget = {
@@ -330,8 +344,7 @@ export async function dispatchNexusTarget(
             }),
           );
         },
-      });
-      return outcome;
+      }).then(() => outcome);
     }
     case "Ask":
       return activateTarget(
@@ -343,15 +356,18 @@ export async function dispatchNexusTarget(
         activation,
       );
     case "QueueAdd":
-      await context.placeItems({
-        mediaIds: [parseMediaId(target.mediaId)],
-        placement: { kind: "Last" },
-      });
-      context.feedback.show({
-        severity: "success",
-        title: "Added to Lectern",
-      });
-      return { kind: "Stayed" };
+      return Promise.resolve(
+        context.placeItems({
+          mediaIds: [parseMediaId(target.mediaId)],
+          placement: { kind: "Last" },
+        }),
+      ).then(() => {
+          context.feedback.show({
+            severity: "success",
+            title: "Added to Lectern",
+          });
+          return { kind: "Stayed" };
+        });
     case "NewConversation":
       return activateTarget(
         {
@@ -384,12 +400,13 @@ export async function dispatchNexusTarget(
       context.openShare(target.target, context.shareOptions());
       return { kind: "NavigationAccepted" };
     case "CopyExternalLink":
-      await copyText(target.href);
-      context.feedback.show({
-        severity: "success",
-        title: "External link copied",
+      return copyText(target.href).then(() => {
+        context.feedback.show({
+          severity: "success",
+          title: "External link copied",
+        });
+        return { kind: "Stayed" };
       });
-      return { kind: "Stayed" };
     case "PaneOpen": {
       const pane = context.panes.find((candidate) => candidate.id === target.paneId);
       if (!pane) return { kind: "Stayed" };

@@ -252,14 +252,16 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
    (inline-refreshing a `refreshable` cookie); forwards an allow-listed set of
    headers plus `Authorization: Bearer <supabase access token>`,
    `X-Nexus-Internal: <secret>`, and `X-Request-ID`; applies a 30s timeout;
-   strips internal/`set-cookie`/auth headers off the response. The browser never
-   sees the bearer or the internal secret.
+   strips internal/`set-cookie`/auth headers off the response; and streams an
+   authenticated upstream body without first materializing it in the BFF. The
+   browser never sees the bearer or the internal secret.
 5. **FastAPI** receives the request through its middleware stack — executed in this
    order (`python/nexus/app.py`): RequestID → StreamCORS → RequestDbSession →
    **Auth** → route. `AuthMiddleware` (`auth/middleware.py`) verifies the JWT via
-   JWKS (`auth/verifier.py`), runs first-login **bootstrap** off the event loop in
-   a threadpool, and attaches a `Viewer{user_id, default_library_id, email, roles}`
-   to `request.state`.
+   JWKS (`auth/verifier.py`), resolves first-login **bootstrap** through its bounded
+   process-local success cache (threadpool + database only on a miss), and attaches
+   a `Viewer{user_id, default_library_id, email, roles}` to `request.state`. It
+   publishes its measured phase as `nexus_auth`.
 6. The **route handler** (`api/routes/*`) is transport-only: pull the `Viewer` and
    a DB `Session` via `Depends`, call exactly one **service** function, return
    `success_response(...)` or raise an `ApiError`. Handlers are plain `def`, so
@@ -267,7 +269,12 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
 7. The **service** holds the business logic, returns plain data.
 8. On the way out, `RequestDbSessionMiddleware` **releases the pooled DB
    connection at `http.response.start`** — before the body streams to a possibly
-   slow client — then RequestID stamps `X-Request-ID` and emits the access log.
+   slow client — then RequestID stamps `X-Request-ID`, publishes the complete API
+   header phase as `Server-Timing: nexus_api`, preserves narrower downstream
+   phases such as Openables' `nexus_openables`, and emits the access log. The BFF
+   allow-lists those trusted timing values and appends `nexus_bff`, so same-origin
+   Resource Timing can attribute auth, service, total API, and proxy work without
+   exposing credentials or implementation detail in the response body.
 
 Errors become HTTP via three exception handlers (`responses.py`): `ApiError`
 carries an `ApiErrorCode` enum mapped to a status; unhandled exceptions become a
@@ -632,7 +639,9 @@ Supabase issues JWTs; FastAPI verifies them via JWKS (`auth/verifier.py`) and
 derives a `Viewer`. On a user's first request per process, `AuthMiddleware` runs
 **bootstrap** (`services/bootstrap.py`: `ensure_user_and_default_library`) once —
 idempotent under SERIALIZABLE, creating the `users` row, a default library, and an
-admin membership; the resulting `default_library_id` rides on the `Viewer`.
+admin membership; its bounded process-local LRU carries the resulting
+`default_library_id` on later `Viewer` projections without another threadpool or
+database hop. Eviction only repeats the idempotent bootstrap on a later request.
 Visibility is enforced by boolean predicates (`auth/permissions.py`) that take an
 explicit session and never leak existence (not-found == not-visible).
 
@@ -698,7 +707,15 @@ is the full hybrid retrieval and may surface passage candidates (`kind:
 "passage"`, transient `candidate_ref`); its `purpose=reference` profile is a
 one-character-capable lexical fast path (exact/prefix/substring/FTS,
 including note-body substrings) restricted to direct targets, and never calls
-`build_query_embedding`. Both profiles apply target capability, visibility,
+`build_query_embedding`. That reference pass retrieves its twelve independently
+bounded lexical sources through one typed `UNION ALL` statement; source-local
+visibility, score, order, and limit remain inside each branch, and the candidate
+engine strictly decodes the common `result_type/id/score/payload` row contract.
+The measured high-volume note-body branch owns both its full-text GIN index and
+its `pg_trgm` substring GIN index; the latter preserves required `ILIKE`
+substring semantics without turning every Openables keystroke into a note-table
+scan.
+Both profiles apply target capability, visibility,
 canonical dedupe, and exclusions before per-source caps, and refill a sparse
 filtered page rather than under-filling it. Openable search performs one
 bounded lexical candidate pass, admits only visible direct resources with
@@ -1372,11 +1389,24 @@ Its Root paints synchronously from workspace state and fixed Place/Quick
 projections. Find merges local pane/destination matches, one-character
 route-only openable resources, and two-character canonical search results while
 preserving pane, destination, occurrence-resource, owner-resource, and
-activation-route identities. All owned-resource opens use workspace `Adopt`;
+activation-route identities. The controller computes only the active viewport's
+projection, retains the last committed projection while the task is hidden, and
+owns a 32-entry session-local LRU for decoded Openables responses; dismissal
+releases that query corpus. Exact-pane dispatch settles synchronously so pane
+activation and task dismissal commit in the initiating event, while commands
+that genuinely await I/O retain the same Promise outcome boundary. Selection
+history is an after-destination-paint side effect: a double-animation-frame
+boundary keeps it off the activation path, and a page-hide keepalive escape hatch
+preserves the exact-once write if the document leaves first. All owned-resource
+opens use workspace `Adopt`;
 external discovery remains in explicit acquisition workflows.
 
 The task changes presentation only: the existing controller and pages remain
 one replacement hierarchy with one page-owned header and content scroll owner.
+After its first opening, the portal subtree stays mounted across dismissal so
+controller, focus, and measurement lifecycles are not recreated on every use;
+the inactive projection becomes `hidden` and `inert`, while children continue
+to receive lifecycle updates before the next opening.
 The viewport-fixed dialog owns an opaque safe-area- and keyboard-aware canvas;
 it has no scrim, grabber, outside-click target, drag dismissal, or
 primitive-owned toolbar. Guarded Back pops one Nexus level before dismissing
@@ -1436,6 +1466,12 @@ they open over Resume and never become panes.
   scroll/focus mementos and bounded route-owned loaded extent by the exact
   `PaneVisit` UUID. `PaneShell` is the sole primary vertical scroll owner for
   ordinary routes; Reader, Chat transcripts, and Atlas retain distinct owners.
+  Desktop keeps every primary pane host mounted. Mobile renders exactly the
+  active primary pane through one stable host identity: switching panes replaces
+  the route-scoped body while retaining the shell, scroll owner, and provider
+  graph, rather than remounting the entire active-pane substrate. A route error
+  is fenced by the route identity and clears before a different pane or route is
+  rendered through that stable host.
   A pane is identified by a stable pane id; its resolved `routeKey` gates
   route-scoped labels, layout, secondary/fixed chrome, primary-chrome
   publication, and return data so stale cleanup cannot mutate a newer route
@@ -1542,7 +1578,11 @@ they open over Resume and never become panes.
   (`make check-bundle`, ≤ 115 kB gz vs ~104 kB measured) runs in `build-front`. Kept
   constraints: nonce-CSP + **streaming only** — no PPR, no `next/dynamic`, no
   server-emitted `modulepreload` (chunk URLs are unknown server-side); `React.lazy` +
-  runtime `preloadPane` (warming all restored visible panes) stays the splitting mechanism.
+  runtime `preloadPane` (warming all restored visible panes) stays the splitting
+  mechanism. Interaction-budget browser tests also consume the standard
+  `nexus_auth`, `nexus_openables`, `nexus_api`, and `nexus_bff` Server-Timing
+  phases, separating auth, service, remaining API, BFF, response-transfer, and
+  client-commit time before an owner is optimized.
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
   in §5. The browser holds **no** Supabase client and no tokens; `lib/auth/dal.ts`
   `verifySession()` is the one verified-session boundary for protected pages/

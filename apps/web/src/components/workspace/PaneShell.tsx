@@ -178,6 +178,7 @@ type ExpandedPaneSearchIdentity =
     }
   | {
       readonly kind: "Route";
+      readonly paneId: string;
       readonly routeKey: string;
     };
 
@@ -290,7 +291,7 @@ export default function PaneShell({
   });
   const chromeRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const filterRowsContinuityKey = `${paneRuntime.visitId}:${paneRuntime.routeId}:${paneRuntime.pathname}`;
+  const filterRowsContinuityKey = `${paneId}:${paneRuntime.visitId}:${paneRuntime.routeId}:${paneRuntime.pathname}`;
   usePaneReturnScrollport({
     paneId,
     enabled: returnMementoEnabled,
@@ -581,6 +582,7 @@ export default function PaneShell({
       ? expandedSearchIdentity?.kind === "FilterRows" &&
         expandedSearchIdentity.continuityKey === filterRowsContinuityKey
       : expandedSearchIdentity?.kind === "Route" &&
+        expandedSearchIdentity.paneId === paneId &&
         expandedSearchIdentity.routeKey === routeKey);
   const searchExpandedRef = useRef(searchExpanded);
   searchExpandedRef.current = searchExpanded;
@@ -608,12 +610,16 @@ export default function PaneShell({
               kind: "FilterRows",
               continuityKey: currentFilterRowsContinuityKeyRef.current,
             }
-          : { kind: "Route", routeKey: currentRouteKeyRef.current },
+          : {
+              kind: "Route",
+              paneId,
+              routeKey: currentRouteKeyRef.current,
+            },
       );
     }
     focusSearchInput();
     return true;
-  }, [focusSearchInput]);
+  }, [focusSearchInput, paneId]);
   usePaneSearchRequested(openSearch);
   const closeSearch = useCallback(() => {
     searchExpandedRef.current = false;
