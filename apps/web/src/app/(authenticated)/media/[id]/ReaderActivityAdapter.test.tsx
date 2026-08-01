@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
@@ -38,6 +38,7 @@ function ReaderHarness({
   isPdf = false,
   paneActive = true,
   totalProgression = 0.25,
+  intent = "Reader",
   previewLease = {
     isActive: () => false,
     subscribe: () => () => {},
@@ -47,6 +48,7 @@ function ReaderHarness({
   isPdf?: boolean;
   paneActive?: boolean;
   totalProgression?: number;
+  intent?: "Reader" | "Restore" | "Preview" | "Return";
   previewLease?: {
     isActive(): boolean;
     subscribe(listener: () => void): () => void;
@@ -56,36 +58,73 @@ function ReaderHarness({
   const readerRootRef = useRef<HTMLDivElement>(null);
   const pdfViewportRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
-  const { noteGenuineInput, publishTextMeasurement } =
-    useReaderActivityAdapter({
+  const { noteGenuineInput } = useReaderActivityAdapter({
     mediaId: "00000000-0000-4000-8000-000000000702",
     observerKey: "reader:activity-test",
     canRead: true,
-    isPdf,
     paneActive,
     viewport: { hydrated: true, kind: "desktop" },
     readerRootRef,
     pdfViewportRef,
     activeContent: isPdf
       ? null
-      : { canonicalText: "reader fixture", documentWordStart: 10 },
-    pdfControls: isPdf
+      : {
+          fragmentId: "fragment-a",
+          canonicalText: "reader fixture!!",
+          documentWordStart: 10,
+        },
+    documentProjection: isPdf
+      ? { kind: "Pdf", pageCount: 4 }
+      : {
+          kind: "Text",
+          fragments: [{ fragmentId: "fragment-a", length: 16 }],
+        },
+    semanticViewport: isPdf
       ? {
-          pageNumber: 2,
-          numPages: 4,
+          sourceKey: "pdf-source",
+          layoutGeneration: 1,
+          intent,
+          primaryLocator: {
+            kind: "pdf",
+            page: 2,
+            page_progression: null,
+            zoom: 1,
+            position: 2,
+          },
+          visibleStart: { kind: "Pdf", page: 2, pageFraction: 0 },
+          visibleEnd: { kind: "Pdf", page: 2, pageFraction: 0.5 },
+          atEnd: false,
         }
-      : null,
+      : {
+          sourceKey: "text-source",
+          layoutGeneration: 1,
+          intent,
+          primaryLocator: {
+            kind: "web",
+            target: { fragment_id: "fragment-a" },
+            locations: {
+              text_offset: totalProgression * 16,
+              progression: totalProgression,
+              total_progression: totalProgression,
+              position: null,
+            },
+            text: { quote: null, quote_prefix: null, quote_suffix: null },
+          },
+          visibleStart: {
+            kind: "Text",
+            fragmentId: "fragment-a",
+            offset: totalProgression * 16,
+          },
+          visibleEnd: {
+            kind: "Text",
+            fragmentId: "fragment-a",
+            offset: Math.min(16, totalProgression * 16 + 4),
+          },
+          atEnd: false,
+        },
     onGenuineReaderInput,
     previewLease,
-    });
-  useEffect(() => {
-    if (!isPdf) {
-      publishTextMeasurement({
-        anchorOffset: 7,
-        totalProgression,
-      });
-    }
-  }, [isPdf, publishTextMeasurement, totalProgression]);
+  });
   return (
     <>
       {isPdf ? (
@@ -214,9 +253,17 @@ describe("useReaderActivityAdapter", () => {
 
     await waitFor(() => expect(latestReadingObservation().eligible).toBe(true));
     expect(latestReadingObservation().measurement).toEqual({
-      progress: 0.5,
+      progress: 0.25,
       wordPosition: undefined,
     });
+  });
+
+  it("keeps restore snapshots ineligible even after genuine input", async () => {
+    render(<ReaderHarness intent="Restore" />);
+    await userEvent.click(screen.getByTestId("reader-root"));
+
+    await waitFor(() => expect(latestReadingObservation().eligible).toBe(false));
+    expect(latestReadingObservation().measurement.progress).toBe(0.25);
   });
 
   it("owns trusted PDF keyboard activity on the scrolling viewport", async () => {

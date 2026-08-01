@@ -19,10 +19,12 @@ import {
 
 export const READER_END_TOLERANCE_PX = 2;
 
-export {
-  getPaneScrollContainer,
-  isElementInPaneView,
-};
+export { getPaneScrollContainer, isElementInPaneView };
+
+export interface VisibleCanonicalTextRange {
+  startOffset: number;
+  endOffset: number;
+}
 
 export function isTextViewportAtEnd(
   viewport: HTMLElement,
@@ -65,67 +67,204 @@ export function findFirstVisibleCanonicalOffset(
   container: HTMLElement,
   cursor: CanonicalCursorResult,
 ): number | null {
-  const containerRect = container.getBoundingClientRect();
-  const topPaddingPx = getPaneScrollTopPaddingPx(container);
-  const probeTop =
-    containerRect.top +
-    Math.min(
-      topPaddingPx,
-      Math.max(8, Math.floor(containerRect.height * 0.12)),
-    );
+  return (
+    captureVisibleCanonicalTextRange(container, cursor)?.startOffset ?? null
+  );
+}
 
-  const isVisibleOffset = (offset: number): boolean => {
-    const ranges = resolveCanonicalTextRanges(cursor, offset, offset + 1);
-    if (!ranges) return false;
-    return ranges.some((range) => {
-      const rect = range.getBoundingClientRect();
-      return (
-        rect.bottom > probeTop &&
-        rect.top < containerRect.bottom &&
-        rect.right > containerRect.left &&
-        rect.left < containerRect.right
-      );
-    });
+function canonicalOffsetRects(
+  cursor: CanonicalCursorResult,
+  offset: number,
+): DOMRect[] {
+  const provenance = cursor.provenance[offset];
+  if (!provenance) {
+    return [];
+  }
+  return provenance.spans.flatMap((span) => {
+    const range = span.node.ownerDocument.createRange();
+    range.setStart(span.node, span.startUtf16);
+    range.setEnd(span.node, span.endUtf16);
+    const clientRects = Array.from(range.getClientRects());
+    return clientRects.length > 0
+      ? clientRects
+      : [range.getBoundingClientRect()];
+  });
+}
+
+export function captureVisibleCanonicalTextRange(
+  container: HTMLElement,
+  cursor: CanonicalCursorResult,
+): VisibleCanonicalTextRange | null {
+  if (cursor.length === 0) {
+    return null;
+  }
+  const viewport = container.getBoundingClientRect();
+  const rectsByOffset = new Map<number, DOMRect[]>();
+  const readRects = (offset: number): DOMRect[] => {
+    const cached = rectsByOffset.get(offset);
+    if (cached) {
+      return cached;
+    }
+    const rects = canonicalOffsetRects(cursor, offset);
+    rectsByOffset.set(offset, rects);
+    return rects;
   };
+  const intersectsViewport = (offset: number): boolean =>
+    readRects(offset).some(
+      (rect) =>
+        rect.bottom > viewport.top &&
+        rect.top < viewport.bottom &&
+        rect.right > viewport.left &&
+        rect.left < viewport.right,
+    );
+  const reachesVisibleTop = (offset: number): boolean =>
+    readRects(offset).some((rect) => rect.bottom > viewport.top);
+  const startsBeforeVisibleBottom = (offset: number): boolean =>
+    readRects(offset).some((rect) => rect.top < viewport.bottom);
 
-  for (const entry of cursor.nodes) {
+  const entries = cursor.nodes.filter(
+    (entry) =>
+      entry.node.parentElement !== null &&
+      (entry.node.textContent ?? "").trim().length > 0,
+  );
+  if (entries.length === 0) {
+    return null;
+  }
+  const relationByIndex = new Map<number, "before" | "inside" | "after">();
+  const classifyEntry = (index: number): "before" | "inside" | "after" => {
+    const cached = relationByIndex.get(index);
+    if (cached) {
+      return cached;
+    }
+    const entry = entries[index];
     const anchorElement = entry.node.parentElement;
     if (!anchorElement) {
+      throw new Error("Canonical cursor text entries must remain connected.");
+    }
+    const elementRect = anchorElement.getBoundingClientRect();
+    if (elementRect.bottom <= viewport.top) {
+      relationByIndex.set(index, "before");
+      return "before";
+    }
+    if (elementRect.top >= viewport.bottom) {
+      relationByIndex.set(index, "after");
+      return "after";
+    }
+    const edgeRects = [...readRects(entry.start), ...readRects(entry.end - 1)];
+    if (
+      edgeRects.length > 0 &&
+      edgeRects.every((rect) => rect.bottom <= viewport.top)
+    ) {
+      relationByIndex.set(index, "before");
+      return "before";
+    }
+    if (
+      edgeRects.length > 0 &&
+      edgeRects.every((rect) => rect.top >= viewport.bottom)
+    ) {
+      relationByIndex.set(index, "after");
+      return "after";
+    }
+    relationByIndex.set(index, "inside");
+    return "inside";
+  };
+
+  // Canonical text entries follow document order. Resolve the viewport edge by
+  // binary search, then inspect only the entries that can intersect it. This
+  // keeps scroll-frame layout reads proportional to visible content.
+  let low = 0;
+  let high = entries.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (classifyEntry(middle) === "before") {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  const firstCandidateIndex = low;
+  const precedingBoundary =
+    firstCandidateIndex > 0 ? entries[firstCandidateIndex - 1].end : null;
+  let followingBoundary: number | null = null;
+  let firstVisible: number | null = null;
+  let lastVisible: number | null = null;
+
+  for (let index = firstCandidateIndex; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const relation = classifyEntry(index);
+    if (relation === "after") {
+      followingBoundary = entry.start;
+      break;
+    }
+    if (relation === "before") {
       continue;
     }
-    const rect = anchorElement.getBoundingClientRect();
-    if (rect.bottom < probeTop || rect.top > containerRect.bottom) {
+    const anchorElement = entry.node.parentElement;
+    if (!anchorElement) {
+      throw new Error("Canonical cursor text entries must remain connected.");
+    }
+    const elementRect = anchorElement.getBoundingClientRect();
+    if (
+      elementRect.right <= viewport.left ||
+      elementRect.left >= viewport.right
+    ) {
       continue;
     }
-    if ((entry.node.textContent ?? "").trim().length === 0) {
-      continue;
-    }
-    let low = entry.start;
-    let high = entry.end;
-    while (low < high) {
-      const middle = Math.floor((low + high) / 2);
-      const ranges = resolveCanonicalTextRanges(cursor, middle, middle + 1);
-      const reachesVisibleTop =
-        ranges?.some(
-          (range) => range.getBoundingClientRect().bottom > probeTop,
-        ) ?? false;
-      if (reachesVisibleTop) {
-        high = middle;
+
+    let firstLow = entry.start;
+    let firstHigh = entry.end;
+    while (firstLow < firstHigh) {
+      const middle = Math.floor((firstLow + firstHigh) / 2);
+      if (reachesVisibleTop(middle)) {
+        firstHigh = middle;
       } else {
-        low = middle + 1;
+        firstLow = middle + 1;
       }
     }
-    // A composed codepoint may span nodes and synthetic boundaries are not
-    // renderable. Probe the small boundary neighborhood, then scan forward.
     for (
-      let offset = Math.max(entry.start, low - 2);
+      let offset = Math.max(entry.start, firstLow - 2);
       offset < entry.end;
       offset += 1
     ) {
-      if (isVisibleOffset(offset)) return offset;
+      if (intersectsViewport(offset)) {
+        firstVisible = Math.min(firstVisible ?? offset, offset);
+        break;
+      }
+    }
+
+    let lastLow = entry.start;
+    let lastHigh = entry.end - 1;
+    while (lastLow < lastHigh) {
+      const middle = Math.ceil((lastLow + lastHigh) / 2);
+      if (startsBeforeVisibleBottom(middle)) {
+        lastLow = middle;
+      } else {
+        lastHigh = middle - 1;
+      }
+    }
+    for (
+      let offset = Math.min(entry.end - 1, lastLow + 2);
+      offset >= entry.start;
+      offset -= 1
+    ) {
+      if (intersectsViewport(offset)) {
+        lastVisible = Math.max(lastVisible ?? offset, offset);
+        break;
+      }
     }
   }
-  return null;
+
+  if (firstVisible !== null && lastVisible !== null) {
+    return {
+      startOffset: firstVisible,
+      endOffset: Math.max(firstVisible, lastVisible + 1),
+    };
+  }
+  const startOffset = precedingBoundary ?? 0;
+  return {
+    startOffset,
+    endOffset: Math.max(startOffset, followingBoundary ?? cursor.length),
+  };
 }
 
 export type CanonicalTextAnchor = {
@@ -187,11 +326,12 @@ export function resolveCanonicalTextAnchor(
   );
 }
 
-function compareDomSpans(left: CanonicalDomSpan, right: CanonicalDomSpan): number {
+function compareDomSpans(
+  left: CanonicalDomSpan,
+  right: CanonicalDomSpan,
+): number {
   if (left.node === right.node) {
-    return (
-      left.startUtf16 - right.startUtf16 || left.endUtf16 - right.endUtf16
-    );
+    return left.startUtf16 - right.startUtf16 || left.endUtf16 - right.endUtf16;
   }
   const position = left.node.compareDocumentPosition(right.node);
   if (position & Node.DOCUMENT_POSITION_FOLLOWING) {
@@ -208,10 +348,7 @@ function mergeDomSpans(spans: CanonicalDomSpan[]): CanonicalDomSpan[] {
   const merged: CanonicalDomSpan[] = [];
   for (const span of ordered) {
     const previous = merged[merged.length - 1];
-    if (
-      previous?.node === span.node &&
-      span.startUtf16 <= previous.endUtf16
-    ) {
+    if (previous?.node === span.node && span.startUtf16 <= previous.endUtf16) {
       previous.endUtf16 = Math.max(previous.endUtf16, span.endUtf16);
       continue;
     }

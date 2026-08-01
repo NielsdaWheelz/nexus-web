@@ -58,7 +58,6 @@ function section(
     href_path: null,
     href_fragment: null,
     anchor_id: null,
-    char_count: 20,
     ...overrides,
   };
 }

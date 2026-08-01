@@ -15,6 +15,8 @@ from nexus.services.reader_locations import (
 MEDIA_ID = UUID("00000000-0000-0000-0000-000000000001")
 FRAGMENT_ID = UUID("00000000-0000-0000-0000-000000000002")
 
+pytestmark = pytest.mark.unit
+
 
 def _pdf_locator(*, page_number: int, top: float, left: float) -> dict[str, object]:
     return {
@@ -43,6 +45,43 @@ def test_pdf_evidence_orders_and_positions_within_the_same_page() -> None:
     assert order_key_from_locator(upper, {}) < order_key_from_locator(lower, {})
     assert locator_fraction(upper, {}, 0, 10, {1: 1000.0}) == 0.01
     assert locator_fraction(lower, {}, 0, 10, {1: 1000.0}) == 0.05
+
+
+def test_text_overview_position_uses_the_exact_start_locus() -> None:
+    locator = {
+        "type": "epub_fragment_offsets",
+        "media_id": str(MEDIA_ID),
+        "fragment_id": str(FRAGMENT_ID),
+        "start_offset": 2,
+        "end_offset": 8,
+    }
+
+    assert locator_fraction(locator, {str(FRAGMENT_ID): (0, 10)}, 10, None, {}) == 0.2
+
+
+def test_overview_position_rejects_locators_without_an_exact_start_locus() -> None:
+    text_without_start = {
+        "type": "web_text_offsets",
+        "media_id": str(MEDIA_ID),
+        "fragment_id": str(FRAGMENT_ID),
+    }
+    pdf_without_geometry = {
+        "type": "pdf_page_geometry",
+        "media_id": str(MEDIA_ID),
+        "page_number": 2,
+    }
+
+    assert (
+        locator_fraction(
+            text_without_start,
+            {str(FRAGMENT_ID): (0, 10)},
+            10,
+            None,
+            {},
+        )
+        is None
+    )
+    assert locator_fraction(pdf_without_geometry, {}, 0, 4, {2: 800.0}) is None
 
 
 @pytest.mark.parametrize(

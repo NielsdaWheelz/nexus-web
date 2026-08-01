@@ -74,7 +74,7 @@ def get_reader_document_map(
     fragment_ranges: dict[str, tuple[int, int]] = {}
     fragment_cursor = 0
     for row in fragments:
-        char_count = max(int(row["char_count"] or 0), 1)
+        char_count = int(row["char_count"] or 0)
         fragment_ranges[str(row["id"])] = (fragment_cursor, char_count)
         fragment_cursor += char_count
 

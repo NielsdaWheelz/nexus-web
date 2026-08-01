@@ -917,11 +917,21 @@ The core idea is two coordinate systems, both **codepoint-based**:
   page-space quads; duplicate detection uses the current anchor rows and PDF writes
   serialize on advisory locks (`services/pdf_highlight_geometry.py`).
 
-EPUB ingestion (`services/epub_ingest.py`) produces fragments + a `EpubNavLocation`
-per section, where the `section_id` is the path-encodable `href_path[#fragment]`
-used in reader URLs. Navigation, sections, and resume state are served from
-`api/routes/reader.py`; resume stores reflow-safe canonical offsets (web/transcript)
-or page/zoom (PDF), never pixels.
+EPUB ingestion (`services/epub_ingest.py`) produces ordered unique fragments and
+exact `EpubNavLocation` targets. A named EPUB target resolves to its element
+start in that fragment's canonical text; a missing named anchor rejects the
+navigation source. `api/routes/reader.py` serves fragments separately from
+sections: fragments own document length and sections own targets. Resume stores
+reflow-safe canonical offsets (web/transcript/EPUB) or page/normalized
+page-space position (PDF), never pixels.
+
+The active renderer publishes one exact semantic viewport for the current
+source and layout generation. `readerDocumentPosition.ts` projects that
+viewport into `0..1`; backend marker owners publish their normalized exact
+start positions. The module owns neither DOM discovery nor persistence.
+`useReaderProgress`, Consumption activity, and the desktop
+Document Map overview rail consume this same capture. Preview, Return, and
+restore can update the rail but cannot create reader progress or activity.
 
 EPUB resource assets use a private media asset lane:
 `/api/media/[id]/assets/[...assetKey]` → FastAPI `/media/{id}/assets/{assetKey}`.
@@ -969,8 +979,9 @@ Evidence is a target-centered aggregate of highlights, source references,
 generated citations, links, and Synapses, separated into passage and
 whole-document scopes with typed one-hop associations. `MarginRail` is the
 wide-reader spatial presenter for the same filtered passage facts. The desktop
-overview rail is positioned from aggregate owner locators and metadata, never
-DOM geometry, and has no generic opener. The shared Companion action opens the
+overview rail receives aggregate marker positions plus the semantic viewport
+range; it performs no scroll discovery or position math and has no generic
+opener. The shared Companion action opens the
 same `resource-inspector` publication on desktop and in the workspace mobile
 sheet.
 The contract is

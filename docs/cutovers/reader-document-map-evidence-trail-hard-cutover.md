@@ -23,7 +23,11 @@ domain owners
   -> strict web decoder / ReaderDocumentMap
        -> Contents secondary surface (when navigation exists)
        -> Evidence secondary surface
-       -> desktop Document Map overview rail
+
+active format reader
+  -> exact ReaderSemanticViewport
+  -> readerDocumentPosition projection
+  -> desktop Document Map overview rail
 
 readable capability + reader-tools publication
   -> documentMapAction
@@ -38,9 +42,10 @@ in the attached secondary pane. Mobile renders the same publication in the
 workspace secondary sheet. Chat remains a conversation-pane capability, not a
 Document Map tab.
 
-The overview rail is ambient, desktop-only fixed primary chrome. It projects
-the aggregate's positioned markers and current viewport band. Activating a
-marker invokes its contextual target; the rail has no generic list/open button.
+The overview rail is ambient, desktop-only fixed primary chrome. It receives
+the aggregate's exact-position markers and the current projected viewport band.
+Activating a marker invokes its contextual target; the rail has no generic
+list/open button.
 The semantic header/Options action is the only generic Document Map entrance.
 
 ## Aggregate Contract
@@ -68,16 +73,23 @@ only `ReaderDocumentMap` and its tagged Evidence/marker types.
 
 ## Marker And Activation Rules
 
-- Marker positions are normalized from owner locators and document metadata,
-  never scraped from rendered DOM geometry.
+- Marker positions are exact owner start locators projected against the ordered
+  document units, never scraped from rendered DOM geometry. Missing start
+  data produces no marker; midpoint, ordinal, section-top, and scrollbar
+  fallbacks do not exist.
+- Text uses unique `(fragment_id, canonical codepoint offset)` units. PDF uses
+  `(one-based page, normalized full-page fraction)`; page gaps and zoom are not
+  document coordinates. EPUB Contents uses the exact named-anchor element
+  start, or `0` for a fragment target without an anchor.
 - Marker kinds are `Contents`, `Embed`, or an Evidence fact kind. Contents
   targets the Contents surface; Evidence facts target Evidence; embeds activate
   their contextual reader target without inventing an Embeds tab.
 - Activation that changes section/location uses the reader's canonical target
   and pane-location seams. No secondary history or duplicate navigation model
   is introduced.
-- Dense markers cluster visually while retaining their members and accessible
-  count. Keyboard navigation is roving and deterministic.
+- Dense 24px targets cluster at their median position while retaining every
+  member as a named native button; a cluster never activates an implicit
+  primary. Keyboard navigation is roving and deterministic.
 - Hover/touch preview is supplementary. It cannot become the only way to
   identify or activate a marker.
 - Unavailable or stale targets stay typed and visibly explained; they never
@@ -98,6 +110,12 @@ only `ReaderDocumentMap` and its tagged Evidence/marker types.
   submenu/disclosure IDREFs.
 - The overview rail is fixed primary chrome and never changes stored primary
   pane width. The secondary pane width remains independent.
+- The rail receives only `markers`, a projected `visibleRange`, and activation.
+  It owns no content ref, scroll listener, content observer, `documentSpan`, or
+  position math. Its track-only `ResizeObserver` recomputes presentation
+  clusters after fixed-chrome reflow and reads no document geometry.
+  Format-owned capture publishes exact source/layout-fenced viewports; Preview,
+  Return, and restore may paint the band but cannot create progress or activity.
 - Reader shortcuts operate only when their owning reader/Document Map layer is
   topmost; nested modal or menu interaction suppresses them.
 
@@ -111,6 +129,8 @@ only `ReaderDocumentMap` and its tagged Evidence/marker types.
 | Transport schema | `python/nexus/schemas/reader_document_map.py` |
 | Strict browser contract | `apps/web/src/lib/reader/documentMapContract.ts` |
 | Browser domain/helpers | `apps/web/src/lib/reader/documentMap.ts` |
+| Semantic projection | `apps/web/src/lib/reader/readerDocumentPosition.ts` |
+| Text/PDF viewport capture | `paneTextAnchor.ts` / `PdfReader.tsx` |
 | Reader composition | `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` |
 | Evidence UI | `apps/web/src/components/reader/document-map/EvidencePaneSurface.tsx` |
 | Semantic action | `apps/web/src/components/reader/document-map/documentMapAction.tsx` |
@@ -129,8 +149,9 @@ only `ReaderDocumentMap` and its tagged Evidence/marker types.
   none.
 - Desktop and mobile consume the same typed secondary publication and preserve
   valid pane-scoped tab/tabpanel relationships.
-- Every marker has a bounded position, stable activation result, accessible
-  label, deterministic clustering, and typed unavailable behavior.
+- Every marker has an exact bounded position, stable activation result,
+  accessible label, deterministic median clustering, and typed unavailable
+  behavior.
 - The rail is desktop-only, fixed primary chrome, keyboard operable, and does
   not alter stored pane sizing.
 - Aggregate status and subordinate omissions are explicit; authorization and

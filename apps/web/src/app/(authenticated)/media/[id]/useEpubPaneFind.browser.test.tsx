@@ -9,7 +9,10 @@ import {
   type EpubFindResultOut,
   type EpubSectionContent,
 } from "@/lib/media/epubFind";
-import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
+import type {
+  ReaderNavigationFragment,
+  ReaderNavigationSection,
+} from "@/lib/media/readerNavigation";
 import type { PaneFindSourceKey } from "@/lib/panes/paneSearch";
 import { usePaneFind } from "@/lib/panes/usePaneFind";
 import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
@@ -55,7 +58,7 @@ function navigationSection({
   label,
   ordinal,
   fragmentId,
-  canonicalText,
+  canonicalText: _canonicalText,
 }: {
   readonly sectionId: string;
   readonly label: string;
@@ -71,12 +74,11 @@ function navigationSection({
     fragment_idx: ordinal,
     level: null,
     depth: null,
-    start_offset: null,
+    start_offset: 0,
     end_offset: null,
     href_path: `chapter-${ordinal + 1}.xhtml`,
     href_fragment: null,
     anchor_id: null,
-    char_count: cpLength(canonicalText),
   };
 }
 
@@ -112,6 +114,27 @@ function sectionContent({
     document_word_start: ordinal * 2,
     created_at: `2026-07-${String(ordinal + 1).padStart(2, "0")}T00:00:00Z`,
   };
+}
+
+function findSnapshot(sections: readonly EpubSectionContent[]) {
+  const fragments: ReaderNavigationFragment[] = sections.map((section) => ({
+    fragment_id: section.fragment_id,
+    fragment_idx: section.fragment_idx,
+    char_count: section.char_count,
+  }));
+  return createEpubFindSnapshot({
+    mediaId: MEDIA_ID,
+    fragments,
+    navigation: sections.map((section) =>
+      navigationSection({
+        sectionId: section.section_id,
+        label: section.label,
+        ordinal: section.ordinal,
+        fragmentId: section.fragment_id,
+        canonicalText: section.canonical_text,
+      }),
+    ),
+  });
 }
 
 function readerViewState(
@@ -227,25 +250,7 @@ describe("EPUB Find adapter", () => {
       fragmentId: SECOND_FRAGMENT,
       canonicalText: "Later needle",
     });
-    const snapshot = createEpubFindSnapshot({
-      mediaId: MEDIA_ID,
-      navigation: [
-        navigationSection({
-          sectionId: first.section_id,
-          label: first.label,
-          ordinal: first.ordinal,
-          fragmentId: first.fragment_id,
-          canonicalText: first.canonical_text,
-        }),
-        navigationSection({
-          sectionId: second.section_id,
-          label: second.label,
-          ordinal: second.ordinal,
-          fragmentId: second.fragment_id,
-          canonicalText: second.canonical_text,
-        }),
-      ],
-    });
+    const snapshot = findSnapshot([first, second]);
     const readerState = readerViewState(second);
     const loadSection = vi.fn();
     const highlightOwner = { publish: vi.fn(), clear: vi.fn() };
@@ -327,25 +332,7 @@ describe("EPUB Find adapter", () => {
       fragmentId: SECOND_FRAGMENT,
       canonicalText: "Later needle",
     });
-    const snapshot = createEpubFindSnapshot({
-      mediaId: MEDIA_ID,
-      navigation: [
-        navigationSection({
-          sectionId: first.section_id,
-          label: first.label,
-          ordinal: first.ordinal,
-          fragmentId: first.fragment_id,
-          canonicalText: first.canonical_text,
-        }),
-        navigationSection({
-          sectionId: second.section_id,
-          label: second.label,
-          ordinal: second.ordinal,
-          fragmentId: second.fragment_id,
-          canonicalText: second.canonical_text,
-        }),
-      ],
-    });
+    const snapshot = findSnapshot([first, second]);
     let readerState = readerViewState(first, 27);
     let override: EpubRenderedSectionOverride | null = null;
     const setRenderedSectionOverride = vi.fn(
@@ -430,25 +417,7 @@ describe("EPUB Find adapter", () => {
       fragmentId: SECOND_FRAGMENT,
       canonicalText: "Later needle",
     });
-    const snapshot = createEpubFindSnapshot({
-      mediaId: MEDIA_ID,
-      navigation: [
-        navigationSection({
-          sectionId: first.section_id,
-          label: first.label,
-          ordinal: first.ordinal,
-          fragmentId: first.fragment_id,
-          canonicalText: first.canonical_text,
-        }),
-        navigationSection({
-          sectionId: second.section_id,
-          label: second.label,
-          ordinal: second.ordinal,
-          fragmentId: second.fragment_id,
-          canonicalText: second.canonical_text,
-        }),
-      ],
-    });
+    const snapshot = findSnapshot([first, second]);
     let readerState = readerViewState(first);
     let override: EpubRenderedSectionOverride | null = null;
     let breakReturnedOrigin = false;
@@ -549,18 +518,7 @@ describe("EPUB Find adapter", () => {
         canonicalText: "Ending needle",
       }),
     ] as const;
-    const snapshot = createEpubFindSnapshot({
-      mediaId: MEDIA_ID,
-      navigation: sections.map((section) =>
-        navigationSection({
-          sectionId: section.section_id,
-          label: section.label,
-          ordinal: section.ordinal,
-          fragmentId: section.fragment_id,
-          canonicalText: section.canonical_text,
-        }),
-      ),
-    });
+    const snapshot = findSnapshot(sections);
     let readerState = readerViewState(sections[0], 19);
     let override: EpubRenderedSectionOverride | null = null;
     const setRenderedSectionOverride = vi.fn(
@@ -690,18 +648,7 @@ describe("EPUB Find adapter", () => {
         canonicalText: "Ending needle",
       }),
     ] as const;
-    const snapshot = createEpubFindSnapshot({
-      mediaId: MEDIA_ID,
-      navigation: sections.map((section) =>
-        navigationSection({
-          sectionId: section.section_id,
-          label: section.label,
-          ordinal: section.ordinal,
-          fragmentId: section.fragment_id,
-          canonicalText: section.canonical_text,
-        }),
-      ),
-    });
+    const snapshot = findSnapshot(sections);
     let readerState = readerViewState(sections[0]);
     let override: EpubRenderedSectionOverride | null = null;
     let breakReturnedOrigin = false;
@@ -822,18 +769,7 @@ describe("EPUB Find adapter", () => {
         canonicalText: "Ending needle",
       }),
     ] as const;
-    const snapshot = createEpubFindSnapshot({
-      mediaId: MEDIA_ID,
-      navigation: sections.map((section) =>
-        navigationSection({
-          sectionId: section.section_id,
-          label: section.label,
-          ordinal: section.ordinal,
-          fragmentId: section.fragment_id,
-          canonicalText: section.canonical_text,
-        }),
-      ),
-    });
+    const snapshot = findSnapshot(sections);
     let readerState = readerViewState(sections[0]);
     let override: EpubRenderedSectionOverride | null = null;
     const setRenderedSectionOverride = vi.fn(
@@ -955,25 +891,7 @@ describe("EPUB Find adapter", () => {
       fragmentId: SECOND_FRAGMENT,
       canonicalText: "Later needle",
     });
-    const snapshot = createEpubFindSnapshot({
-      mediaId: MEDIA_ID,
-      navigation: [
-        navigationSection({
-          sectionId: first.section_id,
-          label: first.label,
-          ordinal: first.ordinal,
-          fragmentId: first.fragment_id,
-          canonicalText: first.canonical_text,
-        }),
-        navigationSection({
-          sectionId: second.section_id,
-          label: second.label,
-          ordinal: second.ordinal,
-          fragmentId: second.fragment_id,
-          canonicalText: second.canonical_text,
-        }),
-      ],
-    });
+    const snapshot = findSnapshot([first, second]);
     let rejectSection!: (reason: unknown) => void;
     const sectionRequest = new Promise<EpubSectionContent>(
       (_resolve, reject) => {
@@ -1048,25 +966,7 @@ describe("EPUB Find adapter", () => {
       fragmentId: SECOND_FRAGMENT,
       canonicalText: "Later needle",
     });
-    const snapshot = createEpubFindSnapshot({
-      mediaId: MEDIA_ID,
-      navigation: [
-        navigationSection({
-          sectionId: first.section_id,
-          label: first.label,
-          ordinal: first.ordinal,
-          fragmentId: first.fragment_id,
-          canonicalText: first.canonical_text,
-        }),
-        navigationSection({
-          sectionId: second.section_id,
-          label: second.label,
-          ordinal: second.ordinal,
-          fragmentId: second.fragment_id,
-          canonicalText: second.canonical_text,
-        }),
-      ],
-    });
+    const snapshot = findSnapshot([first, second]);
     const onSourceChanged = vi.fn();
     const setRenderedSectionOverride = vi.fn();
     const findOccurrences = vi.fn(async () =>
@@ -1163,18 +1063,7 @@ describe("EPUB Find foundation composition", () => {
       fragmentId: FIRST_FRAGMENT,
       canonicalText: "Opening needle",
     });
-    const snapshot = createEpubFindSnapshot({
-      mediaId: MEDIA_ID,
-      navigation: [
-        navigationSection({
-          sectionId: first.section_id,
-          label: first.label,
-          ordinal: first.ordinal,
-          fragmentId: first.fragment_id,
-          canonicalText: first.canonical_text,
-        }),
-      ],
-    });
+    const snapshot = findSnapshot([first]);
     const transport = new ApiError(
       503,
       "E_UPSTREAM_TIMEOUT",
@@ -1247,25 +1136,7 @@ describe("EPUB Find foundation composition", () => {
       fragmentId: SECOND_FRAGMENT,
       canonicalText: "Later needle",
     });
-    const snapshot = createEpubFindSnapshot({
-      mediaId: MEDIA_ID,
-      navigation: [
-        navigationSection({
-          sectionId: first.section_id,
-          label: first.label,
-          ordinal: first.ordinal,
-          fragmentId: first.fragment_id,
-          canonicalText: first.canonical_text,
-        }),
-        navigationSection({
-          sectionId: second.section_id,
-          label: second.label,
-          ordinal: second.ordinal,
-          fragmentId: second.fragment_id,
-          canonicalText: second.canonical_text,
-        }),
-      ],
-    });
+    const snapshot = findSnapshot([first, second]);
     let readerState = readerViewState(first);
     let override: EpubRenderedSectionOverride | null = null;
     const findOccurrences = vi.fn(async () =>
@@ -1391,6 +1262,15 @@ describe("useEpubPaneFind", () => {
       ({ currentNavigation }) =>
         useEpubPaneFind({
           mediaId: MEDIA_ID,
+          fragments: currentNavigation
+            ? [
+                {
+                  fragment_id: first.fragment_id,
+                  fragment_idx: first.fragment_idx,
+                  char_count: first.char_count,
+                },
+              ]
+            : null,
           navigation: currentNavigation,
           renderedStateRef: readerStateRef,
           getRenderedSectionOverride,

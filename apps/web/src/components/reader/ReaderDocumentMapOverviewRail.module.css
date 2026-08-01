@@ -1,85 +1,307 @@
 .rail {
   display: flex;
+  flex: 0 0 28px;
   flex-direction: column;
   width: 28px;
+  min-width: 28px;
   height: 100%;
   min-height: 0;
-  flex: 0 0 auto;
+  overflow: visible;
   background: var(--surface-2);
-  overflow: hidden;
 }
 
 .track {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
+  margin-block: 12px;
+}
+
+.track::before {
+  position: absolute;
+  inset-block: -12px;
+  left: 50%;
+  width: 2px;
+  background: var(--edge);
+  content: "";
+  transform: translateX(-50%);
 }
 
 .band {
   position: absolute;
-  left: 0;
-  right: 0;
+  left: 50%;
+  z-index: 1;
+  width: 12px;
+  min-height: 2px;
   background: var(--accent);
-  opacity: 0.16;
+  border-radius: 999px;
+  opacity: 0.14;
   pointer-events: none;
+  transform: translateX(-50%);
 }
 
-.tick {
+.markerSlot {
   position: absolute;
-  left: 50%;
-  width: 16px;
-  height: 4px;
-  margin-left: -8px;
-  padding: 5px 0;
-  background-clip: content-box;
+  top: var(--position);
+  left: 2px;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  transform: translateY(-50%);
+}
+
+.markerButton {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  color: var(--ink);
+  background: transparent;
   border: 0;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transform: translateY(-50%);
-  transition: transform var(--duration-fast) var(--ease-glide);
 }
 
-.tick:hover,
-.tick:focus-visible {
+.markerButton:hover,
+.markerButton:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 1px;
-  transform: translateY(-50%) scaleX(1.25);
+  outline-offset: 0;
 }
 
-.tickStacked {
-  height: 7px;
+.markerGlyph {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  color: var(--marker-color);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .tick {
-    transition: none;
-  }
+.markerContents {
+  width: 14px;
+  height: 1px;
+  background: currentcolor;
 }
 
-.previewRich {
+.markerEmbed {
+  width: 8px;
+  height: 8px;
+  background: currentcolor;
+}
+
+.markerHighlight {
+  width: 8px;
+  height: 8px;
+  background: currentcolor;
+  transform: rotate(45deg);
+}
+
+.markerCitation {
+  width: 8px;
+  height: 8px;
+  background: currentcolor;
+  border-radius: 50%;
+}
+
+.markerConnection {
+  width: 10px;
+  height: 10px;
+  background: var(--surface-2);
+  border: 2px solid currentcolor;
+  border-radius: 50%;
+}
+
+.markerWarning {
+  outline: 1px solid currentcolor;
+  outline-offset: 2px;
+}
+
+.clusterCount {
+  display: grid;
+  min-width: 16px;
+  height: 16px;
+  padding-inline: 3px;
+  place-items: center;
+  color: var(--surface-1);
+  background: var(--edge-strong);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.preview {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + var(--space-2));
+  z-index: var(--z-raised, 100);
   display: flex;
+  visibility: hidden;
+  width: min(18rem, calc(100vw - 48px));
+  padding: var(--space-2) var(--space-3);
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
-.previewNote {
-  margin: 0;
+.markerSlot:hover .preview,
+.markerSlot:focus-within .preview {
+  visibility: visible;
+}
+
+.markerButton[aria-expanded="true"] + .preview {
+  visibility: hidden;
+}
+
+.preview.placeAtStart {
+  top: 12px;
+  transform: none;
+}
+
+.preview.placeAtEnd {
+  top: auto;
+  bottom: 12px;
+  transform: none;
+}
+
+.destinationContent {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+
+.destinationContent strong,
+.destinationExcerpt,
+.destinationPosition {
+  overflow-wrap: anywhere;
+}
+
+.destinationExcerpt {
   display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-muted);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   line-clamp: 3;
-  overflow: hidden;
 }
 
-.previewStack {
+.destinationPosition {
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.destinationList {
+  position: absolute;
+  top: var(--position);
+  right: calc(100% + var(--space-2));
+  z-index: var(--z-raised, 100);
+  width: min(18rem, calc(100vw - 48px));
+  max-height: min(18rem, 70vh);
+  margin: 0;
+  padding: var(--space-1);
+  overflow: auto;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
   list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  transform: translateY(-50%);
 }
 
-.previewCount {
-  margin: 0;
+.destinationList.placeAtStart {
+  top: 0;
+  transform: none;
+}
+
+.destinationList.placeAtEnd {
+  top: auto;
+  bottom: 0;
+  transform: none;
+}
+
+.destinationList li + li {
+  border-top: 1px solid var(--edge);
+}
+
+.destinationList button {
+  display: grid;
+  width: 100%;
+  min-height: 24px;
+  padding: var(--space-2);
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  cursor: pointer;
+}
+
+.destinationList button:hover,
+.destinationList button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+@media (forced-colors: active) {
+  .rail,
+  .markerConnection,
+  .preview,
+  .destinationList {
+    color: CanvasText;
+    background: Canvas;
+  }
+
+  .track::before,
+  .markerContents,
+  .markerEmbed,
+  .markerHighlight,
+  .markerCitation {
+    color: CanvasText;
+    background: CanvasText;
+  }
+
+  .markerGlyph,
+  .clusterCount,
+  .band {
+    forced-color-adjust: none;
+  }
+
+  .clusterCount {
+    color: Canvas;
+    background: CanvasText;
+  }
+
+  .markerConnection {
+    border-color: CanvasText;
+  }
+
+  .markerWarning {
+    outline-color: CanvasText;
+  }
+
+  .band {
+    background: Highlight;
+    border: 1px solid Highlight;
+    opacity: 0.22;
+  }
+
+  .markerButton:hover,
+  .markerButton:focus-visible,
+  .destinationList button:hover,
+  .destinationList button:focus-visible {
+    outline-color: Highlight;
+  }
 }

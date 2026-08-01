@@ -88,8 +88,32 @@ function inlineHighlight(page: Page, highlightId: string): Locator {
     .first();
 }
 
-function railMarker(rail: Locator, label: string): Locator {
-  return rail.getByRole("button", { name: label, exact: true });
+function escapedPattern(value: string): RegExp {
+  return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+}
+
+async function exposeRailDestination(
+  rail: Locator,
+  label: string,
+): Promise<Locator> {
+  const namedDestination = rail.getByRole("button", {
+    name: escapedPattern(label),
+  });
+  if ((await namedDestination.count()) > 0) {
+    return namedDestination.first();
+  }
+
+  const clusters = rail.getByRole("button", {
+    name: /\d+ destinations near \d+% through document/,
+  });
+  for (let index = 0; index < (await clusters.count()); index += 1) {
+    await clusters.nth(index).click();
+    if ((await namedDestination.count()) > 0) {
+      return namedDestination.first();
+    }
+    await rail.getByRole("list").press("Escape");
+  }
+  throw new Error(`Document Map destination is not discoverable: ${label}`);
 }
 
 // There is no clear/delete semantics under the new contract (a cursor row can
@@ -103,13 +127,6 @@ async function resetReaderStateToDocumentStart(
   mediaId: string,
   fragmentId: string,
 ): Promise<void> {
-  const currentResponse = await page.request.get(
-    `/api/media/${mediaId}/reader-state`,
-  );
-  expect(currentResponse.ok()).toBeTruthy();
-  const current = ((await currentResponse.json()) as ReaderStateResponse).data;
-  const baseRevision = current.state === "Empty" ? 0 : current.revision;
-
   const locator: WebReaderResumeState = {
     kind: "web",
     target: { fragment_id: fragmentId },
@@ -121,18 +138,124 @@ async function resetReaderStateToDocumentStart(
     },
     text: { quote: null, quote_prefix: null, quote_suffix: null },
   };
+  await replaceReaderState(page, mediaId, locator);
+}
 
-  const resetResponse = await page.request.put(
+async function replaceReaderState(
+  page: Page,
+  mediaId: string,
+  locator: WebReaderResumeState,
+): Promise<number> {
+  const currentResponse = await page.request.get(
+    `/api/media/${mediaId}/reader-state`,
+  );
+  expect(currentResponse.ok()).toBeTruthy();
+  const current = ((await currentResponse.json()) as ReaderStateResponse).data;
+  const response = await page.request.put(
     `/api/media/${mediaId}/reader-state`,
     {
-      data: { locator, base_revision: baseRevision },
+      data: {
+        locator,
+        base_revision: current.state === "Empty" ? 0 : current.revision,
+      },
       headers: stateChangingApiHeaders(),
     },
   );
-  expect(resetResponse.ok()).toBeTruthy();
+  expect(response.ok()).toBeTruthy();
+  const saved = ((await response.json()) as ReaderStateResponse).data;
+  if (saved.state !== "Positioned") {
+    throw new Error("Expected the reader-state write to publish a cursor");
+  }
+  return saved.revision;
+}
+
+function trackReaderStateWrites(page: Page, mediaId: string) {
+  let count = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "PUT" &&
+      new URL(request.url()).pathname === `/api/media/${mediaId}/reader-state`
+    ) {
+      count += 1;
+    }
+  });
+  return () => count;
 }
 
 test.describe("reader Document Map overview rail", () => {
+  test("bare web route opens the saved fragment and exact quote without a save echo", async ({
+    page,
+  }, testInfo) => {
+    const seed = readReaderDocumentMapSeed();
+    const fragmentsResponse = await page.request.get(
+      `/api/media/${seed.media_id}/fragments`,
+    );
+    expect(fragmentsResponse.ok()).toBeTruthy();
+    const fragments = (
+      (await fragmentsResponse.json()) as {
+        data: Array<{ id: string; canonical_text: string }>;
+      }
+    ).data;
+    const fragment = fragments.find(({ id }) => id === seed.far_fragment_id);
+    if (!fragment) {
+      throw new Error(`Missing seeded far fragment ${seed.far_fragment_id}`);
+    }
+    const utf16Offset = fragment.canonical_text.indexOf(seed.far_exact);
+    if (utf16Offset < 0) {
+      throw new Error(
+        "The far fragment does not contain its reviewed exact text",
+      );
+    }
+    const textOffset = [...fragment.canonical_text.slice(0, utf16Offset)]
+      .length;
+    const revision = await replaceReaderState(page, seed.media_id, {
+      kind: "web",
+      target: { fragment_id: seed.far_fragment_id },
+      locations: {
+        text_offset: textOffset,
+        progression: textOffset / [...fragment.canonical_text].length,
+        total_progression: null,
+        position: 1,
+      },
+      text: {
+        quote: seed.far_exact,
+        quote_prefix: null,
+        quote_suffix: null,
+      },
+    });
+
+    await page.clock.install({ time: new Date("2026-07-31T12:00:00-07:00") });
+    const readerStateWrites = trackReaderStateWrites(page, seed.media_id);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-reader-document-map-resume"),
+      `/media/${seed.media_id}`,
+    );
+    const pane = activeWorkspacePane(page);
+    await expect(pane.getByText(seed.far_exact).first()).toBeInViewport({
+      timeout: 15_000,
+    });
+    expect(page.url()).not.toMatch(/[?&](loc|fragment)=/);
+
+    await page.clock.runFor(600);
+    expect(readerStateWrites()).toBe(0);
+    const savedResponse = await page.request.get(
+      `/api/media/${seed.media_id}/reader-state`,
+    );
+    expect(savedResponse.ok()).toBeTruthy();
+    const saved = ((await savedResponse.json()) as ReaderStateResponse).data;
+    expect(saved).toMatchObject({
+      state: "Positioned",
+      revision,
+      locator: {
+        kind: "web",
+        target: { fragment_id: seed.far_fragment_id },
+        locations: { text_offset: textOffset },
+      },
+    });
+  });
+
   test("rail shows markers across the whole document and jumps to an off-screen highlight", async ({
     page,
   }, testInfo) => {
@@ -208,27 +331,22 @@ test.describe("reader Document Map overview rail", () => {
 
     // The rail maps the whole media: it renders a marker for the on-screen near
     // highlight and a marker for the far highlight whose fragment is not rendered.
-    const nearMarker = railMarker(rail, seed.near_exact);
-    await expect(nearMarker).toHaveCount(1);
-    await expect(nearMarker).toHaveAccessibleName(seed.near_exact);
-    await expect(nearMarker).toBeVisible();
-    const farMarker = railMarker(rail, seed.far_exact);
-    await expect(farMarker).toHaveCount(1);
-    await expect(farMarker).toHaveAccessibleName(seed.far_exact);
-    await expect(farMarker).toBeVisible();
+    const nearDestination = await exposeRailDestination(rail, seed.near_exact);
+    await expect(nearDestination).toBeVisible();
+    await expect(nearDestination).toHaveAccessibleName(
+      escapedPattern(seed.near_exact),
+    );
+    await nearDestination.press("Escape");
 
-    // The far marker sits below the near marker because it is later in the document.
-    const nearMarkerBox = await nearMarker.boundingBox();
-    const farMarkerBox = await farMarker.boundingBox();
-    expect(nearMarkerBox).not.toBeNull();
-    expect(farMarkerBox).not.toBeNull();
-    if (nearMarkerBox && farMarkerBox) {
-      expect(farMarkerBox.y).toBeGreaterThan(nearMarkerBox.y);
-    }
+    const farDestination = await exposeRailDestination(rail, seed.far_exact);
+    await expect(farDestination).toBeVisible();
+    await expect(farDestination).toHaveAccessibleName(
+      escapedPattern(seed.far_exact),
+    );
 
-    // Clicking the off-screen marker navigates the reader to that highlight: its
+    // Clicking the off-screen destination navigates the reader to that highlight: its
     // fragment loads, the highlight renders inline, and the pulse scrolls it in.
-    await farMarker.click();
+    await farDestination.click();
 
     const farHighlight = inlineHighlight(page, seed.far_highlight_id);
     await expect(farHighlight).toBeAttached({ timeout: 15_000 });

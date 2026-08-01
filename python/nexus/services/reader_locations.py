@@ -47,11 +47,9 @@ def locator_fraction(
     if page is not None and page_count and page_count > 0:
         origin = _pdf_quad_origin(locator)
         page_height = pdf_page_heights.get(page)
-        within_page = (
-            min(1.0, max(0.0, origin[0] / page_height))
-            if origin is not None and page_height is not None and page_height > 0
-            else 0.5
-        )
+        if origin is None or page_height is None or page_height <= 0:
+            return None
+        within_page = min(1.0, max(0.0, origin[0] / page_height))
         return ((page - 1) + within_page) / page_count
     fragment_id = locator_fragment(locator)
     if fragment_id is None:
@@ -61,14 +59,9 @@ def locator_fraction(
         return None
     fragment_start, fragment_length = fragment_range
     start = locator.get("start_offset")
-    end = locator.get("end_offset")
-    if isinstance(start, int) and isinstance(end, int):
-        offset = (start + end) / 2
-    elif isinstance(start, int):
-        offset = start
-    else:
-        offset = fragment_length / 2
-    return (fragment_start + min(max(offset, 0), fragment_length)) / total_fragment_chars
+    if not isinstance(start, int):
+        return None
+    return (fragment_start + min(max(start, 0), fragment_length)) / total_fragment_chars
 
 
 def order_key_from_locator(

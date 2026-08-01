@@ -1,49 +1,8 @@
-import {
-  parseReaderNavigationHrefAnchorId,
-  type ReaderNavigationSection,
-} from "@/lib/media/readerNavigation";
-
-export interface NavigationTocNodeLike {
-  section_id: string | null;
-  href: string | null;
-  children: NavigationTocNodeLike[];
-}
+import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 
 export interface EpubInternalLinkTarget {
   sectionId: string;
   anchorId: string | null;
-}
-
-export function resolveSectionAnchorId(
-  sectionId: string,
-  sectionAnchorId: string | null,
-  tocNodes: NavigationTocNodeLike[] | null
-): string | null {
-  if (sectionAnchorId) {
-    return sectionAnchorId;
-  }
-  if (!tocNodes || tocNodes.length === 0) {
-    return null;
-  }
-
-  const stack = [...tocNodes];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (!node) {
-      continue;
-    }
-    if (node.section_id === sectionId) {
-      const anchor = parseReaderNavigationHrefAnchorId(node.href);
-      if (anchor) {
-        return anchor;
-      }
-    }
-    if (node.children.length > 0) {
-      stack.push(...node.children);
-    }
-  }
-
-  return null;
 }
 
 const EPUB_LINK_ORIGIN = "https://epub.local";

@@ -6,7 +6,10 @@
  * section, and the current section list.
  */
 
-import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
+import type {
+  ReaderNavigationFragment,
+  ReaderNavigationSection,
+} from "@/lib/media/readerNavigation";
 import type {
   EpubReaderResumeState,
   ReaderResumeLocations,
@@ -126,60 +129,79 @@ function findSectionByHrefPath(
   );
 }
 
-function resolveSectionIdByTotalProgression(
+function resolveSectionIdByDocumentOffset(
+  fragments: ReaderNavigationFragment[],
   sections: ReaderNavigationSection[],
-  totalProgression: number,
+  documentOffset: number,
 ): string | null {
-  const totalCharCount = sections.reduce(
-    (sum, section) => sum + (section.char_count ?? 0),
+  const orderedFragments = [...fragments].sort(
+    (left, right) => left.fragment_idx - right.fragment_idx,
+  );
+  const totalCharCount = orderedFragments.reduce(
+    (sum, fragment) => sum + fragment.char_count,
     0,
   );
   if (totalCharCount <= 0) {
     return null;
   }
 
-  const clampedProgression = Math.max(0, Math.min(totalProgression, 1));
-  const targetOffset = Math.min(
-    totalCharCount - 1,
-    Math.floor(clampedProgression * totalCharCount),
+  const targetOffset = Math.max(
+    0,
+    Math.min(totalCharCount - 1, documentOffset),
   );
-
-  let sectionStart = 0;
-  for (const section of sections) {
-    const sectionEnd = sectionStart + (section.char_count ?? 0);
-    if (targetOffset < sectionEnd) {
-      return section.section_id;
+  let fragmentStart = 0;
+  for (const fragment of orderedFragments) {
+    const fragmentEnd = fragmentStart + fragment.char_count;
+    if (targetOffset < fragmentEnd) {
+      const localOffset = targetOffset - fragmentStart;
+      const candidates = sections
+        .filter((section) => section.fragment_id === fragment.fragment_id)
+        .sort(
+          (left, right) =>
+            left.start_offset - right.start_offset ||
+            left.ordinal - right.ordinal,
+        );
+      if (candidates.length === 0) {
+        throw new Error(
+          `EPUB navigation defect: fragment ${fragment.fragment_id} has no target`,
+        );
+      }
+      return (
+        candidates.findLast((section) => section.start_offset <= localOffset) ??
+        candidates[0]!
+      ).section_id;
     }
-    sectionStart = sectionEnd;
+    fragmentStart = fragmentEnd;
   }
   return null;
 }
 
-function resolveSectionIdByPosition(
+function resolveSectionIdByTotalProgression(
+  fragments: ReaderNavigationFragment[],
   sections: ReaderNavigationSection[],
-  position: number,
-  readerPositionBucketCp: number,
+  totalProgression: number,
 ): string | null {
-  const targetOffset = (position - 1) * readerPositionBucketCp;
-  let sectionStart = 0;
-  for (const section of sections) {
-    const sectionEnd = sectionStart + (section.char_count ?? 0);
-    if (targetOffset < sectionEnd) {
-      return section.section_id;
-    }
-    sectionStart = sectionEnd;
-  }
-  return null;
+  const totalCharCount = fragments.reduce(
+    (sum, fragment) => sum + fragment.char_count,
+    0,
+  );
+  return resolveSectionIdByDocumentOffset(
+    fragments,
+    sections,
+    Math.floor(Math.max(0, Math.min(totalProgression, 1)) * totalCharCount),
+  );
 }
 
 export function resolveInitialEpubRestoreRequest({
   requestedSectionId,
   resumeState,
+  fragments,
   sections,
   readerPositionBucketCp,
 }: {
   requestedSectionId: string | null;
   resumeState: EpubReaderResumeState | null;
+  fragments: ReaderNavigationFragment[];
   sections: ReaderNavigationSection[];
   readerPositionBucketCp: number;
 }): EpubRestoreRequest | null {
@@ -222,6 +244,7 @@ export function resolveInitialEpubRestoreRequest({
 
     if (resumeState.locations.total_progression !== null) {
       const sectionId = resolveSectionIdByTotalProgression(
+        fragments,
         sections,
         resumeState.locations.total_progression,
       );
@@ -236,10 +259,10 @@ export function resolveInitialEpubRestoreRequest({
     }
 
     if (resumeState.locations.position !== null) {
-      const sectionId = resolveSectionIdByPosition(
+      const sectionId = resolveSectionIdByDocumentOffset(
+        fragments,
         sections,
-        resumeState.locations.position,
-        readerPositionBucketCp,
+        (resumeState.locations.position - 1) * readerPositionBucketCp,
       );
       if (sectionId) {
         return buildResumeRequest(

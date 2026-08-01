@@ -1,6 +1,9 @@
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/retryPolicy";
-import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
+import type {
+  ReaderNavigationFragment,
+  ReaderNavigationSection,
+} from "@/lib/media/readerNavigation";
 import {
   createPaneFindSourceKey,
   type PaneFindSourceKey,
@@ -109,16 +112,21 @@ function snapshotDefect(message: string): never {
 
 export function createEpubFindSnapshot({
   mediaId,
+  fragments,
   navigation,
 }: {
   readonly mediaId: string;
+  readonly fragments: readonly ReaderNavigationFragment[];
   readonly navigation: readonly ReaderNavigationSection[];
 }): EpubFindSnapshot {
   if (!mediaId) {
     snapshotDefect("media id is empty");
   }
+  if (fragments.length === 0) {
+    snapshotDefect("readable EPUB has no canonical fragments");
+  }
   if (navigation.length === 0) {
-    snapshotDefect("readable EPUB has no navigation");
+    snapshotDefect("readable EPUB has no navigation targets");
   }
 
   const ordered = [...navigation].sort(
@@ -128,9 +136,15 @@ export function createEpubFindSnapshot({
   );
   const sectionIds = new Set<string>();
   const ordinals = new Set<number>();
+  const sectionsByFragmentId = new Map<string, ReaderNavigationSection[]>();
+  for (const section of ordered) {
+    const current = sectionsByFragmentId.get(section.fragment_id) ?? [];
+    current.push(section);
+    sectionsByFragmentId.set(section.fragment_id, current);
+  }
+
   const fragmentsById = new Map<string, EpubFindSnapshotFragment>();
-  const fragmentIdsByIdx = new Map<number, string>();
-  let previousFragmentId: string | null = null;
+  const sectionFragmentIdsByIdx = new Map<number, string>();
 
   for (const section of ordered) {
     if (
@@ -143,64 +157,68 @@ export function createEpubFindSnapshot({
     sectionIds.add(section.section_id);
     ordinals.add(section.ordinal);
     if (
-      !section.fragment_id ||
-      section.fragment_idx === null ||
       section.fragment_idx < 0 ||
-      section.char_count === null ||
-      section.char_count < 0
+      section.start_offset < 0
     ) {
       snapshotDefect(
         `section ${section.section_id} lacks canonical fragment facts`,
       );
     }
 
-    const indexedFragment = fragmentIdsByIdx.get(section.fragment_idx);
+    const indexedFragment = sectionFragmentIdsByIdx.get(section.fragment_idx);
     if (indexedFragment && indexedFragment !== section.fragment_id) {
       snapshotDefect(`fragment index ${section.fragment_idx} is ambiguous`);
     }
-    fragmentIdsByIdx.set(section.fragment_idx, section.fragment_id);
-
-    const existing = fragmentsById.get(section.fragment_id);
-    if (existing) {
-      if (
-        existing.fragmentIdx !== section.fragment_idx ||
-        previousFragmentId !== section.fragment_id ||
-        section.char_count !== 0
-      ) {
-        snapshotDefect(
-          `navigation for fragment ${section.fragment_id} is contradictory`,
-        );
-      }
-      fragmentsById.set(section.fragment_id, {
-        ...existing,
-        navigationLocationCount: existing.navigationLocationCount + 1,
-      });
-      previousFragmentId = section.fragment_id;
-      continue;
-    }
-
-    fragmentsById.set(section.fragment_id, {
-      fragmentId: section.fragment_id,
-      fragmentIdx: section.fragment_idx,
-      activationSectionId: section.section_id,
-      label: section.label,
-      charCount: section.char_count,
-      navigationLocationCount: 1,
-    });
-    previousFragmentId = section.fragment_id;
+    sectionFragmentIdsByIdx.set(section.fragment_idx, section.fragment_id);
   }
 
-  const fragments = [...fragmentsById.values()]
+  const fragmentIdsByIdx = new Map<number, string>();
+  for (const fragment of fragments) {
+    if (
+      fragmentsById.has(fragment.fragment_id) ||
+      fragmentIdsByIdx.has(fragment.fragment_idx)
+    ) {
+      snapshotDefect("fragment ids and indexes must be unique");
+    }
+    const sections = sectionsByFragmentId.get(fragment.fragment_id) ?? [];
+    const activation = sections[0];
+    if (!activation) {
+      snapshotDefect(`fragment ${fragment.fragment_id} has no navigation target`);
+    }
+    if (
+      sections.some(
+        (section) => section.fragment_idx !== fragment.fragment_idx,
+      )
+    ) {
+      snapshotDefect(`fragment ${fragment.fragment_id} has contradictory indexes`);
+    }
+    fragmentsById.set(fragment.fragment_id, {
+      fragmentId: fragment.fragment_id,
+      fragmentIdx: fragment.fragment_idx,
+      activationSectionId: activation.section_id,
+      label: activation.label,
+      charCount: fragment.char_count,
+      navigationLocationCount: sections.length,
+    });
+    fragmentIdsByIdx.set(fragment.fragment_idx, fragment.fragment_id);
+  }
+  if (
+    ordered.some((section) => !fragmentsById.has(section.fragment_id))
+  ) {
+    snapshotDefect("navigation names a fragment outside the canonical inventory");
+  }
+
+  const snapshotFragments = [...fragmentsById.values()]
     .sort(
       (left, right) =>
         left.fragmentIdx - right.fragmentIdx ||
         left.fragmentId.localeCompare(right.fragmentId),
     );
-  if (fragments.length === 0) {
-    snapshotDefect("readable EPUB has no canonical fragments");
-  }
-  for (let index = 1; index < fragments.length; index += 1) {
-    if (fragments[index - 1]!.fragmentIdx >= fragments[index]!.fragmentIdx) {
+  for (let index = 1; index < snapshotFragments.length; index += 1) {
+    if (
+      snapshotFragments[index - 1]!.fragmentIdx >=
+      snapshotFragments[index]!.fragmentIdx
+    ) {
       snapshotDefect("fragment order is not strictly increasing");
     }
   }
@@ -210,7 +228,7 @@ export function createEpubFindSnapshot({
     sourceKey: createPaneFindSourceKey({
       kind: "Epub",
       mediaId,
-      fragments: fragments.map(
+      fragments: snapshotFragments.map(
         ({
           fragmentId,
           fragmentIdx,
@@ -226,8 +244,8 @@ export function createEpubFindSnapshot({
         }),
       ),
     }),
-    sourceWitnessFragmentId: fragments[0]!.fragmentId,
-    fragments,
+    sourceWitnessFragmentId: snapshotFragments[0]!.fragmentId,
+    fragments: snapshotFragments,
   };
 }
 

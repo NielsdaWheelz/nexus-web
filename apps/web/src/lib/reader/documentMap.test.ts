@@ -131,6 +131,7 @@ describe("Reader Document Map contract", () => {
           value: {
             media_id: "media-1",
             kind: "web_article",
+            fragments: [],
             sections: [],
             toc_nodes: [],
             landmarks: [],
