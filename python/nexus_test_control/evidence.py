@@ -12,6 +12,7 @@ from typing import Any
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
     Capability,
+    PeakOwnedMemory,
     RunStatus,
     Selection,
     SelectionReason,
@@ -29,6 +30,7 @@ type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
 REDACTED = "[REDACTED]"
+EVIDENCE_SCHEMA_VERSION = 3
 _SENSITIVE_KEY_PARTS = (
     "authorization",
     "command",
@@ -69,7 +71,9 @@ _EXACT_EXECUTION_INPUTS = frozenset(
         "XDG_CACHE_HOME",
     }
 )
-_IGNORED_EXECUTION_INPUTS = frozenset({"NEXUS_TEST_RESULTS_DIR", "NEXUS_TEST_RUN_ID"})
+_IGNORED_EXECUTION_INPUTS = frozenset(
+    {"NEXUS_TEST_EVIDENCE_RUN_ID", "NEXUS_TEST_RESULTS_DIR", "NEXUS_TEST_RUN_ID"}
+)
 
 
 def _nonnegative(name: str, value: int | float) -> None:
@@ -77,20 +81,28 @@ def _nonnegative(name: str, value: int | float) -> None:
         raise ValueError(f"{name} must be finite and nonnegative")
 
 
-@dataclass(frozen=True, slots=True)
-class PeakOwnedMemory:
-    process_tree_rss: int
-    container_working_set: int
-    total: int
-    measurement_complete: bool = True
+def _repository_relative(value: str) -> bool:
+    path = PurePosixPath(value)
+    return (
+        bool(value.strip())
+        and not path.is_absolute()
+        and ".." not in path.parts
+        and "\\" not in value
+    )
 
-    def __post_init__(self) -> None:
-        _nonnegative("process tree RSS", self.process_tree_rss)
-        _nonnegative("container working set", self.container_working_set)
-        if self.total != self.process_tree_rss + self.container_working_set:
-            raise ValueError("total owned memory must equal its recorded owners")
-        if not isinstance(self.measurement_complete, bool):
-            raise ValueError("owned memory measurement state must be boolean")
+
+def _failure_timing(status: RunStatus, value: int | None) -> None:
+    if value is not None and (type(value) is not int or value < 0):
+        raise ValueError("first actionable failure must be nonnegative milliseconds or null")
+    if status is RunStatus.PASS and value is not None:
+        raise ValueError("passing evidence cannot have an actionable failure time")
+    if status is not RunStatus.PASS and value is None:
+        raise ValueError("non-passing evidence requires an actionable failure time")
+
+
+def _artifact_path(label: str, value: str) -> None:
+    if not _repository_relative(value):
+        raise ValueError(f"{label} must be repository-relative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +158,84 @@ def execution_input_fingerprint(environment: Mapping[str, str]) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class FixedCommandIdentity:
+    owner: Capability
+    argv: tuple[str, ...]
+    cwd: str
+    proof_id: str | None = None
+    sensitivity_attempt: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.owner, Capability):
+            raise ValueError("fixed command owner must be typed")
+        if not self.argv or any(not part for part in self.argv):
+            raise ValueError("fixed command identity requires nonblank argv")
+        if self.cwd != "." and not _repository_relative(self.cwd):
+            raise ValueError("fixed command cwd must be repository-relative")
+        if self.proof_id is not None and not self.proof_id.strip():
+            raise ValueError("fixed command proof id must not be blank")
+        if self.sensitivity_attempt not in {None, "red", "green"}:
+            raise ValueError("fixed command sensitivity attempt is unknown")
+        if self.sensitivity_attempt is not None and self.proof_id is None:
+            raise ValueError("sensitivity command must name its exact proof")
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeIdentity:
+    repo_id: str
+    compose_project: str
+    run_id: str
+    database: str
+    migration_database: str | None
+    bucket: str
+    template_fingerprint: str
+    template_database: str
+
+    def __post_init__(self) -> None:
+        required = (
+            self.repo_id,
+            self.compose_project,
+            self.run_id,
+            self.database,
+            self.bucket,
+            self.template_fingerprint,
+            self.template_database,
+        )
+        if any(not value.strip() for value in required):
+            raise ValueError("runtime identity fields must not be blank")
+        if self.migration_database is not None and not self.migration_database.strip():
+            raise ValueError("migration database identity must not be blank")
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserIdentity:
+    name: str
+    revision: str
+
+    def __post_init__(self) -> None:
+        if not self.name.strip() or not self.revision.strip():
+            raise ValueError("browser identity fields must not be blank")
+
+
+@dataclass(frozen=True, slots=True)
+class RunContextEvidence:
+    fixed_commands: tuple[FixedCommandIdentity, ...]
+    runtimes: tuple[RuntimeIdentity, ...]
+    build_fingerprints: tuple[str, ...]
+    browsers: tuple[BrowserIdentity, ...]
+
+    def __post_init__(self) -> None:
+        if any(_FINGERPRINT.fullmatch(value) is None for value in self.build_fingerprints):
+            raise ValueError("build identities must be SHA-256 fingerprints")
+        if len(self.runtimes) != len(set(self.runtimes)):
+            raise ValueError("run context runtime identities must be unique")
+        if len(self.build_fingerprints) != len(set(self.build_fingerprints)):
+            raise ValueError("run context build identities must be unique")
+        if len(self.browsers) != len(set(self.browsers)):
+            raise ValueError("run context browser identities must be unique")
+
+
+@dataclass(frozen=True, slots=True)
 class RunEvidence:
     repo_root: InitVar[Path]
     run_id: str
@@ -153,7 +243,9 @@ class RunEvidence:
     git_sha: str | None
     base_sha: str | None
     duration_ms: int
+    first_actionable_failure_ms: int | None
     peak_owned_mib: PeakOwnedMemory
+    run_context_artifact: str
     selection: tuple[Selection, ...]
     sensitivity: tuple[Sensitivity, ...]
     capabilities: tuple[CapabilityEvidence, ...]
@@ -164,8 +256,8 @@ class RunEvidence:
             raise ValueError("workflow must be a typed Workflow")
         if not isinstance(self.invocation, InvocationEvidence):
             raise ValueError("invocation must be typed evidence")
-        if not self.run_id.strip():
-            raise ValueError("run id must not be blank")
+        if _RUN_ID.fullmatch(self.run_id) is None:
+            raise ValueError("run id must be 16 lowercase hex characters")
         if self.git_sha is not None and re.fullmatch(r"[0-9a-f]{40}", self.git_sha) is None:
             raise ValueError("run Git SHA must be full and lowercase when resolved")
         if self.base_sha is not None and re.fullmatch(r"[0-9a-f]{40}", self.base_sha) is None:
@@ -181,6 +273,8 @@ class RunEvidence:
             missing = sorted(capability.value for capability in required.difference(ids))
             extra = sorted(capability.value for capability in set(ids).difference(required))
             raise ValueError(f"capability evidence differs; missing={missing}, extra={extra}")
+        _failure_timing(self.status, self.first_actionable_failure_ms)
+        _artifact_path("run context artifact", self.run_context_artifact)
         if self.git_sha is None and self.status is RunStatus.PASS:
             raise ValueError("a passing run requires an exact Git SHA")
 
@@ -228,8 +322,12 @@ class ProveEvidence:
     against: str
     git_sha: str | None
     duration_ms: int
+    first_actionable_failure_ms: int | None
+    peak_owned_mib: PeakOwnedMemory
+    run_context_artifact: str
     status: RunStatus
     sensitivity: tuple[Sensitivity, ...]
+    artifacts: tuple[str, ...] = ()
     detail: str = ""
     invocation: InvocationEvidence = field(default_factory=InvocationEvidence)
 
@@ -245,8 +343,12 @@ class ProveEvidence:
         if self.git_sha is not None and re.fullmatch(r"[0-9a-f]{40}", self.git_sha) is None:
             raise ValueError("prove Git SHA must be full and lowercase when resolved")
         _nonnegative("prove duration", self.duration_ms)
+        _failure_timing(self.status, self.first_actionable_failure_ms)
+        _artifact_path("prove run context artifact", self.run_context_artifact)
+        for artifact in self.artifacts:
+            _artifact_path("prove artifact", artifact)
         if self.status is RunStatus.PASS:
-            if self.git_sha is None or len(self.sensitivity) != 1 or self.detail:
+            if self.git_sha is None or len(self.sensitivity) != 1 or self.detail or self.artifacts:
                 raise ValueError("passing prove evidence requires one result and an exact Git SHA")
             record = self.sensitivity[0]
             if record.proof != self.proof or record.green.git_sha != self.git_sha:
@@ -274,7 +376,9 @@ class DiagnosticRerunEvidence:
     git_sha: str
     diagnostic_of_run_id: str
     duration_ms: int
+    first_actionable_failure_ms: int | None
     peak_owned_mib: PeakOwnedMemory
+    run_context_artifact: str
     capabilities: tuple[CapabilityEvidence, ...]
     invocation: InvocationEvidence = field(default_factory=InvocationEvidence)
 
@@ -299,6 +403,8 @@ class DiagnosticRerunEvidence:
         }
         if len(ids) != len(set(ids)) or set(ids) != required:
             raise ValueError("diagnostic capabilities must exactly match the original workflow")
+        _failure_timing(self.diagnostic_status, self.first_actionable_failure_ms)
+        _artifact_path("diagnostic run context artifact", self.run_context_artifact)
 
     @property
     def status(self) -> RunStatus:
@@ -320,7 +426,9 @@ def run_evidence_from_json(repo_root: Path, value: object) -> RunEvidence:
             "base_sha",
             "status",
             "duration_ms",
+            "first_actionable_failure_ms",
             "peak_owned_mib",
+            "run_context_artifact",
             "invocation",
             "selection",
             "sensitivity",
@@ -328,8 +436,8 @@ def run_evidence_from_json(repo_root: Path, value: object) -> RunEvidence:
         },
         "run summary",
     )
-    if type(payload["version"]) is not int or payload["version"] != 2:
-        raise ValueError("run summary version must be exactly 2")
+    if type(payload["version"]) is not int or payload["version"] != EVIDENCE_SCHEMA_VERSION:
+        raise ValueError(f"run summary version must be exactly {EVIDENCE_SCHEMA_VERSION}")
     invocation = _parse_invocation(payload["invocation"])
     peak = _parse_memory(payload["peak_owned_mib"])
     selection = tuple(_parse_selection(item) for item in _list(payload["selection"], "selection"))
@@ -346,7 +454,11 @@ def run_evidence_from_json(repo_root: Path, value: object) -> RunEvidence:
         git_sha=_optional_string(payload["git_sha"], "Git SHA"),
         base_sha=_optional_string(payload["base_sha"], "base SHA"),
         duration_ms=_integer(payload["duration_ms"], "duration"),
+        first_actionable_failure_ms=_optional_integer(
+            payload["first_actionable_failure_ms"], "first actionable failure"
+        ),
         peak_owned_mib=peak,
+        run_context_artifact=_string(payload["run_context_artifact"], "run context artifact"),
         selection=selection,
         sensitivity=sensitivity,
         capabilities=capabilities,
@@ -371,14 +483,18 @@ def prove_evidence_from_json(repo_root: Path, value: object) -> ProveEvidence:
             "git_sha",
             "status",
             "duration_ms",
+            "first_actionable_failure_ms",
+            "peak_owned_mib",
+            "run_context_artifact",
             "invocation",
             "sensitivity",
+            "artifacts",
             "detail",
         },
         "prove summary",
     )
-    if type(payload["version"]) is not int or payload["version"] != 2:
-        raise ValueError("prove summary version must be exactly 2")
+    if type(payload["version"]) is not int or payload["version"] != EVIDENCE_SCHEMA_VERSION:
+        raise ValueError(f"prove summary version must be exactly {EVIDENCE_SCHEMA_VERSION}")
     if payload["command"] != "prove":
         raise ValueError("prove summary command must be exact")
     return ProveEvidence(
@@ -389,9 +505,18 @@ def prove_evidence_from_json(repo_root: Path, value: object) -> ProveEvidence:
         against=_string(payload["against"], "against target"),
         git_sha=_optional_string(payload["git_sha"], "Git SHA"),
         duration_ms=_integer(payload["duration_ms"], "duration"),
+        first_actionable_failure_ms=_optional_integer(
+            payload["first_actionable_failure_ms"], "first actionable failure"
+        ),
+        peak_owned_mib=_parse_memory(payload["peak_owned_mib"]),
+        run_context_artifact=_string(payload["run_context_artifact"], "run context artifact"),
         status=_enum(RunStatus, payload["status"], "status"),
         sensitivity=tuple(
             _parse_sensitivity(item) for item in _list(payload["sensitivity"], "sensitivity")
+        ),
+        artifacts=tuple(
+            _string(item, "prove artifact")
+            for item in _list(payload["artifacts"], "prove artifacts")
         ),
         detail=_string(payload["detail"], "detail"),
         invocation=_parse_invocation(payload["invocation"]),
@@ -462,9 +587,22 @@ def _parse_sensitivity(value: object) -> Sensitivity:
     )
     against = _exact_object(payload["against"], {"git_sha", "fault_id"}, "sensitivity against")
     red = _exact_object(
-        payload["red"], {"status", "phase", "failure_fingerprint"}, "sensitivity red"
+        payload["red"],
+        {
+            "status",
+            "phase",
+            "failure_fingerprint",
+            "duration_ms",
+            "peak_owned_mib",
+            "artifacts",
+        },
+        "sensitivity red",
     )
-    green = _exact_object(payload["green"], {"status", "git_sha"}, "sensitivity green")
+    green = _exact_object(
+        payload["green"],
+        {"status", "git_sha", "duration_ms", "peak_owned_mib", "artifacts"},
+        "sensitivity green",
+    )
     return Sensitivity(
         proof=_string(payload["proof"], "sensitivity proof"),
         changed_paths=tuple(
@@ -482,10 +620,22 @@ def _parse_sensitivity(value: object) -> Sensitivity:
             failure_fingerprint=_string(
                 red["failure_fingerprint"], "sensitivity failure fingerprint"
             ),
+            duration_ms=_integer(red["duration_ms"], "sensitivity red duration"),
+            peak_owned_mib=_parse_memory(red["peak_owned_mib"]),
+            artifacts=tuple(
+                _string(item, "sensitivity red artifact")
+                for item in _list(red["artifacts"], "sensitivity red artifacts")
+            ),
             status=_enum(RunStatus, red["status"], "sensitivity red status"),
         ),
         green=SensitivityGreen(
             git_sha=_string(green["git_sha"], "sensitivity green Git SHA"),
+            duration_ms=_integer(green["duration_ms"], "sensitivity green duration"),
+            peak_owned_mib=_parse_memory(green["peak_owned_mib"]),
+            artifacts=tuple(
+                _string(item, "sensitivity green artifact")
+                for item in _list(green["artifacts"], "sensitivity green artifacts")
+            ),
             status=_enum(RunStatus, green["status"], "sensitivity green status"),
         ),
     )
@@ -549,6 +699,10 @@ def _integer(value: object, label: str) -> int:
     if type(value) is not int:
         raise ValueError(f"{label} must be an integer")
     return value
+
+
+def _optional_integer(value: object, label: str) -> int | None:
+    return None if value is None else _integer(value, label)
 
 
 def _number(value: object, label: str) -> int | float:
@@ -632,10 +786,16 @@ def _sensitivity_json(sensitivity: Sensitivity) -> dict[str, JsonValue]:
             "status": sensitivity.red.status.value,
             "phase": sensitivity.red.phase.value,
             "failure_fingerprint": sensitivity.red.failure_fingerprint,
+            "duration_ms": sensitivity.red.duration_ms,
+            "peak_owned_mib": _memory_json(sensitivity.red.peak_owned_mib),
+            "artifacts": list(sensitivity.red.artifacts),
         },
         "green": {
             "status": sensitivity.green.status.value,
             "git_sha": sensitivity.green.git_sha,
+            "duration_ms": sensitivity.green.duration_ms,
+            "peak_owned_mib": _memory_json(sensitivity.green.peak_owned_mib),
+            "artifacts": list(sensitivity.green.artifacts),
         },
     }
 
@@ -669,14 +829,16 @@ def _capabilities_json(
 
 def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[str, JsonValue]:
     payload: dict[str, JsonValue] = {
-        "version": 2,
+        "version": EVIDENCE_SCHEMA_VERSION,
         "run_id": evidence.run_id,
         "workflow": evidence.workflow.value,
         "git_sha": evidence.git_sha,
         "base_sha": evidence.base_sha,
         "status": evidence.status.value,
         "duration_ms": evidence.duration_ms,
+        "first_actionable_failure_ms": evidence.first_actionable_failure_ms,
         "peak_owned_mib": _memory_json(evidence.peak_owned_mib),
+        "run_context_artifact": evidence.run_context_artifact,
         "invocation": {
             "ui": evidence.invocation.ui,
             "input_fingerprint": evidence.invocation.input_fingerprint,
@@ -704,7 +866,7 @@ def prove_evidence_json(
     evidence: ProveEvidence, secrets: Iterable[str] = ()
 ) -> dict[str, JsonValue]:
     payload: dict[str, JsonValue] = {
-        "version": 2,
+        "version": EVIDENCE_SCHEMA_VERSION,
         "command": "prove",
         "run_id": evidence.run_id,
         "proof": evidence.proof,
@@ -713,11 +875,15 @@ def prove_evidence_json(
         "git_sha": evidence.git_sha,
         "status": evidence.status.value,
         "duration_ms": evidence.duration_ms,
+        "first_actionable_failure_ms": evidence.first_actionable_failure_ms,
+        "peak_owned_mib": _memory_json(evidence.peak_owned_mib),
+        "run_context_artifact": evidence.run_context_artifact,
         "invocation": {
             "ui": evidence.invocation.ui,
             "input_fingerprint": evidence.invocation.input_fingerprint,
         },
         "sensitivity": [_sensitivity_json(item) for item in evidence.sensitivity],
+        "artifacts": list(evidence.artifacts),
         "detail": evidence.detail,
     }
     redacted = redact_json(payload, secrets)
@@ -725,6 +891,40 @@ def prove_evidence_json(
         raise AssertionError("prove evidence redaction changed the object shape")
     redacted["command"] = "prove"
     return redacted
+
+
+def run_context_json(evidence: RunContextEvidence) -> dict[str, JsonValue]:
+    """Serialize identities already reduced to their non-secret controller form."""
+    return {
+        "version": EVIDENCE_SCHEMA_VERSION,
+        "fixed_commands": [
+            {
+                "owner": command.owner.value,
+                "argv": list(command.argv),
+                "cwd": command.cwd,
+                "proof_id": command.proof_id,
+                "sensitivity_attempt": command.sensitivity_attempt,
+            }
+            for command in evidence.fixed_commands
+        ],
+        "runtimes": [
+            {
+                "repo_id": runtime.repo_id,
+                "compose_project": runtime.compose_project,
+                "run_id": runtime.run_id,
+                "database": runtime.database,
+                "migration_database": runtime.migration_database,
+                "bucket": runtime.bucket,
+                "template_fingerprint": runtime.template_fingerprint,
+                "template_database": runtime.template_database,
+            }
+            for runtime in evidence.runtimes
+        ],
+        "build_fingerprints": list(evidence.build_fingerprints),
+        "browsers": [
+            {"name": browser.name, "revision": browser.revision} for browser in evidence.browsers
+        ],
+    }
 
 
 def write_evidence_json(path: Path, payload: Mapping[str, JsonValue]) -> None:
@@ -766,7 +966,7 @@ def diagnostic_evidence_json(
         PurePosixPath("test-results/runs") / evidence.diagnostic_of_run_id / "summary.json"
     )
     payload: dict[str, JsonValue] = {
-        "version": 2,
+        "version": EVIDENCE_SCHEMA_VERSION,
         "command": "diagnose",
         "run_id": evidence.run_id,
         "workflow": evidence.workflow.value,
@@ -784,7 +984,9 @@ def diagnostic_evidence_json(
         "diagnostic_result": {
             "status": evidence.diagnostic_status.value,
             "duration_ms": evidence.duration_ms,
+            "first_actionable_failure_ms": evidence.first_actionable_failure_ms,
             "peak_owned_mib": _memory_json(evidence.peak_owned_mib),
+            "run_context_artifact": evidence.run_context_artifact,
             "capabilities": _capabilities_json(evidence.capabilities),
         },
     }

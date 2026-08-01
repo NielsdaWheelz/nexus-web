@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from nexus_test_control.evidence import PeakOwnedMemory
+from nexus_test_control.model import PeakOwnedMemory
 from nexus_test_control.runtime import (
     RuntimeContractError,
     compose_project_name,
@@ -43,8 +43,9 @@ class OwnedMemorySampler:
         self._repo_root = repo_root
         self._process_reader = process_reader or _process_tree_rss
         self._container_reader = container_reader or _owned_container_working_set
-        self._include_containers = include_containers
-        self._containers_required = include_containers
+        self._container_roots = {repo_root} if include_containers else set()
+        self._required_container_roots = set(self._container_roots)
+        self._sampled_container_roots: set[Path] = set()
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._peak_process_bytes = 0
@@ -53,24 +54,30 @@ class OwnedMemorySampler:
         self._interval_container_bytes = 0
         self._current_process_bytes = 0
         self._current_container_bytes = 0
-        self._container_sampled = not include_containers
         self._container_sample_failed = False
         self._thread = threading.Thread(target=self._sample_until_stopped, daemon=True)
         self.evidence: PeakOwnedMemory | None = None
 
     def start(self) -> None:
-        self._sample(include_containers=self._include_containers)
+        self._sample(include_containers=bool(self._container_roots))
         self._thread.start()
 
-    def enable_containers(self) -> None:
+    def enable_containers(self, repo_root: Path | None = None) -> None:
         """Begin container sampling after the caller owns the heavy-work lock."""
+        root = repo_root or self._repo_root
         with self._lock:
-            if self._include_containers:
+            if root in self._container_roots:
                 return
-            self._include_containers = True
-            self._containers_required = True
-            self._container_sampled = False
+            self._container_roots.add(root)
+            self._required_container_roots.add(root)
         self._sample(include_containers=True)
+
+    def disable_containers(self, repo_root: Path) -> None:
+        """Stop sampling a sensitivity checkout before its path is removed."""
+        with self._lock:
+            self._container_roots.discard(repo_root)
+            if not self._container_roots:
+                self._current_container_bytes = 0
 
     def stop(self) -> PeakOwnedMemory:
         self._stop.set()
@@ -99,7 +106,7 @@ class OwnedMemorySampler:
                 self._interval_container_bytes if interval else self._peak_container_bytes
             )
             measurement_complete = (
-                not self._containers_required or self._container_sampled
+                self._required_container_roots.issubset(self._sampled_container_roots)
             ) and not self._container_sample_failed
         process = _to_mib(process_bytes)
         containers = _to_mib(container_bytes)
@@ -115,7 +122,7 @@ class OwnedMemorySampler:
         while not self._stop.wait(0.1):
             now = time.monotonic()
             with self._lock:
-                containers_enabled = self._include_containers
+                containers_enabled = bool(self._container_roots)
             include_containers = containers_enabled and now >= next_container_sample
             self._sample(include_containers=include_containers)
             if include_containers:
@@ -125,9 +132,13 @@ class OwnedMemorySampler:
         process_bytes = self._process_reader(os.getpid())
         container_bytes: int | None = None
         container_failed = False
+        sampled_roots: set[Path] = set()
         if include_containers:
+            with self._lock:
+                container_roots = tuple(self._container_roots)
             try:
-                container_bytes = self._container_reader(self._repo_root)
+                container_bytes = sum(self._container_reader(root) for root in container_roots)
+                sampled_roots.update(container_roots)
             except (OSError, RuntimeContractError, subprocess.SubprocessError):
                 container_failed = True
         with self._lock:
@@ -137,7 +148,7 @@ class OwnedMemorySampler:
             if container_failed:
                 self._container_sample_failed = True
             elif container_bytes is not None:
-                self._container_sampled = True
+                self._sampled_container_roots.update(sampled_roots)
                 self._current_container_bytes = container_bytes
                 self._peak_container_bytes = max(self._peak_container_bytes, container_bytes)
                 self._interval_container_bytes = max(

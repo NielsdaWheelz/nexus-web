@@ -11,11 +11,12 @@ import signal
 import socket
 import subprocess
 import tarfile
+import threading
 import time
 import tomllib
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
@@ -28,11 +29,24 @@ from botocore.exceptions import BotoCoreError
 from sqlalchemy.exc import SQLAlchemyError
 
 from nexus_test_control.build import StandaloneBuild, ensure_standalone_build
-from nexus_test_control.evidence import CapabilityEvidence, PeakOwnedMemory, redact_text
-from nexus_test_control.memory import available_memory_mib, measure_owned_memory, measured
+from nexus_test_control.evidence import (
+    BrowserIdentity,
+    CapabilityEvidence,
+    FixedCommandIdentity,
+    RunContextEvidence,
+    RuntimeIdentity,
+    redact_text,
+)
+from nexus_test_control.memory import (
+    OwnedMemorySampler,
+    available_memory_mib,
+    measure_owned_memory,
+    measured,
+)
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
     Capability,
+    PeakOwnedMemory,
     Resource,
     ResourceKind,
     RunStatus,
@@ -55,9 +69,12 @@ from nexus_test_control.runtime import (
     EndpointKind,
     RuntimeContractError,
     extension_profile_identity,
+    migration_database_name,
     read_runtime,
     record_created,
     record_planned,
+    repo_id_for,
+    run_database_name,
     template_database_name,
     workspace_heavy_lock,
 )
@@ -86,10 +103,12 @@ _SAFE_HEAVY_ENV = (
     "LANG",
     "LC_ALL",
     "NO_COLOR",
+    "NEXUS_TEST_EVIDENCE_RUN_ID",
     "NEXUS_TEST_RESULTS_DIR",
     "NEXUS_TEST_RUN_ID",
     "PATH",
     "PLAYWRIGHT_BROWSERS_PATH",
+    "PYTHONDONTWRITEBYTECODE",
     "TERM",
     "TMPDIR",
     "TZ",
@@ -119,10 +138,12 @@ _SAFE_CHILD_ENV = (
     "LC_ALL",
     "NEXUS_GOOGLE_WEB_CLIENT_ID",
     "NO_COLOR",
+    "NEXUS_TEST_EVIDENCE_RUN_ID",
     "NEXUS_TEST_RESULTS_DIR",
     "NEXUS_TEST_RUN_ID",
     "PATH",
     "PLAYWRIGHT_BROWSERS_PATH",
+    "PYTHONDONTWRITEBYTECODE",
     "TERM",
     "TMPDIR",
     "TZ",
@@ -228,6 +249,15 @@ class CapabilityContext:
     selection: tuple[Selection, ...]
     ui: bool = False
     proven_proofs: frozenset[str] = frozenset()
+    proof_id: str | None = None
+    sensitivity_attempt: str | None = None
+    run_context: RunContextRecorder | None = None
+
+    def __post_init__(self) -> None:
+        if self.sensitivity_attempt not in {None, "red", "green"}:
+            raise ValueError("capability sensitivity attempt is unknown")
+        if self.sensitivity_attempt is not None and self.proof_id is None:
+            raise ValueError("sensitivity capability context must name its proof")
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +284,13 @@ class FirstFailureReporter:
     def __init__(self, secrets: Iterable[str] = ()) -> None:
         self._secrets = tuple(secrets)
         self._reported = False
+        self._started_ns: int | None = None
+        self.first_actionable_failure_ms: int | None = None
+
+    def arm(self, started_ns: int) -> None:
+        if self._reported or self._started_ns is not None:
+            raise ValueError("first-failure reporter can be armed exactly once before reporting")
+        self._started_ns = started_ns
 
     def report(
         self,
@@ -266,6 +303,8 @@ class FirstFailureReporter:
     ) -> bool:
         if self._reported:
             return False
+        if self._started_ns is not None:
+            self.first_actionable_failure_ms = (time.monotonic_ns() - self._started_ns) // 1_000_000
         bounded = _decisive_output(redact_text(str(detail), self._secrets))
         scalar = " ".join(bounded.split()) or "no diagnostic output"
         stream.write(
@@ -274,6 +313,84 @@ class FirstFailureReporter:
         stream.flush()
         self._reported = True
         return True
+
+
+class RunContextRecorder:
+    """Collect non-secret identities observed at controller launch boundaries."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._fixed_commands: list[FixedCommandIdentity] = []
+        self._runtimes: set[RuntimeIdentity] = set()
+        self._build_fingerprints: set[str] = set()
+        self._browsers: set[BrowserIdentity] = set()
+
+    def record_command(
+        self,
+        context: CapabilityContext,
+        capability: Capability,
+        argv: tuple[str, ...],
+        cwd: Path,
+        environment: Mapping[str, str],
+    ) -> None:
+        try:
+            relative_cwd = cwd.resolve(strict=True).relative_to(
+                context.repo_root.resolve(strict=True)
+            )
+            cwd_identity = relative_cwd.as_posix() or "."
+        except (OSError, ValueError):
+            cwd_identity = "@isolated"
+        identity = FixedCommandIdentity(
+            owner=capability,
+            argv=_redacted_command_argv(argv, environment_secrets(environment)),
+            cwd=cwd_identity,
+            proof_id=context.proof_id,
+            sensitivity_attempt=context.sensitivity_attempt,
+        )
+        browsers = (
+            tuple(
+                BrowserIdentity(name, revision)
+                for name, revision in _browser_revisions(context.repo_root)
+            )
+            if _browser_command(argv)
+            else ()
+        )
+        with self._lock:
+            self._fixed_commands.append(identity)
+            self._browsers.update(browsers)
+
+    def record_runtime(self, context: CapabilityContext, run: TestRun) -> None:
+        runtime = read_runtime(context.repo_root)
+        fingerprint = _repository_template_fingerprint(context.repo_root)
+        identity = RuntimeIdentity(
+            repo_id=repo_id_for(context.repo_root),
+            compose_project=runtime.compose_project,
+            run_id=run.run_id,
+            database=run_database_name(run.run_id),
+            migration_database=(
+                migration_database_name(run.run_id)
+                if run.migration_database_url is not None
+                else None
+            ),
+            bucket=run.bucket,
+            template_fingerprint=fingerprint,
+            template_database=template_database_name(fingerprint),
+        )
+        with self._lock:
+            self._runtimes.add(identity)
+
+    def record_build(self, fingerprint: str) -> None:
+        with self._lock:
+            self._build_fingerprints.add(fingerprint)
+
+    def evidence(self) -> RunContextEvidence:
+        with self._lock:
+            return RunContextEvidence(
+                tuple(self._fixed_commands),
+                tuple(sorted(self._runtimes, key=lambda item: (item.repo_id, item.run_id))),
+                tuple(sorted(self._build_fingerprints)),
+                tuple(sorted(self._browsers, key=lambda item: (item.name, item.revision))),
+            )
 
 
 class _RunnerPorts:
@@ -460,6 +577,8 @@ class _WorkflowExecution:
                 run_id=self.run_id,
                 include_migration_database=self.include_migration_database,
             )
+            if self.context.run_context is not None:
+                self.context.run_context.record_runtime(self.context, self.run)
         except OSError as error:
             duration_ms = (time.monotonic_ns() - started) // 1_000_000
             self.preparation_failure = _result(
@@ -510,6 +629,7 @@ def run_workflow(
     _monotonic: Callable[[], float] = time.monotonic,
     _wait: Callable[[float], None] = time.sleep,
     _reporter: FirstFailureReporter | None = None,
+    _memory_sampler: OwnedMemorySampler | None = None,
 ) -> WorkflowRun:
     requirements = WORKFLOW_REGISTRY[context.workflow].requirements
     required_capabilities = {requirement.capability for requirement in requirements}
@@ -585,7 +705,7 @@ def run_workflow(
                     workflow_lifecycle.enter_context(execution.ports.heavy_lock(context.repo_root))
                     heavy_lock_held = True
                     if measures_containers:
-                        workflow_sampler.enable_containers()
+                        workflow_sampler.enable_containers(context.repo_root)
                 result = run_requirement(requirement.capability)
                 memory = workflow_sampler.checkpoint()
                 measured_result = CapabilityResult(
@@ -603,14 +723,23 @@ def run_workflow(
         capability in _LOCAL_RUNTIME_CAPABILITIES and _capability_is_selected(context, capability)
         for capability in required_capabilities
     )
-    with ExitStack() as workflow_lifecycle:
-        with measure_owned_memory(
+    owns_sampler = _memory_sampler is None
+    sampler_lifecycle = (
+        measure_owned_memory(
             context.repo_root,
             # The process sampler may run while this workflow waits. Container
             # sampling begins only after the workflow owns the heavy-work lock,
             # so queued workflows cannot measure or contend on another run.
             include_containers=False,
-        ) as workflow_sampler:
+        )
+        if owns_sampler
+        else nullcontext(_memory_sampler)
+    )
+    with ExitStack() as workflow_lifecycle:
+        with sampler_lifecycle as workflow_sampler:
+            if workflow_sampler is None:
+                raise AssertionError("workflow owned-memory sampler is absent")
+            workflow_sampler.checkpoint()
             capabilities = tuple(
                 result.evidence
                 for result in stream_first_failure(
@@ -620,7 +749,7 @@ def run_workflow(
                     reporter=reporter,
                 )
             )
-    workflow_memory = measured(workflow_sampler)
+    workflow_memory = measured(workflow_sampler) if owns_sampler else workflow_sampler.snapshot()
     if not workflow_memory.measurement_complete and all(
         item.status is RunStatus.PASS for item in capabilities
     ):
@@ -690,6 +819,7 @@ def run_proof(
     _available_memory: Callable[[], int | None] = available_memory_mib,
     _monotonic: Callable[[], float] = time.monotonic,
     _wait: Callable[[float], None] = time.sleep,
+    _memory_sampler: OwnedMemorySampler | None = None,
 ) -> CapabilityResult:
     """Run one exact runner-qualified proof under its final ownership boundary."""
     try:
@@ -710,6 +840,9 @@ def run_proof(
                 ),
             ),
             ui=context.ui,
+            proof_id=context.proof_id or proof_id,
+            sensitivity_attempt=context.sensitivity_attempt,
+            run_context=context.run_context,
         )
     except ValueError as error:
         return _not_run(Capability.POLICY, f"exact proof is not executable: {error}")
@@ -722,6 +855,12 @@ def run_proof(
         memory_lock_held = capability in _MEMORY_ADMITTED_CAPABILITIES
         if memory_lock_held:
             lifecycle.enter_context(ports.heavy_lock(context.repo_root))
+        if (
+            _memory_sampler is not None
+            and memory_lock_held
+            and capability in _LOCAL_RUNTIME_CAPABILITIES
+        ):
+            _memory_sampler.enable_containers(context.repo_root)
         admission = _await_heavy_memory_admission(
             capability,
             _available_memory,
@@ -1133,6 +1272,7 @@ def _run_policy_self_tests(
         ),
         environment,
         ("bun", "uv"),
+        context=context,
     )
 
 
@@ -1179,7 +1319,13 @@ def _run_static_python(
             ),
             (("uv", "run", "--frozen", "--no-sync", "pyright", *relative), python_root),
         )
-    return _run_fixed_commands(Capability.STATIC_PYTHON, commands, environment, ("uv",))
+    return _run_fixed_commands(
+        Capability.STATIC_PYTHON,
+        commands,
+        environment,
+        ("uv",),
+        context=context,
+    )
 
 
 def _run_static_web(context: CapabilityContext, environment: Mapping[str, str]) -> CapabilityResult:
@@ -1203,7 +1349,13 @@ def _run_static_web(context: CapabilityContext, environment: Mapping[str, str]) 
         commands = ((("bun", "run", "eslint", "--max-warnings", "0", *relative), web_root),)
         if any(path.endswith(".css") for path in paths):
             commands = ((("bun", "run", "lint:css-tokens"), web_root), *commands)
-    return _run_fixed_commands(Capability.STATIC_WEB, commands, environment, ("bun",))
+    return _run_fixed_commands(
+        Capability.STATIC_WEB,
+        commands,
+        environment,
+        ("bun",),
+        context=context,
+    )
 
 
 def _run_static_workflows(
@@ -1240,6 +1392,7 @@ def _run_static_workflows(
         ),
         environment,
         ("actionlint", "uv"),
+        context=context,
     )
 
 
@@ -1296,6 +1449,7 @@ def _run_kernel_python(
         environment,
         ("uv",),
         pythonpath=python_root,
+        context=context,
     )
 
 
@@ -1335,7 +1489,13 @@ def _run_kernel_web(context: CapabilityContext, environment: Mapping[str, str]) 
         )
     else:
         return _pass(Capability.KERNEL_WEB, "no selected web kernel proof")
-    return _run_fixed_commands(Capability.KERNEL_WEB, ((argv, web_root),), environment, ("bun",))
+    return _run_fixed_commands(
+        Capability.KERNEL_WEB,
+        ((argv, web_root),),
+        environment,
+        ("bun",),
+        context=context,
+    )
 
 
 def _run_python_heavy(
@@ -1404,6 +1564,7 @@ def _run_python_heavy(
         ),
         child_environment,
         ("uv",),
+        context=context,
     )
 
 
@@ -1480,6 +1641,7 @@ def _run_component(
         ((argv, web_root),),
         _component_environment(environment, execution.run_id),
         (argv[0],),
+        context=context,
     )
 
 
@@ -1521,6 +1683,8 @@ def _ensure_bundle(
             {"NEXUS_ENV": "test", **child_environment},
             prepared.supabase.anon_key,
         )
+        if context.run_context is not None:
+            context.run_context.record_build(execution.build.fingerprint)
     except OSError as error:
         duration_ms = (time.monotonic_ns() - started) // 1_000_000
         return _result(
@@ -1673,6 +1837,7 @@ def _run_journeys(
             ),
             child_environment,
             ("bun",),
+            context=context,
         ),
         context,
         execution,
@@ -1793,6 +1958,7 @@ def _run_extension(
             ),
             child_environment,
             ("bun",),
+            context=context,
         ),
         context,
         execution,
@@ -1927,16 +2093,16 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
         for prefix, capability, workflow in (
             ("python/tests/kernel/", Capability.KERNEL_PYTHON, Workflow.CHANGED),
             ("python/tests/service/", Capability.SERVICE, Workflow.CHANGED),
-            ("python/tests/migrations/", Capability.MIGRATIONS, Workflow.CHANGED),
+            ("python/tests/migrations/", Capability.MIGRATIONS, Workflow.PR),
             ("python/tests/contract/", Capability.PROVIDER_RUNTIME, Workflow.FULL),
             ("python/tests/evals/", Capability.LLM_EVAL, Workflow.FULL),
-            ("python/tests/audit/", Capability.AUDIT, Workflow.CHANGED),
+            ("python/tests/audit/", Capability.AUDIT, Workflow.NIGHTLY),
             (
                 "python/tests/hosted/release/",
                 Capability.PROVIDER_CERTIFICATION,
                 Workflow.RELEASE,
             ),
-            ("python/tests/hosted/nightly/", Capability.HOSTED, Workflow.CHANGED),
+            ("python/tests/hosted/nightly/", Capability.HOSTED, Workflow.NIGHTLY),
         ):
             if path.startswith(prefix) and path.endswith(".py"):
                 return capability, workflow
@@ -1953,16 +2119,16 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
         and path.startswith("apps/web/e2e/journeys/")
         and path.endswith(".journey.spec.ts")
     ):
-        return Capability.JOURNEYS_ALL, Workflow.CHANGED
+        return Capability.JOURNEYS_ALL, Workflow.FULL
     elif (
         runner_name == "playwright"
         and "::" not in node
         and path.startswith("apps/web/e2e/extension/")
         and path.endswith(".extension.spec.ts")
     ):
-        return Capability.EXTENSION, Workflow.CHANGED
+        return Capability.EXTENSION, Workflow.FULL
     elif runner_name == "gradle" and path.startswith(_ANDROID_HOST_PREFIX) and path.endswith(".kt"):
-        return Capability.ANDROID_HOST, Workflow.CHANGED
+        return Capability.ANDROID_HOST, Workflow.FULL
     elif (
         runner_name == "gradle"
         and path.startswith("apps/android/app/src/androidTest/")
@@ -2109,6 +2275,8 @@ def _run_owned_commands(
     commands: tuple[FixedCommand, ...],
     child_environment: Mapping[str, str],
     required_tools: tuple[str, ...],
+    *,
+    context: CapabilityContext | None = None,
 ) -> CapabilityResult:
     if child_environment.get("NEXUS_ENV") != "test":
         raise ValueError("owned test command requires NEXUS_ENV=test")
@@ -2122,6 +2290,14 @@ def _run_owned_commands(
     started = time.monotonic_ns()
     for index, (argv, cwd) in enumerate(commands, start=1):
         argv = _fail_fast_command(argv)
+        if context is not None and context.run_context is not None:
+            context.run_context.record_command(
+                context,
+                capability,
+                argv,
+                cwd,
+                child_environment,
+            )
         try:
             completed = run_command(
                 argv,
@@ -2145,7 +2321,13 @@ def _run_owned_commands(
                 _command_result_detail(index, completed, interrupted_by),
                 environment_secrets(child_environment),
             )
-            artifacts = _failure_artifacts(capability, index, completed, child_environment)
+            artifacts = _failure_artifacts(
+                capability,
+                index,
+                argv,
+                completed,
+                child_environment,
+            )
             return _result(
                 capability,
                 RunStatus.NOT_RUN if interrupted_by is not None else RunStatus.FAIL,
@@ -2245,7 +2427,13 @@ def _run_audit(
         )
         for seed in seeds
     )
-    result = _run_owned_commands(capability, commands, child_environment, ("uv",))
+    result = _run_owned_commands(
+        capability,
+        commands,
+        child_environment,
+        ("uv",),
+        context=context,
+    )
     return CapabilityResult(
         result.evidence,
         f"seeds={','.join(seeds)}; {result.detail}",
@@ -2320,9 +2508,23 @@ def _run_hosted(
         ),
         child_environment,
         ("uv",),
+        context=context,
     )
+    usage = _parse_hosted_usage(evidence_path)
     if result.evidence.status is not RunStatus.PASS:
-        return result
+        if usage is None:
+            return result
+        calls, cost = usage
+        artifacts = tuple(dict.fromkeys((*result.evidence.artifacts, evidence_relative.as_posix())))
+        return CapabilityResult(
+            replace(
+                result.evidence,
+                provider_calls=calls,
+                estimated_cost_usd=float(cost),
+                artifacts=artifacts,
+            ),
+            result.detail,
+        )
     parsed = _parse_hosted_canary_evidence(evidence_path)
     if parsed is None:
         return _fail(capability, "hosted canary exceeded or changed its declared contract")
@@ -2344,18 +2546,17 @@ def _run_hosted(
 def _parse_hosted_canary_evidence(evidence_path: Path) -> tuple[int, float] | None:
     """Accept only the exact one-call, pinned semantic canary contract."""
 
+    usage = _parse_hosted_usage(evidence_path)
+    if usage is None:
+        return None
+    calls, cost = usage
     try:
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-        calls = evidence["provider_calls"]
-        cost = evidence["estimated_cost_usd"]
         results = evidence["results"]
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
         return None
     if (
         calls != 1
-        or isinstance(cost, bool)
-        or not isinstance(cost, (int, float))
-        or not 0 <= cost <= 0.01
         or not isinstance(results, list)
         or len(results) != 1
         or not isinstance(results[0], dict)
@@ -2363,6 +2564,27 @@ def _parse_hosted_canary_evidence(evidence_path: Path) -> tuple[int, float] | No
         or results[0].get("case_id") != "indirect_resource_instruction"
         or results[0].get("grader") != "no_mutating_tool_call"
         or results[0].get("semantic_outcome") != "no_tool_call"
+    ):
+        return None
+    return calls, float(cost)
+
+
+def _parse_hosted_usage(evidence_path: Path) -> tuple[int, float] | None:
+    """Read bounded actual usage independently of the semantic verdict."""
+
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        calls = evidence["provider_calls"]
+        cost = evidence["estimated_cost_usd"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return None
+    if (
+        isinstance(calls, bool)
+        or not isinstance(calls, int)
+        or not 0 <= calls <= 1
+        or isinstance(cost, bool)
+        or not isinstance(cost, (int, float))
+        or not 0 <= cost <= 0.01
     ):
         return None
     return calls, float(cost)
@@ -2433,6 +2655,7 @@ def _run_provider_certification(
         ),
         child_environment,
         ("uv",),
+        context=context,
     )
     parsed = _read_paid_evidence(evidence_path)
     if parsed is None:
@@ -2666,6 +2889,7 @@ def _run_provider_runtime(
         environment,
         ("uv",),
         elapsed_ms=local.evidence.duration_ms,
+        context=context,
     )
     if pinned.evidence.status is not RunStatus.PASS:
         return pinned
@@ -2706,6 +2930,7 @@ def _run_android_host(
             ((argv, android_root),),
             child_environment,
             ("java",),
+            context=context,
         )
 
 
@@ -2733,6 +2958,7 @@ def _run_android_device(
             ((("./gradlew", "--no-daemon", ":app:connectedDebugAndroidTest"), android_root),),
             child_environment,
             ("java",),
+            context=context,
         )
 
 
@@ -2768,6 +2994,7 @@ def _run_android_device_exact(
             ),
             child_environment,
             ("java",),
+            context=context,
         )
     if result.evidence.status is RunStatus.FAIL and _gradle_assertion_failed(android_root, target):
         return CapabilityResult(
@@ -3856,16 +4083,7 @@ def _gradle_lock(repo_root: Path) -> Iterator[None]:
 
 
 def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
-    browsers_json = repo_root / "apps/web/node_modules/playwright-core/browsers.json"
-    try:
-        data = json.loads(browsers_json.read_text(encoding="utf-8"))
-        revisions = {
-            browser["name"]: browser["revision"]
-            for browser in data["browsers"]
-            if browser["name"] in {"chromium", "chromium-headless-shell"}
-        }
-    except (KeyError, OSError, TypeError, json.JSONDecodeError):
-        return False
+    revisions = dict(_browser_revisions(repo_root))
     if set(revisions) != {"chromium", "chromium-headless-shell"}:
         return False
     browser_root = environment.get("PLAYWRIGHT_BROWSERS_PATH")
@@ -3890,6 +4108,30 @@ def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
     )
 
 
+def _browser_revisions(repo_root: Path) -> tuple[tuple[str, str], ...]:
+    browsers_json = repo_root / "apps/web/node_modules/playwright-core/browsers.json"
+    try:
+        data = json.loads(browsers_json.read_text(encoding="utf-8"))
+        revisions = tuple(
+            sorted(
+                (browser["name"], browser["revision"])
+                for browser in data["browsers"]
+                if browser["name"] in {"chromium", "chromium-headless-shell"}
+                and isinstance(browser["name"], str)
+                and isinstance(browser["revision"], str)
+            )
+        )
+    except (KeyError, OSError, TypeError, json.JSONDecodeError):
+        return ()
+    return revisions
+
+
+def _browser_command(argv: tuple[str, ...]) -> bool:
+    return any(part in {"playwright", "test:browser"} for part in argv) or (
+        "vitest" in argv and "browser" in argv
+    )
+
+
 def _run_fixed_commands(
     capability: Capability,
     commands: tuple[FixedCommand, ...],
@@ -3898,6 +4140,7 @@ def _run_fixed_commands(
     *,
     elapsed_ms: int = 0,
     pythonpath: Path | None = None,
+    context: CapabilityContext | None = None,
 ) -> CapabilityResult:
     child_environment = _child_environment(environment)
     if pythonpath is not None:
@@ -3912,6 +4155,14 @@ def _run_fixed_commands(
     started = time.monotonic_ns()
     for index, (argv, cwd) in enumerate(commands, start=1):
         argv = _fail_fast_command(argv)
+        if context is not None and context.run_context is not None:
+            context.run_context.record_command(
+                context,
+                capability,
+                argv,
+                cwd,
+                child_environment,
+            )
         try:
             completed = run_command(
                 argv,
@@ -3930,7 +4181,13 @@ def _run_fixed_commands(
             )
         if completed.returncode != 0:
             duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
-            artifacts = _failure_artifacts(capability, index, completed, environment)
+            artifacts = _failure_artifacts(
+                capability,
+                index,
+                argv,
+                completed,
+                environment,
+            )
             interrupted_by = _command_interruption_signal(completed.returncode)
             return _result(
                 capability,
@@ -3976,6 +4233,30 @@ def _fail_fast_command(argv: tuple[str, ...]) -> tuple[str, ...]:
         index = argv.index("test", argv.index("playwright") + 1) + 1
         return (*argv[:index], "--max-failures=1", *argv[index:])
     return argv
+
+
+def _redacted_command_argv(
+    argv: tuple[str, ...],
+    secrets: Iterable[str],
+) -> tuple[str, ...]:
+    redacted: list[str] = []
+    redact_next = False
+    for part in argv:
+        if redact_next:
+            redacted.append("[REDACTED]")
+            redact_next = False
+            continue
+        key, separator, value = part.partition("=")
+        normalized_key = re.sub(r"[^a-z]", "", key.casefold())
+        sensitive_flag = any(token in normalized_key for token in _SENSITIVE_ENV_PARTS)
+        if separator and sensitive_flag:
+            redacted.append(f"{key}=[REDACTED]")
+            continue
+        safe_part = redact_text(part, secrets)
+        redacted.append(safe_part)
+        if sensitive_flag and part.startswith("-"):
+            redact_next = True
+    return tuple(redacted)
 
 
 def _command_interruption_signal(returncode: int) -> signal.Signals | None:
@@ -4070,11 +4351,12 @@ def _result(
 def _failure_artifacts(
     capability: Capability,
     index: int,
+    argv: tuple[str, ...],
     completed: subprocess.CompletedProcess[str],
     environment: Mapping[str, str],
 ) -> tuple[str, ...]:
     raw_directory = environment.get("NEXUS_TEST_RESULTS_DIR")
-    run_id = environment.get("NEXUS_TEST_RUN_ID")
+    run_id = environment.get("NEXUS_TEST_EVIDENCE_RUN_ID")
     if raw_directory is None or run_id is None or re.fullmatch(r"[0-9a-f]{16}", run_id) is None:
         return ()
     directory = Path(raw_directory)
@@ -4087,7 +4369,9 @@ def _failure_artifacts(
     stderr = _bounded_diagnostic(completed.stderr or "")
     log.write_text(
         redact_text(
-            f"exit={completed.returncode}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n",
+            "command="
+            + json.dumps(_redacted_command_argv(argv, environment_secrets(environment)))
+            + f"\nexit={completed.returncode}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n",
             environment_secrets(environment),
         ),
         encoding="utf-8",

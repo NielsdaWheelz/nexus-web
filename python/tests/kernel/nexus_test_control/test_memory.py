@@ -47,3 +47,27 @@ def test_container_sampling_starts_only_after_heavy_lock_enablement(
     assert container_samples == [tmp_path]
     assert evidence.measurement_complete is True
     assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 3, 5)
+
+
+def test_one_sampler_tracks_main_and_isolated_container_owners_without_double_counting(
+    tmp_path: Path,
+) -> None:
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    container_samples: list[Path] = []
+    sampler = memory.OwnedMemorySampler(
+        tmp_path,
+        include_containers=False,
+        process_reader=lambda _pid: 2 * 1024 * 1024,
+        container_reader=lambda repo_root: container_samples.append(repo_root) or 3 * 1024 * 1024,
+    )
+
+    sampler.start()
+    sampler.enable_containers(tmp_path)
+    sampler.enable_containers(isolated)
+    sampler.disable_containers(isolated)
+    evidence = sampler.stop()
+
+    assert set(container_samples) == {tmp_path, isolated}
+    assert evidence.measurement_complete is True
+    assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 6, 8)

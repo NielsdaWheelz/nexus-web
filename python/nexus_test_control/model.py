@@ -1,3 +1,4 @@
+import hashlib
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -110,6 +111,29 @@ class RunStatus(StrEnum):
     NOT_RUN = "not_run"
 
 
+@dataclass(frozen=True, slots=True)
+class PeakOwnedMemory:
+    process_tree_rss: int
+    container_working_set: int
+    total: int
+    measurement_complete: bool = True
+
+    def __post_init__(self) -> None:
+        if any(
+            type(value) is not int or value < 0
+            for value in (
+                self.process_tree_rss,
+                self.container_working_set,
+                self.total,
+            )
+        ):
+            raise ValueError("owned memory values must be nonnegative integers")
+        if self.total != self.process_tree_rss + self.container_working_set:
+            raise ValueError("total owned memory must equal its recorded owners")
+        if not isinstance(self.measurement_complete, bool):
+            raise ValueError("owned memory measurement state must be boolean")
+
+
 def aggregate_status(statuses: tuple[RunStatus, ...]) -> RunStatus:
     if any(not isinstance(status, RunStatus) for status in statuses):
         raise ValueError("aggregate statuses must be typed RunStatus values")
@@ -182,6 +206,9 @@ class SensitivityAgainst:
 class SensitivityRed:
     phase: SensitivityPhase
     failure_fingerprint: str
+    duration_ms: int
+    peak_owned_mib: PeakOwnedMemory
+    artifacts: tuple[str, ...] = ()
     status: RunStatus = RunStatus.FAIL
 
     def __post_init__(self) -> None:
@@ -191,11 +218,15 @@ class SensitivityRed:
             raise ValueError("sensitivity red result must fail")
         if not self.failure_fingerprint.strip():
             raise ValueError("failure fingerprint must not be blank")
+        _validate_sensitivity_attempt(self.duration_ms, self.peak_owned_mib, self.artifacts)
 
 
 @dataclass(frozen=True, slots=True)
 class SensitivityGreen:
     git_sha: str
+    duration_ms: int
+    peak_owned_mib: PeakOwnedMemory
+    artifacts: tuple[str, ...] = ()
     status: RunStatus = RunStatus.PASS
 
     def __post_init__(self) -> None:
@@ -203,6 +234,20 @@ class SensitivityGreen:
             raise ValueError("sensitivity green result must pass")
         if _GIT_SHA.fullmatch(self.git_sha) is None:
             raise ValueError("green Git SHA must be full and lowercase")
+        _validate_sensitivity_attempt(self.duration_ms, self.peak_owned_mib, self.artifacts)
+
+
+def _validate_sensitivity_attempt(
+    duration_ms: int,
+    peak_owned_mib: PeakOwnedMemory,
+    artifacts: tuple[str, ...],
+) -> None:
+    if type(duration_ms) is not int or duration_ms < 0:
+        raise ValueError("sensitivity attempt duration must be a nonnegative integer")
+    if not isinstance(peak_owned_mib, PeakOwnedMemory):
+        raise ValueError("sensitivity attempt memory must be typed evidence")
+    if any(not _repository_relative(artifact) for artifact in artifacts):
+        raise ValueError("sensitivity attempt artifacts must be repository-relative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,3 +413,38 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
         ),
     }
 )
+
+DEFERRED_CAPABILITY_OWNER: Mapping[Capability, Workflow] = MappingProxyType(
+    {
+        Capability.SENSITIVITY: Workflow.PR,
+        Capability.MIGRATIONS: Workflow.PR,
+        Capability.BUNDLE: Workflow.PR,
+        Capability.JOURNEYS_ALL: Workflow.FULL,
+        Capability.CORPUS: Workflow.FULL,
+        Capability.PROVIDER_RUNTIME: Workflow.FULL,
+        Capability.LLM_EVAL: Workflow.FULL,
+        Capability.EXTENSION: Workflow.FULL,
+        Capability.ANDROID_HOST: Workflow.FULL,
+        Capability.AUDIT: Workflow.NIGHTLY,
+        Capability.HOSTED: Workflow.NIGHTLY,
+        Capability.ANDROID_DEVICE: Workflow.NIGHTLY,
+        Capability.PROVIDER_CERTIFICATION: Workflow.RELEASE,
+        Capability.ANDROID_RELEASE: Workflow.RELEASE,
+        Capability.RELEASE_ARTIFACT: Workflow.RELEASE,
+    }
+)
+
+_TEST_ROUTING_CONTRACT = "\n".join(
+    (
+        *(
+            f"workflow|{workflow.value}|{requirement.capability.value}|{requirement.scope.value}"
+            for workflow, definition in WORKFLOW_REGISTRY.items()
+            for requirement in definition.requirements
+        ),
+        *(
+            f"deferred|{capability.value}|{workflow.value}"
+            for capability, workflow in DEFERRED_CAPABILITY_OWNER.items()
+        ),
+    )
+)
+TEST_ROUTING_SHA256 = hashlib.sha256(_TEST_ROUTING_CONTRACT.encode()).hexdigest()

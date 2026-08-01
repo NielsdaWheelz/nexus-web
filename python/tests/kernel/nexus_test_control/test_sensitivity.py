@@ -10,15 +10,17 @@ from pathlib import Path
 import pytest
 
 from nexus_test_control.evidence import CapabilityEvidence
+from nexus_test_control.memory import measure_owned_memory
 from nexus_test_control.model import (
     Capability,
     RunStatus,
     SensitivityMethod,
     SensitivityPhase,
 )
-from nexus_test_control.runner import CapabilityResult
+from nexus_test_control.runner import CapabilityResult, RunContextRecorder
 from nexus_test_control.sensitivity import (
     SensitivityError,
+    SensitivityExecutionError,
     SensitivityRequest,
     behavioral_red,
     canonical_proof,
@@ -153,7 +155,9 @@ def test_priority_manifest_canonicalizes_a_file_level_proof(tmp_path: Path) -> N
 def test_base_sensitivity_runs_the_overlaid_proof_red_then_current_green(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / ".gitignore").write_text("python/.venv\ntest-results\n.nexus-test\n")
+    (tmp_path / ".gitignore").write_text(
+        "python/.venv\npython/.pytest_cache\ntest-results\n.nexus-test\n"
+    )
     project = tmp_path / "python"
     project.mkdir()
     (project / "pyproject.toml").write_bytes((REPO_ROOT / "python/pyproject.toml").read_bytes())
@@ -176,30 +180,60 @@ def test_base_sensitivity_runs_the_overlaid_proof_red_then_current_green(
     (owner / "value.py").write_text("VALUE = 2\n")
     _commit(tmp_path, "fix")
     proof = "pytest:python/tests/kernel/test_value.py::test_value"
-
-    result = prove(
-        tmp_path,
-        proof=proof,
-        changed_paths=("python/tests/kernel/test_value.py",),
-        method=SensitivityMethod.BASE,
-        against=base_sha,
-        environment={
-            key: value
-            for key in ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ")
-            if (value := os.environ.get(key)) is not None
-        },
+    run_id = "0123456789abcdef"
+    results = tmp_path / "test-results/runs" / run_id
+    results.mkdir(parents=True)
+    run_context = RunContextRecorder()
+    environment = {
+        key: value
+        for key in ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ")
+        if (value := os.environ.get(key)) is not None
+    }
+    environment.update(
+        {
+            "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+            "NEXUS_TEST_RESULTS_DIR": str(results),
+            "NEXUS_TEST_RUN_ID": "fedcba9876543210",
+        }
     )
+
+    with measure_owned_memory(tmp_path, include_containers=False) as memory_sampler:
+        result = prove(
+            tmp_path,
+            proof=proof,
+            changed_paths=("python/tests/kernel/test_value.py",),
+            method=SensitivityMethod.BASE,
+            against=base_sha,
+            environment=environment,
+            memory_sampler=memory_sampler,
+            run_context=run_context,
+        )
 
     assert result.against.git_sha == base_sha
     assert result.red.phase is SensitivityPhase.ASSERTION
     assert result.red.failure_fingerprint.startswith("sha256:")
+    assert result.red.peak_owned_mib.measurement_complete is True
+    assert result.green.peak_owned_mib.measurement_complete is True
+    assert result.red.duration_ms >= 0 and result.green.duration_ms >= 0
+    assert result.red.artifacts
+    for artifact in result.red.artifacts:
+        assert (tmp_path / artifact).is_file()
+    failure_log = next(
+        tmp_path / artifact for artifact in result.red.artifacts if artifact.endswith(".log")
+    )
+    assert "command=" in failure_log.read_text(encoding="utf-8")
+    commands = run_context.evidence().fixed_commands
+    assert tuple(command.sensitivity_attempt for command in commands) == ("red", "green")
+    assert all(command.proof_id == proof for command in commands)
     assert result.green.status is RunStatus.PASS
 
 
 def test_fault_portfolio_reverses_each_fault_without_mutating_the_source_checkout(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / ".gitignore").write_text("python/.venv\ntest-results\n.nexus-test\n")
+    (tmp_path / ".gitignore").write_text(
+        "python/.venv\npython/.pytest_cache\ntest-results\n.nexus-test\n"
+    )
     project = tmp_path / "python"
     project.mkdir()
     (project / "pyproject.toml").write_bytes((REPO_ROOT / "python/pyproject.toml").read_bytes())
@@ -210,6 +244,7 @@ def test_fault_portfolio_reverses_each_fault_without_mutating_the_source_checkou
     owner.mkdir()
     (owner / "__init__.py").write_text("")
     (owner / "values.py").write_text("FIRST = 1\nSECOND = 1\n")
+    (owner / "bad.py").write_text("VALUE = 1\n")
     proofs = project / "tests/kernel"
     proofs.mkdir(parents=True)
     (proofs / "test_first.py").write_text(
@@ -221,6 +256,11 @@ def test_fault_portfolio_reverses_each_fault_without_mutating_the_source_checkou
         "from nexus.values import SECOND\n\n"
         "def test_second():\n"
         "    assert SECOND == 1, 'second fault observed'\n"
+    )
+    (proofs / "test_bad.py").write_text(
+        "from nexus.bad import VALUE\n\n"
+        "def test_bad():\n"
+        "    assert VALUE == 2, 'bad fault observed'\n"
     )
     faults = tmp_path / "testdata/faults"
     faults.mkdir(parents=True)
@@ -244,8 +284,18 @@ def test_fault_portfolio_reverses_each_fault_without_mutating_the_source_checkou
         "-SECOND = 1\n"
         "+SECOND = 0\n"
     )
+    bad_patch = faults / "bad.patch"
+    bad_patch.write_text(
+        "diff --git a/python/nexus/bad.py b/python/nexus/bad.py\n"
+        "--- a/python/nexus/bad.py\n"
+        "+++ b/python/nexus/bad.py\n"
+        "@@ -1 +1 @@\n"
+        "-VALUE = 1\n"
+        "+VALUE = 0\n"
+    )
     first_proof = "pytest:python/tests/kernel/test_first.py::test_first"
     second_proof = "pytest:python/tests/kernel/test_second.py::test_second"
+    bad_proof = "pytest:python/tests/kernel/test_bad.py::test_bad"
     (faults / "manifest.json").write_text(
         json.dumps(
             {
@@ -264,6 +314,13 @@ def test_fault_portfolio_reverses_each_fault_without_mutating_the_source_checkou
                         "sha256": hashlib.sha256(second_patch.read_bytes()).hexdigest(),
                         "proofs": [second_proof],
                         "expected_failure": "second fault observed",
+                    },
+                    {
+                        "id": "bad-fault",
+                        "patch": "testdata/faults/bad.patch",
+                        "sha256": hashlib.sha256(bad_patch.read_bytes()).hexdigest(),
+                        "proofs": [bad_proof],
+                        "expected_failure": "bad fault observed",
                     },
                 ],
             }
@@ -299,6 +356,30 @@ def test_fault_portfolio_reverses_each_fault_without_mutating_the_source_checkou
     assert all(result.red.failure_fingerprint.startswith("sha256:") for result in results)
     assert results[0].red.failure_fingerprint != results[1].red.failure_fingerprint
     assert (owner / "values.py").read_text() == "FIRST = 1\nSECOND = 1\n"
+    assert _git_output(tmp_path, "status", "--porcelain=v1", "--untracked-files=all") == ""
+
+    with pytest.raises(SensitivityExecutionError) as failure:
+        prove_many(
+            tmp_path,
+            requests=(
+                SensitivityRequest(
+                    first_proof,
+                    ("python/tests/kernel/test_first.py",),
+                    SensitivityMethod.FAULT,
+                    "first-fault",
+                ),
+                SensitivityRequest(
+                    bad_proof,
+                    ("python/tests/kernel/test_bad.py",),
+                    SensitivityMethod.FAULT,
+                    "bad-fault",
+                ),
+            ),
+            environment=environment,
+        )
+
+    assert failure.value.proof_id == bad_proof, str(failure.value)
+    assert tuple(record.proof for record in failure.value.completed) == (first_proof,)
 
 
 @pytest.mark.parametrize(

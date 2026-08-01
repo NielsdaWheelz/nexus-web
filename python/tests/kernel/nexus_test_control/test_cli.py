@@ -39,6 +39,10 @@ from nexus_test_control.model import (
 from nexus_test_control.selection import load_selection_index
 
 
+def _run_context(run_id: str) -> str:
+    return f"test-results/runs/{run_id}/run-context.json"
+
+
 def test_parser_accepts_only_the_explicit_command_shapes() -> None:
     assert parse_command(
         [
@@ -128,6 +132,15 @@ def test_workflow_writes_truthful_not_run_summary(tmp_path: Path) -> None:
     summary = json.loads(summary_path.read_text())
     assert summary["workflow"] == "doctor"
     assert summary["status"] == "not_run"
+    assert isinstance(summary["first_actionable_failure_ms"], int)
+    run_context_path = tmp_path / summary["run_context_artifact"]
+    assert json.loads(run_context_path.read_text(encoding="utf-8")) == {
+        "browsers": [],
+        "build_fingerprints": [],
+        "fixed_commands": [],
+        "runtimes": [],
+        "version": 3,
+    }
     capability = summary["capabilities"][0]
     assert capability == {
         "artifacts": [],
@@ -159,7 +172,9 @@ def test_summary_coexists_with_same_run_failure_artifacts(tmp_path: Path) -> Non
         git_sha="a" * 40,
         base_sha=None,
         duration_ms=1,
+        first_actionable_failure_ms=0,
         peak_owned_mib=PeakOwnedMemory(1, 0, 1),
+        run_context_artifact=_run_context(run_id),
         selection=(),
         sensitivity=(),
         capabilities=(
@@ -204,7 +219,9 @@ def test_diagnose_replays_failed_workflow_once_but_keeps_failed_verdict(
         git_sha=git_sha,
         base_sha=None,
         duration_ms=1,
+        first_actionable_failure_ms=0,
         peak_owned_mib=PeakOwnedMemory(1, 0, 1),
+        run_context_artifact=_run_context(original_id),
         selection=(),
         sensitivity=(),
         capabilities=(
@@ -277,7 +294,9 @@ def test_diagnose_requires_the_same_clean_committed_head(tmp_path: Path) -> None
             git_sha=git_sha,
             base_sha=None,
             duration_ms=1,
+            first_actionable_failure_ms=0,
             peak_owned_mib=PeakOwnedMemory(1, 0, 1),
+            run_context_artifact=_run_context(original_id),
             selection=(),
             sensitivity=(),
             capabilities=(
@@ -316,7 +335,9 @@ def test_diagnose_rejects_changed_execution_inputs_before_claiming_the_attempt(
             git_sha=git_sha,
             base_sha=None,
             duration_ms=1,
+            first_actionable_failure_ms=0,
             peak_owned_mib=PeakOwnedMemory(1, 0, 1),
+            run_context_artifact=_run_context(run_id),
             selection=(),
             sensitivity=(),
             capabilities=(
@@ -353,7 +374,7 @@ def test_selection_failure_still_writes_a_typed_failed_run_summary(tmp_path: Pat
 
     summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    assert summary["version"] == 2
+    assert summary["version"] == 3
     assert summary["status"] == "fail"
     policy = next(item for item in summary["capabilities"] if item["id"] == "policy")
     assert policy["status"] == "fail"
@@ -371,7 +392,7 @@ def test_git_preflight_failure_still_writes_typed_fail_closed_workflow_evidence(
     summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     evidence = run_evidence_from_json(tmp_path, summary)
-    assert summary["version"] == 2
+    assert summary["version"] == 3
     assert evidence.git_sha is None
     assert evidence.status is RunStatus.FAIL
     assert "could not resolve git revision 'HEAD'" in evidence.capabilities[0].detail
@@ -410,7 +431,9 @@ def test_diagnose_rejects_nonfailed_or_untyped_original_evidence(
             git_sha=git_sha,
             base_sha=None,
             duration_ms=1,
+            first_actionable_failure_ms=(None if status is RunStatus.PASS else 0),
             peak_owned_mib=PeakOwnedMemory(1, 0, 1),
+            run_context_artifact=_run_context(run_id),
             selection=(),
             sensitivity=(),
             capabilities=(CapabilityEvidence(Capability.DOCTOR, status, 1, 1, detail="result"),),
@@ -653,15 +676,18 @@ def test_prove_requires_a_clean_committed_checkout(tmp_path: Path) -> None:
         .splitlines()[0]
         .startswith(
             "failure: owner=prove; status=fail; kind=sensitivity_execution_failure; "
-            "detail=sensitivity execution did not complete:"
+            "detail=proof_id=pytest:python/tests/kernel/test_rule.py::test_rule; "
+            "sensitivity execution did not complete:"
         )
     )
     summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     evidence = prove_evidence_from_json(tmp_path, summary)
-    assert summary["version"] == 2
+    assert summary["version"] == 3
     assert summary["command"] == "prove"
     assert evidence.status is RunStatus.FAIL
+    assert evidence.first_actionable_failure_ms is not None
+    assert (tmp_path / evidence.run_context_artifact).is_file()
     assert "clean committed checkout" in evidence.detail
 
 

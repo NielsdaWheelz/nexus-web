@@ -10,6 +10,8 @@ from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from nexus_test_control.model import TEST_ROUTING_SHA256
+
 
 @dataclass(frozen=True)
 class PolicyViolation:
@@ -151,6 +153,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "./scripts/test confidence",
             "./scripts/test prove",
             "./scripts/test diagnose",
+            f"nexus-test-routing-sha256: {TEST_ROUTING_SHA256}",
             "## 11. Local test-runtime safety",
             "nexus-run-<run-id>",
         ),
@@ -737,6 +740,7 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     scan_paths.extend((repo_root / ".github/workflows").glob("*.yml"))
     scan_paths.extend((repo_root / ".github/workflows").glob("*.yaml"))
     scan_paths.extend(repo_root.glob("**/playwright.config.*"))
+    scan_paths.extend(repo_root.glob("**/vitest.config.*"))
     for candidate in scan_paths:
         if not candidate.is_file() or "node_modules" in candidate.parts:
             continue
@@ -748,14 +752,17 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     "repository-worker-cap", relative, "unbounded workers/shards are forbidden"
                 )
             )
-        for match in re.finditer(r"\bworkers\s*[:=]\s*(\d+)", text):
+        for match in re.finditer(r"\b(?:workers|maxWorkers)\s*[:=]\s*(\d+)", text):
             if int(match.group(1)) > 1:
                 violations.append(
                     PolicyViolation(
                         "repository-worker-cap", relative, "heavy runners use one worker"
                     )
                 )
-        if re.search(r"\bretries\s*[:=]\s*[1-9]\d*|--retries(?:=|\s+)[1-9]\d*", text):
+        if re.search(
+            r"\bretr(?:y|ies)\s*[:=]\s*[1-9]\d*|--retr(?:y|ies)(?:=|\s+)[1-9]\d*",
+            text,
+        ):
             violations.append(
                 PolicyViolation(
                     "repository-automatic-retry", relative, "automatic retries are forbidden"

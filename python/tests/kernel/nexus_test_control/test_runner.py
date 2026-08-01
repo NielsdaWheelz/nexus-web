@@ -23,8 +23,10 @@ from nexus_test_control.runner import (
     CapabilityContext,
     CapabilityResult,
     FirstFailureReporter,
+    RunContextRecorder,
     _ensure_provider_runtime_checkout,
     _parse_hosted_canary_evidence,
+    _parse_hosted_usage,
     run_capability,
     run_proof,
     run_workflow,
@@ -149,9 +151,43 @@ def test_hosted_canary_parser_rejects_green_cost_evidence_without_safe_semantics
 
     evidence["results"][0]["semantic_outcome"] = "unsafe_tool_call"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    assert _parse_hosted_usage(evidence_path) == (1, 0.001), (
+        "failed semantic proof must still retain the actual paid usage"
+    )
     assert _parse_hosted_canary_evidence(evidence_path) is None, (
         "paid canary cost evidence cannot turn an unsafe semantic result green"
     )
+
+
+@pytest.mark.parametrize(
+    ("runner_name", "node", "expected"),
+    [
+        ("pytest", "python/tests/migrations/test_head.py::test_head", Workflow.PR),
+        ("pytest", "python/tests/audit/property/test_state.py::test_state", Workflow.NIGHTLY),
+        (
+            "pytest",
+            "python/tests/hosted/nightly/test_openai_canary.py::test_canary",
+            Workflow.NIGHTLY,
+        ),
+        (
+            "playwright",
+            "apps/web/e2e/journeys/auth-session.journey.spec.ts",
+            Workflow.FULL,
+        ),
+        (
+            "playwright",
+            "apps/web/e2e/extension/capture.extension.spec.ts",
+            Workflow.FULL,
+        ),
+        ("gradle", "apps/android/app/src/test/app/nexus/ExampleTest.kt", Workflow.FULL),
+    ],
+)
+def test_exact_proof_context_uses_its_authoritative_cadence(
+    runner_name: str,
+    node: str,
+    expected: Workflow,
+) -> None:
+    assert runner._proof_owner(runner_name, node)[1] is expected
 
 
 class _ReadyExternalPorts(runner._RunnerPorts):
@@ -488,7 +524,13 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
     _write(tmp_path / "apps/web/src/example.unit.test.ts", "export {};\n")
     _write(tmp_path / ".github/workflows/ci.yml", "name: CI\n")
     environment = _stub_tools(tmp_path, "actionlint", "bun", "uv")
-    context = CapabilityContext(tmp_path, Workflow.CONFIDENCE, ())
+    run_context = RunContextRecorder()
+    context = CapabilityContext(
+        tmp_path,
+        Workflow.CONFIDENCE,
+        (),
+        run_context=run_context,
+    )
 
     capabilities = (
         Capability.POLICY_SELF_TESTS,
@@ -710,7 +752,13 @@ def test_missing_tool_is_not_run_and_command_failure_records_its_exit_status(
     _write(tmp_path / "apps/web/package.json", "{}\n")
     (tmp_path / "apps/web/node_modules").mkdir()
     _write(tmp_path / "apps/web/src/example.unit.test.ts", "export {};\n")
-    context = CapabilityContext(tmp_path, Workflow.CONFIDENCE, ())
+    run_context = RunContextRecorder()
+    context = CapabilityContext(
+        tmp_path,
+        Workflow.CONFIDENCE,
+        (),
+        run_context=run_context,
+    )
 
     missing = run_capability(context, Capability.KERNEL_WEB, {"PATH": str(tmp_path)})
     assert missing.evidence.status is RunStatus.NOT_RUN
@@ -721,8 +769,9 @@ def test_missing_tool_is_not_run_and_command_failure_records_its_exit_status(
     results.mkdir(parents=True)
     environment.update(
         {
+            "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
             "NEXUS_TEST_RESULTS_DIR": str(results),
-            "NEXUS_TEST_RUN_ID": run_id,
+            "NEXUS_TEST_RUN_ID": "fedcba9876543210",
             "API_TOKEN": "hidden-value",
         }
     )
@@ -731,8 +780,20 @@ def test_missing_tool_is_not_run_and_command_failure_records_its_exit_status(
     assert "exited 7" in failed.detail
     assert failed.evidence.artifacts == (f"test-results/runs/{run_id}/kernel-web-1.log",)
     failure_log = tmp_path / failed.evidence.artifacts[0]
-    assert "token=[REDACTED]" in failure_log.read_text(encoding="utf-8")
-    assert "hidden-value" not in failure_log.read_text(encoding="utf-8")
+    failure_text = failure_log.read_text(encoding="utf-8")
+    expected_command = (
+        "bun",
+        "run",
+        "test:unit",
+        "--",
+        "--bail=1",
+        "./src/example.unit.test.ts",
+    )
+    assert f"command={json.dumps(expected_command)}" in failure_text
+    assert "token=[REDACTED]" in failure_text
+    assert "hidden-value" not in failure_text
+    command = run_context.evidence().fixed_commands[-1]
+    assert command.argv == expected_command
 
     stream = StringIO()
     tuple(stream_first_failure((failed,), stream, ("hidden-value",)))
@@ -1805,6 +1866,7 @@ def test_first_failure_reporter_is_one_shot_flushed_redacted_bounded_and_scalar(
 
     stream = FlushTrackingStream()
     reporter = FirstFailureReporter(("hidden-value",))
+    reporter.arm(runner.time.monotonic_ns())
     detail = (
         "raw-noise hidden-value\n" * 400
         + "AssertionError: stable first oracle hidden-value\n"
@@ -1836,6 +1898,8 @@ def test_first_failure_reporter_is_one_shot_flushed_redacted_bounded_and_scalar(
     assert "raw-noise" not in line and "raw-tail" not in line
     assert len(line) < 2100
     assert stream.flush_count == 1
+    assert reporter.first_actionable_failure_ms is not None
+    assert reporter.first_actionable_failure_ms >= 0
 
 
 def test_workflow_reuses_the_injected_one_shot_reporter() -> None:

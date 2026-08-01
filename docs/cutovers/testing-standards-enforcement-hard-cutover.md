@@ -38,10 +38,11 @@ developer / agent / CI / Agency
 Keep pytest, Vitest browser mode, Playwright, PostgreSQL, MinIO, Supabase-local,
 Ruff, Pyright, ESLint, TypeScript, actionlint, and the existing canonical media.
 Add only `pytest-socket`, Hypothesis, `eslint-plugin-playwright`, and the
-repository-owned Python control plane. Hypothesis owns targeted Python
-property/state-machine/fuzz proof; the control plane shuffles collected nodes
-with a recorded seed for randomized-order proof. Add no daemon, test service,
-DSL, coverage gate, remote executor, or second orchestration tool.
+repository-owned Python control plane. Hypothesis owns the current targeted
+Python property proof; the control plane shuffles collected nodes with a
+recorded seed for randomized-order proof. Targeted state-machine or fuzz proof
+may be added only when a named risk earns it. Add no daemon, test service, DSL,
+coverage gate, remote executor, or second orchestration tool.
 
 The public cut lands atomically. Time-boxed internal control-plane, runtime,
 testkit, and replacement-proof foundations MAY land inert and self-tested
@@ -131,12 +132,13 @@ Rules:
   non-gate debugging. Final evidence and every confidence claim use
   `./scripts/test`. `pytest --lf`, Vitest watch mode, and Playwright
   `--headed`/`--debug` are explicitly sanctioned under the checked configs.
-- `doctor` is read-only. `clean` removes only runtime resources whose recorded
-  repo id and run id match this workspace.
+- `doctor` is read-only and checks local readiness; it checks protected-workflow
+  inputs only when that lane is explicitly enabled. `clean` removes only runtime
+  resources whose recorded repo id and run id match this workspace.
 - Exit zero means every required selected capability passed. Missing tools,
   secrets, device, or provider execution is `not_run`, never pass.
 - Every gate fails when a required selected capability is `not_run`.
-- Gates have zero automatic retries. `diagnose --of` MAY replay one failed v2
+- Gates have zero automatic retries. `diagnose --of` MAY replay one failed v3
   workflow at the same clean committed `HEAD` and exact recorded invocation
   inputs for richer artifacts. It records separate linked evidence, retains
   top-level `fail`, exits nonzero, and is forbidden in CI and Agency gates.
@@ -147,9 +149,9 @@ Rules:
 | `confidence` | all policy self-tests and fast static/kernel proof plus affected real-service and Chromium-component proof; no production build or complete journey portfolio |
 | `pr` | `confidence` plus current-migration, bundle, compact service/component proof, and 2–4 critical journeys; no hosted calls |
 | `full` | `pr` plus all deterministic corpus, provider-runtime, LLM-evaluation, extension, Android-host, and all 10–15 journeys |
-| `nightly` | `full` plus audit, randomized/property/fuzz lanes, budgeted hosted canaries, and the existing Android-emulator proof |
+| `nightly` | `full` plus property/random-order audit, budgeted hosted canaries, and the existing Android-emulator proof |
 | `release` | `full` plus fail-closed provider certification, signed Android artifact, and release artifact checks |
-| `doctor` | tools, locked dependencies, browser install, service health, ports, template fingerprint, and workflow credential readiness |
+| `doctor` | local tools, locked dependencies, browser install, service health, ports, and template fingerprint; protected-workflow inputs only when that lane is explicitly enabled |
 
 `changed` scans only changed policy/test source unless policy infrastructure
 changed, in which case it promotes the complete policy capability. It selects
@@ -180,8 +182,8 @@ Implement `python/nexus_test_control/` with cohesive owners:
 - `runner.py` and `sensitivity.py`: capability execution and same-run red/green
   proof;
 - `evidence.py`: typed, redacted run summaries and artifacts;
-- `cli.py` / `__main__.py`: parse, compose, stream the first failure, clean,
-  and publish evidence.
+- `cli.py` / `__main__.py`: parse, compose, report the classified first failure,
+  clean, and publish evidence.
 
 Use frozen dataclasses and exhaustive enums. Capability functions accept one
 typed context and return one typed result. Runners are internal functions, not
@@ -195,8 +197,9 @@ while iterating and the risk-appropriate `pr` or higher gate before claiming
 that broader proof ran.
 
 Do not create YAML workflow definitions or a generic task graph. The typed
-Python registry is the single machine source for CLI help, workflow
-composition, CI assertions, and the command table in the local rule.
+Python registry is the single execution and workflow-composition source used by
+the CLI. CI routes, the local-rule command table, and deferred-owner mapping are
+explicit policy-checked projections; they are not generated from the registry.
 
 ## Runtime and state
 
@@ -257,10 +260,6 @@ cloning; runtime locking and engine disposal must enforce that.
   evidence.
 - Give every Playwright test a new browser context and auth state. Delete global
   `storageState`, setup projects, shared seed users, and shared mutable JSON.
-- Start API, web, and both worker lanes once per journey capability, after run
-  state exists. Stop exact process groups on success, failure, signal, or
-  `clean`; no unowned reader-profile fault proxy or global fail-next state
-  remains.
 - Identify a live process by its persisted run/owner tokens, group-leader PID,
   and kernel start token. Keep the planned command for audit, not cleanup
   identity, because a runtime may rewrite `argv`. Readiness succeeds only when
@@ -321,12 +320,12 @@ priority proof, weaken assertions, or increase concurrency past the memory cap.
 python/tests/
   conftest.py
   testkit/                 # records, storage, jobs, clocks; plumbing only
-  kernel/                  # pure/property/state-machine proof
+  kernel/                  # pure deterministic proof
   service/                 # real PostgreSQL/API/worker proof
   contract/                # local protocol servers and provider fakes
   migrations/              # supported baselines -> head
   evals/                   # deterministic versioned LLM rubrics/cases
-  audit/{property,fuzz,randomized}/
+  audit/property/          # current Hypothesis-owned audit proof
   hosted/                  # explicit hosted canaries only
 
 apps/web/src/
@@ -479,8 +478,8 @@ secrets, absolute paths, duplicate content, and missing provenance.
   prompts/cases, pinned provider-runtime behavior, independently reviewed
   baselines/rubrics, prompt-injection cases, and tool-authorization assertions.
   Hosted sampled evaluation lives under `hosted/`, pins the model, and declares
-  maximum calls and estimated cost in the capability registry. The runtime
-  stops before either ceiling and records actual usage/cost.
+  maximum calls and estimated cost in its protected capability contract. The
+  runtime stops before either ceiling and records actual usage/cost.
 - MV3 extension proof lives under `apps/web/e2e/extension/` and is the sole
   exception to fresh ephemeral browser contexts: it uses
   `launchPersistentContext` with a new per-run user-data directory, then
@@ -489,9 +488,10 @@ secrets, absolute paths, duplicate content, and missing provenance.
 - Android instrumentation adapts the existing emulator runner in
   `.github/workflows/ci.yml`; it is not a hypothetical device lane. The final
   workflow assigns it one cadence and does not duplicate signed-release proof.
-- Property, fuzz, and randomized-order proof lives only in the explicit audit
-  directories and is scheduled by `nightly`; no `slow` or shard marker replaces
-  that classification.
+- Current property proof lives in `python/tests/audit/property/`; the controller
+  owns fixed-seed randomized-order execution in `nightly`. Targeted
+  state-machine or fuzz proof may be added only when a named risk earns it; no
+  `slow` or shard marker replaces that classification.
 - Interactive component/journey proof owns accessible roles/names,
   keyboard-only operation, focus entry/return, and live-status behavior at the
   affected boundary. Do not add a broad visual-regression platform.
@@ -628,19 +628,21 @@ Write ignored `test-results/runs/<run_id>/summary.json`:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "run_id": "16 lowercase hex",
   "workflow": "pr",
   "git_sha": "full sha",
   "base_sha": "full sha or null",
   "status": "pass|fail|not_run",
   "duration_ms": 0,
+  "first_actionable_failure_ms": "integer-or-null",
   "peak_owned_mib": {
     "process_tree_rss": 0,
     "container_working_set": 0,
     "total": 0,
     "measurement_complete": true
   },
+  "run_context_artifact": "test-results/runs/<run-id>/run-context.json",
   "invocation": {
     "ui": false,
     "input_fingerprint": "sha256"
@@ -663,9 +665,18 @@ Write ignored `test-results/runs/<run_id>/summary.json`:
       "red": {
         "status": "fail",
         "phase": "assertion|property",
-        "failure_fingerprint": "stable redacted fingerprint"
+        "failure_fingerprint": "stable redacted fingerprint",
+        "duration_ms": 0,
+        "peak_owned_mib": {},
+        "artifacts": ["relative/path"]
       },
-      "green": {"status": "pass", "git_sha": "full sha"}
+      "green": {
+        "status": "pass",
+        "git_sha": "full sha",
+        "duration_ms": 0,
+        "peak_owned_mib": {},
+        "artifacts": []
+      }
     }
   ],
   "capabilities": [
@@ -688,7 +699,7 @@ first run:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "command": "diagnose",
   "run_id": "new 16-hex id",
   "workflow": "pr",
@@ -706,20 +717,30 @@ first run:
   "diagnostic_result": {
     "status": "pass|fail|not_run",
     "duration_ms": 0,
+    "first_actionable_failure_ms": "integer-or-null",
     "peak_owned_mib": {},
+    "run_context_artifact": "test-results/runs/<run-id>/run-context.json",
     "capabilities": []
   }
 }
 ```
 
-Redact environment and command values. Stream the first decisive failure
-immediately. Preserve pytest output, browser trace/screenshot, process logs,
-database/template identity, last job state, red/green sensitivity, explicit
-diagnostic-rerun linkage, and provider usage only when applicable. A summary
-with a diagnostic pass remains failed when its first run failed. The run
-fingerprint includes outcome-affecting non-secret inputs and only presence for
-secret inputs. A diagnostic claim is durably `started` before execution and
-becomes `terminal` only after its linked summary exists.
+The v3 hard cut does not parse older summary shapes. One workflow-wide sampler
+covers sensitivity and ordinary capabilities; every red/green attempt records
+its own duration, owned-memory snapshot, and bounded retained artifacts. The
+run-context artifact records redacted fixed command identities plus observed
+runtime, template, build, and browser identities.
+
+Redact environment and command values. Do not stream raw live child output.
+Capture bounded output, wait for the child to exit, classify its first decisive
+failure, then report that classification immediately. Preserve pytest output,
+browser trace/screenshot, process logs, database/template identity, last job
+state, red/green sensitivity, explicit diagnostic-rerun linkage, and provider
+usage only when applicable. A summary with a diagnostic pass remains failed
+when its first run failed. The run fingerprint includes outcome-affecting
+non-secret inputs and only presence for secret inputs. A diagnostic claim is
+durably `started` before execution and becomes `terminal` only after its linked
+summary exists.
 
 ## Production-isolation boundary
 
@@ -740,15 +761,17 @@ The harness accepts only resources derived from its recorded local runtime:
   process-group id before readiness can succeed.
 
 Every resource is first persisted as a planned owned resource, then created,
-then marked created. `clean` reads only those run ledgers and the validated
-workspace runtime record. It revalidates endpoint, repo id, run id, type, and
-test-only identity; deletes exact run resources; then stops the exact recorded
-Supabase project and Compose project, removes their test-only volumes, and
-deletes that runtime state. It never discovers targets by port, process name,
-prefix alone, environment default, or broad database/bucket/user listing.
-Independent teardown owners are all attempted; any failure preserves the
-ledger and exact recovery path, and ownership state is removed only after all
-teardown succeeds.
+then marked created. Immutable run-context/resource-plan evidence retains the
+complete audit record. `clean` uses only the mutable recovery ledger and the
+validated workspace runtime record as teardown authority. It revalidates
+endpoint, repo id, run id, type, and test-only identity; deletes exact run
+resources; then stops the exact recorded Supabase project and Compose project,
+removes their test-only volumes, and deletes that runtime state. It never
+discovers targets by port, process name, prefix alone, environment default, or
+broad database/bucket/user listing. Independent teardown owners are all
+attempted. Each exact successful deletion removes only its recovery-ledger
+entry; any failure preserves every failed or outstanding entry and exact
+recovery path. Run ownership is released only when the ledger is empty.
 
 Standing negative proof supplies production-shaped URLs, names, and
 environments and verifies rejection before network or subprocess activity.
@@ -902,6 +925,11 @@ to repair before the public cut, not reasons to restore the escape.
    route, marker, E2E package, config, and lockfile.
 9. Run acceptance below on the final state. Merge only that state.
 
+Recorded implementation-sequence deviation (2026-08-01): the private hard-cut
+branch deleted legacy routes before the candidate rehearsal in steps 6–7. Do
+not restore them. Final merge remains blocked on exact-final local `full`, `pr`,
+`doctor`, and interruption proof plus separately reported remote candidate CI.
+
 No long-lived shadow CI, dual blocking gates, aliases, deprecation warnings,
 compatibility wrappers, old marker support, or fallback to the legacy suite.
 Foundation and candidate-rehearsal phases are time-boxed migration mechanics,
@@ -1020,7 +1048,8 @@ not supported compatibility modes.
 - Semantic oracle quality stays a review responsibility; syntax, isolation,
   routing, and evidence shape are mechanical.
 - Test runtime validation fails before contact with any production-shaped
-  endpoint; the ownership ledger is the sole cleanup authority.
+  endpoint; immutable run-context/resource-plan evidence is the complete audit
+  record and the mutable recovery ledger is the sole cleanup authority.
 
 Implementation facts:
 

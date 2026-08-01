@@ -3,6 +3,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from nexus_test_control.model import (
+    DEFERRED_CAPABILITY_OWNER,
     PRIORITY_RISK_FLOOR,
     WORKFLOW_REGISTRY,
     Capability,
@@ -69,6 +70,13 @@ def test_changed_owns_only_directly_affected_edit_loop_proofs() -> None:
         Capability.MIGRATIONS,
         Capability.JOURNEYS_ALL,
     }
+
+
+def test_deferred_capability_owners_exist_in_their_authoritative_workflow() -> None:
+    for capability, workflow in DEFERRED_CAPABILITY_OWNER.items():
+        assert capability in {
+            requirement.capability for requirement in WORKFLOW_REGISTRY[workflow].requirements
+        }
 
 
 def test_persistent_browser_processes_are_the_final_contiguous_heavy_block() -> None:

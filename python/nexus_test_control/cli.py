@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from typing import TextIO
 
 from nexus_test_control.evidence import (
+    EVIDENCE_SCHEMA_VERSION,
     CapabilityEvidence,
     DiagnosticRerunEvidence,
     InvocationEvidence,
@@ -23,10 +24,13 @@ from nexus_test_control.evidence import (
     evidence_json,
     execution_input_fingerprint,
     prove_evidence_json,
+    run_context_json,
     run_evidence_from_json,
     write_evidence_json,
 )
+from nexus_test_control.memory import OwnedMemorySampler, measure_owned_memory, measured
 from nexus_test_control.model import (
+    DEFERRED_CAPABILITY_OWNER,
     WORKFLOW_REGISTRY,
     Capability,
     RunStatus,
@@ -40,6 +44,7 @@ from nexus_test_control.process import CommandInterrupted, controller_signal_han
 from nexus_test_control.runner import (
     CapabilityContext,
     FirstFailureReporter,
+    RunContextRecorder,
     environment_secrets,
     run_workflow,
 )
@@ -54,6 +59,7 @@ from nexus_test_control.selection import (
 )
 from nexus_test_control.sensitivity import (
     SensitivityError,
+    SensitivityExecutionError,
     SensitivityRequest,
     canonical_proof,
     declared_fault_for_proof,
@@ -67,23 +73,6 @@ from nexus_test_control.services import clean_owned_runtime, new_run_id, test_en
 _PROOF_RUNNERS = frozenset({"gradle", "playwright", "pytest", "static", "vitest"})
 _FAULT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _RUN_ID = re.compile(r"[0-9a-f]{16}\Z")
-_DEFERRED_OWNER = {
-    Capability.SENSITIVITY: Workflow.PR,
-    Capability.MIGRATIONS: Workflow.PR,
-    Capability.BUNDLE: Workflow.PR,
-    Capability.JOURNEYS_ALL: Workflow.FULL,
-    Capability.CORPUS: Workflow.FULL,
-    Capability.PROVIDER_RUNTIME: Workflow.FULL,
-    Capability.LLM_EVAL: Workflow.FULL,
-    Capability.EXTENSION: Workflow.FULL,
-    Capability.ANDROID_HOST: Workflow.FULL,
-    Capability.AUDIT: Workflow.NIGHTLY,
-    Capability.HOSTED: Workflow.NIGHTLY,
-    Capability.ANDROID_DEVICE: Workflow.NIGHTLY,
-    Capability.PROVIDER_CERTIFICATION: Workflow.RELEASE,
-    Capability.ANDROID_RELEASE: Workflow.RELEASE,
-    Capability.RELEASE_ARTIFACT: Workflow.RELEASE,
-}
 
 
 class ControlPlaneError(ValueError):
@@ -275,7 +264,9 @@ def _execute_workflow(
     reporter: FirstFailureReporter,
 ) -> int:
     started = time.monotonic_ns()
+    reporter.arm(started)
     run_id, results_directory = _claim_results_directory(repo_root)
+    run_context = RunContextRecorder()
     invocation = InvocationEvidence(
         ui=command.ui,
         input_fingerprint=execution_input_fingerprint(environment),
@@ -285,58 +276,92 @@ def _execute_workflow(
     selection: tuple[Selection, ...] = ()
     sensitivity: tuple[Sensitivity, ...] = ()
     failure_owner = Capability.POLICY
-    try:
-        git_sha = _git_sha(repo_root, "HEAD")
-        base_override = None
-        if command.workflow is Workflow.PR:
-            base_override = environment.get("NEXUS_TEST_BASE_SHA") or "HEAD^"
-        base_sha, selection = _selection(repo_root, command, base_override=base_override)
-        selected = tuple(_canonical_selection(repo_root, item) for item in selection)
-        selection = _route_selection_for_workflow(command.workflow, selected)
-        active_selection = tuple(item for item in selection if item.deferred_to is None)
-        failure_owner = Capability.SENSITIVITY
-        sensitivity = _workflow_sensitivity(repo_root, command, environment, base_sha, selection)
-        context = CapabilityContext(
-            repo_root,
-            command.workflow,
-            active_selection,
-            command.ui,
-            frozenset(item.proof for item in sensitivity),
-        )
-        owned_environment = {
-            **environment,
-            "NEXUS_TEST_RESULTS_DIR": str(results_directory),
-            "NEXUS_TEST_RUN_ID": run_id,
-        }
-        failure_owner = WORKFLOW_REGISTRY[command.workflow].requirements[0].capability
-        workflow_run = run_workflow(
-            context,
-            output,
-            owned_environment,
-            run_id=run_id,
-            _reporter=reporter,
-        )
-        capabilities = workflow_run.capabilities
-        peak_owned_mib = workflow_run.peak_owned_mib
-    except BaseException as error:
+    owned_environment = {
+        **environment,
+        "NEXUS_TEST_RESULTS_DIR": str(results_directory),
+        "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+        "NEXUS_TEST_RUN_ID": run_id,
+    }
+    with measure_owned_memory(repo_root, include_containers=False) as memory_sampler:
+        try:
+            git_sha = _git_sha(repo_root, "HEAD")
+            base_override = None
+            if command.workflow is Workflow.PR:
+                base_override = environment.get("NEXUS_TEST_BASE_SHA") or "HEAD^"
+            base_sha, selection = _selection(repo_root, command, base_override=base_override)
+            selected = tuple(_canonical_selection(repo_root, item) for item in selection)
+            selection = _route_selection_for_workflow(command.workflow, selected)
+            active_selection = tuple(item for item in selection if item.deferred_to is None)
+            failure_owner = Capability.SENSITIVITY
+            sensitivity = _workflow_sensitivity(
+                repo_root,
+                command,
+                owned_environment,
+                base_sha,
+                selection,
+                memory_sampler=memory_sampler,
+                run_context=run_context,
+            )
+            context = CapabilityContext(
+                repo_root,
+                command.workflow,
+                active_selection,
+                command.ui,
+                frozenset(item.proof for item in sensitivity),
+                run_context=run_context,
+            )
+            failure_owner = WORKFLOW_REGISTRY[command.workflow].requirements[0].capability
+            workflow_run = run_workflow(
+                context,
+                output,
+                owned_environment,
+                run_id=run_id,
+                _reporter=reporter,
+                _memory_sampler=memory_sampler,
+            )
+            capabilities = workflow_run.capabilities
+        except BaseException as error:
+            artifacts: tuple[str, ...] = ()
+            failure_detail = str(error)
+            if isinstance(error, SensitivityExecutionError):
+                sensitivity = error.completed
+                artifacts = error.artifacts
+                failure_detail = f"proof_id={error.proof_id}; {error}"
+            reporter.report(
+                output,
+                owner=failure_owner.value,
+                status=RunStatus.FAIL,
+                kind=(
+                    "sensitivity_execution_failure"
+                    if failure_owner is Capability.SENSITIVITY
+                    else "controller_execution_failure"
+                ),
+                detail=failure_detail,
+            )
+            capabilities = _failed_capabilities(
+                command.workflow,
+                failure_owner,
+                f"controller execution did not complete: {failure_detail}",
+                artifacts=artifacts,
+            )
+    peak_owned_mib = measured(memory_sampler)
+    if not peak_owned_mib.measurement_complete and all(
+        item.status is RunStatus.PASS for item in capabilities
+    ):
+        detail = "owned container memory could not be measured truthfully"
         reporter.report(
             output,
-            owner=failure_owner.value,
+            owner="memory",
             status=RunStatus.FAIL,
-            kind=(
-                "sensitivity_execution_failure"
-                if failure_owner is Capability.SENSITIVITY
-                else "controller_execution_failure"
-            ),
-            detail=error,
+            kind="measurement_failure",
+            detail=detail,
         )
-        capabilities = _failed_capabilities(
-            command.workflow,
-            failure_owner,
-            f"controller execution did not complete: {error}",
+        capabilities = (
+            *capabilities[:-1],
+            replace(capabilities[-1], status=RunStatus.FAIL, detail=detail),
         )
-        peak_owned_mib = PeakOwnedMemory(0, 0, 0, measurement_complete=False)
     duration_ms = (time.monotonic_ns() - started) // 1_000_000
+    run_context_artifact = _write_run_context(repo_root, run_id, run_context)
     evidence = RunEvidence(
         repo_root=repo_root,
         run_id=run_id,
@@ -344,7 +369,9 @@ def _execute_workflow(
         git_sha=git_sha,
         base_sha=base_sha,
         duration_ms=duration_ms,
+        first_actionable_failure_ms=reporter.first_actionable_failure_ms,
         peak_owned_mib=peak_owned_mib,
+        run_context_artifact=run_context_artifact,
         selection=selection,
         sensitivity=sensitivity,
         capabilities=capabilities,
@@ -382,7 +409,7 @@ def _execute_diagnose(
             target.write(
                 json.dumps(
                     {
-                        "version": 2,
+                        "version": EVIDENCE_SCHEMA_VERSION,
                         "command": "diagnose",
                         "diagnostic_run_id": run_id,
                         "summary": relative_summary.as_posix(),
@@ -400,16 +427,20 @@ def _execute_diagnose(
         raise ControlPlaneError("failed run already has a formal diagnostic rerun") from error
 
     started = time.monotonic_ns()
+    reporter.arm(started)
+    run_context = RunContextRecorder()
     context = CapabilityContext(
         repo_root,
         original.workflow,
         tuple(item for item in original.selection if item.deferred_to is None),
         original.invocation.ui,
         frozenset(item.proof for item in original.sensitivity),
+        run_context=run_context,
     )
     owned_environment = {
         **environment,
         "NEXUS_TEST_RESULTS_DIR": str(absolute_results_directory),
+        "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
         "NEXUS_TEST_RUN_ID": run_id,
     }
     try:
@@ -441,7 +472,9 @@ def _execute_diagnose(
         git_sha=git_sha,
         diagnostic_of_run_id=original.run_id,
         duration_ms=(time.monotonic_ns() - started) // 1_000_000,
+        first_actionable_failure_ms=reporter.first_actionable_failure_ms,
         peak_owned_mib=peak_owned_mib,
+        run_context_artifact=_write_run_context(repo_root, run_id, run_context),
         capabilities=capabilities,
         invocation=original.invocation,
     )
@@ -451,7 +484,7 @@ def _execute_diagnose(
         target.flush()
         os.fsync(target.fileno())
     terminal_claim = {
-        "version": 2,
+        "version": EVIDENCE_SCHEMA_VERSION,
         "command": "diagnose",
         "diagnostic_run_id": run_id,
         "summary": relative_summary.as_posix(),
@@ -492,6 +525,8 @@ def _failed_capabilities(
     workflow: Workflow,
     owner: Capability,
     detail: str,
+    *,
+    artifacts: tuple[str, ...] = (),
 ) -> tuple[CapabilityEvidence, ...]:
     required = WORKFLOW_REGISTRY[workflow].requirements
     if owner not in {requirement.capability for requirement in required}:
@@ -502,6 +537,7 @@ def _failed_capabilities(
             RunStatus.FAIL if requirement.capability is owner else RunStatus.NOT_RUN,
             0,
             0,
+            artifacts=(artifacts if requirement.capability is owner else ()),
             detail=(
                 detail
                 if requirement.capability is owner
@@ -553,7 +589,7 @@ def _route_selection_for_workflow(
         if item.capability in required:
             routed.append(item)
             continue
-        owner = _DEFERRED_OWNER.get(item.capability)
+        owner = DEFERRED_CAPABILITY_OWNER.get(item.capability)
         if owner is None:
             raise ControlPlaneError(
                 f"{workflow.value} has no owner for selected {item.capability.value} proof"
@@ -584,7 +620,9 @@ def _execute_prove(
     reporter: FirstFailureReporter,
 ) -> int:
     started = time.monotonic_ns()
-    run_id, _results_directory = _claim_results_directory(repo_root)
+    reporter.arm(started)
+    run_id, results_directory = _claim_results_directory(repo_root)
+    run_context = RunContextRecorder()
     invocation = InvocationEvidence(
         input_fingerprint=execution_input_fingerprint(environment),
     )
@@ -592,29 +630,45 @@ def _execute_prove(
     proof = command.proof
     status = RunStatus.FAIL
     sensitivity: tuple[Sensitivity, ...] = ()
+    artifacts: tuple[str, ...] = ()
     detail = ""
-    try:
-        git_sha = _git_sha(repo_root, "HEAD")
-        proof = canonical_proof(repo_root, command.proof)
-        record = prove_sensitivity(
-            repo_root,
-            proof=proof,
-            changed_paths=(_proof_path(proof),),
-            method=command.method,
-            against=command.against,
-            environment=environment,
-        )
-        sensitivity = (record,)
-        status = RunStatus.PASS
-    except BaseException as error:
-        detail = f"sensitivity execution did not complete: {error}"
-        reporter.report(
-            output,
-            owner="prove",
-            status=RunStatus.FAIL,
-            kind="sensitivity_execution_failure",
-            detail=detail,
-        )
+    owned_environment = {
+        **environment,
+        "NEXUS_TEST_RESULTS_DIR": str(results_directory),
+        "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+        "NEXUS_TEST_RUN_ID": run_id,
+    }
+    with measure_owned_memory(repo_root, include_containers=False) as memory_sampler:
+        try:
+            git_sha = _git_sha(repo_root, "HEAD")
+            proof = canonical_proof(repo_root, command.proof)
+            record = prove_sensitivity(
+                repo_root,
+                proof=proof,
+                changed_paths=(_proof_path(proof),),
+                method=command.method,
+                against=command.against,
+                environment=owned_environment,
+                memory_sampler=memory_sampler,
+                run_context=run_context,
+            )
+            sensitivity = (record,)
+            status = RunStatus.PASS
+        except BaseException as error:
+            proof_id = proof
+            if isinstance(error, SensitivityExecutionError):
+                proof_id = error.proof_id
+                artifacts = error.artifacts
+            detail = f"proof_id={proof_id}; sensitivity execution did not complete: {error}"
+            reporter.report(
+                output,
+                owner="prove",
+                status=RunStatus.FAIL,
+                kind="sensitivity_execution_failure",
+                detail=detail,
+            )
+    peak_owned_mib = measured(memory_sampler)
+    run_context_artifact = _write_run_context(repo_root, run_id, run_context)
     evidence = ProveEvidence(
         repo_root=repo_root,
         run_id=run_id,
@@ -623,8 +677,12 @@ def _execute_prove(
         against=command.against,
         git_sha=git_sha,
         duration_ms=(time.monotonic_ns() - started) // 1_000_000,
+        first_actionable_failure_ms=reporter.first_actionable_failure_ms,
+        peak_owned_mib=peak_owned_mib,
+        run_context_artifact=run_context_artifact,
         status=status,
         sensitivity=sensitivity,
+        artifacts=artifacts,
         detail=detail,
         invocation=invocation,
     )
@@ -646,6 +704,9 @@ def _workflow_sensitivity(
     environment: Mapping[str, str],
     base_sha: str | None,
     selection: tuple[Selection, ...],
+    *,
+    memory_sampler: OwnedMemorySampler,
+    run_context: RunContextRecorder,
 ) -> tuple[Sensitivity, ...]:
     if command.workflow is not Workflow.PR:
         return ()
@@ -666,7 +727,13 @@ def _workflow_sensitivity(
                 against=fault_id or base_sha,
             )
         )
-    return prove_many(repo_root, requests=requests, environment=environment)
+    return prove_many(
+        repo_root,
+        requests=requests,
+        environment=environment,
+        memory_sampler=memory_sampler,
+        run_context=run_context,
+    )
 
 
 def write_summary(
@@ -680,6 +747,19 @@ def write_summary(
         raise ControlPlaneError("run evidence directory is absent")
     try:
         write_evidence_json(path, evidence_json(evidence, secrets))
+    except ValueError as error:
+        raise ControlPlaneError(str(error)) from error
+    return relative.as_posix()
+
+
+def _write_run_context(
+    repo_root: Path,
+    run_id: str,
+    recorder: RunContextRecorder,
+) -> str:
+    relative = Path("test-results") / "runs" / run_id / "run-context.json"
+    try:
+        write_evidence_json(repo_root / relative, run_context_json(recorder.evidence()))
     except ValueError as error:
         raise ControlPlaneError(str(error)) from error
     return relative.as_posix()

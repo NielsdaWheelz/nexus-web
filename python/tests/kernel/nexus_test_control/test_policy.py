@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from nexus_test_control.model import PRIORITY_RISK_FLOOR
+from nexus_test_control.model import PRIORITY_RISK_FLOOR, TEST_ROUTING_SHA256
 from nexus_test_control.policy import (
     corpus_manifest_schema_violations,
     corpus_violations,
@@ -185,6 +185,7 @@ def _minimal_repository(root: Path) -> None:
         root,
         "docs/local-rules/testing-standards.md",
         "./scripts/test confidence\n./scripts/test prove\n./scripts/test diagnose\n"
+        f"nexus-test-routing-sha256: {TEST_ROUTING_SHA256}\n"
         "## 11. Local test-runtime safety\nnexus-run-<run-id>\n",
     )
     for relative in ("README.md", "python/README.md", "apps/web/README.md"):
@@ -246,6 +247,17 @@ def test_repository_guard_rejects_retired_product_test_seams(
 def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
     _minimal_repository(tmp_path)
     _write(tmp_path, "scripts/agency_verify.sh", "exec make test\n")
+
+    assert "repository-route-contract" in _rules(repository_violations(tmp_path))
+
+
+def test_repository_guard_rejects_stale_typed_routing_projection(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    standards = tmp_path / "docs/local-rules/testing-standards.md"
+    standards.write_text(
+        standards.read_text(encoding="utf-8").replace(TEST_ROUTING_SHA256, "0" * 64),
+        encoding="utf-8",
+    )
 
     assert "repository-route-contract" in _rules(repository_violations(tmp_path))
 
@@ -343,19 +355,33 @@ def test_repository_contract_accepts_bounded_single_owner(tmp_path: Path) -> Non
     assert not repository_violations(tmp_path)
 
 
-def test_repository_guard_rejects_unbounded_workers(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("relative", "content"),
+    [
+        ("Makefile", "test:\n\tpytest -n auto\n"),
+        ("apps/web/vitest.config.ts", "export default { test: { maxWorkers: 8 } }\n"),
+    ],
+)
+def test_repository_guard_rejects_unbounded_workers(
+    tmp_path: Path, relative: str, content: str
+) -> None:
     _minimal_repository(tmp_path)
-    _write(tmp_path, "Makefile", "test:\n\tpytest -n auto\n")
+    _write(tmp_path, relative, content)
     assert "repository-worker-cap" in _rules(repository_violations(tmp_path))
 
 
-def test_repository_guard_rejects_automatic_retry(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("relative", "content"),
+    [
+        ("apps/web/e2e/playwright.config.ts", "export default { retries: 1 }\n"),
+        ("apps/web/vitest.config.ts", "export default { test: { retry: 1 } }\n"),
+    ],
+)
+def test_repository_guard_rejects_automatic_retry(
+    tmp_path: Path, relative: str, content: str
+) -> None:
     _minimal_repository(tmp_path)
-    _write(
-        root=tmp_path,
-        relative="apps/web/e2e/playwright.config.ts",
-        content="export default { retries: 1 }\n",
-    )
+    _write(root=tmp_path, relative=relative, content=content)
     assert "repository-automatic-retry" in _rules(repository_violations(tmp_path))
 
 

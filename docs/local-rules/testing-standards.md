@@ -55,11 +55,12 @@ deployment, or production behavior at risk.
 Nexus is outcome-heavy, not E2E-heavy:
 
 1. comprehensive static and preventive proof;
-2. a small kernel of pure, property, and state-machine proof;
+2. a small kernel of pure and property proof;
 3. a dominant middle of service and browser-component proof using real Nexus
    code, real PostgreSQL, and real Chromium semantics;
 4. very few complete journeys;
-5. scheduled provider, device, fuzz, and semantic evaluation;
+5. scheduled provider, device, property/random-order audit, and semantic
+   evaluation;
 6. explicit deployment and production verification.
 
 “Dominant middle” describes confidence and maintenance investment, not a
@@ -351,7 +352,7 @@ Never copy a deleted legacy helper or generalize unrelated endpoint shapes.
 - Automatic retries are forbidden in every blocking workflow. A diagnostic
   rerun is a separate, explicitly requested run and never changes the first
   verdict. Use `./scripts/test diagnose --of <16-hex-run-id>` only for a failed
-  v2 workflow summary at the same clean committed `HEAD` and exact recorded
+  v3 workflow summary at the same clean committed `HEAD` and exact recorded
   invocation inputs; the controller allows one formal replay, links separate
   evidence, keeps top-level `status: fail`, and exits nonzero. CI and Agency
   gates MUST NOT invoke it.
@@ -415,11 +416,18 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 | `./scripts/test full` | complete deterministic local portfolio |
 | `./scripts/test nightly` | `full` plus randomized/property audit, one hosted canary, and Android device proof |
 | `./scripts/test release` | `full` plus bounded provider certification, signed Android release proof, and exact staged artifacts |
-| `./scripts/test doctor` | tool, dependency, browser, SDK, local-service, port, and template readiness |
+| `./scripts/test doctor` | local tool, dependency, browser, SDK, service, port, and template readiness; protected-workflow inputs only when that lane is explicitly enabled |
 | `./scripts/test prove --proof PROOF --against base:REF\|fault:FAULT_ID` | exact demonstrated-red then green sensitivity evidence |
 | `./scripts/test diagnose --of RUN_ID` | one separately recorded replay of the exact failed workflow; never a new verdict |
 | `./scripts/test clean` | delete exact ledger-owned runs, the recorded local workspace stack/volumes, and its runtime state |
 | `./scripts/test list --json` | machine-readable registry from the same typed execution source |
+
+The typed registry is the single execution and workflow-composition source.
+The command table above, CI routes, and deferred-owner map are explicit,
+policy-checked projections that MUST change with it; they are not generated
+from the registry.
+
+<!-- nexus-test-routing-sha256: 1d56430548745366039562788c98ccc4bc277477917c465a4e275fa260b6aeea -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and
@@ -482,16 +490,18 @@ run ID for ownership and evidence; a real-stack workflow additionally receives:
   selected;
 - a MinIO bucket named `nexus-run-<run-id>`;
 - scenario-local Supabase users named from the run and scenario IDs;
-- processes, profiles, and other resources recorded in the run ownership
+- processes, profiles, and other resources recorded in the mutable run recovery
   ledger before creation.
 
 Before contacting a service, the controller MUST reject a non-test
 `NEXUS_ENV`, caller-supplied resource configuration, public/non-loopback
 endpoints, a repository mismatch, or a resource name outside the exact test
-grammar. Cleanup walks the ledger in reverse dependency order and deletes only
-resources both recorded there and still matching that grammar. Interrupted-run
-proof uses synthetic test data and demonstrates that foreign or unrecorded
-resources survive.
+grammar. Cleanup walks the mutable recovery ledger in reverse dependency order
+and deletes only resources both recorded there and still matching that grammar.
+It removes an entry only after that exact resource is deleted and preserves
+every failed or outstanding entry. Immutable run-context/resource-plan evidence
+retains the complete audit record. Interrupted-run proof uses synthetic test
+data and demonstrates that foreign or unrecorded resources survive.
 
 ### Python database and application fixtures
 
@@ -706,6 +716,9 @@ test-only volumes. It MUST preserve every foreign, unrecorded, public, or
 ambiguously named resource. Synthetic interruption proof must cover crashes
 between plan/create/record and idempotent repeated cleanup.
 
+Immutable run-context/resource-plan evidence is the complete audit record, not
+the cleanup oracle. The mutable recovery ledger is the cleanup authority.
+
 Process identity uses the persisted run and random owner tokens, process-group
 leader PID, and kernel start token. The planned command remains audit evidence,
 not a live identity oracle: runtimes such as Next may legitimately rewrite
@@ -713,10 +726,10 @@ not a live identity oracle: runtimes such as Next may legitimately rewrite
 owns the expected loopback listener; a healthy stale or foreign listener is a
 failure, never readiness evidence.
 
-Independent teardown owners are all attempted even when one fails. Any failed
-teardown keeps the runtime ledger and exact recovery path intact and returns a
-failure; ownership evidence is deleted only after every exact teardown
-succeeds.
+Independent teardown owners are all attempted even when one fails. After each
+exact successful deletion, cleanup removes only that recovery-ledger entry. Any
+failure returns nonzero and preserves every failed or outstanding entry and its
+exact recovery path; run ownership is released only when the ledger is empty.
 
 A local synthetic restore scenario is allowed only when it proves a concrete
 migration or PostgreSQL/object-consistency risk. It is not product disaster
@@ -879,8 +892,10 @@ mutation testing, full distributed-system simulation, generic load/soak
 infrastructure, broad pixel regression, or a commercial LLM-evaluation platform
 without a measured problem that simpler tooling cannot solve.
 
-Targeted property testing, fuzzing, changed-code mutation, deterministic job
-simulation, and hosted conformance are allowed when a named risk justifies them.
+The current audit owns targeted property proof and fixed-seed randomized order.
+Targeted state-machine proof, fuzzing, changed-code mutation, deterministic job
+simulation, and hosted conformance are allowed only when a named risk earns
+their cost.
 
 ## 16. Evidence, metrics, and maintenance
 
@@ -897,11 +912,20 @@ Failure artifacts include, as applicable:
 
 Formal diagnostic evidence names `command: diagnose`, the original failed run
 and summary, and a nested `diagnostic_result`. Its top-level status remains
-`fail` regardless of the replay result. The v2 run summary records UI mode and
+`fail` regardless of the replay result. The v3 run summary records UI mode and
 a secret-safe fingerprint of outcome-affecting execution inputs; replay rejects
 any mismatch. Its exclusive attempt record moves durably from `started` to
 `terminal` only after the linked summary exists. Direct runner debugging
 remains unlinked, non-gate evidence.
+
+The v3 hard cut rejects older summary shapes. One sampler spans sensitivity
+and ordinary capabilities; each red/green attempt records duration, owned
+memory, and bounded retained artifacts. One compact run-context artifact owns
+redacted fixed commands and observed runtime/template/build/browser identities.
+
+The controller does not stream raw live child output. It captures bounded
+output, waits for the child to exit, classifies the first decisive failure, then
+reports that classified failure immediately.
 
 Never capture secrets, auth tokens, provider credentials, or personal production
 content.
