@@ -1221,6 +1221,28 @@ def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behav
     assert browser_assertion.detail.startswith("proof_result=behavioral_assertion_failure|")
 
 
+def test_long_command_diagnostic_preserves_the_behavioral_assertion() -> None:
+    completed = subprocess.CompletedProcess(
+        ("pytest",),
+        1,
+        "migration log\n" * 400
+        + "E   AssertionError: intended fault was observed\n"
+        + "warning footer\n" * 400,
+        "",
+    )
+
+    detail = runner._command_result_detail(1, completed)
+    classified = runner._classified_exact_result(
+        CapabilityResult(
+            CapabilityEvidence(Capability.MIGRATIONS, RunStatus.FAIL, 1, 0),
+            detail,
+        )
+    )
+
+    assert "intended fault was observed" in detail
+    assert classified.detail.startswith("proof_result=behavioral_assertion_failure|")
+
+
 def test_first_failure_streams_before_later_results_and_redacts_secrets() -> None:
     stream = StringIO()
 

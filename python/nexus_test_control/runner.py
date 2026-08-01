@@ -1817,6 +1817,7 @@ def _classified_exact_result(result: CapabilityResult) -> CapabilityResult:
         kind = "setup_or_execution_failure"
     elif (
         "falsifying example:" in folded
+        or "assertionerror:" in folded
         or re.search(r"\btests\s+\d+\s+failed\b", folded) is not None
         or ("failed " in folded and "::" in folded and " - assertionerror" in folded)
         or ("error: expect(" in folded and " › " in folded)
@@ -3651,13 +3652,13 @@ def _command_result_detail(
     completed: subprocess.CompletedProcess[str],
     interrupted_by: signal.Signals | None = None,
 ) -> str:
-    stdout = (completed.stdout or "").strip()
-    stderr = (completed.stderr or "").strip()
+    stdout = _decisive_output(completed.stdout or "")
+    stderr = _decisive_output(completed.stderr or "")
     parts = []
     if stdout:
-        parts.append(f"stdout={stdout[-1900:]}")
+        parts.append(f"stdout={stdout}")
     if stderr:
-        parts.append(f"stderr={stderr[-1900:]}")
+        parts.append(f"stderr={stderr}")
     decisive = " | ".join(parts) if parts else "no diagnostic output"
     if interrupted_by is not None:
         return (
@@ -3665,6 +3666,23 @@ def _command_result_detail(
             f"(exit {completed.returncode}): {decisive}"
         )
     return f"fixed command {index} exited {completed.returncode}: {decisive}"
+
+
+def _decisive_output(value: str, limit: int = 1900) -> str:
+    stripped = value.strip()
+    if len(stripped) <= limit:
+        return stripped
+    decisive = "\n".join(
+        line
+        for line in stripped.splitlines()
+        if re.search(
+            r"(?:^|\s)(?:E\s{3}(?:assert|AssertionError|Failed:)|FAILED\s|"
+            r"AssertionError:|Error:\s*expect\(|Tests\s+\d+\s+failed|falsifying example:)",
+            line,
+            re.IGNORECASE,
+        )
+    )
+    return (decisive or stripped)[-limit:]
 
 
 def _failed_command_detail(index: int, completed: subprocess.CompletedProcess[str]) -> str:
