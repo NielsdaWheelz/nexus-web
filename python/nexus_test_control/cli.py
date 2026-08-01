@@ -7,7 +7,6 @@ import re
 import subprocess
 import sys
 import time
-import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
@@ -456,7 +455,7 @@ def _execute_prove(
         against=command.against,
         environment=environment,
     )
-    run_id = uuid.uuid4().hex
+    run_id = new_run_id()
     relative = Path("test-results") / "runs" / run_id / "summary.json"
     path = repo_root / relative
     path.parent.mkdir(parents=True, exist_ok=False)
