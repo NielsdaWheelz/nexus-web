@@ -86,6 +86,8 @@ SUPABASE_EXCLUDED_SERVICES = (
 )
 
 _PORT_DEFAULTS = (15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091)
+_EPHEMERAL_PORT_RANGE_PATH = Path("/proc/sys/net/ipv4/ip_local_port_range")
+_CONSERVATIVE_EPHEMERAL_PORT_RANGE = (32768, 65535)
 _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_DIR")
 _STATUS_KEYS = frozenset(
     {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
@@ -912,14 +914,44 @@ def clean_owned_runtime(
 
 def _allocate_ports() -> RuntimePorts:
     ports: list[int] = []
+    ephemeral_port_range = _local_ephemeral_port_range()
     for preferred in _PORT_DEFAULTS:
-        for port in range(preferred, min(preferred + 200, 65536)):
+        for port in _candidate_ports(preferred, ephemeral_port_range):
             if port not in ports and _port_available(port):
                 ports.append(port)
                 break
         else:
             raise RuntimeContractError(f"no local test port is available from {preferred}")
     return RuntimePorts(*ports)
+
+
+def _local_ephemeral_port_range() -> tuple[int, int]:
+    try:
+        fields = _EPHEMERAL_PORT_RANGE_PATH.read_text(encoding="utf-8").split()
+    except FileNotFoundError:
+        return _CONSERVATIVE_EPHEMERAL_PORT_RANGE
+    except OSError as error:
+        raise RuntimeContractError("cannot read the host ephemeral port range") from error
+    if len(fields) != 2:
+        raise RuntimeContractError("host ephemeral port range has an invalid shape")
+    try:
+        lower, upper = (int(field) for field in fields)
+    except ValueError as error:
+        raise RuntimeContractError("host ephemeral port range is not numeric") from error
+    if not 1 <= lower <= upper <= 65535:
+        raise RuntimeContractError("host ephemeral port range is outside TCP port bounds")
+    return lower, upper
+
+
+def _candidate_ports(
+    preferred: int,
+    ephemeral_port_range: tuple[int, int],
+) -> Iterator[int]:
+    lower, upper = ephemeral_port_range
+    for port in range(preferred, min(preferred + 200, 65536)):
+        if lower <= port <= upper:
+            continue
+        yield port
 
 
 def _port_available(port: int) -> bool:

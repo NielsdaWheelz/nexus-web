@@ -205,9 +205,11 @@ composition, CI assertions, and the command table in the local rule.
 Adapt `docker/docker-compose.test.yml` into one stable, volume-backed
 PostgreSQL/MinIO stack per workspace. Keep one stable Supabase-local workdir per
 workspace. Derive the runtime id from the canonical repo path; allocate ports
-once; record them under ignored `.nexus-test/runtime.json`; health-check before
-reuse. Local workflows leave healthy services running. CI tears them down at
-job end.
+once outside the host kernel's ephemeral client-port range; record them under
+ignored `.nexus-test/runtime.json`; health-check before reuse. If the host range
+interface is absent, conservatively exclude `32768–65535`; an unreadable or
+malformed present interface fails closed. Local workflows leave healthy
+services running. CI tears them down at job end.
 
 The runtime record contains only `version`, `repo_id`, `compose_project`,
 `supabase_workdir`, allocated `ports`, and owned `run_ids`; no secrets.

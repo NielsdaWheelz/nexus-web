@@ -467,6 +467,9 @@ apply. A direct invocation is not a workflow verdict.
 
 The controller owns one persistent, health-checked, workspace-local
 PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json`.
+Initial allocation MUST exclude the host kernel's ephemeral client-port range;
+when the kernel range interface is absent, the controller excludes ports
+`32768–65535`; an unreadable or malformed present interface fails closed.
 It provisions that stack and disposable writable resources lazily, only when a
 selected proof crosses the database, object-storage, auth, or owned app-process
 boundary. Static, kernel, Chromium-component, and Android-host-only workflows

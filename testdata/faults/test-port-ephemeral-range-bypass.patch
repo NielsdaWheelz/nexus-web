@@ -1,0 +1,10 @@
+diff --git a/python/nexus_test_control/services.py b/python/nexus_test_control/services.py
+--- a/python/nexus_test_control/services.py
++++ b/python/nexus_test_control/services.py
+@@ -949,6 +949,4 @@ def _candidate_ports(
+ ) -> Iterator[int]:
+     lower, upper = ephemeral_port_range
+     for port in range(preferred, min(preferred + 200, 65536)):
+-        if lower <= port <= upper:
+-            continue
+         yield port

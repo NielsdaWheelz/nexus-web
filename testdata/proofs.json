@@ -11,6 +11,7 @@
       ],
       "proofs": [
         "pytest:python/tests/kernel/nexus_test_control/test_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run",
+        "pytest:python/tests/kernel/nexus_test_control/test_port_allocation.py::test_port_candidates_exclude_the_host_ephemeral_client_range",
         "pytest:python/tests/kernel/nexus_test_control/test_process.py::test_captured_child_output_is_drained_without_retaining_unbounded_logs"
       ],
       "capabilities": [

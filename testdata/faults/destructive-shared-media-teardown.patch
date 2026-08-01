@@ -1,6 +1,14 @@
 diff --git a/python/nexus/services/media_deletion.py b/python/nexus/services/media_deletion.py
 --- a/python/nexus/services/media_deletion.py
 +++ b/python/nexus/services/media_deletion.py
+@@ -89,6 +89,6 @@ def claim_media_teardown(db: Session, media_id: UUID) -> UUID:
+     if existing is not None:
+         return UUID(str(existing[0]))
+-    if _total_reference_count(db, media_id) != 0:
++    if _total_reference_count(db, media_id) < 0:
+         # justify-defect: the claim doorway is only reached after the caller removed
+         # the last reference under the media lock. A reference here is an impossible
+         # state, not a modeled outcome.
 @@ -237,7 +237,7 @@ def remove_media_for_viewer(
          from nexus.services.artifacts.dossier_types import AudienceUser
  

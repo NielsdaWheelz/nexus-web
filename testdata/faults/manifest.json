@@ -12,6 +12,15 @@
       "expected_failure": "DID NOT RAISE"
     },
     {
+      "id": "test-port-ephemeral-range-bypass",
+      "patch": "testdata/faults/test-port-ephemeral-range-bypass.patch",
+      "sha256": "5ee174f02336aaf746a8b5328930b30947787304a638c79aacca974b038f3c49",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_port_allocation.py::test_port_candidates_exclude_the_host_ephemeral_client_range"
+      ],
+      "expected_failure": "ephemeral client range leaked into allocated test ports"
+    },
+    {
       "id": "auth-privacy-visibility-bypass",
       "patch": "testdata/faults/auth-privacy-visibility-bypass.patch",
       "sha256": "a38e392484381fa66d5f0aafba11b322447b273c1167e8ee5786610ac30e556a",
@@ -24,7 +33,7 @@
     {
       "id": "destructive-shared-media-teardown",
       "patch": "testdata/faults/destructive-shared-media-teardown.patch",
-      "sha256": "cf9428c3976c3cc22c79bfc0750b695c881e6aa852f04ec627dc8a8edfacff80",
+      "sha256": "3af18eabe153e9524d016a9f30283ecd6338d53d10ed3b72e8d18e212cd3700d",
       "proofs": [
         "pytest:python/tests/service/test_destructive_side_effects.py::test_viewer_removal_preserves_shared_media_database_and_object"
       ],
