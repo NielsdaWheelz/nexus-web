@@ -241,6 +241,11 @@ class WorkflowRun:
 class _RunnerPorts:
     """Owned adapters for external process, service, and filesystem boundaries."""
 
+    @contextmanager
+    def heavy_lock(self, repo_root: Path) -> Iterator[Path]:
+        with workspace_heavy_lock(repo_root) as path:
+            yield path
+
     def prepare_run(
         self,
         repo_root: Path,
@@ -457,6 +462,7 @@ def run_workflow(
     )
 
     def results() -> Iterable[CapabilityResult]:
+        nonlocal heavy_lock_held
         blocked_by: Capability | None = None
         try:
             for requirement in requirements:
@@ -466,6 +472,13 @@ def run_workflow(
                         f"blocked by earlier {blocked_by.value} result",
                     )
                     continue
+                if (
+                    requirement.capability in _HEAVY_CAPABILITIES
+                    and _capability_is_selected(context, requirement.capability)
+                    and not heavy_lock_held
+                ):
+                    workflow_lifecycle.enter_context(execution.ports.heavy_lock(context.repo_root))
+                    heavy_lock_held = True
                 admission = (
                     _heavy_memory_admission(requirement.capability, _available_memory())
                     if _requires_memory_admission(context, requirement.capability)
@@ -476,7 +489,7 @@ def run_workflow(
                     requirement.capability,
                     environment,
                     execution,
-                    heavy_lock_held=holds_heavy_lease,
+                    heavy_lock_held=heavy_lock_held,
                 )
                 memory = workflow_sampler.checkpoint()
                 measured_result = CapabilityResult(
@@ -489,17 +502,12 @@ def run_workflow(
         finally:
             execution.close()
 
-    holds_heavy_lease = any(
-        capability in _HEAVY_CAPABILITIES and _capability_is_selected(context, capability)
-        for capability in required_capabilities
-    )
+    heavy_lock_held = False
     measures_containers = any(
         capability in _LOCAL_RUNTIME_CAPABILITIES and _capability_is_selected(context, capability)
         for capability in required_capabilities
     )
     with ExitStack() as workflow_lifecycle:
-        if holds_heavy_lease:
-            workflow_lifecycle.enter_context(workspace_heavy_lock(context.repo_root))
         with measure_owned_memory(
             context.repo_root,
             include_containers=measures_containers,

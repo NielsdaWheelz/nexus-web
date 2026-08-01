@@ -1,6 +1,7 @@
 import json
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
 
@@ -677,6 +678,10 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
     (tmp_path / "python/.venv").mkdir(parents=True)
     _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
     _write(
+        tmp_path / "python/tests/kernel/test_owned.py",
+        "def test_owned():\n    assert 2 + 2 == 4\n",
+    )
+    _write(
         tmp_path / "python/tests/service/test_owned.py",
         "def test_owned():\n    assert 2 + 2 == 4\n",
     )
@@ -690,8 +695,14 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
     environment = _stub_tools(tmp_path, "bun", "docker", "supabase", "uv")
     prepared: list[bool] = []
     cleaned: list[str] = []
+    commands_before_heavy_lock: list[list[list[str]]] = []
 
     class Ports(runner._RunnerPorts):
+        @contextmanager
+        def heavy_lock(self, _repo_root: Path) -> Iterator[Path]:
+            commands_before_heavy_lock.append([command["argv"] for command in _commands(tmp_path)])
+            yield tmp_path / "heavy.lock"
+
         def prepare_run(
             self,
             repo_root: Path,
@@ -732,6 +743,12 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
         tmp_path,
         Workflow.CHANGED,
         (
+            Selection(
+                "python/tests/kernel/test_owned.py",
+                Capability.KERNEL_PYTHON,
+                SelectionReason.CHANGED_TEST,
+                "pytest:python/tests/kernel/test_owned.py",
+            ),
             Selection(
                 "python/tests/service/test_owned.py",
                 Capability.SERVICE,
@@ -776,6 +793,7 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
             "--no-sync",
             "ruff",
             "check",
+            "./tests/kernel/test_owned.py",
             "./tests/migrations/test_owned.py",
             "./tests/service/test_owned.py",
         ],
@@ -786,6 +804,7 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
             "ruff",
             "format",
             "--check",
+            "./tests/kernel/test_owned.py",
             "./tests/migrations/test_owned.py",
             "./tests/service/test_owned.py",
         ],
@@ -794,10 +813,21 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
             "--frozen",
             "--no-sync",
             "pyright",
+            "./tests/kernel/test_owned.py",
             "./tests/migrations/test_owned.py",
             "./tests/service/test_owned.py",
         ],
         ["run", "eslint", "--max-warnings", "0", "./src/owned.browser.test.ts"],
+        [
+            "run",
+            "--frozen",
+            "--no-sync",
+            "pytest",
+            "-p",
+            "no:randomly",
+            "--",
+            "./tests/kernel/test_owned.py",
+        ],
         [
             "run",
             "--frozen",
@@ -818,12 +848,13 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
             "tests/migrations/test_owned.py",
         ],
     ]
+    assert commands_before_heavy_lock == [[command["argv"] for command in commands[:5]]]
     assert all(
         "DATABASE_URL" in command["environment"] and "NEXUS_TEST_RUN_ID" in command["environment"]
-        for command in (commands[4], commands[6])
+        for command in (commands[5], commands[7])
     )
-    assert "DATABASE_URL" not in commands[5]["environment"]
-    assert "NEXUS_TEST_RUN_ID" in commands[5]["environment"]
+    assert "DATABASE_URL" not in commands[6]["environment"]
+    assert "NEXUS_TEST_RUN_ID" in commands[6]["environment"]
 
 
 def test_affected_heavy_capabilities_with_no_selection_do_not_prepare_runtime(
