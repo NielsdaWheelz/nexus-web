@@ -939,7 +939,8 @@ test.describe("pdf reader", () => {
       .getByRole("button", { name: "Options" })
       .first();
     await expect(optionsTrigger).toBeVisible();
-    await optionsTrigger.click();
+    await optionsTrigger.press("ArrowDown");
+    await expect(optionsTrigger).toHaveAttribute("aria-expanded", "true");
 
     // A static status row (labelled role=group via ActionMenu's render seam),
     // not a disabled menuitem keyboard traversal would skip.

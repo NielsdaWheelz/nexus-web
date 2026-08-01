@@ -50,10 +50,15 @@ async function gotoPaneChromePath(
   testInfo: TestInfo,
   href: string,
 ): Promise<Locator> {
-  await gotoSinglePaneWorkspace(page, paneChromeDeviceId(testInfo), href, {
-    paneId: "pane-chrome-default",
-    primaryWidthPx: 480,
-  });
+  await gotoSinglePaneWorkspace(
+    page,
+    `${paneChromeDeviceId(testInfo)}-${randomUUID()}`,
+    href,
+    {
+      paneId: "pane-chrome-default",
+      primaryWidthPx: 480,
+    },
+  );
   return activeWorkspacePane(page);
 }
 

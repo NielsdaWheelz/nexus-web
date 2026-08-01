@@ -1001,9 +1001,42 @@ async function expectTrustedReverseReveal(
 ): Promise<void> {
   const hidden = await readChromeSample(page, scrollport);
   chromeSurfaces(hidden, expectPaneToolbar);
-  const { samples } = await dispatchTouchDrag(page, scrollport, 128, 64, {
-    expectPaneToolbar,
-  });
+  const { samples, scrollEvents } = await dispatchTouchDrag(
+    page,
+    scrollport,
+    128,
+    64,
+    { expectPaneToolbar },
+  );
+  const reverseMotionAt = (recordedAt: number) => {
+    let lastScrollTop = hidden.scrollTop;
+    let direction: "Up" | "Down" | null = "Up";
+    let reversalDistancePx = priorReverseDistance;
+    for (const event of scrollEvents) {
+      if (event.recordedAt > recordedAt) break;
+      if (event.scrollTop <= 8) {
+        lastScrollTop = event.scrollTop;
+        direction = null;
+        reversalDistancePx = 0;
+        continue;
+      }
+      const delta = event.scrollTop - lastScrollTop;
+      if (Math.abs(delta) < 1) continue;
+      const nextDirection = delta > 0 ? "Down" : "Up";
+      reversalDistancePx =
+        direction === nextDirection
+          ? reversalDistancePx + Math.abs(delta)
+          : Math.abs(delta);
+      direction = nextDirection;
+      lastScrollTop = event.scrollTop;
+    }
+    return { direction, reversalDistancePx };
+  };
+  const revealProgressFor = (motion: ReturnType<typeof reverseMotionAt>) =>
+    motion.direction === "Up"
+      ? 1 -
+        Math.min(1, Math.max(0, (motion.reversalDistancePx - 8) / 64))
+      : 1;
   const reverseSamples = samples.filter(
     (sample) => sample.scrollTop < hidden.scrollTop,
   );
@@ -1029,21 +1062,17 @@ async function expectTrustedReverseReveal(
   )) {
     const index = samples.indexOf(sample);
     const prior = index <= 0 ? hidden : (samples[index - 1] ?? hidden);
-    const priorFrameReverseDistance =
-      priorReverseDistance + hidden.scrollTop - prior.scrollTop;
-    const currentReverseDistance =
-      priorReverseDistance + hidden.scrollTop - sample.scrollTop;
-    const priorProgressCeiling =
-      1 - Math.min(1, Math.max(0, (priorFrameReverseDistance - 8) / 64));
-    const currentProgressFloor =
-      1 - Math.min(1, Math.max(0, (currentReverseDistance - 8) / 64));
+    const priorMotion = reverseMotionAt(prior.recordedAt);
+    const currentMotion = reverseMotionAt(sample.recordedAt);
+    const priorProgressCeiling = revealProgressFor(priorMotion);
+    const currentProgressFloor = revealProgressFor(currentMotion);
     expect(
       sample.appBar.progress,
-      `reveal must not lead the current 8px dead-zone / 64px-travel bound; sample=${JSON.stringify(sample)} prior=${JSON.stringify(prior)} hidden=${JSON.stringify(hidden)}`,
+      `reveal must not lead the current 8px dead-zone / 64px-travel bound; sample=${JSON.stringify(sample)} prior=${JSON.stringify(prior)} currentMotion=${JSON.stringify(currentMotion)} hidden=${JSON.stringify(hidden)}`,
     ).toBeGreaterThanOrEqual(currentProgressFloor - 0.01);
     expect(
       sample.appBar.progress,
-      `reveal must not lag beyond one coalesced RAF; sample=${JSON.stringify(sample)} prior=${JSON.stringify(prior)} hidden=${JSON.stringify(hidden)}`,
+      `reveal must not lag beyond one coalesced RAF; sample=${JSON.stringify(sample)} prior=${JSON.stringify(prior)} priorMotion=${JSON.stringify(priorMotion)} hidden=${JSON.stringify(hidden)}`,
     ).toBeLessThanOrEqual(priorProgressCeiling + 0.01);
   }
   const firstRevealedSample = reverseSamples.find(
@@ -1053,10 +1082,14 @@ async function expectTrustedReverseReveal(
     firstRevealedSample,
     `expected chrome to reveal after the reversal dead zone; samples=${JSON.stringify(samples)}`,
   ).toBeDefined();
+  const firstRevealMotion = reverseMotionAt(firstRevealedSample!.recordedAt);
   expect(
-    priorReverseDistance +
-      hidden.scrollTop -
-      (firstRevealedSample?.scrollTop ?? hidden.scrollTop),
+    firstRevealMotion.direction,
+    `chrome must reveal only while native scroll travels upward; motion=${JSON.stringify(firstRevealMotion)} samples=${JSON.stringify(samples)} scrollEvents=${JSON.stringify(scrollEvents)}`,
+  ).toBe("Up");
+  expect(
+    firstRevealMotion.reversalDistancePx,
+    `chrome must consume the exact native 8px reversal dead zone; motion=${JSON.stringify(firstRevealMotion)} samples=${JSON.stringify(samples)} scrollEvents=${JSON.stringify(scrollEvents)}`,
   ).toBeGreaterThan(8);
   const visible = await expectChromePhase(
     page,
