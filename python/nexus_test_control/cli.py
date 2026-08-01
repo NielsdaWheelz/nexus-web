@@ -37,8 +37,10 @@ from nexus_test_control.selection import (
 )
 from nexus_test_control.sensitivity import (
     SensitivityError,
+    SensitivityRequest,
     canonical_proof,
     declared_fault_for_proof,
+    prove_many,
     sensitivity_json,
 )
 from nexus_test_control.sensitivity import (
@@ -357,20 +359,18 @@ def _workflow_sensitivity(
     for item in selection:
         if item.sensitivity_required and item.proof is not None:
             by_proof.setdefault(item.proof, []).append(item.path)
-    records: list[Sensitivity] = []
+    requests: list[SensitivityRequest] = []
     for proof, paths in sorted(by_proof.items()):
         fault_id = declared_fault_for_proof(repo_root, proof)
-        records.append(
-            prove_sensitivity(
-                repo_root,
+        requests.append(
+            SensitivityRequest(
                 proof=proof,
                 changed_paths=tuple(paths),
                 method=SensitivityMethod.FAULT if fault_id else SensitivityMethod.BASE,
                 against=fault_id or base_sha,
-                environment=environment,
             )
         )
-    return tuple(records)
+    return prove_many(repo_root, requests=requests, environment=environment)
 
 
 def write_summary(

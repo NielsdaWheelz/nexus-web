@@ -547,10 +547,14 @@ Sensitivity is enforced by the control plane, not by PR prose:
    targeted fault id from `testdata/faults/manifest.json`. The control plane
    applies that small checked patch to an isolated current worktree. Do not
    build a mutation framework or commit a production defect.
-4. Red is valid only when the named proof was collected/executed and failed at
+4. One PR sensitivity portfolio reuses one isolated worktree and persistent
+   local services per revision group. It applies and exactly reverses one fault
+   at a time; every proof still receives disposable run state. Do not rebuild
+   the stack or schema template once per proof.
+5. Red is valid only when the named proof was collected/executed and failed at
    its expected behavioral assertion or property. Import, collection, build,
    service-readiness, and unrelated-test failures do not count.
-5. The current proof must then pass at the intended real boundary. `pr` fails
+6. The current proof must then pass at the intended real boundary. `pr` fails
    when any materially changed proof lacks a valid same-run red/green
    sensitivity object.
 

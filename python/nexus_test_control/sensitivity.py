@@ -44,6 +44,24 @@ class FaultDefinition:
     expected_failure: str
 
 
+@dataclass(frozen=True, slots=True)
+class SensitivityRequest:
+    proof: str
+    changed_paths: tuple[str, ...]
+    method: SensitivityMethod
+    against: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedSensitivity:
+    request: SensitivityRequest
+    proof_path: str
+    fault: FaultDefinition | None
+    against_sha: str | None
+    revision: str
+    overlays: tuple[str, ...]
+
+
 def prove(
     repo_root: Path,
     *,
@@ -53,60 +71,117 @@ def prove(
     against: str,
     environment: Mapping[str, str],
 ) -> Sensitivity:
+    return prove_many(
+        repo_root,
+        requests=(SensitivityRequest(proof, tuple(changed_paths), method, against),),
+        environment=environment,
+    )[0]
+
+
+def prove_many(
+    repo_root: Path,
+    *,
+    requests: Sequence[SensitivityRequest],
+    environment: Mapping[str, str],
+) -> tuple[Sensitivity, ...]:
+    """Demonstrate several proofs while reusing one isolated runtime per revision."""
     root = repo_root.resolve(strict=True)
     _require_clean_checkout(root)
-    proof_path = _proof_path(proof)
-    if not (root / proof_path).is_file():
-        raise SensitivityError(f"proof owner is absent: {proof_path}")
-    exact_changed_paths = tuple(dict.fromkeys(changed_paths))
-    if proof_path not in exact_changed_paths:
-        raise SensitivityError("sensitivity changed paths must include the proof owner")
+    if not requests:
+        return ()
     current_sha = _git_sha(root, "HEAD")
+    prepared: list[_PreparedSensitivity] = []
+    for request in requests:
+        proof_path = _proof_path(request.proof)
+        if not (root / proof_path).is_file():
+            raise SensitivityError(f"proof owner is absent: {proof_path}")
+        exact_changed_paths = tuple(dict.fromkeys(request.changed_paths))
+        if proof_path not in exact_changed_paths:
+            raise SensitivityError("sensitivity changed paths must include the proof owner")
+        normalized = SensitivityRequest(
+            request.proof,
+            exact_changed_paths,
+            request.method,
+            request.against,
+        )
+        if request.method is SensitivityMethod.BASE:
+            against_sha = _git_sha(root, request.against)
+            prepared.append(
+                _PreparedSensitivity(
+                    normalized,
+                    proof_path,
+                    None,
+                    against_sha,
+                    against_sha,
+                    _base_overlays(proof_path),
+                )
+            )
+        else:
+            prepared.append(
+                _PreparedSensitivity(
+                    normalized,
+                    proof_path,
+                    fault_definition(root, request.against, request.proof),
+                    None,
+                    current_sha,
+                    (),
+                )
+            )
 
-    fault: FaultDefinition | None = None
-    if method is SensitivityMethod.BASE:
-        against_sha = _git_sha(root, against)
-        revision = against_sha
-        overlays = _base_overlays(proof_path)
-    else:
-        fault = fault_definition(root, against, proof)
-        against_sha = None
-        revision = current_sha
-        overlays = ()
+    grouped: dict[tuple[str, SensitivityMethod], list[tuple[int, _PreparedSensitivity]]] = {}
+    for index, item in enumerate(prepared):
+        grouped.setdefault((item.revision, item.request.method), []).append((index, item))
+    red_results: dict[int, SensitivityRed] = {}
+    for (_revision, _method), group in grouped.items():
+        revision = group[0][1].revision
+        overlays = tuple(dict.fromkeys(path for _, item in group for path in item.overlays))
+        with isolated_worktree(root, revision, overlays=overlays) as red_root:
+            for index, item in group:
+                fault_path = root / item.fault.patch if item.fault is not None else None
+                with applied_fault(red_root, fault_path):
+                    red_result = run_proof(
+                        CapabilityContext(red_root, Workflow.CHANGED, ()),
+                        item.request.proof,
+                        environment,
+                    )
+                red_results[index] = behavioral_red(
+                    red_result,
+                    expected_failure=(
+                        item.fault.expected_failure if item.fault is not None else None
+                    ),
+                )
 
-    with isolated_worktree(root, revision, overlays=overlays) as red_root:
-        if fault is not None:
-            _apply_fault(red_root, root / fault.patch)
-        red_result = run_proof(
-            CapabilityContext(red_root, Workflow.CHANGED, ()),
-            proof,
+    records: list[Sensitivity] = []
+    for index, item in enumerate(prepared):
+        green_result = run_proof(
+            CapabilityContext(root, Workflow.CHANGED, ()),
+            item.request.proof,
             environment,
         )
-        red = behavioral_red(red_result, expected_failure=fault.expected_failure if fault else None)
-
-    green_result = run_proof(
-        CapabilityContext(root, Workflow.CHANGED, ()),
-        proof,
-        environment,
-    )
-    if green_result.evidence.status is not RunStatus.PASS:
-        raise SensitivityError(
-            "current proof did not pass at its intended boundary: "
-            f"{green_result.evidence.status.value}: {green_result.detail}"
+        if green_result.evidence.status is not RunStatus.PASS:
+            raise SensitivityError(
+                "current proof did not pass at its intended boundary: "
+                f"{green_result.evidence.status.value}: {green_result.detail}"
+            )
+        records.append(
+            Sensitivity(
+                proof=item.request.proof,
+                changed_paths=item.request.changed_paths,
+                proof_digest=compute_proof_digest(
+                    root,
+                    item.request.proof,
+                    item.request.changed_paths,
+                ),
+                method=item.request.method,
+                against=SensitivityAgainst(
+                    git_sha=item.against_sha,
+                    fault_id=item.fault.id if item.fault is not None else None,
+                ),
+                red=red_results[index],
+                green=SensitivityGreen(current_sha),
+            )
         )
-
-    return Sensitivity(
-        proof=proof,
-        changed_paths=exact_changed_paths,
-        proof_digest=compute_proof_digest(root, proof, exact_changed_paths),
-        method=method,
-        against=SensitivityAgainst(
-            git_sha=against_sha,
-            fault_id=fault.id if fault is not None else None,
-        ),
-        red=red,
-        green=SensitivityGreen(current_sha),
-    )
+    return tuple(records)
 
 
 def behavioral_red(
@@ -292,6 +367,25 @@ def _link_dependency(source: Path, target: Path) -> None:
 def _apply_fault(worktree: Path, patch: Path) -> None:
     _git(worktree, "apply", "--check", "--whitespace=error-all", str(patch))
     _git(worktree, "apply", "--whitespace=error-all", str(patch))
+
+
+@contextmanager
+def applied_fault(worktree: Path, patch: Path | None) -> Iterator[None]:
+    if patch is None:
+        yield
+        return
+    _apply_fault(worktree, patch)
+    try:
+        yield
+    finally:
+        _git(worktree, "apply", "--check", "--reverse", "--whitespace=error-all", str(patch))
+        _git(worktree, "apply", "--reverse", "--whitespace=error-all", str(patch))
+        try:
+            _git(worktree, "diff", "--exit-code", capture=True)
+        except SensitivityError as error:
+            raise SensitivityError(
+                "fault reversal did not restore the isolated checkout"
+            ) from error
 
 
 def _require_clean_checkout(repo_root: Path) -> None:

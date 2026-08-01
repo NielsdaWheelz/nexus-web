@@ -4,10 +4,13 @@ import hashlib
 import json
 import os
 import subprocess
+from collections.abc import Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+import nexus_test_control.sensitivity as sensitivity
 from nexus_test_control.evidence import CapabilityEvidence
 from nexus_test_control.model import (
     Capability,
@@ -18,12 +21,14 @@ from nexus_test_control.model import (
 from nexus_test_control.runner import CapabilityResult
 from nexus_test_control.sensitivity import (
     SensitivityError,
+    SensitivityRequest,
     behavioral_red,
     canonical_proof,
     declared_fault_for_proof,
     fault_definition,
     isolated_worktree,
     prove,
+    prove_many,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -156,6 +161,125 @@ def test_base_sensitivity_runs_the_overlaid_proof_red_then_current_green(
     assert result.green.status is RunStatus.PASS
 
 
+def test_fault_portfolio_reuses_one_isolated_worktree_and_reverses_each_fault(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / ".gitignore").write_text("python/.venv\ntest-results\n.nexus-test\n")
+    project = tmp_path / "python"
+    project.mkdir()
+    (project / "pyproject.toml").write_bytes((REPO_ROOT / "python/pyproject.toml").read_bytes())
+    (project / "uv.lock").write_bytes((REPO_ROOT / "python/uv.lock").read_bytes())
+    (project / ".venv").symlink_to(REPO_ROOT / "python/.venv", target_is_directory=True)
+    owner = project / "nexus"
+    owner.mkdir()
+    (owner / "__init__.py").write_text("")
+    (owner / "values.py").write_text("FIRST = 1\nSECOND = 1\n")
+    proofs = project / "tests/kernel"
+    proofs.mkdir(parents=True)
+    (proofs / "test_first.py").write_text(
+        "from nexus.values import FIRST\n\n"
+        "def test_first():\n"
+        "    assert FIRST == 1, 'first fault observed'\n"
+    )
+    (proofs / "test_second.py").write_text(
+        "from nexus.values import SECOND\n\n"
+        "def test_second():\n"
+        "    assert SECOND == 1, 'second fault observed'\n"
+    )
+    faults = tmp_path / "testdata/faults"
+    faults.mkdir(parents=True)
+    first_patch = faults / "first.patch"
+    first_patch.write_text(
+        "diff --git a/python/nexus/values.py b/python/nexus/values.py\n"
+        "--- a/python/nexus/values.py\n"
+        "+++ b/python/nexus/values.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        "-FIRST = 1\n"
+        "+FIRST = 0\n"
+        " SECOND = 1\n"
+    )
+    second_patch = faults / "second.patch"
+    second_patch.write_text(
+        "diff --git a/python/nexus/values.py b/python/nexus/values.py\n"
+        "--- a/python/nexus/values.py\n"
+        "+++ b/python/nexus/values.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " FIRST = 1\n"
+        "-SECOND = 1\n"
+        "+SECOND = 0\n"
+    )
+    first_proof = "pytest:python/tests/kernel/test_first.py::test_first"
+    second_proof = "pytest:python/tests/kernel/test_second.py::test_second"
+    (faults / "manifest.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "faults": [
+                    {
+                        "id": "first-fault",
+                        "patch": "testdata/faults/first.patch",
+                        "sha256": hashlib.sha256(first_patch.read_bytes()).hexdigest(),
+                        "proofs": [first_proof],
+                        "expected_failure": "first fault observed",
+                    },
+                    {
+                        "id": "second-fault",
+                        "patch": "testdata/faults/second.patch",
+                        "sha256": hashlib.sha256(second_patch.read_bytes()).hexdigest(),
+                        "proofs": [second_proof],
+                        "expected_failure": "second fault observed",
+                    },
+                ],
+            }
+        )
+    )
+    _commit(tmp_path, "fault portfolio")
+
+    isolated_entries = 0
+    real_isolated_worktree = sensitivity.isolated_worktree
+
+    @contextmanager
+    def counted_isolated_worktree(*args, **kwargs):
+        nonlocal isolated_entries
+        isolated_entries += 1
+        with real_isolated_worktree(*args, **kwargs) as checkout:
+            yield checkout
+
+    monkeypatch.setattr(sensitivity, "isolated_worktree", counted_isolated_worktree)
+    environment = {
+        key: value
+        for key in ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ")
+        if (value := os.environ.get(key)) is not None
+    }
+
+    results = prove_many(
+        tmp_path,
+        requests=(
+            SensitivityRequest(
+                first_proof,
+                ("python/tests/kernel/test_first.py",),
+                SensitivityMethod.FAULT,
+                "first-fault",
+            ),
+            SensitivityRequest(
+                second_proof,
+                ("python/tests/kernel/test_second.py",),
+                SensitivityMethod.FAULT,
+                "second-fault",
+            ),
+        ),
+        environment=environment,
+    )
+
+    assert isolated_entries == 1
+    assert [result.red.failure_fingerprint for result in results] == [
+        "first fault observed",
+        "second fault observed",
+    ]
+    assert (owner / "values.py").read_text() == "FIRST = 1\nSECOND = 1\n"
+
+
 @pytest.mark.parametrize(
     "proof_error",
     [RuntimeError("synthetic proof failure"), KeyboardInterrupt()],
@@ -168,12 +292,12 @@ def test_isolated_worktree_cleans_runtime_before_removal_on_proof_exit(
     (tmp_path / "proof.txt").write_text("proof\n")
     _commit(tmp_path, "base")
     revision = _git_output(tmp_path, "rev-parse", "HEAD")
-    cleaned: list[tuple[Path, dict[str, str]]] = []
+    cleaned: list[tuple[Path, Mapping[str, str]]] = []
     checkout: Path | None = None
 
     def clean_runtime(
         worktree: Path,
-        environment: dict[str, str],
+        environment: Mapping[str, str],
     ) -> tuple[str, ...]:
         assert _git_output(worktree, "rev-parse", "HEAD") == revision
         cleaned.append((worktree, environment))
@@ -205,7 +329,7 @@ def test_isolated_worktree_retains_ownership_evidence_when_runtime_cleanup_fails
 
     def fail_cleanup(
         worktree: Path,
-        environment: dict[str, str],
+        environment: Mapping[str, str],
     ) -> tuple[str, ...]:
         assert worktree.exists()
         assert environment == {"NEXUS_ENV": "test"}
