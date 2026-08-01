@@ -156,6 +156,15 @@
       "expected_failure": "first Companion action was rejected before the publication render committed"
     },
     {
+      "id": "mobile-highlight-action-lock-bypass",
+      "patch": "testdata/faults/mobile-highlight-action-lock-bypass.patch",
+      "sha256": "70633e0ed23bab9ead9b1675215ab4e6e8915055fb10fe012632ab451ca78880",
+      "proofs": [
+        "playwright:apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts"
+      ],
+      "expected_failure": "A live highlight action must pin mobile reader chrome until dismissal"
+    },
+    {
       "id": "android-device-method-scope-bypass",
       "patch": "testdata/faults/android-device-method-scope-bypass.patch",
       "sha256": "7b46a2b441d4dcc18513e536f85c192e4d259a205d4cf79bb2d98357ebe8b240",
