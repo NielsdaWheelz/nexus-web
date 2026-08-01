@@ -9,7 +9,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from nexus.db.models import (
     ChatRun,
@@ -19,6 +19,7 @@ from nexus.db.models import (
     Message,
 )
 from nexus.db.session import create_session_factory
+from nexus.jobs.queue import enqueue_job
 from nexus.services.conversations import delete_conversation_rows_without_commit
 
 
@@ -371,19 +372,47 @@ def seed_branching(owner_user_id: UUID) -> dict[str, object]:
             status="pending",
         )
         add_branch(db, conversation.id, running_user, "Running branch")
-        db.add(
-            ChatRun(
-                id=uuid4(),
-                owner_user_id=owner_user_id,
-                conversation_id=conversation.id,
-                user_message_id=running_user.id,
-                assistant_message_id=running_assistant.id,
-                idempotency_key=f"e2e-running-{conversation.id}",
-                payload_hash="e2e-running-branch",
-                status="running",
-                profile_id="balanced",
-                reasoning_option_id="medium",
-            )
+        running_run = ChatRun(
+            id=uuid4(),
+            owner_user_id=owner_user_id,
+            conversation_id=conversation.id,
+            user_message_id=running_user.id,
+            assistant_message_id=running_assistant.id,
+            idempotency_key=f"e2e-running-{conversation.id}",
+            payload_hash="e2e-running-branch",
+            status="running",
+            profile_id="balanced",
+            reasoning_option_id="medium",
+            started_at=datetime.now(UTC),
+        )
+        db.add(running_run)
+        db.flush()
+        running_job = enqueue_job(
+            db,
+            kind="chat_run",
+            payload={"run_id": str(running_run.id)},
+            priority=50,
+            max_attempts=3,
+            dedupe_key=f"chat_run:{running_run.id}",
+        )
+        # The fixture deliberately models a live branch without starting a real
+        # provider dispatch. Keep the queue row structurally equivalent to a
+        # production claim so trust-trail projection observes one valid owner.
+        db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET
+                    status = 'running',
+                    attempts = 1,
+                    claimed_by = 'e2e-conversation-tree',
+                    started_at = now(),
+                    lease_expires_at = now() + interval '1 hour',
+                    updated_at = now()
+                WHERE id = :job_id
+                """
+            ),
+            {"job_id": running_job.id},
         )
 
         disposable_user = add_message(

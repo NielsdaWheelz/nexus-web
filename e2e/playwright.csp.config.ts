@@ -51,6 +51,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
+  failOnFlakyTests: !!process.env.CI,
   workers: process.env.CI ? 2 : undefined,
   reporter: process.env.CI
     ? [["html"], ["github"]]

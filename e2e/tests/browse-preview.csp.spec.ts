@@ -60,7 +60,7 @@ test.describe("Browse Preview enforced CSP", () => {
     await gotoSinglePaneWorkspace(
       page,
       workspaceE2eDeviceId(testInfo, "e2e-csp-browse-video"),
-      "/browse?kind=Video&source=YouTube",
+      "/browse?q=Picturing+Earth&kind=Video&source=YouTube",
     );
     const response = await documentResponse;
     expect(response).not.toBeNull();
@@ -76,8 +76,6 @@ test.describe("Browse Preview enforced CSP", () => {
     expect(directives.get("img-src")).toEqual(["'self'", "data:"]);
 
     const pane = activeWorkspacePane(page);
-    await pane.getByRole("searchbox", { name: "Search" }).fill("Picturing Earth");
-    await pane.getByRole("button", { name: "Search" }).click();
     await pane
       .getByRole("link", { name: "Picturing Earth: Behind the Scenes" })
       .click();
@@ -107,7 +105,7 @@ test.describe("Browse Preview enforced CSP", () => {
     await gotoSinglePaneWorkspace(
       page,
       workspaceE2eDeviceId(testInfo, "e2e-csp-browse-audio"),
-      "/browse?kind=Podcast",
+      "/browse?q=Houston+We+Have+a+Podcast&kind=Podcast",
     );
     const csp = await (await documentResponse).headerValue(
       "content-security-policy",
@@ -120,10 +118,6 @@ test.describe("Browse Preview enforced CSP", () => {
       "https:",
     ]);
     const pane = activeWorkspacePane(page);
-    await pane
-      .getByRole("searchbox", { name: "Search" })
-      .fill("Houston We Have a Podcast");
-    await pane.getByRole("button", { name: "Search" }).click();
     await pane
       .getByRole("link", { name: "Houston We Have a Podcast" })
       .click();

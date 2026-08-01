@@ -1,4 +1,10 @@
-import { test, expect, type APIRequestContext, type TestInfo } from "@playwright/test";
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -58,6 +64,14 @@ function readerSettingsDeviceId(testInfo: TestInfo): string {
   return workspaceE2eDeviceId(testInfo, "e2e-reader-settings");
 }
 
+function nextReaderProfilePatch(page: Page) {
+  return page.waitForRequest(
+    (request) =>
+      request.method() === "PATCH" &&
+      new URL(request.url()).pathname === "/api/me/reader-profile",
+  );
+}
+
 test.describe("reader settings", () => {
   test("reader settings persist and survive reload", async ({ page }, testInfo) => {
     const baseline = await fetchReaderProfile(page.request);
@@ -72,15 +86,15 @@ test.describe("reader settings", () => {
       const themeSelect = activeWorkspacePane(page).locator("#theme");
       await expect(themeSelect).toBeVisible();
 
+      const patchStarted = nextReaderProfilePatch(page);
       await themeSelect.selectOption(targetTheme);
+      await patchStarted;
 
       // AC-2 (and the discrete half of AC-3): a discrete change's keepalive
-      // PATCH has already started by the time the click resolves, so an
-      // immediate reload needs no persistence poll first. Sub-second discrete
-      // send timing itself is proven at the pure and component tiers — under
-      // CDP, Chromium can starve an in-page keepalive fetch for many seconds
-      // (it still flushes at page teardown, as this reload proves), so an
-      // in-page arrival-time assertion is not meaningful here.
+      // PATCH is admitted by Chromium before the immediate reload. This is a
+      // request-start barrier, never a response or persistence wait: component
+      // proof owns the same-task dispatch cadence, while this journey owns the
+      // browser keepalive handoff across teardown.
       await page.reload({ waitUntil: "domcontentloaded" });
       await expect(activeWorkspacePane(page)).toBeVisible({ timeout: 15_000 });
       await waitForWorkspaceHydration(page);
@@ -185,10 +199,12 @@ test.describe("reader settings — mobile quick switch", () => {
       await optionsTrigger.click();
       const darkThemeItem = page.getByRole("menuitem", { name: "Dark theme", exact: true });
       await expect(darkThemeItem).toBeVisible();
+      const patchStarted = nextReaderProfilePatch(page);
       await darkThemeItem.click();
+      await patchStarted;
 
-      // AC-2: the keepalive PATCH already started; no persistence poll before
-      // an immediate reload on the touch quick switch either.
+      // AC-2: Chromium admitted the keepalive PATCH; there is still no response
+      // or persistence wait before the touch quick switch's immediate reload.
       await page.reload({ waitUntil: "domcontentloaded" });
       await expect(activeWorkspacePane(page)).toBeVisible({ timeout: 15_000 });
 
