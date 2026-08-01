@@ -576,6 +576,11 @@ describe("Nexus shell contracts", () => {
     });
     await userEvent.type(input, "alpha");
     await openablesStarted;
+    await waitFor(() =>
+      expect(input.getAttribute("aria-activedescendant")).toMatch(
+        /Continuation%3AAsk$/,
+      ),
+    );
 
     fireEvent.keyDown(input, { key: "ArrowDown" });
     const stabilizedAction = input.getAttribute("aria-activedescendant");
