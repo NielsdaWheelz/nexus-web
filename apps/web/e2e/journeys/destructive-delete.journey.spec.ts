@@ -5,6 +5,7 @@ import {
   test,
   webOrigin,
 } from "../fixtures";
+import { matchesResponse, pageRequest } from "../request";
 
 test.use({ journeyId: "destructive-delete" });
 
@@ -13,7 +14,8 @@ test("confirming conversation deletion removes the exact resource and leaves no 
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
-  const createResponse = await page.request.post("/api/conversations", {
+  const api = pageRequest(page, webOrigin);
+  const createResponse = await api.post("/api/conversations", {
     headers: { origin: webOrigin },
   });
   const createText = await createResponse.text();
@@ -33,9 +35,12 @@ test("confirming conversation deletion removes the exact resource and leaves no 
   await page.getByRole("button", { name: "Options", exact: true }).click();
   const deleteResponsePromise = page.waitForResponse(
     (response) =>
-      response.request().method() === "DELETE" &&
-      new URL(response.url()).pathname ===
+      matchesResponse(
+        response,
+        webOrigin,
+        "DELETE",
         `/api/conversations/${conversationId}`,
+      ),
   );
   page.once("dialog", async (dialog) => {
     expect(
@@ -54,7 +59,7 @@ test("confirming conversation deletion removes the exact resource and leaves no 
   ).toBe(204);
   await expect(page).toHaveURL(/\/conversations$/);
 
-  const deletedResponse = await page.request.get(
+  const deletedResponse = await api.get(
     `/api/conversations/${conversationId}`,
   );
   expect(

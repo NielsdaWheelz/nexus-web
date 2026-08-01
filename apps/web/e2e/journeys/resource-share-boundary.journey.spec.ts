@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { captureCanonicalArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -6,35 +6,21 @@ import {
   test,
   webOrigin,
 } from "../fixtures";
+import { pageRequest } from "../request";
 
 test.use({ journeyId: "resource-share-boundary" });
-
-const SOURCE_URL =
-  "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/";
 
 test("a link grant exposes only its read-only resource and does not mint an account session", async ({
   page,
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
-  const sourceResponse = await page.request.post("/api/media/from-url", {
-    headers: {
-      origin: webOrigin,
-      "Idempotency-Key": `shared-source-${randomUUID()}`,
-    },
-    data: { url: SOURCE_URL, library_ids: [] },
-  });
-  const sourceText = await sourceResponse.text();
-  expect(
-    sourceResponse.ok(),
-    `Shared source acceptance failed: ${sourceResponse.status()} ${sourceText.slice(0, 500)}`,
-  ).toBeTruthy();
-  const mediaId = (JSON.parse(sourceText) as { data: { media_id: string } })
-    .data.media_id;
+  const api = pageRequest(page, webOrigin);
+  const mediaId = await captureCanonicalArticle(page, "shared-source");
   await expect
     .poll(
       async () => {
-        const response = await page.request.get(`/api/media/${mediaId}`);
+        const response = await api.get(`/api/media/${mediaId}`);
         if (!response.ok()) return `http-${response.status()}`;
         const media = (await response.json()) as {
           data: {
@@ -51,7 +37,7 @@ test("a link grant exposes only its read-only resource and does not mint an acco
     )
     .toBe("ready_for_reading:ready");
 
-  const shareResponse = await page.request.post(
+  const shareResponse = await api.post(
     `/api/resource-items/${encodeURIComponent(`media:${mediaId}`)}/shares`,
     {
       headers: { origin: webOrigin },
@@ -94,12 +80,13 @@ test("a link grant exposes only its read-only resource and does not mint an acco
     ),
   ).toBeVisible();
 
-  const accountResponse = await anonymousPage.request.get("/api/me");
+  const anonymousApi = pageRequest(anonymousPage, webOrigin);
+  const accountResponse = await anonymousApi.get("/api/me");
   expect(
     accountResponse.status(),
     `Public grant ${share.handle} unexpectedly minted authenticated account access.`,
   ).toBe(401);
-  const privateMediaResponse = await anonymousPage.request.get(
+  const privateMediaResponse = await anonymousApi.get(
     `/api/media/${mediaId}`,
   );
   expect(

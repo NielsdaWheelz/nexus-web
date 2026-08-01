@@ -1,10 +1,6 @@
-import { expect, type APIRequestContext } from "playwright/test";
-
-const MAILBOX_BASE_URL = process.env.E2E_MAILBOX_URL;
-
-if (!MAILBOX_BASE_URL) {
-  throw new Error("E2E_MAILBOX_URL is required for the deployment smoke.");
-}
+import { expect } from "playwright/test";
+import type { ExactOriginRequest } from "../request";
+import type { DeploymentRuntime } from "./runtime";
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
@@ -50,7 +46,7 @@ function messageBody(value: unknown): string {
 }
 
 async function fetchJsonOrNull(
-  request: APIRequestContext,
+  request: ExactOriginRequest,
   url: string,
 ): Promise<unknown | null> {
   const response = await request.get(url);
@@ -58,10 +54,10 @@ async function fetchJsonOrNull(
 }
 
 async function latestMailpitBody(
-  request: APIRequestContext,
+  request: ExactOriginRequest,
   email: string,
 ): Promise<string | null> {
-  const searchUrl = new URL("/api/v1/search", MAILBOX_BASE_URL);
+  const searchUrl = new URL("/api/v1/search", request.origin);
   searchUrl.searchParams.set("query", `to:${email}`);
   searchUrl.searchParams.set("limit", "10");
   const [message] = messageList(await fetchJsonOrNull(request, searchUrl.toString()));
@@ -69,20 +65,20 @@ async function latestMailpitBody(
   if (!id) return null;
   const detail = await fetchJsonOrNull(
     request,
-    new URL(`/api/v1/message/${encodeURIComponent(id)}`, MAILBOX_BASE_URL).toString(),
+    new URL(`/api/v1/message/${encodeURIComponent(id)}`, request.origin).toString(),
   );
   return detail ? messageBody(detail) : null;
 }
 
 async function latestInbucketBody(
-  request: APIRequestContext,
+  request: ExactOriginRequest,
   email: string,
 ): Promise<string | null> {
   const mailbox = email.split("@")[0] ?? email;
   const [message] = messageList(
     await fetchJsonOrNull(
       request,
-      new URL(`/api/v1/mailbox/${encodeURIComponent(mailbox)}`, MAILBOX_BASE_URL).toString(),
+      new URL(`/api/v1/mailbox/${encodeURIComponent(mailbox)}`, request.origin).toString(),
     ),
   );
   const id = stringField(message, ["id", "ID", "Id"]);
@@ -91,7 +87,7 @@ async function latestInbucketBody(
     request,
     new URL(
       `/api/v1/mailbox/${encodeURIComponent(mailbox)}/${encodeURIComponent(id)}`,
-      MAILBOX_BASE_URL,
+      request.origin,
     ).toString(),
   );
   return detail ? messageBody(detail) : null;
@@ -115,19 +111,20 @@ function extractConfirmationLink(body: string): string {
 
 export function expectAuthCallbackTarget(
   confirmationLink: string,
-  appOrigin: string,
+  runtime: DeploymentRuntime,
   nextPath: string,
 ): void {
   const confirmationUrl = new URL(confirmationLink);
+  expect(confirmationUrl.origin).toBe(runtime.supabaseOrigin);
   const redirectTo = confirmationUrl.searchParams.get("redirect_to");
   const callbackUrl = new URL(redirectTo ?? confirmationLink);
-  expect(callbackUrl.origin).toBe(appOrigin);
+  expect(callbackUrl.origin).toBe(runtime.appOrigin);
   expect(callbackUrl.pathname).toBe("/auth/callback");
   expect(callbackUrl.searchParams.get("next")).toBe(nextPath);
 }
 
 export async function waitForEmailChangeConfirmationLink(
-  request: APIRequestContext,
+  request: ExactOriginRequest,
   email: string,
 ): Promise<string> {
   let body: string | null = null;

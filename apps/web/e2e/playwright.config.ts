@@ -2,9 +2,11 @@ import { defineConfig, devices } from "playwright/test";
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { loadBrowserRuntime } from "./runtime";
+import { loadDeploymentRuntime } from "./deployment/runtime";
 
 const repoRoot = realpathSync(path.resolve(__dirname, "../../.."));
 const deploymentOrigin = process.env.NEXUS_SMOKE_APP_URL?.replace(/\/$/, "");
+const deploymentRuntime = deploymentOrigin ? loadDeploymentRuntime() : null;
 const runtime = deploymentOrigin ? null : loadBrowserRuntime();
 const runId = process.env.NEXUS_TEST_RUN_ID;
 if (runId && !/^[0-9a-f]{16}$/.test(runId)) {
@@ -49,7 +51,7 @@ export default defineConfig({
       name: "deployment-smoke",
       testDir: "./deployment",
       testMatch: "**/*.deployed.spec.ts",
-      use: { baseURL: deploymentOrigin ?? "http://127.0.0.1" },
+      use: { baseURL: deploymentRuntime?.appOrigin ?? "http://127.0.0.1" },
     },
     {
       name: "extension",

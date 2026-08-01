@@ -4,10 +4,12 @@ import type { APIResponse } from "playwright/test";
 import {
   expect,
   gotoWithStrictCsp,
+  minioOrigin,
   signIn,
   test,
   webOrigin,
 } from "../fixtures";
+import { pageRequest } from "../request";
 
 test.use({ journeyId: "durable-ingest-reader-open" });
 
@@ -47,13 +49,24 @@ async function readBody(response: APIResponse) {
   return JSON.parse(text) as unknown;
 }
 
-test("an accepted EPUB survives worker ingestion and opens in the real reader", async ({
+test("an accepted EPUB publishes in the default Library and opens through its real row", async ({
   page,
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
+  const api = pageRequest(page, webOrigin);
+  const objects = pageRequest(page, minioOrigin);
+  const profileResponse = await api.get("/api/me");
+  const profileText = await profileResponse.text();
+  expect(
+    profileResponse.ok(),
+    `Default Library lookup for ${journeyUser.id} failed: ${profileResponse.status()} ${profileText.slice(0, 500)}`,
+  ).toBeTruthy();
+  const defaultLibraryId = (
+    JSON.parse(profileText) as { data: { default_library_id: string } }
+  ).data.default_library_id;
   const epub = uniqueEpub(journeyUser.id);
-  const initResponse = await page.request.post("/api/media/upload/init", {
+  const initResponse = await api.post("/api/media/upload/init", {
     headers: {
       origin: webOrigin,
       "Idempotency-Key": `durable-ingest-${journeyUser.id}`,
@@ -67,12 +80,9 @@ test("an accepted EPUB survives worker ingestion and opens in the real reader", 
     },
   });
   const init = (await readBody(initResponse)) as UploadInit;
-  expect(
-    init.data.upload_url,
-    `Upload init for media ${init.data.media_id} did not publish a local object-store URL.`,
-  ).toMatch(/^http:\/\/(?:127\.0\.0\.1|localhost):\d+\//);
+  expect(new URL(init.data.upload_url).origin).toBe(minioOrigin);
 
-  const objectResponse = await page.request.put(init.data.upload_url, {
+  const objectResponse = await objects.put(init.data.upload_url, {
     headers: { "Content-Type": "application/epub+zip" },
     data: epub,
   });
@@ -81,7 +91,7 @@ test("an accepted EPUB survives worker ingestion and opens in the real reader", 
     `Local object upload for media ${init.data.media_id} failed with ${objectResponse.status()}.`,
   ).toBeTruthy();
 
-  const confirmResponse = await page.request.post(
+  const confirmResponse = await api.post(
     `/api/media/${init.data.media_id}/ingest`,
     {
       headers: { origin: webOrigin },
@@ -109,7 +119,7 @@ test("an accepted EPUB survives worker ingestion and opens in the real reader", 
   await expect
     .poll(
       async () => {
-        const response = await page.request.get(
+        const response = await api.get(
           `/api/media/${init.data.media_id}`,
         );
         if (!response.ok()) return `http-${response.status()}`;
@@ -125,7 +135,16 @@ test("an accepted EPUB survives worker ingestion and opens in the real reader", 
     )
     .toBe("ready_for_reading");
 
-  await gotoWithStrictCsp(page, `/media/${init.data.media_id}`);
+  await gotoWithStrictCsp(page, `/libraries/${defaultLibraryId}`);
+  const published = page.getByRole("link", {
+    name: "Moby Dick; Or, The Whale",
+    exact: true,
+  });
+  await expect(
+    published,
+    `Worker-owned media ${init.data.media_id} was ready but absent from default Library ${defaultLibraryId}.`,
+  ).toBeVisible({ timeout: 15_000 });
+  await published.click();
   await expect(page).toHaveURL(
     new RegExp(`/media/${init.data.media_id}(?:[?#]|$)`),
   );

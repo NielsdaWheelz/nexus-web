@@ -3,12 +3,14 @@ import {
   expectAuthCallbackTarget,
   waitForEmailChangeConfirmationLink,
 } from "./mailbox";
+import { pageRequest, requireExactOrigin } from "../request";
+import { loadDeploymentRuntime } from "./runtime";
 
 const PASSWORD = "Hunter22Hunter22";
+const runtime = loadDeploymentRuntime();
 
 function freshEmail(label: string): string {
-  const domain = process.env.NEXUS_SMOKE_EMAIL_DOMAIN ?? "nexus.local";
-  return `redirect-${label}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}@${domain}`;
+  return `redirect-${label}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}@${runtime.emailDomain}`;
 }
 
 test("email-change confirmation targets the app auth callback", async ({
@@ -17,6 +19,7 @@ test("email-change confirmation targets the app auth callback", async ({
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
+    const mailbox = pageRequest(page, runtime.mailboxOrigin);
     const oldEmail = freshEmail("old");
     const newEmail = freshEmail("new");
 
@@ -35,15 +38,17 @@ test("email-change confirmation targets the app auth callback", async ({
     ).toBeVisible();
 
     const confirmationLink = await waitForEmailChangeConfirmationLink(
-      page.request,
+      mailbox,
       newEmail,
     );
     expectAuthCallbackTarget(
       confirmationLink,
-      new URL(page.url()).origin,
+      runtime,
       "/settings/account",
     );
-    await page.goto(confirmationLink);
+    await page.goto(
+      requireExactOrigin(confirmationLink, runtime.supabaseOrigin).toString(),
+    );
     await page.waitForURL(
       (url) => url.pathname === "/settings/account" || url.pathname === "/lectern",
       { timeout: 60_000 },

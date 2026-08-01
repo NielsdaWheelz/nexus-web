@@ -27,7 +27,10 @@ function localOrExtension(url: string): boolean {
   if (["about:", "blob:", "chrome:", "chrome-extension:", "data:"].includes(parsed.protocol)) {
     return true;
   }
-  return runtime.browserOrigins.has(parsed.origin);
+  return (
+    runtime.browserOrigins.has(parsed.origin) ||
+    parsed.origin === extensionRedirectOrigin()
+  );
 }
 
 async function guardRoute(route: Route): Promise<void> {
@@ -49,6 +52,10 @@ export function extensionId(): string {
     .flatMap((byte) => [byte >> 4, byte & 0x0f])
     .map((nibble) => String.fromCharCode("a".charCodeAt(0) + nibble))
     .join("");
+}
+
+export function extensionRedirectOrigin(): string {
+  return `https://${extensionId()}.chromiumapp.org`;
 }
 
 export async function launchExtension(): Promise<BrowserContext> {

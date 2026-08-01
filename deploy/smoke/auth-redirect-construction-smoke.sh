@@ -160,6 +160,7 @@ case "$MODE" in
     (
       cd "${ROOT_DIR}/apps/web"
       NEXUS_SMOKE_APP_URL="$APP_URL" \
+        NEXUS_SMOKE_SUPABASE_URL="$SUPABASE_URL" \
         E2E_MAILBOX_URL="$MAILBOX_URL" \
         NEXUS_SMOKE_EMAIL_DOMAIN="$EMAIL_DOMAIN" \
         bunx playwright test \

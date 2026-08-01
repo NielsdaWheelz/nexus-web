@@ -123,4 +123,6 @@ export async function signIn(page: Page, user: ScenarioUser): Promise<void> {
   ).toBeVisible();
 }
 
+export const minioOrigin = runtime.minioOrigin;
+export const supabaseOrigin = runtime.supabaseOrigin;
 export const webOrigin = runtime.webOrigin;

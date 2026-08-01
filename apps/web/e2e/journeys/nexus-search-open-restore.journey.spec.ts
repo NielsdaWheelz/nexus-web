@@ -7,6 +7,7 @@ import {
   test,
   webOrigin,
 } from "../fixtures";
+import { pageRequest } from "../request";
 
 test.use({ journeyId: "nexus-search-open-restore" });
 
@@ -70,7 +71,8 @@ test("Nexus finds and opens a place whose workspace survives a fresh document", 
       secure: false,
     },
   ]);
-  const seedResponse = await page.request.put("/api/me/workspace-session", {
+  const api = pageRequest(page, webOrigin);
+  const seedResponse = await api.put("/api/me/workspace-session", {
     headers: { origin: webOrigin },
     data: { state: workspaceState() },
   });
@@ -119,7 +121,7 @@ test("Nexus finds and opens a place whose workspace survives a fresh document", 
   await expect
     .poll(
       async () => {
-        const response = await page.request.get("/api/me/workspace-session");
+        const response = await api.get("/api/me/workspace-session");
         if (!response.ok()) return null;
         const payload = (await response.json()) as {
           data?: { own?: { state?: WorkspaceState } | null };

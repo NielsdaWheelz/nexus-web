@@ -3,10 +3,12 @@ import path from "node:path";
 import {
   expect,
   gotoWithStrictCsp,
+  minioOrigin,
   signIn,
   test,
   webOrigin,
 } from "../fixtures";
+import { matchesResponse, pageRequest } from "../request";
 
 test.use({ journeyId: "reader-progress-resume" });
 
@@ -14,13 +16,15 @@ async function uploadCanonicalEpub(
   page: Parameters<typeof signIn>[0],
   userId: string,
 ): Promise<string> {
+  const api = pageRequest(page, webOrigin);
+  const objects = pageRequest(page, minioOrigin);
   const epub = readFileSync(
     path.resolve(
       __dirname,
       "../../../../python/tests/fixtures/epub/moby-dick-epub3.epub",
     ),
   );
-  const initResponse = await page.request.post("/api/media/upload/init", {
+  const initResponse = await api.post("/api/media/upload/init", {
     headers: {
       origin: webOrigin,
       "Idempotency-Key": `reader-progress-${userId}`,
@@ -42,7 +46,7 @@ async function uploadCanonicalEpub(
     data: { media_id: string; upload_url: string | null };
   }).data;
   if (init.upload_url) {
-    const upload = await page.request.put(init.upload_url, {
+    const upload = await objects.put(init.upload_url, {
       headers: { "Content-Type": "application/epub+zip" },
       data: epub,
     });
@@ -50,7 +54,7 @@ async function uploadCanonicalEpub(
       upload.ok(),
       `Local EPUB object upload for ${init.media_id} failed with ${upload.status()}.`,
     ).toBeTruthy();
-    const confirm = await page.request.post(`/api/media/${init.media_id}/ingest`, {
+    const confirm = await api.post(`/api/media/${init.media_id}/ingest`, {
       headers: { origin: webOrigin },
       data: { library_ids: [] },
     });
@@ -62,7 +66,7 @@ async function uploadCanonicalEpub(
   await expect
     .poll(
       async () => {
-        const response = await page.request.get(`/api/media/${init.media_id}`);
+        const response = await api.get(`/api/media/${init.media_id}`);
         if (!response.ok()) return `http-${response.status()}`;
         return ((await response.json()) as {
           data: { processing_status: string };
@@ -77,13 +81,14 @@ async function uploadCanonicalEpub(
   return init.media_id;
 }
 
-test("reader section movement persists and resumes on a fresh document", async ({
+test("reader progress resumes, completes, and resets through its product actions", async ({
   page,
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
+  const api = pageRequest(page, webOrigin);
   const mediaId = await uploadCanonicalEpub(page, journeyUser.id);
-  const navigationResponse = await page.request.get(
+  const navigationResponse = await api.get(
     `/api/media/${mediaId}/navigation`,
   );
   const navigationText = await navigationResponse.text();
@@ -126,7 +131,7 @@ test("reader section movement persists and resumes on a fresh document", async (
   await expect
     .poll(
       async () => {
-        const response = await page.request.get(
+        const response = await api.get(
           `/api/media/${mediaId}/reader-state`,
         );
         if (!response.ok()) return `http-${response.status()}`;
@@ -164,4 +169,56 @@ test("reader section movement persists and resumes on a fresh document", async (
     page.getByText(/Call me Ishmael\. Some years ago/).first(),
     `Fresh reader document for ${mediaId} resumed the label but not the Loomings content.`,
   ).toBeVisible();
+
+  await page.getByRole("button", { name: "Options", exact: true }).click();
+  const completionResponsePromise = page.waitForResponse(
+    (response) =>
+      matchesResponse(response, webOrigin, "POST", "/api/consumption/commands"),
+  );
+  await page
+    .getByRole("menuitem", { name: "Mark as finished", exact: true })
+    .click();
+  const completionResponse = await completionResponsePromise;
+  expect(
+    completionResponse.ok(),
+    `Completion command for ${mediaId} failed: ${completionResponse.status()} ${await completionResponse.text()}`,
+  ).toBeTruthy();
+  await expect
+    .poll(async () => {
+      const response = await api.get(`/api/media/${mediaId}`);
+      if (!response.ok()) return `http-${response.status()}`;
+      return ((await response.json()) as { data: { read_state: string } }).data
+        .read_state;
+    })
+    .toBe("finished");
+
+  await page.getByRole("button", { name: "Options", exact: true }).click();
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toBe(
+      "Reset progress? This starts the item from the beginning. Notes and activity history are kept.",
+    );
+    await dialog.accept();
+  });
+  const resetResponsePromise = page.waitForResponse(
+    (response) =>
+      matchesResponse(response, webOrigin, "POST", "/api/consumption/commands"),
+  );
+  await page.getByRole("menuitem", { name: "Reset progress", exact: true }).click();
+  const resetResponse = await resetResponsePromise;
+  expect(
+    resetResponse.ok(),
+    `Reset command for ${mediaId} failed: ${resetResponse.status()} ${await resetResponse.text()}`,
+  ).toBeTruthy();
+  await expect
+    .poll(async () => {
+      const response = await api.get(`/api/media/${mediaId}/reader-state`);
+      if (!response.ok()) return `http-${response.status()}`;
+      return ((await response.json()) as { data: { state: string } }).data.state;
+    })
+    .toBe("Empty");
+
+  await gotoWithStrictCsp(page, `/media/${mediaId}`);
+  await expect(page.getByLabel("Select section")).not.toHaveValue(
+    target!.section_id,
+  );
 });

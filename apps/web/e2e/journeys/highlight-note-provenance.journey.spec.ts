@@ -1,4 +1,8 @@
-import { randomUUID } from "node:crypto";
+import type { Locator, Page } from "playwright/test";
+import {
+  ARTICLE_QUOTE,
+  captureCanonicalArticle,
+} from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -6,32 +10,68 @@ import {
   test,
   webOrigin,
 } from "../fixtures";
+import { matchesResponse, pageRequest } from "../request";
 
 test.use({ journeyId: "highlight-note-provenance" });
 
-const SOURCE_URL =
-  "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/";
-const QUOTE = "The SOFIA mission detected water molecules in Clavius Crater";
+const QUOTE = ARTICLE_QUOTE;
+
+async function dragSelectExactText(
+  page: Page,
+  container: Locator,
+  exact: string,
+): Promise<void> {
+  await container.scrollIntoViewIfNeeded();
+  const points = await container.evaluate((element, target) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const text = node.textContent ?? "";
+      const start = text.indexOf(target);
+      if (!(node instanceof Text) || start < 0) continue;
+      const startRange = document.createRange();
+      startRange.setStart(node, start);
+      startRange.setEnd(node, start + 1);
+      const startRect = startRange.getBoundingClientRect();
+      const endRange = document.createRange();
+      endRange.setStart(node, start + target.length - 1);
+      endRange.setEnd(node, start + target.length);
+      const endRect = endRange.getBoundingClientRect();
+      if (startRect.width > 0 && endRect.width > 0) {
+        return {
+          start: {
+            x: startRect.left + 1,
+            y: startRect.top + startRect.height / 2,
+          },
+          end: {
+            x: endRect.right - 1,
+            y: endRect.top + endRect.height / 2,
+          },
+        };
+      }
+    }
+    return null;
+  }, exact);
+  if (!points) throw new Error(`Visible reader text omitted ${JSON.stringify(exact)}.`);
+  await page.mouse.move(points.start.x, points.start.y);
+  await page.mouse.down();
+  await page.mouse.move(points.end.x, points.end.y, { steps: 12 });
+  await page.mouse.up();
+  const selected = await page.evaluate(
+    () => window.getSelection()?.toString().replace(/\s+/g, " ").trim() ?? "",
+  );
+  expect(selected, "Real pointer selection did not retain the known source quote.").toBe(
+    exact,
+  );
+}
 
 async function ingestArticle(page: Parameters<typeof signIn>[0]): Promise<string> {
-  const response = await page.request.post("/api/media/from-url", {
-    headers: {
-      origin: webOrigin,
-      "Idempotency-Key": `highlight-source-${randomUUID()}`,
-    },
-    data: { url: SOURCE_URL, library_ids: [] },
-  });
-  const text = await response.text();
-  expect(
-    response.ok(),
-    `Article acceptance failed at the BFF boundary: ${response.status()} ${text.slice(0, 500)}`,
-  ).toBeTruthy();
-  const mediaId = (JSON.parse(text) as { data: { media_id: string } }).data
-    .media_id;
+  const api = pageRequest(page, webOrigin);
+  const mediaId = await captureCanonicalArticle(page, "highlight-source");
   await expect
     .poll(
       async () => {
-        const mediaResponse = await page.request.get(`/api/media/${mediaId}`);
+        const mediaResponse = await api.get(`/api/media/${mediaId}`);
         if (!mediaResponse.ok()) return `http-${mediaResponse.status()}`;
         const media = (await mediaResponse.json()) as {
           data: { retrieval_status: string | null };
@@ -53,76 +93,60 @@ test("a highlight note remains attached to the exact canonical passage after a f
 }) => {
   await signIn(page, journeyUser);
   const mediaId = await ingestArticle(page);
-  const fragmentsResponse = await page.request.get(
-    `/api/media/${mediaId}/fragments`,
-  );
-  const fragmentsText = await fragmentsResponse.text();
-  expect(
-    fragmentsResponse.ok(),
-    `Fragment read for media ${mediaId} failed: ${fragmentsResponse.status()} ${fragmentsText.slice(0, 500)}`,
-  ).toBeTruthy();
-  const fragments = (
-    JSON.parse(fragmentsText) as {
-      data: Array<{ id: string; canonical_text: string }>;
-    }
-  ).data;
-  const fragment = fragments.find(({ canonical_text: text }) =>
-    text.includes(QUOTE),
-  );
-  expect(
-    fragment,
-    `Canonical fragments for media ${mediaId} omitted the independently known SOFIA passage.`,
-  ).toBeDefined();
-  const startOffset = fragment!.canonical_text.indexOf(QUOTE);
-
-  const highlightResponse = await page.request.post(
-    `/api/fragments/${fragment!.id}/highlights`,
-    {
-      headers: { origin: webOrigin },
-      data: {
-        start_offset: startOffset,
-        end_offset: startOffset + QUOTE.length,
-        color: "green",
-      },
-    },
-  );
-  const highlightText = await highlightResponse.text();
-  expect(
-    highlightResponse.ok(),
-    `Highlight creation for fragment ${fragment!.id} failed: ${highlightResponse.status()} ${highlightText.slice(0, 500)}`,
-  ).toBeTruthy();
-  const highlight = (JSON.parse(highlightText) as {
-    data: { id: string; exact: string };
-  }).data;
-  expect(
-    highlight.exact,
-    `Highlight ${highlight.id} drifted from canonical offsets ${startOffset}:${startOffset + QUOTE.length}.`,
-  ).toBe(QUOTE);
-
-  const noteText = "Keep this finding tied to its exact source passage.";
-  const noteResponse = await page.request.put(
-    `/api/highlights/${highlight.id}/note`,
-    {
-      headers: { origin: webOrigin },
-      data: {
-        note_block_id: randomUUID(),
-        client_mutation_id: `highlight-note-${randomUUID()}`,
-        body_pm_json: {
-          type: "paragraph",
-          content: [{ type: "text", text: noteText }],
-        },
-      },
-    },
-  );
-  expect(
-    noteResponse.ok(),
-    `Note creation for highlight ${highlight.id} failed: ${noteResponse.status()} ${await noteResponse.text()}`,
-  ).toBeTruthy();
-
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
   await expect(
     page.getByRole("heading", { name: "There's Water on the Moon?" }),
   ).toBeVisible();
+  await dragSelectExactText(
+    page,
+    page.getByText(QUOTE, { exact: false }).first(),
+    QUOTE,
+  );
+  const selectionActions = page.getByRole("group", { name: "Selection actions" });
+  await expect(selectionActions).toBeVisible();
+  const highlightResponsePromise = page.waitForResponse(
+    (response) =>
+      matchesResponse(
+        response,
+        webOrigin,
+        "POST",
+        /\/api\/fragments\/[^/]+\/highlights$/,
+      ),
+  );
+  await selectionActions.getByRole("button", { name: "Add note", exact: true }).click();
+  const highlightResponse = await highlightResponsePromise;
+  const highlightText = await highlightResponse.text();
+  expect(
+    highlightResponse.ok(),
+    `Visible selection failed to create a highlight: ${highlightResponse.status()} ${highlightText.slice(0, 500)}`,
+  ).toBeTruthy();
+  const highlight = (JSON.parse(highlightText) as {
+    data: { id: string; exact: string };
+  }).data;
+  expect(highlight.exact).toBe(QUOTE);
+
+  const composer = page.getByRole("dialog", { name: "Add note to highlight" });
+  await expect(composer).toBeVisible();
+  const noteEditor = composer.getByRole("textbox", { name: "Highlight note" });
+  await expect(noteEditor).toBeFocused();
+  const noteText = "Keep this finding tied to its exact source passage.";
+  const noteResponsePromise = page.waitForResponse(
+    (response) =>
+      matchesResponse(
+        response,
+        webOrigin,
+        "PUT",
+        `/api/highlights/${highlight.id}/note`,
+      ),
+  );
+  await page.keyboard.insertText(noteText);
+  await page.keyboard.press("Escape");
+  const noteResponse = await noteResponsePromise;
+  expect(
+    noteResponse.ok(),
+    `Visible highlight note ${highlight.id} failed to persist: ${noteResponse.status()} ${await noteResponse.text()}`,
+  ).toBeTruthy();
+
   await page.getByRole("button", { name: "Companion", exact: true }).click();
   const evidenceTab = page.getByRole("tab", { name: "Evidence" });
   await evidenceTab.click();

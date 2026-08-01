@@ -4,65 +4,92 @@ import {
   gotoWithStrictCsp,
   signIn,
   test,
+  webOrigin,
 } from "../fixtures";
+import { pageRequest } from "../request";
 
 test.use({ journeyId: "daily-page-capture" });
 
-test("a browser share captures one durable note on today's page and opens it", async ({
+interface DailyDescriptor {
+  kind: "Latent" | "Materialized";
+  surface?: {
+    ordered_items: Array<{
+      target: {
+        content:
+          | { kind: "note_body"; body_text: string }
+          | { kind: string };
+      };
+    }>;
+  };
+}
+
+function exactCopies(descriptor: DailyDescriptor, noteText: string): number {
+  return (
+    descriptor.surface?.ordered_items.filter(
+      ({ target }) =>
+        target.content.kind === "note_body" &&
+        "body_text" in target.content &&
+        target.content.body_text === noteText,
+    ).length ?? 0
+  );
+}
+
+test("Quick Note persists exactly once through Today and a fresh document", async ({
   page,
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
-  const noteText = `Daily capture ${randomUUID()}`;
-  await gotoWithStrictCsp(
-    page,
-    `/share?text=${encodeURIComponent(noteText)}`,
+  const api = pageRequest(page, webOrigin);
+  const noteText = `Daily Quick Note ${randomUUID()}`;
+  const navigation = page.getByRole("navigation", { name: "Primary" });
+
+  await navigation.getByRole("button", { name: "Quick Note", exact: true }).click();
+  await expect(page).toHaveURL(/\/daily\/\d{4}-\d{2}-\d{2}(?:[?#]|$)/);
+  const localDate = /^\/daily\/(\d{4}-\d{2}-\d{2})$/.exec(
+    new URL(page.url()).pathname,
+  )?.[1];
+  expect(localDate, "Quick Note did not expose its account-local date.").toMatch(
+    /^\d{4}-\d{2}-\d{2}$/,
   );
-  await expect(
-    page.getByRole("heading", { name: "Saved to Nexus" }),
-    `Browser share did not acknowledge daily capture ${JSON.stringify(noteText)}.`,
-  ).toBeVisible();
-  await expect(page.getByText("Added to today", { exact: true })).toBeVisible();
-  const open = page.getByRole("link", { name: "Open", exact: true });
-  await expect(open).toHaveAttribute("href", /^\/daily\/\d{4}-\d{2}-\d{2}$/);
-  await open.click();
-  await expect(page).toHaveURL(/\/daily\/\d{4}-\d{2}-\d{2}$/);
-  const localDate = new URL(page.url()).pathname.split("/").at(-1);
-  expect(
-    localDate,
-    `Daily capture ${JSON.stringify(noteText)} opened a route without a local date.`,
-  ).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  const editor = page.getByRole("textbox", { name: "Edit note 1" });
+  await expect(editor).toBeFocused({ timeout: 15_000 });
+  await page.keyboard.insertText(noteText);
+
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(`/api/notes/daily/${localDate}`);
+        if (!response.ok()) return -response.status();
+        return exactCopies(
+          ((await response.json()) as { data: DailyDescriptor }).data,
+          noteText,
+        );
+      },
+      {
+        message: `Quick Note did not persist exactly one copy of ${JSON.stringify(noteText)} on ${localDate}.`,
+        timeout: 20_000,
+      },
+    )
+    .toBe(1);
+
+  await navigation.getByRole("button", { name: "Today", exact: true }).click();
+  await expect(page).toHaveURL(`/daily/${localDate}`);
   await expect(
     page.getByRole("textbox", { name: "Edit note 1" }),
-    `Daily page ${localDate} did not render captured note ${JSON.stringify(noteText)}.`,
+    `Today did not reveal the Quick Note ${JSON.stringify(noteText)} on ${localDate}.`,
   ).toContainText(noteText);
 
-  const descriptorResponse = await page.request.get(
-    `/api/notes/daily/${localDate}`,
-  );
-  const descriptorText = await descriptorResponse.text();
+  await gotoWithStrictCsp(page, `/daily/${localDate}`);
+  await expect(
+    page.getByRole("textbox", { name: "Edit note 1" }),
+    `Fresh document lost the Quick Note ${JSON.stringify(noteText)} on ${localDate}.`,
+  ).toContainText(noteText);
+  const persisted = await api.get(`/api/notes/daily/${localDate}`);
+  expect(persisted.ok()).toBeTruthy();
   expect(
-    descriptorResponse.ok(),
-    `Daily page read for ${localDate} failed: ${descriptorResponse.status()} ${descriptorText.slice(0, 500)}`,
-  ).toBeTruthy();
-  const descriptor = JSON.parse(descriptorText) as {
-    data: {
-      kind: string;
-      surface?: {
-        orderedItems: Array<{
-          target: { content: { kind: string; bodyText?: string } };
-        }>;
-      };
-    };
-  };
-  const copies =
-    descriptor.data.surface?.orderedItems.filter(
-      ({ target }) =>
-        target.content.kind === "note_body" &&
-        target.content.bodyText === noteText,
-    ).length ?? 0;
-  expect(
-    copies,
-    `Daily page ${localDate} persisted ${copies} copies of capture ${JSON.stringify(noteText)}.`,
+    exactCopies(
+      ((await persisted.json()) as { data: DailyDescriptor }).data,
+      noteText,
+    ),
   ).toBe(1);
 });

@@ -3,15 +3,18 @@ import {
   gotoWithStrictCsp,
   signIn,
   test,
+  webOrigin,
 } from "../fixtures";
+import { matchesResponse, pageRequest } from "../request";
 
 test.use({ journeyId: "podcast-refresh-playback" });
 
-test("a subscribed podcast refreshes through its durable run and opens an episode in the player", async ({
+test("a subscribed podcast refreshes and durably resumes real episode playback", async ({
   page,
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
+  const api = pageRequest(page, webOrigin);
   await gotoWithStrictCsp(
     page,
     "/browse?kind=Podcast&q=Houston+We+Have+a+Podcast",
@@ -29,8 +32,7 @@ test("a subscribed podcast refreshes through its durable run and opens an episod
 
   const subscribeResponsePromise = page.waitForResponse(
     (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/podcasts/subscriptions",
+      matchesResponse(response, webOrigin, "POST", "/api/podcasts/subscriptions"),
   );
   await page
     .getByRole("button", { name: "Subscribe", exact: true })
@@ -58,8 +60,7 @@ test("a subscribed podcast refreshes through its durable run and opens an episod
   await page.getByRole("button", { name: "Options", exact: true }).click();
   const refreshAdmissionPromise = page.waitForResponse(
     (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/podcasts/refresh-runs",
+      matchesResponse(response, webOrigin, "POST", "/api/podcasts/refresh-runs"),
   );
   await page.getByRole("menuitem", { name: "Refresh", exact: true }).click();
   const refreshAdmission = await refreshAdmissionPromise;
@@ -74,7 +75,7 @@ test("a subscribed podcast refreshes through its durable run and opens an episod
   await expect
     .poll(
       async () => {
-        const response = await page.request.get(
+        const response = await api.get(
           `/api/podcasts/refresh-runs/${encodeURIComponent(refreshHandle)}`,
         );
         if (!response.ok()) return `http-${response.status()}`;
@@ -90,6 +91,8 @@ test("a subscribed podcast refreshes through its durable run and opens an episod
 
   await episode.click();
   await expect(page).toHaveURL(/\/media\/[0-9a-f-]{36}$/i);
+  const mediaId = new URL(page.url()).pathname.split("/").at(-1);
+  expect(mediaId).toMatch(/^[0-9a-f-]{36}$/i);
   const activeTranscriptSegment = page.getByRole("region", {
     name: "Active transcript segment",
   });
@@ -114,4 +117,44 @@ test("a subscribed podcast refreshes through its durable run and opens an episod
     controls.getByRole("button", { name: /^(?:Play|Pause) media player$/ }),
     `Episode from podcast ${podcastId} did not establish an operable player session.`,
   ).toBeVisible();
+  await controls.getByRole("button", { name: "Play media player", exact: true }).click();
+  await expect(
+    controls.getByRole("button", { name: "Pause media player", exact: true }),
+  ).toBeVisible({ timeout: 15_000 });
+  const seek = player.getByRole("slider", { name: "Seek playback position" });
+  await expect(
+    seek,
+    `Episode ${mediaId} never loaded a run-local playable duration.`,
+  ).toBeEnabled({ timeout: 15_000 });
+  const durationMs = Number(await seek.getAttribute("max"));
+  expect(durationMs).toBeGreaterThan(15_000);
+  const targetMs = Math.min(30_000, Math.floor(durationMs / 3));
+  await seek.fill(String(targetMs));
+  await controls.getByRole("button", { name: "Pause media player", exact: true }).click();
+
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(`/api/media/${mediaId}/listening-state`);
+        if (!response.ok()) return -response.status();
+        return ((await response.json()) as { data: { positionMs: number } }).data
+          .positionMs;
+      },
+      {
+        message: `Episode ${mediaId} did not durably checkpoint the visible seek to ${targetMs}ms.`,
+        timeout: 15_000,
+      },
+    )
+    .toBeGreaterThanOrEqual(targetMs - 1_000);
+
+  await gotoWithStrictCsp(page, `/media/${mediaId}`);
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  const resumedSeek = page.getByRole("region", { name: "Media player" }).getByRole(
+    "slider",
+    { name: "Seek playback position" },
+  );
+  await expect(resumedSeek).toBeEnabled({ timeout: 15_000 });
+  expect(Number(await resumedSeek.inputValue())).toBeGreaterThanOrEqual(
+    targetMs - 1_000,
+  );
 });

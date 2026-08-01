@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { captureCanonicalArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -6,35 +6,21 @@ import {
   test,
   webOrigin,
 } from "../fixtures";
+import { matchesResponse, pageRequest } from "../request";
 
 test.use({ journeyId: "grounded-chat-citation" });
-
-const SOURCE_URL =
-  "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/";
 
 test("a source-grounded answer publishes a citation that opens its exact reader evidence", async ({
   page,
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
-  const sourceResponse = await page.request.post("/api/media/from-url", {
-    headers: {
-      origin: webOrigin,
-      "Idempotency-Key": `grounded-source-${randomUUID()}`,
-    },
-    data: { url: SOURCE_URL, library_ids: [] },
-  });
-  const sourceText = await sourceResponse.text();
-  expect(
-    sourceResponse.ok(),
-    `Grounded source acceptance failed: ${sourceResponse.status()} ${sourceText.slice(0, 500)}`,
-  ).toBeTruthy();
-  const mediaId = (JSON.parse(sourceText) as { data: { media_id: string } })
-    .data.media_id;
+  const api = pageRequest(page, webOrigin);
+  const mediaId = await captureCanonicalArticle(page, "grounded-source");
   await expect
     .poll(
       async () => {
-        const response = await page.request.get(`/api/media/${mediaId}`);
+        const response = await api.get(`/api/media/${mediaId}`);
         if (!response.ok()) return `http-${response.status()}`;
         return ((await response.json()) as {
           data: { retrieval_status: string | null };
@@ -48,7 +34,7 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
     .toBe("ready");
 
   const query = "SOFIA water Clavius Crater";
-  const searchResponse = await page.request.get(
+  const searchResponse = await api.get(
     `/api/search?${new URLSearchParams({
       q: query,
       kinds: "documents",
@@ -76,7 +62,7 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
     `Search result ${evidence!.context_ref.id} for media ${mediaId} had no resolvable span.`,
   ).toBeGreaterThan(0);
 
-  const conversationResponse = await page.request.post("/api/conversations", {
+  const conversationResponse = await api.post("/api/conversations", {
     headers: { origin: webOrigin },
     data: {
       initial_context_refs: [
@@ -102,8 +88,7 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   );
   const runResponsePromise = page.waitForResponse(
     (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/chat-runs",
+      matchesResponse(response, webOrigin, "POST", "/api/chat-runs"),
   );
   const send = page.getByRole("button", { name: "SEND", exact: true });
   await expect(send).toBeEnabled();
