@@ -195,7 +195,10 @@ clear() -> None
 ```
 
 It owns commits required by the coordination protocol. Domain code cannot
-mutate queue payload JSON directly.
+mutate queue payload JSON directly. The stored `ExecutionRuntime` is passed
+unchanged into the sole `llm_execution` generation boundary; that boundary's
+pre-dispatch checkpoint invokes `mark_uncertain(path)` immediately before the
+runtime call.
 
 ### Step Results
 

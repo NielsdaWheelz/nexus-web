@@ -30,8 +30,10 @@ from ``session_factory``:
    code="budget_exceeded"} and re-raises the same ``ApiError`` (the sole
    budget-denial site). Reservation succeeding precedes
    :func:`llm_ledger.commit_plan_facts`, committed.
-5. Dispatch ``runtime.generate``/``runtime.stream`` with the resolved
-   platform ``generation_credential``.
+5. Invoke the optional caller-owned pre-dispatch checkpoint, then dispatch
+   ``runtime.generate``/``runtime.stream`` with the resolved platform
+   ``generation_credential``. The checkpoint runs inside this sole generation
+   boundary and immediately before the runtime call.
 6. Terminalize from the outcome (:func:`llm_ledger.terminalize`), committed
    before any owner-side postprocessing.
 7. Settle the reservation exactly once (:func:`_settle` / the defect-path
@@ -51,7 +53,7 @@ terminal ``RuntimeStreamEvent``.
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
@@ -234,6 +236,7 @@ async def execute_generation(
     session_factory: sessionmaker[Session],
     runtime: ExecutionRuntime,
     settings: Settings,
+    before_dispatch: Callable[[], None] | None = None,
 ) -> CallOutcome:
     _check_entitlement(session_factory, user_id=req.owner.user_id)
 
@@ -282,6 +285,8 @@ async def execute_generation(
             session_factory, generation_id=generation_id, profile=req.profile, plan=plan
         )
         credential = generation_credential(settings, req.profile.target.provider)
+        if before_dispatch is not None:
+            before_dispatch()
         dispatch_attempted = True
         started = time.monotonic()
         outcome = await runtime.generate(req.intent, plan, credential)
@@ -334,6 +339,7 @@ async def execute_generation_stream(
     runtime: ExecutionRuntime,
     settings: Settings,
     cancel: CancelSignal,
+    before_dispatch: Callable[[], None] | None = None,
 ) -> AsyncIterator[RuntimeStreamEvent]:
     _check_entitlement(session_factory, user_id=req.owner.user_id)
 
@@ -383,6 +389,8 @@ async def execute_generation_stream(
             session_factory, generation_id=generation_id, profile=req.profile, plan=plan
         )
         credential = generation_credential(settings, req.profile.target.provider)
+        if before_dispatch is not None:
+            before_dispatch()
         dispatch_attempted = True
         started = time.monotonic()
         async for event in runtime.stream(req.intent, plan, credential, cancel=cancel):

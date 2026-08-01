@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import AsyncIterator
 from dataclasses import replace
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
@@ -15,19 +14,15 @@ from provider_runtime import (
 )
 from provider_runtime import (
     AssistantMessage,
-    CancelSignal,
     CanonicalTool,
     ContinuationArtifact,
     ConversationScope,
     Dynamic,
-    FinalizedProviderCall,
     GenerateIntent,
     GlobalScope,
     OwnerScope,
     PromptBlock,
-    ProviderCredential,
     ProviderTarget,
-    RuntimeStreamEvent,
     Stable,
     StrictJsonOutput,
     SystemMessage,
@@ -37,9 +32,6 @@ from provider_runtime import (
     UserMessage,
     parse_canonical_schema,
     to_json_schema,
-)
-from provider_runtime import (
-    CallOutcome as ProviderCallOutcome,
 )
 from provider_runtime import (
     Present as RuntimePresent,
@@ -389,9 +381,6 @@ class ChatStepRuntime:
         self.llm_runtime = llm_runtime
         self.web_search_provider = web_search_provider
 
-    def generation_runtime(self, path: str) -> ExecutionRuntime:
-        return _GenerationDispatchRuntime(owner=self, path=path)
-
     def read(self, path: str, policy: ReplayPolicy) -> StepReplayState | None:
         state = read_step_states(self.job).get(path)
         if state is not None and state.generation_id != stable_generation_id(self.run_id, path):
@@ -532,34 +521,6 @@ class ChatStepRuntime:
             raise LostChatJobLease(f"chat job {self.job.id} lost its lease")
         self.job = replace(self.job, payload=payload)
         self.db.commit()
-
-
-class _GenerationDispatchRuntime:
-    """Commit Uncertain at the exact provider-runtime dispatch boundary."""
-
-    def __init__(self, *, owner: ChatStepRuntime, path: str) -> None:
-        self.owner = owner
-        self.path = path
-
-    async def generate(
-        self,
-        intent: GenerateIntent,
-        plan: FinalizedProviderCall,
-        credential: ProviderCredential,
-    ) -> ProviderCallOutcome:
-        self.owner.mark_uncertain(self.path)
-        return await self.owner.llm_runtime.generate(intent, plan, credential)
-
-    def stream(
-        self,
-        intent: GenerateIntent,
-        plan: FinalizedProviderCall,
-        credential: ProviderCredential,
-        *,
-        cancel: CancelSignal | None,
-    ) -> AsyncIterator[RuntimeStreamEvent]:
-        self.owner.mark_uncertain(self.path)
-        return self.owner.llm_runtime.stream(intent, plan, credential, cancel=cancel)
 
 
 def decode_prepared(state: StepReplayState) -> PreparedChatRun:

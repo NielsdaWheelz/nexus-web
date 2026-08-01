@@ -1121,12 +1121,17 @@ async def _dispatch_generation_step(
     cancel_watcher = asyncio.create_task(
         _watch_chat_run_cancel(db, run_id=run.id, cancel_signal=cancel_signal)
     )
+
+    def mark_dispatch_uncertain() -> None:
+        steps.mark_uncertain(path)
+
     stream = execute_generation_stream(
         request,
         session_factory=session_factory,
-        runtime=steps.generation_runtime(path),
+        runtime=steps.llm_runtime,
         settings=settings,
         cancel=cast(CancelSignal, cancel_signal),
+        before_dispatch=mark_dispatch_uncertain,
     )
     terminal_outcome: object | None = None
     try:
