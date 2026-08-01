@@ -138,10 +138,15 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
             # Always echo request ID in response
             response.headers[REQUEST_ID_HEADER] = request_id
+            duration_ms = (time.monotonic() - start_time) * 1000
+            downstream_timings = response.headers.getlist("Server-Timing")
+            api_timing = f"nexus_api;dur={duration_ms:.2f}"
+            response.headers["Server-Timing"] = (
+                ", ".join((api_timing, *downstream_timings)) if downstream_timings else api_timing
+            )
 
             # Log access entry.
             if self.log_requests:
-                duration_ms = (time.monotonic() - start_time) * 1000
                 logger.info(
                     "http.request.completed",
                     **safe_kv(

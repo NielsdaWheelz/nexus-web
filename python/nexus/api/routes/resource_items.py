@@ -1,8 +1,9 @@
 """Resource item routes."""
 
+import time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -87,17 +88,19 @@ def search_resource_targets(
 @router.post("/openables/search")
 def search_openable_resources(
     request: ResourceOpenableSearchRequest,
+    response: Response,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    return ok(
-        openables.search_openable_resources(
-            db,
-            viewer_id=viewer.user_id,
-            request=request,
-        ),
-        by_alias=True,
+    started_at = time.monotonic()
+    result = openables.search_openable_resources(
+        db,
+        viewer_id=viewer.user_id,
+        request=request,
     )
+    duration_ms = (time.monotonic() - started_at) * 1000
+    response.headers.append("Server-Timing", f"nexus_openables;dur={duration_ms:.2f}")
+    return ok(result, by_alias=True)
 
 
 @router.get("/{resource_ref}")

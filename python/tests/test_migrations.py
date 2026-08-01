@@ -27494,3 +27494,81 @@ class TestMigration0208PersistEpubNavigationOffsets:
         finally:
             reset_test_schema()
             engine.dispose()
+
+
+@MIGRATION_CI_LATE
+class TestMigration0210NoteBodySubstringSearchIndex:
+    INDEX_NAME = "ix_note_blocks_body_text_trgm"
+
+    def test_0210_declares_pg_trgm_and_a_valid_usable_index(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0209").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0210")
+            assert result.returncode == 0, result.stderr
+
+            with engine.begin() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0210"
+                assert (
+                    connection.scalar(
+                        text("SELECT count(*) FROM pg_extension WHERE extname = 'pg_trgm'")
+                    )
+                    == 1
+                )
+                index = connection.execute(
+                    text(
+                        """
+                        SELECT index_metadata.indisvalid, pg_get_indexdef(index_metadata.indexrelid)
+                        FROM pg_class index_relation
+                        JOIN pg_namespace index_namespace
+                          ON index_namespace.oid = index_relation.relnamespace
+                        JOIN pg_index index_metadata
+                          ON index_metadata.indexrelid = index_relation.oid
+                        WHERE index_namespace.nspname = 'public'
+                          AND index_relation.relname = :name
+                        """
+                    ),
+                    {"name": self.INDEX_NAME},
+                ).one()
+                assert index == (
+                    True,
+                    "CREATE INDEX ix_note_blocks_body_text_trgm ON public.note_blocks "
+                    "USING gin (body_text gin_trgm_ops)",
+                )
+
+                user_id = uuid4()
+                connection.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO note_blocks (user_id, body_pm_json, body_text)
+                        SELECT
+                            :user_id,
+                            '{"type":"doc","content":[]}'::jsonb,
+                            'searchable note ' || series::text
+                        FROM generate_series(1, 100) AS series
+                        """
+                    ),
+                    {"user_id": user_id},
+                )
+                connection.execute(text("SET LOCAL enable_seqscan = off"))
+                plan = connection.execute(
+                    text(
+                        """
+                        EXPLAIN (FORMAT JSON)
+                        SELECT id
+                        FROM note_blocks
+                        WHERE body_text ILIKE '%able note 5%'
+                        """
+                    )
+                ).scalar_one()
+                assert self.INDEX_NAME in json.dumps(plan)
+
+            downgrade = run_alembic_command("downgrade 0209")
+            assert downgrade.returncode != 0
+            assert "0210 is a hard cutover migration" in downgrade.stderr
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()

@@ -76,6 +76,7 @@ const ALLOWED_RESPONSE_HEADERS = new Set([
   "accept-ranges",
   "content-range",
   "location",
+  "server-timing",
 ]);
 
 /**
@@ -194,14 +195,6 @@ function isTextContentType(contentType: string | null): boolean {
   return lower.includes("application/json") || lower.includes("text/");
 }
 
-function setBodyContentLength(headers: Headers, body: string | ArrayBuffer) {
-  const byteLength =
-    typeof body === "string"
-      ? new TextEncoder().encode(body).byteLength
-      : body.byteLength;
-  headers.set("content-length", String(byteLength));
-}
-
 type TimedFetchController = {
   signal: AbortSignal;
   timedOut: () => boolean;
@@ -301,6 +294,7 @@ export async function proxyToFastAPIWithDeps(
   path: string,
   deps: ProxyDeps
 ): Promise<Response> {
+  const proxyStartedAt = performance.now();
   // Validate path does not contain query string (caller error)
   if (path.includes("?")) {
     throw new Error(
@@ -483,6 +477,10 @@ export async function proxyToFastAPIWithDeps(
       REQUEST_ID_HEADER,
       isValidRequestId(backendRequestId) ? backendRequestId : requestId
     );
+    responseHeaders.append(
+      "server-timing",
+      `nexus_bff;dur=${(performance.now() - proxyStartedAt).toFixed(2)}`
+    );
 
     // A response carrying rotated auth cookies must never be cached: a cached
     // Set-Cookie would hand one user another user's session.
@@ -490,10 +488,13 @@ export async function proxyToFastAPIWithDeps(
       responseHeaders.set("cache-control", "no-store");
     }
 
-    const responseBody = await readProxiedBody(response, request);
-    if (responseBody !== null) {
-      setBodyContentLength(responseHeaders, responseBody);
-    }
+    const responseBody =
+      request.method === "HEAD" ||
+      response.status === 204 ||
+      response.status === 205 ||
+      response.status === 304
+        ? null
+        : response.body;
     const proxied = new NextResponse(responseBody, {
       status: response.status,
       statusText: response.statusText,

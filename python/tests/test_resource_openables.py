@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from uuid import UUID, uuid4
 
 import pytest
@@ -111,6 +112,39 @@ def test_openables_calls_candidate_owner_exactly_once(
             "limit_per_source": OPENABLE_SEARCH_RESULT_LIMIT,
         }
     ]
+
+
+def test_empty_openables_batches_all_candidate_sources_into_one_statement(
+    db_session: Session,
+    bootstrapped_user: UUID,
+) -> None:
+    statements: list[str] = []
+
+    def observe(
+        _connection,
+        _cursor,
+        statement: str,
+        _parameters: object,
+        _context,
+        _executemany: bool,
+    ) -> None:
+        if statement.lstrip().upper().startswith(("SELECT", "WITH")):
+            statements.append(statement)
+
+    bind = db_session.get_bind()
+    event.listen(bind, "before_cursor_execute", observe)
+    try:
+        response = search_openable_resources(
+            db_session,
+            viewer_id=bootstrapped_user,
+            request=_request("definitely-absent-openable"),
+        )
+    finally:
+        event.remove(bind, "before_cursor_execute", observe)
+
+    assert response.items == []
+    assert len(statements) == 1
+    assert sum("UNION ALL" in statement for statement in statements) == 1
 
 
 def test_openables_sql_count_is_row_bounded_and_candidate_plan_executes(
@@ -273,3 +307,9 @@ def test_route_returns_exact_camel_resource_item_wire(
     assert "resource_ref" not in item["activation"]
     assert "userRelation" in item["capabilities"]
     assert "versionByLane" in item
+    assert re.fullmatch(
+        r"nexus_api;dur=\d+\.\d{2}, "
+        r"nexus_openables;dur=\d+\.\d{2}, "
+        r"nexus_auth;dur=\d+\.\d{2}",
+        response.headers["Server-Timing"],
+    )

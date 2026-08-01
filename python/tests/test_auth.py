@@ -7,6 +7,7 @@ Tests the full auth flow including:
 - GET /me endpoint
 """
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID, uuid4
 
@@ -179,6 +180,52 @@ class TestAuthBoundary:
         assert response.status_code == 200
         assert response.json()["email"] == "viewer+tag@example.com"
         assert bootstrap_emails == ["viewer+tag@example.com"]
+
+    def test_successful_bootstrap_is_reused_without_a_second_callback(self):
+        """Warm authenticated requests stay off the blocking bootstrap lane."""
+        user_id = uuid4()
+        default_library_id = uuid4()
+        bootstrap_calls: list[tuple[UUID, str | None]] = []
+
+        class StableVerifier:
+            def verify(self, token: str) -> dict[str, object]:
+                return {"sub": str(user_id), "email": "viewer@example.com"}
+
+        def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
+            bootstrap_calls.append((user_id, email))
+            return default_library_id
+
+        app = FastAPI()
+
+        @app.get("/private")
+        def private_route(request: Request) -> dict[str, str]:
+            return {
+                "default_library_id": str(request.state.viewer.default_library_id),
+            }
+
+        app.add_middleware(
+            AuthMiddleware,
+            verifier=StableVerifier(),
+            requires_internal_header=False,
+            internal_secret=None,
+            bootstrap_callback=bootstrap_callback,
+        )
+        client = TestClient(app)
+
+        first = client.get("/private", headers={"Authorization": "Bearer first"})
+        second = client.get("/private", headers={"Authorization": "Bearer second"})
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert (
+            first.json()
+            == second.json()
+            == {
+                "default_library_id": str(default_library_id),
+            }
+        )
+        assert bootstrap_calls == [(user_id, "viewer@example.com")]
+        assert re.fullmatch(r"nexus_auth;dur=\d+\.\d{2}", second.headers["Server-Timing"])
 
     @pytest.mark.parametrize(
         "email_claim",

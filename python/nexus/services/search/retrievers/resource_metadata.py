@@ -13,6 +13,7 @@ capable; no retriever here touches ``build_query_embedding``. Query caller-gatin
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID
@@ -238,6 +239,111 @@ def retrieve_library_artifact_candidates(
 
 
 _PASSAGE_ANCHOR_EXACT_SQL = "(pa.selector #>> '{quote,exact}')"
+
+
+def reference_metadata_candidate_sql_parts(
+    include: Callable[[str], bool],
+) -> list[str]:
+    """Typed UNION branches for the reference profile's metadata sources.
+
+    The candidate engine owns the one-statement reference retrieval plan. This
+    retriever keeps each metadata source's visibility, matching, and ordering
+    SQL beside its standalone hybrid-profile retriever while projecting the
+    common ``result_type/id/score/payload`` row contract consumed there.
+    """
+    parts: list[str] = []
+    if include("library"):
+        parts.append(
+            f"""
+            (
+                SELECT 'library'::text AS result_type, l.id,
+                       {_tier_score_sql("l.name", "l.name")} AS score,
+                       jsonb_build_object('name', l.name) AS payload
+                FROM (
+                    SELECT id, CASE WHEN is_default THEN 'All' ELSE name END AS name
+                    FROM libraries
+                ) l
+                JOIN memberships mem
+                  ON mem.library_id = l.id AND mem.user_id = :viewer_id
+                WHERE {_lexical_match_sql("l.name")}
+                ORDER BY score DESC, l.name ASC, l.id ASC
+                LIMIT :limit
+            )
+            """
+        )
+    if include("oracle_reading"):
+        parts.append(
+            f"""
+            (
+                SELECT 'oracle_reading'::text AS result_type, r.id,
+                       {_tier_score_sql("r.question_text", _ORACLE_READING_BLOB_SQL)} AS score,
+                       jsonb_build_object(
+                           'question_text', r.question_text,
+                           'blob', {_ORACLE_READING_BLOB_SQL}
+                       ) AS payload
+                FROM oracle_readings r
+                WHERE r.user_id = :viewer_id
+                  AND {_lexical_match_sql(_ORACLE_READING_BLOB_SQL)}
+                ORDER BY score DESC, r.created_at DESC, r.id ASC
+                LIMIT :limit
+            )
+            """
+        )
+    if include("artifact"):
+        parts.append(
+            f"""
+            (
+                SELECT 'artifact'::text AS result_type, a.id,
+                       {_tier_score_sql(_LIBRARY_DISPLAY_NAME_SQL, "r.content_text")} AS score,
+                       jsonb_build_object(
+                           'library_id', a.subject_id,
+                           'library_name', {_LIBRARY_DISPLAY_NAME_SQL},
+                           'content_text', r.content_text
+                       ) AS payload
+                FROM artifacts a
+                JOIN libraries l ON l.id = a.subject_id
+                JOIN memberships mem
+                  ON mem.library_id = l.id AND mem.user_id = :viewer_id
+                JOIN artifact_revisions r ON r.id = a.current_revision_id
+                WHERE a.subject_scheme = 'library'
+                  AND a.audience_scheme = 'library'
+                  AND a.audience_id = a.subject_id::text
+                  AND {_lexical_match_sql("r.content_text")}
+                ORDER BY score DESC, a.id ASC
+                LIMIT :limit
+            )
+            """
+        )
+    if include("passage_anchor"):
+        parts.append(
+            f"""
+            (
+                WITH visible_media AS ({visible_media_ids_cte_sql()})
+                SELECT 'passage_anchor'::text AS result_type, pa.id,
+                       {_tier_score_sql(_PASSAGE_ANCHOR_EXACT_SQL, _PASSAGE_ANCHOR_EXACT_SQL)}
+                           AS score,
+                       jsonb_build_object(
+                           'owner_scheme', pa.owner_scheme,
+                           'owner_id', pa.owner_id,
+                           'exact', {_PASSAGE_ANCHOR_EXACT_SQL}
+                       ) AS payload
+                FROM passage_anchors pa
+                WHERE pa.user_id = :viewer_id
+                  AND (
+                        (pa.owner_scheme = 'media'
+                         AND pa.owner_id IN (SELECT media_id FROM visible_media))
+                        OR (pa.owner_scheme = 'note_block'
+                            AND pa.owner_id IN (
+                                SELECT id FROM note_blocks WHERE user_id = :viewer_id
+                            ))
+                  )
+                  AND {_lexical_match_sql(_PASSAGE_ANCHOR_EXACT_SQL)}
+                ORDER BY score DESC, pa.created_at DESC, pa.id ASC
+                LIMIT :limit
+            )
+            """
+        )
+    return parts
 
 
 def retrieve_passage_anchor_candidates(

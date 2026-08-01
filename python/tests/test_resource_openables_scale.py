@@ -39,6 +39,16 @@ _WARMUP_QUERY_COUNT = 10
 _MEASURED_QUERY_COUNT = 100
 _P95_BUDGET_MS = 250.0
 _MAX_SQL_STATEMENTS_PER_QUERY = 16
+_NOTE_SUBSTRING_INDEX = "ix_note_blocks_body_text_trgm"
+
+
+def _plan_index_names(plan: object) -> set[str]:
+    if isinstance(plan, list):
+        return {name for item in plan for name in _plan_index_names(item)}
+    if not isinstance(plan, dict):
+        return set()
+    names = {value for key, value in plan.items() if key == "Index Name" and isinstance(value, str)}
+    return names | {name for value in plan.values() for name in _plan_index_names(value)}
 
 
 def _seed_scale_fixture(db: Session, *, viewer_id: UUID) -> tuple[int, int]:
@@ -285,3 +295,4 @@ def test_openables_meets_warm_real_backend_scale_gate(
     assert isinstance(explain, list) and explain
     assert explain[0]["Plan"]["Actual Loops"] >= 1
     assert explain[0]["Execution Time"] >= 0
+    assert _NOTE_SUBSTRING_INDEX in _plan_index_names(explain[0]["Plan"])

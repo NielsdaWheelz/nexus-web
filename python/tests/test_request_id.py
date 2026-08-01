@@ -9,6 +9,7 @@ Tests cover:
 - Request ID in error response body
 """
 
+import re
 from uuid import UUID
 
 import pytest
@@ -35,6 +36,10 @@ class TestRequestIdMiddleware:
 
         assert response.status_code == 200
         assert "X-Request-ID" in response.headers
+        assert re.fullmatch(
+            r"nexus_api;dur=\d+\.\d{2}, nexus_auth;dur=\d+\.\d{2}",
+            response.headers["Server-Timing"],
+        )
 
         # Verify it's a valid UUID
         request_id = response.headers["X-Request-ID"]

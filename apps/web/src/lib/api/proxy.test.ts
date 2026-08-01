@@ -336,6 +336,73 @@ describe("proxyToFastAPI", () => {
     );
   });
 
+  it("returns the authenticated response before the upstream body finishes", async () => {
+    let releaseBody: (() => void) | undefined;
+    const backendFetch = mockBackendFetch(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"data":'));
+              releaseBody = () => {
+                controller.enqueue(new TextEncoder().encode("[]}"));
+                controller.close();
+              };
+            },
+          }),
+          {
+            headers: {
+              "content-type": "application/json",
+              "x-request-id": "request-1",
+            },
+          },
+        ),
+    );
+
+    const responsePromise = proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: { cookie: sessionCookie() },
+      }),
+      "/libraries",
+      deps({ backendFetch }),
+    );
+    const returnedBeforeBody = await Promise.race([
+      responsePromise.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 0)),
+    ]);
+
+    expect(returnedBeforeBody).toBe(true);
+    releaseBody?.();
+    const response = await responsePromise;
+    expect(await response.json()).toEqual({ data: [] });
+  });
+
+  it("preserves API timing and appends the BFF header phase", async () => {
+    const backendFetch = mockBackendFetch(async () =>
+      Response.json(
+        { data: [] },
+        {
+          headers: {
+            "server-timing": "nexus_api;dur=12.34",
+            "x-request-id": "request-1",
+          },
+        },
+      ),
+    );
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: { cookie: sessionCookie() },
+      }),
+      "/libraries",
+      deps({ backendFetch }),
+    );
+
+    expect(response.headers.get("server-timing")).toMatch(
+      /^nexus_api;dur=12\.34, nexus_bff;dur=\d+\.\d{2}$/,
+    );
+  });
+
   it("forwards only server-owned auth headers to FastAPI", async () => {
     const backendFetch = mockBackendFetch(async () =>
       Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
