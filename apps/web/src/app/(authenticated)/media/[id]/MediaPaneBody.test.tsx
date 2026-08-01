@@ -53,6 +53,7 @@ import type {
   ActionDescriptor,
   PaneHeaderAction,
 } from "@/lib/ui/actionDescriptor";
+import type { Highlight } from "@/lib/highlights/api";
 import { READER_PULSE_HIGHLIGHT } from "@/lib/reader/pulseEvent";
 import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
 import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
@@ -126,6 +127,8 @@ const testState = vi.hoisted(() => ({
   fragmentHtml: "<p>Readable text.</p>",
   fragmentCanonicalText: "",
   renderHtmlInMock: false,
+  highlightCreateResponse: null as Promise<{ data: unknown }> | null,
+  fragmentHighlights: [] as Highlight[],
   documentMapDocumentItems: null as unknown[] | null,
   documentMapPassageGroups: null as unknown[] | null,
   documentMapEmbeds: null as DocumentEmbed[] | null,
@@ -450,6 +453,59 @@ async function expectReaderScrollTracksChrome(
   });
 }
 const PDF_HIGHLIGHT_ID = "33333333-3333-4333-8333-333333333333";
+const SELECTION_HIGHLIGHT_ID = "77777777-7777-4777-8777-777777777777";
+
+function existingSelectionHighlight(): Highlight {
+  return {
+    id: SELECTION_HIGHLIGHT_ID,
+    anchor: {
+      type: "fragment_offsets",
+      media_id: "00000000-0000-4000-8000-000000000001",
+      fragment_id: "fragment-1",
+      start_offset: 0,
+      end_offset: "Readable text.".length,
+    },
+    color: "yellow",
+    exact: "Readable text.",
+    prefix: "",
+    suffix: "",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    author_user_id: "user-1",
+    is_owner: true,
+  };
+}
+
+function stubReadableSelectionGeometry(): void {
+  const rect = new DOMRect(120, 160, 90, 20);
+  vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(rect);
+  vi.spyOn(Range.prototype, "getClientRects").mockReturnValue(
+    Object.assign([rect], {
+      item: (index: number) => [rect][index] ?? null,
+    }) as unknown as DOMRectList,
+  );
+}
+
+function publishReadableSelection(readableText: HTMLElement): void {
+  const range = document.createRange();
+  range.selectNodeContents(readableText);
+  const nativeSelection = window.getSelection();
+  nativeSelection?.removeAllRanges();
+  nativeSelection?.addRange(range);
+  document.dispatchEvent(new Event("selectionchange"));
+}
+
+async function openReadableSelectionPalette(): Promise<{
+  palette: HTMLElement;
+  readableText: HTMLElement;
+}> {
+  const readableText = await screen.findByText("Readable text.");
+  publishReadableSelection(readableText);
+  return {
+    palette: await screen.findByLabelText("Selection actions"),
+    readableText,
+  };
+}
 
 function jsonResponse(data: unknown) {
   return { data };
@@ -457,10 +513,12 @@ function jsonResponse(data: unknown) {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 }
 
 function pathOf(input: unknown): string {
@@ -1254,6 +1312,8 @@ describe("MediaPaneBody pane sizing", () => {
     testState.fragmentHtml = "<p>Readable text.</p>";
     testState.fragmentCanonicalText = "";
     testState.renderHtmlInMock = false;
+    testState.highlightCreateResponse = null;
+    testState.fragmentHighlights = [];
     testState.documentMapDocumentItems = null;
     testState.documentMapPassageGroups = null;
     testState.documentMapEmbeds = null;
@@ -1572,10 +1632,29 @@ describe("MediaPaneBody pane sizing", () => {
           return jsonResponse({ highlights: [] });
         }
         if (path === "/api/fragments/fragment-1/highlights") {
-          return jsonResponse({ highlights: [] });
+          if (init?.method === "POST" && testState.highlightCreateResponse) {
+            return await testState.highlightCreateResponse;
+          }
+          return jsonResponse({ highlights: testState.fragmentHighlights });
         }
         if (path === "/api/fragments/fragment-2/highlights") {
           return jsonResponse({ highlights: [] });
+        }
+        if (
+          path ===
+          `/api/resource-items/${encodeURIComponent(`highlight:${SELECTION_HIGHLIGHT_ID}`)}/shares`
+        ) {
+          return jsonResponse({
+            subject: `highlight:${SELECTION_HIGHLIGHT_ID}`,
+            sharing: "HighlightGrants",
+            authenticatedHref: `http://localhost:3000/media/00000000-0000-4000-8000-000000000001#highlight-${SELECTION_HIGHLIGHT_ID}`,
+            creationAvailability: {
+              user: { kind: "Available" },
+              link: { kind: "Available" },
+            },
+            shares: [],
+            receivedAccess: [],
+          });
         }
         throw new Error(`Unexpected API call: ${path}`);
       },
@@ -1587,6 +1666,383 @@ describe("MediaPaneBody pane sizing", () => {
         disconnect = vi.fn();
       },
     );
+  });
+
+  it.each([
+    { first: "Note", second: "New chat", winner: "note" },
+    { first: "New chat", second: "Note", winner: "chat" },
+    { first: "Note", second: "Share", winner: "note" },
+    { first: "Share", second: "Note", winner: "share" },
+    { first: "Link", second: "Note", winner: "link" },
+    { first: "Note", second: "Link", winner: "note" },
+    { first: "Link", second: "New chat", winner: "link" },
+    { first: "New chat", second: "Link", winner: "chat" },
+  ] as const)(
+    "serializes duplicate selection actions for $first then $second",
+    async ({ first, second, winner }) => {
+      testState.mediaKind = "web_article";
+      testState.fragmentCanonicalText = "Readable text.";
+      testState.renderHtmlInMock = true;
+      testState.fragmentHighlights = [existingSelectionHighlight()];
+      stubReadableSelectionGeometry();
+
+      const { onActivateWorkspaceTarget } = renderMediaPane();
+      const { palette } = await openReadableSelectionPalette();
+      const action = (label: typeof first | typeof second) =>
+        label === "Note"
+          ? null
+          : within(palette).getByRole("button", { name: label });
+      const activate = (label: typeof first | typeof second) => {
+        if (label === "Note") {
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
+          return;
+        }
+        action(label)?.click();
+      };
+
+      act(() => {
+        activate(first);
+        activate(second);
+      });
+
+      await waitFor(() => {
+        expect(onActivateWorkspaceTarget).toHaveBeenCalledTimes(
+          winner === "chat" ? 1 : 0,
+        );
+        const noteDialog = screen.queryByRole("dialog", {
+          name: "Add note to highlight",
+        });
+        const shareDialog = screen.queryByRole("dialog", { name: "Share" });
+        const linkDialog = screen.queryByRole("dialog", { name: "Link" });
+        if (winner === "note") expect(noteDialog).toBeInTheDocument();
+        else expect(noteDialog).toBeNull();
+        if (winner === "share") expect(shareDialog).toBeInTheDocument();
+        else expect(shareDialog).toBeNull();
+        if (winner === "link") expect(linkDialog).toBeInTheDocument();
+        else expect(linkDialog).toBeNull();
+      });
+
+      const creationCalls = apiCallsForPath(
+        "/api/fragments/fragment-1/highlights",
+      ).filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+      );
+      expect(creationCalls).toHaveLength(0);
+    },
+  );
+
+  it("does not reuse a synchronously cleared retained selection from stale palette handlers", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    stubReadableSelectionGeometry();
+
+    const { onActivateWorkspaceTarget } = renderMediaPane();
+    const { palette } = await openReadableSelectionPalette();
+    const staleLink = within(palette).getByRole("button", { name: "Link" });
+    act(() => {
+      document.body.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true }),
+      );
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
+      staleLink.click();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Selection actions")).toBeNull();
+      expect(
+        screen.queryByRole("dialog", { name: "Add note to highlight" }),
+      ).toBeNull();
+      expect(screen.queryByRole("dialog", { name: "Link" })).toBeNull();
+    });
+    expect(onActivateWorkspaceTarget).not.toHaveBeenCalled();
+    expect(
+      apiCallsForPath("/api/fragments/fragment-1/highlights").filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("releases a cancelled Link session for the retained selection", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    testState.fragmentHighlights = [existingSelectionHighlight()];
+    stubReadableSelectionGeometry();
+
+    renderMediaPane();
+    const { palette } = await openReadableSelectionPalette();
+    fireEvent.click(within(palette).getByRole("button", { name: "Link" }));
+    await screen.findByRole("dialog", { name: "Link" });
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Link" })).toBeNull();
+    });
+
+    fireEvent.click(
+      within(screen.getByLabelText("Selection actions")).getByRole("button", {
+        name: "Note",
+      }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Add note to highlight" }),
+    ).toBeInTheDocument();
+  });
+
+  it("releases duplicate success only after palette retirement for a new selection", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    testState.fragmentHighlights = [existingSelectionHighlight()];
+    stubReadableSelectionGeometry();
+
+    const { onActivateWorkspaceTarget } = renderMediaPane();
+    const { palette: firstPalette, readableText } =
+      await openReadableSelectionPalette();
+    fireEvent.click(
+      within(firstPalette).getByRole("button", { name: "Colour" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Green" }));
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Selection actions")).toBeNull();
+    });
+
+    act(() => publishReadableSelection(readableText));
+    const nextPalette = await screen.findByLabelText("Selection actions");
+    fireEvent.click(
+      within(nextPalette).getByRole("button", { name: "New chat" }),
+    );
+    await waitFor(() => {
+      expect(onActivateWorkspaceTarget).toHaveBeenCalledTimes(1);
+    });
+    expect(
+      apiCallsForPath("/api/fragments/fragment-1/highlights").filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("blocks bare-n behind palette creation and opens one retry Note after failure", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    const firstCreate = deferred<{ data: unknown }>();
+    testState.highlightCreateResponse = firstCreate.promise;
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(120, 160, 90, 20),
+    );
+    vi.spyOn(Range.prototype, "getClientRects").mockReturnValue(
+      Object.assign([new DOMRect(120, 160, 90, 20)], {
+        item: (index: number) => [new DOMRect(120, 160, 90, 20)][index] ?? null,
+      }) as unknown as DOMRectList,
+    );
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    renderMediaPane();
+
+    const readableText = await screen.findByText("Readable text.");
+    const range = document.createRange();
+    range.selectNodeContents(readableText);
+    const nativeSelection = window.getSelection();
+    nativeSelection?.removeAllRanges();
+    nativeSelection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const palette = await screen.findByLabelText("Selection actions");
+    fireEvent.click(within(palette).getAllByRole("button")[0]!);
+    const green = await screen.findByRole("button", { name: "Green" });
+
+    act(() => {
+      green.click();
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
+    });
+
+    const creationCalls = () =>
+      apiCallsForPath("/api/fragments/fragment-1/highlights").filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+      );
+    expect(creationCalls()).toHaveLength(1);
+    expect(
+      screen.queryByRole("dialog", { name: "Add note to highlight" }),
+    ).toBeNull();
+
+    await act(async () => {
+      firstCreate.reject(new Error("controlled highlight failure"));
+      await firstCreate.promise.catch(() => undefined);
+    });
+
+    const retryCreate = deferred<{ data: unknown }>();
+    testState.highlightCreateResponse = retryCreate.promise;
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
+    });
+    expect(creationCalls()).toHaveLength(2);
+    expect(
+      screen.getByRole("dialog", { name: "Add note to highlight" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      retryCreate.resolve(
+        jsonResponse({
+          id: "highlight-after-retry",
+          anchor: {
+            type: "fragment_offsets",
+            media_id: "00000000-0000-4000-8000-000000000001",
+            fragment_id: "fragment-1",
+            start_offset: 0,
+            end_offset: "Readable text.".length,
+          },
+          color: "yellow",
+          exact: "Readable text.",
+          prefix: "",
+          suffix: "",
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+          author_user_id: "user-1",
+          is_owner: true,
+        }),
+      );
+      await retryCreate.promise;
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText("Selection actions"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("dialog", { name: "Add note to highlight" }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("clips selection lines to the reader scrollport instead of tall content", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    testState.isMobileViewport = true;
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(120, 170, 90, 40),
+    );
+    vi.spyOn(Range.prototype, "getClientRects").mockReturnValue(
+      Object.assign([new DOMRect(120, 170, 90, 40)], {
+        item: (index: number) =>
+          [new DOMRect(120, 170, 90, 40)][index] ?? null,
+      }) as unknown as DOMRectList,
+    );
+
+    renderMediaPane();
+
+    const viewport = await screen.findByTestId("document-viewport");
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 390, 180),
+    );
+    const readableText = await screen.findByText("Readable text.");
+    // eslint-disable-next-line testing-library/no-node-access
+    const content = readableText.closest<HTMLElement>('div[class*="fragments"]');
+    if (!content) throw new Error("Expected reader content owner");
+    vi.spyOn(content, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 390, 800),
+    );
+
+    const range = document.createRange();
+    range.selectNodeContents(readableText);
+    const nativeSelection = window.getSelection();
+    nativeSelection?.removeAllRanges();
+    nativeSelection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const palette = await screen.findByRole("toolbar", {
+      name: "Selection actions",
+    });
+    // The geometry contract is carried by the role-free FAS parent.
+    // eslint-disable-next-line testing-library/no-node-access
+    const surface = palette.closest<HTMLElement>(
+      '[data-floating-action-surface="true"]',
+    );
+    if (!surface) throw new Error("Expected selection floating surface");
+    await waitFor(() => {
+      expect(surface).toHaveAttribute("data-placement", "below");
+      expect(Number.parseFloat(surface.style.top)).toBe(188);
+    });
+  });
+
+  it("repositions a retained HTML Range on nested scroll and viewport reflow", async () => {
+    testState.mediaKind = "web_article";
+    testState.isMobileViewport = true;
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    let liveRect = new DOMRect(120, 220, 90, 20);
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockImplementation(
+      () => liveRect,
+    );
+    vi.spyOn(Range.prototype, "getClientRects").mockImplementation(() =>
+      Object.assign([liveRect], {
+        item: (index: number) => [liveRect][index] ?? null,
+      }) as unknown as DOMRectList,
+    );
+
+    renderMediaPane();
+
+    const viewport = await screen.findByTestId("document-viewport");
+    Object.defineProperties(viewport, {
+      scrollHeight: { configurable: true, value: 1_000 },
+      clientHeight: { configurable: true, value: 400 },
+    });
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 600, 500),
+    );
+    const readableText = await screen.findByText("Readable text.");
+    const range = document.createRange();
+    range.selectNodeContents(readableText);
+    const nativeSelection = window.getSelection();
+    nativeSelection?.removeAllRanges();
+    nativeSelection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const palette = await screen.findByRole("toolbar", {
+      name: "Selection actions",
+    });
+    // eslint-disable-next-line testing-library/no-node-access
+    const surface = palette.closest<HTMLElement>(
+      '[data-floating-action-surface="true"]',
+    );
+    if (!surface) throw new Error("Expected selection floating surface");
+    const expectCurrentBelowGap = async () => {
+      await waitFor(() => {
+        const surfaceRect = surface.getBoundingClientRect();
+        expect({
+          placement: surface.dataset.placement,
+          gap: Math.round(surfaceRect.top - liveRect.bottom),
+        }).toEqual({ placement: "below", gap: 8 });
+      });
+      const surfaceRect = surface.getBoundingClientRect();
+      expect(surfaceRect.top).toBeGreaterThanOrEqual(8);
+      expect(surfaceRect.top).toBeGreaterThanOrEqual(liveRect.bottom + 8);
+    };
+
+    await expectCurrentBelowGap();
+    liveRect = new DOMRect(120, 140, 90, 20);
+    viewport.scrollTop = 80;
+    fireEvent.scroll(viewport);
+    await expectCurrentBelowGap();
+
+    fireEvent(document, new Event("selectionchange"));
+    expect(
+      screen.getByRole("toolbar", { name: "Selection actions" }),
+    ).toBe(palette);
+    await expectCurrentBelowGap();
+
+    liveRect = new DOMRect(160, 260, 130, 40);
+    fireEvent(window, new Event("resize"));
+    await expectCurrentBelowGap();
+
+    liveRect = new DOMRect(0, 0, 0, 0);
+    fireEvent.scroll(viewport);
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("toolbar", { name: "Selection actions" }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it.each(["web_article", "epub"] as const)(

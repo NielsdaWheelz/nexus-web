@@ -222,6 +222,30 @@ describe("MobileViewportProvider", () => {
     expect(readRootLength("--mobile-content-bottom-clearance")).toBe(37);
   });
 
+  it("notifies bottom-clearance subscribers after publication until released", () => {
+    render(
+      <MobileViewportProvider>
+        <CapabilityProbe />
+      </MobileViewportProvider>,
+    );
+    const publishedClearances: number[] = [];
+    const unsubscribe = capability!.subscribeContentBottomClearance(() => {
+      publishedClearances.push(
+        readRootLength("--mobile-content-bottom-clearance"),
+      );
+    });
+
+    let release: (() => void) | null = null;
+    act(() => {
+      release = capability!.reportMobileOverlayKeyboardInset(312);
+    });
+    expect(publishedClearances).toEqual([312]);
+
+    unsubscribe();
+    act(() => release!());
+    expect(publishedClearances).toEqual([312]);
+  });
+
   it("restores the preceding active keyboard report when the newest report releases", () => {
     render(
       <MobileViewportProvider>

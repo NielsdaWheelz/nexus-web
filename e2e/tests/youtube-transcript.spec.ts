@@ -180,7 +180,7 @@ test.describe("youtube transcript media", () => {
       existingExacts,
     );
 
-    const highlightActions = page.getByRole("group", {
+    const highlightActions = page.getByRole("toolbar", {
       name: /selection actions/i,
     });
     await expect(highlightActions).toBeVisible({ timeout: 5_000 });
@@ -193,7 +193,7 @@ test.describe("youtube transcript media", () => {
           .includes(`/api/fragments/${targetFragment.id}/highlights`),
     );
     await highlightActions
-      .getByRole("button", { name: "Highlight color" })
+      .getByRole("button", { name: "Colour" })
       .click();
     await page
       .getByRole("button", { name: /^Green$/ })

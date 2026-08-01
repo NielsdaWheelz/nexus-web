@@ -67,13 +67,13 @@ test("@real-media desktop selected quote opens new chat pane with attached conte
     /^new chat\b/i,
   ).count();
 
-  const actions = page.getByRole("group", { name: /selection actions/i });
+  const actions = page.getByRole("toolbar", { name: /selection actions/i });
   await expect(
-    actions.getByRole("button", { name: "Ask in new chat" }),
+    actions.getByRole("button", { name: "New chat" }),
   ).toBeVisible({ timeout: 5_000 });
-  await actions.getByRole("button", { name: "Ask in new chat" }).click();
+  await actions.getByRole("button", { name: "New chat" }).click();
 
-  // Reader-highlight-quote-chat cutover: "Ask in new chat" creates a durable
+  // New chat creates a durable
   // Highlight from the live selection, then navigates to a *fresh* conversation
   // pane on the pane-local intent hash
   // (/conversations/new#mediaId=..&highlightId=..). No conversation is created
@@ -164,13 +164,13 @@ test("@real-media mobile selected quote opens new chat pane", async ({
     { method: "range" },
   );
 
-  const actions = page.getByRole("group", { name: /selection actions/i });
+  const actions = page.getByRole("toolbar", { name: /selection actions/i });
   await expect(
-    actions.getByRole("button", { name: "Ask in new chat" }),
+    actions.getByRole("button", { name: "New chat" }),
   ).toBeVisible({ timeout: 5_000 });
-  await actions.getByRole("button", { name: "Ask in new chat" }).click();
+  await actions.getByRole("button", { name: "New chat" }).click();
 
-  // On mobile, "Ask in new chat" activates the fresh conversation pane while the
+  // On mobile, New chat activates the fresh conversation pane while the
   // reader pane stays in the session. No conversation is created until the first
   // send; the activated pane shows the pending QuotedPassageCard above the
   // composer.

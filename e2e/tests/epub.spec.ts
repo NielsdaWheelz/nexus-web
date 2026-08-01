@@ -1349,7 +1349,7 @@ test.describe("epub", () => {
     );
 
     // Selection popover should appear
-    const highlightActions = page.getByRole("group", {
+    const highlightActions = page.getByRole("toolbar", {
       name: /selection actions/i,
     });
     await expect(highlightActions).toBeVisible({ timeout: 5_000 });
@@ -1362,7 +1362,7 @@ test.describe("epub", () => {
           .includes(`/api/fragments/${section.data.fragment_id}/highlights`),
     );
     await highlightActions
-      .getByRole("button", { name: "Highlight color" })
+      .getByRole("button", { name: "Colour" })
       .click();
     await page
       .getByRole("button", { name: /^Green$/ })

@@ -1,15 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import ActionBar from "@/components/ui/ActionBar";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactElement } from "react";
+
+function renderActionBar(ui: ReactElement) {
+  const view = render(withRenderEnvironment(ui));
+  return {
+    ...view,
+    rerender: (nextUi: ReactElement) =>
+      view.rerender(withRenderEnvironment(nextUi)),
+  };
+}
 
 describe("ActionBar", () => {
   it("renders each option as a named icon button and invokes its onSelect", async () => {
     const user = userEvent.setup();
     const onQuote = vi.fn();
     const tokens = { "--size-md": "32px" } as CSSProperties;
-    render(
+    renderActionBar(
       <div style={tokens}>
         <ActionBar
           label="Highlight actions"
@@ -36,7 +46,7 @@ describe("ActionBar", () => {
 
   it("does not invoke disabled actions", () => {
     const onDelete = vi.fn();
-    render(
+    renderActionBar(
       <ActionBar
         options={[
           { kind: "command", id: "delete", label: "Delete highlight", icon: <span aria-hidden>x</span>, disabled: true, onSelect: onDelete },
@@ -66,7 +76,7 @@ describe("ActionBar", () => {
   it("keeps action clicks inside the bar", async () => {
     const user = userEvent.setup();
     const onParentClick = vi.fn();
-    render(
+    renderActionBar(
       <div onClick={onParentClick}>
         <ActionBar
           options={[
@@ -89,7 +99,7 @@ describe("ActionBar", () => {
   });
 
   it("reflects pressed state via aria-pressed", () => {
-    render(
+    renderActionBar(
       <ActionBar
         options={[
           { kind: "command", id: "edit-bounds", label: "Cancel edit bounds", icon: <span aria-hidden>e</span>, state: { kind: "toggle", pressed: true }, onSelect: vi.fn() },
@@ -105,7 +115,7 @@ describe("ActionBar", () => {
   it("opens an anchored popover for a render option and dismisses on Escape", async () => {
     const user = userEvent.setup();
     let triggerEl: HTMLButtonElement | null = null;
-    render(
+    renderActionBar(
       <ActionBar
         options={[
           {
@@ -141,7 +151,7 @@ describe("ActionBar", () => {
   });
 
   it("maps disclosure state and only references a mounted expanded region", () => {
-    const { rerender } = render(
+    const { rerender } = renderActionBar(
       <ActionBar
         options={[
           {
@@ -194,7 +204,7 @@ describe("ActionBar", () => {
   });
 
   it("renders nothing when there are no options", () => {
-    render(<ActionBar options={[]} />);
+    renderActionBar(<ActionBar options={[]} />);
     expect(screen.queryByRole("group")).not.toBeInTheDocument();
   });
 });

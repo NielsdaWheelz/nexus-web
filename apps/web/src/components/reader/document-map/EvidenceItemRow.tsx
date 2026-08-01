@@ -222,7 +222,6 @@ export function EvidenceItemRow({
         <div className={styles.itemActions}>
           {highlight ? (
             <HighlightActionBar
-              variant="existing"
               presentation="menu"
               highlight={highlight}
               canQuoteToChat={highlightActions.canQuoteToChat}

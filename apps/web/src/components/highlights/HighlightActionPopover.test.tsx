@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
@@ -23,17 +24,19 @@ function renderPopover(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
   render(
-    <FeedbackProvider>
-      <ShareControllerProvider>
-        <HighlightActionPopover
-          highlight={highlight}
-          anchorRect={new DOMRect(100, 100, 80, 20)}
-          canQuoteToChat
-          isReflowable
-          {...props}
-        />
-      </ShareControllerProvider>
-    </FeedbackProvider>,
+    withRenderEnvironment(
+      <FeedbackProvider>
+        <ShareControllerProvider>
+          <HighlightActionPopover
+            highlight={highlight}
+            anchorRect={new DOMRect(100, 100, 80, 20)}
+            canQuoteToChat
+            isReflowable
+            {...props}
+          />
+        </ShareControllerProvider>
+      </FeedbackProvider>,
+    ),
   );
   return props;
 }

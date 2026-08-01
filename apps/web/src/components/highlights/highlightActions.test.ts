@@ -99,6 +99,39 @@ describe("buildHighlightActions", () => {
     ).toEqual(["color", "quote-new", "quote-existing"]);
   });
 
+  it("publishes the complete selection palette in its visible order and groups", () => {
+    const actions = buildHighlightActions({
+      target: { kind: "selection", color: "yellow" },
+      canQuoteToChat: true,
+      canAddNote: true,
+      isReflowable: false,
+      state: idleState,
+      handlers: {
+        ...noopHandlers,
+        onAddNote: () => {},
+        onLink: () => {},
+        onShare: () => {},
+        onLearn: () => {},
+      },
+    });
+
+    expect(
+      actions.map(({ id, label, separatorBefore }) => ({
+        id,
+        label,
+        separatorBefore: separatorBefore ?? false,
+      })),
+    ).toEqual([
+      { id: "color", label: "Colour", separatorBefore: false },
+      { id: "note", label: "Note", separatorBefore: false },
+      { id: "link", label: "Link", separatorBefore: false },
+      { id: "ResourceAction.Share", label: "Share", separatorBefore: true },
+      { id: "learn", label: "Learn", separatorBefore: true },
+      { id: "quote-new", label: "New chat", separatorBefore: false },
+      { id: "quote-existing", label: "Existing chat", separatorBefore: false },
+    ]);
+  });
+
   it("offers only color for a selection when chat quoting is unavailable", () => {
     expect(
       ids({
@@ -109,6 +142,30 @@ describe("buildHighlightActions", () => {
         handlers: noopHandlers,
       }),
     ).toEqual(["color"]);
+  });
+
+  it("requires both chat callbacks before exposing either selection destination", () => {
+    const target = { kind: "selection" as const, color: "green" as const };
+    const shared = {
+      target,
+      canQuoteToChat: true,
+      canAddNote: false,
+      isReflowable: true,
+      state: idleState,
+    };
+    const singleChatHandlers = {
+      onSelectColor: noopHandlers.onSelectColor,
+      onQuoteToNewChat: noopHandlers.onQuoteToNewChat,
+      onToggleEditBounds: noopHandlers.onToggleEditBounds,
+      onDelete: noopHandlers.onDelete,
+    };
+
+    expect(ids({ ...shared, handlers: singleChatHandlers })).toEqual(["color"]);
+    expect(ids({ ...shared, handlers: noopHandlers })).toEqual([
+      "color",
+      "quote-new",
+      "quote-existing",
+    ]);
   });
 
   it("slots the note action directly after color when enabled", () => {
@@ -158,7 +215,7 @@ describe("buildHighlightActions", () => {
     expect(noteLabel({ linked_note_blocks: [{ note_block_id: "n1", body_text: "hi" }] })).toBe("Edit note");
   });
 
-  it('labels the note action "Add note" for a fresh selection', () => {
+  it('labels the note action "Note" for a fresh selection', () => {
     const actions = buildHighlightActions({
       target: { kind: "selection", color: "green" },
       canQuoteToChat: true, canAddNote: true,
@@ -167,7 +224,7 @@ describe("buildHighlightActions", () => {
       handlers: { ...noopHandlers, onAddNote: () => {} },
     });
     expect(actions.map((option) => option.id)).toEqual(["color", "note", "quote-new", "quote-existing"]);
-    expect(actions.find((option) => option.id === "note")?.label).toBe("Add note");
+    expect(actions.find((option) => option.id === "note")?.label).toBe("Note");
   });
 
   it("disables selection color and quote actions while the selection action is busy", () => {

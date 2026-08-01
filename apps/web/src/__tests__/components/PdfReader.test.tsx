@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { createRef, useRef, type ComponentProps } from "react";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
@@ -37,6 +38,7 @@ const pdfRuntimeState = vi.hoisted(() => ({
   pageTexts: ["Alpha selected quote Omega"] as string[],
   pageHighlights: [] as unknown[],
   createdHighlightId: "created-highlight-1",
+  highlightCreateResponse: null as Promise<{ data: unknown }> | null,
 }));
 
 type PdfReaderProps = ComponentProps<typeof PdfReaderImplementation>;
@@ -85,6 +87,16 @@ function rectList(rects: DOMRect[]): DOMRectList {
   return Object.assign(rects, {
     item: (index: number) => rects[index] ?? null,
   }) as unknown as DOMRectList;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
+    resolve = next;
+    reject = fail;
+  });
+  return { promise, reject, resolve };
 }
 
 function prepareScrollableReader(viewport: HTMLElement): void {
@@ -144,6 +156,9 @@ vi.mock("@/lib/api/client", async () => {
         path === "/api/media/media-1/pdf-highlights" &&
         init?.method === "POST"
       ) {
+        if (pdfRuntimeState.highlightCreateResponse) {
+          return await pdfRuntimeState.highlightCreateResponse;
+        }
         return {
           data: {
             id: pdfRuntimeState.createdHighlightId,
@@ -537,6 +552,7 @@ describe("PdfReader selection chat destinations", () => {
     pdfRuntimeState.pageTexts = ["Alpha selected quote Omega"];
     pdfRuntimeState.pageHighlights = [];
     pdfRuntimeState.createdHighlightId = "created-highlight-1";
+    pdfRuntimeState.highlightCreateResponse = null;
     vi.mocked(apiFetch).mockClear();
   });
 
@@ -861,6 +877,39 @@ describe("PdfReader selection chat destinations", () => {
     expect(publishedRuntimes.at(-1)).toBeNull();
   });
 
+  it("exposes neither PDF chat destination when only one callback is supplied", async () => {
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(110, 140, 160, 20),
+    );
+    vi.spyOn(Range.prototype, "getClientRects").mockReturnValue(
+      rectList([new DOMRect(110, 140, 160, 20)]),
+    );
+
+    render(<PdfReader mediaId="media-1" onQuoteToNewChat={vi.fn()} />);
+
+    const textLayer = await screen.findByTestId("pdf-page-text-layer-1");
+    await waitFor(() => {
+      expect(textLayer.textContent).toContain("selected quote");
+    });
+    const textNode = pdfRuntimeState.textNode;
+    if (!textNode) throw new Error("Expected PDF text node");
+    const range = document.createRange();
+    range.setStart(textNode, "Alpha ".length);
+    range.setEnd(textNode, "Alpha selected quote".length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    expect(
+      await screen.findByRole("button", { name: "Colour" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New chat" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Existing chat" }),
+    ).toBeNull();
+  });
+
   it("creates a PDF highlight and quotes it to a new chat", async () => {
     pdfRuntimeState.createdHighlightId = "created-highlight-42";
     const onQuoteToNewChat =
@@ -898,10 +947,10 @@ describe("PdfReader selection chat destinations", () => {
     document.dispatchEvent(new Event("selectionchange"));
 
     const newChatButton = await screen.findByRole("button", {
-      name: "Ask in new chat",
+      name: "New chat",
     });
     expect(
-      screen.getByRole("button", { name: "Ask in existing chat…" }),
+      screen.getByRole("button", { name: "Existing chat" }),
     ).toBeInTheDocument();
 
     fireEvent.click(newChatButton);
@@ -940,6 +989,109 @@ describe("PdfReader selection chat destinations", () => {
     });
   });
 
+  it("blocks bare-n behind PDF palette creation and opens one retry Note after failure", async () => {
+    const noteSessions: Array<{
+      quote: string;
+      anchorRect: DOMRect;
+      creation: Promise<{ id: string } | null>;
+    }> = [];
+    const firstCreate = deferred<{ data: unknown }>();
+    pdfRuntimeState.highlightCreateResponse = firstCreate.promise;
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(110, 140, 160, 20),
+    );
+    vi.spyOn(Range.prototype, "getClientRects").mockReturnValue(
+      rectList([new DOMRect(110, 140, 160, 20)]),
+    );
+
+    render(
+      <PdfReader
+        mediaId="media-1"
+        onAddNote={(session) => noteSessions.push(session)}
+      />,
+    );
+
+    const textLayer = await screen.findByTestId("pdf-page-text-layer-1");
+    await waitFor(() => {
+      expect(textLayer.textContent).toContain("selected quote");
+    });
+    const textNode = pdfRuntimeState.textNode;
+    if (!textNode) throw new Error("Expected PDF text node");
+    const range = document.createRange();
+    range.setStart(textNode, "Alpha ".length);
+    range.setEnd(textNode, "Alpha selected quote".length);
+    const nativeSelection = window.getSelection();
+    nativeSelection?.removeAllRanges();
+    nativeSelection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const palette = await screen.findByLabelText("Selection actions");
+    fireEvent.click(within(palette).getAllByRole("button")[0]!);
+    const green = await screen.findByRole("button", { name: "Green" });
+
+    act(() => {
+      green.click();
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
+    });
+
+    const postCalls = () =>
+      vi
+        .mocked(apiFetch)
+        .mock.calls.filter(
+          ([path, init]) =>
+            path === "/api/media/media-1/pdf-highlights" &&
+            init?.method === "POST",
+        );
+    expect(postCalls()).toHaveLength(1);
+    expect(noteSessions).toHaveLength(0);
+
+    await act(async () => {
+      firstCreate.reject(new Error("controlled PDF highlight failure"));
+      await firstCreate.promise.catch(() => undefined);
+    });
+    const retryCreate = deferred<{ data: unknown }>();
+    pdfRuntimeState.highlightCreateResponse = retryCreate.promise;
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
+    });
+    expect(postCalls()).toHaveLength(2);
+    expect(noteSessions).toHaveLength(1);
+
+    const createdHighlight = {
+      id: "pdf-highlight-after-retry",
+      anchor: {
+        type: "pdf_page_geometry",
+        media_id: "media-1",
+        page_number: 1,
+        quads: [],
+      },
+      color: "yellow",
+      exact: "selected quote",
+      prefix: "",
+      suffix: "",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      author_user_id: "user-1",
+      is_owner: true,
+    };
+    await act(async () => {
+      retryCreate.resolve({ data: createdHighlight });
+      await retryCreate.promise;
+    });
+
+    await expect(noteSessions[0]!.creation).resolves.toMatchObject({
+      id: "pdf-highlight-after-retry",
+    });
+    const firstBody = JSON.parse(String(postCalls()[0]![1]!.body)) as {
+      color: string;
+    };
+    const retryBody = JSON.parse(String(postCalls()[1]![1]!.body)) as {
+      color: string;
+    };
+    expect(firstBody.color).toBe("green");
+    expect(retryBody.color).toBe("yellow");
+  });
+
   it("keeps captured PDF selection actions usable after transient selection collapse", async () => {
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
       new DOMRect(110, 140, 160, 20),
@@ -966,13 +1118,13 @@ describe("PdfReader selection chat destinations", () => {
     document.dispatchEvent(new Event("selectionchange"));
 
     const colorButton = await screen.findByRole("button", {
-      name: "Highlight color",
+      name: "Colour",
     });
     selection?.removeAllRanges();
     document.dispatchEvent(new Event("selectionchange"));
 
     expect(
-      screen.getByRole("group", { name: "Selection actions" }),
+      screen.getByRole("toolbar", { name: "Selection actions" }),
     ).toBeInTheDocument();
 
     fireEvent.click(colorButton);
@@ -1006,6 +1158,90 @@ describe("PdfReader selection chat destinations", () => {
       page_number: 1,
       color: "green",
       exact: "selected quote",
+    });
+  });
+
+  it("repositions from the retained PDF Range after native selection collapse", async () => {
+    let liveRect = new DOMRect(110, 220, 160, 20);
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockImplementation(
+      () => liveRect,
+    );
+    vi.spyOn(Range.prototype, "getClientRects").mockImplementation(() =>
+      rectList([liveRect]),
+    );
+
+    vi.stubGlobal("innerWidth", 390);
+    fireEvent(window, new Event("resize"));
+    render(
+      withRenderEnvironment(<PdfReader mediaId="media-1" />, {
+        initialViewport: "mobile",
+      }),
+    );
+
+    const textLayer = await screen.findByTestId("pdf-page-text-layer-1");
+    await waitFor(() => {
+      expect(textLayer.textContent).toContain("selected quote");
+    });
+    const textNode = pdfRuntimeState.textNode;
+    if (!textNode) throw new Error("Expected PDF text node");
+    const range = document.createRange();
+    range.setStart(textNode, "Alpha ".length);
+    range.setEnd(textNode, "Alpha selected quote".length);
+    const nativeSelection = window.getSelection();
+    nativeSelection?.removeAllRanges();
+    nativeSelection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const palette = await screen.findByRole("toolbar", {
+      name: "Selection actions",
+    });
+    // eslint-disable-next-line testing-library/no-node-access
+    const surface = palette.closest<HTMLElement>(
+      '[data-floating-action-surface="true"]',
+    );
+    if (!surface) throw new Error("Expected selection floating surface");
+    const expectCurrentBelowGap = async () => {
+      await waitFor(() => {
+        const surfaceRect = surface.getBoundingClientRect();
+        expect({
+          placement: surface.dataset.placement,
+          gap: Math.round(surfaceRect.top - liveRect.bottom),
+        }).toEqual({ placement: "below", gap: 8 });
+      });
+      const surfaceRect = surface.getBoundingClientRect();
+      expect(surfaceRect.top).toBeGreaterThanOrEqual(8);
+      expect(surfaceRect.top).toBeGreaterThanOrEqual(liveRect.bottom + 8);
+    };
+
+    await expectCurrentBelowGap();
+    const viewport = screen.getByRole("region", { name: "PDF document" });
+    liveRect = new DOMRect(110, 140, 160, 20);
+    viewport.scrollTop = 80;
+    fireEvent.scroll(viewport);
+    await expectCurrentBelowGap();
+
+    fireEvent(document, new Event("selectionchange"));
+    expect(
+      screen.getByRole("toolbar", { name: "Selection actions" }),
+    ).toBe(palette);
+    await expectCurrentBelowGap();
+
+    nativeSelection?.removeAllRanges();
+    document.dispatchEvent(new Event("selectionchange"));
+    expect(
+      screen.getByRole("toolbar", { name: "Selection actions" }),
+    ).toBeInTheDocument();
+
+    liveRect = new DOMRect(150, 260, 190, 40);
+    fireEvent(window, new Event("resize"));
+    await expectCurrentBelowGap();
+
+    liveRect = new DOMRect(0, 0, 0, 0);
+    fireEvent.scroll(viewport);
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("toolbar", { name: "Selection actions" }),
+      ).not.toBeInTheDocument();
     });
   });
 

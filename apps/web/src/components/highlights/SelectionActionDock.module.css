@@ -1,0 +1,235 @@
+.frame {
+  width: max-content;
+  max-width: var(--floating-action-content-max-width, 100vw);
+  max-height: var(--floating-action-content-max-height, none);
+}
+
+.dock {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: var(--floating-action-content-max-width, 100vw);
+}
+
+.dock .action {
+  min-width: 0;
+  height: var(--size-xl);
+  min-height: var(--size-xl);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+}
+
+.action[aria-disabled="true"] {
+  opacity: 0.58;
+  cursor: progress;
+}
+
+.action[data-pending="true"] {
+  background: var(--surface-active);
+  box-shadow: inset 0 0 0 var(--stroke-hairline) var(--edge-strong);
+}
+
+.action:active:not([aria-disabled="true"]) {
+  background: var(--surface-active);
+}
+
+.actionIcon,
+.actionLabel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.actionIcon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+
+.active {
+  background: var(--surface-active);
+}
+
+.separator {
+  align-self: stretch;
+  width: var(--stroke-hairline);
+  min-height: var(--size-sm);
+  margin-block: var(--space-1);
+  margin-inline: var(--space-1);
+  background: var(--edge-subtle);
+}
+
+.busyIndicator {
+  width: var(--space-3);
+  height: var(--space-3);
+  border: 2px solid currentcolor;
+  border-inline-end-color: transparent;
+  border-radius: var(--radius-full);
+  animation: selectionActionBusy var(--duration-deliberate) linear infinite;
+}
+
+.colorPopover {
+  padding: var(--space-2);
+  --highlight-color-picker-button-size: var(--size-xl);
+}
+
+.colorContent,
+.colorContent > * {
+  max-width: 100%;
+}
+
+.colorContent > * {
+  flex-wrap: wrap;
+}
+
+.colorContent :global(button) {
+  flex: 0 0 var(--highlight-color-picker-button-size, var(--size-xl));
+}
+
+@keyframes selectionActionBusy {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+:global([data-floating-action-surface]:is([data-mobile="true"], [data-reflow-width="true"], [data-compact-width="true"]))
+  .frame {
+  width: 100%;
+  overflow: hidden;
+}
+
+:global([data-floating-action-surface]:is([data-mobile="true"], [data-reflow-width="true"], [data-compact-width="true"]))
+  .dock {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  width: 100%;
+  max-height: var(--floating-action-content-max-height, none);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+:global([data-floating-action-surface]:is([data-mobile="true"], [data-reflow-width="true"], [data-compact-width="true"]))
+  .dock
+  .action {
+  grid-column: span 3;
+  width: 100%;
+  height: auto;
+  min-width: 48px;
+  min-height: 48px;
+  padding: var(--space-1);
+  flex-direction: column;
+  gap: var(--space-1);
+  white-space: normal;
+  text-align: center;
+}
+
+:global([data-floating-action-surface]:is([data-mobile="true"], [data-reflow-width="true"], [data-compact-width="true"]))
+  .dock:is([data-action-count="3"], [data-action-count="6"])
+  .action {
+  grid-column: span 4;
+}
+
+:global([data-floating-action-surface]:is([data-mobile="true"], [data-reflow-width="true"], [data-compact-width="true"]))
+  .dock[data-action-count="7"]
+  .action:is(
+    [data-action-index="4"],
+    [data-action-index="5"],
+    [data-action-index="6"]
+  ) {
+  grid-column: span 4;
+}
+
+:global([data-floating-action-surface]:is([data-mobile="true"], [data-reflow-width="true"], [data-compact-width="true"]))
+  .dock[data-action-count="2"]
+  .action {
+  grid-column: span 6;
+}
+
+:global([data-floating-action-surface]:is([data-mobile="true"], [data-reflow-width="true"], [data-compact-width="true"]))
+  .dock[data-action-count="5"]
+  .action {
+  grid-column: span 4;
+}
+
+:global([data-floating-action-surface]:is([data-mobile="true"], [data-reflow-width="true"], [data-compact-width="true"]))
+  .dock[data-action-count="5"]
+  .action:is([data-action-index="3"], [data-action-index="4"]) {
+  grid-column: span 6;
+}
+
+:global([data-floating-action-surface]:is([data-mobile="true"], [data-reflow-width="true"], [data-compact-width="true"]))
+  .dock[data-action-count="1"]
+  .action {
+  grid-column: span 12;
+}
+
+:global([data-floating-action-surface]:is([data-mobile="true"], [data-reflow-width="true"], [data-compact-width="true"]))
+  .separator {
+  display: none;
+}
+
+:global([data-floating-action-surface][data-compact-width="true"])
+  .dock {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+:global([data-floating-action-surface][data-compact-width="true"])
+  .dock[data-action-count]
+  .action[data-action-index] {
+  grid-column: span 1;
+}
+
+.colorPopover:is([data-mobile="true"], [data-compact-width="true"]) {
+  --highlight-color-picker-button-size: 48px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .busyIndicator {
+    animation: none;
+    border-style: double;
+  }
+
+  .colorPopover :global(button) {
+    transition: none;
+    transform: none;
+  }
+
+  .colorPopover :global(button:hover:not(:disabled)) {
+    transform: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .dock .action {
+    border: var(--stroke-hairline) solid ButtonText;
+    background: Canvas;
+    color: ButtonText;
+  }
+
+  .action[data-pending="true"] {
+    outline: var(--focus-ring-width) double Highlight;
+    outline-offset: calc(-1 * var(--focus-ring-width));
+  }
+
+  .colorPopover :global(button[aria-pressed="true"]) {
+    outline: var(--focus-ring-width) double Highlight;
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .colorPopover :global(button) {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+  }
+
+  .colorPopover :global(button:focus-visible) {
+    outline: var(--focus-ring-width) solid Highlight;
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .separator {
+    background: CanvasText;
+  }
+}

@@ -73,10 +73,12 @@ Out of scope:
 
 ### Reader actions
 
-- **Ask in new chat** opens `/conversations/new` with a typed Highlight intent.
-  Chat launch performs no conversation mutation; creating a new durable
-  Highlight from a fresh selection is the required preceding mutation.
-- **Ask in existing chat…** opens a real destination picker. Selecting a row
+- Fresh-selection **New chat** and existing-Highlight **Ask in new chat** open
+  `/conversations/new` with a typed Highlight intent. Chat launch performs no
+  conversation mutation; creating a new durable Highlight from a fresh
+  selection is the required preceding mutation.
+- Fresh-selection **Existing chat** and existing-Highlight
+  **Ask in existing chat…** open a real destination picker. Selecting a row
   opens that exact conversation and performs no conversation mutation.
 - Highlight creation must succeed before either navigation occurs.
 - A new quote replaces an already-pending quote for that destination, preserves

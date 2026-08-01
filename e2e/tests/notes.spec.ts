@@ -278,7 +278,7 @@ async function readResourceGraphEdges(
 
 /**
  * Resolves with the highlight created by the note verb (selection popover
- * "Add note" / the `n` chord), which POSTs to the fragment highlights
+ * **Note** / the `n` chord), which POSTs to the fragment highlights
  * endpoint concurrently with opening the composer.
  */
 async function nextCreatedHighlight(
@@ -758,12 +758,12 @@ test.describe("notes cutover", () => {
       );
 
       // AC-1: the selection popover offers the note verb.
-      const selectionPopover = page.getByRole("group", {
+      const selectionPopover = page.getByRole("toolbar", {
         name: "Selection actions",
       });
       await expect(selectionPopover).toBeVisible({ timeout: 5_000 });
       const addNoteButton = selectionPopover.getByRole("button", {
-        name: "Add note",
+        name: "Note",
       });
       await expect(addNoteButton).toBeVisible();
 
@@ -936,7 +936,7 @@ test.describe("notes cutover", () => {
         { method: "range" },
       );
       await expect(
-        page.getByRole("group", { name: "Selection actions" }),
+        page.getByRole("toolbar", { name: "Selection actions" }),
       ).toBeVisible({ timeout: 5_000 });
 
       const created = await nextCreatedHighlight(page, () =>

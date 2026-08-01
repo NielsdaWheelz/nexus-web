@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import HighlightActionBar from "./HighlightActionBar";
@@ -27,18 +28,19 @@ function setupExisting(
     onToggleEditBounds: vi.fn(),
   };
   render(
-    <FeedbackProvider>
-      <HighlightActionBar
-        variant="existing"
-        presentation={presentation}
-        highlight={highlight}
-        canQuoteToChat
-        isReflowable
-        isEditingBounds={false}
-        {...handlers}
-        {...overrides}
-      />
-    </FeedbackProvider>,
+    withRenderEnvironment(
+      <FeedbackProvider>
+        <HighlightActionBar
+          presentation={presentation}
+          highlight={highlight}
+          canQuoteToChat
+          isReflowable
+          isEditingBounds={false}
+          {...handlers}
+          {...overrides}
+        />
+      </FeedbackProvider>,
+    ),
   );
   return handlers;
 }
@@ -176,94 +178,5 @@ describe("HighlightActionBar — existing (menu)", () => {
     expect(
       screen.queryByRole("button", { name: "Highlight actions" }),
     ).toBeNull();
-  });
-});
-
-describe("HighlightActionBar — selection", () => {
-  it("offers color and quotes but never edit-bounds or delete", async () => {
-    const user = userEvent.setup();
-    const onSelectColor = vi.fn();
-    render(
-      <FeedbackProvider>
-        <HighlightActionBar
-          variant="selection"
-          selectionColor="yellow"
-          canQuoteToChat
-          busy={false}
-          onShare={vi.fn()}
-          onSelectColor={onSelectColor}
-          onQuoteToNewChat={vi.fn()}
-          onQuoteToExistingChat={vi.fn()}
-        />
-      </FeedbackProvider>,
-    );
-
-    expect(screen.getByRole("button", { name: "Ask in new chat" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Delete highlight" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Edit bounds" })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Highlight color" }));
-    await user.click(await screen.findByRole("button", { name: "Green" }));
-    expect(onSelectColor).toHaveBeenCalledWith("green");
-  });
-
-  it("renders the note action when enabled and fires its handler", async () => {
-    const user = userEvent.setup();
-    const onAddNote = vi.fn();
-    render(
-      <FeedbackProvider>
-        <HighlightActionBar
-          variant="selection"
-          selectionColor="yellow"
-          canQuoteToChat
-          canAddNote
-          busy={false}
-          onShare={vi.fn()}
-          onSelectColor={vi.fn()}
-          onAddNote={onAddNote}
-          onQuoteToNewChat={vi.fn()}
-          onQuoteToExistingChat={vi.fn()}
-        />
-      </FeedbackProvider>,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Add note" }));
-    expect(onAddNote).toHaveBeenCalledTimes(1);
-  });
-
-  it("disables every create/quote action while a selection action is busy", async () => {
-    const onSelectColor = vi.fn();
-    const onQuoteToNewChat = vi.fn();
-    const onQuoteToExistingChat = vi.fn();
-    render(
-      <FeedbackProvider>
-        <HighlightActionBar
-          variant="selection"
-          selectionColor="yellow"
-          canQuoteToChat
-          busy
-          onShare={vi.fn()}
-          onSelectColor={onSelectColor}
-          onQuoteToNewChat={onQuoteToNewChat}
-          onQuoteToExistingChat={onQuoteToExistingChat}
-        />
-      </FeedbackProvider>,
-    );
-
-    const color = screen.getByRole("button", { name: "Highlight color" });
-    const newChat = screen.getByRole("button", { name: "Ask in new chat" });
-    const existingChat = screen.getByRole("button", {
-      name: "Ask in existing chat…",
-    });
-    expect(color).toBeDisabled();
-    expect(newChat).toBeDisabled();
-    expect(existingChat).toBeDisabled();
-
-    fireEvent.click(color);
-    fireEvent.click(newChat);
-    fireEvent.click(existingChat);
-    expect(onSelectColor).not.toHaveBeenCalled();
-    expect(onQuoteToNewChat).not.toHaveBeenCalled();
-    expect(onQuoteToExistingChat).not.toHaveBeenCalled();
   });
 });

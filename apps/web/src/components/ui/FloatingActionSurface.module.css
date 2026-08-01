@@ -1,4 +1,7 @@
 .surface {
+  --floating-action-enter-x: 0;
+  --floating-action-enter-y: 4px;
+
   display: flex;
   align-items: stretch;
   padding: var(--space-1);
@@ -7,16 +10,119 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-3);
   z-index: var(--z-modal);
-  animation: floatingActionSurfaceFadeIn var(--duration-fast) var(--ease-snap);
 }
 
-@keyframes floatingActionSurfaceFadeIn {
+.surface[data-positioned="true"] {
+  animation: floatingActionSurfaceEnter var(--duration-fast) var(--ease-snap);
+}
+
+.surface > * {
+  min-width: 0;
+  min-height: 0;
+  max-width: var(--floating-action-content-max-width);
+  max-height: var(--floating-action-content-max-height);
+}
+
+.surface[data-strategy="text-selection"][data-placement="above"] {
+  --floating-action-enter-y: 4px;
+}
+
+.surface[data-strategy="text-selection"][data-placement="below"] {
+  --floating-action-enter-y: -4px;
+}
+
+.surface[data-strategy="text-selection"][data-placement="right"] {
+  --floating-action-enter-x: -4px;
+  --floating-action-enter-y: 0;
+}
+
+.surface[data-strategy="text-selection"][data-placement="left"] {
+  --floating-action-enter-x: 4px;
+  --floating-action-enter-y: 0;
+}
+
+.surface[data-strategy="text-selection"][data-placement="edge"] {
+  --floating-action-enter-y: 0;
+}
+
+.surface[data-strategy="text-selection"]::after {
+  position: absolute;
+  display: none;
+  width: 6px;
+  height: 6px;
+  background: var(--surface-2);
+  border: 0 solid var(--edge);
+  content: "";
+  pointer-events: none;
+}
+
+.surface[data-strategy="text-selection"][data-placement="above"]::after,
+.surface[data-strategy="text-selection"][data-placement="below"]::after {
+  left: var(--floating-action-caret-inline-offset);
+  display: block;
+}
+
+.surface[data-strategy="text-selection"][data-placement="above"]::after {
+  bottom: -4px;
+  border-right-width: var(--stroke-hairline);
+  border-bottom-width: var(--stroke-hairline);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.surface[data-strategy="text-selection"][data-placement="below"]::after {
+  top: -4px;
+  border-top-width: var(--stroke-hairline);
+  border-left-width: var(--stroke-hairline);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+@keyframes floatingActionSurfaceEnter {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translate(
+        var(--floating-action-enter-x),
+        var(--floating-action-enter-y)
+      )
+      scale(0.98);
   }
+
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes floatingActionSurfaceFadeOnly {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface[data-positioned="true"] {
+    animation-name: floatingActionSurfaceFadeOnly;
+  }
+}
+
+@media (forced-colors: active) {
+  .surface {
+    color: CanvasText;
+    background: Canvas;
+    border: var(--stroke-hairline, 1px) solid CanvasText;
+    box-shadow: none;
+  }
+
+  .surface[data-strategy="text-selection"]::after {
+    background: Canvas;
+    border-color: CanvasText;
+  }
+
+  .surface :where(button, a, [role="button"]):focus-visible {
+    outline: var(--focus-ring-width, 2px) solid Highlight;
+    outline-offset: var(--focus-ring-offset, 2px);
   }
 }

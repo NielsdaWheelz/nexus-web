@@ -37,7 +37,24 @@ describe("buildHighlightActions — Link verb", () => {
   });
 
   it("offers Link on a bare selection when onLink is provided", () => {
-    expect(optionIds({ kind: "selection", color: "blue" }, vi.fn())).toContain("link");
+    const onLink = vi.fn();
+    const actions = buildHighlightActions({
+      target: { kind: "selection", color: "blue" },
+      canQuoteToChat: true,
+      canAddNote: true,
+      isReflowable: true,
+      state: { isEditingBounds: false, deleting: false, changingColor: false },
+      handlers: {
+        onSelectColor: vi.fn(),
+        onAddNote: vi.fn(),
+        onLink,
+        onQuoteToNewChat: vi.fn(),
+        onQuoteToExistingChat: vi.fn(),
+        onToggleEditBounds: vi.fn(),
+        onDelete: vi.fn(),
+      },
+    });
+    expect(actions.find((action) => action.id === "link")?.label).toBe("Link");
   });
 
   it("omits Link when no onLink handler is wired", () => {
