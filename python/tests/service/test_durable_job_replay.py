@@ -180,6 +180,7 @@ def test_owned_worker_replays_committed_note_index_after_process_death(
     note_transaction = note_lock.begin()
     job_lock = None
     job_transaction = None
+    recovered: test_services.StartedProcess | None = None
     try:
         note_lock.execute(text("LOCK TABLE note_blocks IN ACCESS EXCLUSIVE MODE"))
         crashed = test_services.start_python_process(
@@ -253,3 +254,5 @@ def test_owned_worker_replays_committed_note_index_after_process_death(
             job_transaction.rollback()
         if job_lock is not None:
             job_lock.close()
+        if recovered is not None:
+            kill_and_forget_worker(recovered)
