@@ -96,7 +96,7 @@
     {
       "id": "web-search-provider-identity-bypass",
       "patch": "testdata/faults/web-search-provider-identity-bypass.patch",
-      "sha256": "7bb4c2799946f3e60f923b39822db60d453a0a83b7f5461bf18e8ba43e560432",
+      "sha256": "6abd3a8a714233954c12dc333161a1bf3bd3cb12adb06d5b8a0ddf4e9d33d548",
       "proofs": [
         "pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
       ],
