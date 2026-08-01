@@ -89,7 +89,7 @@
       "patch": "testdata/faults/durable-chat-uncertain-checkpoint-bypass.patch",
       "sha256": "a8af3f77bb335513e5fc373234f142a28119d3b67679f88bf6ecbe311f58209b",
       "proofs": [
-        "pytest:python/tests/service/test_durable_job_replay.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job"
+        "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job"
       ],
       "expected_failure": "the provider boundary did not observe the pre-dispatch Uncertain checkpoint"
     },
