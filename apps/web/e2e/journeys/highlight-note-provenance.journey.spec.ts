@@ -104,7 +104,9 @@ test("a highlight note remains attached to the exact canonical passage after a f
     page.getByText(QUOTE, { exact: false }).first(),
     QUOTE,
   );
-  const selectionActions = page.getByRole("group", { name: "Selection actions" });
+  const selectionActions = page.getByRole("toolbar", {
+    name: "Selection actions",
+  });
   await expect(selectionActions).toBeVisible();
   const highlightResponsePromise = page.waitForResponse(
     (response) =>
@@ -115,7 +117,7 @@ test("a highlight note remains attached to the exact canonical passage after a f
         /\/api\/fragments\/[^/]+\/highlights$/,
       ),
   );
-  await selectionActions.getByRole("button", { name: "Add note", exact: true }).click();
+  await selectionActions.getByRole("button", { name: "Note", exact: true }).click();
   const highlightResponse = await highlightResponsePromise;
   const highlightText = await highlightResponse.text();
   expect(
