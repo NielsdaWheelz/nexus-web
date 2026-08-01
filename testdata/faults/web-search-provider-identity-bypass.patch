@@ -1,12 +1,17 @@
 diff --git a/python/nexus/services/agent_tools/web_search.py b/python/nexus/services/agent_tools/web_search.py
 --- a/python/nexus/services/agent_tools/web_search.py
 +++ b/python/nexus/services/agent_tools/web_search.py
-@@ -543,7 +543,7 @@ def persist_web_search_run(
-     for ordinal, citation in enumerate(persisted_citations_tuple):
-         selected = citation.selected
-         score = 1.0 / max(citation.rank, 1)
--        source_id = str(citation.external_snapshot_id)
-+        source_id = str(citation.provider_result_ref)
-         locator = citation.locator_json()
-         insert_retrieval_row(
-             db,
+@@ -595,7 +595,12 @@ def persist_web_search_run(
+         selected_count=len(selected_citations),
+         latency_ms=run.latency_ms,
+         provider_request_ids=run.provider_request_ids,
+-        results=list(result_ref_models),
++        results=[
++            result.model_copy(
++                update={"id": result.result_ref, "source_id": result.result_ref}
++            )
++            for result in result_ref_models
++        ],
+     )
+     return PersistedWebSearchResult(
+         tool_call_id=tool_call_id,

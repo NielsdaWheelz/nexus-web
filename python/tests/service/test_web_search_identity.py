@@ -90,7 +90,9 @@ def test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity(
         assert isinstance(snapshot_id, UUID)
         assert str(snapshot_id) != provider_ref
         assert persisted.citations[0].provider_result_ref == provider_ref
-        assert result["id"] == result["source_id"] == str(snapshot_id)
+        assert result["id"] == result["source_id"] == str(snapshot_id), (
+            "provider result ref replaced the Nexus snapshot identity"
+        )
         assert result["context_ref"]["id"] == str(snapshot_id)
         assert result["result_ref"] == provider_ref
         assert json.loads(persisted.model_output)["results"][0]["n"] == 7
@@ -135,5 +137,7 @@ def test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity(
     assert stored.provider_ref == provider_ref
     assert stored.citation_candidate_ordinal == 7
     assert stored.selected_context_refs == [{"type": "web_result", "id": str(snapshot_id)}]
-    assert stored.result_refs[0]["id"] == str(snapshot_id)
+    assert stored.result_refs[0]["id"] == str(snapshot_id), (
+        "provider result ref replaced the Nexus snapshot identity"
+    )
     assert stored.result_refs[0]["result_ref"] == provider_ref
