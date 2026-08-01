@@ -250,6 +250,24 @@ and revise this spec before expanding scope.
   `FloatingActionSurface` tests remain green. Browser-only tests do not claim
   native handoff coverage.
 
+### Current environment evidence
+
+On 2026-07-31, [hosted CI run 30682028416](https://github.com/NielsdaWheelz/nexus-web/actions/runs/30682028416)
+established the available automation boundary:
+
+- API 34 and API 35 hosted shell-regression lanes passed after compiling the
+  M144 scenarios and excluding only `RequiresWebViewM144` at runtime.
+- Google's newest published canary image, `android-36-ext19`, booted and ran all
+  three focused scenarios, but its System WebView was `133.0.6943.137`; every
+  scenario failed at the unchanged M144 capability guard.
+- Hosted CI therefore does not claim native system-inset handoff acceptance.
+  The M144 instrumentation run and physical-device matrix remain `not_run`, not
+  green.
+
+Provision the controlled M144+ device and run `./scripts/test nightly` before
+claiming this cutover accepted. Direct Gradle invocation is allowed only for
+interactive diagnosis; the controller-owned capability is the recorded gate.
+
 ### Physical-device matrix
 
 Run on the affected phone with System WebView M144+:

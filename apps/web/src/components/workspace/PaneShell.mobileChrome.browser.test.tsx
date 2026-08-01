@@ -5,7 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { Profiler } from "react";
+import { Profiler, useCallback, useEffect, useRef, useState } from "react";
 import { page } from "vitest/browser";
 import { describe, expect, it } from "vitest";
 import MobilePaneBar from "@/components/appnav/MobilePaneBar";
@@ -17,6 +17,7 @@ import { ShareControllerProvider } from "@/lib/sharing/controller";
 import {
   MobileChromeProvider,
   useMobileChromeReaderScrollport,
+  useMobileChromeVisibleLocks,
 } from "@/lib/workspace/mobileChrome";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
@@ -29,12 +30,23 @@ const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 const noop = () => {};
 
 function Reader() {
+  const [title, setTitle] = useState("Document title");
+  const visibleLocks = useMobileChromeVisibleLocks();
+  const releaseFindLockRef = useRef<(() => void) | null>(null);
+  const openFind = useCallback(() => {
+    releaseFindLockRef.current ??= visibleLocks.acquire("pane-find");
+  }, [visibleLocks]);
+  const dismissFind = useCallback(() => {
+    releaseFindLockRef.current?.();
+    releaseFindLockRef.current = null;
+  }, []);
+  useEffect(() => dismissFind, [dismissFind]);
   usePanePrimaryChrome({
     header: {
       kind: "resource",
       resource: {
         status: "ready",
-        title: "Document title",
+        title,
         creditGroups: [],
       },
     },
@@ -44,9 +56,9 @@ function Reader() {
       query: "",
       inputLabel: "Find in document",
       placeholder: "Find",
-      onOpen: noop,
+      onOpen: openFind,
       onQueryChange: noop,
-      onDismiss: noop,
+      onDismiss: dismissFind,
       result: { kind: "Idle" },
       scope: { kind: "EntireResource" },
       matchCase: false,
@@ -71,7 +83,15 @@ function Reader() {
       data-testid="reader-scrollport"
       style={{ height: 120, overflowY: "auto" }}
     >
-      <div style={{ height: 1_200 }}>Reader document</div>
+      <div style={{ height: 1_200 }}>
+        Reader document
+        <button
+          type="button"
+          onClick={() => setTitle("Updated document title")}
+        >
+          Update reader title
+        </button>
+      </div>
     </div>
   );
 }
@@ -309,5 +329,16 @@ describe("PaneShell mobile Find chrome composition", () => {
     expect(appBar).toHaveAttribute("inert");
     expect(paneChrome).toHaveAttribute("aria-hidden", "true");
     expect(paneChrome).toHaveAttribute("inert");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Update reader title" }),
+    );
+    await waitFor(() => {
+      expect(screen.getAllByText("Updated document title")).toHaveLength(2);
+    });
+    expect(appBar).toHaveAttribute("data-mobile-chrome-phase", "Hidden");
+    expect(paneChrome).toHaveAttribute("data-mobile-chrome-phase", "Hidden");
+    expect(collapseProgress(appBar)).toBe(1);
+    expect(collapseProgress(paneChrome)).toBe(1);
   });
 });

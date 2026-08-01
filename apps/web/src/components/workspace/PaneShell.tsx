@@ -964,6 +964,13 @@ export default function PaneShell({
     routeShareIdentity,
     startPaneRefresh,
   ]);
+  // Route ownership and chrome publication have different lifecycles. A
+  // routine header/action update must not briefly withdraw the active route:
+  // doing so rebaselines reader motion while trusted scrolling is in flight.
+  useLayoutEffect(() => {
+    if (!isMobile) return;
+    return () => setPaneChrome(null);
+  }, [identityId, isMobile, paneId, routeKey, setPaneChrome]);
   useLayoutEffect(() => {
     if (!isMobile) return;
     // Direct header actions (e.g. the Companion toggle) travel on their own
@@ -979,7 +986,6 @@ export default function PaneShell({
       actions: reconciledActions,
       options: paneMenuOptions,
     });
-    return () => setPaneChrome(null);
   }, [
     activateIdentityAnchor,
     header,
