@@ -63,6 +63,12 @@ let requests: RecordedRequest[] = [];
 let openablesResponse:
   | Promise<Response>
   | ((init: RequestInit | undefined) => Promise<Response>);
+let searchResponse:
+  | Promise<Response>
+  | ((init: RequestInit | undefined) => Promise<Response>);
+let selectionResponse:
+  | Promise<Response>
+  | ((init: RequestInit | undefined) => Promise<Response>);
 let mediaFromUrlResponse: Promise<Response> | null;
 let viewport: ReturnType<typeof mockViewport>;
 let allowWorkspaceSessionWrite = false;
@@ -124,6 +130,13 @@ function mockApi() {
   openablesResponse = Promise.resolve(
     jsonResponse({ data: { items: [] } }),
   );
+  searchResponse = Promise.resolve(
+    jsonResponse({
+      results: [],
+      page: { has_more: false, next_cursor: null },
+    }),
+  );
+  selectionResponse = Promise.resolve(jsonResponse({ data: null }));
   mediaFromUrlResponse = null;
   return vi
     .spyOn(globalThis, "fetch")
@@ -144,7 +157,9 @@ function mockApi() {
         url.pathname === "/api/me/nexus-selections" &&
         init?.method === "POST"
       ) {
-        return jsonResponse({ data: null });
+        return typeof selectionResponse === "function"
+          ? selectionResponse(init)
+          : selectionResponse;
       }
       if (
         allowWorkspaceSessionWrite &&
@@ -159,10 +174,9 @@ function mockApi() {
           : openablesResponse;
       }
       if (url.pathname === "/api/search") {
-        return jsonResponse({
-          results: [],
-          page: { has_more: false, next_cursor: null },
-        });
+        return typeof searchResponse === "function"
+          ? searchResponse(init)
+          : searchResponse;
       }
       if (
         url.pathname === "/api/media/from-url" &&
@@ -363,6 +377,14 @@ function selectionRequests(): RecordedRequest[] {
   );
 }
 
+function queryHistoryRequests(): RecordedRequest[] {
+  return requests.filter(
+    ({ url }) =>
+      url.pathname === "/api/me/nexus-history" &&
+      url.searchParams.has("query"),
+  );
+}
+
 beforeEach(() => {
   localStorage.clear();
   window.history.replaceState({}, "", "/");
@@ -444,6 +466,7 @@ describe("Nexus shell contracts", () => {
     act(() => {
       for (const callback of secondFrame) callback(performance.now());
     });
+    expect(selectionRequests()).toHaveLength(0);
     await waitFor(() => expect(selectionRequests()).toHaveLength(1));
     expect(selectionRequests()[0]!.body).toMatchObject({
       query: null,
@@ -488,6 +511,50 @@ describe("Nexus shell contracts", () => {
     });
     expect(selectionRequests()).toHaveLength(1);
     expect(selectionRequests()[0]!.init?.keepalive).toBe(true);
+  });
+
+  it("interrupts persistence for foreground work and replays the same mutation afterward", async () => {
+    let attempt = 0;
+    selectionResponse = async (init) => {
+      attempt += 1;
+      if (attempt > 1) return jsonResponse({ data: null });
+      const signal = init?.signal;
+      if (!(signal instanceof AbortSignal)) {
+        throw new Error("Selection persistence requires an abort signal");
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    };
+    renderNexus({ mobile: true });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Nexus, 1 tab" }),
+    );
+    let dialog = await screen.findByRole("dialog", { name: "Nexus" });
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /^Notes Place$/ }),
+    );
+    await waitFor(() => expect(selectionRequests()).toHaveLength(1));
+    const mutationId = selectionRequests()[0]!.body?.client_mutation_id;
+    const firstSignal = selectionRequests()[0]!.init?.signal;
+    expect(mutationId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(firstSignal).toBeInstanceOf(AbortSignal);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Nexus, 1 tab" }),
+    );
+    dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    await waitFor(() => expect(firstSignal?.aborted).toBe(true));
+    expect(selectionRequests()).toHaveLength(1);
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(selectionRequests()).toHaveLength(2));
+    expect(selectionRequests()[1]!.body?.client_mutation_id).toBe(mutationId);
   });
 
   it("uses Nexus.Open to open the inline row menu and no-ops without row actions", async () => {
@@ -571,6 +638,51 @@ describe("Nexus shell contracts", () => {
     expect(
       String(selectionRequests()[0]!.body?.client_mutation_id),
     ).toMatch(/^[0-9a-f-]{36}$/i);
+  });
+
+  it("starts query-aware history only after the foreground provider chain settles", async () => {
+    let resolveOpenables!: (response: Response) => void;
+    let resolveSearch!: (response: Response) => void;
+    const openablesStarted = new Promise<void>((resolve) => {
+      openablesResponse = () => {
+        resolve();
+        return new Promise<Response>((resolveResponse) => {
+          resolveOpenables = resolveResponse;
+        });
+      };
+    });
+    const searchStarted = new Promise<void>((resolve) => {
+      searchResponse = () => {
+        resolve();
+        return new Promise<Response>((resolveResponse) => {
+          resolveSearch = resolveResponse;
+        });
+      };
+    });
+    renderNexus();
+    act(() => requestNexusOpen({ kind: "Root" }));
+    const input = await screen.findByRole("combobox", {
+      name: "Find anything…",
+    });
+
+    fireEvent.change(input, { target: { value: "alpha" } });
+    await openablesStarted;
+    expect(queryHistoryRequests()).toHaveLength(0);
+
+    resolveOpenables(jsonResponse({ data: { items: [] } }));
+    await searchStarted;
+    expect(queryHistoryRequests()).toHaveLength(0);
+
+    resolveSearch(
+      jsonResponse({
+        results: [],
+        page: { has_more: false, next_cursor: null },
+      }),
+    );
+    await waitFor(() => expect(queryHistoryRequests()).toHaveLength(1));
+    expect(queryHistoryRequests()[0]!.url.searchParams.get("query")).toBe(
+      "alpha",
+    );
   });
 
   it("never projects a delayed provider response onto a newer query revision", async () => {

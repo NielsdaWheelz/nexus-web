@@ -865,6 +865,10 @@ function p95(samples: readonly number[]): number {
   );
 }
 
+function p95OrNull(samples: readonly number[]): number | null {
+  return samples.length === 0 ? null : p95(samples);
+}
+
 async function measureCount(page: Page, name: string): Promise<number> {
   return page.evaluate(
     (measureName) =>
@@ -1496,6 +1500,7 @@ test.describe("mobile Nexus task", () => {
           )
           .slice(-sampleCount);
         return entries.map((entry) => ({
+          startTimeMs: entry.startTime,
           durationMs: entry.duration,
           apiDurationMs:
             entry.serverTiming.find((timing) => timing.name === "nexus_api")
@@ -1513,6 +1518,36 @@ test.describe("mobile Nexus task", () => {
         }));
       }, OPENABLES_SAMPLE_COUNT);
       expect(openablesResourceTimings).toHaveLength(OPENABLES_SAMPLE_COUNT);
+      const historyResourceTimings = await page.evaluate(() =>
+        performance
+          .getEntriesByType("resource")
+          .filter((entry): entry is PerformanceResourceTiming => {
+            if (!(entry instanceof PerformanceResourceTiming)) return false;
+            const url = new URL(entry.name);
+            return (
+              url.pathname === "/api/me/nexus-history" &&
+              url.searchParams.get("query")?.startsWith("openables-sample-") ===
+                true
+            );
+          })
+          .map((entry) => ({
+            startTimeMs: entry.startTime,
+            durationMs: entry.duration,
+          })),
+      );
+      const searchResourceTimings = await page.evaluate(() =>
+        performance
+          .getEntriesByType("resource")
+          .filter(
+            (entry): entry is PerformanceResourceTiming =>
+              entry instanceof PerformanceResourceTiming &&
+              new URL(entry.name).pathname === "/api/search",
+          )
+          .map((entry) => ({
+            startTimeMs: entry.startTime,
+            durationMs: entry.duration,
+          })),
+      );
       const apiSamples = openablesResourceTimings.flatMap((timing) =>
         timing.apiDurationMs === null ? [] : [timing.apiDurationMs],
       );
@@ -1546,6 +1581,47 @@ test.describe("mobile Nexus task", () => {
         (duration, index) =>
           duration - openablesResourceTimings[index]!.durationMs,
       );
+      const historyDurationSamples = historyResourceTimings.map(
+        (timing) => timing.durationMs,
+      );
+      const openablesHistoryOverlap = openablesResourceTimings.map(
+        (openablesTiming) => {
+          const openablesEndMs =
+            openablesTiming.startTimeMs + openablesTiming.durationMs;
+          return historyResourceTimings.some((historyTiming) => {
+            const historyEndMs =
+              historyTiming.startTimeMs + historyTiming.durationMs;
+            return (
+              historyTiming.startTimeMs < openablesEndMs &&
+              historyEndMs > openablesTiming.startTimeMs
+            );
+          });
+        },
+      );
+      const openablesSearchOverlap = openablesResourceTimings.map(
+        (openablesTiming) => {
+          const openablesEndMs =
+            openablesTiming.startTimeMs + openablesTiming.durationMs;
+          return searchResourceTimings.some((searchTiming) => {
+            const searchEndMs =
+              searchTiming.startTimeMs + searchTiming.durationMs;
+            return (
+              searchTiming.startTimeMs < openablesEndMs &&
+              searchEndMs > openablesTiming.startTimeMs
+            );
+          });
+        },
+      );
+      const openablesBackgroundOverlap = openablesHistoryOverlap.map(
+        (historyOverlap, index) =>
+          historyOverlap || openablesSearchOverlap[index]!,
+      );
+      const overlappedOpenablesServiceSamples = openablesServiceSamples.filter(
+        (_, index) => openablesBackgroundOverlap[index],
+      );
+      const isolatedOpenablesServiceSamples = openablesServiceSamples.filter(
+        (_, index) => !openablesBackgroundOverlap[index],
+      );
 
       await input.fill("");
       await dialog.getByRole("button", { name: "Done" }).tap();
@@ -1563,6 +1639,23 @@ test.describe("mobile Nexus task", () => {
         await expect(nexusDialog(page)).toBeHidden();
         await waitForMeasureCount(page, "nexus-pane-activate", iteration + 1);
       }
+      await expect
+        .poll(
+          () =>
+            page.evaluate(
+              () =>
+                performance
+                  .getEntriesByType("resource")
+                  .filter(
+                    (entry): entry is PerformanceResourceTiming =>
+                      entry instanceof PerformanceResourceTiming &&
+                      new URL(entry.name).pathname ===
+                        "/api/me/nexus-selections",
+                  ).length,
+            ),
+          { message: "expected setup selection writes to settle" },
+        )
+        .toBeGreaterThanOrEqual(PERFORMANCE_SETUP_ITERATIONS);
       await page.evaluate(() =>
         performance.clearMeasures("nexus-pane-activate"),
       );
@@ -1579,6 +1672,68 @@ test.describe("mobile Nexus task", () => {
       const activateSamples = await measureDurations(
         page,
         "nexus-pane-activate",
+      );
+      const activateTimings = await page.evaluate(() =>
+        performance
+          .getEntriesByName("nexus-pane-activate", "measure")
+          .map((entry) => ({
+            startTimeMs: entry.startTime,
+            durationMs: entry.duration,
+          })),
+      );
+      expect(activateTimings).toHaveLength(PERFORMANCE_SAMPLE_COUNT);
+      const firstActivateStartTimeMs = activateTimings[0]!.startTimeMs;
+      const selectionResourceCount = () =>
+        page.evaluate(
+          (startTimeMs) =>
+            performance
+              .getEntriesByType("resource")
+              .filter(
+                (entry): entry is PerformanceResourceTiming =>
+                  entry instanceof PerformanceResourceTiming &&
+                  entry.startTime >= startTimeMs &&
+                  new URL(entry.name).pathname === "/api/me/nexus-selections",
+              ).length,
+          firstActivateStartTimeMs,
+        );
+      await expect
+        .poll(selectionResourceCount, {
+          message: "expected every measured selection write to settle",
+        })
+        .toBe(PERFORMANCE_SAMPLE_COUNT);
+      const selectionResourceTimings = await page.evaluate(
+        (startTimeMs) =>
+          performance
+            .getEntriesByType("resource")
+            .filter(
+              (entry): entry is PerformanceResourceTiming =>
+                entry instanceof PerformanceResourceTiming &&
+                entry.startTime >= startTimeMs &&
+                new URL(entry.name).pathname === "/api/me/nexus-selections",
+            )
+            .map((entry) => ({
+              startTimeMs: entry.startTime,
+              durationMs: entry.duration,
+            })),
+        firstActivateStartTimeMs,
+      );
+      const activateSelectionOverlap = activateTimings.map((activateTiming) => {
+        const activateEndMs =
+          activateTiming.startTimeMs + activateTiming.durationMs;
+        return selectionResourceTimings.some((selectionTiming) => {
+          const selectionEndMs =
+            selectionTiming.startTimeMs + selectionTiming.durationMs;
+          return (
+            selectionTiming.startTimeMs < activateEndMs &&
+            selectionEndMs > activateTiming.startTimeMs
+          );
+        });
+      });
+      const overlappedActivateSamples = activateSamples.filter(
+        (_, index) => activateSelectionOverlap[index],
+      );
+      const isolatedActivateSamples = activateSamples.filter(
+        (_, index) => !activateSelectionOverlap[index],
       );
       const performanceSummary = {
         conditions: {
@@ -1619,6 +1774,29 @@ test.describe("mobile Nexus task", () => {
             bffOverheadP95Ms: p95(bffOverheadSamples),
             responseTransferP95Ms: p95(responseTransferSamples),
             clientCommitP95Ms: p95(clientCommitSamples),
+            historyRequestP95Ms: p95OrNull(historyDurationSamples),
+            searchRequestP95Ms: p95OrNull(
+              searchResourceTimings.map((timing) => timing.durationMs),
+            ),
+            openablesOverlappedByHistory: openablesHistoryOverlap.filter(
+              Boolean,
+            ).length,
+            openablesOverlappedBySearch: openablesSearchOverlap.filter(Boolean)
+              .length,
+            overlappedServiceP95Ms: p95OrNull(
+              overlappedOpenablesServiceSamples,
+            ),
+            isolatedServiceP95Ms: p95OrNull(isolatedOpenablesServiceSamples),
+          },
+          "nexus-pane-activate": {
+            selectionRequestP95Ms: p95(
+              selectionResourceTimings.map((timing) => timing.durationMs),
+            ),
+            activationsOverlappedBySelection: activateSelectionOverlap.filter(
+              Boolean,
+            ).length,
+            overlappedP95Ms: p95OrNull(overlappedActivateSamples),
+            isolatedP95Ms: p95OrNull(isolatedActivateSamples),
           },
         },
       };
@@ -1633,6 +1811,18 @@ test.describe("mobile Nexus task", () => {
       expect(findSamples).toHaveLength(PERFORMANCE_SAMPLE_COUNT);
       expect(activateSamples).toHaveLength(PERFORMANCE_SAMPLE_COUNT);
       expect(openablesSamples).toHaveLength(OPENABLES_SAMPLE_COUNT);
+      expect(
+        openablesHistoryOverlap.filter(Boolean),
+        "query history must not overlap latency-critical Openables work",
+      ).toHaveLength(0);
+      expect(
+        openablesSearchOverlap.filter(Boolean),
+        "canonical Search must not overlap latency-critical Openables work",
+      ).toHaveLength(0);
+      expect(
+        activateSelectionOverlap.filter(Boolean),
+        "selection persistence must not overlap pane activation",
+      ).toHaveLength(0);
       expect(
         p95(openSamples),
         `nexus-open p95: ${p95(openSamples).toFixed(2)}ms`,

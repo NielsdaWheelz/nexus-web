@@ -143,9 +143,10 @@ def _seed_scale_fixture(db: Session, *, viewer_id: UUID) -> tuple[int, int]:
 
 
 def _request(index: int) -> ResourceOpenableSearchRequest:
+    query = f"openables-missing-{index}" if index % 2 == 0 else f"cohort {index % 50}"
     return ResourceOpenableSearchRequest.model_validate(
         {
-            "q": f"cohort {index % 50}",
+            "q": query,
             "schemes": {"kind": "Absent"},
         }
     )
@@ -187,7 +188,7 @@ def test_openables_meets_warm_real_backend_scale_gate(
             viewer_id=bootstrapped_user,
             request=_request(index),
         )
-        assert response.items
+        assert bool(response.items) is (index % 2 == 1)
 
     candidate_passes = 0
     statement_counts: list[int] = []
@@ -235,6 +236,8 @@ def test_openables_meets_warm_real_backend_scale_gate(
     event.listen(bind, "before_cursor_execute", observe)
     event.listen(bind, "after_cursor_execute", record_statement_duration)
     durations_ms: list[float] = []
+    matching_durations_ms: list[float] = []
+    missing_durations_ms: list[float] = []
     try:
         for index in range(_MEASURED_QUERY_COUNT):
             statement_counts.append(0)
@@ -244,13 +247,21 @@ def test_openables_meets_warm_real_backend_scale_gate(
                 viewer_id=bootstrapped_user,
                 request=_request(index),
             )
-            durations_ms.append((perf_counter_ns() - started_ns) / 1_000_000)
-            assert response.items
+            duration_ms = (perf_counter_ns() - started_ns) / 1_000_000
+            durations_ms.append(duration_ms)
+            if index % 2 == 0:
+                missing_durations_ms.append(duration_ms)
+                assert not response.items
+            else:
+                matching_durations_ms.append(duration_ms)
+                assert response.items
     finally:
         event.remove(bind, "before_cursor_execute", observe)
         event.remove(bind, "after_cursor_execute", record_statement_duration)
 
     latency_p95_ms = _p95(durations_ms)
+    missing_statement_counts = statement_counts[::2]
+    matching_statement_counts = statement_counts[1::2]
 
     explain: object | None = None
     if captured_candidate is not None:
@@ -280,9 +291,14 @@ def test_openables_meets_warm_real_backend_scale_gate(
             "mean": fmean(durations_ms),
             "min": min(durations_ms),
             "p95": latency_p95_ms,
+            "matching_p95": _p95(matching_durations_ms),
+            "missing_p95": _p95(missing_durations_ms),
         },
         "measured_queries": len(durations_ms),
-        "sql_statements_per_query": statement_counts[0],
+        "sql_statements_per_query": {
+            "matching": matching_statement_counts[0],
+            "missing": missing_statement_counts[0],
+        },
         "warmup_queries": _WARMUP_QUERY_COUNT,
     }
     print(f"OPENABLES_SCALE_REPORT={json.dumps(report, sort_keys=True, default=str)}")
@@ -290,7 +306,8 @@ def test_openables_meets_warm_real_backend_scale_gate(
     assert candidate_passes == _MEASURED_QUERY_COUNT
     assert len(statement_counts) == _MEASURED_QUERY_COUNT
     assert max(statement_counts) <= _MAX_SQL_STATEMENTS_PER_QUERY
-    assert len(set(statement_counts)) == 1
+    assert set(missing_statement_counts) == {1}
+    assert set(matching_statement_counts) == {3}
     assert latency_p95_ms < _P95_BUDGET_MS
     assert isinstance(explain, list) and explain
     assert explain[0]["Plan"]["Actual Loops"] >= 1

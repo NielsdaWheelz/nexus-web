@@ -71,6 +71,7 @@ import type {
   RetainedActivationSource,
 } from "@/lib/nexus/model";
 import { nexusEntryKeyValue } from "@/lib/nexus/model";
+import { useNexusSelectionJournal } from "@/lib/nexus/useNexusSelectionJournal";
 import {
   commitNexusRevision,
   composeNexusProjection,
@@ -137,29 +138,6 @@ import {
   useAddContentSession,
   type AddContentSessionController,
 } from "./useAddContentSession";
-
-function scheduleAfterDestinationPaint(task: () => void): void {
-  let firstFrame: number | null = null;
-  let secondFrame: number | null = null;
-  let settled = false;
-  const run = () => {
-    if (settled) return;
-    settled = true;
-    if (firstFrame !== null) window.cancelAnimationFrame(firstFrame);
-    if (secondFrame !== null) window.cancelAnimationFrame(secondFrame);
-    window.removeEventListener("pagehide", run);
-    task();
-  };
-
-  // Internal pane navigation owns the initiating event and its first paint.
-  // History is an observational side effect, so keep it off that critical path;
-  // pagehide remains an exact-once escape hatch when the browser suppresses rAF.
-  window.addEventListener("pagehide", run, { once: true });
-  firstFrame = window.requestAnimationFrame(() => {
-    firstFrame = null;
-    secondFrame = window.requestAnimationFrame(run);
-  });
-}
 
 interface NexusHistoryResponse {
   readonly data: {
@@ -342,6 +320,8 @@ export function useNexusController(): NexusController {
   const [announcement, setAnnouncement] = useState("");
   const [openablesRetry, setOpenablesRetry] = useState(0);
   const [searchRetry, setSearchRetry] = useState(0);
+  const [historyEnabled, setHistoryEnabled] = useState(false);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [showBusy, setShowBusy] = useState(false);
   const [pendingDismissal, setPendingDismissal] =
     useState<PendingDismissal | null>(null);
@@ -354,6 +334,25 @@ export function useNexusController(): NexusController {
   const suppressReturnFocusRef = useRef(false);
   const requestIdRef = useRef(0);
   const openablesCacheRef = useRef(new Map<string, ResourceOpenableSearchResponse>());
+  const handleHistoryWriteError = useCallback(
+    (error: unknown) => {
+      if (handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      feedback.show(
+        toFeedback(error, { fallback: "Nexus history was not saved" }),
+      );
+    },
+    [feedback],
+  );
+  const markHistoryCommitted = useCallback(
+    () => setHistoryRevision((value) => value + 1),
+    [],
+  );
+  const recordSelection = useNexusSelectionJournal({
+    foregroundActive: open,
+    onError: handleHistoryWriteError,
+    onQuiescentCommit: markHistoryCommitted,
+  });
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const todayLocalDate = resolveDailyLocalDate(
@@ -368,6 +367,7 @@ export function useNexusController(): NexusController {
   useEffect(() => {
     if (open) {
       suppressReturnFocusRef.current = false;
+      setHistoryEnabled(true);
       return;
     }
     // Results are useful only within one visible Nexus session. Release them
@@ -377,27 +377,13 @@ export function useNexusController(): NexusController {
     openablesCacheRef.current = new Map();
   }, [open]);
 
-  const historyPath = useMemo<ApiPath | null>(() => {
-    if (!open) return null;
-    return parsed.text
-      ? (`/api/me/nexus-history?${new URLSearchParams({ query: parsed.text })}` as ApiPath)
-      : "/api/me/nexus-history";
-  }, [open, parsed.text]);
-  const historyResource = useResource<NexusHistoryResponse>({
-    cacheKey: historyPath,
-    path: (path) => path as ApiPath,
+  const baseHistoryResource = useResource<NexusHistoryResponse>({
+    cacheKey: historyEnabled
+      ? `${accountId}:nexus-history:${historyRevision}`
+      : null,
+    load: (signal) =>
+      apiFetch<NexusHistoryResponse>("/api/me/nexus-history", { signal }),
   });
-  const history = useMemo(() => {
-    if (historyResource.status !== "ready") {
-      return { recent: EMPTY_RECENT, frecencyByHref: EMPTY_FRECENCY };
-    }
-    return {
-      recent: historyResource.data.data.recent.filter(
-        (entry) => !isAndroidShellRestrictedHref(entry.target_href, androidShell),
-      ),
-      frecencyByHref: historyResource.data.data.frecency_by_href,
-    };
-  }, [androidShell, historyResource]);
 
   const panes = useMemo<NexusManagedPane[]>(
     () =>
@@ -476,8 +462,9 @@ export function useNexusController(): NexusController {
   // Preserve the established latency policy: cheap Openables reaches a
   // terminal state before expensive owned full-text retrieval starts.
   const openablesTerminal =
-    openablesFetch.dataIdentity === ownedCandidateIdentity ||
-    openablesFetch.errorIdentity === ownedCandidateIdentity;
+    openablesIdentity !== null &&
+    (openablesFetch.dataIdentity === openablesIdentity ||
+      openablesFetch.errorIdentity === openablesIdentity);
   const ownedIdentity =
     ownedCandidateIdentity !== null && openablesTerminal
       ? ownedCandidateIdentity
@@ -492,6 +479,50 @@ export function useNexusController(): NexusController {
       }),
     { debounceMs: SEARCH_DEBOUNCE_MS, identity: ownedIdentity },
   );
+  const ownedTerminal =
+    ownedIdentity !== null &&
+    (ownedFetch.dataIdentity === ownedIdentity ||
+      ownedFetch.errorIdentity === ownedIdentity);
+  const typedHistoryIdentity =
+    findEnabled &&
+    (parsed.text.length === 1 ? openablesTerminal : ownedTerminal)
+      ? query
+      : null;
+  const typedHistoryPath =
+    typedHistoryIdentity === null
+      ? null
+      : (`/api/me/nexus-history?${new URLSearchParams({ query: parsed.text })}` as ApiPath);
+  const typedHistoryResource = useResource<NexusHistoryResponse>({
+    cacheKey:
+      typedHistoryPath === null
+        ? null
+        : `${accountId}:${historyRevision}:${typedHistoryPath}`,
+    load: (signal) => {
+      if (typedHistoryPath === null) {
+        throw new Error("Typed Nexus history requires a current query path");
+      }
+      return apiFetch<NexusHistoryResponse>(typedHistoryPath, { signal });
+    },
+  });
+  const history = useMemo(() => {
+    const baseData =
+      baseHistoryResource.status === "ready"
+        ? baseHistoryResource.data.data
+        : null;
+    const typedData =
+      typedHistoryResource.status === "ready"
+        ? typedHistoryResource.data.data
+        : null;
+    return {
+      recent: (baseData?.recent ?? EMPTY_RECENT).filter(
+        (entry) => !isAndroidShellRestrictedHref(entry.target_href, androidShell),
+      ),
+      frecencyByHref:
+        (parsed.text ? typedData?.frecency_by_href : null) ??
+        baseData?.frecency_by_href ??
+        EMPTY_FRECENCY,
+    };
+  }, [androidShell, baseHistoryResource, parsed.text, typedHistoryResource]);
   const openablesData =
     openablesFetch.dataIdentity === openablesIdentity
       ? openablesFetch.data
@@ -895,24 +926,9 @@ export function useNexusController(): NexusController {
         label_snapshot: entry.label,
         source: entry.historySource,
       };
-      scheduleAfterDestinationPaint(() => {
-        void apiFetch("/api/me/nexus-selections", {
-          method: "POST",
-          keepalive: true,
-          body: JSON.stringify({
-            client_mutation_id: crypto.randomUUID(),
-            ...selection,
-          }),
-        }).catch((error: unknown) => {
-          if (handleUnauthenticatedApiError(error)) return;
-          if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-          feedback.show(
-            toFeedback(error, { fallback: "Nexus history was not saved" }),
-          );
-        });
-      });
+      recordSelection(selection);
     },
-    [androidShell, feedback, panes, parsed.text],
+    [androidShell, panes, parsed.text, recordSelection],
   );
   const dispatch = useCallback(
     (
