@@ -861,8 +861,8 @@ and more diagnosable proof.
 
 Build these in order:
 
-1. one repository-owned `changed`, `pr`, `full`, `nightly`, `release`, and
-   `doctor` interface;
+1. one repository-owned `changed`, `confidence`, `pr`, `full`, `nightly`,
+   `release`, and `doctor` interface;
 2. an explicit memory-admission floor, measured ratchets, no `-n auto`, and no
    overlapping heavy local gates;
 3. one persistent Postgres/MinIO/Supabase stack;

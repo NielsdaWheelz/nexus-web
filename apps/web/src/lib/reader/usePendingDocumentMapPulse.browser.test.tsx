@@ -21,6 +21,10 @@ function pulseTarget(highlightId: string): ReaderPulseTarget {
   };
 }
 
+function pulseTelemetry(): string {
+  return screen.getByLabelText("Pending pulse telemetry").textContent ?? "";
+}
+
 function PendingPulseHarness() {
   const [activeFragmentId, setActiveFragmentId] = useState("fragment-origin");
   const [renderRevision, setRenderRevision] = useState(0);
@@ -133,29 +137,29 @@ it("retries a cancelled highlight position before releasing its pending pulse", 
 
   fireEvent.click(screen.getByRole("button", { name: "Activate first highlight" }));
   await waitFor(() =>
-    expect(screen.getByLabelText("Pending pulse telemetry")).toHaveTextContent(
-      "attempts=1;cancellations=0;pulses=none",
+    expect(pulseTelemetry()).toBe(
+      "attempts=1;cancellations=0;pulses=none;apparatus=none",
     ),
   );
 
   fireEvent.click(screen.getByRole("button", { name: "Interrupt rendered content" }));
   await waitFor(() =>
     expect(
-      screen.getByLabelText("Pending pulse telemetry"),
+      pulseTelemetry(),
       "Interrupted render did not retain the pending Document Map highlight",
-    ).toHaveTextContent("attempts=2;cancellations=1;pulses=none"),
+    ).toBe("attempts=2;cancellations=1;pulses=none;apparatus=none"),
   );
 
   fireEvent.click(screen.getByRole("button", { name: "Complete latest attempt" }));
   expect(
-    screen.getByLabelText("Pending pulse telemetry"),
+    pulseTelemetry(),
     "A render interruption discarded the pending Document Map highlight activation",
-  ).toHaveTextContent("attempts=2;cancellations=1;pulses=highlight-1");
+  ).toBe("attempts=2;cancellations=1;pulses=highlight-1;apparatus=none");
 
   fireEvent.click(screen.getByRole("button", { name: "Interrupt rendered content" }));
   await waitFor(() =>
-    expect(screen.getByLabelText("Pending pulse telemetry")).toHaveTextContent(
-      "attempts=2;cancellations=2;pulses=highlight-1",
+    expect(pulseTelemetry()).toBe(
+      "attempts=2;cancellations=2;pulses=highlight-1;apparatus=none",
     ),
   );
 });
@@ -165,26 +169,26 @@ it("ignores a cancelled completion after a newer highlight takes ownership", asy
 
   fireEvent.click(screen.getByRole("button", { name: "Activate first highlight" }));
   await waitFor(() =>
-    expect(screen.getByLabelText("Pending pulse telemetry")).toHaveTextContent(
-      "attempts=1;cancellations=0;pulses=none",
+    expect(pulseTelemetry()).toBe(
+      "attempts=1;cancellations=0;pulses=none;apparatus=none",
     ),
   );
   fireEvent.click(screen.getByRole("button", { name: "Replace with second highlight" }));
   await waitFor(() =>
-    expect(screen.getByLabelText("Pending pulse telemetry")).toHaveTextContent(
-      "attempts=2;cancellations=1;pulses=none",
+    expect(pulseTelemetry()).toBe(
+      "attempts=2;cancellations=1;pulses=none;apparatus=none",
     ),
   );
 
   fireEvent.click(screen.getByRole("button", { name: "Complete first attempt" }));
   expect(
-    screen.getByLabelText("Pending pulse telemetry"),
+    pulseTelemetry(),
     "A cancelled activation was allowed to pulse after a newer target took ownership",
-  ).toHaveTextContent("pulses=none");
+  ).toBe("attempts=2;cancellations=1;pulses=none;apparatus=none");
 
   fireEvent.click(screen.getByRole("button", { name: "Complete latest attempt" }));
-  expect(screen.getByLabelText("Pending pulse telemetry")).toHaveTextContent(
-    "pulses=highlight-2",
+  expect(pulseTelemetry()).toBe(
+    "attempts=2;cancellations=1;pulses=highlight-2;apparatus=none",
   );
 });
 
@@ -195,10 +199,10 @@ it("focuses and pulses a queued source reference after its fragment commits", as
 
   await waitFor(() =>
     expect(
-      screen.getByLabelText("Pending pulse telemetry"),
+      pulseTelemetry(),
       "Queued source-reference activation did not complete both visible effects",
-    ).toHaveTextContent(
-      "pulses=apparatus-highlight;apparatus=source-reference-1",
+    ).toBe(
+      "attempts=0;cancellations=0;pulses=apparatus-highlight;apparatus=source-reference-1",
     ),
   );
 });

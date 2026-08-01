@@ -271,7 +271,7 @@
       "proofs": [
         "vitest:apps/web/src/lib/reader/usePendingDocumentMapPulse.browser.test.tsx"
       ],
-      "expected_failure": "pulses=apparatus-highlight;apparatus=source-reference-1"
+      "expected_failure": "Interrupted render did not retain the pending Document Map highlight"
     },
     {
       "id": "pdf-committed-highlight-projection-bypass",
