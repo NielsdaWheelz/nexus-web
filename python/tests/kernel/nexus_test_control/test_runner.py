@@ -1201,6 +1201,47 @@ def test_run_proof_rejects_missing_or_inexact_browser_nodes_without_preparing_ru
     assert missing.evidence.id is Capability.SERVICE
 
 
+def test_exact_browser_component_proof_never_prepares_a_local_stack(tmp_path: Path) -> None:
+    proof = "apps/web/src/owned.browser.test.ts"
+    _write(tmp_path / proof, "export {};\n")
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    environment = _stub_tools(tmp_path, "bun")
+
+    class Ports(runner._RunnerPorts):
+        def browser_installed(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+        ) -> bool:
+            return True
+
+        def prepare_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            *,
+            run_id: str,
+            include_migration_database: bool,
+        ) -> OwnedTestRun:
+            del run_id, include_migration_database
+            raise AssertionError("component proof provisioned the database/object/auth stack")
+
+    result = run_proof(
+        CapabilityContext(tmp_path, Workflow.CHANGED, ()),
+        f"vitest:{proof}",
+        environment,
+        _ports=Ports(),
+        _available_memory=lambda: 8192,
+    )
+
+    assert result.evidence.status is RunStatus.PASS
+    command = _commands(tmp_path)[0]
+    assert command["argv"] == ["run", "test:browser", "--", "./src/owned.browser.test.ts"]
+    assert {"NEXUS_ENV", "NEXUS_TEST_RUN_ID"}.issubset(command["environment"])
+    assert "DATABASE_URL" not in command["environment"]
+
+
 def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behavioral() -> None:
     evidence = CapabilityEvidence(Capability.SERVICE, RunStatus.FAIL, 1, 0)
     proof = "pytest:python/tests/service/test_owned.py::test_exact"

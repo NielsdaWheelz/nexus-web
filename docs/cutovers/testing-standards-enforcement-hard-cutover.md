@@ -565,13 +565,16 @@ Sensitivity is enforced by the control plane, not by PR prose:
    targeted fault id from `testdata/faults/manifest.json`. The control plane
    applies that small checked patch to an isolated current worktree. Do not
    build a mutation framework or commit a production defect.
-4. One PR sensitivity portfolio reuses one isolated worktree, one
-   checkout-local locked Python environment, and persistent local services per
-   revision group. The environment is materialized offline from the lock and
-   is deleted with the worktree; it MUST NOT symlink, retarget, or reconcile the
-   developer worktree's `.venv`. The portfolio applies and exactly reverses one
-   fault at a time; every proof still receives disposable run state. Do not
-   rebuild the stack, Python environment, or schema template once per proof.
+4. One PR sensitivity portfolio reuses one isolated worktree and one
+   checkout-local locked Python environment per revision group. The environment
+   is materialized offline from the lock and is deleted with the worktree; it
+   MUST NOT symlink, retarget, or reconcile the developer worktree's `.venv`.
+   Persistent services and disposable run state are created lazily and shared
+   only by proof boundaries that require them; a static, kernel, component, or
+   Android-host-only portfolio MUST NOT start the service stack or run
+   migrations. The portfolio applies and exactly reverses one fault at a time.
+   Do not rebuild a required stack, Python environment, or schema template once
+   per proof.
 5. Red is valid only when the named proof was collected/executed and failed at
    its expected behavioral assertion or property. Import, collection, build,
    service-readiness, and unrelated-test failures do not count.
@@ -904,8 +907,11 @@ not supported compatibility modes.
   `pr` policy self-test. A sensitivity-required changed proof without a valid
   executed-assertion red and current green sensitivity object fails `pr`;
   collection/build failure is rejected as evidence.
-- **AC3 — reuse:** two consecutive workflows retain identical infrastructure
-  container ids and browser install; the second creates no service stack.
+- **AC3 — reuse and lazy state:** two consecutive real-stack workflows retain
+  identical infrastructure container ids and browser install; the second
+  creates no service stack. A component-only workflow and component-only
+  red/green sensitivity run create no stack, template, database, bucket, user,
+  or app process.
 - **AC4 — isolation:** every run gets a distinct database/bucket; every journey
   gets a distinct user/context; extension proof gets a distinct persistent
   user-data directory; randomized order twice produces the same result; no

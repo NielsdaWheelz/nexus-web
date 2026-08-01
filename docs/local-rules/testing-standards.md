@@ -458,7 +458,11 @@ apply. A direct invocation is not a workflow verdict.
 
 The controller owns one persistent, health-checked, workspace-local
 PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json`.
-Each workflow receives one run ID and disposable writable state:
+It provisions that stack and disposable writable resources lazily, only when a
+selected proof crosses the database, object-storage, auth, or owned app-process
+boundary. Static, kernel, Chromium-component, and Android-host-only workflows
+MUST NOT start the service stack or run migrations. Every workflow receives a
+run ID for ownership and evidence; a real-stack workflow additionally receives:
 
 - a fingerprinted, migrated, non-connectable PostgreSQL template built from
   `template0`, then a clone named `nexus_run_<run-id>`;
@@ -495,11 +499,13 @@ disposable run database; do not add a convenience bypass fixture.
 ### Browser state and helpers
 
 Chromium component proof uses the owner-local testkit and may stub only the
-browser's external fetch/SSE boundary as defined in §6. Every Playwright
-journey creates its own local Supabase user and writable state, uses strict CSP,
-and runs in a fresh context. `storageState`, setup projects, shared seed users,
-and shared mutable JSON are forbidden. The sole Playwright configuration uses
-one worker and zero retries.
+browser's external fetch/SSE boundary as defined in §6. It receives no run
+database, bucket, Supabase user, or migrated template; needing one promotes the
+proof to service or journey ownership. Every Playwright journey creates its own
+local Supabase user and writable state, uses strict CSP, and runs in a fresh
+context. `storageState`, setup projects, shared seed users, and shared mutable
+JSON are forbidden. The sole Playwright configuration uses one worker and zero
+retries.
 
 Each journey declares its product-source owner globs in `testdata/proofs.json`.
 Changing a declared source selects that exact journey. Lazy pane registry/body

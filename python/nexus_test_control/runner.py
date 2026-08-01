@@ -1290,11 +1290,8 @@ def _run_component(
     ports = execution.ports if execution is not None else _RunnerPorts()
     if not ports.browser_installed(context.repo_root, environment):
         return _not_run(capability, "the locked Chromium browser is absent")
-    prepared = _prepared_run(execution, capability)
-    if isinstance(prepared, CapabilityResult):
-        return prepared
     if execution is None:
-        raise AssertionError("prepared run exists without workflow execution")
+        return _not_run(capability, "browser component proof requires workflow ownership")
     if argv is None:
         argv = ("bun", "run", "test:browser")
         if targets:
@@ -1302,7 +1299,7 @@ def _run_component(
     return _run_owned_commands(
         capability,
         ((argv, web_root),),
-        _heavy_environment(context, environment, prepared, execution.ports, browser=True),
+        _component_environment(environment, execution.run_id),
         (argv[0],),
     )
 
@@ -1878,6 +1875,24 @@ def _heavy_environment(
     owned = ports.run_environment(context.repo_root, {"NEXUS_ENV": "test"}, run)
     child.update(
         {key: value for key, value in owned.items() if not browser or key in _BROWSER_RUN_ENV}
+    )
+    return child
+
+
+def _component_environment(
+    caller_environment: Mapping[str, str],
+    run_id: str,
+) -> dict[str, str]:
+    child = {
+        key: value
+        for key in _SAFE_HEAVY_ENV
+        if (value := caller_environment.get(key)) is not None and value != ""
+    }
+    child.update(
+        {
+            "NEXUS_ENV": "test",
+            "NEXUS_TEST_RUN_ID": run_id,
+        }
     )
     return child
 
