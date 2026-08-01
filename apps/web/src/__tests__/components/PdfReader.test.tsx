@@ -37,6 +37,7 @@ const pdfRuntimeState = vi.hoisted(() => ({
   pageBorderTop: 0,
   pageTexts: ["Alpha selected quote Omega"] as string[],
   pageHighlights: [] as unknown[],
+  highlightListResponse: null as Promise<{ data: unknown }> | null,
   createdHighlightId: "created-highlight-1",
   highlightCreateResponse: null as Promise<{ data: unknown }> | null,
 }));
@@ -133,6 +134,9 @@ vi.mock("@/lib/api/client", async () => {
           path.startsWith("/api/media/media-2/pdf-highlights?")) &&
         (init?.method ?? "GET") === "GET"
       ) {
+        if (pdfRuntimeState.highlightListResponse) {
+          return await pdfRuntimeState.highlightListResponse;
+        }
         const params = new URLSearchParams(path.split("?")[1] ?? "");
         const pageNumber = Number(params.get("page_number") ?? "1");
         return {
@@ -551,6 +555,7 @@ describe("PdfReader selection chat destinations", () => {
     pdfRuntimeState.pageBorderTop = 0;
     pdfRuntimeState.pageTexts = ["Alpha selected quote Omega"];
     pdfRuntimeState.pageHighlights = [];
+    pdfRuntimeState.highlightListResponse = null;
     pdfRuntimeState.createdHighlightId = "created-highlight-1";
     pdfRuntimeState.highlightCreateResponse = null;
     vi.mocked(apiFetch).mockClear();
@@ -1268,6 +1273,87 @@ describe("PdfReader selection chat destinations", () => {
       color: "green",
       exact: "selected quote",
     });
+  });
+
+  it("projects a committed PDF highlight before reconciliation finishes", async () => {
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(110, 140, 160, 20),
+    );
+    vi.spyOn(Range.prototype, "getClientRects").mockReturnValue(
+      rectList([new DOMRect(110, 140, 160, 20)]),
+    );
+
+    render(<PdfReader mediaId="media-1" />);
+
+    await screen.findByTestId("pdf-page-text-layer-1");
+    await waitFor(() => {
+      expect(
+        vi
+          .mocked(apiFetch)
+          .mock.calls.filter(
+            ([path, init]) =>
+              path ===
+                "/api/media/media-1/pdf-highlights?page_number=1&mine_only=false" &&
+              (init?.method ?? "GET") === "GET",
+          ),
+      ).toHaveLength(1);
+    });
+
+    const reconciliation = deferred<{ data: unknown }>();
+    pdfRuntimeState.highlightListResponse = reconciliation.promise;
+    pdfRuntimeState.highlightCreateResponse = Promise.resolve({
+      data: {
+        id: "committed-highlight",
+        anchor: {
+          type: "pdf_page_geometry",
+          media_id: "media-1",
+          page_number: 1,
+          quads: [
+            {
+              x1: 70,
+              y1: 60,
+              x2: 230,
+              y2: 60,
+              x3: 230,
+              y3: 80,
+              x4: 70,
+              y4: 80,
+            },
+          ],
+        },
+        color: "green",
+        exact: "selected quote",
+        prefix: "",
+        suffix: "",
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        author_user_id: "user-1",
+        is_owner: true,
+      },
+    });
+
+    const textNode = pdfRuntimeState.textNode;
+    expect(textNode).not.toBeNull();
+    const range = document.createRange();
+    range.setStart(textNode!, "Alpha ".length);
+    range.setEnd(textNode!, "Alpha selected quote".length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Colour" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Green" }));
+
+    try {
+      expect(
+        await screen.findByTestId("pdf-highlight-committed-highlight-0"),
+      ).toBeVisible();
+    } finally {
+      reconciliation.resolve({
+        data: { page_number: 1, highlights: [] },
+      });
+    }
   });
 
   it("repositions from the retained PDF Range after native selection collapse", async () => {
