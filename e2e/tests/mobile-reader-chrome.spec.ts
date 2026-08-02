@@ -2764,6 +2764,39 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       await waitForAnimationFrame(page);
       await waitForAnimationFrame(page);
       await expect
+        .poll(
+          async () => {
+            const [readerInlineBounds, ribbonInlineBounds] = await Promise.all([
+              scrollport.evaluate((element) =>
+                element.getBoundingClientRect().toJSON(),
+              ),
+              positionRibbon.evaluate((element) =>
+                element.getBoundingClientRect().toJSON(),
+              ),
+            ]);
+            return {
+              readerLeft: Math.round(readerInlineBounds.left),
+              readerRightInset: Math.round(
+                viewport.width - readerInlineBounds.right,
+              ),
+              ribbonLeft: Math.round(ribbonInlineBounds.left),
+              ribbonRightInset: Math.round(
+                viewport.width - ribbonInlineBounds.right,
+              ),
+            };
+          },
+          {
+            message:
+              "the reader and its ribbon must consume each physical safe side exactly once",
+          },
+        )
+        .toEqual({
+          readerLeft: safeLeft,
+          readerRightInset: safeRight,
+          ribbonLeft: safeLeft,
+          ribbonRightInset: safeRight,
+        });
+      await expect
         .poll(async () => {
           const [readerBottom, playerTop] = await Promise.all([
             scrollport.evaluate(

@@ -99,14 +99,21 @@ format-owned viewport capture
 MobileViewportProvider
   -> --mobile-content-bottom-clearance
   -> ribbon placement only
+
+PaneShell
+  -> physical safe-left/right padding
+  -> already-safe reader column
+  -> ribbon inline span only
 ```
 
 - `MediaPaneBody` remains the composition owner.
-- `.readerColumn` remains the relative containing block.
+- `PaneShell` remains the sole horizontal side-safe owner. `.readerColumn`
+  remains the already-safe relative containing block.
 - The ribbon is a sibling of the format reader and
   `ReaderProgressHandoff`, after the format reader in DOM order.
-- The ribbon root uses physical mapped safe-left/right tokens and
-  `bottom: var(--mobile-content-bottom-clearance)`.
+- The ribbon root spans the full reader column with `inset-inline: 0` and uses
+  `bottom: var(--mobile-content-bottom-clearance)`. It does not consume the
+  physical safe-left/right tokens again.
 - The band uses logical inline positioning. Use the projected values directly;
   do not mirror them in TypeScript.
 - Use a 2px track, a 2px rounded accent band, and a 2px minimum visible band.
@@ -283,6 +290,11 @@ The cutover is complete only when:
 - Supported real-stack runner: both selected mobile journeys plus auth setup
   passed, 3 total.
 - `git diff --check` and hard-cut residue searches pass.
+- Physical Samsung landscape review found a stale predecessor-composition
+  defect: the already-safe 707px reader column was inset by the 25px/48px
+  physical safe sides a second time, compressing the ribbon to 634px. The
+  corrected source contract keeps `PaneShell` as the sole horizontal safe-side
+  owner and spans the full already-safe reader column.
 - Sensitivity was demonstrated before the owner fixes: the coarse-landscape
   terminal checks measured 138px of PDF overlap and 77.5px of Web overlap, and
   the PDF runtime-error regression observed no null semantic-viewport

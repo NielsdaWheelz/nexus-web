@@ -1,8 +1,7 @@
 .ribbon {
   position: absolute;
-  right: var(--viewport-safe-right);
+  inset-inline: 0;
   bottom: var(--mobile-content-bottom-clearance);
-  left: var(--viewport-safe-left);
   z-index: 2;
   height: 2px;
   background: var(--edge-subtle);

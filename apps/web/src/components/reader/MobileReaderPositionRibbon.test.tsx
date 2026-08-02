@@ -40,7 +40,7 @@ function renderRibbon(options: RibbonOptions = {}) {
 }
 
 describe("MobileReaderPositionRibbon", () => {
-  it("paints the supplied semantic range above composed bottom clearance", () => {
+  it("spans the already-safe reader column above composed bottom clearance", () => {
     renderRibbon();
 
     const hostBounds = screen
@@ -52,8 +52,8 @@ describe("MobileReaderPositionRibbon", () => {
       .getByTestId("mobile-reader-position-band")
       .getBoundingClientRect();
 
-    expect(ribbonBounds.left - hostBounds.left).toBeCloseTo(11, 1);
-    expect(hostBounds.right - ribbonBounds.right).toBeCloseTo(17, 1);
+    expect(ribbonBounds.left).toBeCloseTo(hostBounds.left, 1);
+    expect(ribbonBounds.right).toBeCloseTo(hostBounds.right, 1);
     expect(hostBounds.bottom - ribbonBounds.bottom).toBeCloseTo(31, 1);
     expect(ribbonBounds.height).toBeCloseTo(2, 1);
     expect(bandBounds.height).toBeCloseTo(2, 1);
@@ -98,15 +98,12 @@ describe("MobileReaderPositionRibbon", () => {
     expect(updatedBandBounds.width).not.toBeCloseTo(initialBandBounds.width, 1);
   });
 
-  it("maps normalized zero to logical inline start without swapping physical safe offsets", () => {
+  it("maps normalized zero to logical inline start", () => {
     renderRibbon({
       direction: "rtl",
       visibleRange: { start: 0, end: 0.3 },
     });
 
-    const hostBounds = screen
-      .getByTestId("positioning-host")
-      .getBoundingClientRect();
     const ribbonBounds = screen
       .getByTestId("mobile-reader-position-ribbon")
       .getBoundingClientRect();
@@ -114,8 +111,6 @@ describe("MobileReaderPositionRibbon", () => {
       .getByTestId("mobile-reader-position-band")
       .getBoundingClientRect();
 
-    expect(ribbonBounds.left - hostBounds.left).toBeCloseTo(11, 1);
-    expect(hostBounds.right - ribbonBounds.right).toBeCloseTo(17, 1);
     expect(ribbonBounds.right - bandBounds.right).toBeCloseTo(0, 1);
     expect(bandBounds.width).toBeCloseTo(ribbonBounds.width * 0.3, 1);
   });
