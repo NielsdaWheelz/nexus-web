@@ -269,10 +269,19 @@ remains.
   `[0,0][144,1080]`; pane Back `[24,90][168,237]`, the Lectern clickable row
   beginning at x=72, and MiniPlayer Open beginning at x=36 intersected
   `[0,144)`.
+- Signed `android-v0.2.8` exposed one further product red in gesture-navigation
+  landscape at rotation 3: the native navigation bar began at physical y=1035,
+  but MiniPlayer Open Now Playing ended at y=1041; the other player controls
+  ended at y=1023.
 - The scoped CSS correction keeps pane/chrome/player backgrounds and progress
   full bleed while their existing body, contextual/app-bar, MiniPlayer row,
   and status-row owners apply physical left/right safe tokens to content and
   controls. It adds no bridge, store, or platform branch.
+- The MiniPlayer frame owner now adds its existing 4 CSS px bottom breathing
+  space to the platform safe bottom instead of allowing the larger value to
+  replace the smaller. The focused Chromium sensitivity red reproduced the
+  escape at 346.765625 CSS px against a 345 px safe boundary; the corrected
+  exact journey passed setup plus the grepped case, 2/2.
 - Focused green: `cd apps/web && bun run test:browser --
   src/components/workspace/PaneShell.mobileChrome.browser.test.tsx` passed 1/1
   in 2.61 seconds; `make test-e2e PLAYWRIGHT_ARGS='tests/mobile-reader-chrome.spec.ts
