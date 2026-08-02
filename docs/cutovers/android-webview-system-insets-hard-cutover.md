@@ -1,6 +1,6 @@
 # Android WebView System Insets — Hard Cutover
 
-**Status:** APPROVED — source path implemented; proof and release blocked
+**Status:** IMPLEMENTED — M144 boundary accepted; signed product and release blocked
 
 **Last verified:** 2026-08-02
 
@@ -190,7 +190,7 @@ motion, overlay-lifecycle, SDK, target/min SDK, or dependency change exists.
    workflow checks. Delete obsolete exact-equality and asset-clobber paths.
 4. Tag the intended SHA. Let the existing signing workflow create one draft.
 5. Install that draft, record its SHA-256, and run physical acceptance.
-6. Promote only that hash. Update status to `ACCEPTED` with evidence.
+6. Promote only the signed, physically accepted hash.
 
 Any current signed-product failure expands scope only to its demonstrated
 owner. Revise this document before crossing another boundary.
@@ -255,13 +255,16 @@ remains.
 
 ## Current demonstrated evidence
 
-- Installed stable `android-v0.2.6` on Android 16 / WebView 150 overlaps the
-  144-physical-pixel three-button navigation bar; Retry intersects it by 42 px.
-- Current source on the same phone passes actual-inset and rotation scenarios.
-  The clearing scenario is red only because synthetic 43 physical px is
-  conservatively represented as 45 at DPR 3, outside the obsolete 1 px oracle.
-- Focused web owner/consumer tests pass. No signed current-source APK has yet
-  completed product acceptance. Release remains blocked.
+- 2026-08-02: Samsung Galaxy S22+ SM-S906W, Android 16/API 36, three-button
+  navigation (`mode=0`), 1080x2340, physical density 450/override 480, and
+  System WebView `150.0.7871.181`.
+- Sensitivity red: right CSS 14 px at DPR 3 produced 42 physical px against a
+  native 43 px inset; native zero with retained left CSS 6 px produced 18
+  physical px. Both failed with the intended diagnostics.
+- Same-renderer clearing passed 1/1; the full `RequiresWebViewM144` lane passed
+  3/3 in 57 seconds.
+- This accepts only the M144 native-to-CSS boundary. No signed current-source
+  APK, product matrix, or release promotion is accepted.
 
 ## Non-goals
 
