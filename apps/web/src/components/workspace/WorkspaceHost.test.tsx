@@ -89,6 +89,7 @@ const hostMocks = vi.hoisted(() => ({
     PanePrimaryChromePublication
   >(),
   isMobile: false,
+  browserViewportKind: null as "desktop" | "mobile" | null,
   canvasEdges: { atStart: false, atEnd: false },
   paneCanvasInputs: [] as { mode: string; paneIds: string[] }[],
   runtimeLayout: null as PaneRuntimeLayout | null,
@@ -663,6 +664,9 @@ vi.mock("@/lib/renderEnvironment/provider", () => ({
     initialViewport: "desktop",
   }),
   useAndroidShell: () => false,
+  getBrowserViewportKind: () =>
+    hostMocks.browserViewportKind ??
+    (hostMocks.isMobile ? "mobile" : "desktop"),
   useViewportState: () => ({
     kind: hostMocks.isMobile ? "mobile" : "desktop",
     isMobile: hostMocks.isMobile,
@@ -776,6 +780,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.paneShellSnapshots = [];
     hostMocks.mobileSecondaryInputs = [];
     hostMocks.useActualPaneShell = false;
+    hostMocks.browserViewportKind = null;
     hostMocks.keybindings = { "Pane.Search": "Meta+f" };
     hostMocks.matchesKeyEvent.mockReset();
     hostMocks.matchesKeyEvent.mockImplementation(
@@ -853,6 +858,49 @@ describe("WorkspaceHost pane route lifecycle", () => {
     expect(
       fireEvent.keyDown(editor, { key: "f", metaKey: true }),
     ).toBe(false);
+    const search = await screen.findByRole("searchbox", {
+      name: "Filter pane items",
+    });
+    await waitFor(() => expect(search).toHaveFocus());
+  });
+
+  it("delivers Pane Search to the incoming responsive projection", async () => {
+    hostMocks.useActualPaneShell = true;
+    hostMocks.primaryChromePublicationByPaneId.set("pane-1", {
+      search: {
+        kind: "FilterRows",
+        query: "",
+        inputLabel: "Filter pane items",
+        placeholder: "Filter",
+        onQueryChange: vi.fn(),
+        onDismiss: vi.fn(),
+        rowStatus: {
+          kind: "Complete",
+          visibleCount: 1,
+          totalCount: 1,
+          unit: { singular: "item", plural: "items" },
+        },
+        activeDomainControlCount: 0,
+      },
+    });
+    const view = render(
+      <MobileChromeProvider>
+        <WorkspaceHost />
+      </MobileChromeProvider>,
+    );
+
+    hostMocks.browserViewportKind = "mobile";
+    expect(
+      fireEvent.keyDown(document, { key: "f", ctrlKey: true }),
+    ).toBe(false);
+
+    hostMocks.isMobile = true;
+    view.rerender(
+      <MobileChromeProvider>
+        <WorkspaceHost />
+      </MobileChromeProvider>,
+    );
+
     const search = await screen.findByRole("searchbox", {
       name: "Filter pane items",
     });

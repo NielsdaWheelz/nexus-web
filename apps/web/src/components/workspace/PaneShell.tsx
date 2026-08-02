@@ -207,6 +207,10 @@ interface PaneShellProps {
   onChromeMouseDown?: (event: React.MouseEvent<HTMLElement>) => void;
   isActive?: boolean;
   isMobile?: boolean;
+  responsiveSearchHandoff?: {
+    readonly id: number;
+    readonly onConsumed: (id: number) => void;
+  } | null;
   children: React.ReactNode;
 }
 
@@ -232,6 +236,7 @@ export default function PaneShell({
   onChromeMouseDown,
   isActive = false,
   isMobile = false,
+  responsiveSearchHandoff = null,
   children,
 }: PaneShellProps) {
   if (returnMementoEnabled && bodyMode !== "standard") {
@@ -621,6 +626,20 @@ export default function PaneShell({
     return true;
   }, [focusSearchInput, paneId]);
   usePaneSearchRequested(openSearch);
+  const consumedSearchRequestIdRef = useRef<number | null>(null);
+  // A browser resize can lead the React projection by one input event. Consume
+  // the route-fenced host handoff only after this shell has republished Search.
+  useLayoutEffect(() => {
+    if (
+      responsiveSearchHandoff === null ||
+      consumedSearchRequestIdRef.current === responsiveSearchHandoff.id ||
+      !openSearch()
+    ) {
+      return;
+    }
+    consumedSearchRequestIdRef.current = responsiveSearchHandoff.id;
+    responsiveSearchHandoff.onConsumed(responsiveSearchHandoff.id);
+  }, [acceptedSearch, openSearch, responsiveSearchHandoff]);
   const closeSearch = useCallback(() => {
     searchExpandedRef.current = false;
     setExpandedSearchIdentity(null);

@@ -32,6 +32,7 @@ import MobileSecondaryPaneHost from "@/components/workspace/MobileSecondaryPaneH
 import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { getBrowserViewportKind } from "@/lib/renderEnvironment/provider";
 import { matchesKeyEvent } from "@/lib/keybindings";
 import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
 import { useKeybindings } from "@/lib/keybindingsProvider";
@@ -131,6 +132,13 @@ interface WorkspaceHostPane {
   isActive: boolean;
   visibility: "visible" | "minimized";
   content: React.ReactNode;
+}
+
+interface PendingResponsivePaneSearchDelivery {
+  readonly id: number;
+  readonly paneId: string;
+  readonly routeKey: string;
+  readonly targetIsMobile: boolean;
 }
 
 interface RuntimePaneLayoutRecord {
@@ -827,6 +835,11 @@ function WorkspaceHost() {
   pendingPaneEntryDeliveryByPaneIdRef.current =
     pendingPaneEntryDeliveryByPaneId;
   const previousIsMobileRef = useRef(isMobile);
+  const nextResponsivePaneSearchDeliveryIdRef = useRef(0);
+  const [
+    pendingResponsivePaneSearchDelivery,
+    setPendingResponsivePaneSearchDelivery,
+  ] = useState<PendingResponsivePaneSearchDelivery | null>(null);
   const secondaryReturnFocusByPaneIdRef = useRef<Map<string, HTMLElement>>(
     new Map(),
   );
@@ -1641,6 +1654,12 @@ function WorkspaceHost() {
     scrollPaneIntoView(state.activePrimaryPaneId);
   }, [state.activePrimaryPaneId, scrollPaneIntoView]);
 
+  const acknowledgeResponsivePaneSearchDelivery = useCallback((id: number) => {
+    setPendingResponsivePaneSearchDelivery((current) =>
+      current?.id === id ? null : current,
+    );
+  }, []);
+
   const handleActivatePane = useCallback(
     (paneId: string, options?: { focusPane?: boolean }) => {
       const shouldFocusPane = options?.focusPane !== false;
@@ -1668,7 +1687,25 @@ function WorkspaceHost() {
         searchCombo &&
         matchesKeyEvent(searchCombo, event)
       ) {
-        if (dispatchPaneSearchRequest()) {
+        const consumed = dispatchPaneSearchRequest();
+        if (consumed) {
+          const targetIsMobile = getBrowserViewportKind() === "mobile";
+          const routeKey = currentRouteKeyByPaneIdRef.current.get(
+            state.activePrimaryPaneId,
+          );
+          // The outgoing projection established capability synchronously, but a
+          // live responsive transition will replace its shell. Carry one exact
+          // delivery to the incoming route instead of losing the command.
+          setPendingResponsivePaneSearchDelivery(
+            targetIsMobile === isMobile || !routeKey
+              ? null
+              : {
+                  id: ++nextResponsivePaneSearchDeliveryIdRef.current,
+                  paneId: state.activePrimaryPaneId,
+                  routeKey,
+                  targetIsMobile,
+                },
+          );
           event.preventDefault();
         }
         return;
@@ -1705,6 +1742,7 @@ function WorkspaceHost() {
     state.activePrimaryPaneId,
     keybindings,
     handleActivatePane,
+    isMobile,
   ]);
 
   // --- Close handler ---
@@ -1853,6 +1891,20 @@ function WorkspaceHost() {
                       onChromeMouseDown={handleChromeMouseDown}
                       isActive={pane.isActive}
                       isMobile={isMobile}
+                      responsiveSearchHandoff={
+                        pendingResponsivePaneSearchDelivery?.paneId ===
+                          pane.paneId &&
+                        pendingResponsivePaneSearchDelivery.routeKey ===
+                          pane.routeKey &&
+                        pendingResponsivePaneSearchDelivery.targetIsMobile ===
+                          isMobile
+                          ? {
+                              id: pendingResponsivePaneSearchDelivery.id,
+                              onConsumed:
+                                acknowledgeResponsivePaneSearchDelivery,
+                            }
+                          : null
+                      }
                     >
                       {pane.content}
                     </PaneShell>

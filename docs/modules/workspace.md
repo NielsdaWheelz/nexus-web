@@ -84,6 +84,9 @@ expanded row, focus, and active-pane request consumption. `WorkspaceHost`
 arbitrates bindable `Pane.Search` before the editable-target guard, so
 Cmd/Ctrl+F reaches Page and Note editors; it prevents native Find only when the
 active pane consumes the request. Cmd/Ctrl+K remains Nexus retrieval.
+If the live browser viewport leads React during a responsive host replacement,
+the arbiter carries one pane-and-route-fenced Search handoff; the incoming
+`PaneShell` acknowledges it only after its current publication is ready.
 
 `menu` is an `ActionPublication`. Resource panes publish an explicit canonical
 target and the four semantic groups `core | operations | relationships | view`;
