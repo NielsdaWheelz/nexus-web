@@ -2533,6 +2533,7 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
   }, testInfo) => {
     const safeLeft = 144;
     const safeRight = 32;
+    const safeBottom = 15;
     await page.setViewportSize({ width: 780, height: 360 });
     const audio = readSeed<AudioSeed>("activity-audio-media.json");
     const article = readSeed<ArticleSeed>("non-pdf-media.json");
@@ -2552,8 +2553,8 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
         topMax: 0,
         left: safeLeft,
         leftMax: safeLeft,
-        bottom: 0,
-        bottomMax: 0,
+        bottom: safeBottom,
+        bottomMax: safeBottom,
         right: safeRight,
         rightMax: safeRight,
       },
@@ -2583,12 +2584,15 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       const progress = player
         .locator(':scope > span[aria-hidden="true"]')
         .first();
-      const viewportWidth = await page.evaluate(() => window.innerWidth);
+      const viewport = await page.evaluate(() => ({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      }));
       const [playerRect, progressRect, rowPadding, controlRects] =
         await Promise.all([
           player.evaluate((element) => {
             const rect = element.getBoundingClientRect();
-            return { left: rect.left, right: rect.right };
+            return { left: rect.left, right: rect.right, bottom: rect.bottom };
           }),
           progress.evaluate((element) => {
             const rect = element.getBoundingClientRect();
@@ -2607,20 +2611,39 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
             )
             .evaluateAll((elements) =>
               elements
-                .map((element) => element.getBoundingClientRect())
-                .filter((rect) => rect.width > 0 && rect.height > 0)
-                .map((rect) => ({ left: rect.left, right: rect.right })),
+                .map((element) => {
+                  const rect = element.getBoundingClientRect();
+                  return {
+                    name:
+                      element.getAttribute("aria-label") ??
+                      element.textContent?.trim() ??
+                      element.tagName,
+                    left: rect.left,
+                    right: rect.right,
+                    bottom: rect.bottom,
+                    width: rect.width,
+                    height: rect.height,
+                  };
+                })
+                .filter((rect) => rect.width > 0 && rect.height > 0),
             ),
         ]);
       expect(playerRect.left).toBeCloseTo(0, 0);
-      expect(playerRect.right).toBeCloseTo(viewportWidth, 0);
+      expect(playerRect.right).toBeCloseTo(viewport.width, 0);
+      expect(playerRect.bottom).toBeCloseTo(viewport.height, 0);
       expect(progressRect.left).toBeCloseTo(playerRect.left, 0);
       expect(progressRect.right).toBeCloseTo(playerRect.right, 0);
       expect(rowPadding).toEqual({ left: safeLeft, right: safeRight });
       expect(controlRects.length).toBeGreaterThan(0);
       for (const rect of controlRects) {
         expect(rect.left).toBeGreaterThanOrEqual(safeLeft - 1);
-        expect(rect.right).toBeLessThanOrEqual(viewportWidth - safeRight + 1);
+        expect(rect.right).toBeLessThanOrEqual(
+          viewport.width - safeRight + 1,
+        );
+        expect(
+          rect.bottom,
+          `${rect.name} intersects the bottom safe edge`,
+        ).toBeLessThanOrEqual(viewport.height - safeBottom);
       }
 
       await page.getByRole("button", { name: "Open Nexus, 2 tabs" }).tap();

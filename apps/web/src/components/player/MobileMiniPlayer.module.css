@@ -1,7 +1,7 @@
 .miniPlayer {
   display: grid;
   min-height: 64px;
-  padding-bottom: max(var(--space-1), var(--viewport-safe-bottom));
+  padding-bottom: calc(var(--space-1) + var(--viewport-safe-bottom));
   color: var(--ink);
   background: var(--surface-1);
   border-top: var(--stroke-hairline) solid var(--edge);
