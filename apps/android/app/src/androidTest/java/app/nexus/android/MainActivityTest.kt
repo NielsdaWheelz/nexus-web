@@ -110,7 +110,7 @@ class MainActivityTest {
             loadInsetProbePage(scenario)
 
             val snapshot = captureInsetProbe(scenario)
-            assertCssInsetsMatchNative(snapshot, "initial viewport")
+            assertCssInsetsProtectNative(snapshot, "initial viewport")
             assertSafeControlInsideCssSafeRectangle(snapshot.css)
 
             scenario.onActivity { activity ->
@@ -165,7 +165,7 @@ class MainActivityTest {
 
             val nonzero = PhysicalInsets(left = 17, top = 29, right = 43, bottom = 59)
             val published = dispatchInsetsAndCaptureCss(scenario, originalWebView, nonzero)
-            assertCssInsetsMatchNative(
+            assertCssInsetsProtectNative(
                 InsetProbeSnapshot(native = nonzero, css = published),
                 "nonzero same-renderer dispatch",
             )
@@ -173,7 +173,7 @@ class MainActivityTest {
 
             val cleared = PhysicalInsets(left = 0, top = 0, right = 0, bottom = 0)
             val clearedCss = dispatchInsetsAndCaptureCss(scenario, originalWebView, cleared)
-            assertCssInsetsMatchNative(
+            assertCssInsetsProtectNative(
                 InsetProbeSnapshot(native = cleared, css = clearedCss),
                 "cleared same-renderer dispatch",
             )
@@ -188,7 +188,7 @@ class MainActivityTest {
             requireWebViewM144OrNewer()
             loadInsetProbePage(scenario)
             val before = captureInsetProbe(scenario)
-            assertCssInsetsMatchNative(before, "pre-rotation viewport")
+            assertCssInsetsProtectNative(before, "pre-rotation viewport")
 
             var targetOrientation = Configuration.ORIENTATION_LANDSCAPE
             scenario.onActivity { activity ->
@@ -217,7 +217,7 @@ class MainActivityTest {
             waitForInsetProbePage(scenario)
 
             val after = captureInsetProbe(scenario)
-            assertCssInsetsMatchNative(after, "post-rotation viewport")
+            assertCssInsetsProtectNative(after, "post-rotation viewport")
             assertSafeControlInsideCssSafeRectangle(after.css)
             assertTrue(
                 "Expected rotation to change the real WebView layout viewport; " +
@@ -929,32 +929,70 @@ class MainActivityTest {
         )
     }
 
-    private fun assertCssInsetsMatchNative(snapshot: InsetProbeSnapshot, state: String) {
+    private fun assertCssInsetsProtectNative(snapshot: InsetProbeSnapshot, state: String) {
         val native = snapshot.native
         val css = snapshot.css
-        assertEquals(
-            "$state left CSS safe inset did not match native systemBars | displayCutout.",
-            native.left.toDouble(),
-            css.leftPhysical,
-            1.0,
+        assertCssInsetProtectsNative(
+            state = state,
+            edge = "left",
+            nativePhysical = native.left,
+            cssInset = css.left,
+            physicalPerCssPixel = css.devicePixelRatio,
         )
-        assertEquals(
-            "$state top CSS safe inset did not match native systemBars | displayCutout.",
-            native.top.toDouble(),
-            css.topPhysical,
-            1.0,
+        assertCssInsetProtectsNative(
+            state = state,
+            edge = "top",
+            nativePhysical = native.top,
+            cssInset = css.top,
+            physicalPerCssPixel = css.devicePixelRatio,
         )
-        assertEquals(
-            "$state right CSS safe inset did not match native systemBars | displayCutout.",
-            native.right.toDouble(),
-            css.rightPhysical,
-            1.0,
+        assertCssInsetProtectsNative(
+            state = state,
+            edge = "right",
+            nativePhysical = native.right,
+            cssInset = css.right,
+            physicalPerCssPixel = css.devicePixelRatio,
         )
-        assertEquals(
-            "$state bottom CSS safe inset did not match native systemBars | displayCutout.",
-            native.bottom.toDouble(),
-            css.bottomPhysical,
-            1.0,
+        assertCssInsetProtectsNative(
+            state = state,
+            edge = "bottom",
+            nativePhysical = native.bottom,
+            cssInset = css.bottom,
+            physicalPerCssPixel = css.devicePixelRatio,
+        )
+    }
+
+    private fun assertCssInsetProtectsNative(
+        state: String,
+        edge: String,
+        nativePhysical: Int,
+        cssInset: Double,
+        physicalPerCssPixel: Double,
+    ) {
+        val cssPhysical = cssInset * physicalPerCssPixel
+        if (nativePhysical == 0) {
+            assertEquals(
+                "$state $edge native inset was zero, but the CSS safe inset was " +
+                    "$cssInset CSS px ($cssPhysical physical px).",
+                0.0,
+                cssPhysical,
+                FLOATING_COMPARISON_EPSILON_PHYSICAL_PX,
+            )
+            return
+        }
+
+        assertTrue(
+            "$state $edge CSS safe inset under-protected native systemBars | displayCutout: " +
+                "native=$nativePhysical physical px, CSS=$cssInset CSS px " +
+                "($cssPhysical physical px).",
+            cssPhysical + FLOATING_COMPARISON_EPSILON_PHYSICAL_PX >= nativePhysical,
+        )
+        val excessPhysical = cssPhysical - nativePhysical
+        assertTrue(
+            "$state $edge CSS safe inset exceeded native systemBars | displayCutout by " +
+                "$excessPhysical physical px; conservative rounding must stay below one " +
+                "CSS px ($physicalPerCssPixel physical px).",
+            excessPhysical < physicalPerCssPixel + FLOATING_COMPARISON_EPSILON_PHYSICAL_PX,
         )
     }
 
@@ -1155,12 +1193,7 @@ class MainActivityTest {
         val controlTop: Double,
         val controlRight: Double,
         val controlBottom: Double,
-    ) {
-        val leftPhysical: Double get() = left * devicePixelRatio
-        val topPhysical: Double get() = top * devicePixelRatio
-        val rightPhysical: Double get() = right * devicePixelRatio
-        val bottomPhysical: Double get() = bottom * devicePixelRatio
-    }
+    )
 
     private data class InsetProbeSnapshot(
         val native: PhysicalInsets,
@@ -1168,6 +1201,7 @@ class MainActivityTest {
     )
 
     private companion object {
+        const val FLOATING_COMPARISON_EPSILON_PHYSICAL_PX = 0.0001
         const val INSET_PROBE_TITLE = "Nexus system inset probe"
         val INSET_PROBE_HTML =
             """

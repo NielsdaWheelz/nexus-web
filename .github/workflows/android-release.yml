@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing android-v* git tag to build and publish.
+        description: Existing android-v* git tag to draft or publish.
         required: true
         type: string
       publish_stable:
@@ -12,6 +12,10 @@ on:
         required: false
         default: false
         type: boolean
+      verified_apk_sha256:
+        description: Required lowercase SHA-256 from the device-verified draft APK when publishing.
+        required: false
+        type: string
   push:
     tags:
       - "android-v*"
@@ -20,14 +24,14 @@ concurrency:
   group: android-release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
-permissions:
-  contents: write
-
 jobs:
-  release-apk:
+  build-draft:
+    if: ${{ github.event_name == 'push' || inputs.publish_stable == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: android-release
+    permissions:
+      contents: write
 
     env:
       ANDROID_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -40,7 +44,6 @@ jobs:
       NEXUS_GOOGLE_WEB_CLIENT_ID: ${{ vars.NEXUS_GOOGLE_WEB_CLIENT_ID }}
       NEXUS_ANDROID_VERSION_CODE: ${{ github.run_number }}
       NEXUS_ANDROID_VERSION_NAME: ${{ inputs.tag || github.ref_name }}
-      ANDROID_PUBLISH_STABLE: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_stable || false }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,6 +57,10 @@ jobs:
           set -euo pipefail
           if [[ ! "$ANDROID_RELEASE_TAG" == android-v* ]]; then
             echo "Android releases must use an android-v* git tag."
+            exit 1
+          fi
+          if [ "$(git cat-file -t "$ANDROID_RELEASE_TAG")" != "tag" ]; then
+            echo "Android releases require an annotated git tag."
             exit 1
           fi
           tag_commit="$(git rev-parse "$ANDROID_RELEASE_TAG^{commit}")"
@@ -90,43 +97,158 @@ jobs:
           cp nexus-android.apk "nexus-android-$android_version.apk"
           shasum -a 256 nexus-android.apk > nexus-android.apk.sha256
           shasum -a 256 "nexus-android-$android_version.apk" > "nexus-android-$android_version.apk.sha256"
+          git rev-parse "$ANDROID_RELEASE_TAG^{commit}" > nexus-android.commit
 
-      - name: Create or update draft release
+      - name: Create immutable draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          upload_args=()
-          if gh release view "$ANDROID_RELEASE_TAG" >/dev/null 2>&1; then
-            if [ "$(gh release view "$ANDROID_RELEASE_TAG" --json isDraft --jq .isDraft)" = "true" ]; then
-              upload_args+=(--clobber)
-            fi
-          else
-            gh release create "$ANDROID_RELEASE_TAG" \
-              --verify-tag \
-              --draft \
-              --title "$ANDROID_RELEASE_TAG" \
-              --notes "Self-distributed Nexus Android APK. Publish only after installing this APK on a device and verifying App Links for app.nexus.android. After publishing, the stable install URL is /releases/latest/download/nexus-android.apk."
-          fi
           android_version="${ANDROID_RELEASE_TAG#android-}"
-          gh release upload "$ANDROID_RELEASE_TAG" \
+          gh release create "$ANDROID_RELEASE_TAG" \
+            --verify-tag \
+            --draft \
+            --title "$ANDROID_RELEASE_TAG" \
+            --notes "Self-distributed Nexus Android APK. Publish only after installing this APK on a device and verifying App Links for app.nexus.android. After publishing, the stable install URL is /releases/latest/download/nexus-android.apk." \
             nexus-android.apk \
             nexus-android.apk.sha256 \
             "nexus-android-$android_version.apk" \
             "nexus-android-$android_version.apk.sha256" \
-            "${upload_args[@]}"
+            nexus-android.commit
 
-      - name: Publish stable release
-        if: ${{ env.ANDROID_PUBLISH_STABLE == 'true' }}
+  publish-stable:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_stable == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: android-release
+    permissions:
+      contents: write
+
+    env:
+      ANDROID_RELEASE_TAG: ${{ inputs.tag }}
+      VERIFIED_APK_SHA256: ${{ inputs.verified_apk_sha256 }}
+
+    steps:
+      - name: Verify and publish immutable draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [ "$(gh release view "$ANDROID_RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]; then
+          if [[ ! "$ANDROID_RELEASE_TAG" == android-v* ]]; then
+            echo "Android releases must use an android-v* git tag."
+            exit 1
+          fi
+          if [[ ! "$VERIFIED_APK_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Publishing requires the device-verified APK SHA-256 as 64 lowercase hexadecimal characters."
+            exit 1
+          fi
+
+          tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$ANDROID_RELEASE_TAG")"
+          if [ "$(jq -r .ref <<< "$tag_json")" != "refs/tags/$ANDROID_RELEASE_TAG" ] || \
+            [ "$(jq -r .object.type <<< "$tag_json")" != "tag" ]; then
+            echo "$ANDROID_RELEASE_TAG is not an exact annotated git tag."
+            exit 1
+          fi
+          tag_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$ANDROID_RELEASE_TAG" --jq .sha)"
+          if [[ ! "$tag_commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "$ANDROID_RELEASE_TAG does not resolve to a commit."
+            exit 1
+          fi
+
+          release_json="$(gh release view "$ANDROID_RELEASE_TAG" --json databaseId,isDraft,tagName)"
+          if [ "$(jq -r .tagName <<< "$release_json")" != "$ANDROID_RELEASE_TAG" ]; then
+            echo "Draft release tag does not match $ANDROID_RELEASE_TAG."
+            exit 1
+          fi
+          if [ "$(jq -r .isDraft <<< "$release_json")" != "true" ]; then
             echo "Only draft Android releases can be published by this workflow."
             exit 1
           fi
-          release_id="$(gh release view "$ANDROID_RELEASE_TAG" --json databaseId --jq .databaseId)"
+
+          android_version="${ANDROID_RELEASE_TAG#android-}"
+          asset_dir="$RUNNER_TEMP/android-release-assets"
+          mkdir "$asset_dir"
+          gh release download "$ANDROID_RELEASE_TAG" \
+            --dir "$asset_dir" \
+            --pattern nexus-android.apk \
+            --pattern nexus-android.apk.sha256 \
+            --pattern "nexus-android-$android_version.apk" \
+            --pattern "nexus-android-$android_version.apk.sha256" \
+            --pattern nexus-android.commit
+
+          if [ "$(wc -l < "$asset_dir/nexus-android.commit")" -ne 1 ]; then
+            echo "Draft commit evidence must contain exactly one line."
+            exit 1
+          fi
+          read -r draft_commit commit_extra < "$asset_dir/nexus-android.commit"
+          if [[ ! "$draft_commit" =~ ^[0-9a-f]{40}$ ]] || [ -n "${commit_extra:-}" ]; then
+            echo "Draft commit evidence is malformed."
+            exit 1
+          fi
+          if [ "$tag_commit" != "$draft_commit" ]; then
+            echo "$ANDROID_RELEASE_TAG no longer resolves to the commit that built the draft APK."
+            exit 1
+          fi
+
+          verify_asset() {
+            apk_path="$1"
+            checksum_path="$2"
+            expected_name="$3"
+            if [ "$(wc -l < "$checksum_path")" -ne 1 ]; then
+              echo "$expected_name checksum must contain exactly one line." >&2
+              return 1
+            fi
+            read -r checksum_sha checksum_name checksum_extra < "$checksum_path"
+            if [[ ! "$checksum_sha" =~ ^[0-9a-f]{64}$ ]] || \
+              [ "$checksum_name" != "$expected_name" ] || \
+              [ -n "${checksum_extra:-}" ]; then
+              echo "$expected_name checksum file is malformed." >&2
+              return 1
+            fi
+            actual_sha="$(sha256sum "$apk_path")"
+            actual_sha="${actual_sha%% *}"
+            if [ "$actual_sha" != "$checksum_sha" ]; then
+              echo "$expected_name does not match its checksum file." >&2
+              return 1
+            fi
+            printf '%s\n' "$actual_sha"
+          }
+
+          canonical_sha="$(verify_asset \
+            "$asset_dir/nexus-android.apk" \
+            "$asset_dir/nexus-android.apk.sha256" \
+            nexus-android.apk)"
+          versioned_sha="$(verify_asset \
+            "$asset_dir/nexus-android-$android_version.apk" \
+            "$asset_dir/nexus-android-$android_version.apk.sha256" \
+            "nexus-android-$android_version.apk")"
+          if [ "$versioned_sha" != "$canonical_sha" ]; then
+            echo "Canonical and versioned APK assets are not the same signed artifact."
+            exit 1
+          fi
+          if [ "$canonical_sha" != "$VERIFIED_APK_SHA256" ]; then
+            echo "Draft APK SHA-256 does not match the device-verified SHA-256."
+            exit 1
+          fi
+
+          release_id="$(jq -r .databaseId <<< "$release_json")"
+          current_release="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id")"
+          if [ "$(jq -r .draft <<< "$current_release")" != "true" ] || \
+            [ "$(jq -r .tag_name <<< "$current_release")" != "$ANDROID_RELEASE_TAG" ]; then
+            echo "Release draft or tag changed before publication."
+            exit 1
+          fi
+          current_tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$ANDROID_RELEASE_TAG")"
+          if [ "$(jq -r .ref <<< "$current_tag_json")" != "refs/tags/$ANDROID_RELEASE_TAG" ] || \
+            [ "$(jq -r .object.type <<< "$current_tag_json")" != "tag" ]; then
+            echo "$ANDROID_RELEASE_TAG stopped being an exact annotated git tag."
+            exit 1
+          fi
+          current_tag_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$ANDROID_RELEASE_TAG" --jq .sha)"
+          if [ "$current_tag_commit" != "$draft_commit" ]; then
+            echo "$ANDROID_RELEASE_TAG changed before publication."
+            exit 1
+          fi
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
             -F draft=false \
             -F prerelease=false \

@@ -133,11 +133,13 @@ link to the stable latest-release assets:
 - `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk`
 - `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk.sha256`
 
-Create an existing `android-v*` tag, run the Android APK Release workflow for
-that tag, install the APK from the draft release on a physical device, verify
-App Links and login, then rerun the workflow with `publish_stable=true`. The
-workflow uploads stable assets for `/android` plus versioned assets such as
-`nexus-android-v0.1.0.apk` for tag `android-v0.1.0`.
+Create an `android-v*` tag and let the Android APK Release workflow build one
+draft APK. Install that exact draft asset on a physical device and verify App
+Links and login. Promote only by manually dispatching the workflow with the
+same tag and the device-verified APK SHA-256; promotion verifies and publishes
+the existing draft asset without rebuilding, signing, uploading, or replacing
+assets. The stable asset serves `/android`; versioned assets such as
+`nexus-android-v0.1.0.apk` remain available for tag `android-v0.1.0`.
 
 ## Repository Map
 
