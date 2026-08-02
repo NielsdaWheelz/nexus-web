@@ -32,6 +32,15 @@ describe("useHistoryDismiss", () => {
     });
   };
 
+  const flushFrame = async () => {
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
+    );
+  };
+
   it("pushes one entry while active and pops it when closed via UI", async () => {
     const onDismiss = vi.fn();
     const { rerender } = renderHook(
@@ -44,6 +53,28 @@ describe("useHistoryDismiss", () => {
     await flushMicrotasks();
     expect(history.back).toHaveBeenCalledTimes(1);
     expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it("settles a UI close only after its synthetic history traversal", async () => {
+    const onHistorySettled = vi.fn();
+    const { rerender } = renderHook(
+      ({ active }) =>
+        useHistoryDismiss(active, vi.fn(), {
+          isTopmost: true,
+          onHistorySettled,
+        }),
+      { initialProps: { active: true } },
+    );
+
+    rerender({ active: false });
+    await flushMicrotasks();
+    expect(history.back).toHaveBeenCalledTimes(1);
+    expect(onHistorySettled).not.toHaveBeenCalled();
+
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(onHistorySettled).not.toHaveBeenCalled();
+    await flushFrame();
+    expect(onHistorySettled).toHaveBeenCalledOnce();
   });
 
   it("does not pop when the close navigated (synthetic entry was replaced)", async () => {

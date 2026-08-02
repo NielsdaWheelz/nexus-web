@@ -18,6 +18,8 @@ import {
 interface DialogOverlayState {
   readonly isTopmost: boolean;
   readonly layerToken: ModalLayerToken;
+  /** Reassert the captured opener after a platform-owned close settles. */
+  readonly restoreFocus: () => void;
 }
 
 /**
@@ -76,7 +78,7 @@ export function useDialogOverlay(args: {
   }, [active, isTopmost, ref]);
   useBodyOverflowLock(active);
   useFocusTrap(ref, active && isTopmost);
-  useReturnFocus(active, {
+  const returnFocus = useReturnFocus(active, {
     returnFocusTo,
     returnFocusFallback,
     skip: () =>
@@ -94,5 +96,9 @@ export function useDialogOverlay(args: {
     modalToken: modalLayer.token,
     scope: layerScope,
   });
-  return { isTopmost, layerToken: modalLayer.token };
+  return {
+    isTopmost,
+    layerToken: modalLayer.token,
+    restoreFocus: returnFocus.restore,
+  };
 }

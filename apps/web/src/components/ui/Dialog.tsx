@@ -80,6 +80,7 @@ export default function Dialog({
   });
   useHistoryDismiss(open && historyDismiss, requestDismiss, {
     isTopmost: overlay.isTopmost,
+    onHistorySettled: overlay.restoreFocus,
   });
 
   if (!open) return null;

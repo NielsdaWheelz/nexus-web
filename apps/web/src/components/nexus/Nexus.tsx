@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import NexusButton from "@/components/switchboard/NexusButton";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import SwitchboardRecovery from "@/components/switchboard/SwitchboardRecovery";
@@ -186,6 +186,29 @@ export default function Nexus() {
   );
   const clearAddDefect = useCallback(() => setAddDefect(null), []);
   const viewport = useViewportState();
+  const pendingMobileNexusOpenerRef = useRef<HTMLButtonElement>(null);
+  const currentMobileNexusButtonRef = useRef<HTMLButtonElement>(null);
+  const openRoot = controller.openRoot;
+  const setCurrentMobileNexusButton = useCallback(
+    (node: HTMLButtonElement | null) => {
+      currentMobileNexusButtonRef.current = node;
+    },
+    [],
+  );
+  const openMobileNexus = useCallback(
+    (opener: HTMLButtonElement) => {
+      pendingMobileNexusOpenerRef.current = opener;
+      openRoot();
+    },
+    [openRoot],
+  );
+  const resolveMobileNexusReturnFocus = useCallback(() => {
+    const opener = pendingMobileNexusOpenerRef.current;
+    pendingMobileNexusOpenerRef.current = null;
+    if (opener?.isConnected) return opener;
+    const current = currentMobileNexusButtonRef.current;
+    return current?.isConnected ? current : null;
+  }, []);
   const waitingForViewport = controller.open && !viewport.hydrated;
   const workflow = desktopWorkflow({
     controller,
@@ -203,6 +226,7 @@ export default function Nexus() {
       <SwitchboardTask
         controller={controller}
         active={controller.open && viewport.isMobile}
+        returnFocusTo={resolveMobileNexusReturnFocus}
         activeAddDefect={addDefect?.sessionId === sessionId}
         onAddDefect={reportAddDefect}
         onClearAddDefect={clearAddDefect}
@@ -211,7 +235,8 @@ export default function Nexus() {
         <NexusButton
           paneCount={controller.paneCount}
           switchboardOpen={controller.open}
-          onOpen={controller.openRoot}
+          onOpen={openMobileNexus}
+          onButtonNodeChange={setCurrentMobileNexusButton}
         />
       ) : null}
       {!viewport.isMobile && !waitingForViewport ? (

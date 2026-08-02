@@ -75,6 +75,7 @@ export function useMobileModalLifecycle({
 
   useHistoryDismiss(active && historyDismiss, requestDismiss, {
     isTopmost: overlay.isTopmost,
+    onHistorySettled: overlay.restoreFocus,
   });
   useLayoutEffect(() => {
     if (!active || !mobileViewport) {

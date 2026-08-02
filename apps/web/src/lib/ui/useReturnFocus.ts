@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 export type ReturnFocusTarget = () => HTMLElement | null;
 
@@ -8,6 +8,14 @@ export interface ReturnFocusOptions {
   readonly returnFocusTo?: ReturnFocusTarget;
   readonly returnFocusFallback?: ReturnFocusTarget;
   readonly skip?: () => boolean;
+}
+
+export interface ReturnFocusHandle {
+  /**
+   * Re-run the captured return-focus decision after an owning platform
+   * lifecycle (for example, a same-document history traversal) has settled.
+   */
+  readonly restore: () => void;
 }
 
 function focusTarget(target: HTMLElement | null): boolean {
@@ -47,7 +55,10 @@ function focusTarget(target: HTMLElement | null): boolean {
  * yank focus back and fight it. Dismissal paths (Escape, backdrop) leave `skip`
  * unset and keep the return-focus contract unchanged.
  */
-export function useReturnFocus(active: boolean, options?: ReturnFocusOptions): void {
+export function useReturnFocus(
+  active: boolean,
+  options?: ReturnFocusOptions,
+): ReturnFocusHandle {
   const returnFocusToRef = useRef(options?.returnFocusTo);
   returnFocusToRef.current = options?.returnFocusTo;
   const fallbackRef = useRef(options?.returnFocusFallback);
@@ -55,8 +66,17 @@ export function useReturnFocus(active: boolean, options?: ReturnFocusOptions): v
   const skipRef = useRef(options?.skip);
   skipRef.current = options?.skip;
   const returnRef = useRef<HTMLElement | null>(null);
+  const restore = useCallback(() => {
+    if (skipRef.current?.()) return;
+    const liveTarget = returnFocusToRef.current?.() ?? null;
+    if (focusTarget(liveTarget)) return;
+    const target = returnRef.current;
+    if (focusTarget(target)) return;
+    const fallback = fallbackRef.current?.() ?? null;
+    focusTarget(fallback);
+  }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active) return;
     const explicitTarget = returnFocusToRef.current?.() ?? null;
     const activeElement =
@@ -66,12 +86,12 @@ export function useReturnFocus(active: boolean, options?: ReturnFocusOptions): v
         ? document.activeElement
         : null;
     returnRef.current = explicitTarget ?? activeElement;
-    return () => {
-      if (skipRef.current?.()) return;
-      const target = returnRef.current;
-      if (focusTarget(target)) return;
-      const fallback = fallbackRef.current?.() ?? null;
-      focusTarget(fallback);
-    };
   }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
+    return restore;
+  }, [active, restore]);
+
+  return { restore };
 }

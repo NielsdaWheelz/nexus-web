@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { StickyNote } from "lucide-react";
 import {
   act,
@@ -60,6 +60,7 @@ const dailyEntry: NexusEntry = {
 function Harness({ daily = false }: { daily?: boolean }) {
   const addSession = useAddContentSession();
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState<NexusPage>({ kind: "Root" });
   const [activeKey, setActiveKey] = useState<NexusEntryKey | null>(
@@ -194,11 +195,15 @@ function Harness({ daily = false }: { daily?: boolean }) {
       <NexusButton
         paneCount={1}
         switchboardOpen={open}
-        onOpen={() => setOpen(true)}
+        onOpen={(opener) => {
+          triggerRef.current = opener;
+          setOpen(true);
+        }}
       />
       <SwitchboardTask
         controller={controller}
         active={open}
+        returnFocusTo={() => triggerRef.current}
         activeAddDefect={false}
         onAddDefect={() => undefined}
         onClearAddDefect={() => undefined}
@@ -263,6 +268,7 @@ describe("mobile Nexus full-screen task", () => {
 
     fireEvent.keyDown(search, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Open Nexus/ })).toHaveFocus();
   });
 
   it("keeps the daily handoff mounted and editable after accepted navigation closes the task", async () => {

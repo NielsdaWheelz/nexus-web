@@ -188,6 +188,34 @@ describe("useDialogOverlay", () => {
     fallback.remove();
   });
 
+  it("re-resolves a logical return target when its mounted node is replaced", async () => {
+    let currentTarget = document.createElement("button");
+    document.body.append(currentTarget);
+    const { rerender, unmount } = render(
+      <Host
+        active
+        onDismiss={vi.fn()}
+        returnFocusTo={() => currentTarget}
+      />,
+    );
+    await waitFor(() => expect(first()).toHaveFocus());
+
+    currentTarget.remove();
+    currentTarget = document.createElement("button");
+    document.body.append(currentTarget);
+    rerender(
+      <Host
+        active={false}
+        onDismiss={vi.fn()}
+        returnFocusTo={() => currentTarget}
+      />,
+    );
+    expect(currentTarget).toHaveFocus();
+
+    unmount();
+    currentTarget.remove();
+  });
+
   it("skips return focus when the destination already claimed it", async () => {
     const destination = document.createElement("button");
     document.body.append(destination);

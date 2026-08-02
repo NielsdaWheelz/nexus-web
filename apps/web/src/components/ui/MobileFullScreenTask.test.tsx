@@ -86,6 +86,9 @@ function OpenCloseTask() {
       >
         <h1 tabIndex={-1}>Focused task</h1>
         <button type="button">Continue</button>
+        <button type="button" onClick={() => setActive(false)}>
+          Done
+        </button>
       </MobileFullScreenTask>
     </>
   );
@@ -237,6 +240,7 @@ describe("MobileFullScreenTask", () => {
 
   afterEach(() => {
     document.body.style.overflow = "";
+    document.body.removeAttribute("tabindex");
     Reflect.deleteProperty(window, "visualViewport");
     document.documentElement.style.removeProperty("--z-nexus");
     document.documentElement.style.removeProperty("--surface-canvas");
@@ -411,6 +415,47 @@ describe("MobileFullScreenTask", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Open task" })).toBeNull(),
+    );
+    expect(opener).toHaveFocus();
+  });
+
+  it("reasserts its opener after the synthetic history traversal settles", async () => {
+    let resolvePop!: () => void;
+    const popDelivered = new Promise<void>((resolve) => {
+      resolvePop = resolve;
+    });
+    vi.mocked(history.back).mockImplementation(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          fakeState = null;
+          document.body.tabIndex = -1;
+          document.body.focus();
+          window.dispatchEvent(new PopStateEvent("popstate"));
+          resolvePop();
+        });
+      });
+    });
+    render(
+      withRenderEnvironment(<OpenCloseTask />, {
+        initialViewport: "mobile",
+      }),
+    );
+    const opener = screen.getByRole("button", { name: "Open task" });
+    await userEvent.click(opener);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Focused task" }),
+      ).toHaveFocus(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Done" }));
+    await act(() => popDelivered);
+    expect(document.body).toHaveFocus();
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
     );
     expect(opener).toHaveFocus();
   });

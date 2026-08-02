@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import AsterismMark from "@/components/AsterismMark";
 import { useMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
@@ -18,13 +18,22 @@ export default function NexusButton({
   paneCount,
   switchboardOpen,
   onOpen,
+  onButtonNodeChange,
 }: {
   paneCount: number;
   switchboardOpen: boolean;
-  onOpen: () => void;
+  onOpen: (opener: HTMLButtonElement) => void;
+  onButtonNodeChange?: (node: HTMLButtonElement | null) => void;
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const setButtonRef = useCallback(
+    (node: HTMLButtonElement | null) => {
+      buttonRef.current = node;
+      onButtonNodeChange?.(node);
+    },
+    [onButtonNodeChange],
+  );
   const mobileViewport = useMobileViewport();
   const { motionPhase } = useMobileChrome();
   useMobileChromeSurface(buttonRef, "NexusControl", true);
@@ -44,7 +53,7 @@ export default function NexusButton({
       data-testid="nexus-wrapper"
     >
       <button
-        ref={buttonRef}
+        ref={setButtonRef}
         data-nexus-return-focus
         type="button"
         className={styles.nexusButton}
@@ -54,9 +63,9 @@ export default function NexusButton({
         inert={motionInert || switchboardOpen || undefined}
         data-switchboard-open={switchboardOpen || undefined}
         data-mobile-chrome-phase={motionPhase.kind}
-        onClick={() => {
+        onClick={(event) => {
           beginNexusPerformance(NEXUS_OPEN_PERFORMANCE);
-          flushSync(onOpen);
+          flushSync(() => onOpen(event.currentTarget));
         }}
       >
         <span className={styles.nexusFace}>

@@ -126,12 +126,14 @@ function CreationStatus({
 export default function SwitchboardTask({
   controller,
   active,
+  returnFocusTo,
   activeAddDefect,
   onAddDefect,
   onClearAddDefect,
 }: {
   controller: MobileNexusTaskController;
   active: boolean;
+  returnFocusTo: () => HTMLElement | null;
   activeAddDefect: boolean;
   onAddDefect(error: unknown): void;
   onClearAddDefect(): void;
@@ -361,9 +363,7 @@ export default function SwitchboardTask({
         }}
         ariaLabel={activeAddDefect ? "Add needs attention" : controller.dialogLabel}
         initialFocus={(container) => controller.initialFocus(container, true)}
-        returnFocusTo={() =>
-          document.querySelector<HTMLElement>("[data-nexus-return-focus]")
-        }
+        returnFocusTo={returnFocusTo}
         skipReturnFocus={controller.shouldSuppressReturnFocusOnClose}
         focusKey={controller.focusKey}
       >

@@ -32,6 +32,9 @@ const owners: HistoryDismissOwner[] = [];
 let markerPopScheduled = false;
 let markerPopInFlight = false;
 let listening = false;
+let settlementWaveScheduled = false;
+let closingWaveSettlements: Array<() => void> = [];
+let markerPopSettlements: Array<() => void> = [];
 
 function hasMarker(): boolean {
   return isRecord(history.state) && history.state[MARKER] === true;
@@ -65,25 +68,57 @@ function pushMarker(): void {
   );
 }
 
+function settleMarkerPop(restoreFocus: boolean): void {
+  const settlements = markerPopSettlements;
+  markerPopSettlements = [];
+  if (!restoreFocus || settlements.length === 0) return;
+  requestAnimationFrame(() => {
+    for (const settle of settlements) settle();
+  });
+}
+
 function scheduleMarkerPop(): void {
   if (markerPopScheduled || markerPopInFlight) return;
   markerPopScheduled = true;
   queueMicrotask(() => {
     markerPopScheduled = false;
     if (markerPopInFlight) return;
-    if (owners.length !== 0) return;
+    if (owners.length !== 0) {
+      settleMarkerPop(false);
+      return;
+    }
     if (!hasMarker()) {
       if (!markerPopInFlight) stopListening();
+      settleMarkerPop(true);
       return;
     }
     if (markerHref() !== currentHref()) {
       clearMarker();
       stopListening();
+      settleMarkerPop(true);
       return;
     }
     markerPopInFlight = true;
     startListening();
     history.back();
+  });
+}
+
+function scheduleOwnerCleanupSettlement(
+  onHistorySettled: (() => void) | undefined,
+): void {
+  if (onHistorySettled) closingWaveSettlements.push(onHistorySettled);
+  if (settlementWaveScheduled) return;
+  settlementWaveScheduled = true;
+  queueMicrotask(() => {
+    settlementWaveScheduled = false;
+    if (owners.length !== 0) {
+      closingWaveSettlements = [];
+      return;
+    }
+    markerPopSettlements.push(...closingWaveSettlements);
+    closingWaveSettlements = [];
+    scheduleMarkerPop();
   });
 }
 
@@ -101,8 +136,13 @@ function handlePopState(): void {
   // arm a fresh marker instead of dismissing the replacement overlay.
   if (markerPopInFlight) {
     markerPopInFlight = false;
-    if (owners.length > 0 && !hasMarker()) pushMarker();
-    if (owners.length === 0) stopListening();
+    if (owners.length > 0) {
+      settleMarkerPop(false);
+      if (!hasMarker()) pushMarker();
+    } else {
+      stopListening();
+      settleMarkerPop(true);
+    }
     return;
   }
   const owner = topmostOwner();
@@ -139,12 +179,22 @@ function stopListening(): void {
 export function useHistoryDismiss(
   active: boolean,
   onDismiss: () => DismissDecision | void,
-  options: { readonly isTopmost: boolean },
+  options: {
+    readonly isTopmost: boolean;
+    /**
+     * Called after a UI-initiated synthetic marker traversal has completed.
+     * Focus owners use this exact boundary to repair the browser's native
+     * post-traversal focus reset without timers or speculative frame counts.
+     */
+    readonly onHistorySettled?: () => void;
+  },
 ): void {
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
   const isTopmostRef = useRef(options.isTopmost);
   isTopmostRef.current = options.isTopmost;
+  const onHistorySettledRef = useRef(options.onHistorySettled);
+  onHistorySettledRef.current = options.onHistorySettled;
   const tokenRef = useRef<object | null>(null);
   if (tokenRef.current === null) tokenRef.current = {};
   const token = tokenRef.current;
@@ -166,9 +216,8 @@ export function useHistoryDismiss(
         throw new Error("Active history-dismiss owner was not registered.");
       }
       owners.splice(index, 1);
-      if (owners.length === 0) {
-        scheduleMarkerPop();
-      } else if (!markerPopInFlight && !hasMarker()) {
+      scheduleOwnerCleanupSettlement(onHistorySettledRef.current);
+      if (owners.length > 0 && !markerPopInFlight && !hasMarker()) {
         pushMarker();
       }
     };
