@@ -124,10 +124,10 @@ describe("SettingsLocalVaultPaneBody", () => {
   it("shows an unsupported message and skips local vault APIs in the android shell", () => {
     renderLocalVault(true);
 
+    expect(screen.getByText("Local Vault isn’t available in the Android app"))
+      .toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Local Vault is not available in the Android app. Use a supported desktop browser to connect and sync a local folder."
-      )
+      screen.getByText("Use a supported desktop browser to connect and sync a local folder."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /connect folder/i })).not.toBeInTheDocument();
     expect(mockLoadVaultDirectoryHandle).not.toHaveBeenCalled();

@@ -97,6 +97,7 @@ import type {
   WorkspaceTargetActivationRequest,
   WorkspaceTargetActivationResult,
 } from "@/lib/workspace/targetActivation";
+import Button from "@/components/ui/Button";
 import { usePaneCanvas } from "./usePaneCanvas";
 import PaneRouteBoundary from "./PaneRouteBoundary";
 import styles from "./WorkspaceHost.module.css";
@@ -182,20 +183,22 @@ interface PaneRouteErrorBoundaryProps {
 
 class PaneRouteErrorBoundary extends Component<
   PaneRouteErrorBoundaryProps,
-  { hasError: boolean; resetKey: string }
+  { hasError: boolean; resetKey: string; retryKey: number }
 > {
+  private failureRegion: HTMLElement | null = null;
+
   constructor(props: PaneRouteErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false, resetKey: props.resetKey };
+    this.state = { hasError: false, resetKey: props.resetKey, retryKey: 0 };
   }
 
   static getDerivedStateFromProps(
     props: PaneRouteErrorBoundaryProps,
-    state: { hasError: boolean; resetKey: string },
-  ): { hasError: false; resetKey: string } | null {
+    state: { hasError: boolean; resetKey: string; retryKey: number },
+  ): { hasError: false; resetKey: string; retryKey: number } | null {
     return props.resetKey === state.resetKey
       ? null
-      : { hasError: false, resetKey: props.resetKey };
+      : { hasError: false, resetKey: props.resetKey, retryKey: 0 };
   }
 
   static getDerivedStateFromError(): { hasError: true } {
@@ -211,6 +214,31 @@ class PaneRouteErrorBoundary extends Component<
     );
   }
 
+  componentDidMount(): void {
+    if (this.state.hasError) {
+      this.failureRegion?.focus();
+    }
+  }
+
+  componentDidUpdate(
+    _previousProps: PaneRouteErrorBoundaryProps,
+    previousState: { hasError: boolean; resetKey: string; retryKey: number },
+  ): void {
+    if (!previousState.hasError && this.state.hasError) {
+      this.failureRegion?.focus();
+    }
+  }
+
+  private retry = (): void => {
+    // This remounts only the routed pane subtree. It does not alter the visit,
+    // close the pane, or invoke any domain operation.
+    this.setState((state) => ({
+      hasError: false,
+      resetKey: state.resetKey,
+      retryKey: state.retryKey + 1,
+    }));
+  };
+
   render() {
     return (
       <div
@@ -221,13 +249,26 @@ class PaneRouteErrorBoundary extends Component<
       >
         {this.state.hasError ? (
           <section
-            className={styles.unsupported}
-            aria-label="Pane failed to render"
+            ref={(element) => {
+              this.failureRegion = element;
+            }}
+            className={styles.paneFailure}
+            role="alert"
+            aria-labelledby={`pane-failure-heading-${this.props.paneId}`}
+            tabIndex={-1}
           >
-            This pane failed to render. Close it and retry.
+            <h2 id={`pane-failure-heading-${this.props.paneId}`}>
+              This pane couldn’t load
+            </h2>
+            <p>Retry this pane. Your other panes are still available.</p>
+            <Button variant="secondary" size="sm" onClick={this.retry}>
+              Retry pane
+            </Button>
           </section>
         ) : (
-          this.props.children
+          <div key={this.state.retryKey} className={styles.paneFailureRetryRoot}>
+            {this.props.children}
+          </div>
         )}
       </div>
     );

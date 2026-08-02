@@ -190,7 +190,7 @@
   color: var(--danger);
 }
 
-.itemFeedback[data-severity="warning"] {
+.itemFeedback[data-tone="Warning"] {
   color: var(--warning);
 }
 

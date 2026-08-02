@@ -77,7 +77,16 @@ function failThenAckFetch(profile: ReaderProfile) {
     if (failNext) {
       failNext = false;
       return Promise.resolve(
-        jsonResponse({ error: { code: "E_INTERNAL", message: "boom", request_id: "req-7" } }, 500),
+        jsonResponse(
+          {
+            error: {
+              code: "E_UPSTREAM_TIMEOUT",
+              message: "boom",
+              request_id: "req-7",
+            },
+          },
+          504,
+        ),
       );
     }
     return Promise.resolve(jsonResponse({ data: profile }));
@@ -108,7 +117,7 @@ describe("SettingsReaderPaneBody", () => {
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
   });
 
-  it("presents a failure inline while active, suppressing the global toast to one alert region", async () => {
+  it("presents a failure inline while active, suppressing the global rail to one alert region", async () => {
     failThenAckFetch({ ...BASE, theme: "dark" });
     render(<Harness />);
 
@@ -117,7 +126,7 @@ describe("SettingsReaderPaneBody", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Reader settings didn’t save");
     expect(alert).toHaveTextContent("Nexus request ID: req-7");
-    // Exactly one live failure presentation: the suppressed global toast
+    // Exactly one live failure presentation: the suppressed global rail
     // contributes no second alert region.
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     // Failed controls stay interactive.
@@ -138,19 +147,31 @@ describe("SettingsReaderPaneBody", () => {
     fireEvent.click(screen.getByRole("button", { name: "toggle pane activity" }));
 
     // Inactive Settings renders no inline live notice; the released lease
-    // restores the retained global toast — still exactly one presentation.
+    // restores the retained visual-only global rail — still one presentation.
     await waitFor(() => {
-      const alerts = screen.getAllByRole("alert");
-      expect(alerts).toHaveLength(1);
-      expect(alerts[0]).toHaveTextContent("Reader settings didn’t save");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(
+        within(screen.getByLabelText("Persistent feedback")).getByText(
+          "Reader settings didn’t save",
+        ),
+      ).toBeInTheDocument();
     });
-    // The global toast carries the Retry action.
-    expect(within(screen.getByRole("alert")).getByRole("button", { name: "Retry" }))
-      .toBeInTheDocument();
+    // The global rail carries the Retry action; detached speech belongs solely
+    // to the provider's pre-mounted announcer, not this visual lane.
+    expect(
+      within(screen.getByLabelText("Persistent feedback")).getByRole("button", {
+        name: "Retry",
+      }),
+    ).toBeInTheDocument();
 
     // Re-activating moves it back inline.
     fireEvent.click(screen.getByRole("button", { name: "toggle pane activity" }));
     await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(1));
+    expect(
+      within(screen.getByLabelText("Persistent feedback")).queryByText(
+        "Reader settings didn’t save",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it("disables persistence controls without Retry on terminal Forbidden", async () => {

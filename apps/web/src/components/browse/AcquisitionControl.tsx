@@ -2,7 +2,11 @@
 
 import { useId, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  useFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import LibraryDestinationPicker from "@/components/libraries/LibraryDestinationPicker";
 import Button from "@/components/ui/Button";
 import {
@@ -53,6 +57,7 @@ type AcquisitionFailure = {
   readonly kind:
     "DeliveryUnknown" | "Unavailable" | "Permission" | "PermissionRefresh";
   readonly message: string;
+  readonly requestId?: string;
 };
 
 interface AcquisitionSnapshot {
@@ -73,17 +78,38 @@ function mutationId(): string {
 }
 
 function isDeliveryUnknown(error: unknown): boolean {
-  if (isAbortError(error)) return true;
-  if (
-    error instanceof DOMException &&
-    (error.name === "NetworkError" || error.name === "TimeoutError")
-  ) {
-    return true;
-  }
   return (
-    error instanceof TypeError &&
-    /failed to fetch|fetch failed|network|load failed/i.test(error.message)
+    isAbortError(error) || (isApiError(error) && error.code === "E_NETWORK")
   );
+}
+
+function previewTransferErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Warning",
+        title: "Added without preview position",
+        message: "The preview listening position couldn’t be transferred.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
+function permissionRefreshErrorMessage(error: unknown): AcquisitionFailure {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        kind: "PermissionRefresh",
+        message: "Couldn’t refresh your writable libraries.",
+        ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
+      };
+    default:
+      throw error;
+  }
 }
 
 async function fetchWritableDestinationIndex(): Promise<
@@ -195,6 +221,7 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
     readonly conflicts: readonly PodcastReplacementConflict[];
     readonly fingerprint: string;
   } | null>(restored?.conflict ?? null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   snapshotRef.current = { selected, frozen, failure, conflict };
 
   const createDestination = async (
@@ -233,7 +260,7 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
     };
   };
 
-  const reviewWritableDestinations = async () => {
+  const reviewWritableDestinations = async (permissionRequestId?: string) => {
     setReviewingPermissions(true);
     setFailure(null);
     try {
@@ -248,20 +275,17 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
       setFailure({
         kind: "Permission",
         message: "Library access changed. Review your destinations.",
+        ...(permissionRequestId === undefined ? {} : { requestId: permissionRequestId }),
       });
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
-      if (
-        isSameSystemApiDefect(error) ||
-        (!isApiError(error) && !isDeliveryUnknown(error))
-      ) {
-        throw error;
+      try {
+        setFailure(permissionRefreshErrorMessage(error));
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+        return;
       }
       setPickerOpen(false);
-      setFailure({
-        kind: "PermissionRefresh",
-        message: "Couldn’t refresh your writable libraries.",
-      });
     } finally {
       setReviewingPermissions(false);
     }
@@ -293,17 +317,15 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
           );
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
-          // justify-ignore-error: preview-position transfer is best-effort per
-          // spec §5.2 — the Add stays committed. Rethrow only genuine same-system
-          // defects (real server bugs must fail loud); every other failure
-          // (transport, timeout, abort, expected API error) is non-fatal feedback
-          // and the canonical replace still proceeds.
-          if (isSameSystemApiDefect(error)) throw error;
-          feedback.show({
-            severity: "warning",
-            title: "Added without preview position",
-            message: "The preview listening position could not be transferred.",
-          });
+          try {
+            feedback.publish({
+              kind: "Hud",
+              content: previewTransferErrorMessage(error),
+            });
+          } catch (caughtDefect) {
+            setDefect({ error: caughtDefect });
+            return;
+          }
         }
       }
       setSelected([]);
@@ -313,7 +335,13 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
       onCommitted(result.href);
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
-      const nextConflict = replacementConflict(error);
+      let nextConflict: ReturnType<typeof replacementConflict>;
+      try {
+        nextConflict = replacementConflict(error);
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+        return;
+      }
       if (nextConflict) {
         setFrozen(command);
         setConflict({
@@ -329,7 +357,11 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
       ) {
         setFrozen(null);
         setPickerOpen(false);
-        setFailure({ kind: "Unavailable", message: "No longer available" });
+        setFailure({
+          kind: "Unavailable",
+          message: "No longer available",
+          ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
+        });
         return;
       }
       if (
@@ -337,7 +369,7 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
         (error.code === "E_FORBIDDEN" || error.code === "E_LIBRARY_FORBIDDEN")
       ) {
         setFrozen(null);
-        await reviewWritableDestinations();
+        await reviewWritableDestinations(error.requestId);
         return;
       }
       if (!dispatched && isAbortError(error)) {
@@ -352,10 +384,13 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
         setFailure({
           kind: "DeliveryUnknown",
           message: "Delivery unknown",
+          ...(isApiError(error) && error.requestId !== undefined
+            ? { requestId: error.requestId }
+            : {}),
         });
         return;
       }
-      throw error;
+      setDefect({ error });
     } finally {
       setBusy(false);
     }
@@ -381,6 +416,8 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
         : actionLabel;
   const accessibleActionLabel =
     failure?.kind === "DeliveryUnknown" ? primaryLabel : actionLabel;
+
+  if (defect) throw defect.error;
 
   return (
     <div className={styles.root}>
@@ -464,12 +501,19 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
       {failure ? (
         <>
           <FeedbackNotice
-            severity={
+            content={{
+              tone:
+                failure.kind === "Unavailable" || failure.kind === "Permission"
+                  ? "Warning"
+                  : "Danger",
+              title: failure.message,
+              requestId: failure.requestId,
+            }}
+            announcement={
               failure.kind === "Unavailable" || failure.kind === "Permission"
-                ? "warning"
-                : "error"
+                ? "Polite"
+                : "Assertive"
             }
-            title={failure.message}
           />
           {failure.kind === "PermissionRefresh" ? (
             <Button

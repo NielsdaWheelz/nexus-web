@@ -4,6 +4,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
   apiFetch,
   isApiError,
+  isSameSystemApiDefect,
   type ApiError,
   type ApiPath,
 } from "@/lib/api/client";
@@ -80,6 +81,12 @@ export function useResource<T, P>(
 
   const [retryTick, setRetryTick] = useState(0);
   const retry = useCallback(() => setRetryTick((n) => n + 1), []);
+  // Defects belong to the applicable render boundary, not to AsyncResource's
+  // modeled request state. Keep the failing key so a later resource identity
+  // can render its own loading state before its effect starts.
+  const [defect, setDefect] = useState<{ key: string; error: unknown } | null>(
+    null,
+  );
 
   const cache = useContext(ResourceCacheContext);
   const handleUnauthenticatedApiError = useUnauthenticatedApiHandler();
@@ -153,8 +160,14 @@ export function useResource<T, P>(
               });
             }
           },
-          () => {
-            if (!cancelled) retry();
+          (error) => {
+            if (cancelled || isAbortError(error)) return;
+            if (handleUnauthenticatedApiError(error)) return;
+            if (!isApiError(error) || isSameSystemApiDefect(error)) {
+              setDefect({ key: cacheKey, error });
+              return;
+            }
+            retry();
           },
         );
         return () => {
@@ -185,7 +198,10 @@ export function useResource<T, P>(
       } catch (err) {
         if (isAbortError(err) || controller.signal.aborted) return;
         if (handleUnauthenticatedApiError(err)) return;
-        if (!isApiError(err)) throw err;
+        if (!isApiError(err) || isSameSystemApiDefect(err)) {
+          setDefect({ key: cacheKey, error: err });
+          return;
+        }
         setResourceState({
           key: cacheKey,
           resource: { status: "error", error: err, retry },
@@ -198,6 +214,10 @@ export function useResource<T, P>(
       controller.abort();
     };
   }, [cacheKey, retryTick, retry, handleUnauthenticatedApiError]);
+
+  if (defect?.key === cacheKey) {
+    throw defect.error;
+  }
 
   return resource;
 }

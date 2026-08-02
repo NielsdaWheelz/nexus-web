@@ -3,12 +3,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import MediaImage from "@/components/ui/MediaImage";
 import ReaderCitation from "@/components/ui/ReaderCitation";
-import { apiFetch } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useGenerationRun } from "@/lib/api/useGenerationRun";
 import type { CitationOut } from "@/lib/conversations/citationOut";
@@ -127,9 +130,59 @@ type OracleStreamEvent = {
 };
 
 const ORACLE_RECONNECT_MAX_ATTEMPTS = 3;
-const LOAD_ERROR_MESSAGE = "The reading could not be loaded. Please retry.";
 const STREAM_ERROR_MESSAGE =
   "The reading stream could not reconnect. Please retry.";
+
+function oracleDetailErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title: "The reading was interrupted",
+        message: "This reading is no longer available.",
+        requestId: error.requestId,
+      };
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "The reading was interrupted",
+        message: "Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
+function oracleRetryErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "The retry couldn’t begin",
+        message: "Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title: "The oracle is busy",
+        message: "Wait a moment, then retry.",
+        requestId: error.requestId,
+      };
+    case "E_TOKEN_BUDGET_EXCEEDED":
+      return {
+        tone: "Danger",
+        title: "The retry couldn’t begin",
+        message: "The platform AI allowance has been reached.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
 
 const initialState = (): ReadingState => ({
   question: "",
@@ -435,29 +488,61 @@ function FleuronBreak() {
 }
 
 function oracleFailureFeedback(errorCode: string | null): FeedbackContent {
-  let message: string;
   switch (errorCode) {
     case "E_LLM_INVALID_KEY":
-      message =
-        "Add or fix a model API key before the oracle can complete a reading.";
-      break;
+      return {
+        tone: "Danger",
+        title: "The reading could not finish.",
+        message:
+          "Add or fix a model API key before the oracle can complete a reading.",
+      };
     case "E_BILLING_REQUIRED":
-      message =
-        "Platform model access requires an AI tier — add an API key or upgrade.";
-      break;
+      return {
+        tone: "Danger",
+        title: "The reading could not finish.",
+        message:
+          "Platform model access requires an AI tier — add an API key or upgrade.",
+      };
+    case "E_TOKEN_BUDGET_EXCEEDED":
+    case "budget_exceeded":
+      return {
+        tone: "Danger",
+        title: "The reading could not finish.",
+        message: "The platform AI allowance has been reached.",
+      };
     case "E_LLM_BAD_REQUEST":
-      message =
-        "The reading could not be completed. Start a new reading with a simpler question.";
-      break;
+    case "context_too_large":
+      return {
+        tone: "Danger",
+        title: "The reading could not finish.",
+        message:
+          "The reading could not be completed. Start a new reading with a simpler question.",
+      };
+    case "E_ORACLE_CORPUS_NOT_READY":
+    case "E_APP_SEARCH_FAILED":
+      return {
+        tone: "Danger",
+        title: "The reading could not finish.",
+        message: "The oracle’s source material is not ready. Start a new reading later.",
+      };
+    case "invalid_structured_output":
+    case "refused":
+    case "incomplete":
+    case "cancelled":
+    case "rate_limited":
+    case "timeout":
+    case "provider_unavailable":
+    case "stream_interrupted":
+      return {
+        tone: "Danger",
+        title: "The reading could not finish.",
+        message: "The reading could not be completed. Please start a new reading.",
+      };
     default:
-      message =
-        "The reading could not be completed. Please start a new reading.";
+      throw new Error(
+        `Unsupported oracle terminal error code: ${errorCode ?? "null"}`,
+      );
   }
-  return {
-    severity: "error",
-    title: "The reading could not finish.",
-    message,
-  };
 }
 
 export default function OracleReadingPaneBody() {
@@ -477,6 +562,7 @@ export default function OracleReadingPaneBody() {
   );
   const [retryingReading, setRetryingReading] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const detailResource = useResource<ReadingDetail>({
     cacheKey: `${readingId}:${retryNonce}`,
     load: (signal) => loadReadingDetail(readingId, signal),
@@ -518,11 +604,11 @@ export default function OracleReadingPaneBody() {
       });
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
-      setRetryError(
-        toFeedback(error, {
-          fallback: "The retry could not begin. Please try again.",
-        }),
-      );
+      try {
+        setRetryError(oracleRetryErrorMessage(error));
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+      }
       setRetryingReading(false);
     }
   }, [paneRuntime, retryingReading, state.question]);
@@ -542,11 +628,11 @@ export default function OracleReadingPaneBody() {
       return;
     }
     if (detailResource.status === "error") {
-      setLoadError(
-        toFeedback(detailResource.error, {
-          fallback: LOAD_ERROR_MESSAGE,
-        }),
-      );
+      try {
+        setLoadError(oracleDetailErrorMessage(detailResource.error));
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+      }
       return;
     }
     if (detailResource.data.id !== readingId) {
@@ -578,7 +664,7 @@ export default function OracleReadingPaneBody() {
 
   useEffect(() => {
     if (streamPhase === "failed") {
-      setLoadError({ severity: "error", title: STREAM_ERROR_MESSAGE });
+      setLoadError({ tone: "Danger", title: STREAM_ERROR_MESSAGE });
     }
   }, [streamPhase]);
 
@@ -631,6 +717,8 @@ export default function OracleReadingPaneBody() {
     created !== null
       ? `${ordinalEnglish(created.getUTCDate())} of ${MONTHS[created.getUTCMonth()]!}, ${toRoman(created.getUTCFullYear())}`
       : null;
+
+  if (defect) throw defect.error;
 
   return (
     <OracleThemeWrapper>
@@ -775,13 +863,13 @@ export default function OracleReadingPaneBody() {
           {state.status === "failed" && (
             <section className={styles.errorPanel}>
               <FeedbackNotice
-                feedback={oracleFailureFeedback(state.errorCode)}
-                className={styles.oracleFeedback}
+                content={oracleFailureFeedback(state.errorCode)}
+                announcement="Assertive"
               />
               {retryError !== null && (
                 <FeedbackNotice
-                  feedback={retryError}
-                  className={styles.oracleFeedback}
+                  content={retryError}
+                  announcement="Assertive"
                 />
               )}
               <button
@@ -798,12 +886,8 @@ export default function OracleReadingPaneBody() {
           {loadError !== null && state.status !== "complete" && (
             <section className={styles.errorPanel}>
               <FeedbackNotice
-                feedback={{
-                  ...loadError,
-                  title: "The reading was interrupted.",
-                  message: loadError.title,
-                }}
-                className={styles.oracleFeedback}
+                content={loadError}
+                announcement="Assertive"
               />
               <button
                 type="button"

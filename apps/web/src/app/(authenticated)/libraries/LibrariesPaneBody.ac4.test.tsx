@@ -334,7 +334,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
         createBodies.push(body);
         if (createBodies.length < 3) {
           return Response.json(
-            { error: { code: "E_INTERNAL", message: "Response lost" } },
+            { error: { code: "E_UPSTREAM", message: "Response lost" } },
             { status: 500 },
           );
         }
@@ -873,9 +873,10 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Shared Research · Member")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Accept" }));
-    expect(
-      await screen.findByText("Library invitation accepted."),
-    ).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(screen.queryByText("Shared Research · Member")).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Library invitation accepted.")).not.toBeInTheDocument();
     expect(
       wasFetchPathCalled(
         fetchSpy,

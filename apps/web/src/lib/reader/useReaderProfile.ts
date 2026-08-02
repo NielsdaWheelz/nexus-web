@@ -15,7 +15,14 @@
  * attempt into a retryable failure.
  */
 
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -30,6 +37,7 @@ import {
   sendableReaderProfilePatch,
   type ReaderProfilePatch,
   type ReaderProfilePersistence,
+  type ReaderProfileSaveFailure,
   type ReaderProfileSyncEvent,
   type ReaderProfileSyncState,
 } from "./readerProfileSync";
@@ -52,6 +60,7 @@ export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfil
   );
   const stateRef = useRef<ReaderProfileSyncState>(state);
   stateRef.current = state;
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
 
   const attemptSeqRef = useRef(0);
   const intentGenerationRef = useRef(0);
@@ -90,7 +99,15 @@ export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfil
         // late settlement is ignored.
         return;
       }
-      apply({ type: "save_failed", attemptId, failure: classifyReaderProfileSaveError(err) });
+      try {
+        apply({
+          type: "save_failed",
+          attemptId,
+          failure: classifyReaderProfileSaveError(err),
+        });
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+      }
     }
   }, [apply]);
 
@@ -156,11 +173,18 @@ export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfil
       if (handleUnauthenticatedApiError(err)) {
         return;
       }
-      const failure = classifyReaderProfileSaveError(err);
+      let failure: ReaderProfileSaveFailure;
+      try {
+        failure = classifyReaderProfileSaveError(err);
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+        return;
+      }
       if (failure.kind === "Forbidden") {
         // A forbidden read is an authorization contract regression, not a
         // save failure; defect loudly.
-        throw err;
+        setDefect({ error: err });
+        return;
       }
       // justify-ignore-error: classified transient revalidation failure
       // retains current state until the next resume event (spec §7).
@@ -277,6 +301,8 @@ export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfil
     persistenceRef.current = next;
     return next;
   }, [state]);
+
+  if (defect) throw defect.error;
 
   return { profile, persistence, intend, retrySave };
 }

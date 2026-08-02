@@ -88,6 +88,7 @@ const hostMocks = vi.hoisted(() => ({
     string,
     PanePrimaryChromePublication
   >(),
+  throwingPaneIds: new Set<string>(),
   isMobile: false,
   browserViewportKind: null as "desktop" | "mobile" | null,
   canvasEdges: { atStart: false, atEnd: false },
@@ -302,6 +303,9 @@ function TestPaneBody() {
   const instanceId = useRef(++hostMocks.bodyInstanceId);
   const paneRuntime = usePaneRuntime();
   const paneId = paneRuntime?.paneId ?? "none";
+  if (hostMocks.throwingPaneIds.has(paneId)) {
+    throw new Error(`Pane body ${paneId} failed during initial render.`);
+  }
   hostMocks.bodyRenderCountByPaneId.set(
     paneId,
     (hostMocks.bodyRenderCountByPaneId.get(paneId) ?? 0) + 1,
@@ -790,6 +794,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
         event.key.toLowerCase() === "f",
     );
     hostMocks.primaryChromePublicationByPaneId = new Map();
+    hostMocks.throwingPaneIds = new Set();
     hostMocks.isMobile = false;
     hostMocks.canvasEdges = { atStart: false, atEnd: false };
     hostMocks.paneCanvasInputs = [];
@@ -1494,6 +1499,15 @@ describe("WorkspaceHost pane route lifecycle", () => {
           <WorkspaceHost />
         </MobileChromeProvider>,
       );
+      const initialPaneOneBody = screen
+        .getAllByTestId("route-body")
+        .find((body) => body.dataset.runtimePaneId === "pane-1");
+      const siblingBody = screen
+        .getAllByTestId("route-body")
+        .find((body) => body.dataset.runtimePaneId === "pane-2");
+      expect(initialPaneOneBody).toBeDefined();
+      expect(siblingBody).toBeDefined();
+      const initialPaneOneInstance = initialPaneOneBody!.dataset.instanceId;
       const initialBoundary = screen.getByTestId("pane-error-boundary-pane-1");
       const initialWidth = initialBoundary.getBoundingClientRect().width;
       expect(initialWidth).toBeGreaterThan(0);
@@ -1513,13 +1527,9 @@ describe("WorkspaceHost pane route lifecycle", () => {
       );
 
       expect(
-        await screen.findByText(
-          "This pane failed to render. Close it and retry.",
-        ),
+        await screen.findByRole("alert", { name: "This pane couldn’t load" }),
       ).toBeInTheDocument();
-      expect(
-        screen.getByRole("region", { name: "Pane failed to render" }),
-      ).toBeInTheDocument();
+      expect(screen.getByRole("alert", { name: "This pane couldn’t load" })).toHaveFocus();
       expect(screen.getByTestId("route-body")).toHaveAttribute(
         "data-runtime-pane-id",
         "pane-2",
@@ -1530,6 +1540,55 @@ describe("WorkspaceHost pane route lifecycle", () => {
       expect(screen.getByTestId("workspace-pane-strip")).toBeInTheDocument();
       const failedBoundary = screen.getByTestId("pane-error-boundary-pane-1");
       expect(failedBoundary.getBoundingClientRect().width).toBe(initialWidth);
+
+      hostMocks.primaryChromePublicationByPaneId.delete("pane-1");
+      fireEvent.click(screen.getByRole("button", { name: "Retry pane" }));
+
+      await waitFor(() =>
+        expect(
+          screen.getAllByTestId("route-body").find(
+            (body) => body.dataset.runtimePaneId === "pane-1",
+          ),
+        ).toBeDefined(),
+      );
+      expect(
+        screen.queryByRole("alert", { name: "This pane couldn’t load" }),
+      ).not.toBeInTheDocument();
+      const recoveredPaneOneBody = screen
+        .getAllByTestId("route-body")
+        .find((body) => body.dataset.runtimePaneId === "pane-1");
+      expect(recoveredPaneOneBody).toHaveAttribute(
+        "data-runtime-href",
+        MEDIA_HREF_3,
+      );
+      expect(recoveredPaneOneBody).not.toHaveAttribute(
+        "data-instance-id",
+        initialPaneOneInstance,
+      );
+      expect(
+        screen
+          .getAllByTestId("route-body")
+          .find((body) => body.dataset.runtimePaneId === "pane-2"),
+      ).toBe(siblingBody);
+      expect(hostMocks.store.navigatePane).not.toHaveBeenCalled();
+      expect(hostMocks.store.activateWorkspaceTarget).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("focuses a routed-pane failure that occurs during the boundary's initial mount", async () => {
+    hostMocks.throwingPaneIds.add("pane-1");
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    try {
+      render(<WorkspaceHost />);
+
+      expect(
+        await screen.findByRole("alert", { name: "This pane couldn’t load" }),
+      ).toHaveFocus();
     } finally {
       consoleError.mockRestore();
     }
@@ -1550,7 +1609,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
       render(<WorkspaceHost />);
 
       expect(
-        await screen.findByRole("region", { name: "Pane failed to render" }),
+        await screen.findByRole("alert", { name: "This pane couldn’t load" }),
       ).toBeInTheDocument();
       expect(screen.getByTestId("route-body")).toHaveAttribute(
         "data-runtime-pane-id",
@@ -1573,7 +1632,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
       render(<WorkspaceHost />);
 
       expect(
-        await screen.findByRole("region", { name: "Pane failed to render" }),
+        await screen.findByRole("alert", { name: "This pane couldn’t load" }),
       ).toBeInTheDocument();
       expect(screen.getByTestId("route-body")).toHaveAttribute(
         "data-runtime-pane-id",

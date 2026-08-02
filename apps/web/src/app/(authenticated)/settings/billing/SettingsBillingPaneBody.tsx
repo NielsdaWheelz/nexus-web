@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -31,6 +34,55 @@ interface CheckoutResponse {
 const PLAN_SEQUENCE: BillingPlanTier[] = ["free", "plus", "ai_plus", "ai_pro"];
 const BILLING_DISABLED_MESSAGE =
   "Billing is currently disabled. Plan changes and billing management are unavailable right now.";
+
+type BillingAction = "Checkout" | "Portal";
+
+function billingActionErrorMessage(
+  error: unknown,
+  action: BillingAction,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const title =
+    action === "Checkout"
+      ? "Checkout couldn’t be started"
+      : "The billing portal couldn’t be opened";
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    case "E_BILLING_DISABLED":
+      return {
+        tone: "Danger",
+        title,
+        message: BILLING_DISABLED_MESSAGE,
+        requestId: error.requestId,
+      };
+    case "E_BILLING_REQUIRED":
+      return {
+        tone: "Danger",
+        title,
+        message:
+          action === "Checkout"
+            ? "Refresh billing details, then retry."
+            : "No billing account is available to manage.",
+        requestId: error.requestId,
+      };
+    case "E_INVALID_REQUEST":
+      if (action === "Portal") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "This plan is not available for checkout.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
 
 function planDescription(planTier: BillingPlanTier): string {
   if (planTier === "plus") return "Sharing and collaboration.";
@@ -144,6 +196,7 @@ export default function SettingsBillingPaneBody() {
   const [checkoutBusy, setCheckoutBusy] = useState<BillingPlanTier | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const [actionError, setActionError] = useState<FeedbackContent | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   usePaneReturnReady(!loading);
 
   const effectivePlan = account?.entitlement_plan_tier ?? "free";
@@ -173,7 +226,7 @@ export default function SettingsBillingPaneBody() {
   const launchCheckout = useCallback(
     async (planTier: BillingPlanTier) => {
       if (!billingEnabled) {
-        setActionError({ severity: "error", title: BILLING_DISABLED_MESSAGE });
+        setActionError({ tone: "Danger", title: BILLING_DISABLED_MESSAGE });
         return;
       }
       setCheckoutBusy(planTier);
@@ -186,7 +239,11 @@ export default function SettingsBillingPaneBody() {
         window.location.assign(response.data.url);
       } catch (checkoutError) {
         if (handleUnauthenticatedApiError(checkoutError)) return;
-        setActionError(toFeedback(checkoutError, { fallback: "Failed to start checkout" }));
+        try {
+          setActionError(billingActionErrorMessage(checkoutError, "Checkout"));
+        } catch (caughtDefect) {
+          setDefect({ error: caughtDefect });
+        }
       } finally {
         setCheckoutBusy(null);
       }
@@ -196,7 +253,7 @@ export default function SettingsBillingPaneBody() {
 
   const launchBillingPortal = useCallback(async () => {
     if (!billingEnabled || !account?.can_manage_billing) {
-      setActionError({ severity: "error", title: BILLING_DISABLED_MESSAGE });
+      setActionError({ tone: "Danger", title: BILLING_DISABLED_MESSAGE });
       return;
     }
     setPortalBusy(true);
@@ -208,21 +265,39 @@ export default function SettingsBillingPaneBody() {
       window.location.assign(response.data.url);
     } catch (portalError) {
       if (handleUnauthenticatedApiError(portalError)) return;
-      setActionError(toFeedback(portalError, { fallback: "Failed to open billing portal" }));
+      try {
+        setActionError(billingActionErrorMessage(portalError, "Portal"));
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+      }
     } finally {
       setPortalBusy(false);
     }
   }, [account?.can_manage_billing, billingEnabled]);
 
+  if (defect) throw defect.error;
+
   return (
     <PaneSurface opener={<SectionOpener heading="Billing" />}>
       <PaneSection>
         <div className={styles.content}>
-        {loading && <PaneLoadingState />}
-        {error && <FeedbackNotice severity="error">{error}</FeedbackNotice>}
-        {actionError ? <FeedbackNotice feedback={actionError} /> : null}
+        {loading && (
+          <PaneLoadingState label="Loading billing settings…" announcement="Polite" />
+        )}
+        {error ? (
+          <FeedbackNotice
+            content={{ tone: "Danger", title: error }}
+            announcement="Assertive"
+          />
+        ) : null}
+        {actionError ? (
+          <FeedbackNotice content={actionError} announcement="Assertive" />
+        ) : null}
         {!loading && account && !billingEnabled && (
-          <FeedbackNotice severity="info">{BILLING_DISABLED_MESSAGE}</FeedbackNotice>
+          <FeedbackNotice
+            content={{ tone: "Info", title: BILLING_DISABLED_MESSAGE }}
+            announcement="None"
+          />
         )}
 
         {!loading && account && (

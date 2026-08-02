@@ -1,7 +1,10 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api/client";
 import type { AddSeed } from "@/lib/nexus/model";
 import {
+  addContentPlacementErrorMessage,
+  opmlImportErrorMessage,
   useAddContentSession,
   type AddContentSessionController,
 } from "./useAddContentSession";
@@ -23,6 +26,28 @@ function Harness({
 
 describe("useAddContentSession mutation lifecycle", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it("maps only finite operation failures and preserves diagnostics", () => {
+    expect(
+      addContentPlacementErrorMessage(
+        new ApiError(0, "E_NETWORK", "offline", "req-placement"),
+      ),
+    ).toMatchObject({ tone: "Danger", requestId: "req-placement" });
+    expect(
+      opmlImportErrorMessage(
+        new ApiError(429, "E_RATE_LIMITED", "slow", "req-opml"),
+      ),
+    ).toMatchObject({ tone: "Danger", requestId: "req-opml" });
+
+    const sameSystem = new ApiError(500, "E_INTERNAL", "broken");
+    expect(() => opmlImportErrorMessage(sameSystem)).toThrow(sameSystem);
+
+    const unknownCode = new ApiError(409, "E_NEW_OPML_FAILURE", "new");
+    expect(() => opmlImportErrorMessage(unknownCode)).toThrow(unknownCode);
+
+    const nonApi = new Error("decoder failed");
+    expect(() => addContentPlacementErrorMessage(nonApi)).toThrow(nonApi);
+  });
 
   it.each(["Stop", "replacement"] as const)(
     "rejects a destination created after %s supersedes its session",
@@ -208,7 +233,7 @@ describe("useAddContentSession mutation lifecycle", () => {
     expect(session.state.items[0]).toMatchObject({
       kind: "AcceptanceUnresolved",
       feedback: {
-        severity: "warning",
+        tone: "Warning",
         title: "Stopped · acceptance status unknown",
       },
     });

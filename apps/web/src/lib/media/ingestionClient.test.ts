@@ -172,14 +172,14 @@ describe("upload init outcome projection", () => {
       kind: "AcceptedUncertain",
       mediaId: "media-1",
       sourceAttemptId: "attempt-1",
-      feedback: { severity: "warning" },
+      feedback: { tone: "Warning" },
     });
   });
 });
 
 describe("upload reference projection", () => {
   const processingFailureFeedback = {
-    severity: "warning" as const,
+    tone: "Warning" as const,
     title: "Attachment was added, but source processing failed.",
   };
 
@@ -194,7 +194,7 @@ describe("upload reference projection", () => {
       data: acceptedFields({ duplicate: false, processing_status: "failed" }),
     });
     const uncertainFeedback = {
-      severity: "warning" as const,
+      tone: "Warning" as const,
       title: "Upload status could not be confirmed.",
     };
 
@@ -234,7 +234,7 @@ describe("upload reference projection", () => {
       kind: "AcceptedUncertain" as const,
       mediaId: "media-1",
       sourceAttemptId: "attempt-1",
-      feedback: { severity: "warning" as const, title: "Status unknown" },
+      feedback: { tone: "Warning" as const, title: "Status unknown" },
     };
 
     for (const result of [accepted, uncertain]) {

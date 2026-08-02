@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import ReaderCitation from "@/components/ui/ReaderCitation";
@@ -10,7 +10,9 @@ import { assumePaneVisitId } from "@/lib/workspace/schema";
 import type {
   ComponentProps,
   MouseEvent as ReactMouseEvent,
+  ReactNode,
 } from "react";
+import { Component } from "react";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 
@@ -23,6 +25,25 @@ const activateWorkspaceTarget =
     kind: "CreatedPane" as const,
     paneId: "pane-2",
   }));
+
+class ReaderCitationBoundary extends Component<
+  { children: ReactNode },
+  { error: unknown }
+> {
+  state = { error: null as unknown };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  render() {
+    return this.state.error === null ? (
+      this.props.children
+    ) : (
+      <p role="alert">Citation defect reached boundary</p>
+    );
+  }
+}
 
 function renderCitation(
   preview: ReaderCitationPreview,
@@ -54,20 +75,22 @@ function renderCitation(
           onGoBackPane={vi.fn()}
           onGoForwardPane={vi.fn()}
         >
-          <ReaderCitation
-            index={1}
-            preview={preview}
-            activation={
-              options.activation ?? {
-                resourceRef: "media:media-1",
-                kind: "route",
-                href: "/media/media-1",
-                unresolvedReason: null,
+          <ReaderCitationBoundary>
+            <ReaderCitation
+              index={1}
+              preview={preview}
+              activation={
+                options.activation ?? {
+                  resourceRef: "media:media-1",
+                  kind: "route",
+                  href: "/media/media-1",
+                  unresolvedReason: null,
+                }
               }
-            }
-            target={options.target ?? null}
-            onActivate={onActivate}
-          />
+              target={options.target ?? null}
+              onActivate={onActivate}
+            />
+          </ReaderCitationBoundary>
         </PaneRuntimeProvider>
       </FeedbackProvider>
     </PaneReturnMementoProvider>,
@@ -78,6 +101,10 @@ function renderCitation(
 describe("ReaderCitation summary abstract", () => {
   beforeEach(() => {
     activateWorkspaceTarget.mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("owns an internal rich click with one workspace activation and one pulse callback", () => {
@@ -234,5 +261,50 @@ describe("ReaderCitation summary abstract", () => {
       expect(screen.getByText("matched source text")).toBeInTheDocument();
     });
     expect(screen.queryByText(/abstract/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps finite clipboard failure inline with exact retry ownership", async () => {
+    const user = userEvent.setup();
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"))
+      .mockResolvedValueOnce(undefined);
+    vi.spyOn(document, "execCommand").mockReturnValue(false);
+    renderCitation({ title: "Source title", copyText: "Citation text" });
+
+    await user.hover(screen.getByRole("link", { name: "Open citation 1" }));
+    await user.click(await screen.findByRole("button", { name: "Copy citation" }));
+
+    const notice = await screen.findByRole("alert");
+    expect(notice).toHaveTextContent("Citation wasn’t copied");
+    expect(screen.getByLabelText("HUD feedback")).toBeEmptyDOMElement();
+    expect(
+      screen.getByLabelText("Detached feedback announcements"),
+    ).toBeEmptyDOMElement();
+    expect(screen.queryByRole("button", { name: "Copy citation" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("HUD feedback")).toHaveTextContent(
+        "Citation copied",
+      ),
+    );
+    expect(writeText).toHaveBeenCalledTimes(2);
+  });
+
+  it("routes an unknown clipboard defect through the render boundary", async () => {
+    const user = userEvent.setup();
+    const defect = new TypeError("unexpected clipboard defect");
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(defect);
+    const fallback = vi.spyOn(document, "execCommand").mockReturnValue(true);
+    renderCitation({ title: "Source title", copyText: "Citation text" });
+
+    await user.hover(screen.getByRole("link", { name: "Open citation 1" }));
+    await user.click(await screen.findByRole("button", { name: "Copy citation" }));
+
+    expect(await screen.findByText("Citation defect reached boundary")).toBeVisible();
+    expect(screen.queryByText("Citation wasn’t copied")).toBeNull();
+    expect(fallback).not.toHaveBeenCalled();
   });
 });

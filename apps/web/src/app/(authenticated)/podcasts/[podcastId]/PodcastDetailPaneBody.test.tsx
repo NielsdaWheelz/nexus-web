@@ -72,6 +72,10 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => false,
 }));
 
+vi.mock("@/components/connections/ConnectionsSurface", () => ({
+  default: () => null,
+}));
+
 vi.mock("@/lib/billing/useBillingAccount", () => ({
   useBillingAccount: () => ({
     account: {
@@ -1478,8 +1482,6 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     expect(confirmReset).toHaveBeenCalledWith(
       "Reset progress? This starts the item from the beginning. Notes and activity history are kept.",
     );
-    expect(await screen.findByText("Progress reset.")).toBeInTheDocument();
-
     await waitFor(() => expect(episodeRequests).toBe(2));
     fireEvent.click(
       screen.getByRole("button", { name: "More actions for Episode 1" }),
@@ -1558,9 +1560,155 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       }),
     );
     expect(
-      screen.getByRole("menuitem", { name: "Re-enrich metadata" }),
+      await screen.findByRole("menuitem", { name: "Re-enrich metadata" }),
     ).toBeInTheDocument();
   });
+
+  it("keeps a modeled metadata retry state local with its request ID", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return jsonResponse(
+          episodePage([episodeMedia({ canRetryMetadata: true })]),
+        );
+      }
+      if (
+        url.pathname === "/api/media/00000000-0000-4000-8000-000000000111/retry"
+      ) {
+        return jsonResponse(
+          {
+            error: {
+              code: "E_RETRY_INVALID_STATE",
+              message: "Media is no longer ready",
+              request_id: "req-metadata-state",
+            },
+          },
+          409,
+        );
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Re-enrich metadata" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Metadata can be retried only after this episode is ready to read.",
+    );
+    expect(
+      screen.getByText("Nexus request ID: req-metadata-state"),
+    ).toBeInTheDocument();
+  });
+
+  it.each(["E_NETWORK", "E_UPSTREAM_TIMEOUT"])(
+    "retains an unconfirmed metadata Notice after reload and removes direct retry for %s",
+    async (code) => {
+      let episodeRequests = 0;
+      let metadataPosts = 0;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = new URL(String(input), "http://localhost");
+        if (
+          url.pathname ===
+          "/api/podcasts/00000000-0000-4000-8000-000000000011"
+        ) {
+          return jsonResponse(podcastDetailResponse());
+        }
+        if (
+          url.pathname ===
+          "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+        ) {
+          episodeRequests += 1;
+          return jsonResponse(
+            episodePage([episodeMedia({ canRetryMetadata: true })]),
+          );
+        }
+        if (
+          url.pathname ===
+          "/api/media/00000000-0000-4000-8000-000000000111/retry"
+        ) {
+          metadataPosts += 1;
+          return jsonResponse(
+            {
+              error: {
+                code,
+                message: "The outcome is unknown",
+                request_id: "req-metadata-unconfirmed",
+              },
+            },
+            503,
+          );
+        }
+        if (
+          url.pathname ===
+          "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+        ) {
+          return jsonResponse({ data: [] });
+        }
+        if (url.pathname === "/api/lectern") {
+          return jsonResponse({ data: { items: [] } });
+        }
+        throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+      });
+
+      render(<Wrapped />);
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: "More actions for Episode 1",
+        }),
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: "Re-enrich metadata" }),
+      );
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Metadata request couldn’t be confirmed",
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Its status is being checked. Don’t start it again yet.",
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Nexus request ID: req-metadata-unconfirmed",
+      );
+      await waitFor(() => expect(episodeRequests).toBeGreaterThanOrEqual(2));
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Metadata request couldn’t be confirmed",
+      );
+
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: "More actions for Episode 1",
+        }),
+      );
+      expect(
+        screen.queryByRole("menuitem", { name: "Re-enrich metadata" }),
+      ).toBeNull();
+      expect(metadataPosts).toBe(1);
+    },
+  );
 
   it("keys episode busy state by action and derives Lectern Add from ready membership", async () => {
     const metadataResponse = deferredResponse();
@@ -2061,10 +2209,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         };
         requests.push(request);
         if (request.sort === "oldest") {
-          return newFirstPage.promise;
+          return newFirstPage.promise.then((response) => response.clone());
         }
         if (request.cursor === "page-2") {
-          return oldContinuation.promise;
+          return oldContinuation.promise.then((response) => response.clone());
         }
         return jsonResponse(
           episodePage([episodeMedia()], { kind: "Present", value: "page-2" }),
@@ -2106,6 +2254,9 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     });
 
     newFirstPage.resolve(jsonResponse(episodePage([])));
+    expect(
+      await screen.findByText("No episodes found for this podcast."),
+    ).toBeVisible();
   });
 
   it("ignores older podcast loads that resolve after a newer route load", async () => {
@@ -2393,7 +2544,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     expect(
       screen.queryByText("No episodes found for this podcast."),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByText("Loading podcast…")).toBeInTheDocument();
 
     await act(async () => {
       initialEpisodes.resolve(jsonResponse(episodePage([])));

@@ -84,7 +84,9 @@ function PaneBodyPerformanceMarker({ children }: { children: ReactNode }) {
 export function renderPane(id: PaneRouteId): ReactNode {
   const Body = PANE_BODIES[id];
   return (
-    <Suspense fallback={<PaneLoadingState />}>
+    <Suspense
+      fallback={<PaneLoadingState label="Loading pane…" announcement="Polite" />}
+    >
       <PaneBodyPerformanceMarker>
         {SHELL_SCROLL_ROUTE_IDS.has(id) ? (
           <ResolvedPaneBodyMarker>

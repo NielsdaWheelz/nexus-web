@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import type {
   WorkspaceTargetActivationRequest,
   WorkspaceTargetActivationResult,
@@ -15,12 +16,17 @@ import {
 
 function context(input?: {
   result?: WorkspaceTargetActivationResult;
+  androidShell?: boolean;
 }): NexusDispatchCtx & {
   activateWorkspaceTarget: ReturnType<typeof vi.fn>;
 } {
   return {
-    androidShell: false,
-    feedback: { show: vi.fn() } as never,
+    androidShell: input?.androidShell ?? false,
+    feedback: {
+      publish: vi.fn(),
+      resolve: vi.fn(),
+      suppress: vi.fn(),
+    } as never,
     activePaneId: "pane-origin",
     activateWorkspaceTarget: vi.fn(
       (_request: WorkspaceTargetActivationRequest) =>
@@ -130,6 +136,64 @@ describe("Nexus dispatch", () => {
         labelHint: "Libraries",
       },
     });
+  });
+
+  it("keeps Android-only Local Vault rejection as a durable dispatch outcome", async () => {
+    const ctx = context({ androidShell: true });
+
+    expect(
+      await dispatchNexusTarget(
+        {
+          kind: "InternalHref",
+          href: "/settings/local-vault",
+          labelHint: "Local Vault",
+        },
+        ctx,
+        PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
+      ),
+    ).toEqual({
+      kind: "OperationBlocked",
+      reason: "AndroidRestricted",
+      title: "Local Vault isn’t available in the Android app",
+    });
+    expect(ctx.activateWorkspaceTarget).not.toHaveBeenCalled();
+    expect(ctx.feedback.publish).not.toHaveBeenCalled();
+  });
+
+  it("owns expected clipboard unavailability and rejects unknown clipboard defects", async () => {
+    const expected = new ClipboardWriteUnavailableError();
+    const writeText = vi
+      .fn()
+      .mockRejectedValueOnce(expected)
+      .mockRejectedValueOnce(new Error("native clipboard defect"));
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const ctx = context();
+    const target = {
+      kind: "CopyExternalLink" as const,
+      href: "https://example.test/story",
+    };
+
+    expect(
+      await dispatchNexusTarget(
+        target,
+        ctx,
+        PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
+      ),
+    ).toEqual({
+      kind: "OperationBlocked",
+      reason: "ClipboardUnavailable",
+      title: "External link wasn’t copied",
+      message: "Copy it manually or retry the same link.",
+    });
+    await expect(
+      dispatchNexusTarget(
+        target,
+        ctx,
+        PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
+      ),
+    ).rejects.toThrow("native clipboard defect");
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(ctx.feedback.publish).not.toHaveBeenCalled();
   });
 
   it("preserves captured Follow and Fork for desktop resource Chat", async () => {
@@ -433,6 +497,7 @@ describe("Nexus dispatch", () => {
       mediaIds: ["11111111-1111-4111-8111-111111111111"],
       placement: { kind: "Last" },
     });
+    expect(ctx.feedback.publish).not.toHaveBeenCalled();
     expect(ctx.openShare).toHaveBeenCalledTimes(1);
     expect(ctx.closePane).toHaveBeenCalledWith("pane-a");
   });

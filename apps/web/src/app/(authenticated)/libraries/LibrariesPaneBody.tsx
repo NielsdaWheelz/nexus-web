@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import {
   type CollectionCursor,
   type CollectionPage,
@@ -23,7 +22,6 @@ import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -72,6 +70,10 @@ import type {
   ViewerLibraryInvitation,
 } from "@/lib/libraries/contract";
 import { useStringIdSet } from "@/lib/useStringIdSet";
+import {
+  libraryRequestErrorMessage,
+  type LibraryRequest,
+} from "@/lib/libraries/libraryRequestErrorMessage";
 import styles from "./page.module.css";
 
 type Library = LibraryOut;
@@ -136,6 +138,7 @@ export default function LibrariesPaneBody() {
   const [refreshingLibraries, setRefreshingLibraries] = useState(false);
   const clearAllVisitData = useClearAllPaneVisitData();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [invitesRefreshVersion, setInvitesRefreshVersion] = useState(0);
   const [viewerInvites, setViewerInvites] = useState<ViewerLibraryInvitation[]>(
     [],
@@ -396,23 +399,46 @@ export default function LibrariesPaneBody() {
     controller !== null && exhaustion.kind === "Complete";
   const initialLoadError =
     controller === null && librariesResource.status === "error"
-      ? toFeedback(librariesResource.error, {
-          fallback: "Failed to load libraries",
-        })
+      ? libraryRequestErrorMessage(
+          librariesResource.error,
+          {
+            title: "Libraries couldn’t be loaded",
+            request: "LibraryCollectionRead",
+          },
+        )
       : null;
   const refreshLoadError =
     controller !== null && librariesResource.status === "error"
-      ? toFeedback(librariesResource.error, {
-          fallback: "Failed to refresh libraries",
-        })
+      ? libraryRequestErrorMessage(
+          librariesResource.error,
+          {
+            title: "Libraries couldn’t be refreshed",
+            request: "LibraryCollectionRead",
+          },
+        )
       : null;
 
   const inviteLoadError =
     viewerInvitesResource.status === "error"
-      ? toFeedback(viewerInvitesResource.error, {
-          fallback: "Library invitations could not be loaded.",
-        })
+      ? libraryRequestErrorMessage(
+          viewerInvitesResource.error,
+          {
+            title: "Library invitations couldn’t be loaded",
+            request: "InvitationRead",
+          },
+        )
       : null;
+
+  const presentFailure = useCallback(
+    (error: unknown, title: string, request: LibraryRequest): void => {
+      try {
+        setFeedback(libraryRequestErrorMessage(error, { title, request }));
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+      }
+    },
+    [],
+  );
 
   const newLibraryNameReserved = isReservedLibraryName(newLibraryName);
 
@@ -436,11 +462,7 @@ export default function LibrariesPaneBody() {
     } catch (err) {
       pendingFocusNeighborRef.current = undefined;
       if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(
-        toFeedback(err, {
-          fallback: "Failed to create library",
-        }),
-      );
+      presentFailure(err, "Library wasn’t created", "LibraryCreate");
     } finally {
       setCreating(false);
     }
@@ -473,12 +495,7 @@ export default function LibrariesPaneBody() {
       publishLibraryPlacementChange("Unknown");
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-      setFeedback(
-        toFeedback(err, {
-          fallback: "Failed to delete library",
-        }),
-      );
+      presentFailure(err, "Library wasn’t deleted", "LibraryMutation");
     } finally {
       deletingLibraryIds.remove(library.id);
     }
@@ -531,17 +548,11 @@ export default function LibrariesPaneBody() {
       try {
         if (action === "accept") {
           await acceptLibraryInvite(invite.invitationHandle);
-          setFeedback({
-            severity: "success",
-            title: "Library invitation accepted.",
-          });
+          setFeedback(null);
           refreshLibraries();
         } else {
           await declineLibraryInvite(invite.invitationHandle);
-          setFeedback({
-            severity: "success",
-            title: "Library invitation declined.",
-          });
+          setFeedback(null);
         }
         setViewerInvites((current) =>
           current.filter(
@@ -552,19 +563,18 @@ export default function LibrariesPaneBody() {
         setInvitesRefreshVersion((version) => version + 1);
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
-        setFeedback(
-          toFeedback(error, {
-            fallback:
-              action === "accept"
-                ? "The invitation could not be accepted."
-                : "The invitation could not be declined.",
-          }),
+        presentFailure(
+          error,
+          action === "accept"
+            ? "Invitation couldn’t be accepted"
+            : "Invitation couldn’t be declined",
+          "InvitationMutation",
         );
       } finally {
         setBusyInvitationHandle(null);
       }
     },
-    [busyInvitationHandle, refreshLibraries],
+    [busyInvitationHandle, presentFailure, refreshLibraries],
   );
   const getFilterStatus = useCallback(
     (query: string) => {
@@ -708,6 +718,8 @@ export default function LibrariesPaneBody() {
     },
   });
 
+  if (defect) throw defect.error;
+
   const createLibraryAction = (
     <div>
       <form className={styles.createForm} onSubmit={handleCreateLibrary}>
@@ -749,14 +761,17 @@ export default function LibrariesPaneBody() {
     <>
       {inviteLoadError ? (
         <div className={styles.invitationInbox}>
-          <FeedbackNotice feedback={inviteLoadError} />
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setInvitesRefreshVersion((version) => version + 1)}
-          >
-            Retry invitations
-          </Button>
+          <FeedbackNotice
+            content={inviteLoadError}
+            announcement="Assertive"
+            actions={[
+              {
+                label: "Retry invitations",
+                onClick: () =>
+                  setInvitesRefreshVersion((version) => version + 1),
+              },
+            ]}
+          />
         </div>
       ) : null}
       {viewerInvites.length > 0 ? (
@@ -841,35 +856,55 @@ export default function LibrariesPaneBody() {
         }
         notice={
           feedback ? (
-            <FeedbackNotice feedback={feedback} />
+            <FeedbackNotice content={feedback} announcement="Assertive" />
           ) : status === "loading" && filterQuery.trim() ? (
             <FeedbackNotice
-              severity="neutral"
-              title="No matching library found so far."
+              content={{
+                tone: "Neutral",
+                title: "No matching library found so far.",
+              }}
+              announcement="Polite"
             />
           ) : undefined
         }
         error={
           initialLoadError ? (
-            <FeedbackNotice feedback={initialLoadError} />
+            <FeedbackNotice
+              content={initialLoadError}
+              announcement="Assertive"
+              actions={[
+                {
+                  label: "Retry",
+                  onClick: () => {
+                    if (librariesResource.status === "error") {
+                      librariesResource.retry();
+                    }
+                  },
+                },
+              ]}
+            />
           ) : undefined
         }
         empty={
           filterQuery.trim() ? (
             <FeedbackNotice
-              severity="neutral"
-              title={
-                collectionComplete
+              content={{
+                tone: "Neutral",
+                title: collectionComplete
                   ? "No libraries match this filter."
-                  : "No matching library found so far."
-              }
+                  : "No matching library found so far.",
+              }}
+              announcement="Polite"
             />
           ) : (
-          <FeedbackNotice
-            severity="neutral"
-            title="No libraries yet."
-            message="Create your first library above."
-          />
+            <FeedbackNotice
+              content={{
+                tone: "Neutral",
+                title: "No libraries yet.",
+                message: "Create your first library above.",
+              }}
+              announcement="Polite"
+            />
           )
         }
         footer={
@@ -879,20 +914,20 @@ export default function LibrariesPaneBody() {
                 state={refreshingLibraries ? { kind: "Idle" } : exhaustion}
               />
               {refreshLoadError ? (
-                <>
-                  <FeedbackNotice feedback={refreshLoadError} />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (librariesResource.status === "error") {
-                        librariesResource.retry();
-                      }
-                    }}
-                  >
-                    Retry
-                  </Button>
-                </>
+                <FeedbackNotice
+                  content={refreshLoadError}
+                  announcement="Assertive"
+                  actions={[
+                    {
+                      label: "Retry",
+                      onClick: () => {
+                        if (librariesResource.status === "error") {
+                          librariesResource.retry();
+                        }
+                      },
+                    },
+                  ]}
+                />
               ) : null}
             </>
           ) : null

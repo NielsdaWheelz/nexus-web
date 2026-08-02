@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -365,7 +365,9 @@ describe("WorkspaceStoreProvider", () => {
     expect(primaryPanes(workspace().state).map((pane) => pane.id)).toEqual(
       expect.arrayContaining(initialPaneIds),
     );
-    expect(screen.getByText("Pane limit reached")).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("HUD feedback")).getByText("Pane limit reached"),
+    ).toBeInTheDocument();
     flushWorkspaceSession();
   });
 

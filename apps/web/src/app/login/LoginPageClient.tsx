@@ -20,7 +20,10 @@ import styles from "./page.module.css";
 type AuthMode = "signin" | "create";
 
 interface LoginPageClientProps {
-  initialFeedback?: FeedbackContent | null;
+  initialFeedback?: {
+    content: FeedbackContent;
+    announcement: "Polite" | "Assertive";
+  } | null;
   initialMode?: AuthMode;
   nextPath: AuthReturnTarget;
   isShell: boolean;
@@ -132,7 +135,12 @@ export default function LoginPageClient({
           <h1 className={styles.wordmark}>Nexus</h1>
         </div>
 
-        {initialFeedback ? <FeedbackNotice feedback={initialFeedback} /> : null}
+        {initialFeedback ? (
+          <FeedbackNotice
+            content={initialFeedback.content}
+            announcement={initialFeedback.announcement}
+          />
+        ) : null}
 
         <form
           aria-label={isCreate ? "Credential account creation" : "Credential sign in"}

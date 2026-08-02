@@ -217,7 +217,7 @@ describe("MediaAuthorsEditor", () => {
     expect(puts()).toHaveLength(0);
   });
 
-  it("enables Save on an edit and PUTs a manual slice, then closes and toasts", async () => {
+  it("enables Save on an edit and PUTs a manual slice, then closes silently", async () => {
     const { puts } = installFetch();
     const { props } = renderEditor();
     fireEvent.change(screen.getAllByLabelText("Credited as")[0]!, { target: { value: "U. K. Le Guin" } });
@@ -232,7 +232,7 @@ describe("MediaAuthorsEditor", () => {
       binding: { kind: "existing", contributorHandle: "ursula-le-guin" },
     });
     expect(props.onClose).toHaveBeenCalled();
-    expect(await screen.findByText("Authors saved.")).toBeInTheDocument();
+    expect(screen.queryByText("Authors saved.")).not.toBeInTheDocument();
   });
 
   it("treats an empty save as valid (PUTs authors: [])", async () => {
@@ -290,7 +290,7 @@ describe("MediaAuthorsEditor", () => {
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the pinned marker and resets to automatic with a toast", async () => {
+  it("shows the pinned marker and resets to automatic silently", async () => {
     const { puts } = installFetch();
     const { props } = renderEditor({ authorMode: "manual" });
     expect(screen.getByText("Authors edited manually")).toBeInTheDocument();
@@ -301,8 +301,8 @@ describe("MediaAuthorsEditor", () => {
     expect(body.authors).toBeUndefined();
     expect(props.onClose).toHaveBeenCalled();
     expect(
-      await screen.findByText("Automatic author updates will resume on the next refresh."),
-    ).toBeInTheDocument();
+      screen.queryByText("Automatic author updates will resume on the next refresh."),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the shared 422 title in-dialog and preserves the draft", async () => {
@@ -311,7 +311,7 @@ describe("MediaAuthorsEditor", () => {
     const input = screen.getAllByLabelText("Credited as")[0]!;
     fireEvent.change(input, { target: { value: "Edited" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("That author is already listed for this role.")).toBeInTheDocument();
+    expect(await screen.findByText("That author is already listed")).toBeInTheDocument();
     expect(input).toHaveValue("Edited");
     expect(props.onClose).not.toHaveBeenCalled();
   });
@@ -326,7 +326,7 @@ describe("MediaAuthorsEditor", () => {
     const input = screen.getAllByLabelText("Credited as")[0]!;
     fireEvent.change(input, { target: { value: "Edited" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("Couldn't confirm the change. Try again.")).toBeInTheDocument();
+    expect(await screen.findByText("The change couldn’t be confirmed")).toBeInTheDocument();
     await waitFor(() => expect(puts()).toHaveLength(1));
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -343,7 +343,7 @@ describe("MediaAuthorsEditor", () => {
     renderEditor();
     fireEvent.change(screen.getAllByLabelText("Credited as")[0]!, { target: { value: "Edited" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("That author change changed. Reload and try again.")).toBeInTheDocument();
+    expect(await screen.findByText("The authors weren’t updated")).toBeInTheDocument();
     await waitFor(() => expect(puts()).toHaveLength(1));
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));

@@ -1160,7 +1160,13 @@ describe("PdfReader selection chat destinations", () => {
     expect(noteSessions).toHaveLength(0);
 
     await act(async () => {
-      firstCreate.reject(new Error("controlled PDF highlight failure"));
+      firstCreate.reject(
+        Object.assign(new Error("controlled PDF highlight failure"), {
+          name: "ApiError",
+          status: 502,
+          code: "E_UPSTREAM",
+        }),
+      );
       await firstCreate.promise.catch(() => undefined);
     });
     const retryCreate = deferred<{ data: unknown }>();

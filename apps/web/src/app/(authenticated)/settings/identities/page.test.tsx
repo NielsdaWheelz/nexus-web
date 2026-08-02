@@ -121,11 +121,18 @@ describe("SettingsIdentitiesPaneBody", () => {
 
   it("shows an error notice when identity loading fails", async () => {
     getUserIdentitiesOutcomes.push({ error: { message: "boom" } });
+    getUserIdentitiesOutcomes.push({ identities: [identity("github")] });
 
     renderIdentities();
 
     expect(
       await screen.findByText(/failed to load identities/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /set password/i })).toBeNull();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByText(/^owner\+github@example\.com · linked /),
     ).toBeInTheDocument();
   });
 
@@ -151,9 +158,10 @@ describe("SettingsIdentitiesPaneBody", () => {
     );
     await waitFor(() => {
       expect(
-        screen.getByText("GitHub sign-in was removed.")
-      ).toBeInTheDocument();
+        screen.queryByText(/^owner\+github@example\.com · linked /),
+      ).not.toBeInTheDocument();
     });
+    expect(screen.queryByText("GitHub sign-in was removed.")).not.toBeInTheDocument();
   });
 
   it("shows an error notice when unlinking fails", async () => {

@@ -33,7 +33,6 @@ import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import {
@@ -63,6 +62,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { isAbortError } from "@/lib/errors";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import type { PodcastRefreshResult } from "@/lib/podcasts/types";
 import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import styles from "./page.module.css";
 
@@ -82,6 +82,88 @@ const DEFAULT_PODCAST_LIST_STATE: PodcastListUrlState = {
   filter: "all",
   libraryId: "",
 };
+
+type PodcastsLoadOperation = "Subscriptions" | "Libraries" | "Revalidate";
+
+function podcastsLoadErrorMessage(
+  error: unknown,
+  operation: PodcastsLoadOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const requestId = error.requestId;
+  const title =
+    operation === "Subscriptions"
+      ? "Followed podcasts couldn’t be loaded"
+      : operation === "Libraries"
+        ? "Podcast libraries couldn’t be loaded"
+        : "Podcasts couldn’t be refreshed";
+  switch (error.code) {
+    case "E_NETWORK":
+      return { tone: "Danger", title, message: "Check your connection and retry.", requestId };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The server took too long to respond. Retry the load.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return { tone: "Danger", title, message: "Wait a moment, then retry.", requestId };
+    case "E_BAD_REQUEST":
+    case "E_INVALID_REQUEST":
+      if (operation !== "Revalidate") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "The podcast view changed. Refresh the pane, then retry.",
+        requestId,
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title,
+        message: "This account can’t view those podcasts.",
+        requestId,
+      };
+    case "E_NOT_FOUND":
+    case "E_LIBRARY_NOT_FOUND":
+      if (operation !== "Libraries") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "The selected library is no longer available. Clear the library filter.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
+function podcastRefreshFeedback(result: PodcastRefreshResult): FeedbackContent | null {
+  switch (result.kind) {
+    case "Complete":
+      return null;
+    case "Partial":
+      return {
+        tone: "Warning",
+        title: "Some podcasts couldn’t be refreshed",
+        message: "Available episode updates were kept. Check again later for the remaining shows.",
+      };
+    case "Failed":
+      return {
+        tone: "Danger",
+        title: "Episodes weren’t refreshed",
+        message: "No refresh result was committed. Retry when the podcast source is available.",
+      };
+    case "ObservationLost":
+      return {
+        tone: "Warning",
+        title: "Refresh status couldn’t be confirmed",
+        message: "The refresh may still be running. Wait for the list to update before starting another.",
+      };
+  }
+}
 
 interface PodcastsSnapshot {
   readonly subscriptions: readonly PodcastSubscriptionListItem[];
@@ -319,6 +401,17 @@ export default function PodcastsPaneBody() {
     [],
   );
   const [error, setError] = useState<FeedbackContent | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const captureLoadError = useCallback(
+    (loadError: unknown, operation: PodcastsLoadOperation) => {
+      try {
+        setError(podcastsLoadErrorMessage(loadError, operation));
+      } catch (defect) {
+        setAsyncDefect({ error: defect });
+      }
+    },
+    [],
+  );
   const actions = usePodcastSubscriptionActions(setError);
   const rowRefreshOwnerRef = useRef<{
     readonly sourceKey: string;
@@ -444,18 +537,18 @@ export default function PodcastsPaneBody() {
       setInitialLoadEnabled(false);
       committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
       refreshFallbackSnapshotRef.current = null;
-      setError(
-        toFeedback(subscriptionListResource.error, {
-          fallback: "Failed to load followed podcasts",
-        }),
-      );
       const pending = pendingPodcastsRevalidationRef.current;
+      captureLoadError(
+        subscriptionListResource.error,
+        pending?.nonce === reloadNonce ? "Revalidate" : "Subscriptions",
+      );
       if (pending?.nonce === reloadNonce) {
         rejectPendingPodcastsRevalidation(subscriptionListResource.error);
       }
     }
   }, [
     commitInitialController,
+    captureLoadError,
     rejectPendingPodcastsRevalidation,
     reloadNonce,
     subscriptionListResource,
@@ -475,7 +568,7 @@ export default function PodcastsPaneBody() {
       .catch((err) => {
         if (handleUnauthenticatedApiError(err)) return;
         if (!cancelled) {
-          setError(toFeedback(err, { fallback: "Failed to load libraries" }));
+          captureLoadError(err, "Libraries");
         }
       })
       .finally(() => {
@@ -484,7 +577,7 @@ export default function PodcastsPaneBody() {
     return () => {
       cancelled = true;
     };
-  }, [commitInitialController, restored]);
+  }, [captureLoadError, commitInitialController, restored]);
 
   useLayoutEffect(() => {
     committedSnapshotRef.current = controller;
@@ -622,33 +715,16 @@ export default function PodcastsPaneBody() {
         async (result, signal) => {
           try {
             await revalidateSubscriptions(signal);
-            setError({
-              severity:
-                result.kind === "Failed"
-                  ? "error"
-                  : result.kind === "Complete"
-                    ? "success"
-                    : "warning",
-              title: result.announcement,
-            });
+            setError(podcastRefreshFeedback(result));
           } catch (refreshError: unknown) {
             if (isAbortError(refreshError)) throw refreshError;
             if (handleUnauthenticatedApiError(refreshError)) return;
-            if (
-              !isApiError(refreshError) ||
-              isSameSystemApiDefect(refreshError)
-            ) {
-              throw refreshError;
-            }
-            setError({
-              severity: "error",
-              title: "Podcasts failed to refresh",
-            });
+            captureLoadError(refreshError, "Revalidate");
           }
         },
       );
     },
-    [actions, revalidateSubscriptions, subscriptionQueryIdentity],
+    [actions, captureLoadError, revalidateSubscriptions, subscriptionQueryIdentity],
   );
 
   const finalCount =
@@ -864,6 +940,13 @@ export default function PodcastsPaneBody() {
         };
       } catch (refreshError: unknown) {
         if (isAbortError(refreshError)) throw refreshError;
+        if (!handleUnauthenticatedApiError(refreshError)) {
+          try {
+            podcastsLoadErrorMessage(refreshError, "Revalidate");
+          } catch (defect) {
+            setAsyncDefect({ error: defect });
+          }
+        }
         return {
           kind: "Failed",
           announcement: "Podcasts failed to refresh",
@@ -887,6 +970,8 @@ export default function PodcastsPaneBody() {
       execute: executeRefresh,
     },
   });
+
+  if (asyncDefect !== null) throw asyncDefect.error;
 
   const collectionRows = visibleRows.map((row) => {
     const rowBusy = actions.unsubscribingPodcastIds.ids.has(row.podcast_id);
@@ -974,24 +1059,34 @@ export default function PodcastsPaneBody() {
           }}
           notice={
             error ? (
-              <FeedbackNotice feedback={error} />
+              <FeedbackNotice content={error} announcement="Assertive" />
             ) : initialFilterNoMatch ? (
-              <FeedbackNotice severity="neutral">
-                No matching show found so far.
-              </FeedbackNotice>
+              <FeedbackNotice
+                content={{ tone: "Neutral", title: "No matching show found so far." }}
+                announcement="None"
+              />
             ) : undefined
           }
           empty={
-            <FeedbackNotice severity="neutral">
-              {subscriptionFilterRows.query.trim() ? (
-                exhaustion.kind === "Complete" ? (
-                  "No shows match this filter."
-                ) : (
-                  "No matching show found so far."
-                )
-              ) : hasActiveDomainFilters ? (
-                <>
-                  No podcasts match the current filters.{" "}
+            subscriptionFilterRows.query.trim() ? (
+              <FeedbackNotice
+                content={{
+                  tone: "Neutral",
+                  title:
+                    exhaustion.kind === "Complete"
+                      ? "No shows match this filter."
+                      : "No matching show found so far.",
+                }}
+                announcement="None"
+              />
+            ) : hasActiveDomainFilters ? (
+              <FeedbackNotice
+                content={{
+                  tone: "Neutral",
+                  title: "No podcasts match the current filters.",
+                }}
+                announcement="None"
+              >
                   <Button
                     variant="ghost"
                     size="sm"
@@ -1000,10 +1095,12 @@ export default function PodcastsPaneBody() {
                   >
                     Clear filters
                   </Button>
-                </>
-              ) : (
-                <>
-                  No followed podcasts yet.{" "}
+              </FeedbackNotice>
+            ) : (
+              <FeedbackNotice
+                content={{ tone: "Neutral", title: "No followed podcasts yet." }}
+                announcement="None"
+              >
                   <Button
                     asChild
                     variant="ghost"
@@ -1014,9 +1111,8 @@ export default function PodcastsPaneBody() {
                       Browse podcasts
                     </Link>
                   </Button>
-                </>
-              )}
-            </FeedbackNotice>
+              </FeedbackNotice>
+            )
           }
           collectionBusy={exhaustion.kind === "Draining"}
           footer={<CollectionExhaustionNotice state={exhaustion} />}

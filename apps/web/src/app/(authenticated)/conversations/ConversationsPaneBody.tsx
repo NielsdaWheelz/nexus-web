@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import {
   type CollectionCursor,
   type CollectionPage,
@@ -24,7 +24,6 @@ import CollectionExhaustionNotice from "@/components/collections/CollectionExhau
 import CollectionView from "@/components/collections/CollectionView";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -60,6 +59,42 @@ const CONVERSATIONS_VISIT_DATA = definePaneVisitDataKey<ConversationsPaneSeed>(
 const NO_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
 const ZERO_REVISION = 0 as CollectionRevision;
 const PAGE_SIZE = 100;
+
+function conversationsErrorMessage(
+  error: ApiError,
+  operation: "Load" | "Delete",
+): FeedbackContent {
+  if (operation === "Load") {
+    switch (error.code) {
+      case "E_NETWORK":
+        return {
+          tone: "Danger",
+          requestId: error.requestId,
+          title: "Chats couldn’t be loaded.",
+        };
+      default:
+        throw error;
+    }
+  }
+
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title: "It’s unclear whether the chat was deleted.",
+        message: "Refresh your chats before trying again.",
+      };
+    case "E_CONVERSATION_NOT_FOUND":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title: "This chat couldn’t be deleted.",
+      };
+    default:
+      throw error;
+  }
+}
 
 interface PendingConversationsRevalidation {
   readonly version: number;
@@ -110,6 +145,7 @@ export default function ConversationsPaneBody() {
     restored,
   );
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   const deletingConversationIds = useStringIdSet();
   const clearAllVisitData = useClearAllPaneVisitData();
   const initial = useResource<ConversationsPaneSeed>({
@@ -144,11 +180,11 @@ export default function ConversationsPaneBody() {
     }
     if (initial.status === "error" && allowResourceAdoptionRef.current) {
       setRefreshingIndex(false);
-      setFeedback(
-        toFeedback(initial.error, {
-          fallback: "Failed to load conversations",
-        }),
-      );
+      try {
+        setFeedback(conversationsErrorMessage(initial.error, "Load"));
+      } catch (defect) {
+        setAsyncDefect({ error: defect });
+      }
       const pending = pendingConversationsRevalidationRef.current;
       if (pending?.version === firstPageVersion) {
         pendingConversationsRevalidationRef.current = null;
@@ -340,12 +376,15 @@ export default function ConversationsPaneBody() {
       } catch (error) {
         pendingFocusNeighborRef.current = undefined;
         if (handleUnauthenticatedApiError(error)) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-        setFeedback(
-          toFeedback(error, {
-            fallback: "Failed to delete conversation",
-          }),
-        );
+        if (!isApiError(error) || isSameSystemApiDefect(error)) {
+          setAsyncDefect({ error });
+          return;
+        }
+        try {
+          setFeedback(conversationsErrorMessage(error, "Delete"));
+        } catch (defect) {
+          setAsyncDefect({ error: defect });
+        }
       } finally {
         deletingConversationIds.remove(id);
       }
@@ -494,6 +533,8 @@ export default function ConversationsPaneBody() {
     },
   });
 
+  if (asyncDefect !== null) throw asyncDefect.error;
+
   return (
     <CollectionView
       returnScope="Conversations.Items"
@@ -517,35 +558,40 @@ export default function ConversationsPaneBody() {
       }
       notice={
         controller !== null && feedback ? (
-          <FeedbackNotice feedback={feedback} />
+          <FeedbackNotice content={feedback} announcement="Assertive" />
         ) : controller === null && status === "loading" && filterQuery.trim() ? (
           <FeedbackNotice
-            severity="neutral"
-            title="No matching chat found so far."
+            content={{ tone: "Neutral", title: "No matching chat found so far." }}
+            announcement="None"
           />
         ) : undefined
       }
       error={
         controller === null && feedback ? (
-          <FeedbackNotice feedback={feedback} />
+          <FeedbackNotice content={feedback} announcement="Assertive" />
         ) : undefined
       }
       empty={
         filterQuery.trim() ? (
           <FeedbackNotice
-            severity="neutral"
-            title={
-              exhaustion.kind === "Complete"
-                ? "No chats match this filter."
-                : "No matching chat found so far."
-            }
+            content={{
+              tone: "Neutral",
+              title:
+                exhaustion.kind === "Complete"
+                  ? "No chats match this filter."
+                  : "No matching chat found so far.",
+            }}
+            announcement="None"
           />
         ) : (
-        <FeedbackNotice
-          severity="neutral"
-          title="No chats yet."
-          message="Choose New chat to begin."
-        />
+          <FeedbackNotice
+            content={{
+              tone: "Neutral",
+              title: "No chats yet.",
+              message: "Choose New chat to begin.",
+            }}
+            announcement="None"
+          />
         )
       }
       footer={<CollectionExhaustionNotice state={exhaustion} />}

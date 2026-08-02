@@ -1,4 +1,12 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { Component, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversation } from "@/components/chat/useConversation";
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
@@ -25,6 +33,37 @@ vi.mock("@/components/chat/useChatRunTail", () => ({
 }));
 
 const timestamp = "2026-01-01T00:00:00Z";
+
+class ConversationDefectBoundary extends Component<
+  { children: ReactNode; onDefect: (error: unknown) => void },
+  { error: unknown | null }
+> {
+  state = { error: null as unknown | null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  componentDidCatch(error: unknown): void {
+    this.props.onDefect(error);
+  }
+
+  render() {
+    return this.state.error === null ? this.props.children : <div role="alert">Defect</div>;
+  }
+}
+
+function RerunDefectHarness() {
+  const conversation = useConversation({ conversationId: null, branching: false });
+  return (
+    <button
+      type="button"
+      onClick={() => void conversation.rerunAssistantResponse("assistant-1")}
+    >
+      Rerun
+    </button>
+  );
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -547,6 +586,40 @@ describe("useConversation", () => {
     expect(result.current.rerunningAssistantMessageIds.has("a")).toBe(false);
   });
 
+  it("throws an unowned rerun ApiError during render for the nearest boundary", async () => {
+    const defect = {
+      error: {
+        code: "E_NEW_RERUN_FAILURE",
+        message: "New rerun contract failure",
+      },
+    };
+    stubFetch((input, init) => {
+      const path = pathOf(input);
+      if (path === "/api/messages/assistant-1/rerun" && init?.method === "POST") {
+        return jsonResponse(defect, 409);
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${path}`);
+    });
+    const onDefect = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      render(
+        <ConversationDefectBoundary onDefect={onDefect}>
+          <RerunDefectHarness />
+        </ConversationDefectBoundary>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Rerun" }));
+
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Defect"));
+      expect(onDefect).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E_NEW_RERUN_FAILURE" }),
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("branching mode loads /tree, keeps olderCursor null, and loadOlder is a no-op", async () => {
     const fetchMock = stubFetch((input, init) => {
       const path = pathOf(input);
@@ -1009,7 +1082,7 @@ describe("useConversation", () => {
 
     expect(revealed).toBe(false);
     expect(result.current.error).toMatchObject({
-      severity: "error",
+      tone: "Danger",
       title: "This message is not available in this conversation.",
     });
     expect(result.current.messages.map((message) => message.id)).toEqual(

@@ -120,7 +120,31 @@ function sourceErrorMessage(
           ? { kind: "Retry" }
           : { kind: "None" },
       };
-    default:
+    case null:
+    case undefined:
+    case "E_BILLING_REQUIRED":
+    case "E_CAPTURE_TOO_LARGE":
+    case "E_FILE_TOO_LARGE":
+    case "E_INGEST_FAILED":
+    case "E_INGEST_TIMEOUT":
+    case "E_INVALID_CONTENT_TYPE":
+    case "E_INVALID_REQUEST":
+    case "E_PODCAST_PROVIDER_UNAVAILABLE":
+    case "E_PODCAST_QUOTA_EXCEEDED":
+    case "E_SANITIZATION_FAILED":
+    case "E_SIGN_UPLOAD_FAILED":
+    case "E_SOURCE_FETCH_FAILED":
+    case "E_SSRF_BLOCKED":
+    case "E_STORAGE_ERROR":
+    case "E_STORAGE_MISSING":
+    case "E_TRANSCRIPTION_FAILED":
+    case "E_TRANSCRIPTION_TIMEOUT":
+    case "E_TRANSCRIPT_UNAVAILABLE":
+    case "E_X_POST_UNAVAILABLE":
+    case "E_X_PROVIDER_AUTH_REJECTED":
+    case "E_X_PROVIDER_CREDITS_DEPLETED":
+    case "E_X_PROVIDER_RATE_LIMITED":
+    case "E_X_PROVIDER_TIMEOUT":
       return {
         kind: "Source",
         severity: "error",
@@ -132,6 +156,11 @@ function sourceErrorMessage(
           ? { kind: "Retry" }
           : { kind: "None" },
       };
+    default:
+      // justify-defect: last_error_code is decoded same-system source state.
+      throw new Error(
+        `Unsupported media source error code: ${input.lastErrorCode}`,
+      );
   }
 }
 

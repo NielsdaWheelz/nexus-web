@@ -1,8 +1,13 @@
-import { act, render, screen } from "@testing-library/react";
+import { Component, type ReactNode } from "react";
+import { act, render, screen, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
-import ResourceSurfaceEditor from "./ResourceSurfaceEditor";
+import { ApiError } from "@/lib/api/client";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
+import ResourceSurfaceEditor, {
+  resourceSurfaceErrorMessage,
+} from "./ResourceSurfaceEditor";
 
 const PAGE_REF = "page:11111111-1111-4111-8111-111111111111";
 const NOTE_REF = "note_block:22222222-2222-4222-8222-222222222222";
@@ -56,9 +61,142 @@ function item(ref: string, scheme: string, id: string, label = "") {
   };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+class ResourceSurfaceDefectBoundary extends Component<
+  { children: ReactNode },
+  { error: unknown | null }
+> {
+  state = { error: null as unknown | null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  render() {
+    return this.state.error === null ? (
+      this.props.children
+    ) : (
+      <p>Resource Surface defect boundary</p>
+    );
+  }
+}
+
+function seedRecoveryDraft() {
+  localStorage.setItem(
+    `nexus.resourceSurface:${PAGE_REF}`,
+    JSON.stringify({
+      version: 1,
+      source_ref: PAGE_REF,
+      acknowledged_surface: {
+        source: {
+          item: item(PAGE_REF, "page", PAGE_REF.slice(5)),
+          content: { kind: "page_title", title: "Today" },
+        },
+        orderedItems: [],
+      },
+      commands: [],
+      title: {
+        value: "Recovered Today",
+        client_mutation_id: "copy-recovery",
+      },
+      bodies: {},
+    }),
+  );
+}
+
+afterEach(() => {
+  localStorage.clear();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("ResourceSurfaceEditor", () => {
+  it("maps only finite expected failures and preserves diagnostics", () => {
+    expect(
+      resourceSurfaceErrorMessage(
+        new ApiError(503, "E_UPSTREAM", "down", "req-surface"),
+        "Load",
+      ),
+    ).toMatchObject({ tone: "Danger", requestId: "req-surface" });
+
+    const sameSystem = new ApiError(500, "E_INTERNAL", "broken");
+    expect(() => resourceSurfaceErrorMessage(sameSystem, "Load")).toThrow(
+      sameSystem,
+    );
+
+    const unknownCode = new ApiError(409, "E_NEW_SURFACE_FAILURE", "new");
+    expect(() => resourceSurfaceErrorMessage(unknownCode, "Edit")).toThrow(
+      unknownCode,
+    );
+
+    const nonApi = new Error("decoder failed");
+    expect(() => resourceSurfaceErrorMessage(nonApi, "Load")).toThrow(nonApi);
+  });
+
+  it("keeps expected recovery-copy unavailability inline with an exact Retry", async () => {
+    seedRecoveryDraft();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        response({
+          source: {
+            item: item(PAGE_REF, "page", PAGE_REF.slice(5)),
+            content: { kind: "page_title", title: "Today" },
+          },
+          ordered_items: [],
+        }),
+      ),
+    );
+    const unavailable = new ClipboardWriteUnavailableError();
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockRejectedValueOnce(unavailable)
+      .mockResolvedValueOnce(undefined);
+    render(
+      <ResourceSurfaceEditor sourceRef={PAGE_REF} activateTarget={vi.fn()} />,
+    );
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Copy" }),
+    );
+    const failure = await screen.findByRole("alert");
+    expect(failure).toHaveTextContent("Recovery draft wasn’t copied");
+    await userEvent.click(within(failure).getByRole("button", { name: "Retry" }));
+
+    await vi.waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(writeText).toHaveBeenCalledTimes(2);
+  });
+
+  it("routes unknown recovery-copy failures through the render boundary", async () => {
+    seedRecoveryDraft();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        response({
+          source: {
+            item: item(PAGE_REF, "page", PAGE_REF.slice(5)),
+            content: { kind: "page_title", title: "Today" },
+          },
+          ordered_items: [],
+        }),
+      ),
+    );
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(
+      new Error("native clipboard defect"),
+    );
+    render(
+      <ResourceSurfaceDefectBoundary>
+        <ResourceSurfaceEditor sourceRef={PAGE_REF} activateTarget={vi.fn()} />
+      </ResourceSurfaceDefectBoundary>,
+    );
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Copy" }),
+    );
+    expect(
+      await screen.findByText("Resource Surface defect boundary"),
+    ).toBeVisible();
+  });
+
   it("renders only direct ordered rows below the page masthead", async () => {
     const activateTarget = vi.fn();
     const fetchMock = vi.fn(async () =>

@@ -16,7 +16,7 @@ import {
   type LibraryGovernancePageState,
 } from "./governanceState";
 
-const feedback = { severity: "error", title: "Not confirmed" } as const;
+const feedback = { tone: "Danger", title: "Not confirmed" } as const;
 const absent = { kind: "Absent" } as const;
 const present = (value: string) => ({ kind: "Present" as const, value });
 

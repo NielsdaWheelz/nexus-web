@@ -83,7 +83,7 @@ function seededMedia() {
     title: MEDIA_TITLE,
     canonical_source_url: null,
     processing_status: "failed",
-    last_error_code: "E_TEST",
+    last_error_code: "E_INGEST_FAILED",
     retrieval_status: "ready",
     contributors: [],
     playerDescriptor: { kind: "Absent" },

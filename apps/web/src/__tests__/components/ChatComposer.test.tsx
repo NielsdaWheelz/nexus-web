@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import { Component, type ComponentProps, type ReactNode } from "react";
 import { cdp, page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
@@ -30,6 +30,25 @@ function ChatComposer({
       sendCapability={{ kind: "Available" }}
     />
   );
+}
+
+class TestErrorBoundary extends Component<
+  { children: ReactNode },
+  { caught: boolean }
+> {
+  state = { caught: false };
+
+  static getDerivedStateFromError() {
+    return { caught: true };
+  }
+
+  render() {
+    return this.state.caught ? (
+      <div role="alert">Conversation defect</div>
+    ) : (
+      this.props.children
+    );
+  }
 }
 
 const LLM_PROFILES = {
@@ -1406,6 +1425,31 @@ describe("ChatComposer", () => {
     expect(
       screen.queryByText(/wait for the assistant/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("surfaces a falsey cancel rejection through the render boundary", async () => {
+    const user = userEvent.setup();
+    installChatComposerFetchMock();
+
+    render(
+      <TestErrorBoundary>
+        <ChatComposerComponent
+          conversationId="conversation-1"
+          inheritedProfileSelection={null}
+          sendCapability={{ kind: "AssistantRunning" }}
+          activeRunId="run-1"
+          onCancelRun={() => Promise.reject(null)}
+        />
+      </TestErrorBoundary>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Stop response" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Conversation defect",
+    );
   });
 
   it("keeps the two-line input and compact controls contained at 320px", async () => {

@@ -35,7 +35,7 @@ describe("usePodcastSubscriptionActions error boundary", () => {
     });
 
     expect(onError).toHaveBeenCalledWith(
-      expect.objectContaining({ severity: "error" }),
+      expect.objectContaining({ tone: "Danger" }),
     );
     expect(
       result.current.busyLibraryPlacementKeys.has("library-1:podcast-1"),

@@ -107,7 +107,7 @@ export default function OpmlImportPanel({
           <p
             id={feedbackId}
             className={styles.feedback}
-            data-severity={feedback.severity}
+            data-tone={feedback.tone}
           >
             {feedback.title}
             {feedback.message ? ` ${feedback.message}` : ""}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import NexusButton from "@/components/switchboard/NexusButton";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import SwitchboardRecovery from "@/components/switchboard/SwitchboardRecovery";
@@ -28,6 +29,23 @@ function desktopWorkflow(input: {
     case "Root":
     case "EntryActions":
       return undefined;
+    case "CommandFailed":
+      content = (
+        <section className={styles.workflowPage}>
+          <h2 tabIndex={-1} data-switchboard-heading>
+            Command needs attention
+          </h2>
+          <FeedbackNotice
+            content={page.content}
+            announcement="Assertive"
+            actions={[
+              { label: "Retry", onClick: controller.retryCommandFailure },
+              { label: "Back", onClick: controller.openRoot },
+            ]}
+          />
+        </section>
+      );
+      break;
     case "UnsupportedLink":
       content = (
         <section className={styles.workflowPage}>
@@ -81,16 +99,17 @@ function desktopWorkflow(input: {
           <h2 tabIndex={-1} data-switchboard-heading>
             New page
           </h2>
-          <p>
-            {page.submit.kind === "Retryable"
-              ? page.submit.message
-              : `Creating “${page.titleDraft}”…`}
-          </p>
           {page.submit.kind === "Retryable" ? (
-            <button type="button" onClick={controller.retryPageCreation}>
-              Retry
-            </button>
-          ) : null}
+            <FeedbackNotice
+              content={page.submit.content}
+              announcement="Assertive"
+              actions={[
+                { label: "Retry", onClick: controller.retryPageCreation },
+              ]}
+            />
+          ) : (
+            <p>{`Creating “${page.titleDraft}”…`}</p>
+          )}
         </section>
       );
       break;
@@ -138,6 +157,36 @@ function desktopWorkflow(input: {
         />
       );
       break;
+    case "OperationBlocked":
+      content = (
+        <section className={styles.workflowPage}>
+          <h2 tabIndex={-1} data-switchboard-heading>
+            {page.title}
+          </h2>
+          <FeedbackNotice
+            content={{
+              tone: "Warning",
+              title: page.title,
+              message: page.message,
+            }}
+            announcement="Assertive"
+            actions={
+              page.retry === null
+                ? [{ label: "Back", onClick: controller.back }]
+                : [
+                    {
+                      label: "Retry",
+                      onClick: controller.retryBlockedOperation,
+                    },
+                    { label: "Back", onClick: controller.back },
+                  ]
+            }
+          >
+            {page.manualValue ? <code>{page.manualValue}</code> : null}
+          </FeedbackNotice>
+        </section>
+      );
+      break;
     case "ManageTabs":
       content = (
         <ManageTabsPage
@@ -150,6 +199,7 @@ function desktopWorkflow(input: {
           onRestore={controller.restoreManagedPane}
           onRetryRetained={controller.retryRetainedActivation}
           onCancelRetained={controller.cancelRetainedActivation}
+          feedback={controller.managedTabsFeedback}
         />
       );
       break;

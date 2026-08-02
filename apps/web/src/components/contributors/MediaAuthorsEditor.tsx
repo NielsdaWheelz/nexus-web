@@ -8,11 +8,9 @@ import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
 import {
   FeedbackNotice,
-  toFeedback,
-  useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import { isApiError } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { putMediaAuthors } from "@/lib/contributors/api";
 import { MAX_CREDITS_PER_MANAGED_ROLE } from "@/lib/contributors/constants";
@@ -106,6 +104,61 @@ function removedAnnouncement(name: string, remaining: number): string {
   return `Removed ${name}. ${count}.`;
 }
 
+function mediaAuthorsErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "The change couldn’t be confirmed",
+        message: "Retry to safely check whether it was saved.",
+        requestId: error.requestId,
+      };
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title: "This work is no longer available",
+        requestId: error.requestId,
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title: "You can’t edit authors for this work",
+        requestId: error.requestId,
+      };
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title: "The authors weren’t updated",
+        message: "Review every credited name and retry.",
+        requestId: error.requestId,
+      };
+    case "E_AUTHOR_ALREADY_LISTED":
+      return {
+        tone: "Danger",
+        title: "That author is already listed",
+        message: "Choose each author once.",
+        requestId: error.requestId,
+      };
+    case "E_AUTHOR_NOT_SELECTABLE":
+      return {
+        tone: "Danger",
+        title: "That author can’t be selected",
+        message: "Choose another author and retry.",
+        requestId: error.requestId,
+      };
+    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
+      return {
+        tone: "Danger",
+        title: "The authors weren’t updated",
+        message: "Retry the saved draft.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
 interface MediaAuthorsEditorProps {
   /** Visibility gate. The media pane keeps this mounted; drive with this. */
   open: boolean;
@@ -137,8 +190,6 @@ export default function MediaAuthorsEditor({
   onSaved,
 }: MediaAuthorsEditorProps) {
   const isMobile = useIsMobileViewport();
-  const { show: showToast } = useFeedback();
-
   const intentRef = useRef<MutationIntent | null>(null);
   if (intentRef.current === null) intentRef.current = createMutationIntent();
   const intent = intentRef.current;
@@ -148,6 +199,7 @@ export default function MediaAuthorsEditor({
   const [saving, setSaving] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [announcement, setAnnouncement] = useState("");
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
 
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const addButtonRef = useRef<HTMLButtonElement>(null);
@@ -393,15 +445,18 @@ export default function MediaAuthorsEditor({
 
   function handleMutationError(error: unknown) {
     setSaving(false);
-    if (isApiError(error)) {
-      if (handleUnauthenticatedApiError(error)) return;
-      if (error.code === "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH") intent.rotate();
-      setNotice(toFeedback(error, { fallback: "Couldn't save your changes." }));
-      return;
+    if (handleUnauthenticatedApiError(error)) return;
+    if (
+      isApiError(error) &&
+      error.code === "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"
+    ) {
+      intent.rotate();
     }
-    // Transport/timeout: the server may have committed. Reuse the same key (no
-    // rotation) so a retry replays idempotently; keep the draft intact (DP-1).
-    setNotice({ severity: "error", title: "Couldn't confirm the change. Try again." });
+    try {
+      setNotice(mediaAuthorsErrorMessage(error));
+    } catch (caughtDefect) {
+      setDefect({ error: caughtDefect });
+    }
   }
 
   async function save() {
@@ -422,7 +477,6 @@ export default function MediaAuthorsEditor({
       intent.discard();
       onSaved(result);
       handleClose();
-      showToast({ severity: "success", title: "Authors saved." });
     } catch (error) {
       handleMutationError(error);
     }
@@ -438,10 +492,6 @@ export default function MediaAuthorsEditor({
       intent.discard();
       onSaved(result);
       handleClose();
-      showToast({
-        severity: "info",
-        title: "Automatic author updates will resume on the next refresh.",
-      });
     } catch (error) {
       handleMutationError(error);
     }
@@ -545,6 +595,7 @@ export default function MediaAuthorsEditor({
   }
 
   function renderContent(showTitle: boolean) {
+    if (defect) throw defect.error;
     return (
       <div className={styles.editor}>
         <div className={styles.head}>
@@ -567,7 +618,9 @@ export default function MediaAuthorsEditor({
           ) : null}
         </div>
 
-        {notice ? <FeedbackNotice feedback={notice} className={styles.notice} /> : null}
+        {notice ? (
+          <FeedbackNotice content={notice} announcement="Assertive" />
+        ) : null}
 
         <ul className={styles.rows}>{rows.map((row) => renderRow(row))}</ul>
 

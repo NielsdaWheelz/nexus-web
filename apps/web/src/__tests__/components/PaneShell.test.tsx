@@ -2306,6 +2306,92 @@ describe("PaneShell", () => {
     }
   });
 
+  it.each([
+    {
+      code: "E_NETWORK",
+      expectedTitle: "It’s unclear whether the chat began.",
+    },
+    {
+      code: "E_INVALID_REQUEST",
+      expectedTitle: "A chat about this resource couldn’t begin.",
+    },
+  ])(
+    "projects modeled $code chat failures into one local Notice with diagnostics",
+    async ({ code, expectedTitle }) => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        Response.json(
+          {
+            error: {
+              code,
+              message: "Chat could not begin",
+              request_id: `req-${code}`,
+            },
+          },
+          { status: code === "E_NETWORK" ? 503 : 400 },
+        ),
+      );
+      try {
+        render(
+          paneTree({
+            routeHeader: resourceHeader,
+            routeShareIdentity: null,
+            label: "Media",
+            children: (
+              <PrimaryChromeProbe
+                publication={{
+                  ...readyResource("Document title"),
+                  menu: resourceMenu(),
+                }}
+              />
+            ),
+          }),
+        );
+
+        fireEvent.click(await screen.findByRole("button", { name: "Options" }));
+        fireEvent.click(
+          await screen.findByRole("menuitem", {
+            name: "Chat about this resource",
+          }),
+        );
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(expectedTitle);
+        expect(
+          screen.getByText(`Nexus request ID: req-${code}`),
+        ).toBeInTheDocument();
+        expect(screen.queryByLabelText("HUD feedback")).toBeEmptyDOMElement();
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    },
+  );
+
+  it("surfaces a falsey refresh rejection through the render boundary", async () => {
+    const execute = vi.fn().mockRejectedValue(null);
+
+    render(
+      <TestErrorBoundary>
+        {paneTree({
+          children: (
+            <PrimaryChromeProbe
+              publication={{
+                refresh: { sourceKey: "falsey-refresh", execute },
+              }}
+            />
+          ),
+        })}
+      </TestErrorBoundary>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Options" }));
+    fireEvent.click(
+      within(await screen.findByRole("menu")).getByRole("menuitem", {
+        name: "Refresh",
+      }),
+    );
+
+    expect(await screen.findByText("Unknown render error")).toBeInTheDocument();
+  });
+
   it("scopes ready same-resource identity, actions, Options, and secondary regions per pane", async () => {
     const secondaryPublication = {
       groupId: "resource-inspector",

@@ -300,40 +300,47 @@ export default function EvidencePaneSurface({
   if (projection.kind === "Processing") {
     content = (
       <FeedbackNotice
-        severity="info"
-        title={
-          projection.source === "media"
-            ? "This media is still being processed."
-            : "Loading evidence..."
-        }
+        content={{
+          tone: "Info",
+          title:
+            projection.source === "media"
+              ? "This media is still being processed."
+              : "Loading evidence...",
+        }}
+        announcement="Polite"
       />
     );
   } else if (projection.kind === "IngestFailed") {
-    content = <FeedbackNotice feedback={projection.feedback} />;
+    content = <FeedbackNotice content={projection.feedback} announcement="Assertive" />;
   } else if (projection.kind === "Empty" || totalFacts === 0) {
     content = (
       <FeedbackNotice
-        severity="neutral"
-        title="No highlights, citations, links, or Synapses in this document."
+        content={{
+          tone: "Neutral",
+          title: "No highlights, citations, links, or Synapses in this document.",
+        }}
+        announcement="None"
       />
     );
   } else if (currentScopeFactCount === 0) {
     content = (
       <FeedbackNotice
-        severity="neutral"
-        title={
-          scope === "passages"
-            ? "No passage-aligned evidence in this document."
-            : "No whole-document evidence in this document."
-        }
+        content={{
+          tone: "Neutral",
+          title:
+            scope === "passages"
+              ? "No passage-aligned evidence in this document."
+              : "No whole-document evidence in this document.",
+        }}
+        announcement="None"
       />
     );
   } else if (!anyFilterEnabled || !currentScopeHasRows) {
     content = (
       <div className={styles.filteredEmpty}>
         <FeedbackNotice
-          severity="neutral"
-          title="No evidence matches these filters."
+          content={{ tone: "Neutral", title: "No evidence matches these filters." }}
+          announcement="None"
         />
         <button
           type="button"
@@ -447,8 +454,8 @@ export default function EvidencePaneSurface({
       {header}
       {aggregateStatus === "partial" ? (
         <FeedbackNotice
-          severity="warning"
-          title="Some document evidence is unavailable."
+          content={{ tone: "Warning", title: "Some document evidence is unavailable." }}
+          announcement="Polite"
         />
       ) : null}
       <TabsContent

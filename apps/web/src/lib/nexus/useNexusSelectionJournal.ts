@@ -28,7 +28,7 @@ interface QueuedSelection {
 
 interface NexusSelectionJournalOptions {
   readonly foregroundActive: boolean;
-  readonly onError: (error: unknown) => void;
+  readonly onError: (error: unknown, retry: () => void) => void;
   readonly onQuiescentCommit: () => void;
 }
 
@@ -136,25 +136,35 @@ export function useNexusSelectionJournal({
         entry.sending = true;
         entry.controller = new AbortController();
         let retryAfterForeground = false;
+        let committed = false;
+        let awaitingExplicitRetry = false;
         try {
           await send(entry, entry.controller.signal);
           committedSinceRefreshRef.current = true;
+          committed = true;
         } catch (error) {
           if (isAbortError(error) && foregroundActiveRef.current) {
             retryAfterForeground = true;
           } else {
-            onErrorRef.current(error);
+            awaitingExplicitRetry = true;
+            entry.ready = false;
+            onErrorRef.current(error, () => {
+              if (!queueRef.current.includes(entry) || entry.sending) return;
+              entry.ready = true;
+              scheduleDrainRef.current();
+            });
           }
         } finally {
           entry.controller = null;
           entry.sending = false;
-          if (!retryAfterForeground) {
+          if (committed) {
             queueRef.current = queueRef.current.filter(
               (candidate) => candidate !== entry,
             );
           }
         }
         if (retryAfterForeground) break;
+        if (awaitingExplicitRetry) break;
         if (generationRef.current !== startedGeneration) break;
       }
     } finally {

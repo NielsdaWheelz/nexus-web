@@ -148,9 +148,12 @@ describe("LoginPageClient", () => {
         nextPath={DEFAULT_AUTH_RETURN_TARGET}
         isShell={false}
         initialFeedback={{
-          severity: "info",
-          title: "You were signed out.",
-          message: SESSION_ENDED_MESSAGE,
+          content: {
+            tone: "Info",
+            title: "You were signed out.",
+            message: SESSION_ENDED_MESSAGE,
+          },
+          announcement: "Polite",
         }}
       />
     );
@@ -167,8 +170,11 @@ describe("LoginPageClient", () => {
         nextPath={DEFAULT_AUTH_RETURN_TARGET}
         isShell={false}
         initialFeedback={{
-          severity: "error",
-          title: "We couldn't start sign in. Please try again.",
+          content: {
+            tone: "Danger",
+            title: "We couldn't start sign in. Please try again.",
+          },
+          announcement: "Assertive",
         }}
       />
     );

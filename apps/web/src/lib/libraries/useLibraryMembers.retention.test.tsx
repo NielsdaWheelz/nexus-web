@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { Component, useState, type ReactNode } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LibraryOut } from "./contract";
 import { useLibraryMembers } from "./useLibraryMembers";
 
@@ -189,7 +189,56 @@ function CommandHarness() {
   );
 }
 
+class LibraryMembersDefectBoundary extends Component<
+  { children: ReactNode },
+  { caught: { error: unknown } | null }
+> {
+  state = { caught: null as { error: unknown } | null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { caught: { error } };
+  }
+
+  render() {
+    return this.state.caught === null ? (
+      this.props.children
+    ) : (
+      <p>Library members defect boundary</p>
+    );
+  }
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
 describe("useLibraryMembers route-owned retention", () => {
+  it("routes a falsey search defect through explicit owner state to the boundary", async () => {
+    const envelope = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(envelope, "data", {
+      enumerable: true,
+      get: () => {
+        throw false;
+      },
+    });
+    const response = new Response();
+    vi.spyOn(response, "json").mockResolvedValue(envelope);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+    const user = userEvent.setup();
+    render(
+      <LibraryMembersDefectBoundary>
+        <Harness />
+      </LibraryMembersDefectBoundary>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Set draft" }));
+
+    expect(
+      await screen.findByText("Library members defect boundary"),
+    ).toBeInTheDocument();
+  });
+
   it("retains its draft while the conditional Members body unmounts", async () => {
     const user = userEvent.setup();
     render(<Harness />);
@@ -371,8 +420,8 @@ describe("useLibraryMembers route-owned retention", () => {
           return new Response(
             JSON.stringify({
               error: {
-                code: "E_CONFLICT",
-                message: "Role changed concurrently",
+                code: "E_FORBIDDEN",
+                message: "Role authority changed",
                 request_id: "req-role-conflict",
               },
             }),

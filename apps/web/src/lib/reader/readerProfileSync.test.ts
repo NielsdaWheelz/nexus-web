@@ -89,10 +89,21 @@ describe("classifyReaderProfileSaveError", () => {
     }
   });
 
-  it("classifies 408, 429, and 5xx as retryable TransientApi", () => {
-    for (const status of [408, 429, 500, 502, 503, 504]) {
-      const err = new ApiError(status, "E_WHATEVER", "boom");
+  it("classifies only the endpoint's finite transient codes as retryable", () => {
+    for (const [status, code] of [
+      [0, "E_NETWORK"],
+      [429, "E_RATE_LIMITED"],
+      [504, "E_UPSTREAM_TIMEOUT"],
+    ] as const) {
+      const err = new ApiError(status, code, "boom");
       expect(classifyReaderProfileSaveError(err)).toEqual({ kind: "TransientApi", error: err });
+    }
+  });
+
+  it("rethrows same-system defects and unknown server codes", () => {
+    for (const code of ["E_INTERNAL", "E_UNKNOWN", "E_INVALID_RESPONSE", "E_NEW_SERVER_CODE"]) {
+      const err = new ApiError(500, code, "boom");
+      expect(() => classifyReaderProfileSaveError(err)).toThrow(err);
     }
   });
 
@@ -115,7 +126,7 @@ describe("classifyReaderProfileSaveError", () => {
 
 describe("toReaderProfileSaveErrorMessage", () => {
   it("maps every failure variant to copy and includes the request id when present", () => {
-    const withId = new ApiError(500, "E_INTERNAL", "boom", "req-9");
+    const withId = new ApiError(504, "E_UPSTREAM_TIMEOUT", "boom", "req-9");
     const transient = toReaderProfileSaveErrorMessage({ kind: "TransientApi", error: withId });
     expect(transient.title).toBe("Reader settings didn’t save");
     expect(transient.requestId).toBe("req-9");
@@ -424,7 +435,7 @@ describe("single-flight save lifecycle", () => {
 describe("failure, expiry, and retry", () => {
   const FAILURE = {
     kind: "TransientApi",
-    error: new ApiError(500, "E_INTERNAL", "boom"),
+    error: new ApiError(504, "E_UPSTREAM_TIMEOUT", "boom"),
   } as const;
 
   function failedState() {

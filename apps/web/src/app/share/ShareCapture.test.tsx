@@ -456,8 +456,8 @@ describe("ShareCapture", () => {
         attempt += 1;
         if (attempt === 1) {
           return jsonResponse(
-            { error: { code: "E_TEST", message: "failed" } },
-            500,
+            { error: { code: "E_BAD_REQUEST", message: "failed" } },
+            400,
           );
         }
         return jsonResponse({
@@ -514,7 +514,7 @@ describe("ShareCapture", () => {
 
     await screen.findByRole("heading", { name: "Couldn’t save" });
     expect(
-      screen.getByText("X imports are temporarily unavailable"),
+      screen.getByText("X imports are temporarily unavailable."),
     ).toBeInTheDocument();
     expect(screen.getByText("Nexus request ID: req-x-1")).toBeInTheDocument();
   });
@@ -716,10 +716,10 @@ describe("ShareCapture", () => {
     const fetchMock = installShareFetch({
       profile: () => {
         profileAttempt += 1;
-        return profileAttempt === 1
+        return profileAttempt <= 3
           ? jsonResponse(
-              { error: { code: "E_PROFILE", message: "profile failed" } },
-              400,
+              { error: { code: "E_NETWORK", message: "profile failed" } },
+              503,
             )
           : accountResponse("UTC");
       },
@@ -733,7 +733,7 @@ describe("ShareCapture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     await screen.findByText("Added to today");
-    expect(profileCalls(fetchMock)).toHaveLength(2);
+    expect(profileCalls(fetchMock)).toHaveLength(4);
     expect(dailyCaptureCalls(fetchMock)).toHaveLength(1);
   });
 
@@ -805,8 +805,8 @@ describe("ShareCapture", () => {
         captureAttempt += 1;
         return captureAttempt === 1
           ? jsonResponse(
-              { error: { code: "E_CAPTURE", message: "capture failed" } },
-              500,
+              { error: { code: "E_NETWORK", message: "capture failed" } },
+              503,
             )
           : dailyCaptureResponse(localDate, body);
       },

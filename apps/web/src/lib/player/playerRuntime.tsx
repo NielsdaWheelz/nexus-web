@@ -6,7 +6,11 @@ import {
   type ReactNode,
 } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import type { ApiError } from "@/lib/api/client";
+import {
+  isApiError,
+  isSameSystemApiDefect,
+  type ApiError,
+} from "@/lib/api/client";
 import type { Presence } from "@/lib/api/presence";
 import type {
   DiscoveryTargetHandle,
@@ -135,6 +139,92 @@ export type PlayerPlaybackRateRemember =
       attemptedRate?: number;
       retry?: () => void;
     };
+
+export type PlayerPreferenceOperation =
+  | "RememberPlaybackRate"
+  | "RememberPauseShortening";
+
+function playerPreferenceFailureTitle(
+  operation: PlayerPreferenceOperation,
+): string {
+  switch (operation) {
+    case "RememberPlaybackRate":
+      return "Playback speed wasn’t saved";
+    case "RememberPauseShortening":
+      return "Pause shortening wasn’t saved";
+  }
+}
+
+/** Finite product-copy adapter for podcast player preference mutations. */
+export function playerPreferenceErrorMessage(
+  error: unknown,
+  operation: PlayerPreferenceOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  const requestId = error.requestId;
+  const title = playerPreferenceFailureTitle(operation);
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and retry.",
+        requestId,
+      };
+    case "E_UPSTREAM":
+      return {
+        tone: "Danger",
+        title,
+        message: "The podcast service is unavailable. Retry in a moment.",
+        requestId,
+      };
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The server took too long to respond. Retry the save.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_NOT_FOUND":
+    case "E_PODCAST_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title: "Podcast subscription no longer exists.",
+        requestId,
+      };
+    case "E_CONFLICT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The subscription changed. Refresh the podcast, then retry.",
+        requestId,
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title,
+        message: "This account can’t change that podcast preference.",
+        requestId,
+      };
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title,
+        message: "That podcast preference isn’t valid. Choose another value.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
 
 export interface PlayerPlaybackRateCapability {
   scope: PlayerPlaybackRateScope;

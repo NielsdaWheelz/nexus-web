@@ -1,4 +1,11 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { Component, type ReactNode } from "react";
+import {
+  act,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { absent } from "@/lib/api/presence";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
@@ -53,11 +60,58 @@ function renderPlacement() {
   });
 }
 
+function PlacementDefectHarness() {
+  useLibraryPlacement(session);
+  return null;
+}
+
+class LibraryPlacementDefectBoundary extends Component<
+  { children: ReactNode },
+  { caught: { error: unknown } | null }
+> {
+  state = { caught: null as { error: unknown } | null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { caught: { error } };
+  }
+
+  render() {
+    return this.state.caught === null ? (
+      this.props.children
+    ) : (
+      <p>Library placement defect boundary</p>
+    );
+  }
+}
+
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("useLibraryPlacement", () => {
+  it("routes a falsey load defect through explicit owner state to the boundary", async () => {
+    const envelope = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(envelope, "data", {
+      enumerable: true,
+      get: () => {
+        throw false;
+      },
+    });
+    const response = new Response();
+    vi.spyOn(response, "json").mockResolvedValue(envelope);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+    render(
+      <LibraryPlacementDefectBoundary>
+        <PlacementDefectHarness />
+      </LibraryPlacementDefectBoundary>,
+    );
+
+    expect(
+      await screen.findByText("Library placement defect boundary"),
+    ).toBeInTheDocument();
+  });
+
   it("loads authoritative rows and becomes ready", async () => {
     vi.stubGlobal(
       "fetch",
@@ -71,6 +125,21 @@ describe("useLibraryPlacement", () => {
     expect(result.current.failure).toBeNull();
     expect(result.current.libraries).toHaveLength(1);
     expect(result.current.libraries[0]?.isInLibrary).toBe(false);
+  });
+
+  it("preserves request diagnostics in a modeled load failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => apiError(503, "E_UPSTREAM")),
+    );
+
+    const { result } = renderPlacement();
+
+    await waitFor(() => expect(result.current.failure?.kind).toBe("Retry"));
+    expect(result.current.failure?.content).toMatchObject({
+      tone: "Danger",
+      requestId: "req-1",
+    });
   });
 
   it("projects no membership before 204, flips only after 204, and stays disabled until reconciliation", async () => {
@@ -134,7 +203,7 @@ describe("useLibraryPlacement", () => {
         if (methodOf(init) === "POST") return new Response(null, { status: 204 });
         gets += 1;
         if (gets === 1) return listResponse(wireRow(LIB_A, "Research", false));
-        if (gets === 2) throw new TypeError("offline during reconciliation");
+        if (gets === 2) return apiError(503, "E_UPSTREAM");
         return listResponse(wireRow(LIB_A, "Research", true));
       }),
     );
@@ -151,6 +220,7 @@ describe("useLibraryPlacement", () => {
     expect(result.current.libraries[0]?.isInLibrary).toBe(true);
     expect(result.current.commandsDisabled).toBe(true);
     expect(result.current.pendingLibraryId).toBe(LIB_A);
+    expect(result.current.failure?.content.requestId).toBe("req-1");
 
     const failure = result.current.failure;
     await act(async () => {
@@ -186,7 +256,7 @@ describe("useLibraryPlacement", () => {
     expect(result.current.loading).toBe(false);
   });
 
-  it("preserves prior rows on a transient command failure and reruns the command on retry", async () => {
+  it("observes media placement after an uncertain command instead of replaying it", async () => {
     let posts = 0;
     let gets = 0;
     vi.stubGlobal(
@@ -194,12 +264,10 @@ describe("useLibraryPlacement", () => {
       vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
         if (methodOf(init) === "POST") {
           posts += 1;
-          if (posts === 1) throw new TypeError("connection reset");
-          return new Response(null, { status: 204 });
+          throw new TypeError("connection reset");
         }
         gets += 1;
-        if (gets === 1) return listResponse(wireRow(LIB_A, "Research", false));
-        return listResponse(wireRow(LIB_A, "Research", true));
+        return listResponse(wireRow(LIB_A, "Research", false));
       }),
     );
 
@@ -211,21 +279,62 @@ describe("useLibraryPlacement", () => {
     });
 
     await waitFor(() => expect(result.current.failure?.kind).toBe("Retry"));
-    // No overlay: prior authoritative state survives; rows remain actionable.
+    expect(result.current.failure?.content.title).toBe(
+      "Placement couldn’t be confirmed",
+    );
+    // No projection or failure assertion: prior authoritative state survives
+    // and commands remain disabled until observation completes.
     expect(result.current.libraries[0]?.isInLibrary).toBe(false);
-    expect(result.current.commandsDisabled).toBe(false);
-    expect(result.current.pendingLibraryId).toBeNull();
+    expect(result.current.commandsDisabled).toBe(true);
+    expect(result.current.pendingLibraryId).toBe(LIB_A);
 
     const failure = result.current.failure;
     await act(async () => {
       if (failure?.kind === "Retry") failure.retry();
     });
 
-    await waitFor(() =>
-      expect(result.current.libraries[0]?.isInLibrary).toBe(true),
-    );
+    await waitFor(() => expect(result.current.commandsDisabled).toBe(false));
+    expect(result.current.libraries[0]?.isInLibrary).toBe(false);
     expect(result.current.commandsDisabled).toBe(false);
-    expect(posts).toBe(2);
+    expect(posts).toBe(1);
+    expect(gets).toBe(2);
+  });
+
+  it("accepts observed podcast membership after uncertainty without issuing a second POST", async () => {
+    let posts = 0;
+    let gets = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (methodOf(init) === "POST") {
+          posts += 1;
+          throw new TypeError("response lost");
+        }
+        gets += 1;
+        return listResponse(wireRow(LIB_A, "Research", gets === 2));
+      }),
+    );
+    const podcastSession: LibraryPlacementSession = {
+      ...session,
+      target: { kind: "Podcast", id: "podcast-1" },
+    };
+    const { result } = renderHook(
+      ({ session }) => useLibraryPlacement(session),
+      { initialProps: { session: podcastSession } },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => result.current.addToLibrary(LIB_A));
+    await waitFor(() => expect(result.current.failure?.kind).toBe("Retry"));
+    const failure = result.current.failure;
+    act(() => {
+      if (failure?.kind === "Retry") failure.retry();
+    });
+
+    await waitFor(() => expect(result.current.commandsDisabled).toBe(false));
+    expect(result.current.libraries[0]?.isInLibrary).toBe(true);
+    expect(posts).toBe(1);
+    expect(gets).toBe(2);
   });
 
   it("runs one mutation at a time and ignores a second command while one is in flight", async () => {

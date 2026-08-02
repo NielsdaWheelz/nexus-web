@@ -7,9 +7,9 @@ import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurface
 import DawnWriteBlock from "@/components/notes/DawnWriteBlock";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
@@ -51,6 +51,37 @@ export type PagePaneSource =
       accountId: string;
       localDate: string;
     };
+
+function pageLoadErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title: "This page is no longer available",
+        requestId: error.requestId,
+      };
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "This page couldn’t be loaded",
+        message: "Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
+function isExpectedDawnWriteAbsence(error: unknown): boolean {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return true;
+    default:
+      throw error;
+  }
+}
 
 export default function PagePaneBody({
   pageIdOverride,
@@ -140,6 +171,7 @@ export default function PagePaneBody({
   );
   const [dailyTitle, setDailyTitle] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [focusMastheadSerial, setFocusMastheadSerial] = useState(0);
   const [focusBodySerial, setFocusBodySerial] = useState(0);
   const pageRefId = source.kind === "PageRef" ? source.pageId : null;
@@ -156,9 +188,11 @@ export default function PagePaneBody({
       .then((next) => active && setPage(next))
       .catch((error: unknown) => {
         if (!active || handleUnauthenticatedApiError(error)) return;
-        setFeedback(
-          toFeedback(error, { fallback: "This page could not be loaded." }),
-        );
+        try {
+          setFeedback(pageLoadErrorMessage(error));
+        } catch (caughtDefect) {
+          setDefect({ error: caughtDefect });
+        }
       });
     return () => {
       active = false;
@@ -257,7 +291,16 @@ export default function PagePaneBody({
     }
     void fetchDawnWrite(dailyLocalDate)
       .then(setDawnWrite)
-      .catch(() => setDawnWrite(null));
+      .catch((error: unknown) => {
+        if (handleUnauthenticatedApiError(error)) return;
+        try {
+          // justify-ignore-error: Dawn Write is optional editorial context; a
+          // modeled network miss omits it without blocking the canonical page.
+          if (isExpectedDawnWriteAbsence(error)) setDawnWrite(null);
+        } catch (caughtDefect) {
+          setDefect({ error: caughtDefect });
+        }
+      });
   }, [dailyLocalDate]);
 
   const chrome = (
@@ -268,11 +311,12 @@ export default function PagePaneBody({
       activateTarget={activateTarget}
     />
   );
+  if (defect) throw defect.error;
   if (feedback && !page) {
     return (
       <>
         {chrome}
-        <FeedbackNotice {...feedback} />
+        <FeedbackNotice content={feedback} announcement="Assertive" />
       </>
     );
   }
@@ -280,7 +324,7 @@ export default function PagePaneBody({
     return (
       <>
         {chrome}
-        <PaneLoadingState />
+        <PaneLoadingState label="Loading page…" announcement="Polite" />
         {filterQuery.trim() ? (
           <p role="status">No matching item found so far.</p>
         ) : null}

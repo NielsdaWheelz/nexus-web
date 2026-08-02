@@ -255,10 +255,24 @@ export interface NexusProjection {
   readonly activeKey: NexusEntryKey | null;
 }
 
+export interface NexusFeedbackContent {
+  readonly tone: "Neutral" | "Info" | "Success" | "Warning" | "Danger";
+  readonly title: string;
+  readonly message?: string;
+  readonly requestId?: string;
+}
+
+export type FrozenNexusTarget =
+  | Exclude<NexusTarget, { kind: "OpenDailyPage" }>
+  | MaterializedOpenDailyPageTarget;
+
 export type ReplayableSubmitState =
   | { readonly kind: "Ready" }
   | { readonly kind: "Running" }
-  | { readonly kind: "Retryable"; readonly message: string };
+  | {
+      readonly kind: "Retryable";
+      readonly content: NexusFeedbackContent;
+    };
 
 export type CommittedWorkflow =
   | { readonly kind: "Page"; readonly replayId: string }
@@ -308,6 +322,22 @@ export type ManageTabsOrigin =
 export type NexusPage =
   | { readonly kind: "Root" }
   | { readonly kind: "UnsupportedLink" }
+  | {
+      readonly kind: "CommandFailed";
+      readonly content: NexusFeedbackContent;
+      readonly target: FrozenNexusTarget;
+      readonly activation: NexusTargetActivation;
+    }
+  | {
+      readonly kind: "OperationBlocked";
+      readonly title: string;
+      readonly message?: string;
+      readonly manualValue?: string;
+      readonly retry: {
+        readonly target: Extract<NexusTarget, { kind: "CopyExternalLink" }>;
+        readonly activation: NexusTargetActivation;
+      } | null;
+    }
   | { readonly kind: "EntryActions"; readonly entry: NexusEntry }
   | { readonly kind: "ChooseCreate"; readonly initialDraft: string }
   | { readonly kind: "ChooseBrowse"; readonly query: string }

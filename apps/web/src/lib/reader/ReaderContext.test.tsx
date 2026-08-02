@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Component, type ReactNode } from "react";
 import { ReaderProvider, useReaderContext } from "./ReaderContext";
 import type { ReaderProfile } from "./types";
 
@@ -43,6 +44,35 @@ function renderProbe() {
     <ReaderProvider initialProfile={BASE}>
       <Probe />
     </ReaderProvider>,
+  );
+}
+
+class TestBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    return this.state.error ? (
+      <output aria-label="reader boundary">{this.state.error.message}</output>
+    ) : (
+      this.props.children
+    );
+  }
+}
+
+function renderBoundaryProbe() {
+  return render(
+    <TestBoundary>
+      <ReaderProvider initialProfile={BASE}>
+        <Probe />
+      </ReaderProvider>
+    </TestBoundary>,
   );
 }
 
@@ -105,7 +135,10 @@ describe("ReaderContext", () => {
       if (failNext) {
         failNext = false;
         return Promise.resolve(
-          jsonResponse({ error: { code: "E_INTERNAL", message: "boom" } }, 500),
+          jsonResponse(
+            { error: { code: "E_UPSTREAM_TIMEOUT", message: "boom" } },
+            504,
+          ),
         );
       }
       return ackResponse(acked);
@@ -136,6 +169,27 @@ describe("ReaderContext", () => {
       expect(screen.getByLabelText("persistence")).toHaveTextContent("Forbidden"),
     );
     expect(screen.getByLabelText("theme")).toHaveTextContent("light");
+  });
+
+  it("routes an unknown profile ApiError code through the render boundary", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    stubFetch(() =>
+      Promise.resolve(
+        jsonResponse(
+          { error: { code: "E_NEW_PROFILE_FAILURE", message: "unknown profile failure" } },
+          409,
+        ),
+      ),
+    );
+    try {
+      renderBoundaryProbe();
+      fireEvent.click(screen.getByRole("button", { name: "set dark" }));
+      expect(await screen.findByLabelText("reader boundary")).toHaveTextContent(
+        "unknown profile failure",
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("defects when retrySave is invoked outside SaveFailed", () => {

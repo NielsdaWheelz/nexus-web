@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api/client";
 import TranscriptStatePanel from "./TranscriptStatePanel";
 import type {
   TranscriptCoverage,
@@ -55,8 +56,6 @@ vi.mock("@/lib/api/client", async () => {
   return {
     ...actual,
     apiFetch: (...args: unknown[]) => apiFetchMock(...args),
-    isApiError: () => false,
-    isUnauthenticatedApiError: () => false,
   };
 });
 
@@ -147,5 +146,40 @@ describe("TranscriptStatePanel", () => {
       screen.queryByText("Transcript unavailable for this episode."),
     ).not.toBeInTheDocument();
     expect(apiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["E_PODCAST_QUOTA_EXCEEDED", "There isn’t enough transcription quota for this request."],
+    ["E_INVALID_KIND", "Transcription isn’t available for this media."],
+    ["E_TRANSCRIPT_UNAVAILABLE", "No transcript is available from this source."],
+  ])("keeps modeled request failure %s visible", async (code, message) => {
+    apiFetchMock
+      .mockResolvedValueOnce({
+        data: {
+          transcript_state: "not_requested",
+          transcript_coverage: "none",
+          required_minutes: 12,
+          remaining_minutes: 30,
+          fits_budget: true,
+        },
+      })
+      .mockRejectedValueOnce(
+        new ApiError(409, code, "modeled transcript failure", "req-transcript"),
+      );
+
+    render(
+      <TranscriptStatePanel
+        mediaId="media-1"
+        transcriptState="not_requested"
+        transcriptCoverage="none"
+        onTranscriptStateChange={vi.fn()}
+      />,
+    );
+    await screen.findByText("Estimated cost: 12 min");
+
+    fireEvent.click(screen.getByRole("button", { name: "Transcribe this episode" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByText("Nexus request ID: req-transcript")).toBeInTheDocument();
   });
 });

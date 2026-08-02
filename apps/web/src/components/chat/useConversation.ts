@@ -30,7 +30,13 @@ import {
   useState,
 } from "react";
 import type { RefObject } from "react";
-import { apiFetch, type ApiPath } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+  type ApiError,
+  type ApiPath,
+} from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
@@ -50,10 +56,7 @@ import {
   decodeConversationMessages,
   decodeConversationTree,
 } from "@/lib/conversations/messageWire";
-import {
-  toFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type {
   BranchDraft,
   BranchGraph,
@@ -85,6 +88,48 @@ type ConversationHistorySnapshot =
     };
 
 const MESSAGE_PAGE_SIZE = 30;
+
+function conversationOperationErrorMessage(
+  error: ApiError,
+  operation: "RefreshForks" | "Load" | "Rerun" | "SwitchFork",
+): FeedbackContent {
+  switch (error.code) {
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title:
+          operation === "Load"
+            ? "This chat is no longer available."
+            : "The requested conversation state is no longer available.",
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title: "You don’t have access to this chat.",
+        requestId: error.requestId,
+      };
+    case "E_BAD_REQUEST":
+    case "E_BRANCH_PATH_INVALID":
+    case "E_UPSTREAM":
+    case "E_NETWORK":
+    case "E_TREE_REFRESH_FAILED":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title:
+          operation === "Rerun"
+            ? "This response couldn’t be run again."
+            : operation === "SwitchFork"
+              ? "This fork couldn’t be opened."
+              : operation === "RefreshForks"
+                ? "Forks couldn’t be refreshed."
+                : "This chat couldn’t be loaded.",
+      };
+    default:
+      throw error;
+  }
+}
 
 const EMPTY_BRANCH_GRAPH: BranchGraph = {
   nodes: [],
@@ -185,6 +230,23 @@ export function useConversation(
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(initialConversationId));
   const [error, setError] = useState<FeedbackContent | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const reportAsyncDefect = useCallback((error: unknown) => {
+    setAsyncDefect({ error });
+  }, []);
+  const reportOperationError = useCallback(
+    (
+      operationError: ApiError,
+      operation: "RefreshForks" | "Load" | "Rerun" | "SwitchFork",
+    ) => {
+      try {
+        setError(conversationOperationErrorMessage(operationError, operation));
+      } catch (defect) {
+        reportAsyncDefect(defect);
+      }
+    },
+    [reportAsyncDefect],
+  );
   const conversationIdRef = useRef(conversationId);
   conversationIdRef.current = conversationId;
 
@@ -395,15 +457,24 @@ export function useConversation(
         return true;
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return false;
+        if (!isApiError(err) || isSameSystemApiDefect(err)) {
+          reportAsyncDefect(err);
+          return false;
+        }
         if (reportError) {
-          setError(toFeedback(err, { fallback: "Failed to refresh forks" }));
+          reportOperationError(err, "RefreshForks");
         } else {
           console.error("Failed to refresh conversation tree:", err);
         }
         return false;
       }
     },
-    [applyConversationTree, loadConversationTree],
+    [
+      applyConversationTree,
+      loadConversationTree,
+      reportAsyncDefect,
+      reportOperationError,
+    ],
   );
 
   const loadConversationHistory = useCallback(
@@ -548,11 +619,7 @@ export function useConversation(
       return;
     }
     if (historyResource.status === "error") {
-      setError(
-        toFeedback(historyResource.error, {
-          fallback: "Failed to load conversation",
-        }),
-      );
+      reportOperationError(historyResource.error, "Load");
       setLoading(false);
       return;
     }
@@ -580,7 +647,13 @@ export function useConversation(
     }
     setError(null);
     setLoading(false);
-  }, [applyConversationTree, branching, conversationId, historyResource]);
+  }, [
+    applyConversationTree,
+    branching,
+    conversationId,
+    historyResource,
+    reportOperationError,
+  ]);
 
   useEffect(() => abortAll, [abortAll]);
 
@@ -693,12 +766,21 @@ export function useConversation(
         onChatRunCreated(decodeChatRunData(response.data));
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
-        setError(toFeedback(err, { fallback: "Failed to run again" }));
+        if (!isApiError(err) || isSameSystemApiDefect(err)) {
+          reportAsyncDefect(err);
+          return;
+        }
+        reportOperationError(err, "Rerun");
       } finally {
         rerunningAssistantMessageIds.remove(assistantMessageId);
       }
     },
-    [onChatRunCreated, rerunningAssistantMessageIds],
+    [
+      onChatRunCreated,
+      reportAsyncDefect,
+      reportOperationError,
+      rerunningAssistantMessageIds,
+    ],
   );
 
   const connectionLostAssistantIds = useMemo(
@@ -730,7 +812,7 @@ export function useConversation(
       const nextPath = pathCacheByLeafId[nextLeafId];
       if (!nextPath) {
         setError({
-          severity: "error",
+          tone: "Danger",
           title: "This fork is not available yet.",
         });
         return false;
@@ -788,7 +870,11 @@ export function useConversation(
       } catch (err) {
         if (activePathSwitchSeqRef.current !== switchSeq) return false;
         if (handleUnauthenticatedApiError(err)) return false;
-        setError(toFeedback(err, { fallback: "Failed to switch fork" }));
+        if (!isApiError(err) || isSameSystemApiDefect(err)) {
+          reportAsyncDefect(err);
+          return false;
+        }
+        reportOperationError(err, "SwitchFork");
         scrollRef.current?.captureAnchor(anchorMessageId);
         dispatchMessages({ type: "set_all", messages: previous.messages });
         selectedPathIdsRef.current = messageIdsForPath(
@@ -812,6 +898,8 @@ export function useConversation(
       messageIdsForPath,
       messages,
       pathCacheByLeafId,
+      reportAsyncDefect,
+      reportOperationError,
       tailVisibleActiveRuns,
     ],
   );
@@ -843,7 +931,7 @@ export function useConversation(
           )[0];
         if (!candidate) {
           setError({
-            severity: "error",
+            tone: "Danger",
             title: "This message is not available in this conversation.",
           });
           return false;
@@ -972,6 +1060,8 @@ export function useConversation(
     }
     return { kind: "Available" };
   }, [branchDraft, conversationId, loading, messages, replyParentMessageId]);
+
+  if (asyncDefect !== null) throw asyncDefect.error;
 
   return {
     messages,

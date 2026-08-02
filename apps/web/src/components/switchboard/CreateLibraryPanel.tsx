@@ -2,6 +2,7 @@
 
 import { ArrowLeft } from "lucide-react";
 import type { FormEvent } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import type { ReplayableSubmitState } from "@/lib/nexus/model";
 import styles from "./switchboard.module.css";
 
@@ -46,7 +47,10 @@ export default function CreateLibraryPanel({
           />
         </label>
         {submit.kind === "Retryable" ? (
-          <p role="alert">{submit.message}</p>
+          <FeedbackNotice
+            content={submit.content}
+            announcement="Assertive"
+          />
         ) : null}
         <button type="submit" disabled={!name.trim() || running}>
           {running ? "Creating…" : submit.kind === "Retryable" ? "Retry" : "Create"}

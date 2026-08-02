@@ -1325,10 +1325,10 @@ export function WorkspaceStoreProvider({
 
       if (plan.kind === "Reject") {
         consumePaneEntryActivation(request.paneEntryActivation);
-        feedback.show({
-          severity: "warning",
-          title: "Pane limit reached",
-          dedupeKey: WORKSPACE_PANE_LIMIT_FEEDBACK_KEY,
+        feedback.publish({
+          kind: "Hud",
+          key: WORKSPACE_PANE_LIMIT_FEEDBACK_KEY,
+          content: { tone: "Warning", title: "Pane limit reached" },
         });
         return { kind: "Rejected", reason: plan.reason };
       }

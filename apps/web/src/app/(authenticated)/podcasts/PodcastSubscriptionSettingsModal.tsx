@@ -137,7 +137,12 @@ export default function PodcastSubscriptionSettingsModal({
           New episodes from this podcast will be added to the end of your playback
           queue when they&apos;re synced.
         </p>
-        {settingsModal.error ? <FeedbackNotice feedback={settingsModal.error} /> : null}
+        {settingsModal.error ? (
+          <FeedbackNotice
+            content={settingsModal.error}
+            announcement="Assertive"
+          />
+        ) : null}
         <div className={styles.modalActions}>
           <Button
             variant="primary"

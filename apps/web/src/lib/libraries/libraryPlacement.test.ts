@@ -122,6 +122,7 @@ describe("library placement commands", () => {
         addLibraryPlacement(
           { kind: "Media", id: "media-1" },
           "library-1",
+          { clientMutationId: "mutation-1" },
         ),
       path: "/api/media/media-1/libraries",
       method: "POST",
@@ -133,6 +134,7 @@ describe("library placement commands", () => {
         removeLibraryPlacement(
           { kind: "Media", id: "media-1" },
           "library-1",
+          { clientMutationId: "mutation-1" },
         ),
       path: "/api/media/media-1/libraries/library-1",
       method: "DELETE",
@@ -144,6 +146,7 @@ describe("library placement commands", () => {
         addLibraryPlacement(
           { kind: "Podcast", id: "podcast-1" },
           "library-1",
+          { clientMutationId: "mutation-1" },
         ),
       path: "/api/podcasts/subscriptions",
       method: "POST",
@@ -159,6 +162,7 @@ describe("library placement commands", () => {
         removeLibraryPlacement(
           { kind: "Podcast", id: "podcast-1" },
           "library-1",
+          { clientMutationId: "mutation-1" },
         ),
       path: "/api/libraries/library-1/podcasts/podcast-1",
       method: "DELETE",
@@ -233,6 +237,7 @@ describe("library placement commands", () => {
       addLibraryPlacement(
         { kind: "Podcast", id: "podcast-1" },
         "library-1",
+        { clientMutationId: "mutation-1" },
       ),
     ).rejects.toBeInstanceOf(TypeError);
   });
@@ -245,6 +250,7 @@ describe("library placement commands", () => {
       addLibraryPlacement(
         { kind: "Podcast", id: "podcast-1" },
         "library-1",
+        { clientMutationId: "mutation-1" },
       ),
     ).rejects.toBeInstanceOf(TypeError);
   });
@@ -258,19 +264,31 @@ describe("library placement commands", () => {
     {
       name: "addLibraryPlacement(Podcast)",
       run: () =>
-        addLibraryPlacement({ kind: "Podcast", id: "podcast-1" }, "library-1"),
+        addLibraryPlacement(
+          { kind: "Podcast", id: "podcast-1" },
+          "library-1",
+          { clientMutationId: "mutation-1" },
+        ),
       affected: ["library-1"] as string[] | "Unknown",
     },
     {
       name: "addLibraryPlacement(Media) via addMediaToLibraries delegate",
       run: () =>
-        addLibraryPlacement({ kind: "Media", id: "media-1" }, "library-1"),
+        addLibraryPlacement(
+          { kind: "Media", id: "media-1" },
+          "library-1",
+          { clientMutationId: "mutation-1" },
+        ),
       affected: ["library-1"] as string[] | "Unknown",
     },
     {
       name: "removeLibraryPlacement(Media)",
       run: () =>
-        removeLibraryPlacement({ kind: "Media", id: "media-1" }, "library-1"),
+        removeLibraryPlacement(
+          { kind: "Media", id: "media-1" },
+          "library-1",
+          { clientMutationId: "mutation-1" },
+        ),
       affected: ["library-1"] as string[] | "Unknown",
     },
     {
@@ -279,6 +297,7 @@ describe("library placement commands", () => {
         removeLibraryPlacement(
           { kind: "Podcast", id: "podcast-1" },
           "library-1",
+          { clientMutationId: "mutation-1" },
         ),
       affected: ["library-1"] as string[] | "Unknown",
     },

@@ -1,400 +1,595 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import { useRef } from "react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { cdp } from "vitest/browser";
+import { Component, type MutableRefObject, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FeedbackNotice,
   FeedbackProvider,
-  toFeedback,
+  FieldFeedback,
   useFeedback,
+  type DetachedFeedback,
+  type FeedbackContextValue,
 } from "@/components/feedback/Feedback";
-import { ApiError } from "@/lib/api/client";
 
-function ToastHarness() {
-  const feedback = useFeedback();
-  const releases = useRef<Array<() => void>>([]);
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() =>
-          feedback.show({
-            severity: "success",
-            title: "Saved",
-            dedupeKey: "save",
-            duration: 100,
-          })
-        }
-      >
-        Show saved
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          feedback.show({
-            severity: "success",
-            title: "Saved again",
-            dedupeKey: "save",
-            duration: 0,
-          })
-        }
-      >
-        Show saved again
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          feedback.show({
-            severity: "info",
-            title: "Other notice",
-            dedupeKey: "other",
-            duration: 0,
-          })
-        }
-      >
-        Show other
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          feedback.show({
-            severity: "error",
-            title: "Save failed",
-            dedupeKey: "save",
-            duration: 0,
-            action: { label: "Retry", onClick: () => {} },
-          })
-        }
-      >
-        Show failed with retry
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          feedback.show({
-            severity: "error",
-            title: "Save forbidden",
-            dedupeKey: "save",
-            duration: 0,
-          })
-        }
-      >
-        Show failed without retry
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          feedback.show({
-            severity: "success",
-            title: "Linked to Some Media",
-            dedupeKey: "link",
-            action: [
-              { label: "Undo", onClick: () => {} },
-              { label: "Add note to link", onClick: () => {} },
-            ],
-          })
-        }
-      >
-        Show linked with two actions
-      </button>
-      <button type="button" onClick={() => feedback.dismissByDedupeKey("save")}>
-        Dismiss save
-      </button>
-      <button type="button" onClick={() => feedback.dismissByDedupeKey("unknown-key")}>
-        Dismiss unknown
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          releases.current.push(feedback.suppressDedupeKey("save"));
-        }}
-      >
-        Suppress save
-      </button>
-      <button type="button" onClick={() => releases.current[0]?.()}>
-        Release lease 0
-      </button>
-      <button type="button" onClick={() => releases.current[1]?.()}>
-        Release lease 1
-      </button>
-    </>
+const SPEC = {
+  passiveHudMs: 5_000,
+  actionableHudMs: 10_000,
+  maxHuds: 3,
+} as const;
+
+const content = (
+  title: string,
+  overrides: Partial<DetachedFeedback["content"]> = {},
+): DetachedFeedback["content"] => ({
+  tone: "Info",
+  title,
+  ...overrides,
+});
+
+function FeedbackHarness({
+  apiRef,
+}: {
+  apiRef: MutableRefObject<FeedbackContextValue | null>;
+}) {
+  apiRef.current = useFeedback();
+  return null;
+}
+
+class DiagnosticsDefectBoundary extends Component<
+  { children: ReactNode; onDefect: (error: unknown) => void },
+  { error: unknown | null }
+> {
+  state = { error: null as unknown | null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  componentDidCatch(error: unknown): void {
+    this.props.onDefect(error);
+  }
+
+  render() {
+    return this.state.error === null ? this.props.children : <div role="alert">Defect</div>;
+  }
+}
+
+function renderFeedback() {
+  const apiRef = { current: null } as MutableRefObject<FeedbackContextValue | null>;
+  const view = render(
+    <FeedbackProvider>
+      <FeedbackHarness apiRef={apiRef} />
+    </FeedbackProvider>,
   );
+  if (apiRef.current === null) throw new Error("Feedback context was not published.");
+  return { ...view, api: apiRef.current };
+}
+
+function publish(api: FeedbackContextValue, signal: DetachedFeedback): void {
+  act(() => api.publish(signal));
+}
+
+function feedbackArticle(title: string): HTMLElement {
+  const candidates = (["article", "status", "alert"] as const).flatMap((role) =>
+    screen.queryAllByRole(role),
+  );
+  const matches = candidates.filter(
+    (candidate) => within(candidate).queryByText(title) !== null,
+  );
+  const uniqueMatches = [...new Set(matches)];
+  if (uniqueMatches.length !== 1) {
+    throw new Error(
+      `Expected one feedback article containing ${title}; got ${uniqueMatches.length}.`,
+    );
+  }
+  return uniqueMatches[0];
+}
+
+function visualTitles(matcher: string | RegExp): HTMLElement[] {
+  return ["Persistent feedback", "HUD feedback"].flatMap((label) => {
+    const lane = screen.queryByLabelText(label);
+    return lane === null ? [] : within(lane).queryAllByText(matcher);
+  });
+}
+
+function visualTitle(title: string): HTMLElement | null {
+  const matches = visualTitles(title);
+  if (matches.length > 1) throw new Error(`Multiple visual feedback titles matched ${title}.`);
+  return matches[0] ?? null;
 }
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
-describe("feedback layer", () => {
-  it("converts API errors through owned copy and keeps the request id", () => {
-    expect(
-      toFeedback(new ApiError(500, "E_INTERNAL", "Internal database detail", "req-1"), {
-        fallback: "Unable to save.",
-      })
-    ).toEqual({
-      severity: "error",
-      title: "Unable to save.",
-      requestId: "req-1",
+describe("Nexus Signal System feedback owner", () => {
+  it("mounts one detached announcer before updates and keeps tone independent from urgency", () => {
+    const { api } = renderFeedback();
+    const announcer = screen.getByLabelText("Detached feedback announcements");
+    const persistentRail = screen.getByLabelText("Persistent feedback");
+    const hudViewport = screen.getByLabelText("HUD feedback");
+
+    expect(announcer).toHaveTextContent("");
+    expect(screen.getAllByLabelText("Detached feedback announcements")).toHaveLength(1);
+    expect(persistentRail).not.toHaveAttribute("aria-live");
+    expect(hudViewport).not.toHaveAttribute("aria-live");
+
+    publish(api, {
+      kind: "Hud",
+      key: "danger-hud",
+      content: content("Removed", { tone: "Danger" }),
     });
 
-    expect(
-      toFeedback(new ApiError(400, "E_KEY_TEST_FAILED", "Provider test failed", "req-2"), {
-        fallback: "Unable to test the API key.",
-      })
-    ).toEqual({
-      severity: "error",
-      title: "Provider test failed",
-      requestId: "req-2",
+    expect(announcer).toHaveAttribute("aria-live", "polite");
+    expect(announcer).toHaveTextContent("Removed");
+    expect(feedbackArticle("Removed")).not.toHaveAttribute("role");
+
+    publish(api, {
+      kind: "Persistent",
+      key: "neutral-persistent",
+      content: content("Account needs attention", { tone: "Neutral" }),
+      announcement: "Assertive",
     });
+
+    expect(announcer).toHaveAttribute("aria-live", "assertive");
+    expect(announcer).toHaveTextContent("Account needs attention");
+    expect(feedbackArticle("Account needs attention")).not.toHaveAttribute("role");
+    expect(screen.getAllByLabelText("Detached feedback announcements")).toHaveLength(1);
   });
 
-  it("maps the author-dedup error codes to their frozen DP-1 titles", () => {
-    expect(
-      toFeedback(new ApiError(422, "E_AUTHOR_ALREADY_LISTED", "duplicate", "req-a"), {
-        fallback: "Couldn't save your changes.",
-      }),
-    ).toEqual({
-      severity: "error",
-      title: "That author is already listed for this role.",
-      requestId: "req-a",
-    });
+  it("maps explicit scoped announcement policy without inferring it from tone", () => {
+    const { rerender } = render(
+      <FeedbackNotice
+        content={content("Quiet failure", { tone: "Danger" })}
+        announcement="None"
+      />,
+    );
 
-    expect(
-      toFeedback(new ApiError(409, "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH", "replay", "req-b"), {
-        fallback: "Couldn't save your changes.",
-      }),
-    ).toEqual({
-      severity: "error",
-      title: "That author change changed. Reload and try again.",
-      requestId: "req-b",
-    });
+    expect(feedbackArticle("Quiet failure")).not.toHaveAttribute("role");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    rerender(
+      <FeedbackNotice
+        content={content("Urgent neutral update", { tone: "Neutral" })}
+        announcement="Assertive"
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Urgent neutral update");
+
+    rerender(
+      <FeedbackNotice
+        content={content("Routine progress", { tone: "Warning" })}
+        announcement="Polite"
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Routine progress");
   });
 
-  it("renders inline errors as alerts with support metadata", () => {
+  it("renders concise anatomy, collapsed copyable diagnostics, ordered actions, and associated field text", async () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+
+    render(
+      <>
+        <FeedbackNotice
+          content={content("Could not save", {
+            tone: "Danger",
+            message: "Your changes are still here.",
+            requestId: "req-quiet-press",
+          })}
+          announcement="None"
+          actions={[
+            { label: "Retry", onClick: first },
+            { label: "Open settings", onClick: second },
+          ]}
+        >
+          Recovery uses the same frozen attempt.
+        </FeedbackNotice>
+        <label htmlFor="title">Title</label>
+        <input id="title" aria-describedby="title-feedback" />
+        <FieldFeedback
+          id="title-feedback"
+          content={content("Enter a title", { tone: "Danger" })}
+        />
+      </>,
+    );
+
+    const notice = feedbackArticle("Could not save");
+    expect(notice).toHaveTextContent("Danger");
+    expect(notice).toHaveTextContent("Your changes are still here.");
+    expect(notice).toHaveTextContent("Recovery uses the same frozen attempt.");
+    const copyDiagnostics = within(notice).getByRole("button", {
+      name: "Copy diagnostics",
+    });
+    expect(copyDiagnostics).not.toBeVisible();
+
+    fireEvent.click(within(notice).getByText("Diagnostics"));
+    expect(copyDiagnostics).toBeVisible();
+    fireEvent.click(copyDiagnostics);
+    await vi.waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("Nexus request ID: req-quiet-press"),
+    );
+
+    const actionLabels = within(notice)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    expect(actionLabels).toEqual(["Copy diagnostics", "Retry", "Open settings"]);
+    fireEvent.click(within(notice).getByRole("button", { name: "Retry" }));
+    fireEvent.click(within(notice).getByRole("button", { name: "Open settings" }));
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+
+    const field = screen.getByText("Enter a title");
+    expect(field).toHaveAttribute("id", "title-feedback");
+    expect(field).not.toHaveAttribute("role");
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveAttribute(
+      "aria-describedby",
+      "title-feedback",
+    );
+  });
+
+  it("keeps canonical clipboard unavailability near diagnostics with exact Retry", async () => {
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockRejectedValueOnce(
+        new DOMException("Clipboard permission denied", "NotAllowedError"),
+      )
+      .mockResolvedValueOnce();
+    vi.spyOn(document, "execCommand").mockReturnValue(false);
+
     render(
       <FeedbackNotice
-        feedback={{
-          severity: "error",
-          title: "Unable to load library.",
-          requestId: "req-3",
-        }}
-      />
+        content={content("Could not save", { requestId: "req-retry-copy" })}
+        announcement="None"
+      />,
     );
+    const notice = feedbackArticle("Could not save");
+    fireEvent.click(within(notice).getByText("Diagnostics"));
+    fireEvent.click(within(notice).getByRole("button", { name: "Copy diagnostics" }));
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Unable to load library.");
-    expect(screen.getByRole("alert")).toHaveTextContent("Nexus request ID: req-3");
+    expect(await within(notice).findByRole("alert")).toHaveTextContent(
+      "Diagnostics couldn’t be copied.",
+    );
+    const retry = within(notice).getByRole("button", { name: "Retry" });
+    fireEvent.click(retry);
+    await vi.waitFor(() =>
+      expect(within(notice).queryByText("Diagnostics couldn’t be copied.")).toBeNull(),
+    );
+    expect(within(notice).getByRole("button", { name: "Copy diagnostics" })).toBeVisible();
+    expect(writeText).toHaveBeenCalledTimes(2);
   });
 
-  it("dedupes, dismisses, and auto-dismisses toasts", () => {
-    vi.useFakeTimers();
-    render(
-      <FeedbackProvider>
-        <ToastHarness />
-      </FeedbackProvider>
+  it("lets an atomic scoped notice solely announce its diagnostics copy failure", async () => {
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(
+      new DOMException("Clipboard permission denied", "NotAllowedError"),
     );
+    vi.spyOn(document, "execCommand").mockReturnValue(false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show saved" }));
-    expect(screen.getByRole("status")).toHaveTextContent("Saved");
+    render(
+      <FeedbackNotice
+        content={content("Could not save", { requestId: "req-parent-speech" })}
+        announcement="Assertive"
+      />,
+    );
+    const notice = screen.getByRole("alert", { name: "" });
+    fireEvent.click(within(notice).getByText("Diagnostics"));
+    fireEvent.click(within(notice).getByRole("button", { name: "Copy diagnostics" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Show saved again" }));
-    expect(screen.getAllByRole("status")).toHaveLength(1);
-    expect(screen.getByRole("status")).toHaveTextContent("Saved again");
-
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss Saved again" }));
-    act(() => vi.advanceTimersByTime(150));
-    expect(screen.queryByText("Saved again")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Show saved" }));
-    act(() => vi.advanceTimersByTime(250));
-    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+    const copyFailure = await within(notice).findByText("Diagnostics couldn’t be copied.");
+    expect(copyFailure).not.toHaveAttribute("role");
+    expect(screen.getAllByRole("alert")).toEqual([notice]);
   });
 
-  it("dismissByDedupeKey removes an owned toast permanently and no-ops for an unknown key", () => {
-    vi.useFakeTimers();
-    render(
-      <FeedbackProvider>
-        <ToastHarness />
-      </FeedbackProvider>
+  it("throws an unexpected diagnostics clipboard failure during render", async () => {
+    const defect = new Error("Clipboard fallback invariant failed");
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(
+      new DOMException("Clipboard permission denied", "NotAllowedError"),
     );
+    vi.spyOn(document, "execCommand").mockImplementation(() => {
+      throw defect;
+    });
+    const onDefect = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    fireEvent.click(screen.getByRole("button", { name: "Show saved" }));
-    expect(screen.getByText("Saved")).toBeInTheDocument();
+    try {
+      render(
+        <DiagnosticsDefectBoundary onDefect={onDefect}>
+          <FeedbackNotice
+            content={content("Could not save", { requestId: "req-defect-copy" })}
+            announcement="None"
+          />
+        </DiagnosticsDefectBoundary>,
+      );
+      fireEvent.click(screen.getByText("Diagnostics"));
+      fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss unknown" }));
-    expect(screen.getByText("Saved")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss save" }));
-    act(() => vi.advanceTimersByTime(150));
-    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+      await vi.waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Defect"));
+      expect(onDefect).toHaveBeenCalledWith(defect);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
-  it("suppressDedupeKey hides a toast without touching a different dedupeKey, and reveals it on show()", () => {
+  it("updates one keyed presentation in place and leaves an identical republish untouched", async () => {
     vi.useFakeTimers();
-    render(
-      <FeedbackProvider>
-        <ToastHarness />
-      </FeedbackProvider>
-    );
+    const { api } = renderFeedback();
+    const initial: DetachedFeedback = {
+      kind: "Hud",
+      key: "save",
+      content: content("Saved"),
+    };
 
-    fireEvent.click(screen.getByRole("button", { name: "Show saved" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show other" }));
-    expect(screen.getByText("Saved")).toBeInTheDocument();
-    expect(screen.getByText("Other notice")).toBeInTheDocument();
+    publish(api, initial);
+    const article = feedbackArticle("Saved");
+    const announcer = screen.getByLabelText("Detached feedback announcements");
+    const visualMutations = vi.fn();
+    const speechMutations = vi.fn();
+    const visualObserver = new MutationObserver(visualMutations);
+    const speechObserver = new MutationObserver(speechMutations);
+    visualObserver.observe(article, { attributes: true, childList: true, subtree: true });
+    speechObserver.observe(announcer, { attributes: true, childList: true, subtree: true });
 
-    fireEvent.click(screen.getByRole("button", { name: "Suppress save" }));
-    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
-    expect(screen.getByText("Other notice")).toBeInTheDocument();
+    publish(api, initial);
+    await Promise.resolve();
+    expect(visualMutations).not.toHaveBeenCalled();
+    expect(speechMutations).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Release lease 0" }));
-    expect(screen.getByText("Saved")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(4_000));
+    publish(api, {
+      kind: "Hud",
+      key: "save",
+      content: content("Saved to Library", { tone: "Success" }),
+    });
+
+    expect(feedbackArticle("Saved to Library")).toBe(article);
+    expect(announcer).toHaveTextContent("Saved to Library");
+    act(() => vi.advanceTimersByTime(SPEC.passiveHudMs - 1));
+    expect(visualTitle("Saved to Library")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(visualTitle("Saved to Library")).not.toBeInTheDocument();
+
+    visualObserver.disconnect();
+    speechObserver.disconnect();
   });
 
-  it("hides a show() made while its dedupeKey is already suppressed, until release", () => {
+  it("expires passive and actionable HUDs at their fixed durations and caps only the HUD lane", () => {
     vi.useFakeTimers();
-    render(
-      <FeedbackProvider>
-        <ToastHarness />
-      </FeedbackProvider>
-    );
+    const { api } = renderFeedback();
 
-    fireEvent.click(screen.getByRole("button", { name: "Suppress save" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show saved" }));
-    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+    publish(api, { kind: "Hud", key: "passive", content: content("Passive") });
+    act(() => vi.advanceTimersByTime(SPEC.passiveHudMs - 1));
+    expect(visualTitle("Passive")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(visualTitle("Passive")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Release lease 0" }));
-    expect(screen.getByText("Saved")).toBeInTheDocument();
+    publish(api, {
+      kind: "Hud",
+      key: "actionable",
+      content: content("Actionable"),
+      actions: [{ label: "Undo", onClick: () => {} }],
+    });
+    act(() => vi.advanceTimersByTime(SPEC.actionableHudMs - 1));
+    expect(visualTitle("Actionable")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(visualTitle("Actionable")).not.toBeInTheDocument();
+
+    for (let index = 1; index <= SPEC.maxHuds + 1; index += 1) {
+      publish(api, { kind: "Hud", key: `hud-${index}`, content: content(`HUD ${index}`) });
+    }
+    expect(visualTitle("HUD 1")).not.toBeInTheDocument();
+    expect(visualTitles(/^HUD \d$/)).toHaveLength(SPEC.maxHuds);
   });
 
-  it("composes suppression leases by count: releasing one keeps it hidden, releasing the second reveals it", () => {
+  it("keeps the persistent rail uncapped and unresolved until its owner resolves it", () => {
     vi.useFakeTimers();
-    render(
-      <FeedbackProvider>
-        <ToastHarness />
-      </FeedbackProvider>
-    );
+    const { api } = renderFeedback();
 
-    fireEvent.click(screen.getByRole("button", { name: "Show saved" }));
-    fireEvent.click(screen.getByRole("button", { name: "Suppress save" }));
-    fireEvent.click(screen.getByRole("button", { name: "Suppress save" }));
-    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+    for (let index = 1; index <= 5; index += 1) {
+      publish(api, {
+        kind: "Persistent",
+        key: `persistent-${index}`,
+        content: content(`Persistent ${index}`, { tone: "Warning" }),
+        announcement: "Polite",
+      });
+    }
+    const firstArticle = feedbackArticle("Persistent 1");
+    act(() => vi.advanceTimersByTime(24 * 60 * 60 * 1_000));
+    expect(visualTitles(/^Persistent \d$/)).toHaveLength(5);
 
-    fireEvent.click(screen.getByRole("button", { name: "Release lease 0" }));
-    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+    publish(api, {
+      kind: "Persistent",
+      key: "persistent-1",
+      content: content("Persistent recovered", { tone: "Success" }),
+      announcement: "Polite",
+    });
+    expect(feedbackArticle("Persistent recovered")).toBe(firstArticle);
 
-    fireEvent.click(screen.getByRole("button", { name: "Release lease 1" }));
-    expect(screen.getByText("Saved")).toBeInTheDocument();
+    act(() => api.resolve("persistent-1"));
+    expect(visualTitle("Persistent recovered")).not.toBeInTheDocument();
+    expect(visualTitles(/^Persistent \d$/)).toHaveLength(4);
   });
 
-  it("does not corrupt the lease count when the same release function is called twice", () => {
-    vi.useFakeTimers();
-    render(
-      <FeedbackProvider>
-        <ToastHarness />
-      </FeedbackProvider>
-    );
+  it("composes suppression leases and announces restoration only when hidden content changed", async () => {
+    const { api } = renderFeedback();
+    const announcer = screen.getByLabelText("Detached feedback announcements");
+    const releaseFirst = api.suppress("profile-save");
+    const releaseSecond = api.suppress("profile-save");
 
-    fireEvent.click(screen.getByRole("button", { name: "Show saved" }));
-    fireEvent.click(screen.getByRole("button", { name: "Suppress save" }));
-    fireEvent.click(screen.getByRole("button", { name: "Suppress save" }));
-    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+    publish(api, {
+      kind: "Persistent",
+      key: "profile-save",
+      content: content("Save failed", { tone: "Danger" }),
+      announcement: "Assertive",
+    });
+    expect(visualTitle("Save failed")).not.toBeInTheDocument();
+    expect(announcer).toHaveTextContent("");
 
-    fireEvent.click(screen.getByRole("button", { name: "Release lease 0" }));
-    fireEvent.click(screen.getByRole("button", { name: "Release lease 0" }));
-    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+    act(() => releaseFirst());
+    expect(visualTitle("Save failed")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Release lease 1" }));
-    expect(screen.getByText("Saved")).toBeInTheDocument();
+    publish(api, {
+      kind: "Persistent",
+      key: "profile-save",
+      content: content("Save still failing", { tone: "Danger" }),
+      announcement: "Assertive",
+    });
+    act(() => releaseSecond());
+    expect(visualTitle("Save still failing")).toBeInTheDocument();
+    expect(announcer).toHaveTextContent("Save still failing");
+
+    const speechMutations = vi.fn();
+    const observer = new MutationObserver(speechMutations);
+    observer.observe(announcer, { attributes: true, childList: true, subtree: true });
+    const releaseUnchanged = api.suppress("profile-save");
+    act(() => releaseUnchanged());
+    await Promise.resolve();
+    expect(visualTitle("Save still failing")).toBeInTheDocument();
+    expect(speechMutations).not.toHaveBeenCalled();
+    observer.disconnect();
   });
 
-  it("dismissByDedupeKey while suppressed removes the record so release reveals nothing", () => {
+  it("pauses HUD remaining time while hidden, hovered, or keyboard-focused", () => {
     vi.useFakeTimers();
-    render(
-      <FeedbackProvider>
-        <ToastHarness />
-      </FeedbackProvider>
-    );
+    let visibility: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    const { api } = renderFeedback();
 
-    fireEvent.click(screen.getByRole("button", { name: "Show saved" }));
-    fireEvent.click(screen.getByRole("button", { name: "Suppress save" }));
-    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss save" }));
-    act(() => vi.advanceTimersByTime(150));
-
-    fireEvent.click(screen.getByRole("button", { name: "Release lease 0" }));
-    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
-  });
-
-  it("does not silently auto-dismiss a suppressed toast while its duration elapses", () => {
-    vi.useFakeTimers();
-    render(
-      <FeedbackProvider>
-        <ToastHarness />
-      </FeedbackProvider>
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Show saved" }));
-    fireEvent.click(screen.getByRole("button", { name: "Suppress save" }));
-    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
-
-    act(() => vi.advanceTimersByTime(500));
-
-    fireEvent.click(screen.getByRole("button", { name: "Release lease 0" }));
-    expect(screen.getByText("Saved")).toBeInTheDocument();
-  });
-
-  it("revives a toast re-shown within the exit window instead of letting the stale removal delete it", () => {
-    vi.useFakeTimers();
-    render(
-      <FeedbackProvider>
-        <ToastHarness />
-      </FeedbackProvider>
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Show failed with retry" }));
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss save" }));
-    // Re-shown mid-exit (before the 150ms removal): the record is revived.
-    act(() => vi.advanceTimersByTime(100));
-    fireEvent.click(screen.getByRole("button", { name: "Show failed with retry" }));
-
-    act(() => vi.advanceTimersByTime(300));
-    expect(screen.getByText("Save failed")).toBeInTheDocument();
-  });
-
-  it("drops a stale action when a re-show of the same dedupeKey omits it", () => {
-    vi.useFakeTimers();
-    render(
-      <FeedbackProvider>
-        <ToastHarness />
-      </FeedbackProvider>
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Show failed with retry" }));
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-
-    // Forbidden replacing SaveFailed must not retain the Retry action.
-    fireEvent.click(screen.getByRole("button", { name: "Show failed without retry" }));
-    expect(screen.getByText("Save forbidden")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
-  });
-
-  it("renders two ordered actions for an actionable toast and never auto-dismisses it", () => {
-    vi.useFakeTimers();
-    render(
-      <FeedbackProvider>
-        <ToastHarness />
-      </FeedbackProvider>
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Show linked with two actions" }));
-    expect(screen.getByText("Linked to Some Media")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add note to link" })).toBeInTheDocument();
-
+    publish(api, { kind: "Hud", key: "hidden", content: content("Hidden pause") });
+    act(() => vi.advanceTimersByTime(4_000));
+    visibility = "hidden";
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
     act(() => vi.advanceTimersByTime(60_000));
-    expect(screen.getByText("Linked to Some Media")).toBeInTheDocument();
+    expect(visualTitle("Hidden pause")).toBeInTheDocument();
+    visibility = "visible";
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    act(() => vi.advanceTimersByTime(999));
+    expect(visualTitle("Hidden pause")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(visualTitle("Hidden pause")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    act(() => vi.advanceTimersByTime(150));
-    expect(screen.queryByText("Linked to Some Media")).not.toBeInTheDocument();
+    publish(api, { kind: "Hud", key: "hover", content: content("Hover pause") });
+    act(() => vi.advanceTimersByTime(4_000));
+    const hoverArticle = feedbackArticle("Hover pause");
+    fireEvent.mouseEnter(hoverArticle);
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(visualTitle("Hover pause")).toBeInTheDocument();
+    fireEvent.mouseLeave(hoverArticle);
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(visualTitle("Hover pause")).not.toBeInTheDocument();
+
+    publish(api, {
+      kind: "Hud",
+      key: "focus",
+      content: content("Focus pause"),
+      actions: [{ label: "Undo focus", onClick: () => {} }],
+    });
+    act(() => vi.advanceTimersByTime(9_000));
+    const action = screen.getByRole("button", { name: "Undo focus" });
+    act(() => action.focus());
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(visualTitle("Focus pause")).toBeInTheDocument();
+    act(() => action.blur());
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(visualTitle("Focus pause")).not.toBeInTheDocument();
+  });
+
+  it("pauses a suppressed HUD and restores its remaining time without replaying speech", async () => {
+    vi.useFakeTimers();
+    const { api } = renderFeedback();
+    publish(api, { kind: "Hud", key: "local-owner", content: content("Background saved") });
+    const announcer = screen.getByLabelText("Detached feedback announcements");
+    const speechMutations = vi.fn();
+    const observer = new MutationObserver(speechMutations);
+    observer.observe(announcer, { attributes: true, childList: true, subtree: true });
+
+    act(() => vi.advanceTimersByTime(4_000));
+    let release: () => void = () => {};
+    act(() => {
+      release = api.suppress("local-owner");
+    });
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(visualTitle("Background saved")).not.toBeInTheDocument();
+    act(() => release());
+    await Promise.resolve();
+    expect(visualTitle("Background saved")).toBeInTheDocument();
+    expect(speechMutations).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(visualTitle("Background saved")).not.toBeInTheDocument();
+    observer.disconnect();
+
+    publish(api, {
+      kind: "Hud",
+      key: "paused-local-owner",
+      content: content("Paused owner saved"),
+    });
+    act(() => vi.advanceTimersByTime(4_000));
+    fireEvent.mouseEnter(feedbackArticle("Paused owner saved"));
+    let releasePaused: () => void = () => {};
+    act(() => {
+      releasePaused = api.suppress("paused-local-owner");
+    });
+    expect(visualTitle("Paused owner saved")).not.toBeInTheDocument();
+    act(() => releasePaused());
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(visualTitle("Paused owner saved")).not.toBeInTheDocument();
+  });
+
+  it("keeps a suppressed HUD outside the visual cap and evicts the oldest other HUD on release", () => {
+    vi.useFakeTimers();
+    const { api } = renderFeedback();
+
+    publish(api, {
+      kind: "Hud",
+      key: "suppressed-owner",
+      content: content("Suppressed owner"),
+    });
+    act(() => vi.advanceTimersByTime(4_000));
+    let release: () => void = () => {};
+    act(() => {
+      release = api.suppress("suppressed-owner");
+    });
+
+    for (let index = 1; index <= SPEC.maxHuds; index += 1) {
+      publish(api, {
+        kind: "Hud",
+        key: `visible-${index}`,
+        content: content(`Visible ${index}`),
+      });
+    }
+    expect(visualTitle("Suppressed owner")).not.toBeInTheDocument();
+    expect(visualTitles(/^Visible \d$/)).toHaveLength(SPEC.maxHuds);
+
+    act(() => release());
+    expect(visualTitle("Suppressed owner")).toBeInTheDocument();
+    expect(visualTitle("Visible 1")).not.toBeInTheDocument();
+    expect(visualTitle("Visible 2")).toBeInTheDocument();
+    expect(visualTitle("Visible 3")).toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(999));
+    expect(visualTitle("Suppressed owner")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(visualTitle("Suppressed owner")).not.toBeInTheDocument();
+  });
+
+  it("removes travel and pulse choreography when reduced motion is requested", async () => {
+    const session = cdp() as unknown as {
+      send(method: string, params: Record<string, unknown>): Promise<unknown>;
+    };
+    await session.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+    });
+    try {
+      const { api } = renderFeedback();
+      publish(api, { kind: "Hud", key: "motion", content: content("Motion quiet") });
+      const article = feedbackArticle("Motion quiet");
+      expect(getComputedStyle(article).animationName).toBe("none");
+      expect(getComputedStyle(article).transitionDuration).toBe("0s");
+    } finally {
+      await session.send("Emulation.setEmulatedMedia", {
+        features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
+      });
+    }
   });
 });

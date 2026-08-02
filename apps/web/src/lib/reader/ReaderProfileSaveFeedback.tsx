@@ -19,36 +19,41 @@ export const READER_PROFILE_SAVE_FEEDBACK_KEY = "reader-profile-save";
  */
 export function ReaderProfileSaveFeedback() {
   const { persistence, retrySave } = useReaderContext();
-  const { show, dismissByDedupeKey } = useFeedback();
+  const { publish, resolve } = useFeedback();
 
-  // A toast stays clickable through its exit animation; a Retry click landing
-  // after the state already left SaveFailed is "too late", not a defect.
+  // A persistent action may outlive the failure render that published it; a
+  // Retry click after state already left SaveFailed is "too late", not a defect.
   const persistenceRef = useRef(persistence);
   persistenceRef.current = persistence;
 
   useEffect(() => {
     if (persistence.state === "SaveFailed" || persistence.state === "Forbidden") {
-      show({
-        severity: "error",
-        ...toReaderProfileSaveErrorMessage(persistence.failure),
-        dedupeKey: READER_PROFILE_SAVE_FEEDBACK_KEY,
-        duration: 0,
-        action:
+      publish({
+        kind: "Persistent",
+        key: READER_PROFILE_SAVE_FEEDBACK_KEY,
+        content: {
+          tone: "Danger",
+          ...toReaderProfileSaveErrorMessage(persistence.failure),
+        },
+        announcement: "Assertive",
+        actions:
           persistence.state === "SaveFailed"
-            ? {
-                label: "Retry",
-                onClick: () => {
-                  if (persistenceRef.current.state === "SaveFailed") {
-                    retrySave();
-                  }
+            ? [
+                {
+                  label: "Retry",
+                  onClick: () => {
+                    if (persistenceRef.current.state === "SaveFailed") {
+                      retrySave();
+                    }
+                  },
                 },
-              }
+              ]
             : undefined,
       });
       return;
     }
-    dismissByDedupeKey(READER_PROFILE_SAVE_FEEDBACK_KEY);
-  }, [dismissByDedupeKey, persistence, retrySave, show]);
+    resolve(READER_PROFILE_SAVE_FEEDBACK_KEY);
+  }, [persistence, publish, resolve, retrySave]);
 
   return null;
 }

@@ -29,7 +29,10 @@ import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import "./hljs-theme.css";
 import styles from "./MarkdownMessage.module.css";
-import { copyText } from "@/lib/ui/copyText";
+import {
+  ClipboardWriteUnavailableError,
+  copyText,
+} from "@/lib/ui/copyText";
 
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
@@ -79,6 +82,7 @@ function CodeBlockWrapper({
   const [copyState, setCopyState] = useState<
     "idle" | "copied" | "failed"
   >("idle");
+  const [copyDefect, setCopyDefect] = useState<{ error: unknown } | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
   const handleCopy = useCallback(async () => {
@@ -86,11 +90,17 @@ function CodeBlockWrapper({
     try {
       await copyText(text);
       setCopyState("copied");
-    } catch {
+    } catch (error) {
+      if (!(error instanceof ClipboardWriteUnavailableError)) {
+        setCopyDefect({ error });
+        return;
+      }
       setCopyState("failed");
     }
     setTimeout(() => setCopyState("idle"), 1500);
   }, []);
+
+  if (copyDefect !== null) throw copyDefect.error;
 
   return (
     <div className={styles.codeBlock}>

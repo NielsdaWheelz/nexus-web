@@ -5,7 +5,6 @@ import { Component, type ReactNode } from "react";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import {
   DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
-  DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
   EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
   EMAIL_IN_USE_MESSAGE,
 } from "@/lib/auth/messages";
@@ -33,24 +32,12 @@ vi.mock("@/lib/api/client", async () => {
   );
   return {
     ...actual,
-    ApiError: class ApiError extends Error {
-      readonly status: number;
-      readonly code: string;
-      readonly requestId?: string;
-
-      constructor(status: number, code: string, message: string, requestId?: string) {
-        super(message);
-        this.status = status;
-        this.code = code;
-        this.requestId = requestId;
-      }
-    },
     apiFetch: (...args: unknown[]) => apiFetch(...args),
-    isApiError: () => false,
     isUnauthenticatedApiError: () => false,
   };
 });
 
+import { ApiError } from "@/lib/api/client";
 import SettingsAccountPaneBody from "./SettingsAccountPaneBody";
 
 interface AccountWire {
@@ -217,7 +204,7 @@ describe("SettingsAccountPaneBody", () => {
     });
   });
 
-  it("shows a success notice when the display-name PATCH resolves ok", async () => {
+  it("updates the visible display name without a redundant success notice", async () => {
     apiFetch.mockReset();
     apiFetch.mockResolvedValueOnce(accountResponse());
     apiFetch.mockResolvedValueOnce(
@@ -235,9 +222,7 @@ describe("SettingsAccountPaneBody", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText(DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE)
-      ).toBeInTheDocument();
+      expect(screen.getByText(/current: ada new/i)).toBeInTheDocument();
     });
     expect(apiFetch).toHaveBeenCalledWith("/api/me", {
       method: "PATCH",
@@ -248,7 +233,9 @@ describe("SettingsAccountPaneBody", () => {
   it("shows the failure message when the display-name PATCH rejects", async () => {
     apiFetch.mockReset();
     apiFetch.mockResolvedValueOnce(accountResponse());
-    apiFetch.mockRejectedValueOnce(new Error("patch failed"));
+    apiFetch.mockRejectedValueOnce(
+      new ApiError(0, "E_NETWORK", "Network request failed"),
+    );
     const user = userEvent.setup();
 
     renderAccount();
@@ -330,6 +317,66 @@ describe("SettingsAccountPaneBody", () => {
     writeText.mockRestore();
   });
 
+  it("shows exact copy failure when clipboard permission is unavailable", async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValue(
+      accountResponse({
+        email_ingest_address: "letters-abc@mail.example.com",
+      }),
+    );
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockRejectedValue(new DOMException("denied", "NotAllowedError"));
+    const fallback = vi.spyOn(document, "execCommand").mockReturnValue(false);
+    const user = userEvent.setup();
+
+    try {
+      renderAccount();
+      await user.click(
+        await screen.findByRole("button", { name: /copy address/i }),
+      );
+
+      expect(
+        await screen.findByRole("button", { name: "Copy failed" }),
+      ).toBeInTheDocument();
+    } finally {
+      writeText.mockRestore();
+      fallback.mockRestore();
+    }
+  });
+
+  it("routes an unknown clipboard failure through the account boundary", async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValue(
+      accountResponse({
+        email_ingest_address: "letters-abc@mail.example.com",
+      }),
+    );
+    const defect = new TypeError("unexpected clipboard defect");
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockRejectedValue(defect);
+    const fallback = vi.spyOn(document, "execCommand").mockReturnValue(true);
+    const onDefect = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = userEvent.setup();
+
+    try {
+      renderAccount({ onDefect });
+      await user.click(
+        await screen.findByRole("button", { name: /copy address/i }),
+      );
+
+      expect(await screen.findByText("Account defect boundary")).toBeInTheDocument();
+      expect(onDefect).toHaveBeenCalledWith(defect);
+      expect(fallback).not.toHaveBeenCalled();
+    } finally {
+      writeText.mockRestore();
+      fallback.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
   it("updates the authenticated account time zone only after PATCH succeeds", async () => {
     apiFetch.mockReset();
     apiFetch.mockResolvedValueOnce(accountResponse());
@@ -368,7 +415,9 @@ describe("SettingsAccountPaneBody", () => {
   it("keeps the authenticated account time zone unchanged when PATCH fails", async () => {
     apiFetch.mockReset();
     apiFetch.mockResolvedValueOnce(accountResponse());
-    apiFetch.mockRejectedValueOnce(new Error("patch failed"));
+    apiFetch.mockRejectedValueOnce(
+      new ApiError(0, "E_NETWORK", "Network request failed"),
+    );
     const user = userEvent.setup();
 
     renderAccount();
@@ -383,7 +432,7 @@ describe("SettingsAccountPaneBody", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "Calendar time zone could not be updated.",
+        "Calendar time zone couldn’t be updated",
       );
     });
     expect(screen.getByLabelText("Provider calendar time zone")).toHaveTextContent(

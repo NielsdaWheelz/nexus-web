@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ComponentProps } from "react";
+import { Component, type ComponentProps, type ReactNode } from "react";
 import type {
   ConnectionActionEndpointOut,
   ConnectionEndpointOut,
@@ -10,7 +10,10 @@ import type {
 import { decodeStandingActionTarget } from "@/lib/resources/resourceActionTarget";
 import type { ResourceTarget } from "@/lib/resources/resourceTargets";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
-import ConnectionsSurfaceImpl from "./ConnectionsSurface";
+import { ApiError } from "@/lib/api/client";
+import ConnectionsSurfaceImpl, {
+  connectionErrorMessage,
+} from "./ConnectionsSurface";
 import { useConnectionsComposerController } from "./connectionsComposerController";
 
 function ConnectionsSurface(
@@ -33,6 +36,25 @@ function ConnectionsSurface(
       />
     </ShareControllerProvider>
   );
+}
+
+class ConnectionsDefectBoundary extends Component<
+  { children: ReactNode },
+  { caught: { error: unknown } | null }
+> {
+  state = { caught: null as { error: unknown } | null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { caught: { error } };
+  }
+
+  render() {
+    return this.state.caught === null ? (
+      this.props.children
+    ) : (
+      <p>Connections defect boundary</p>
+    );
+  }
 }
 
 const BLOCK_A = "11111111-1111-4111-8111-111111111111";
@@ -292,6 +314,54 @@ describe("ConnectionsSurface", () => {
     vi.unstubAllGlobals();
   });
 
+  it("maps only finite expected failures and preserves diagnostics", () => {
+    expect(
+      connectionErrorMessage(
+        new ApiError(503, "E_UPSTREAM", "down", "req-connections"),
+        "Load",
+      ),
+    ).toMatchObject({ tone: "Danger", requestId: "req-connections" });
+
+    const sameSystem = new ApiError(500, "E_INTERNAL", "broken");
+    expect(() => connectionErrorMessage(sameSystem, "Load")).toThrow(sameSystem);
+
+    const unknownCode = new ApiError(409, "E_NEW_GRAPH_FAILURE", "new");
+    expect(() => connectionErrorMessage(unknownCode, "CreateLink")).toThrow(
+      unknownCode,
+    );
+
+    const nonApi = new Error("decoder failed");
+    expect(() => connectionErrorMessage(nonApi, "Load")).toThrow(nonApi);
+
+    const stanceSelf = new ApiError(409, "E_LINK_SELF", "self");
+    expect(connectionErrorMessage(stanceSelf, "RecordStance")).toMatchObject({
+      title: "Stance wasn’t recorded",
+    });
+    expect(() => connectionErrorMessage(stanceSelf, "Unlink")).toThrow(
+      stanceSelf,
+    );
+
+    const highlightConflict = new ApiError(
+      409,
+      "E_HIGHLIGHT_CONFLICT",
+      "changed",
+    );
+    expect(
+      connectionErrorMessage(highlightConflict, "CreateLink"),
+    ).toMatchObject({ title: "Link wasn’t created" });
+    expect(() =>
+      connectionErrorMessage(highlightConflict, "RecordStance"),
+    ).toThrow(highlightConflict);
+
+    const dismissConflict = new ApiError(409, "E_CONFLICT", "changed");
+    expect(connectionErrorMessage(dismissConflict, "Dismiss")).toMatchObject({
+      title: "Connection wasn’t dismissed",
+    });
+    expect(() => connectionErrorMessage(dismissConflict, "Unlink")).toThrow(
+      dismissConflict,
+    );
+  });
+
   it("shows API errors instead of an empty connections state", async () => {
     vi.stubGlobal(
       "fetch",
@@ -300,7 +370,7 @@ describe("ConnectionsSurface", () => {
           new Response(
             JSON.stringify({
               error: {
-                code: "E_INTERNAL",
+                code: "E_UPSTREAM",
                 message: "boom",
                 request_id: "req-1",
               },
@@ -317,7 +387,7 @@ describe("ConnectionsSurface", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Connections could not be loaded.",
+      "Connections couldn’t be loaded",
     );
     expect(screen.queryByText(SCANNABLE_EMPTY_COPY)).not.toBeInTheDocument();
   });
@@ -1007,7 +1077,7 @@ describe("ConnectionsSurface", () => {
             return new Response(
               JSON.stringify({
                 error: {
-                  code: "E_LINK_WRITE_FAILED",
+                  code: "E_UPSTREAM",
                   message: "Link write failed",
                   request_id: "req-1",
                 },
@@ -1069,7 +1139,7 @@ describe("ConnectionsSurface", () => {
     await waitFor(() => expect(linkAttempts).toBe(2));
     expect(
       await screen.findByText(
-        "File was saved, but its connection could not be created.",
+        "File was saved, but its connection wasn’t created",
       ),
     ).toBeInTheDocument();
 
@@ -1079,7 +1149,7 @@ describe("ConnectionsSurface", () => {
     view.rerender(<TabSwitchHarness showConnections resourceId={BLOCK_A} />);
     expect(
       await screen.findByText(
-        "File was saved, but its connection could not be created.",
+        "File was saved, but its connection wasn’t created",
       ),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry attachment" }));
@@ -1174,7 +1244,7 @@ describe("ConnectionsSurface", () => {
             return Response.json(
               {
                 error: {
-                  code: "E_LINK_WRITE_FAILED",
+                  code: "E_UPSTREAM",
                   message: "Link write failed",
                   request_id: "req-link-double-failure",
                 },
@@ -1396,6 +1466,32 @@ describe("ConnectionsSurface", () => {
     ).toHaveLength(0);
   });
 
+  it("routes a falsey scan-status defect through owner state to the boundary", async () => {
+    const requests = stubFetchQueue();
+    render(
+      <ConnectionsDefectBoundary>
+        <ConnectionsSurface resourceRef={{ scheme: "media", id: MEDIA_ID }} />
+      </ConnectionsDefectBoundary>,
+    );
+    await waitFor(() => expect(connectionReads(requests)).toHaveLength(1));
+    connectionReads(requests)[0].resolve(connectionResponse([]));
+    await waitFor(() => expect(scanStatusReads(requests)).toHaveLength(1));
+    const envelope = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(envelope, "data", {
+      enumerable: true,
+      get: () => {
+        throw false;
+      },
+    });
+    const response = new Response();
+    vi.spyOn(response, "json").mockResolvedValue(envelope);
+    scanStatusReads(requests)[0].resolve(response);
+
+    expect(
+      await screen.findByText("Connections defect boundary"),
+    ).toBeInTheDocument();
+  });
+
   it("short-circuits without polling when the scan request reports idle", async () => {
     const user = userEvent.setup();
     const requests = stubFetchQueue();
@@ -1425,6 +1521,56 @@ describe("ConnectionsSurface", () => {
       await screen.findByText("No new connections found."),
     ).toBeInTheDocument();
     expect(scanStatusReads(requests)).toHaveLength(1);
+  });
+
+  it("retries a failed scan-status read without starting a new scan", async () => {
+    const user = userEvent.setup();
+    const requests = stubFetchQueue();
+
+    render(
+      <ConnectionsSurface resourceRef={{ scheme: "media", id: MEDIA_ID }} />,
+    );
+    await waitFor(() => expect(connectionReads(requests)).toHaveLength(1));
+    connectionReads(requests)[0].resolve(connectionResponse([]));
+    await waitFor(() => expect(scanStatusReads(requests)).toHaveLength(1));
+    scanStatusReads(requests)[0].resolve(idleStatusResponse());
+
+    await user.click(
+      await screen.findByRole("button", { name: "Find connections" }),
+    );
+    await waitFor(() => expect(scanPosts(requests)).toHaveLength(1));
+    scanPosts(requests)[0].resolve(
+      Response.json(
+        { data: { queued: true, status: "queued" } },
+        { status: 202 },
+      ),
+    );
+    await waitFor(
+      () => expect(scanStatusReads(requests)).toHaveLength(2),
+      { timeout: 4_000 },
+    );
+    scanStatusReads(requests)[1].resolve(
+      Response.json(
+        {
+          error: {
+            code: "E_UPSTREAM",
+            message: "worker unavailable",
+            request_id: "req-scan-status",
+          },
+        },
+        { status: 503 },
+      ),
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(scanStatusReads(requests)).toHaveLength(3));
+    expect(scanPosts(requests)).toHaveLength(1);
+    scanStatusReads(requests)[2].resolve(idleStatusResponse());
+    await waitFor(() => expect(connectionReads(requests)).toHaveLength(2));
+    connectionReads(requests)[1].resolve(connectionResponse([]));
+    expect(
+      await screen.findByText("No new connections found."),
+    ).toBeInTheDocument();
   });
 
   it("deletes user-created neutral Links through the Link command", async () => {

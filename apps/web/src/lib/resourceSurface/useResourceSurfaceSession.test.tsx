@@ -9,6 +9,7 @@ import {
   dailyDraftKey,
   writeDailyDraft,
 } from "@/lib/notes/dailyDraftStore";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 
 const PAGE = "page:11111111-1111-4111-8111-111111111111";
 const NOTE = "note_block:22222222-2222-4222-8222-222222222222";
@@ -113,7 +114,11 @@ function Harness() {
   </>;
 }
 
-function DailyHarness() {
+function DailyHarness({
+  onCopyError = () => undefined,
+}: {
+  onCopyError?: (error: unknown) => void;
+} = {}) {
   const session = useResourceSurfaceSession({
     sessionKey: `daily:${ACCOUNT_ID}:${LOCAL_DATE}`,
     daily: { accountId: ACCOUNT_ID, localDate: LOCAL_DATE },
@@ -233,7 +238,12 @@ function DailyHarness() {
     }}>daily empty-alt image</button>
     <button type="button" onClick={session.retry}>daily retry</button>
     <button type="button" onClick={() => void session.reload()}>daily reload</button>
-    <button type="button" onClick={() => void session.copyRecovery()}>daily copy</button>
+    <button
+      type="button"
+      onClick={() => void session.copyRecovery().catch(onCopyError)}
+    >
+      daily copy
+    </button>
   </>;
 }
 
@@ -675,6 +685,30 @@ describe("useResourceSurfaceSession", () => {
       "absent",
     );
     expect(localStorage.getItem(RESOURCE_DRAFT_KEY)).toBeNull();
+  });
+
+  it("preserves typed clipboard unavailability from the exact recovery-copy intent", async () => {
+    writeDailyDraft({
+      version: 1,
+      accountId: ACCOUNT_ID,
+      localDate: LOCAL_DATE,
+      noteId: NOTE.slice(11),
+      clientMutationId: "copy-recovery",
+      ...noteBody("Recovered"),
+      handoff: { kind: "None" },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(dailyDescriptor(initial)));
+    const unavailable = new ClipboardWriteUnavailableError();
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(unavailable);
+    const onCopyError = vi.fn();
+    render(<DailyHarness onCopyError={onCopyError} />);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("daily status")).toHaveTextContent("recovered"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "daily copy" }));
+
+    await waitFor(() => expect(onCopyError).toHaveBeenCalledWith(unavailable));
   });
 
   it("re-reads a failed daily descriptor when Retry has no draft to save", async () => {

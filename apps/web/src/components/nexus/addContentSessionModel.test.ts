@@ -29,7 +29,7 @@ describe("acceptanceErrorMessage", () => {
       ),
     ).toMatchObject({
       kind: "Unresolved",
-      feedback: { severity: "warning" },
+      feedback: { tone: "Warning" },
     });
   });
 
@@ -41,14 +41,17 @@ describe("acceptanceErrorMessage", () => {
     },
   );
 
-  it("keeps a non-abort DOM transport failure unresolved", () => {
-    expect(
-      acceptanceErrorMessage(
-        new DOMException("Network failed", "NetworkError"),
-      ),
-    ).toMatchObject({
-      kind: "Unresolved",
-      feedback: { severity: "warning" },
+  it("keeps unknown API codes and non-API failures as defects", () => {
+    const unknownCode = new ApiError(409, "E_NEW_ACCEPTANCE_FAILURE", "new");
+    expect(acceptanceErrorMessage(unknownCode)).toEqual({
+      kind: "Defect",
+      error: unknownCode,
+    });
+
+    const nonApi = new DOMException("Network failed", "NetworkError");
+    expect(acceptanceErrorMessage(nonApi)).toEqual({
+      kind: "Defect",
+      error: nonApi,
     });
   });
 });
@@ -247,7 +250,7 @@ describe("add content submission state", () => {
             kind,
             id: "one",
             intent,
-            feedback: { severity: "error" as const, title: "Not added" },
+            feedback: { tone: "Danger" as const, title: "Not added" },
           },
         ],
       };
@@ -278,13 +281,13 @@ describe("add content submission state", () => {
           kind: "Rejected" as const,
           id: "rejected",
           intent,
-          feedback: { severity: "error" as const, title: "Not added" },
+          feedback: { tone: "Danger" as const, title: "Not added" },
         },
         {
           kind: "AcceptanceUnresolved" as const,
           id: "unresolved",
           intent,
-          feedback: { severity: "warning" as const, title: "Status unknown" },
+          feedback: { tone: "Warning" as const, title: "Status unknown" },
         },
       ],
     };
@@ -318,7 +321,7 @@ describe("add content submission state", () => {
           },
           mediaId: "media-uncertain",
           sourceAttemptId: "attempt-uncertain",
-          feedback: { severity: "warning" as const, title: "Status unknown" },
+          feedback: { tone: "Warning" as const, title: "Status unknown" },
         },
       ],
     };
@@ -342,8 +345,8 @@ describe("add content submission state", () => {
       acceptedUploadIdentityByItemId: new Map(),
       startedSubmissionItemIds: new Set(["one"]),
       placementProgressByMediaId: new Map(),
-      acceptanceFeedback: { severity: "warning", title: "Status unknown" },
-      operationFeedback: { severity: "warning", title: "Stopped" },
+      acceptanceFeedback: { tone: "Warning", title: "Status unknown" },
+      operationFeedback: { tone: "Warning", title: "Stopped" },
     });
 
     expect(stopped.items[0]).toMatchObject({
@@ -371,8 +374,8 @@ describe("add content submission state", () => {
       acceptedUploadIdentityByItemId: new Map(),
       startedSubmissionItemIds: new Set(["one", "two"]),
       placementProgressByMediaId: new Map(),
-      acceptanceFeedback: { severity: "warning", title: "Status unknown" },
-      operationFeedback: { severity: "warning", title: "Stopped" },
+      acceptanceFeedback: { tone: "Warning", title: "Status unknown" },
+      operationFeedback: { tone: "Warning", title: "Stopped" },
     });
 
     expect(stopped.items).toMatchObject([
@@ -412,8 +415,8 @@ describe("add content submission state", () => {
       ]),
       startedSubmissionItemIds: new Set(["file-one"]),
       placementProgressByMediaId: new Map(),
-      acceptanceFeedback: { severity: "warning", title: "Status unknown" },
-      operationFeedback: { severity: "warning", title: "Stopped" },
+      acceptanceFeedback: { tone: "Warning", title: "Status unknown" },
+      operationFeedback: { tone: "Warning", title: "Stopped" },
     });
 
     expect(stopped.items[0]).toMatchObject({
@@ -434,7 +437,7 @@ describe("add content submission state", () => {
         destinations: [research],
         idempotencyKey: "upload-key",
       },
-      feedback: { severity: "warning", title: "Status unknown" },
+      feedback: { tone: "Warning", title: "Status unknown" },
     };
     const reconciling = reduceAddSession(
       { ...initial(), items: [unresolved] },
@@ -450,8 +453,8 @@ describe("add content submission state", () => {
       ]),
       startedSubmissionItemIds: new Set(),
       placementProgressByMediaId: new Map(),
-      acceptanceFeedback: { severity: "warning", title: "Status unknown" },
-      operationFeedback: { severity: "warning", title: "Stopped" },
+      acceptanceFeedback: { tone: "Warning", title: "Status unknown" },
+      operationFeedback: { tone: "Warning", title: "Stopped" },
     });
 
     expect(stopped.items[0]).toMatchObject({
@@ -475,7 +478,7 @@ describe("add content submission state", () => {
       },
       mediaId: "media-one",
       sourceAttemptId: "attempt-one",
-      feedback: { severity: "warning", title: "Status unknown" },
+      feedback: { tone: "Warning", title: "Status unknown" },
     };
     const reconciling = reduceAddSession(
       { ...initial(), items: [uncertain] },
@@ -489,8 +492,8 @@ describe("add content submission state", () => {
       acceptedUploadIdentityByItemId: new Map(),
       startedSubmissionItemIds: new Set(),
       placementProgressByMediaId: new Map(),
-      acceptanceFeedback: { severity: "warning", title: "Status unknown" },
-      operationFeedback: { severity: "warning", title: "Stopped" },
+      acceptanceFeedback: { tone: "Warning", title: "Status unknown" },
+      operationFeedback: { tone: "Warning", title: "Stopped" },
     });
 
     expect(stopped.items[0]).toEqual(uncertain);
@@ -511,8 +514,8 @@ describe("add content submission state", () => {
       acceptedUploadIdentityByItemId: new Map(),
       startedSubmissionItemIds: new Set(),
       placementProgressByMediaId: new Map(),
-      acceptanceFeedback: { severity: "warning", title: "Status unknown" },
-      operationFeedback: { severity: "warning", title: "Stopped" },
+      acceptanceFeedback: { tone: "Warning", title: "Status unknown" },
+      operationFeedback: { tone: "Warning", title: "Stopped" },
     });
 
     expect(stopped.items[0]).toMatchObject({
@@ -559,8 +562,8 @@ describe("add content submission state", () => {
         ["started", { phase: "Started", libraries, command }],
         ["succeeded", { phase: "Succeeded", libraries, command }],
       ]),
-      acceptanceFeedback: { severity: "warning", title: "Status unknown" },
-      operationFeedback: { severity: "warning", title: "Stopped" },
+      acceptanceFeedback: { tone: "Warning", title: "Status unknown" },
+      operationFeedback: { tone: "Warning", title: "Stopped" },
     });
 
     expect(stopped.placementByMediaId.get("queued")).toMatchObject({
@@ -605,8 +608,8 @@ describe("add content submission state", () => {
       acceptedUploadIdentityByItemId: new Map(),
       startedSubmissionItemIds: new Set(),
       placementProgressByMediaId: new Map(),
-      acceptanceFeedback: { severity: "warning", title: "Status unknown" },
-      operationFeedback: { severity: "warning", title: "Stopped" },
+      acceptanceFeedback: { tone: "Warning", title: "Status unknown" },
+      operationFeedback: { tone: "Warning", title: "Stopped" },
     });
 
     expect(stopped.placementByMediaId.get("media-read")).toEqual(previous);
@@ -637,7 +640,7 @@ describe("session derivations and OPML isolation", () => {
               sizeBytes: 3,
               fileKind: "Unsupported",
             },
-            feedback: { severity: "error", title: "Unsupported" },
+            feedback: { tone: "Danger", title: "Unsupported" },
           },
         ],
       }),

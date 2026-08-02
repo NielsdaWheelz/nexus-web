@@ -165,6 +165,9 @@ describe("BrowsePaneBody", () => {
     const view = renderBrowse("/browse?source=Brave");
 
     expect(screen.getByText("This Browse link is invalid")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Reset Browse to start from a valid search.",
+    );
     expect(screen.queryByRole("searchbox", { name: "Search" })).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
 
@@ -278,7 +281,9 @@ describe("BrowsePaneBody", () => {
       await screen.findByText("6 surfaced · 8 of 8 sources settled"),
     ).toBeInTheDocument();
     expect(screen.queryByText("Source unavailable")).toBeNull();
-    expect(screen.getByText("Results available")).toBeInTheDocument();
+    expect(screen.getByLabelText("Browse result announcements")).toHaveTextContent(
+      "6 surfaced · 8 of 8 sources settled",
+    );
   });
 
   it("updates surfaced results after continuation without claiming a total", async () => {
@@ -311,6 +316,12 @@ describe("BrowsePaneBody", () => {
     expect(
       await screen.findAllByText("1 surfaced · 1 of 1 source settled"),
     ).toHaveLength(2);
+    expect(screen.getAllByLabelText("Browse result announcements")).toHaveLength(1);
+    expect(screen.getByLabelText("Browse result announcements"))
+      .toHaveAttribute("aria-live", "polite");
+    expect(screen.getByLabelText("Browse result announcements"))
+      .toHaveTextContent("1 surfaced · 1 of 1 source settled");
+    expect(screen.queryByText("Results available")).toBeNull();
     expect(screen.queryByText(/\btotal\b/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     await screen.findByRole("link", { name: "Second systems result" });

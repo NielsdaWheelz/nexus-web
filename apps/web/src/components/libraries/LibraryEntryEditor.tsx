@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import LibraryChooser, {
   type LibraryChooserItem,
 } from "@/components/libraries/LibraryChooser";
@@ -16,7 +17,7 @@ export interface LibraryEntryEditorProps {
   /** Commands disabled → chooser `busy`. */
   busy: boolean;
   pendingLibraryId: string | null;
-  error: { message: string; onRetry: (() => void) | null } | null;
+  error: { content: FeedbackContent; onRetry: (() => void) | null } | null;
   onAddToLibrary: (libraryId: string) => void;
   onRemoveFromLibrary: (libraryId: string) => void;
   selectedGroupLabel: string;

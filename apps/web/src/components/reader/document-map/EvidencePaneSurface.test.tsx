@@ -270,7 +270,7 @@ describe("EvidencePaneSurface", () => {
       {
         kind: "IngestFailed",
         feedback: {
-          severity: "warning",
+          tone: "Warning",
           title: "Media processing failed.",
         },
       } as const,
@@ -285,6 +285,16 @@ describe("EvidencePaneSurface", () => {
     (projection, message) => {
       render(<Harness projection={projection} />);
       expect(screen.getByText(message)).toBeInTheDocument();
+      if (projection.kind === "Processing") {
+        expect(screen.getByRole("status")).toHaveTextContent(message);
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      } else if (projection.kind === "IngestFailed") {
+        expect(screen.getByRole("alert")).toHaveTextContent(message);
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      } else {
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      }
       expect(screen.queryByText("Footnote one")).not.toBeInTheDocument();
     },
   );

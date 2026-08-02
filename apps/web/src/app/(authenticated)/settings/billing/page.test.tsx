@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
+import { ApiError } from "@/lib/api/client";
 import SettingsBillingPaneBody from "./SettingsBillingPaneBody";
 
 const mockBillingState = vi.hoisted(() => ({
@@ -62,7 +63,6 @@ vi.mock("@/lib/api/client", async () => {
   return {
     ...actual,
     apiFetch: (...args: unknown[]) => mockApiFetch(...args),
-    isApiError: () => false,
     isUnauthenticatedApiError: () => false,
   };
 });
@@ -93,7 +93,9 @@ describe("SettingsBillingPaneBody", () => {
 
   it("shows plan, usage, and upgrade actions for a free account", async () => {
     const user = userEvent.setup();
-    mockApiFetch.mockRejectedValue(new Error("checkout unavailable"));
+    mockApiFetch.mockRejectedValue(
+      new ApiError(0, "E_NETWORK", "checkout unavailable", "req-checkout"),
+    );
 
     renderBilling();
 
@@ -114,7 +116,7 @@ describe("SettingsBillingPaneBody", () => {
         method: "POST",
         body: JSON.stringify({ plan_tier: "plus" }),
       });
-      expect(screen.getByText("Failed to start checkout")).toBeInTheDocument();
+      expect(screen.getByText("Checkout couldn’t be started")).toBeInTheDocument();
     });
   });
 
@@ -127,7 +129,9 @@ describe("SettingsBillingPaneBody", () => {
     mockBillingState.account.entitlement_plan_tier = "plus";
     mockBillingState.account.entitlement_source = "subscription";
     mockBillingState.account.can_share = true;
-    mockApiFetch.mockRejectedValue(new Error("portal unavailable"));
+    mockApiFetch.mockRejectedValue(
+      new ApiError(0, "E_NETWORK", "portal unavailable", "req-portal"),
+    );
 
     renderBilling();
 
@@ -140,7 +144,7 @@ describe("SettingsBillingPaneBody", () => {
       expect(mockApiFetch).toHaveBeenCalledWith("/api/billing/portal", {
         method: "POST",
       });
-      expect(screen.getByText("Failed to open billing portal")).toBeInTheDocument();
+      expect(screen.getByText("The billing portal couldn’t be opened")).toBeInTheDocument();
     });
   });
 

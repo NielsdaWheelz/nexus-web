@@ -835,10 +835,10 @@ describe("PodcastsPaneBody — Nexus podcast integration", () => {
           };
           requests.push(request);
           if (request.sort === "alpha") {
-            return newFirstPage.promise;
+            return newFirstPage.promise.then((response) => response.clone());
           }
           if (request.cursor === "page-2") {
-            return oldContinuation.promise;
+            return oldContinuation.promise.then((response) => response.clone());
           }
           return jsonResponse({
             data: {
@@ -903,5 +903,8 @@ describe("PodcastsPaneBody — Nexus podcast integration", () => {
         },
       }),
     );
+    expect(
+      await screen.findByText("No podcasts match the current filters."),
+    ).toBeVisible();
   });
 });

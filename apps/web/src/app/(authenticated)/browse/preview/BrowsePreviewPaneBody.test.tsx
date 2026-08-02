@@ -217,6 +217,36 @@ describe("BrowsePreviewPaneBody", () => {
     expect(view.onReplacePane).not.toHaveBeenCalled();
   });
 
+  it("keeps a modeled network failure near an exact retry", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse(
+        {
+          error: {
+            code: "E_NETWORK",
+            message: "raw transport detail",
+            request_id: "req-preview-network",
+          },
+        },
+        503,
+      ),
+    );
+    renderPreview(`/browse/preview?target=${encodeURIComponent(TARGET)}`);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Preview couldn’t be loaded",
+    );
+    expect(screen.queryByText("raw transport detail")).toBeNull();
+    expect(
+      screen.getByText("Nexus request ID: req-preview-network"),
+    ).toBeInTheDocument();
+
+    const callsBeforeRetry = fetchMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBeforeRetry),
+    );
+  });
+
   it("canonicalizes an already-owned target without exposing acquisition", async () => {
     const fetchMock = stubPreview(
       episodePreview({ kind: "InNexus", href: "/media/owned-media" }),

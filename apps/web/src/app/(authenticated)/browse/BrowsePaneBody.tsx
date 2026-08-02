@@ -364,12 +364,14 @@ export default function BrowsePaneBody() {
   const runState = query?.text ? (
     <>
       <p className={styles.summary}>{browseRunSummaryText(runSummary)}</p>
-      <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {announcements.queryKey === currentQueryKey ? announcements.first : ""}
-      </div>
-      <div className="sr-only" aria-live="polite" aria-atomic="true">
+      <div
+        className="sr-only"
+        aria-label="Browse result announcements"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         {announcements.queryKey === currentQueryKey
-          ? announcements.settled
+          ? announcements.settled || announcements.first
           : ""}
       </div>
     </>
@@ -392,9 +394,12 @@ export default function BrowsePaneBody() {
         decoded.kind === "Invalid" ? (
           <div className={styles.invalid}>
             <FeedbackNotice
-              severity="warning"
-              title="This Browse link is invalid"
-              message="Reset Browse to start from a valid search."
+              content={{
+                tone: "Warning",
+                title: "This Browse link is invalid",
+                message: "Reset Browse to start from a valid search.",
+              }}
+              announcement="Polite"
             />
             <Button onClick={() => router.replace("/browse")}>Reset Browse</Button>
           </div>

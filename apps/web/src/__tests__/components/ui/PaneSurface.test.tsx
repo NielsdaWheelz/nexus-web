@@ -10,7 +10,12 @@ describe("PaneSurface", () => {
     render(
       <PaneSurface
         toolbar={<button>Search</button>}
-        state={<FeedbackNotice severity="info">Ready</FeedbackNotice>}
+        state={
+          <FeedbackNotice
+            content={{ tone: "Info", title: "Ready" }}
+            announcement="Polite"
+          />
+        }
         footer={<button>Load more</button>}
       >
         <p>Results</p>
@@ -36,8 +41,13 @@ describe("PaneSurface", () => {
   it("renders an empty state when there is no content", () => {
     render(
       <PaneSurface
-        state={<PaneLoadingState label="Loading rows" />}
-        empty={<FeedbackNotice severity="neutral">No rows.</FeedbackNotice>}
+        state={<PaneLoadingState label="Loading rows" announcement="Polite" />}
+        empty={
+          <FeedbackNotice
+            content={{ tone: "Neutral", title: "No rows." }}
+            announcement="None"
+          />
+        }
       />,
     );
 
@@ -47,7 +57,14 @@ describe("PaneSurface", () => {
 
   it("does not treat renderable falsy content as empty", () => {
     render(
-      <PaneSurface empty={<FeedbackNotice severity="neutral">No rows.</FeedbackNotice>}>
+      <PaneSurface
+        empty={
+          <FeedbackNotice
+            content={{ tone: "Neutral", title: "No rows." }}
+            announcement="None"
+          />
+        }
+      >
         {0}
       </PaneSurface>,
     );
@@ -60,7 +77,12 @@ describe("PaneSurface", () => {
     render(
       <PaneSurface
         opener={<div>Section opener</div>}
-        empty={<FeedbackNotice severity="neutral">No rows.</FeedbackNotice>}
+        empty={
+          <FeedbackNotice
+            content={{ tone: "Neutral", title: "No rows." }}
+            announcement="None"
+          />
+        }
       />,
     );
 
@@ -70,7 +92,14 @@ describe("PaneSurface", () => {
 
   it("treats an empty fragment as no content so the empty state survives", () => {
     render(
-      <PaneSurface empty={<FeedbackNotice severity="neutral">No rows.</FeedbackNotice>}>
+      <PaneSurface
+        empty={
+          <FeedbackNotice
+            content={{ tone: "Neutral", title: "No rows." }}
+            announcement="None"
+          />
+        }
+      >
         <></>
       </PaneSurface>,
     );

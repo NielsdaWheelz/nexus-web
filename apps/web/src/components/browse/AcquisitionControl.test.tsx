@@ -13,14 +13,13 @@ import AcquisitionControl, {
 
 const mocks = vi.hoisted(() => ({
   apiCommand204: vi.fn(),
-  feedbackShow: vi.fn(),
+  feedbackPublish: vi.fn(),
   stopPreviewAudio: vi.fn(),
 }));
 
 vi.mock("@/components/feedback/Feedback", () => ({
   FeedbackNotice: () => null,
-  toFeedback: () => ({ title: "Library access changed" }),
-  useFeedback: () => ({ show: mocks.feedbackShow }),
+  useFeedback: () => ({ publish: mocks.feedbackPublish }),
 }));
 
 vi.mock("@/lib/api/client", async (importOriginal) => {
@@ -216,7 +215,7 @@ describe("AcquisitionControl", () => {
       if (commands.length === 2) {
         // Delivery unknown on the confirmed, destructive replacement: the
         // command may already have committed, so the retry must reuse its key.
-        throw new TypeError("Failed to fetch");
+        throw { code: "E_NETWORK" };
       }
       return { href: "/podcasts/podcast-1" };
     });
@@ -260,7 +259,10 @@ describe("AcquisitionControl", () => {
       positionMs: 12_345,
       durationMs: { kind: "Present", value: 60_000 },
     });
-    mocks.apiCommand204.mockRejectedValue(new TypeError("offline"));
+    mocks.apiCommand204.mockRejectedValue({
+      code: "E_NETWORK",
+      requestId: "req-preview",
+    });
     const onCommitted = vi.fn();
 
     renderControl(
@@ -290,27 +292,26 @@ describe("AcquisitionControl", () => {
         }),
       }),
     );
-    expect(mocks.feedbackShow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        severity: "warning",
+    expect(mocks.feedbackPublish).toHaveBeenCalledWith({
+      kind: "Hud",
+      content: {
+        tone: "Warning",
         title: "Added without preview position",
-      }),
-    );
+        message: "The preview listening position couldn’t be transferred.",
+        requestId: "req-preview",
+      },
+    });
   });
 
-  it("treats a raw fetch rejection as Delivery unknown and retries the frozen command with the same key", async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  it("treats a modeled network rejection as Delivery unknown and retries the frozen command with the same key", async () => {
+    let failNext = true;
     const commands: AcquisitionCommand[] = [];
     const commit = vi.fn(async (command: AcquisitionCommand) => {
       commands.push(command);
-      await fetch("/api/test-acquisition", {
-        method: "POST",
-        headers: { "Idempotency-Key": command.idempotencyKey },
-        body: JSON.stringify(command),
-      });
+      if (failNext) {
+        failNext = false;
+        throw { code: "E_NETWORK" };
+      }
       return { href: "/media/media-1", mediaId: "media-1" };
     });
     const onCommitted = vi.fn();
@@ -334,10 +335,6 @@ describe("AcquisitionControl", () => {
     await waitFor(() => expect(onCommitted).toHaveBeenCalledTimes(1));
     expect(commands).toHaveLength(2);
     expect(commands[1]).toEqual(commands[0]);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(
-      new Headers(fetchSpy.mock.calls[1]![1]?.headers).get("Idempotency-Key"),
-    ).toBe(commands[0]!.idempotencyKey);
   });
 
   it("refetches writable destinations after a permission change, prunes only unauthorized selections, and requires resubmit", async () => {

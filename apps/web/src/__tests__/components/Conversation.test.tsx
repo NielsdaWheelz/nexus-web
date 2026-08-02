@@ -740,7 +740,9 @@ describe("Conversation", () => {
     const { publishPrimaryChrome } = renderPane();
     expect(await screen.findByText("Original prompt")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run again" }));
-    expect(await screen.findByText("Failed to run again")).toBeVisible();
+    expect(
+      await screen.findByText("This response couldn’t be run again."),
+    ).toBeVisible();
     await waitFor(() =>
       expect(
         publishPrimaryChrome.mock.calls.at(-1)?.[0].publication?.search?.kind,
@@ -1008,13 +1010,13 @@ describe("Conversation", () => {
     );
 
     expect(await screen.findByText("Answer A")).toBeVisible();
-    expect(await screen.findByText("Failed to switch fork")).toBeVisible();
+    expect(await screen.findByText("This fork couldn’t be opened.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Retry" }));
 
     await waitFor(() => expect(activePathCalls).toBe(2));
     expect(treeCalls).toBeGreaterThanOrEqual(2);
     expect(await screen.findByText("Answer B")).toBeVisible();
-    expect(screen.queryByText("Failed to switch fork")).toBeNull();
+    expect(screen.queryByText("This fork couldn’t be opened.")).toBeNull();
   });
 
   it("recovers an exact-message reveal when refresh observes the committed active path", async () => {
@@ -1053,7 +1055,7 @@ describe("Conversation", () => {
           return jsonResponse(
             {
               error: {
-                code: "E_BRANCH_PATH_RESPONSE_LOST",
+                code: "E_NETWORK",
                 message: "Active-path response unavailable",
               },
             },
@@ -1071,7 +1073,7 @@ describe("Conversation", () => {
       href: "/conversations/00000000-0000-4000-8000-000000000101?message=branch-b-user",
     });
 
-    expect(await screen.findByText("Failed to switch fork")).toBeVisible();
+    expect(await screen.findByText("This fork couldn’t be opened.")).toBeVisible();
     expect(screen.getByText("Answer A")).toBeVisible();
     expect(activePathCalls).toBe(1);
 
@@ -1080,7 +1082,7 @@ describe("Conversation", () => {
     await waitFor(() => expect(treeCalls).toBeGreaterThanOrEqual(2));
     expect(await screen.findByText("Answer B")).toBeVisible();
     await waitFor(() =>
-      expect(screen.queryByText("Failed to switch fork")).toBeNull(),
+      expect(screen.queryByText("This fork couldn’t be opened.")).toBeNull(),
     );
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     expect(activePathCalls).toBe(1);
@@ -1186,7 +1188,7 @@ describe("Conversation", () => {
     });
     await user.click(await screen.findByRole("button", { name: "Retry" }));
 
-    expect(await screen.findByText("Failed to refresh forks")).toBeVisible();
+    expect(await screen.findByText("Forks couldn’t be refreshed.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
   });
 
@@ -1764,7 +1766,7 @@ describe("Conversation", () => {
     const { publishPrimaryChrome } = renderPane();
 
     expect(
-      await screen.findByText("Failed to load conversation"),
+      await screen.findByText("This chat is no longer available."),
     ).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Send message" }),

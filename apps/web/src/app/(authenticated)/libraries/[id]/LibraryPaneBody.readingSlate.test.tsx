@@ -555,7 +555,10 @@ describe("LibraryPaneBody Reading Slate host", () => {
         replacementConfirmation: { kind: "Absent" },
       }),
     ]);
-    expect(await screen.findByText("Added to Research")).toBeVisible();
+    expect(screen.queryByText("Added to Research")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add Signal Path to Research" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the single list compact and complete in a 320px host", async () => {
@@ -853,7 +856,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
     });
     expect(within(rankedList).getByRole("link", { name: "Existing work" })).toBeVisible();
     await waitFor(() => expect(entryReads).toBe(2));
-    expect(screen.getByText("Failed to refresh library entries")).toBeVisible();
+    expect(screen.getByText("Library entries couldn’t be refreshed")).toBeVisible();
 
     view.rerender(
       <Harness isActive={false} search="sort=title&direction=asc">
@@ -867,7 +870,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
     );
     expect(entryReads).toBe(2);
     expect(within(rankedList).getByRole("link", { name: "Existing work" })).toBeVisible();
-    expect(screen.getByText("Failed to refresh library entries")).toBeVisible();
+    expect(screen.getByText("Library entries couldn’t be refreshed")).toBeVisible();
     // Reconciliation used only the current factual view, never the canonical
     // (query-less) entries endpoint.
     expect(

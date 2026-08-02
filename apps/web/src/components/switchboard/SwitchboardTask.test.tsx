@@ -57,12 +57,26 @@ const dailyEntry: NexusEntry = {
   rank: { tier: "Exact", score: 1, frecency: 0 },
 };
 
-function Harness({ daily = false }: { daily?: boolean }) {
+function Harness({
+  daily = false,
+  initialPage = { kind: "Root" },
+  managedTabsFeedback = null,
+  onRetryBlockedOperation = () => undefined,
+  onRetryCommandFailure = () => undefined,
+  onRestoreManagedPane = () => undefined,
+}: {
+  daily?: boolean;
+  initialPage?: NexusPage;
+  managedTabsFeedback?: MobileNexusTaskController["managedTabsFeedback"];
+  onRetryBlockedOperation?: () => void;
+  onRetryCommandFailure?: () => void;
+  onRestoreManagedPane?: (paneId: string) => void;
+}) {
   const addSession = useAddContentSession();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState("");
-  const [page, setPage] = useState<NexusPage>({ kind: "Root" });
+  const [page, setPage] = useState<NexusPage>(initialPage);
   const [activeKey, setActiveKey] = useState<NexusEntryKey | null>(
     daily ? dailyEntry.key : null,
   );
@@ -118,6 +132,7 @@ function Harness({ daily = false }: { daily?: boolean }) {
     browseChoiceActions: [],
     managedPanes: [],
     managedClosedPanes: [],
+    managedTabsFeedback,
     setQuery,
     setActiveEntry: setActiveKey,
     openEntryActions: (entry) => setPage({ kind: "EntryActions", entry }),
@@ -182,10 +197,12 @@ function Harness({ daily = false }: { daily?: boolean }) {
     setLibraryNameDraft: () => undefined,
     submitLibrary: () => undefined,
     retryPageCreation: () => undefined,
+    retryCommandFailure: onRetryCommandFailure,
+    retryBlockedOperation: onRetryBlockedOperation,
     manageTabs: () => undefined,
     openManagedPane: () => undefined,
     closeManagedPane: () => undefined,
-    restoreManagedPane: () => undefined,
+    restoreManagedPane: onRestoreManagedPane,
     retryRetainedActivation: () => undefined,
     cancelRetainedActivation: () => undefined,
   };
@@ -212,7 +229,14 @@ function Harness({ daily = false }: { daily?: boolean }) {
   );
 }
 
-function renderTask(daily = false) {
+function renderTask(input?: {
+  daily?: boolean;
+  initialPage?: NexusPage;
+  managedTabsFeedback?: MobileNexusTaskController["managedTabsFeedback"];
+  onRetryBlockedOperation?: () => void;
+  onRetryCommandFailure?: () => void;
+  onRestoreManagedPane?: (paneId: string) => void;
+}) {
   return render(
     withRenderEnvironment(
       <AuthenticatedAccountProvider
@@ -225,7 +249,7 @@ function renderTask(daily = false) {
               initialState={createDefaultWorkspaceState("/libraries", metrics)}
             >
               <MobileChromeProvider>
-                <Harness daily={daily} />
+                <Harness {...input} />
               </MobileChromeProvider>
             </WorkspaceStoreProvider>
           </PaneReturnMementoProvider>
@@ -272,7 +296,7 @@ describe("mobile Nexus full-screen task", () => {
   });
 
   it("keeps the daily handoff mounted and editable after accepted navigation closes the task", async () => {
-    renderTask(true);
+    renderTask({ daily: true });
     fireEvent.click(screen.getByRole("button", { name: /Open Nexus/ }));
 
     fireEvent.click(screen.getByRole("button", { name: "Quick Note" }));
@@ -295,5 +319,85 @@ describe("mobile Nexus full-screen task", () => {
     expect(readDailyDraft("account-1", "2026-07-31")?.bodyText).toBe(
       "Project Ideas and Tasks",
     );
+  });
+
+  it("keeps clipboard failure at the Nexus origin with the exact retry and manual link", async () => {
+    const retry = vi.fn();
+    renderTask({
+      initialPage: {
+        kind: "OperationBlocked",
+        title: "External link wasn’t copied",
+        message: "Copy it manually or retry the same link.",
+        manualValue: "https://example.test/story",
+        retry: {
+          target: {
+            kind: "CopyExternalLink",
+            href: "https://example.test/story",
+          },
+          activation: {
+            disposition: { kind: "Follow" },
+            modality: "Keyboard",
+          },
+        },
+      },
+      onRetryBlockedOperation: retry,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Open Nexus/ }));
+    expect(screen.getByText("https://example.test/story")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps command failure and its frozen Retry at the Nexus origin", () => {
+    const retry = vi.fn();
+    renderTask({
+      initialPage: {
+        kind: "CommandFailed",
+        content: {
+          tone: "Danger",
+          title: "Command couldn’t be completed",
+          message: "Check your connection and retry.",
+          requestId: "req-command-1",
+        },
+        target: {
+          kind: "QueueAdd",
+          mediaId: "11111111-1111-4111-8111-111111111111",
+          title: "Article",
+        },
+        activation: {
+          disposition: { kind: "Follow" },
+          modality: "Keyboard",
+        },
+      },
+      onRetryCommandFailure: retry,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Open Nexus/ }));
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("req-command-1");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("keeps tab-limit restore guidance inline with the failed pane retry", () => {
+    const restore = vi.fn();
+    renderTask({
+      initialPage: { kind: "ManageTabs", origin: { kind: "Direct" } },
+      managedTabsFeedback: {
+        paneId: "closed-pane",
+        content: {
+          tone: "Warning",
+          title: "Tab limit reached",
+          message: "Close a tab, then restore this one.",
+        },
+      },
+      onRestoreManagedPane: restore,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Open Nexus/ }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Tab limit reached");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(restore).toHaveBeenCalledWith("closed-pane");
   });
 });

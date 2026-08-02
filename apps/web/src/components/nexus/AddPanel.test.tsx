@@ -329,7 +329,7 @@ describe("AddPanel source-first workbench", () => {
 
       await waitFor(() =>
         expect(screen.getByRole("status")).toHaveTextContent(
-          "OPML could not be imported. Request ID: req-opml-invalid",
+          "OPML couldn’t be imported Review the OPML file and selected libraries, then retry. Request ID: req-opml-invalid",
         ),
       );
     } finally {
@@ -384,6 +384,49 @@ describe("AddPanel source-first workbench", () => {
       ).toBeInTheDocument();
       expect(onDefect).toHaveBeenCalledWith(
         expect.objectContaining({ name: "MediaIngestionContractDefect" }),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
+  it("routes an unknown acceptance code through owner state into the render boundary", async () => {
+    const onDefect = vi.fn();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { code: "E_NEW_ACCEPTANCE_FAILURE", message: "new" },
+        }),
+        {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    try {
+      render(
+        withRenderEnvironment(
+          <DefectBoundary onDefect={onDefect}>
+            <DefectOwner />
+          </DefectBoundary>,
+        ),
+      );
+      fireEvent.change(await screen.findByRole("textbox", { name: "Links" }), {
+        target: { value: "https://example.com/unknown-code" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Review links" }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Add 1 item" }),
+      );
+
+      expect(await screen.findByText("Add defect boundary")).toBeVisible();
+      expect(onDefect).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E_NEW_ACCEPTANCE_FAILURE" }),
       );
     } finally {
       fetchSpy.mockRestore();

@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { billingAccountResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
-import { toFeedback } from "@/components/feedback/Feedback";
+import type { ApiError } from "@/lib/api/client";
 
 export type BillingPlanTier = "free" | "plus" | "ai_plus" | "ai_pro";
 type BillingEntitlementSource = "free" | "subscription" | "internal_grant";
@@ -39,6 +39,18 @@ interface BillingAccountResponse {
   data: BillingAccount;
 }
 
+function billingAccountErrorMessage(error: ApiError): string {
+  switch (error.code) {
+    case "E_FORBIDDEN":
+      return "You don’t have access to billing details.";
+    case "E_NOT_FOUND":
+    case "E_BAD_REQUEST":
+      return "Billing details couldn’t be loaded.";
+    default:
+      throw error;
+  }
+}
+
 // The billing account seed (cacheKey `billing-account:0`) has multiple simultaneous
 // first-paint consumers: the settings-billing pane it is seeded for, the always-mounted
 // player surfaces, and (in multi-pane workspaces) media/podcast panes. The resource
@@ -66,9 +78,7 @@ export function useBillingAccount(options?: { claimSeed?: boolean }) {
   const loading = accountResource.status === "loading";
   const error =
     accountResource.status === "error"
-      ? toFeedback(accountResource.error, {
-          fallback: "Failed to load billing account",
-        }).title
+      ? billingAccountErrorMessage(accountResource.error)
       : null;
 
   return { account, loading, error, reload };

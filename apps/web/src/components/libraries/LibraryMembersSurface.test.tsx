@@ -408,7 +408,7 @@ describe("LibraryMembersSurface", () => {
           pageLoad: {
             kind: "Failed",
             feedback: {
-              severity: "error",
+              tone: "Danger",
               title: "More members could not be loaded.",
             },
           },
@@ -433,7 +433,7 @@ describe("LibraryMembersSurface", () => {
           snapshot: {
             ...ready,
             refreshFeedback: {
-              severity: "error",
+              tone: "Danger",
               title: "No confirmed role change was applied.",
             },
           },
@@ -444,7 +444,40 @@ describe("LibraryMembersSurface", () => {
 
     expect(
       screen.getAllByText("No confirmed role change was applied."),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("keeps unconfirmed settlement details and recovery in one durable lane", async () => {
+    const user = userEvent.setup();
+    const retryReconciliation = vi.fn().mockResolvedValue(undefined);
+    const ready = controller().snapshot;
+    if (ready.kind !== "Ready") throw new Error("expected Ready fixture");
+    render(
+      <LibraryMembersSurface
+        controller={controller({
+          snapshot: {
+            ...ready,
+            refreshFeedback: {
+              tone: "Warning",
+              title: "The outcome is not yet confirmed.",
+            },
+            reconciliation: { kind: "Unconfirmed" },
+          },
+          retryReconciliation,
+        })}
+      />,
+    );
+
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The outcome is not yet confirmed.",
+    );
+    expect(screen.getAllByText("The outcome is not yet confirmed.")).toHaveLength(1);
+    await user.click(
+      screen.getByRole("button", { name: "Retry reconciliation" }),
+    );
+    expect(retryReconciliation).toHaveBeenCalledOnce();
   });
 
   it("associates a failed account search with the combobox", () => {
@@ -455,7 +488,7 @@ describe("LibraryMembersSurface", () => {
             kind: "Failed",
             sequence: 2,
             feedback: {
-              severity: "error",
+              tone: "Danger",
               title: "People could not be searched.",
             },
           },
@@ -470,6 +503,14 @@ describe("LibraryMembersSurface", () => {
     ).toHaveAccessibleDescription(
       "Find an existing Nexus user by name or account email. People could not be searched.",
     );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen
+        .getAllByRole("status")
+        .filter((node) =>
+          node.textContent?.includes("People could not be searched."),
+        ),
+    ).toHaveLength(1);
   });
 
   it("keeps the server-confirmed role value controlled while requesting a change", async () => {

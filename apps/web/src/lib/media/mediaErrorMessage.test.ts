@@ -96,6 +96,18 @@ describe("mediaErrorMessage", () => {
     });
   });
 
+  it("defects on an unknown owned source error code", () => {
+    expect(() =>
+      mediaErrorMessage({
+        kind: "Source",
+        processingStatus: "failed",
+        lastErrorCode: "E_INVENTED",
+        capabilities: noSourceActions,
+        sourceUrl: null,
+      }),
+    ).toThrow("Unsupported media source error code: E_INVENTED");
+  });
+
   it.each([
     ["pending", "Search and AI are still preparing."],
     ["indexing", "Search and AI are still preparing."],

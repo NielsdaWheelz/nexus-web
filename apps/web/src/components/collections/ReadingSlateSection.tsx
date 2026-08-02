@@ -350,7 +350,10 @@ export default function ReadingSlateSection({
       >
         {state.kind === "InitialLoading" ? (
           <div className={styles.loading}>
-            <PaneLoadingState label={`Loading ${ariaLabel}…`} />
+            <PaneLoadingState
+              label={`Loading ${ariaLabel}…`}
+              announcement="Polite"
+            />
           </div>
         ) : (
           <CollectionView

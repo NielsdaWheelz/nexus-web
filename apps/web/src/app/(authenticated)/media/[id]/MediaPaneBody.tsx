@@ -81,7 +81,6 @@ import {
 } from "@/lib/panes/paneResourceLoaders";
 import {
   FeedbackNotice,
-  toFeedback,
   useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
@@ -411,6 +410,10 @@ interface MetadataRetryBaseline {
   signature: string;
 }
 
+function metadataRetryUnconfirmedFeedbackKey(mediaId: string): string {
+  return `metadata-retry-unconfirmed:${mediaId}`;
+}
+
 function metadataRetrySignature(media: Media): string {
   return JSON.stringify({
     title: media.title,
@@ -670,6 +673,163 @@ function evidenceItemSnippet(item: ReaderEvidenceItem): string | null {
     : item.label || null;
 }
 
+type MediaPaneOperation =
+  | "Lectern"
+  | "Consumption"
+  | "Progress"
+  | "CanonicalState"
+  | "Citation"
+  | "Highlight"
+  | "DocumentMap"
+  | "Load"
+  | "Navigation"
+  | "Chat"
+  | "Learn";
+
+function mediaPaneOperationTitle(operation: MediaPaneOperation): string {
+  switch (operation) {
+    case "Lectern":
+      return "Lectern wasn’t changed";
+    case "Consumption":
+      return "Reading state wasn’t changed";
+    case "Progress":
+      return "Progress wasn’t reset";
+    case "CanonicalState":
+      return "The latest state couldn’t be loaded";
+    case "Citation":
+      return "Citation couldn’t be opened";
+    case "Highlight":
+      return "Highlight wasn’t changed";
+    case "DocumentMap":
+      return "Document Map couldn’t be loaded";
+    case "Load":
+      return "Media couldn’t be loaded";
+    case "Navigation":
+      return "Section couldn’t be opened";
+    case "Chat":
+      return "Conversation couldn’t be started";
+    case "Learn":
+      return "Lesson couldn’t be created";
+  }
+}
+
+/** Finite copy adapter for media-pane resources and user-started commands. */
+function mediaPaneErrorMessage(
+  error: unknown,
+  operation: MediaPaneOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const requestId = error.requestId;
+  const title = mediaPaneOperationTitle(operation);
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and retry.",
+        requestId,
+      };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The server couldn’t complete the request. Retry in a moment.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_MEDIA_NOT_FOUND":
+    case "E_NOT_FOUND":
+    case "E_CHAPTER_NOT_FOUND":
+    case "E_HIGHLIGHT_NOT_FOUND":
+    case "E_EVIDENCE_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title,
+        message: "This item is no longer available. Return to your library.",
+        requestId,
+      };
+    case "E_MEDIA_NOT_READY":
+      return {
+        tone: "Warning",
+        title,
+        message: "This item is still preparing. Wait for it to settle, then retry.",
+        requestId,
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title,
+        message: "This account can’t make that change.",
+        requestId,
+      };
+    case "E_CONFLICT":
+    case "E_HIGHLIGHT_CONFLICT":
+    case "E_READER_PROGRESS_CONFLICT":
+    case "E_IDEMPOTENCY_CONFLICT":
+      return {
+        tone: "Warning",
+        title,
+        message: "The item changed. Refresh the pane, then retry.",
+        requestId,
+      };
+    case "E_INVALID_REQUEST":
+    case "E_BAD_REQUEST":
+      return {
+        tone: "Danger",
+        title,
+        message: "The saved item can’t be used for this action.",
+        requestId,
+      };
+    case "E_PODCAST_QUOTA_EXCEEDED":
+    case "E_BILLING_REQUIRED":
+    case "E_BILLING_DISABLED":
+      return {
+        tone: "Danger",
+        title,
+        message: "This action isn’t available for the current account.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
+function transcriptSeedErrorMessage(
+  failure: PaneSubresourceFailure,
+): FeedbackContent {
+  switch (failure.code) {
+    case "E_MEDIA_NOT_READY":
+      return {
+        tone: "Warning",
+        title: "Transcript content is still being processed",
+      };
+    case null:
+    case "E_NETWORK":
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+    case "E_RATE_LIMITED":
+    case "E_MEDIA_NOT_FOUND":
+    case "E_NOT_FOUND":
+    case "E_FORBIDDEN":
+      return {
+        tone: "Warning",
+        title: "Transcript content couldn’t be loaded",
+      };
+    default:
+      // justify-defect: the fragment seed is decoded same-system state.
+      throw new Error(
+        `Unsupported initial transcript error code: ${failure.code}`,
+      );
+  }
+}
+
 export default function MediaPaneBody() {
   const paneRuntime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
   const isPaneActive = usePaneIsActive();
@@ -741,6 +901,21 @@ export default function MediaPaneBody() {
     target?.kind === "page" ? Number(target.value) : null;
   const requestedStartMs = target?.kind === "t" ? Number(target.value) : null;
   const feedback = useFeedback();
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const publishMediaFailure = useCallback(
+    (error: unknown, operation: MediaPaneOperation, key: string) => {
+      try {
+        feedback.publish({
+          kind: "Hud",
+          key,
+          content: mediaPaneErrorMessage(error, operation),
+        });
+      } catch (defect) {
+        setAsyncDefect({ error: defect });
+      }
+    },
+    [feedback],
+  );
   const isMobileViewport = useIsMobileViewport();
   const {
     profile: readerProfile,
@@ -817,15 +992,11 @@ export default function MediaPaneBody() {
         mediaIds: [parseMediaId(id)],
         placement: { kind: "Last" },
       });
-      feedback.show({ severity: "success", title: "Added to Lectern" });
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-      feedback.show({
-        ...toFeedback(err, { fallback: "Failed to add to Lectern" }),
-      });
+      publishMediaFailure(err, "Lectern", `lectern-add:${id}`);
     }
-  }, [feedback, id, lectern]);
+  }, [id, lectern, publishMediaFailure]);
 
   // "Done" — mark this document finished, removing its exact Lectern row when
   // present (else state-only), then offer a 10s Undo (spec §6).
@@ -856,24 +1027,18 @@ export default function MediaPaneBody() {
       }
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-      feedback.show({
-        ...toFeedback(err, { fallback: "Failed to mark as finished" }),
-      });
+      publishMediaFailure(err, "Consumption", `media-finished:${id}`);
     }
-  }, [feedback, id, lectern, offerCompletionUndo]);
+  }, [id, lectern, offerCompletionUndo, publishMediaFailure]);
 
   const handleMarkUnread = useCallback(async () => {
     try {
       await lectern.setUnread(parseMediaId(id));
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-      feedback.show({
-        ...toFeedback(err, { fallback: "Failed to mark as unread" }),
-      });
+      publishMediaFailure(err, "Consumption", `media-unread:${id}`);
     }
-  }, [feedback, id, lectern]);
+  }, [id, lectern, publishMediaFailure]);
 
   const handleMarkEpisodePlayed = useCallback(async () => {
     const snapshot = lecternSnapshotRef.current;
@@ -889,24 +1054,18 @@ export default function MediaPaneBody() {
       });
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-      feedback.show(
-        toFeedback(error, { fallback: "Failed to mark episode as played" }),
-      );
+      publishMediaFailure(error, "Consumption", `episode-played:${id}`);
     }
-  }, [feedback, id, lectern, offerCompletionUndo]);
+  }, [id, lectern, offerCompletionUndo, publishMediaFailure]);
 
   const handleMarkEpisodeUnplayed = useCallback(async () => {
     try {
       await lectern.setUnread(parseMediaId(id));
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-      feedback.show(
-        toFeedback(error, { fallback: "Failed to mark episode as unplayed" }),
-      );
+      publishMediaFailure(error, "Consumption", `episode-unplayed:${id}`);
     }
-  }, [feedback, id, lectern]);
+  }, [id, lectern, publishMediaFailure]);
 
   // "Done & open next" — finish this row selecting a Readable successor, open the
   // returned next entry, and offer Undo. No successor → no navigation.
@@ -942,11 +1101,10 @@ export default function MediaPaneBody() {
         });
       }
     } catch (err) {
-      feedback.show({
-        ...toFeedback(err, { fallback: "Failed to mark as finished" }),
-      });
+      if (handleUnauthenticatedApiError(err)) return;
+      publishMediaFailure(err, "Consumption", `media-open-next:${id}`);
     }
-  }, [activateForkTarget, feedback, id, lectern, offerCompletionUndo]);
+  }, [activateForkTarget, id, lectern, offerCompletionUndo, publishMediaFailure]);
 
   // ---- Core data state ----
   const [media, setMedia] = useState<Media | null>(null);
@@ -1012,12 +1170,7 @@ export default function MediaPaneBody() {
       });
     } catch (resetError) {
       if (handleUnauthenticatedApiError(resetError)) return;
-      if (!isApiError(resetError) || isSameSystemApiDefect(resetError)) {
-        throw resetError;
-      }
-      feedback.show(
-        toFeedback(resetError, { fallback: "Failed to reset progress" }),
-      );
+      publishMediaFailure(resetError, "Progress", `progress-reset:${id}`);
       return;
     }
     if (outcome.kind === "Cancelled") return;
@@ -1025,7 +1178,6 @@ export default function MediaPaneBody() {
     // The mutation is committed and its cursor/player state has already been
     // installed by Lectern. This pane's raw media DTO is a separate projection,
     // so reload it rather than guessing Read/Finished from a cursor snapshot.
-    feedback.show({ severity: "success", title: "Progress reset." });
     try {
       const canonical = await apiFetch<{ data: Media }>(
         mediaResource.clientPath({ id }),
@@ -1033,23 +1185,21 @@ export default function MediaPaneBody() {
       setMedia((current) => (current?.id === id ? canonical.data : current));
     } catch (reconciliationError) {
       if (handleUnauthenticatedApiError(reconciliationError)) return;
-      if (
-        !isApiError(reconciliationError) ||
-        isSameSystemApiDefect(reconciliationError)
-      ) {
-        throw reconciliationError;
-      }
-      feedback.show(
-        toFeedback(reconciliationError, {
-          fallback: "Progress reset, but the latest state could not be loaded.",
-        }),
+      publishMediaFailure(
+        reconciliationError,
+        "CanonicalState",
+        `progress-reconcile:${id}`,
       );
     }
-  }, [feedback, id, lectern.resetProgress, media]);
+  }, [id, lectern.resetProgress, media, publishMediaFailure]);
   const metadataRetryBaselineRef = useRef<MetadataRetryBaseline | null>(null);
+  const metadataRetryUnconfirmedRequestIdRef = useRef<string | null>(null);
   const [metadataRetryPollsRemaining, setMetadataRetryPollsRemaining] =
     useState(0);
-  const [, setMetadataRetryPollExhausted] = useState(false);
+  const [metadataRetryPollExhausted, setMetadataRetryPollExhausted] =
+    useState(false);
+  const [metadataRetryUnconfirmed, setMetadataRetryUnconfirmed] =
+    useState(false);
   useSetPaneLabel(loading ? null : media?.title.trim() || "Media");
 
   // ---- Non-EPUB fragment state ----
@@ -1340,29 +1490,33 @@ export default function MediaPaneBody() {
       resolvedEvidenceResource.status === "error" &&
       resolvedEvidenceResource.error.status !== 404
     ) {
-      feedback.show({
-        severity: "error",
-        title: "Failed to resolve citation",
-      });
+      publishMediaFailure(
+        resolvedEvidenceResource.error,
+        "Citation",
+        `citation-resolve:${requestedEvidenceId ?? id}`,
+      );
     }
-  }, [feedback, resolvedEvidenceResource]);
+  }, [id, publishMediaFailure, requestedEvidenceId, resolvedEvidenceResource]);
 
   useEffect(() => {
     if (resolvedHighlightTargetResource.status !== "error") {
       return;
     }
-    feedback.show({
-      severity: "error",
-      title:
-        isApiError(resolvedHighlightTargetResource.error) &&
-        resolvedHighlightTargetResource.error.status === 404
-          ? "Highlight unavailable"
-          : "Couldn't open highlight",
-    });
+    publishMediaFailure(
+      resolvedHighlightTargetResource.error,
+      "Highlight",
+      `highlight-open:${requestedHighlightId ?? id}`,
+    );
     // Never allow a missing, stale, mismatched, or malformed target to focus a
     // highlight that happens to exist in the initially rendered source.
     clearTarget();
-  }, [clearTarget, feedback, resolvedHighlightTargetResource]);
+  }, [
+    clearTarget,
+    id,
+    publishMediaFailure,
+    requestedHighlightId,
+    resolvedHighlightTargetResource,
+  ]);
 
   const resolvedEvidence =
     resolvedEvidenceResource.status === "ready"
@@ -1543,7 +1697,6 @@ export default function MediaPaneBody() {
   const urlTranscriptSeekAppliedRef = useRef<string | null>(null);
   const urlApparatusAppliedRef = useRef<string | null>(null);
   const urlEvidenceAppliedRef = useRef<string | null>(null);
-  const mismatchToastFragmentRef = useRef<string | null>(null);
   const mismatchLoggedFragmentRef = useRef<string | null>(null);
   const webSectionScrollKeyRef = useRef<string | null>(null);
 
@@ -1874,9 +2027,7 @@ export default function MediaPaneBody() {
   const documentMapError = useMemo(
     () =>
       readerDocumentMapFailure
-        ? toFeedback(readerDocumentMapFailure, {
-            fallback: "Document Map could not be loaded.",
-          })
+        ? mediaPaneErrorMessage(readerDocumentMapFailure, "DocumentMap")
         : null,
     [readerDocumentMapFailure],
   );
@@ -1903,7 +2054,7 @@ export default function MediaPaneBody() {
           return {
             kind: "IngestFailed",
             feedback: {
-              severity: "error",
+              tone: presentation?.severity === "warning" ? "Warning" : "Danger",
               title: presentation?.title ?? "Import failed.",
               ...(presentation ? { message: presentation.explanation } : {}),
             },
@@ -1929,8 +2080,8 @@ export default function MediaPaneBody() {
           feedback:
             documentMapError ??
             ({
-              severity: "error",
-              title: "Document Map could not be loaded.",
+              tone: "Danger",
+              title: "Document Map couldn’t be loaded",
             } satisfies FeedbackContent),
         };
       case "ready":
@@ -2404,8 +2555,10 @@ export default function MediaPaneBody() {
 
   useEffect(() => {
     metadataRetryBaselineRef.current = null;
+    metadataRetryUnconfirmedRequestIdRef.current = null;
     setMetadataRetryPollsRemaining(0);
     setMetadataRetryPollExhausted(false);
+    setMetadataRetryUnconfirmed(false);
   }, [id]);
 
   useEffect(() => {
@@ -2436,15 +2589,11 @@ export default function MediaPaneBody() {
 
     if (initialMediaResource.status === "error") {
       const err = initialMediaResource.error;
-      if (err.status === 404) {
-        setInitialHeaderFailure("unavailable");
-        setError({
-          severity: "error",
-          title: "Media not found or you don't have access to it.",
-        });
-      } else {
-        setInitialHeaderFailure("failed");
-        setError(toFeedback(err, { fallback: "Failed to load media" }));
+      try {
+        setError(mediaPaneErrorMessage(err, "Load"));
+        setInitialHeaderFailure(err.status === 404 ? "unavailable" : "failed");
+      } catch (defect) {
+        setAsyncDefect({ error: defect });
       }
       setInitialFragmentsFailure(null);
       setLoading(false);
@@ -2533,6 +2682,14 @@ export default function MediaPaneBody() {
       try {
         mediaResp = await apiFetch<{ data: Media }>(`/api/media/${media.id}`);
       } catch (error) {
+        if (handleUnauthenticatedApiError(error)) return;
+        let failure: FeedbackContent;
+        try {
+          failure = mediaPaneErrorMessage(error, "CanonicalState");
+        } catch (defect) {
+          setAsyncDefect({ error: defect });
+          return;
+        }
         if (classifyCanonicalMediaRefetchFailure(error) === "unavailable") {
           metadataRetryBaselineRef.current = null;
           setMetadataRetryPollsRemaining(0);
@@ -2541,16 +2698,18 @@ export default function MediaPaneBody() {
           setFragments([]);
           setInitialFragmentsFailure(null);
           setInitialHeaderFailure("unavailable");
-          setError({
-            severity: "error",
-            title: "Media not found or you don't have access to it.",
-          });
+          setError(failure);
           return;
         }
         if (options?.decrementOnNoChange !== false) {
-          setMetadataRetryPollsRemaining((remaining) =>
-            Math.max(remaining - 1, 0),
-          );
+          setMetadataRetryPollsRemaining((remaining) => {
+            if (remaining <= 1) {
+              metadataRetryBaselineRef.current = null;
+              setMetadataRetryPollExhausted(true);
+              return 0;
+            }
+            return remaining - 1;
+          });
         }
         return;
       }
@@ -2562,13 +2721,33 @@ export default function MediaPaneBody() {
         metadataRetryBaselineRef.current = null;
         setMetadataRetryPollsRemaining(0);
         setMetadataRetryPollExhausted(false);
+        setMetadataRetryUnconfirmed(false);
+        metadataRetryUnconfirmedRequestIdRef.current = null;
+        feedback.resolve(metadataRetryUnconfirmedFeedbackKey(nextMedia.id));
         if (terminalState === "failed") {
-          feedback.show({
-            severity: "warning",
-            title: nextMedia.last_error_code
-              ? `Metadata enrichment failed: ${nextMedia.last_error_code}`
-              : "Metadata enrichment failed.",
-          });
+          try {
+            const presentation = mediaErrorMessage({
+              kind: "Source",
+              processingStatus: "failed",
+              lastErrorCode: nextMedia.last_error_code,
+              capabilities: {
+                can_retry: nextMedia.capabilities?.can_retry_metadata === true,
+                can_refresh_source: false,
+              },
+              sourceUrl: null,
+            });
+            feedback.publish({
+              kind: "Hud",
+              key: `metadata-retry:${nextMedia.id}`,
+              content: {
+                tone: "Warning",
+                title: "Metadata enrichment failed",
+                ...(presentation ? { message: presentation.explanation } : {}),
+              },
+            });
+          } catch (defect) {
+            setAsyncDefect({ error: defect });
+          }
         }
         return;
       }
@@ -2588,6 +2767,24 @@ export default function MediaPaneBody() {
     },
     [feedback, media?.id],
   );
+
+  useEffect(() => {
+    if (!metadataRetryPollExhausted || !media?.id) return;
+    feedback.publish({
+      kind: "Persistent",
+      key: metadataRetryUnconfirmedFeedbackKey(media.id),
+      content: {
+        tone: "Warning",
+        title: "Metadata request still couldn’t be confirmed",
+        message: "Refresh or reopen this item later before trying again.",
+        ...(metadataRetryUnconfirmedRequestIdRef.current
+          ? { requestId: metadataRetryUnconfirmedRequestIdRef.current }
+          : {}),
+      },
+      announcement: "Polite",
+    });
+    setMetadataRetryPollExhausted(false);
+  }, [feedback, media?.id, metadataRetryPollExhausted]);
 
   const pollMetadataRetryState = useCallback(
     () => refreshMetadataRetryState(),
@@ -2664,10 +2861,7 @@ export default function MediaPaneBody() {
       epubNavigationResource.status === "error" &&
       epubNavigationResource.error.code === "E_MEDIA_NOT_FOUND"
     ) {
-      setError({
-        severity: "error",
-        title: "Media not found or you don't have access to it.",
-      });
+      setError(mediaPaneErrorMessage(epubNavigationResource.error, "Load"));
     }
   }, [epubNavigationResource]);
 
@@ -2676,32 +2870,18 @@ export default function MediaPaneBody() {
   // ==========================================================================
 
   const handleEpubSectionFetchError = useCallback((err: unknown) => {
-    if (!isApiError(err)) {
-      setEpubError("Failed to load EPUB section.");
-      return;
+    try {
+      const failure = mediaPaneErrorMessage(err, "Navigation");
+      if (isApiError(err) && err.code === "E_MEDIA_NOT_READY") {
+        setEpubError("processing");
+      } else if (isApiError(err) && err.code === "E_MEDIA_NOT_FOUND") {
+        setError(failure);
+      } else {
+        setEpubError(failure.title);
+      }
+    } catch (defect) {
+      setAsyncDefect({ error: defect });
     }
-
-    if (err.code === "E_CHAPTER_NOT_FOUND") {
-      setEpubError("EPUB section not found.");
-      return;
-    }
-
-    if (err.code === "E_MEDIA_NOT_READY") {
-      setEpubError("processing");
-      return;
-    }
-
-    if (err.code === "E_MEDIA_NOT_FOUND") {
-      setError({
-        severity: "error",
-        title: "Media not found or you don't have access to it.",
-      });
-      return;
-    }
-
-    setEpubError(
-      toFeedback(err, { fallback: "Failed to load EPUB section." }).title,
-    );
   }, []);
 
   const epubSectionResource = useResource<EpubSectionContent>({
@@ -2849,9 +3029,10 @@ export default function MediaPaneBody() {
     );
     if (!section?.fragment_id) {
       setActiveWebSectionId(null);
-      feedback.show({
-        severity: "warning",
-        title: "Section unavailable.",
+      feedback.publish({
+        kind: "Hud",
+        key: `web-section:${activeRequestedReaderLoc}`,
+        content: { tone: "Warning", title: "Section unavailable" },
       });
       return;
     }
@@ -3984,7 +4165,6 @@ export default function MediaPaneBody() {
   }, [activeContent?.fragmentId, activeContent?.canonicalText, renderedHtml]);
 
   useEffect(() => {
-    mismatchToastFragmentRef.current = null;
     mismatchLoggedFragmentRef.current = null;
   }, [activeContent?.fragmentId]);
 
@@ -4471,14 +4651,6 @@ export default function MediaPaneBody() {
 
     if (isMismatchDisabled) {
       clearRetainedSelection(false);
-      const mismatchKey = activeContent?.fragmentId ?? "__unknown__";
-      if (mismatchToastFragmentRef.current !== mismatchKey) {
-        mismatchToastFragmentRef.current = mismatchKey;
-        feedback.show({
-          severity: "warning",
-          title: "Highlights disabled due to content mismatch.",
-        });
-      }
       return;
     }
 
@@ -4550,7 +4722,6 @@ export default function MediaPaneBody() {
     isMobileViewport,
     isPdf,
     publishSelection,
-    feedback,
   ]);
 
   useEffect(() => {
@@ -4640,18 +4811,19 @@ export default function MediaPaneBody() {
       }
 
       if (isMismatchDisabled) {
-        feedback.show({
-          severity: "warning",
-          title: "Highlights disabled due to content mismatch.",
-        });
         clearRetainedSelection(false);
         return null;
       }
 
       if (activeSelection.fragmentId !== activeContent.fragmentId) {
-        feedback.show({
-          severity: "warning",
-          title: "Selection changed. Select text again.",
+        feedback.publish({
+          kind: "Hud",
+          key: `highlight-selection:${id}`,
+          content: {
+            tone: "Warning",
+            title: "Selection changed",
+            message: "Select the text again.",
+          },
         });
         clearRetainedSelection(false);
         return null;
@@ -4702,7 +4874,11 @@ export default function MediaPaneBody() {
           })
           .catch((err) => {
             if (handleUnauthenticatedApiError(err)) return;
-            console.error("Failed to refresh highlights after create:", err);
+            try {
+              mediaPaneErrorMessage(err, "Highlight");
+            } catch (defect) {
+              setAsyncDefect({ error: defect });
+            }
           });
         return createdHighlight;
       } catch (err) {
@@ -4736,22 +4912,15 @@ export default function MediaPaneBody() {
             if (handleUnauthenticatedApiError(refreshErr)) {
               return null;
             }
-            console.error(
-              "Failed to refresh highlights after conflict:",
+            publishMediaFailure(
               refreshErr,
+              "Highlight",
+              `highlight-conflict:${id}`,
             );
-            feedback.show({
-              severity: "error",
-              title: "Failed to resolve existing highlight",
-            });
             return null;
           }
         } else {
-          console.error("Failed to create highlight:", err);
-          feedback.show({
-            severity: "error",
-            title: "Failed to create highlight",
-          });
+          publishMediaFailure(err, "Highlight", `highlight-create:${id}`);
           return null;
         }
       } finally {
@@ -4768,7 +4937,9 @@ export default function MediaPaneBody() {
       isMismatchDisabled,
       highlights,
       focusHighlight,
+      id,
       feedback,
+      publishMediaFailure,
       refreshMediaHighlights,
     ],
   );
@@ -4967,11 +5138,7 @@ export default function MediaPaneBody() {
         if (handleUnauthenticatedApiError(err)) {
           return;
         }
-        console.error("Failed to update bounds:", err);
-        feedback.show({
-          severity: "error",
-          title: "Failed to update highlight bounds",
-        });
+        publishMediaFailure(err, "Highlight", `highlight-bounds:${id}`);
       }
     };
 
@@ -4987,7 +5154,8 @@ export default function MediaPaneBody() {
     clearRetainedSelection,
     focusHighlight,
     cancelEditBounds,
-    feedback,
+    id,
+    publishMediaFailure,
     refreshMediaHighlights,
   ]);
 
@@ -5124,16 +5292,11 @@ export default function MediaPaneBody() {
       });
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-      feedback.show(
-        toFeedback(error, {
-          fallback: "A conversation about this resource could not begin.",
-        }),
-      );
+      publishMediaFailure(error, "Chat", `media-chat:${id}`);
     } finally {
       keyboardChatBusyRef.current = false;
     }
-  }, [activatePaneTarget, feedback, id]);
+  }, [activatePaneTarget, id, publishMediaFailure]);
 
   // ==========================================================================
   // EPUB Section Navigation
@@ -5225,9 +5388,10 @@ export default function MediaPaneBody() {
         (item) => item.section_id === sectionId,
       );
       if (!section?.fragment_id) {
-        feedback.show({
-          severity: "warning",
-          title: "Section unavailable.",
+        feedback.publish({
+          kind: "Hud",
+          key: `web-section:${sectionId}`,
+          content: { tone: "Warning", title: "Section unavailable" },
         });
         return;
       }
@@ -5283,9 +5447,10 @@ export default function MediaPaneBody() {
     if (epubNavigationResource.status === "error") {
       return {
         status: "error" as const,
-        message: toFeedback(epubNavigationResource.error, {
-          fallback: "Failed to load EPUB navigation.",
-        }).title,
+        message: mediaPaneErrorMessage(
+          epubNavigationResource.error,
+          "Navigation",
+        ).title,
       };
     }
     if (epubError) {
@@ -5635,7 +5800,7 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const handleMetadataRetryEnqueued = useCallback(() => {
+  const beginMetadataRetryObservation = useCallback(() => {
     if (!media) return;
     metadataRetryBaselineRef.current = {
       mediaId: media.id,
@@ -5647,6 +5812,24 @@ export default function MediaPaneBody() {
     setMetadataRetryPollsRemaining(METADATA_REENRICHMENT_MAX_POLLS);
     void refreshMetadataRetryState({ decrementOnNoChange: false });
   }, [media, refreshMetadataRetryState]);
+
+  const handleMetadataRetryEnqueued = beginMetadataRetryObservation;
+
+  const handleMetadataRetryUnconfirmed = useCallback(
+    (content: FeedbackContent) => {
+      if (!media) return;
+      setMetadataRetryUnconfirmed(true);
+      metadataRetryUnconfirmedRequestIdRef.current = content.requestId ?? null;
+      feedback.publish({
+        kind: "Persistent",
+        key: metadataRetryUnconfirmedFeedbackKey(media.id),
+        content,
+        announcement: "Polite",
+      });
+      beginMetadataRetryObservation();
+    },
+    [beginMetadataRetryObservation, feedback, media],
+  );
 
   const {
     deleteBusy: mediaRemovalBusy,
@@ -5661,6 +5844,8 @@ export default function MediaPaneBody() {
     media,
     onProcessingRestarted: handleProcessingRestarted,
     onMetadataRetryEnqueued: handleMetadataRetryEnqueued,
+    metadataRetryBlocked: metadataRetryUnconfirmed,
+    onMetadataRetryUnconfirmed: handleMetadataRetryUnconfirmed,
   });
 
   // Prose mark hover → hoveredHighlightId, mirroring the click delegation above.
@@ -6164,18 +6349,18 @@ export default function MediaPaneBody() {
   const learnFromHighlight = useCallback(
     (highlightId: string) => {
       const feedbackKey = `learn-dossier:${highlightId}`;
-      feedback.show({
-        severity: "info",
-        title: "Creating lesson…",
-        dedupeKey: feedbackKey,
-        duration: 0,
+      feedback.publish({
+        kind: "Persistent",
+        key: feedbackKey,
+        content: { tone: "Neutral", title: "Creating lesson…" },
+        announcement: "Polite",
       });
       void learnDossierFromHighlight({
         highlightRef: `highlight:${highlightId}`,
         idempotencyKey: createRandomId("learn-dossier"),
       })
         .then((outcome) => {
-          feedback.dismissByDedupeKey(feedbackKey);
+          feedback.resolve(feedbackKey);
           activatePaneTarget({
             target: {
               href: artifactPaneHref(outcome.artifactRef),
@@ -6185,16 +6370,21 @@ export default function MediaPaneBody() {
           });
         })
         .catch((error: unknown) => {
-          feedback.dismissByDedupeKey(feedbackKey);
-          if (handleUnauthenticatedApiError(error)) return;
-          feedback.show({
-            severity: "error",
-            title:
-              "Could not create a lesson from this Highlight. Open the saved Highlight and try Learn again.",
-            dedupeKey: feedbackKey,
-            duration: 0,
-          });
-          console.error("learn_dossier_failed", error);
+          if (handleUnauthenticatedApiError(error)) {
+            feedback.resolve(feedbackKey);
+            return;
+          }
+          try {
+            feedback.publish({
+              kind: "Persistent",
+              key: feedbackKey,
+              content: mediaPaneErrorMessage(error, "Learn"),
+              announcement: "Assertive",
+            });
+          } catch (defect) {
+            feedback.resolve(feedbackKey);
+            setAsyncDefect({ error: defect });
+          }
         });
     },
     [activatePaneTarget, feedback],
@@ -6324,8 +6514,8 @@ export default function MediaPaneBody() {
       ?.can_refresh_source
       ? { kind: "Available", execute: handleRefreshSource }
       : { kind: "Unavailable" };
-    const retryMetadata: ExecutableResourceAction = media.capabilities
-      ?.can_retry_metadata
+    const retryMetadata: ExecutableResourceAction =
+      media.capabilities?.can_retry_metadata && !metadataRetryUnconfirmed
       ? { kind: "Available", execute: handleRetryMetadata }
       : { kind: "Unavailable" };
     const removeMedia: ExecutableResourceAction = media.capabilities?.can_delete
@@ -6360,13 +6550,10 @@ export default function MediaPaneBody() {
                       await lectern.removeItem(lecternItem.itemId);
                     } catch (error: unknown) {
                       if (handleUnauthenticatedApiError(error)) return;
-                      if (!isApiError(error) || isSameSystemApiDefect(error)) {
-                        throw error;
-                      }
-                      feedback.show(
-                        toFeedback(error, {
-                          fallback: "Failed to remove from Lectern",
-                        }),
+                      publishMediaFailure(
+                        error,
+                        "Lectern",
+                        `lectern-remove:${lecternItem.itemId}`,
                       );
                     }
                   },
@@ -6505,7 +6692,6 @@ export default function MediaPaneBody() {
     };
   }, [
     id,
-    feedback,
     lectern,
     lecternSnapshot.items,
     mediaRemovalBusy,
@@ -6531,8 +6717,10 @@ export default function MediaPaneBody() {
     readerPersistence.state,
     refreshSourceBusy,
     retryMetadataBusy,
+    metadataRetryUnconfirmed,
     retryProcessingBusy,
     paneActionBusyIds,
+    publishMediaFailure,
     runPaneAction,
     canRead,
     setTheme,
@@ -7936,6 +8124,8 @@ export default function MediaPaneBody() {
   // Render
   // ==========================================================================
 
+  if (asyncDefect) throw asyncDefect.error;
+
   if (loading) {
     return (
       <div
@@ -7945,7 +8135,7 @@ export default function MediaPaneBody() {
         }
         data-testid="mobile-reader-interaction-root"
       >
-        <PaneLoadingState />
+        <PaneLoadingState label="Loading item…" announcement="Polite" />
       </div>
     );
   }
@@ -7960,7 +8150,8 @@ export default function MediaPaneBody() {
         data-testid="mobile-reader-interaction-root"
       >
         <FeedbackNotice
-          feedback={error ?? { severity: "error", title: "Media not found" }}
+          content={error ?? { tone: "Danger", title: "Media not found" }}
+          announcement="Assertive"
         />
       </div>
     );
@@ -8083,13 +8274,8 @@ export default function MediaPaneBody() {
   const transcriptPaneBody = initialFragmentsFailure ? (
     <div className={styles.mobileDocumentState}>
       <FeedbackNotice
-        feedback={{
-          severity: "warning",
-          title:
-            initialFragmentsFailure.code === "E_MEDIA_NOT_READY"
-              ? "Transcript content is still being processed."
-              : "Transcript content could not be loaded.",
-        }}
+        content={transcriptSeedErrorMessage(initialFragmentsFailure)}
+        announcement="Assertive"
       />
     </div>
   ) : !canRead ? (
@@ -8507,6 +8693,7 @@ export default function MediaPaneBody() {
           linkComposer.sourceRef ? [linkComposer.sourceRef] : undefined
         }
         busy={linkComposer.committing}
+        failure={linkComposer.failure}
         onPick={(target, label) => void linkComposer.confirm(target, label)}
         onClose={handleCloseLinkComposer}
       />

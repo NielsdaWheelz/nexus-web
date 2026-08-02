@@ -16,9 +16,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, RotateCcw, Square } from "lucide-react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { toFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import { absent, type Presence } from "@/lib/api/presence";
 import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
@@ -124,6 +124,34 @@ function sendCapabilityMessage(capability: ChatSendCapability): string {
   }
 }
 
+function chatRunErrorMessage(
+  error: ApiError,
+  operation: "Start" | "Stop",
+): FeedbackContent {
+  switch (error.code) {
+    case "E_BAD_REQUEST":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title: operation === "Start" ? "This message can’t be sent as written." : "This response can’t be stopped right now.",
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title: operation === "Start" ? "You don’t have permission to start this chat." : "You don’t have permission to stop this response.",
+      };
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title: operation === "Start" ? "This chat is no longer available." : "This response is no longer available.",
+      };
+    default:
+      throw error;
+  }
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -155,7 +183,8 @@ export default function ChatComposer({
 }: ChatComposerProps) {
   const [sending, setSending] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const restoreFocusAfterSendRef = useRef(false);
@@ -333,6 +362,26 @@ export default function ChatComposer({
         return;
       }
       if (isApiError(err)) {
+        if (isSameSystemApiDefect(err)) {
+          setAsyncDefect({ error: err });
+          return;
+        }
+        if (err.code === "E_NETWORK") {
+          // The request may have reached the service despite the missing response.
+          resolveAmbiguous();
+          setError(null);
+          return;
+        }
+        if (
+          err.code !== "E_READER_SELECTION_STALE" &&
+          err.code !== "E_CONVERSATION_NO_LONGER_EMPTY" &&
+          err.code !== "E_BAD_REQUEST" &&
+          err.code !== "E_FORBIDDEN" &&
+          err.code !== "E_NOT_FOUND"
+        ) {
+          setAsyncDefect({ error: err });
+          return;
+        }
         if (err.code === "E_READER_SELECTION_STALE") {
           const fresh = decodeReaderSelectionPreview(
             isRecord(err.details) ? err.details.preview : undefined,
@@ -343,13 +392,15 @@ export default function ChatComposer({
             onReaderSelectionStale?.(fresh);
             reconfirmRevision(fresh.revision);
             restoreFocusAfterSendRef.current = true;
-            setError("The quoted passage changed — review it and send again.");
+            setError({
+              tone: "Warning",
+              title: "The quoted passage changed — review it and send again.",
+              requestId: err.requestId,
+            });
           } else {
             resolveKnownFailure();
             restoreFocusAfterSendRef.current = true;
-            setError(
-              toFeedback(err, { fallback: "Failed to start chat run" }).title,
-            );
+            setError(chatRunErrorMessage(err, "Start"));
           }
         } else if (err.code === "E_CONVERSATION_NO_LONGER_EMPTY") {
           // Another tab created the first message: refresh so the next send
@@ -357,21 +408,18 @@ export default function ChatComposer({
           resolveKnownFailure();
           restoreFocusAfterSendRef.current = true;
           onConversationRefresh?.();
-          setError(
-            "This chat already has messages — send again to continue it.",
-          );
+          setError({
+            tone: "Warning",
+            title: "This chat already has messages — send again to continue it.",
+            requestId: err.requestId,
+          });
         } else {
           resolveKnownFailure();
           restoreFocusAfterSendRef.current = true;
-          setError(
-            toFeedback(err, { fallback: "Failed to start chat run" }).title,
-          );
+          setError(chatRunErrorMessage(err, "Start"));
         }
       } else {
-        // A network reject carries no status: the send may or may not have
-        // landed. Lock the draft for reconciliation — never auto-resend.
-        resolveAmbiguous();
-        setError(null);
+        setAsyncDefect({ error: err });
       }
     } finally {
       setSending(false);
@@ -408,7 +456,19 @@ export default function ChatComposer({
       await onCancelRun();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      setError(toFeedback(err, { fallback: "Failed to stop chat run" }).title);
+      if (!isApiError(err) || isSameSystemApiDefect(err)) {
+        setAsyncDefect({ error: err });
+        return;
+      }
+      if (
+        err.code !== "E_BAD_REQUEST" &&
+        err.code !== "E_FORBIDDEN" &&
+        err.code !== "E_NOT_FOUND"
+      ) {
+        setAsyncDefect({ error: err });
+        return;
+      }
+      setError(chatRunErrorMessage(err, "Stop"));
     } finally {
       setCancelling(false);
     }
@@ -456,6 +516,8 @@ export default function ChatComposer({
     !content.trim() ||
     pendingBlocksSend;
 
+  if (asyncDefect !== null) throw asyncDefect.error;
+
   return (
     <div className={styles.composer}>
       <div className={styles.composerShell}>
@@ -463,8 +525,8 @@ export default function ChatComposer({
           {sendCapabilityMessage(sendCapability)}
         </span>
         {error ? (
-          <div className={styles.composerError} role="alert">
-            {error}
+          <div className={styles.composerError}>
+            <FeedbackNotice content={error} announcement="Assertive" />
           </div>
         ) : null}
         {reconciling && (
@@ -526,7 +588,7 @@ export default function ChatComposer({
               Loading profiles…
             </span>
           ) : reconciling && currentAttempt ? (
-            <span className={styles.profileStatus} role="status">
+            <span className={styles.profileStatus}>
               Original chat profile locked for retry.
             </span>
           ) : effectiveProfileSelection ? (

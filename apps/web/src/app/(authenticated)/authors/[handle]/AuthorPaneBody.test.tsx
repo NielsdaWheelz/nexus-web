@@ -307,14 +307,13 @@ describe("AuthorPaneBody", () => {
     ).toBeVisible();
   });
 
-  it("shows initial-load feedback without rendering stale author content", async () => {
-    stubRoutes({
-      detail: errorResponse(500, "E_INTERNAL", "boom"),
-      works: worksPage([work({ title: "Must not render" })]),
+  it("shows modeled initial-load feedback without rendering stale author content", async () => {
+    stubFetchRouter(() => {
+      throw new TypeError("network down");
     });
     render(authorPane());
 
-    expect(await screen.findByText("Couldn't load this author.")).toBeVisible();
+    expect(await screen.findByText("This author couldn’t be loaded")).toBeVisible();
     expect(screen.queryByRole("heading", { name: CANONICAL })).toBeNull();
     expect(screen.queryByRole("list", { name: "Works" })).toBeNull();
     expect(screen.queryByText("Must not render")).toBeNull();
@@ -463,7 +462,7 @@ describe("AuthorPaneBody", () => {
     expect(screen.queryByRole("button", { name: "Edit name" })).not.toBeInTheDocument();
   });
 
-  it("renames the author and shows a success toast", async () => {
+  it("renames the author and lets the resulting heading show success", async () => {
     let patchBody: { clientMutationId?: string; displayName?: string } | null = null;
     stubFetchRouter((url, init) => {
       if (url.pathname === `/api/contributors/${HANDLE}` && init?.method === "PATCH") {
@@ -494,8 +493,8 @@ describe("AuthorPaneBody", () => {
       expect(patchBody?.displayName).toBe("Ursula Le Guin");
       expect(typeof patchBody?.clientMutationId).toBe("string");
     });
-    expect(await screen.findByText("Author name updated.")).toBeVisible();
     expect(await screen.findByRole("heading", { name: "Ursula Le Guin" })).toBeVisible();
+    expect(screen.queryByText("Author name updated.")).not.toBeInTheDocument();
   });
 
   it("blocks an empty rename and keeps Save disabled until the name changes", async () => {
@@ -538,7 +537,7 @@ describe("AuthorPaneBody", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
 
     expect(
-      await within(dialog).findByText("That author change changed. Reload and try again."),
+      await within(dialog).findByText("The name wasn’t updated"),
     ).toBeVisible();
     // Dialog stays open with the draft retained.
     expect(within(dialog).getByLabelText("Author name")).toHaveValue("Ursula Le Guin");
@@ -565,7 +564,7 @@ describe("AuthorPaneBody", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
     expect(
-      await within(dialog).findByText("That author change changed. Reload and try again."),
+      await within(dialog).findByText("The name wasn’t updated"),
     ).toBeVisible();
     await waitFor(() => expect(mutationIds).toHaveLength(1));
 
@@ -603,13 +602,12 @@ describe("AuthorPaneBody", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
 
     expect(
-      await within(dialog).findByText("Couldn't confirm the change. Try again."),
+      await within(dialog).findByText("The change couldn’t be confirmed"),
     ).toBeVisible();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
-    await waitFor(() => {
-      expect(screen.getByText("Author name updated.")).toBeVisible();
-    });
+    expect(await screen.findByRole("heading", { name: "Ursula Le Guin" })).toBeVisible();
+    expect(screen.queryByText("Author name updated.")).not.toBeInTheDocument();
     // The same key was replayed across the transport-uncertain retry.
     expect(mutationIds).toHaveLength(2);
     expect(mutationIds[0]).toBe(mutationIds[1]);

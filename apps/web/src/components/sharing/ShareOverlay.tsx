@@ -6,8 +6,11 @@ import PeopleSearchCombobox from "@/components/users/PeopleSearchCombobox";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
-import { toFeedback } from "@/components/feedback/Feedback";
-import { isSameSystemApiDefect } from "@/lib/api/client";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { getMemberLibrary } from "@/lib/libraries/client";
 import {
@@ -41,7 +44,10 @@ import {
   searchUsers,
   type UserSearchResult,
 } from "@/lib/users/search";
-import { copyText } from "@/lib/ui/copyText";
+import {
+  ClipboardWriteUnavailableError,
+  copyText,
+} from "@/lib/ui/copyText";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./ShareOverlay.module.css";
 
@@ -54,13 +60,13 @@ type LoadState =
   | { kind: "Idle" }
   | { kind: "Loading" }
   | { kind: "Ready"; snapshot: ShareSnapshot }
-  | { kind: "Error"; message: string };
+  | { kind: "Error"; content: FeedbackContent };
 
 type LibraryCapabilityState =
   | { kind: "Idle" }
   | { kind: "Loading" }
   | { kind: "Ready"; library: LibraryOut }
-  | { kind: "Error"; message: string };
+  | { kind: "Error"; content: FeedbackContent };
 
 function nativeShareAvailable(): boolean {
   return (
@@ -84,6 +90,139 @@ function librarySubjectId(snapshot: ShareSnapshot): string {
     );
   }
   return ref.id;
+}
+
+function sharingLoadErrorContent(
+  error: ApiError,
+  operation: "Load" | "CheckMembers",
+): FeedbackContent {
+  switch (error.code) {
+    case "E_NETWORK":
+    case "E_RATE_LIMITED":
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title:
+          operation === "Load"
+            ? "Sharing options couldn’t be loaded."
+            : "Member-management access could not be checked.",
+      };
+    case "E_FORBIDDEN":
+    case "E_LIBRARY_FORBIDDEN":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title:
+          operation === "Load"
+            ? "You don’t have access to these sharing options."
+            : "You don’t have access to member management.",
+      };
+    case "E_NOT_FOUND":
+    case "E_LIBRARY_NOT_FOUND":
+    case "E_INVALID_REQUEST":
+    case "E_BAD_REQUEST":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title:
+          operation === "Load"
+            ? "Sharing options couldn’t be loaded."
+            : "Member-management access could not be checked.",
+      };
+    default:
+      throw error;
+  }
+}
+
+type SharingActionOperation =
+  | "SearchPeople"
+  | "ShareWithPerson"
+  | "RemoveShare"
+  | "DeclineShare"
+  | "TurnOnLink";
+
+function sharingActionErrorContent(
+  error: ApiError,
+  operation: SharingActionOperation,
+): FeedbackContent {
+  const title = (() => {
+    switch (operation) {
+      case "SearchPeople":
+        return "People could not be searched.";
+      case "ShareWithPerson":
+        return "Access could not be shared.";
+      case "RemoveShare":
+        return "The share could not be removed.";
+      case "DeclineShare":
+        return "The shared access could not be declined.";
+      case "TurnOnLink":
+        return "Your public link could not be turned on.";
+    }
+  })();
+
+  switch (error.code) {
+    case "E_NETWORK":
+      if (operation !== "SearchPeople") {
+        return {
+          tone: "Danger",
+          title: "It’s unclear whether the sharing change completed.",
+          message: "Refresh sharing options before trying again.",
+          requestId: error.requestId,
+        };
+      }
+      return { tone: "Danger", title, requestId: error.requestId };
+    case "E_RATE_LIMITED":
+    case "E_UPSTREAM_TIMEOUT":
+    case "E_FORBIDDEN":
+    case "E_NOT_FOUND":
+    case "E_INVALID_REQUEST":
+    case "E_BAD_REQUEST":
+      return { tone: "Danger", title, requestId: error.requestId };
+    case "E_USER_NOT_FOUND":
+      if (operation === "ShareWithPerson") {
+        return {
+          tone: "Danger",
+          title: "This person is no longer available to share with.",
+          requestId: error.requestId,
+        };
+      }
+      throw error;
+    case "E_BILLING_REQUIRED":
+      if (operation === "ShareWithPerson" || operation === "TurnOnLink") {
+        return {
+          tone: "Danger",
+          title: "Your current plan doesn’t allow this share.",
+          requestId: error.requestId,
+        };
+      }
+      throw error;
+    case "E_MEDIA_DELETING":
+      if (operation === "ShareWithPerson" || operation === "TurnOnLink") {
+        return {
+          tone: "Danger",
+          title: "This media is being deleted and can’t be shared.",
+          requestId: error.requestId,
+        };
+      }
+      throw error;
+    default:
+      throw error;
+  }
+}
+
+function nativeShareErrorMessage(error: unknown): string | null {
+  if (!(error instanceof DOMException)) throw error;
+  switch (error.name) {
+    case "AbortError":
+      return null;
+    case "DataError":
+    case "InvalidStateError":
+    case "NotAllowedError":
+      return "The share menu could not be opened.";
+    default:
+      throw error;
+  }
 }
 
 export default function ShareOverlay({ session, onClose }: ShareOverlayProps) {
@@ -136,10 +275,13 @@ function SharePanel({
     target.kind === "Route" ? { kind: "Idle" } : { kind: "Loading" },
   );
   const [liveMessage, setLiveMessage] = useState("");
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<FeedbackContent | null>(null);
   const [libraryCapability, setLibraryCapability] =
     useState<LibraryCapabilityState>({ kind: "Idle" });
-  const [asyncDefect, setAsyncDefect] = useState<unknown>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const reportDefect = useCallback((error: unknown) => {
+    setAsyncDefect({ error });
+  }, []);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -150,19 +292,21 @@ function SharePanel({
         setLoadState({ kind: "Ready", snapshot });
       } catch (error) {
         if (signal?.aborted || handleUnauthenticatedApiError(error)) return;
-        if (isSameSystemApiDefect(error)) {
-          setAsyncDefect(error);
+        if (!isApiError(error) || isSameSystemApiDefect(error)) {
+          reportDefect(error);
           return;
         }
-        setLoadState({
-          kind: "Error",
-          message: toFeedback(error, {
-            fallback: "Sharing could not be loaded.",
-          }).title,
-        });
+        try {
+          setLoadState({
+            kind: "Error",
+            content: sharingLoadErrorContent(error, "Load"),
+          });
+        } catch (defect) {
+          reportDefect(defect);
+        }
       }
     },
-    [target],
+    [reportDefect, target],
   );
 
   useEffect(() => {
@@ -208,21 +352,24 @@ function SharePanel({
       } catch (error) {
         if (signal?.aborted || handleUnauthenticatedApiError(error)) return;
         if (
+          !isApiError(error) ||
           isLibraryContractDefect(error) ||
           isSameSystemApiDefect(error)
         ) {
-          setAsyncDefect(error);
+          reportDefect(error);
           return;
         }
-        setLibraryCapability({
-          kind: "Error",
-          message: toFeedback(error, {
-            fallback: "Member-management access could not be checked.",
-          }).title,
-        });
+        try {
+          setLibraryCapability({
+            kind: "Error",
+            content: sharingLoadErrorContent(error, "CheckMembers"),
+          });
+        } catch (defect) {
+          reportDefect(defect);
+        }
       }
     },
-    [libraryId],
+    [libraryId, reportDefect],
   );
 
   useEffect(() => {
@@ -241,11 +388,27 @@ function SharePanel({
     requestAnimationFrame(() => setLiveMessage(message));
   }, []);
 
-  const reportActionError = useCallback((error: unknown, fallback: string) => {
-    if (handleUnauthenticatedApiError(error)) return;
+  const reportLocalActionError = useCallback((title: string) => {
     setLiveMessage("");
-    setActionError(toFeedback(error, { fallback }).title);
+    setActionError({ tone: "Danger", title });
   }, []);
+
+  const reportApiActionError = useCallback(
+    (error: unknown, operation: SharingActionOperation) => {
+      if (handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) {
+        reportDefect(error);
+        return;
+      }
+      try {
+        setLiveMessage("");
+        setActionError(sharingActionErrorContent(error, operation));
+      } catch (defect) {
+        reportDefect(defect);
+      }
+    },
+    [reportDefect],
+  );
 
   const handleCopy = useCallback(
     async (href: string, copiedLabel: string) => {
@@ -253,10 +416,14 @@ function SharePanel({
         await copyText(href);
         announce(`${copiedLabel} copied.`);
       } catch (error) {
-        reportActionError(error, "The link could not be copied. Try again.");
+        if (error instanceof ClipboardWriteUnavailableError) {
+          reportLocalActionError("The link could not be copied. Try again.");
+          return;
+        }
+        reportDefect(error);
       }
     },
-    [announce, reportActionError],
+    [announce, reportDefect, reportLocalActionError],
   );
 
   const handleNativeShare = useCallback(
@@ -266,14 +433,16 @@ function SharePanel({
         await navigator.share({ title, url: href });
         return true;
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return false;
+        try {
+          const message = nativeShareErrorMessage(error);
+          if (message !== null) reportLocalActionError(message);
+        } catch (defect) {
+          reportDefect(defect);
         }
-        reportActionError(error, "The share menu could not be opened.");
         return false;
       }
     },
-    [reportActionError],
+    [reportDefect, reportLocalActionError],
   );
 
   const handleManageMembers = useCallback(() => {
@@ -294,10 +463,13 @@ function SharePanel({
       return;
     }
     setLiveMessage("");
-    setActionError("Members could not be opened. Try again.");
+    setActionError({
+      tone: "Danger",
+      title: "Members could not be opened. Try again.",
+    });
   }, [onClose, snapshot]);
 
-  if (asyncDefect) throw asyncDefect;
+  if (asyncDefect !== null) throw asyncDefect.error;
 
   return (
     <div className={styles.panel}>
@@ -347,12 +519,11 @@ function SharePanel({
       </section>
 
       {loadState.kind === "Error" ? (
-        <div className={styles.error} role="alert">
-          <span>{loadState.message}</span>
-          <Button variant="secondary" size="sm" onClick={() => void load()}>
-            Retry
-          </Button>
-        </div>
+        <FeedbackNotice
+          content={loadState.content}
+          announcement="Assertive"
+          actions={[{ label: "Retry", onClick: () => void load() }]}
+        />
       ) : null}
 
       {snapshot && (mode === "ResourceGrants" || mode === "HighlightGrants") ? (
@@ -364,8 +535,9 @@ function SharePanel({
           onCopy={handleCopy}
           onNativeShare={handleNativeShare}
           announce={announce}
-          reportError={reportActionError}
-          reportDefect={setAsyncDefect}
+          reportApiError={reportApiActionError}
+          reportLocalError={reportLocalActionError}
+          reportDefect={reportDefect}
         />
       ) : null}
 
@@ -407,24 +579,22 @@ function SharePanel({
             ) : null}
           </div>
           {libraryCapability.kind === "Error" ? (
-            <div className={styles.error} role="alert">
-              <span>{libraryCapability.message}</span>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void loadLibraryCapability()}
-              >
-                Retry
-              </Button>
-            </div>
+            <FeedbackNotice
+              content={libraryCapability.content}
+              announcement="Assertive"
+              actions={[
+                {
+                  label: "Retry",
+                  onClick: () => void loadLibraryCapability(),
+                },
+              ]}
+            />
           ) : null}
         </section>
       ) : null}
 
       {actionError ? (
-        <div className={styles.error} role="alert">
-          {actionError}
-        </div>
+        <FeedbackNotice content={actionError} announcement="Assertive" />
       ) : null}
       <div
         className="sr-only"
@@ -479,7 +649,8 @@ function GrantEditor({
   onCopy,
   onNativeShare,
   announce,
-  reportError,
+  reportApiError,
+  reportLocalError,
   reportDefect,
 }: {
   snapshot: ShareSnapshot;
@@ -487,7 +658,8 @@ function GrantEditor({
   onCopy: (href: string, label: string) => Promise<void>;
   onNativeShare: (href: string, title: string) => Promise<boolean>;
   announce: (message: string) => void;
-  reportError: (error: unknown, fallback: string) => void;
+  reportApiError: (error: unknown, operation: SharingActionOperation) => void;
+  reportLocalError: (title: string) => void;
   reportDefect: (error: unknown) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -530,7 +702,7 @@ function GrantEditor({
             reportDefect(error);
             return;
           }
-          reportError(error, "People could not be searched.");
+          reportApiError(error, "SearchPeople");
         }
       } finally {
         if (searchSequence.current === sequence) setSearching(false);
@@ -540,7 +712,7 @@ function GrantEditor({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [query, reportDefect, reportError]);
+  }, [query, reportApiError, reportDefect]);
 
   const addUser = async (user: UserSearchResult) => {
     if (busyHandle !== null) return;
@@ -563,7 +735,7 @@ function GrantEditor({
           : `${userSearchLabel(user)} already has this share.`,
       );
     } catch (error) {
-      reportError(error, "Access could not be shared.");
+      reportApiError(error, "ShareWithPerson");
     } finally {
       setBusyHandle(null);
     }
@@ -585,7 +757,7 @@ function GrantEditor({
           : `Removed the share for ${shareUserLabel(share.user)}.`,
       );
     } catch (error) {
-      reportError(error, "The share could not be removed.");
+      reportApiError(error, "RemoveShare");
     } finally {
       setBusyHandle(null);
     }
@@ -609,7 +781,7 @@ function GrantEditor({
           : "Your public link was already on.",
       );
     } catch (error) {
-      reportError(error, "Your public link could not be turned on.");
+      reportApiError(error, "TurnOnLink");
     } finally {
       setBusyHandle(null);
     }
@@ -732,10 +904,7 @@ function GrantEditor({
                           setConfirmHandle(null);
                           announce("This shared access path was declined.");
                         } catch (error) {
-                          reportError(
-                            error,
-                            "The shared access could not be declined.",
-                          );
+                          reportApiError(error, "DeclineShare");
                         } finally {
                           setBusyHandle(null);
                         }
@@ -877,8 +1046,7 @@ function GrantEditor({
                       if (opened) {
                         setConfirmX(false);
                       } else {
-                        reportError(
-                          null,
+                        reportLocalError(
                           "X could not be opened. Check your popup settings and try again.",
                         );
                       }

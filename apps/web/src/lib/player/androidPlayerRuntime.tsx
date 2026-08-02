@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { ApiError, isApiError } from "@/lib/api/client";
 import {
   absent,
@@ -39,6 +40,7 @@ import {
   AndroidPlayerClient,
   NativePlayerRejectedError,
   NativePlayerTimeoutError,
+  NativePlayerUnavailableError,
 } from "@/lib/player/androidPlayerClient";
 import {
   receiptSettlement,
@@ -57,11 +59,13 @@ import type {
 import { parsePlaybackRate } from "@/lib/player/playbackRate";
 import {
   PlayerCapabilityProviders,
+  playerPreferenceErrorMessage,
   type GlobalPlayerState,
   type PlayerCommandsCapability,
   type PlayerPersistence,
   type PlayerPlaybackRateCapability,
   type PlayerPlaybackRateRemember,
+  type PlayerPreferenceOperation,
   type PlayerRuntimeCapabilities,
   type PreviewAudioPosition,
 } from "@/lib/player/playerRuntime";
@@ -117,6 +121,69 @@ type RetryableNativeOperation = {
   run: () => Promise<void>;
   stillApplies?: () => boolean;
 };
+
+type DevicePauseShorteningFailure = {
+  content: FeedbackContent;
+  retryable: boolean;
+};
+
+function androidPlayerMutationErrorMessage(
+  error: unknown,
+  title: string,
+): DevicePauseShorteningFailure {
+  if (
+    error instanceof NativePlayerUnavailableError ||
+    (error instanceof NativePlayerRejectedError &&
+      error.code === "PlayerUnavailable")
+  ) {
+    return {
+      content: {
+        tone: "Danger",
+        title,
+        message: "The Android player is unavailable. Reconnect it, then retry.",
+      },
+      retryable: true,
+    };
+  }
+  if (error instanceof NativePlayerTimeoutError) {
+    return {
+      content: {
+        tone: "Danger",
+        title,
+        message: "The Android player took too long to respond. Retry the change.",
+      },
+      retryable: true,
+    };
+  }
+  if (
+    error instanceof NativePlayerRejectedError &&
+    error.code === "NaturalEndPending"
+  ) {
+    return {
+      content: {
+        tone: "Warning",
+        title,
+        message: "Finish the pending playback update, then retry.",
+      },
+      retryable: true,
+    };
+  }
+  throw error;
+}
+
+function androidPreferenceErrorMessage(
+  error: unknown,
+  operation: PlayerPreferenceOperation,
+): FeedbackContent {
+  if (isApiError(error)) {
+    return playerPreferenceErrorMessage(error, operation);
+  }
+  const title =
+    operation === "RememberPlaybackRate"
+      ? "Playback speed wasn’t saved"
+      : "Pause shortening wasn’t saved";
+  return androidPlayerMutationErrorMessage(error, title).content;
+}
 
 function sessionKeyOf(snapshot: AndroidPlayerSnapshot | null): string | null {
   return snapshot !== null && snapshot.kind !== "Absent"
@@ -462,6 +529,9 @@ export function AndroidPlayerRuntimeProvider({
     useState<PlayerPlaybackRateRemember>({ kind: "Unavailable" });
   const [pauseMutation, setPauseMutation] =
     useState<PauseShorteningMutation>({ kind: "Idle" });
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
+    null,
+  );
 
   const clientRef = useRef<AndroidPlayerClient | null>(null);
   const snapshotRef = useRef<AndroidPlayerSnapshot | null>(null);
@@ -1192,7 +1262,10 @@ export function AndroidPlayerRuntimeProvider({
           return;
         }
         if (handleUnauthenticatedApiError(error)) return;
-        const notFound = isApiError(error) && error.code === "E_NOT_FOUND";
+        const notFound =
+          isApiError(error) &&
+          (error.code === "E_NOT_FOUND" ||
+            error.code === "E_PODCAST_NOT_FOUND");
         if (notFound) {
           try {
             const subscription = absent<PodcastPlaybackSubscription>();
@@ -1225,6 +1298,16 @@ export function AndroidPlayerRuntimeProvider({
             });
           }
         }
+        let feedback: FeedbackContent;
+        try {
+          feedback = androidPreferenceErrorMessage(
+            error,
+            "RememberPlaybackRate",
+          );
+        } catch (defect) {
+          setAsyncDefect({ error: defect });
+          return;
+        }
         setPlaybackRateRemember({
           kind: "Failed",
           retryable: !notFound,
@@ -1232,17 +1315,7 @@ export function AndroidPlayerRuntimeProvider({
           retry: () => {
             if (!notFound) retryPodcastRateRef.current(attempt);
           },
-          error: {
-            severity: "error",
-            title: notFound
-              ? "Podcast subscription no longer exists."
-              : "Could not remember playback speed",
-            message:
-              !notFound && error instanceof Error
-                ? error.message
-                : undefined,
-            requestId: isApiError(error) ? error.requestId : undefined,
-          },
+          error: feedback,
         });
       } finally {
         if (podcastRateAttemptRef.current === attempt) {
@@ -1328,7 +1401,10 @@ export function AndroidPlayerRuntimeProvider({
           return;
         }
         if (handleUnauthenticatedApiError(error)) return;
-        const notFound = isApiError(error) && error.code === "E_NOT_FOUND";
+        const notFound =
+          isApiError(error) &&
+          (error.code === "E_NOT_FOUND" ||
+            error.code === "E_PODCAST_NOT_FOUND");
         if (notFound) {
           try {
             const subscription = absent<PodcastPlaybackSubscription>();
@@ -1361,21 +1437,21 @@ export function AndroidPlayerRuntimeProvider({
             });
           }
         }
+        let feedback: FeedbackContent;
+        try {
+          feedback = androidPreferenceErrorMessage(
+            error,
+            "RememberPauseShortening",
+          );
+        } catch (defect) {
+          setAsyncDefect({ error: defect });
+          return;
+        }
         setPauseMutation({
           kind: "Failed",
           scope: "Podcast",
           retryable: !notFound,
-          error: {
-            severity: "error",
-            title: notFound
-              ? "Podcast subscription no longer exists."
-              : "Could not remember pause shortening",
-            message:
-              !notFound && error instanceof Error
-                ? error.message
-                : undefined,
-            requestId: isApiError(error) ? error.requestId : undefined,
-          },
+          error: feedback,
           retry: () => {
             if (!notFound) retryPodcastPauseRef.current(attempt);
           },
@@ -1417,16 +1493,21 @@ export function AndroidPlayerRuntimeProvider({
             setPauseMutation({ kind: "Idle" });
           })
           .catch((error: unknown) => {
+            let failure: DevicePauseShorteningFailure;
+            try {
+              failure = androidPlayerMutationErrorMessage(
+                error,
+                "Device default wasn’t changed",
+              );
+            } catch (defect) {
+              setAsyncDefect({ error: defect });
+              return;
+            }
             setPauseMutation({
               kind: "Failed",
               scope: "Device",
-              retryable: true,
-              error: {
-                severity: "error",
-                title: "Could not update the device default",
-                message:
-                  error instanceof Error ? error.message : "Please try again.",
-              },
+              retryable: failure.retryable,
+              error: failure.content,
               retry: run,
             });
           });
@@ -1860,6 +1941,8 @@ export function AndroidPlayerRuntimeProvider({
       snapshot,
     ],
   );
+
+  if (asyncDefect !== null) throw asyncDefect.error;
 
   return (
     <PlayerCapabilityProviders capabilities={capabilities}>

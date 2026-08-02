@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type FeedbackContent,
-  toFeedback,
 } from "@/components/feedback/Feedback";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { absent, type Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -36,6 +36,49 @@ const PODCAST_SUBSCRIPTION_SETTINGS_DRAFT =
   definePaneVisitDataKey<PodcastSubscriptionSettingsDraft>(
     "Podcasts.SubscriptionSettingsDraft",
   );
+
+function podcastSubscriptionSettingsErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const requestId = error.requestId;
+  const title = "Subscription settings weren’t saved";
+  switch (error.code) {
+    case "E_NETWORK":
+      return { tone: "Danger", title, message: "Check your connection and retry.", requestId };
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The server took too long to respond. Retry the save.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return { tone: "Danger", title, message: "Wait a moment, then retry.", requestId };
+    case "E_NOT_FOUND":
+    case "E_PODCAST_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title,
+        message: "This subscription no longer exists. Close settings and refresh the pane.",
+        requestId,
+      };
+    case "E_CONFLICT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The subscription changed. Close settings, refresh the pane, and retry.",
+        requestId,
+      };
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title,
+        message: "One of these settings isn’t valid. Review the values and retry.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
 
 export interface PodcastSubscriptionSettingsModal {
   /** Non-null when the modal is open; identifies the podcast being edited. */
@@ -88,6 +131,7 @@ export function usePodcastSubscriptionSettingsModal({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FeedbackContent | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   const busyRef = useRef(false);
   committedDraftRef.current =
     podcastId === null
@@ -135,16 +179,18 @@ export function usePodcastSubscriptionSettingsModal({
       setPodcastId(null);
     } catch (saveError) {
       if (handleUnauthenticatedApiError(saveError)) return;
-      setError(
-        toFeedback(saveError, {
-          fallback: "Failed to save subscription settings",
-        }),
-      );
+      try {
+        setError(podcastSubscriptionSettingsErrorMessage(saveError));
+      } catch (defect) {
+        setAsyncDefect({ error: defect });
+      }
     } finally {
       busyRef.current = false;
       setBusy(false);
     }
   }, [autoQueue, defaultPlaybackSpeed, pauseShorteningMode, podcastId]);
+
+  if (asyncDefect !== null) throw asyncDefect.error;
 
   return {
     podcastId,

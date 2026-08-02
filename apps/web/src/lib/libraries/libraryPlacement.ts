@@ -130,6 +130,7 @@ export async function listLibraryPlacements(
 export async function addLibraryPlacement(
   target: LibraryPlacementTarget,
   libraryId: string,
+  { clientMutationId }: { clientMutationId: string },
 ): Promise<void> {
   switch (target.kind) {
     case "Media":
@@ -140,7 +141,7 @@ export async function addLibraryPlacement(
         target: { kind: "Canonical", podcastId: target.id },
         namedLibraryIds: [libraryId],
         replacementConfirmation: { kind: "Absent" },
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: clientMutationId,
       });
       return;
   }
@@ -149,7 +150,10 @@ export async function addLibraryPlacement(
 export async function removeLibraryPlacement(
   target: LibraryPlacementTarget,
   libraryId: string,
-  { signal }: { signal?: AbortSignal } = {},
+  {
+    clientMutationId,
+    signal,
+  }: { clientMutationId: string; signal?: AbortSignal },
 ): Promise<CollectionRevision> {
   let response: unknown;
   switch (target.kind) {
@@ -167,7 +171,7 @@ export async function removeLibraryPlacement(
         `/api/libraries/${libraryId}/podcasts/${target.id}`,
         {
           method: "DELETE",
-          headers: { "Idempotency-Key": crypto.randomUUID() },
+          headers: { "Idempotency-Key": clientMutationId },
           signal,
         },
       );

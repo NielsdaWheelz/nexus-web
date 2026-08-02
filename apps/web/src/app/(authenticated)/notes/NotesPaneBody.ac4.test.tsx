@@ -1,4 +1,4 @@
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
@@ -10,6 +10,7 @@ import {
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { ApiError } from "@/lib/api/client";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -23,7 +24,7 @@ import {
   WorkspaceStoreProvider,
 } from "@/lib/workspace/store";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
-import NotesPaneBody from "./NotesPaneBody";
+import NotesPaneBody, { notesErrorMessage } from "./NotesPaneBody";
 
 const HYDRATED_PAGE_ID = "22222222-0000-4000-8000-000000000002";
 const WORKSPACE_METRICS: WorkspacePrimaryMetrics = {
@@ -79,6 +80,26 @@ describe("NotesPaneBody — Today button", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("maps only finite expected failures and preserves diagnostics", () => {
+    expect(
+      notesErrorMessage(
+        new ApiError(0, "E_NETWORK", "offline", "req-notes"),
+        "Load",
+      ),
+    ).toMatchObject({ tone: "Danger", requestId: "req-notes" });
+
+    const sameSystem = new ApiError(500, "E_INTERNAL", "broken");
+    expect(() => notesErrorMessage(sameSystem, "Load")).toThrow(sameSystem);
+
+    const unknownCode = new ApiError(409, "E_NEW_NOTES_FAILURE", "new");
+    expect(() => notesErrorMessage(unknownCode, "CreatePage")).toThrow(
+      unknownCode,
+    );
+
+    const nonApi = new Error("decoder failed");
+    expect(() => notesErrorMessage(nonApi, "Load")).toThrow(nonApi);
   });
 
   it("opens Today through the current OpenDailyPage view capability", async () => {
@@ -288,7 +309,7 @@ describe("NotesPaneBody create replay identity", () => {
         if (createBodies.length < 3) {
           return new Response(
             JSON.stringify({
-              error: { code: "E_INTERNAL", message: "Response lost" },
+              error: { code: "E_NETWORK", message: "Response lost" },
             }),
             {
               status: 500,
@@ -348,5 +369,66 @@ describe("NotesPaneBody create replay identity", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
     void fetchMock;
+  });
+
+  it("does not replay validation failure and mints a new create intent after editing", async () => {
+    const createBodies: Array<Record<string, unknown>> = [];
+    stubFetch(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/notes/pages" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        createBodies.push(body);
+        if (createBodies.length === 1) {
+          return Response.json(
+            {
+              error: {
+                code: "E_BAD_REQUEST",
+                message: "Invalid title",
+                request_id: "req-invalid-page",
+              },
+            },
+            { status: 400 },
+          );
+        }
+        return Response.json(
+          {
+            data: {
+              id: body.page_id,
+              title: body.title,
+              updatedAt: "2026-07-27T12:00:00Z",
+              dailyPage: null,
+            },
+          },
+          { status: 201 },
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url.pathname}`);
+    });
+    renderHydratedPane({
+      href: "/notes",
+      resources: { "notes:pages": [] },
+      children: (
+        <NotesTestProviders>
+          <ResolvedPaneBodyMarker>
+            <LibraryPlacementControllerProvider>
+              <NotesPaneBody />
+            </LibraryPlacementControllerProvider>
+          </ResolvedPaneBodyMarker>
+        </NotesTestProviders>
+      ),
+    });
+
+    const title = screen.getByRole("textbox", { name: "New page title" });
+    fireEvent.change(title, { target: { value: "Invalid draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create page" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Change the page title, then submit it again",
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+
+    fireEvent.change(title, { target: { value: "Valid draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create page" }));
+    await waitFor(() => expect(createBodies).toHaveLength(2));
+    expect(createBodies[1]?.page_id).not.toBe(createBodies[0]?.page_id);
   });
 });

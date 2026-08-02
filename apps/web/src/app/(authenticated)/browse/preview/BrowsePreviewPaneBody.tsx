@@ -6,7 +6,10 @@ import AcquisitionControl, {
   type AcquisitionSuccess,
 } from "@/components/browse/AcquisitionControl";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import YouTubeEmbedFrame from "@/components/media/YouTubeEmbedFrame";
 import PodcastOverview from "@/components/podcasts/PodcastOverview";
 import Button from "@/components/ui/Button";
@@ -19,6 +22,10 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { CursorPage } from "@/lib/api/useCursorPagination";
 import { useCursorPagination } from "@/lib/api/useCursorPagination";
 import { useResource, type AsyncResource } from "@/lib/api/useResource";
+import {
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import {
   addEpisodeFromDiscovery,
   browsePreviewPath,
@@ -46,6 +53,70 @@ import { subscribeToPodcast } from "@/lib/podcasts/acquisition";
 import styles from "../browse.module.css";
 
 const PREVIEW_EPISODE_PAGE_SIZE = 20;
+
+type BrowsePreviewFailure = {
+  content: FeedbackContent;
+  retryable: boolean;
+};
+
+function browsePreviewErrorMessage(error: unknown): BrowsePreviewFailure {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const requestId = error.requestId;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        content: {
+          tone: "Danger",
+          title: "Preview couldn’t be loaded",
+          message: "Check your connection and retry.",
+          requestId,
+        },
+        retryable: true,
+      };
+    case "E_BROWSE_PROVIDER_UNAVAILABLE":
+      return {
+        content: {
+          tone: "Danger",
+          title: "Preview couldn’t be loaded",
+          message: "The discovery provider is unavailable. Retry in a moment.",
+          requestId,
+        },
+        retryable: true,
+      };
+    case "E_BROWSE_PROVIDER_RATE_LIMITED":
+      return {
+        content: {
+          tone: "Warning",
+          title: "Preview couldn’t be loaded",
+          message: "Wait a moment, then retry.",
+          requestId,
+        },
+        retryable: true,
+      };
+    case "E_BROWSE_PROVIDER_QUOTA_EXHAUSTED":
+      return {
+        content: {
+          tone: "Warning",
+          title: "Preview isn’t available",
+          message: "The discovery provider’s allowance has been exhausted.",
+          requestId,
+        },
+        retryable: false,
+      };
+    case "E_INVALID_DISCOVERY_TARGET":
+      return {
+        content: { tone: "Warning", title: "Invalid preview link", requestId },
+        retryable: false,
+      };
+    case "E_NOT_FOUND":
+      return {
+        content: { tone: "Warning", title: "No longer available", requestId },
+        retryable: false,
+      };
+    default:
+      throw error;
+  }
+}
 
 function episodeCursorPage(
   page: PreviewEpisodePage,
@@ -228,11 +299,16 @@ export default function BrowsePreviewPaneBody() {
     return (
       <PaneSurface
         opener={<SectionOpener heading="Invalid preview link" scale="title" />}
-        state={<FeedbackNotice
-          severity="warning"
-          title="Invalid preview link"
-          message="This link is malformed or obsolete."
-        />}
+        state={
+          <FeedbackNotice
+            content={{
+              tone: "Warning",
+              title: "Invalid preview link",
+              message: "This link is malformed or obsolete.",
+            }}
+            announcement="Assertive"
+          />
+        }
       >
         <Button onClick={backToBrowse}>Back to Browse</Button>
       </PaneSurface>
@@ -241,24 +317,29 @@ export default function BrowsePreviewPaneBody() {
 
   if (resource.status === "idle" || resource.status === "loading" || ownedHref) {
     return (
-      <PaneSurface state={<PaneLoadingState label="Loading preview…" />} />
+      <PaneSurface
+        state={<PaneLoadingState label="Loading preview…" announcement="Polite" />}
+      />
     );
   }
 
   if (resource.status === "error") {
-    const invalid = resource.error.code === "E_INVALID_DISCOVERY_TARGET";
-    const deleted = resource.error.code === "E_NOT_FOUND";
-    if (!invalid && !deleted) throw resource.error;
-    const heading = invalid ? "Invalid preview link" : "No longer available";
+    const failure = browsePreviewErrorMessage(resource.error);
     return (
       <PaneSurface
-        opener={<SectionOpener heading={heading} scale="title" />}
-        state={<FeedbackNotice
-          severity="warning"
-          title={heading}
-        />}
+        opener={<SectionOpener heading={failure.content.title} scale="title" />}
+        state={
+          <FeedbackNotice
+            content={failure.content}
+            announcement="Assertive"
+          />
+        }
       >
-        <Button onClick={backToBrowse}>Back to Browse</Button>
+        {failure.retryable ? (
+          <Button onClick={resource.retry}>Retry</Button>
+        ) : (
+          <Button onClick={backToBrowse}>Back to Browse</Button>
+        )}
       </PaneSurface>
     );
   }

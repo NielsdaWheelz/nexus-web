@@ -7,6 +7,10 @@ import { getMemberLibrary } from "@/lib/libraries/client";
 import { requestWorkspaceTargetActivation } from "@/lib/workspace/workspaceTargetActivationIngress";
 import { ApiError } from "@/lib/api/client";
 import { LibraryContractDefect } from "@/lib/libraries/contract";
+import {
+  ClipboardWriteUnavailableError,
+  copyText,
+} from "@/lib/ui/copyText";
 import { createLinkShare, fetchShareSnapshot } from "@/lib/sharing/api";
 import {
   assumeCanonicalResourceRef,
@@ -47,11 +51,19 @@ vi.mock("@/lib/workspace/workspaceTargetActivationIngress", async () => {
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => false,
 }));
+vi.mock("@/lib/ui/copyText", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/ui/copyText")>(
+      "@/lib/ui/copyText",
+    );
+  return { ...actual, copyText: vi.fn() };
+});
 
 const fetchShareSnapshotMock = vi.mocked(fetchShareSnapshot);
 const createLinkShareMock = vi.mocked(createLinkShare);
 const getMemberLibraryMock = vi.mocked(getMemberLibrary);
 const requestWorkspaceTargetActivationMock = vi.mocked(requestWorkspaceTargetActivation);
+const copyTextMock = vi.mocked(copyText);
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const LIBRARY_ID = "22222222-2222-4222-8222-222222222222";
 const PUBLIC_HREF = `http://localhost:3000/s#share=nxshr1_${"A".repeat(43)}`;
@@ -177,6 +189,8 @@ describe("ShareOverlay public native sharing", () => {
     createLinkShareMock.mockReset();
     getMemberLibraryMock.mockReset();
     requestWorkspaceTargetActivationMock.mockReset();
+    copyTextMock.mockReset();
+    copyTextMock.mockResolvedValue(undefined);
   });
 
   it("opens the canonical Library pane on Members and closes after accepted dispatch", async () => {
@@ -218,9 +232,9 @@ describe("ShareOverlay public native sharing", () => {
     );
 
     expect(onClose).not.toHaveBeenCalled();
-    expect(
-      screen.getByText("Members could not be opened. Try again."),
-    ).toHaveAttribute("role", "alert");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Members could not be opened. Try again.",
+    );
   });
 
   it("omits member-management UI for default or system Libraries", async () => {
@@ -297,13 +311,16 @@ describe("ShareOverlay public native sharing", () => {
 
   it("keeps canonical link actions available when capability loading fails", async () => {
     fetchShareSnapshotMock.mockResolvedValue(librarySnapshot());
-    getMemberLibraryMock.mockRejectedValue(new TypeError("offline"));
+    getMemberLibraryMock.mockRejectedValue(
+      new ApiError(0, "E_NETWORK", "offline", "req-member-check"),
+    );
 
     render(<ShareOverlay session={librarySession()} onClose={vi.fn()} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Member-management access could not be checked.",
     );
+    expect(screen.getByText("Nexus request ID: req-member-check")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy link" })).toBeEnabled();
   });
 
@@ -366,20 +383,72 @@ describe("ShareOverlay public native sharing", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows a retryable hard failure", async () => {
+  it("shows a retryable finite native-share failure", async () => {
     const user = userEvent.setup();
-    setNativeShare(vi.fn().mockRejectedValue(new Error("OS share failed")));
+    setNativeShare(
+      vi.fn().mockRejectedValue(new DOMException("OS share failed", "DataError")),
+    );
     render(<ShareOverlay session={session()} onClose={vi.fn()} />);
     await user.click(
       await screen.findByRole("button", { name: "Share public link" }),
     );
     await user.click(screen.getByRole("button", { name: "Continue to share" }));
     expect(
-      await screen.findByText("The share menu could not be opened."),
-    ).toHaveAttribute("role", "alert");
+      await screen.findByRole("alert"),
+    ).toHaveTextContent("The share menu could not be opened.");
     expect(
       screen.getByRole("button", { name: "Continue to share" }),
     ).toBeInTheDocument();
+  });
+
+  it("routes an unknown native-share rejection to the render boundary", async () => {
+    const user = userEvent.setup();
+    setNativeShare(vi.fn().mockRejectedValue(new Error("OS share defect")));
+    renderWithBoundary(<ShareOverlay session={session()} onClose={vi.fn()} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Share public link" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Continue to share" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "OS share defect",
+    );
+  });
+
+  it("reports only clipboard unavailability locally and lets the action be retried", async () => {
+    const user = userEvent.setup();
+    copyTextMock
+      .mockRejectedValueOnce(new ClipboardWriteUnavailableError())
+      .mockResolvedValueOnce(undefined);
+    render(<ShareOverlay session={session()} onClose={vi.fn()} />);
+
+    const copyButton = await screen.findByRole("button", { name: "Copy link" });
+    await user.click(copyButton);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The link could not be copied. Try again.",
+    );
+
+    await user.click(copyButton);
+    expect(await screen.findByText("Nexus link copied.")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("routes an unknown clipboard rejection to the render boundary", async () => {
+    const user = userEvent.setup();
+    copyTextMock.mockRejectedValueOnce(new Error("clipboard defect"));
+    renderWithBoundary(<ShareOverlay session={session()} onClose={vi.fn()} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Copy link" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "clipboard defect",
+    );
   });
 
   it("discloses X bearer access before leaving Nexus", async () => {
@@ -409,11 +478,9 @@ describe("ShareOverlay public native sharing", () => {
     await user.click(await screen.findByRole("button", { name: "Post to X" }));
     await user.click(screen.getByRole("button", { name: "Continue to X" }));
 
-    expect(
-      await screen.findByText(
-        "X could not be opened. Check your popup settings and try again.",
-      ),
-    ).toHaveAttribute("role", "alert");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "X could not be opened. Check your popup settings and try again.",
+    );
     expect(
       screen.getByRole("button", { name: "Continue to X" }),
     ).toBeInTheDocument();

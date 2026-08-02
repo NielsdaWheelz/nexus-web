@@ -71,7 +71,6 @@ import {
 } from "@/lib/resources/activation";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
@@ -101,31 +100,79 @@ import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget
 // Pending reader-selection hydration (route-owned launch intent)
 // ---------------------------------------------------------------------------
 
-/** Map a hydration error onto a pending context + optional reported defect.
+function conversationErrorMessage(
+  error: ApiError,
+  operation: "LoadQuote" | "Delete" | "Load",
+): FeedbackContent {
+  switch (error.code) {
+    case "E_NOT_FOUND":
+    case "E_CONVERSATION_NOT_FOUND":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title:
+          operation === "Delete"
+            ? "This chat is no longer available."
+            : operation === "LoadQuote"
+              ? "This quote is no longer available."
+              : "This chat is no longer available.",
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title: "You don’t have access to this chat.",
+        requestId: error.requestId,
+      };
+    case "E_NETWORK":
+      if (operation === "Delete") {
+        return {
+          tone: "Danger",
+          requestId: error.requestId,
+          title: "It’s unclear whether the chat was deleted.",
+          message: "Check your chats before trying again.",
+        };
+      }
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title:
+          operation === "LoadQuote"
+            ? "This quote couldn’t be loaded."
+            : "This chat couldn’t be loaded.",
+      };
+    case "E_BAD_REQUEST":
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title:
+          operation === "Delete"
+            ? "This chat couldn’t be deleted."
+            : operation === "LoadQuote"
+              ? "This quote couldn’t be loaded."
+              : "This chat couldn’t be loaded.",
+      };
+    default:
+      throw error;
+  }
+}
+
+/** Map a hydration error onto the one pending-context projection.
  *  Authoritative forbidden/geometry/over-limit are `NonSendable`; a not-found
  *  for an accepted launch is projection drift (reported, retryable — NOT
  *  NonSendable); anything else is a retryable transport `LoadFailed`. */
 function mapHydrationError(
   err: unknown,
   intent: ReaderHighlightChatIntent,
-): { context: PendingTurnContext; defect: FeedbackContent | null } {
+): PendingTurnContext {
   if (isApiError(err)) {
     switch (err.code) {
       case "E_READER_SELECTION_FORBIDDEN":
-        return {
-          context: { kind: "NonSendable", intent, reason: "Forbidden" },
-          defect: null,
-        };
+        return { kind: "NonSendable", intent, reason: "Forbidden" };
       case "E_READER_SELECTION_GEOMETRY_ONLY":
-        return {
-          context: { kind: "NonSendable", intent, reason: "GeometryOnly" },
-          defect: null,
-        };
+        return { kind: "NonSendable", intent, reason: "GeometryOnly" };
       case "E_READER_SELECTION_TOO_LARGE":
-        return {
-          context: { kind: "NonSendable", intent, reason: "TooLarge" },
-          defect: null,
-        };
+        return { kind: "NonSendable", intent, reason: "TooLarge" };
       case "E_READER_SELECTION_NOT_FOUND": {
         // justify-ignore-error: a not-found for a client-accepted launch is a
         // reported invariant defect (projection drift), never a NonSendable.
@@ -134,47 +181,28 @@ function mapHydrationError(
           intent.selection,
         );
         const defect: FeedbackContent = {
-          severity: "error",
+          tone: "Danger",
           title: "This quote is temporarily unavailable.",
           message:
             "Its highlight hasn't finished syncing yet. Retry the quote to try again.",
+          requestId: err.requestId,
         };
-        return {
-          context: { kind: "LoadFailed", intent, error: defect },
-          defect,
-        };
+        return { kind: "LoadFailed", intent, error: defect };
       }
-      case "E_INVALID_RESPONSE": {
-        // justify-ignore-error: a malformed trusted preview is a reported
-        // same-system contract defect, never a missing quote.
-        console.error(
-          "Invalid reader-selection preview payload",
-          intent.selection,
-        );
-        const defect: FeedbackContent = {
-          severity: "error",
-          title: "This quote could not be read.",
-        };
-        return {
-          context: { kind: "LoadFailed", intent, error: defect },
-          defect,
-        };
-      }
+      case "E_INVALID_RESPONSE":
+        throw err;
     }
   }
+  if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
   return {
-    context: {
-      kind: "LoadFailed",
-      intent,
-      error: toFeedback(err, { fallback: "Couldn't load the quoted passage." }),
-    },
-    defect: null,
+    kind: "LoadFailed",
+    intent,
+    error: conversationErrorMessage(err, "LoadQuote"),
   };
 }
 
 interface PendingReaderSelection {
   pendingContext: Presence<PendingTurnContext>;
-  defect: FeedbackContent | null;
   retryHydration: () => void;
   replaceWithPreview: (preview: ReaderSelectionPreview) => void;
 }
@@ -217,7 +245,6 @@ function usePendingReaderSelection(
   } | null>(null);
 
   let pendingContext: Presence<PendingTurnContext>;
-  let defect: FeedbackContent | null = null;
   if (intent === null) {
     pendingContext = absent();
   } else if (replacement?.intent === intent) {
@@ -238,9 +265,7 @@ function usePendingReaderSelection(
         });
         break;
       case "error": {
-        const mapped = mapHydrationError(selectionResource.error, intent);
-        pendingContext = present(mapped.context);
-        defect = mapped.defect;
+        pendingContext = present(mapHydrationError(selectionResource.error, intent));
         break;
       }
       default: {
@@ -264,7 +289,7 @@ function usePendingReaderSelection(
     [intent],
   );
 
-  return { pendingContext, defect, retryHydration, replaceWithPreview };
+  return { pendingContext, retryHydration, replaceWithPreview };
 }
 
 export default function Conversation() {
@@ -311,7 +336,6 @@ export default function Conversation() {
   }, [readerIntentHashInvalid, paneHash]);
   const {
     pendingContext,
-    defect: readerSelectionDefect,
     retryHydration,
     replaceWithPreview,
   } = usePendingReaderSelection(readerIntent);
@@ -319,6 +343,7 @@ export default function Conversation() {
 
   const [deleting, setDeleting] = useState(false);
   const deleteInFlightRef = useRef(false);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   const [branchFocusKey, setBranchFocusKey] = useState("");
 
   // The context-ref secondary surface is keyed off the engine's resolved id, but the engine
@@ -538,10 +563,15 @@ export default function Conversation() {
       router.push("/conversations");
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-      setDeleteError(
-        toFeedback(err, { fallback: "Failed to delete conversation" }),
-      );
+      if (!isApiError(err) || isSameSystemApiDefect(err)) {
+        setAsyncDefect({ error: err });
+        return;
+      }
+      try {
+        setDeleteError(conversationErrorMessage(err, "Delete"));
+      } catch (defect) {
+        setAsyncDefect({ error: defect });
+      }
     } finally {
       deleteInFlightRef.current = false;
       setDeleting(false);
@@ -649,7 +679,6 @@ export default function Conversation() {
   const handleReaderSelectionStale = useCallback(
     (preview: ReaderSelectionPreview) => {
       replaceWithPreview(preview);
-      setReaderAnnouncement("Quote updated — resend");
     },
     [replaceWithPreview],
   );
@@ -727,8 +756,8 @@ export default function Conversation() {
           />
         ) : (
           <FeedbackNotice
-            severity="neutral"
-            title="No forks in this conversation yet."
+            content={{ tone: "Neutral", title: "No forks in this conversation yet." }}
+            announcement="None"
           />
         )}
       </div>
@@ -859,16 +888,19 @@ export default function Conversation() {
   // Render
   // --------------------------------------------------------------------------
 
+  if (asyncDefect !== null) throw asyncDefect.error;
+
   const routeTargetFailed =
     routeTargetKey !== null && failedRouteTarget === routeTargetKey;
   const routeTargetFailureNotice = routeTargetFailed ? (
     <FeedbackNotice
-      feedback={
+      content={
         convo.error ?? {
-          severity: "error",
-          title: "Failed to open the requested message.",
+          tone: "Danger",
+          title: "The requested message couldn’t be opened.",
         }
       }
+      announcement="Assertive"
     >
       <Button
         variant="secondary"
@@ -887,7 +919,9 @@ export default function Conversation() {
   // surface so the composer can show its disabled reason.
   if (conversationId !== null && convo.messages.length === 0 && convo.error) {
     return (
-      routeTargetFailureNotice ?? <FeedbackNotice feedback={convo.error} />
+      routeTargetFailureNotice ?? (
+        <FeedbackNotice content={convo.error} announcement="Assertive" />
+      )
     );
   }
 
@@ -903,18 +937,16 @@ export default function Conversation() {
           {routeTargetFailureNotice}
           {readerIntentHashInvalid ? (
             <FeedbackNotice
-              feedback={{
-                severity: "error",
+              content={{
+                tone: "Danger",
                 title: "This quote link is malformed",
                 message:
                   "The passage couldn't be attached. Reopen it from the reader.",
               }}
+              announcement="Assertive"
             />
           ) : null}
-          {readerSelectionDefect ? (
-            <FeedbackNotice feedback={readerSelectionDefect} />
-          ) : null}
-          {error ? <FeedbackNotice feedback={error} /> : null}
+          {error ? <FeedbackNotice content={error} announcement="Assertive" /> : null}
           <ChatSurface
             ref={convo.scrollRef}
             messages={convo.messages}
@@ -922,9 +954,10 @@ export default function Conversation() {
             initialTargetMessageId={initialTargetMessageId}
             emptyState={
               convo.loading ? (
-                <FeedbackNotice severity="info">
-                  Loading conversation...
-                </FeedbackNotice>
+                <FeedbackNotice
+                  content={{ tone: "Info", title: "Loading conversation..." }}
+                  announcement="None"
+                />
               ) : null
             }
             docentOverlay={

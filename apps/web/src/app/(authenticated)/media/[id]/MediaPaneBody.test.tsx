@@ -104,6 +104,7 @@ const testState = vi.hoisted(() => ({
   lastErrorCode: null as string | null,
   sourceUrl: null as string | null,
   canRetry: false,
+  canRetryMetadata: false,
   canRefreshSource: false,
   contributors: [] as ContributorCredit[],
   canEditAuthors: false,
@@ -124,6 +125,16 @@ const testState = vi.hoisted(() => ({
   conversationResponse: null as Promise<{ data: { id: string } }> | null,
   mediaDetailCallCount: 0,
   onMetadataRetryEnqueued: null as (() => void) | null,
+  onMetadataRetryUnconfirmed: null as
+    | ((content: {
+        tone: "Warning";
+        title: string;
+        message: string;
+        requestId?: string;
+      }) => void)
+    | null,
+  metadataRetryBlocked: false,
+  metadataEnrichedAt: null as string | null,
   includeToc: false,
   includeSecondEpubSection: false,
   secondEpubCanonicalText: "",
@@ -216,8 +227,17 @@ vi.mock("@/lib/reader/ReaderContext", () => ({
 }));
 
 vi.mock("@/lib/media/useDocumentActions", () => ({
-  useDocumentActions: (options: { onMetadataRetryEnqueued: () => void }) => {
+  useDocumentActions: (options: {
+    onMetadataRetryEnqueued: () => void;
+    metadataRetryBlocked: boolean;
+    onMetadataRetryUnconfirmed: NonNullable<
+      typeof testState.onMetadataRetryUnconfirmed
+    >;
+  }) => {
     testState.onMetadataRetryEnqueued = options.onMetadataRetryEnqueued;
+    testState.onMetadataRetryUnconfirmed =
+      options.onMetadataRetryUnconfirmed;
+    testState.metadataRetryBlocked = options.metadataRetryBlocked;
     return {
       deleteBusy: false,
       retryBusy: false,
@@ -229,6 +249,15 @@ vi.mock("@/lib/media/useDocumentActions", () => ({
       handleRetryMetadata: vi.fn(),
     };
   },
+}));
+
+vi.mock("@/lib/billing/useBillingAccount", () => ({
+  useBillingAccount: () => ({
+    account: null,
+    loading: false,
+    error: null,
+    reload: vi.fn(),
+  }),
 }));
 
 vi.mock("@/lib/media/useMediaProcessingStatus", () => ({
@@ -930,6 +959,7 @@ function mediaResponse() {
       can_play: testState.canPlay,
       can_download_file: false,
       can_retry: testState.canRetry,
+      can_retry_metadata: testState.canRetryMetadata,
       can_refresh_source: testState.canRefreshSource,
       can_read_embeds: testState.mediaKind === "web_article",
       can_edit_authors: testState.canEditAuthors,
@@ -941,6 +971,7 @@ function mediaResponse() {
     progress_resettable:
       canonicalAfterReset?.progressResettable ?? testState.progressResettable,
     playerDescriptor: { kind: "Absent" },
+    metadata_enriched_at: testState.metadataEnrichedAt,
   };
 }
 
@@ -1442,6 +1473,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.lastErrorCode = null;
     testState.sourceUrl = null;
     testState.canRetry = false;
+    testState.canRetryMetadata = false;
     testState.canRefreshSource = false;
     testState.contributors = [];
     testState.canEditAuthors = false;
@@ -1456,6 +1488,9 @@ describe("MediaPaneBody pane sizing", () => {
     testState.conversationResponse = null;
     testState.mediaDetailCallCount = 0;
     testState.onMetadataRetryEnqueued = null;
+    testState.onMetadataRetryUnconfirmed = null;
+    testState.metadataRetryBlocked = false;
+    testState.metadataEnrichedAt = null;
     testState.readerFocusMode = "off";
     testState.readerPersistence = { state: "Clean" };
     testState.lecternItems = [];
@@ -1533,7 +1568,10 @@ describe("MediaPaneBody pane sizing", () => {
           if (testState.initialMediaFailureStatus !== null) {
             throw {
               status: testState.initialMediaFailureStatus,
-              code: "E_TEST_MEDIA_LOAD",
+              code:
+                testState.initialMediaFailureStatus === 404
+                  ? "E_MEDIA_NOT_FOUND"
+                  : "E_UPSTREAM",
               message: "Media load failed",
             };
           }
@@ -1790,6 +1828,24 @@ describe("MediaPaneBody pane sizing", () => {
             receivedAccess: [],
           });
         }
+        if (/^\/api\/highlights\/[^/]+\/reader-target$/.test(path)) {
+          return jsonResponse({
+            kind: "PdfPageGeometry",
+            page_number: 1,
+            quads: [
+              {
+                x1: 70,
+                y1: 60,
+                x2: 230,
+                y2: 60,
+                x3: 230,
+                y3: 80,
+                x4: 70,
+                y4: 80,
+              },
+            ],
+          });
+        }
         throw new Error(`Unexpected API call: ${path}`);
       },
     );
@@ -2001,7 +2057,12 @@ describe("MediaPaneBody pane sizing", () => {
     ).toBeNull();
 
     await act(async () => {
-      firstCreate.reject(new Error("controlled highlight failure"));
+      firstCreate.reject(
+        Object.assign(new Error("controlled highlight failure"), {
+          status: 502,
+          code: "E_UPSTREAM",
+        }),
+      );
       await firstCreate.promise.catch(() => undefined);
     });
 
@@ -2467,13 +2528,13 @@ describe("MediaPaneBody pane sizing", () => {
     testState.renderHtmlInMock = true;
     testState.documentMapFailure = {
       status: 500,
-      code: "E_TEST_DOCUMENT_MAP",
+      code: "E_UPSTREAM",
     };
     const { onSetPaneSecondary } = renderMediaPane({
       renderSecondarySurfaceId: "resource-evidence",
     });
 
-    await screen.findByText("Document Map could not be loaded.", undefined, {
+    await screen.findByText("Document Map couldn’t be loaded", undefined, {
       timeout: 10_000,
     });
     const publication = latestSecondaryPublication(onSetPaneSecondary);
@@ -3023,6 +3084,51 @@ describe("MediaPaneBody pane sizing", () => {
     expect(latestPrimaryChrome()?.header).toEqual(ready.header);
   });
 
+  it("owns an unconfirmed metadata retry persistently until canonical terminal evidence clears its gate", async () => {
+    testState.canRetryMetadata = true;
+    renderMediaPane();
+    await getReadyPrimaryChrome();
+
+    act(() => {
+      testState.onMetadataRetryUnconfirmed?.({
+        tone: "Warning",
+        title: "Metadata request couldn’t be confirmed",
+        message: "Its status is being checked. Don’t start it again yet.",
+        requestId: "req-unconfirmed-metadata",
+      });
+    });
+
+    await waitFor(() => expect(testState.metadataRetryBlocked).toBe(true));
+    const persistentRail = screen.getByLabelText("Persistent feedback");
+    expect(
+      within(persistentRail).getByText(
+        "Metadata request couldn’t be confirmed",
+      ),
+    ).toBeVisible();
+    expect(
+      within(persistentRail).getByText(
+        "Nexus request ID: req-unconfirmed-metadata",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("HUD feedback")).queryByText(
+        "Metadata request couldn’t be confirmed",
+      ),
+    ).toBeNull();
+
+    await waitFor(() => expect(testState.mediaDetailCallCount).toBe(2));
+    testState.metadataEnrichedAt = "2026-01-02T00:00:00Z";
+
+    await waitFor(() => expect(testState.metadataRetryBlocked).toBe(false), {
+      timeout: 4_500,
+    });
+    expect(
+      within(persistentRail).queryByText(
+        "Metadata request couldn’t be confirmed",
+      ),
+    ).toBeNull();
+  });
+
   it("keeps ready identity when a subordinate fragment request returns 404", async () => {
     testState.mediaKind = "video";
     testState.fragmentFailure = {
@@ -3040,7 +3146,7 @@ describe("MediaPaneBody pane sizing", () => {
       }),
     });
     expect(
-      screen.getByText("Transcript content is still being processed."),
+      screen.getByText("Transcript content is still being processed"),
     ).toBeVisible();
   });
 
@@ -3621,7 +3727,11 @@ describe("MediaPaneBody pane sizing", () => {
       highlightRef: `highlight:${PDF_HIGHLIGHT_ID}`,
       idempotencyKey: expect.any(String),
     });
-    expect(screen.getByText("Creating lesson…")).toBeVisible();
+    expect(
+      within(screen.getByLabelText("Persistent feedback")).getByText(
+        "Creating lesson…",
+      ),
+    ).toBeVisible();
 
     learn.resolve({
       kind: "Opened",
@@ -3646,7 +3756,10 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaKind = "pdf";
     testState.documentMapPassageGroups = [pdfHighlightPassage()];
     learnMocks.learnDossierFromHighlight.mockRejectedValueOnce(
-      new Error("resolver unavailable"),
+      Object.assign(new Error("resolver unavailable"), {
+        status: 502,
+        code: "E_UPSTREAM",
+      }),
     );
     const consoleError = vi
       .spyOn(console, "error")
@@ -3665,7 +3778,7 @@ describe("MediaPaneBody pane sizing", () => {
 
       expect(
         await screen.findByText(
-          "Could not create a lesson from this Highlight. Open the saved Highlight and try Learn again.",
+          "Lesson couldn’t be created",
         ),
       ).toBeVisible();
       expect(onActivateWorkspaceTarget).not.toHaveBeenCalled();

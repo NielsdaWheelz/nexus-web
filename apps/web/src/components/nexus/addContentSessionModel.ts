@@ -1,9 +1,6 @@
-import {
-  toFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { isAbortError } from "@/lib/errors";
+import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import type { AddSeed } from "@/lib/nexus/model";
 import type { LibraryDestinationSelection } from "@/lib/libraries/client";
 import type {
@@ -156,40 +153,28 @@ export type AcceptanceFailure =
   | { kind: "Defect"; error: unknown };
 
 export function acceptanceErrorMessage(error: unknown): AcceptanceFailure {
-  if (isApiError(error)) {
-    if (isSameSystemApiDefect(error)) {
-      // justify-defect: same-system contract failures are not product outcomes.
-      return { kind: "Defect", error };
-    }
-    const feedback = toFeedback(error, {
-      fallback: "This item could not be added.",
-    });
-    if (
-      error.status >= 500 ||
-      error.code === "E_UPSTREAM" ||
-      error.code === "E_UPSTREAM_TIMEOUT"
-    ) {
-      return {
-        kind: "Unresolved",
-        feedback: { ...feedback, severity: "warning" },
-      };
-    }
-    return { kind: "Rejected", feedback };
+  if (!isApiError(error) || isSameSystemApiDefect(error)) {
+    return { kind: "Defect", error };
+  }
+
+  let feedback: FeedbackContent;
+  try {
+    feedback = mediaCaptureErrorMessage(error, "SaveSource");
+  } catch (caughtDefect: unknown) {
+    return { kind: "Defect", error: caughtDefect };
   }
   if (
-    error instanceof TypeError ||
-    (error instanceof DOMException && !isAbortError(error))
+    error.status >= 500 ||
+    error.code === "E_NETWORK" ||
+    error.code === "E_UPSTREAM" ||
+    error.code === "E_UPSTREAM_TIMEOUT"
   ) {
     return {
       kind: "Unresolved",
-      feedback: {
-        severity: "warning",
-        title:
-          "Nexus may have accepted this item. Check its status before restaging.",
-      },
+      feedback: { ...feedback, tone: "Warning" },
     };
   }
-  return { kind: "Defect", error };
+  return { kind: "Rejected", feedback };
 }
 
 export type AddSessionAction =
@@ -286,7 +271,7 @@ export function reduceAddSession(
     case "StageItems": {
       if (state.items.length + action.items.length > ADD_SESSION_MAX_ITEMS) {
         const feedback: FeedbackContent = {
-          severity: "error",
+          tone: "Danger",
           title: `Add up to ${ADD_SESSION_MAX_ITEMS} items at a time.`,
         };
         return action.source === "Url"

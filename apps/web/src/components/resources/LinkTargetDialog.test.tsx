@@ -225,6 +225,32 @@ describe("LinkTargetDialog", () => {
     expect(onPick).toHaveBeenCalledOnce();
   });
 
+  it("renders the consumer-owned create failure and invokes its exact Retry", async () => {
+    stubSearch([]);
+    const retry = vi.fn();
+    render(
+      <LinkTargetDialog
+        open
+        failure={{
+          content: {
+            tone: "Danger",
+            title: "Link wasn’t created",
+            message: "Check your connection and retry.",
+            requestId: "req-link-1",
+          },
+          actions: [{ label: "Retry", onClick: retry }],
+        }}
+        onPick={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Link wasn’t created");
+    expect(screen.getByText(/req-link-1/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
   it("navigates and picks with the keyboard, and closes on Escape", async () => {
     const secondId = "33333333-3333-4333-8333-333333333333";
     const secondRef = `media:${secondId}`;

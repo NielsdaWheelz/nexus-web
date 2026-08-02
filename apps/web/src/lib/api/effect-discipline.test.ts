@@ -440,25 +440,6 @@ describe("effect discipline source shape", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("requires caught feedback errors to classify unauthenticated errors", () => {
-    const catchPattern = /\bcatch\s*(?:\(|\{)|\.catch\s*\(/;
-    const authHandlerPattern =
-      /handleUnauthenticatedApiError|isUnauthenticatedApiError|useUnauthenticatedApiHandler/;
-    const offenders = sourceFiles(join(process.cwd(), "src"))
-      .map((path) => ({ path: repoPath(path), text: readFileSync(path, "utf8") }))
-      .filter((source) =>
-        source.path.startsWith("src/app/(authenticated)") ||
-        source.path.startsWith("src/components") ||
-        source.path.startsWith("src/lib"),
-      )
-      .filter((source) => catchPattern.test(source.text))
-      .filter((source) => /toFeedback\(/.test(source.text))
-      .filter((source) => !authHandlerPattern.test(source.text))
-      .map((source) => source.path);
-
-    expect(offenders).toEqual([]);
-  });
-
   it("keeps raw fetch in explicit boundary modules", () => {
     const offenders = readSources()
       .filter((file) => {

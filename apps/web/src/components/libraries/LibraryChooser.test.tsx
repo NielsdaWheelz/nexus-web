@@ -216,17 +216,30 @@ describe("LibraryChooser", () => {
   it("shows an alert with Retry when the error is retryable", () => {
     const onRetry = vi.fn();
     renderChooser({
-      error: { message: "Couldn’t load your libraries.", onRetry },
+      error: {
+        content: {
+          tone: "Danger",
+          title: "Couldn’t load your libraries.",
+        },
+        onRetry,
+      },
     });
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("Couldn’t load your libraries.");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it("shows a terminal alert without Retry when onRetry is null", () => {
     renderChooser({
-      error: { message: "This item is no longer available.", onRetry: null },
+      error: {
+        content: {
+          tone: "Danger",
+          title: "This item is no longer available.",
+        },
+        onRetry: null,
+      },
     });
     expect(screen.getByRole("alert")).toHaveTextContent(
       "This item is no longer available.",

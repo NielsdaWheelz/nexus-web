@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import {
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import {
   requirePaneRuntime,
@@ -56,6 +63,36 @@ interface AtlasOut {
   stars: StarOut[];
   constellations: ConstellationOut[];
   edges: AtlasEdgeOut[];
+}
+
+function atlasLoadErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "The Atlas couldn’t be loaded",
+        message: "Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
+function atlasReadingsErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "The readings layer couldn’t be loaded",
+        message: "Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
 }
 
 // ---- geometry constants (reused from the oracle atlas) ---------------------
@@ -370,7 +407,7 @@ export default function GrandAtlasPaneBody() {
   const atlas = atlasResource.status === "ready" ? atlasResource.data.data : null;
   const loadError =
     atlasResource.status === "error"
-      ? toFeedback(atlasResource.error, { fallback: "The Atlas could not be loaded." })
+      ? atlasLoadErrorMessage(atlasResource.error)
       : null;
 
   // Readings layer is fetched lazily — a null cacheKey holds the fetch until the
@@ -380,6 +417,10 @@ export default function GrandAtlasPaneBody() {
     path: () => "/api/oracle/readings",
   });
   const readings = readingsResource.status === "ready" ? readingsResource.data.data : null;
+  const readingsLoadError =
+    readingsResource.status === "error"
+      ? atlasReadingsErrorMessage(readingsResource.error)
+      : null;
 
   const corpusStars = useMemo<CorpusStar[]>(() => {
     if (!atlas) return [];
@@ -754,7 +795,10 @@ export default function GrandAtlasPaneBody() {
         </div>
 
         {loadError !== null && (
-          <FeedbackNotice feedback={loadError} className={styles.atlasFeedback} />
+          <FeedbackNotice content={loadError} announcement="Assertive" />
+        )}
+        {readingsLoadError !== null && (
+          <FeedbackNotice content={readingsLoadError} announcement="Assertive" />
         )}
 
         <div ref={containerRef} className={styles.canvasFrame}>

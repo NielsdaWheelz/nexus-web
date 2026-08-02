@@ -193,14 +193,16 @@ export default function LibraryMembersSurface({
   if (controller.snapshot.kind === "Failed") {
     return (
       <div className={styles.surface}>
-        <FeedbackNotice feedback={controller.snapshot.feedback} />
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => void controller.ensureFresh()}
-        >
-          Retry
-        </Button>
+        <FeedbackNotice
+          content={controller.snapshot.feedback}
+          announcement="Assertive"
+          actions={[
+            {
+              label: "Retry",
+              onClick: () => void controller.ensureFresh(),
+            },
+          ]}
+        />
       </div>
     );
   }
@@ -211,6 +213,15 @@ export default function LibraryMembersSurface({
     refreshFeedback,
     reconciliation,
   } = controller.snapshot;
+  const unconfirmedFeedback =
+    reconciliation.kind === "Unconfirmed"
+      ? refreshFeedback ?? {
+          tone: "Warning" as const,
+          title: "The last change is not confirmed.",
+          message:
+            "Member changes stay disabled until authoritative Library state is reconciled.",
+        }
+      : null;
   const searchResults =
     controller.search.kind === "Ready" ? controller.search.results : [];
   const searchFeedback =
@@ -252,21 +263,22 @@ export default function LibraryMembersSurface({
         </div>
       </div>
 
-      {refreshFeedback ? <FeedbackNotice feedback={refreshFeedback} /> : null}
-      {reconciliation.kind === "Unconfirmed" ? (
-        <div className={styles.unconfirmed} role="alert">
-          <span>
-            The last change is not confirmed. Member changes stay disabled
-            until authoritative Library state is reconciled.
-          </span>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void controller.retryReconciliation()}
-          >
-            Retry reconciliation
-          </Button>
-        </div>
+      {unconfirmedFeedback ? (
+        <FeedbackNotice
+          content={unconfirmedFeedback}
+          announcement="Assertive"
+          actions={[
+            {
+              label: "Retry reconciliation",
+              onClick: () => void controller.retryReconciliation(),
+            },
+          ]}
+        />
+      ) : refreshFeedback ? (
+        <FeedbackNotice
+          content={refreshFeedback}
+          announcement="Assertive"
+        />
       ) : null}
 
       <div className={styles.invite}>
@@ -308,7 +320,12 @@ export default function LibraryMembersSurface({
             Invite
           </Button>
         </div>
-        {searchFeedback ? <FeedbackNotice feedback={searchFeedback} /> : null}
+        {searchFeedback ? (
+          <FeedbackNotice
+            content={searchFeedback}
+            announcement="None"
+          />
+        ) : null}
       </div>
 
       <div className={styles.section}>
@@ -348,14 +365,16 @@ export default function LibraryMembersSurface({
         </div>
         {pageFeedback(members.pageLoad) ? (
           <div className={styles.pageError}>
-            <FeedbackNotice feedback={pageFeedback(members.pageLoad)!} />
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void controller.loadMoreMembers()}
-            >
-              Retry
-            </Button>
+            <FeedbackNotice
+              content={pageFeedback(members.pageLoad)!}
+              announcement="Assertive"
+              actions={[
+                {
+                  label: "Retry",
+                  onClick: () => void controller.loadMoreMembers(),
+                },
+              ]}
+            />
           </div>
         ) : (
           <LoadMoreFooter
@@ -435,25 +454,25 @@ export default function LibraryMembersSurface({
           })}
         </div>
         {pageFeedback(pendingInvites.pageLoad) ? (
-            <div className={styles.pageError}>
-              <FeedbackNotice
-                feedback={pageFeedback(pendingInvites.pageLoad)!}
-              />
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void controller.loadMoreInvites()}
-              >
-                Retry
-              </Button>
-            </div>
-          ) : (
-            <LoadMoreFooter
-              hasMore={pendingInvites.nextCursor.kind === "Present"}
-              loading={pendingInvites.pageLoad.kind === "Loading"}
-              onLoadMore={() => void controller.loadMoreInvites()}
-              label="Load more invitations"
+          <div className={styles.pageError}>
+            <FeedbackNotice
+              content={pageFeedback(pendingInvites.pageLoad)!}
+              announcement="Assertive"
+              actions={[
+                {
+                  label: "Retry",
+                  onClick: () => void controller.loadMoreInvites(),
+                },
+              ]}
             />
+          </div>
+        ) : (
+          <LoadMoreFooter
+            hasMore={pendingInvites.nextCursor.kind === "Present"}
+            loading={pendingInvites.pageLoad.kind === "Loading"}
+            onLoadMore={() => void controller.loadMoreInvites()}
+            label="Load more invitations"
+          />
         )}
       </div>
 
@@ -467,7 +486,7 @@ export default function LibraryMembersSurface({
         aria-live="polite"
         aria-atomic="true"
       >
-        {controller.announcement}
+        {refreshFeedback === null ? controller.announcement : ""}
       </div>
     </section>
   );

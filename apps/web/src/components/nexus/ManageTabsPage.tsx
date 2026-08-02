@@ -1,6 +1,10 @@
 "use client";
 
 import { ArrowLeft, RotateCcw, X } from "lucide-react";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import type { ManageTabsOrigin } from "@/lib/nexus/model";
 import { retainedNexusTargetLabel } from "@/lib/nexus/model";
 import type {
@@ -19,6 +23,7 @@ export default function ManageTabsPage({
   onRestore,
   onRetryRetained,
   onCancelRetained,
+  feedback,
 }: {
   readonly origin: ManageTabsOrigin;
   readonly panes: readonly NexusManagedPane[];
@@ -29,6 +34,7 @@ export default function ManageTabsPage({
   readonly onRestore: (paneId: string) => void;
   readonly onRetryRetained: () => void;
   readonly onCancelRetained: () => void;
+  readonly feedback: { content: FeedbackContent; paneId: string } | null;
 }) {
   return (
     <section className={styles.workflowPage}>
@@ -54,6 +60,19 @@ export default function ManageTabsPage({
             <button type="button" onClick={onCancelRetained}>Cancel</button>
           </div>
         </div>
+      ) : null}
+
+      {feedback ? (
+        <FeedbackNotice
+          content={feedback.content}
+          announcement="Assertive"
+          actions={[
+            {
+              label: "Retry",
+              onClick: () => onRestore(feedback.paneId),
+            },
+          ]}
+        />
       ) : null}
 
       <section className={styles.tabSection} aria-labelledby="nexus-open-tabs">

@@ -81,6 +81,7 @@ import { useMediaSessionAdapter } from "@/lib/player/mediaSession";
 import { parsePlaybackRate } from "@/lib/player/playbackRate";
 import {
   PlayerCapabilityProviders,
+  playerPreferenceErrorMessage,
   type GlobalPlayerState,
   type PlayerCommandsCapability,
   type PlayerPersistence,
@@ -442,6 +443,9 @@ export function BrowserPlayerRuntimeProvider({
   const [outputEffectsAvailable, setOutputEffectsAvailable] = useState(true);
   const [runtimeGeneration, setRuntimeGeneration] = useState(0);
   const [activityAudioPlaying, setActivityAudioPlaying] = useState(false);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
+    null,
+  );
 
   // Latest-value refs read by async callbacks (audio events and heartbeat).
   const lecternRef = useRef(lectern);
@@ -1882,7 +1886,21 @@ export function BrowserPlayerRuntimeProvider({
         ) {
           return;
         }
-        if (isApiError(error) && error.code === "E_NOT_FOUND") {
+        let feedback;
+        try {
+          feedback = playerPreferenceErrorMessage(
+            error,
+            "RememberPlaybackRate",
+          );
+        } catch (defect) {
+          setAsyncDefect({ error: defect });
+          return;
+        }
+        if (
+          isApiError(error) &&
+          (error.code === "E_NOT_FOUND" ||
+            error.code === "E_PODCAST_NOT_FOUND")
+        ) {
           installedPodcastPreferencesRef.current.set(podcastId, {
             kind: "Lapsed",
           });
@@ -1891,11 +1909,7 @@ export function BrowserPlayerRuntimeProvider({
             podcastPreference: absent(),
             remember: {
               kind: "Failed",
-              error: {
-                severity: "error",
-                title: "Podcast subscription no longer exists.",
-                requestId: error.requestId,
-              },
+              error: feedback,
               retryable: false,
             },
           };
@@ -1908,15 +1922,7 @@ export function BrowserPlayerRuntimeProvider({
           ...installed,
           remember: {
             kind: "Failed",
-            error: {
-              severity: "error",
-              title: "Could not remember playback speed",
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "Please try again.",
-              requestId: isApiError(error) ? error.requestId : undefined,
-            },
+            error: feedback,
             retryable: true,
           },
         });
@@ -2617,6 +2623,8 @@ export function BrowserPlayerRuntimeProvider({
     () => ({ commands, session, settings, timeline }),
     [commands, session, settings, timeline],
   );
+
+  if (asyncDefect !== null) throw asyncDefect.error;
 
   return (
     <PlayerCapabilityProviders capabilities={capabilities}>

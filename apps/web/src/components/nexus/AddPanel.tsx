@@ -752,7 +752,7 @@ export default function AddPanel({
                           <span
                             id={feedbackId}
                             className={styles.itemFeedback}
-                            data-severity={feedback.severity}
+                            data-tone={feedback.tone}
                           >
                             {feedback.title}
                             {feedback.message ? ` ${feedback.message}` : ""}
@@ -1022,7 +1022,7 @@ export default function AddPanel({
             error={
               placementPresentation.error
                 ? {
-                    message: placementPresentation.error.title,
+                    content: placementPresentation.error,
                     onRetry: () => {
                       const retryCommand = placementPresentation.retryCommand;
                       if (retryCommand) {

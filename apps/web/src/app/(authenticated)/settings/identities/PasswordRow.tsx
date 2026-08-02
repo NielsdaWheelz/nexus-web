@@ -33,6 +33,7 @@ export function PasswordRow({
   const [password, setPassword] = useState("");
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [pending, startTransition] = useTransition();
 
   const closeDialog = useCallback(() => {
@@ -47,14 +48,18 @@ export function PasswordRow({
     }
     const action = mode === "set" ? setPasswordAction : changePasswordAction;
     startTransition(async () => {
-      const result = await action({ password });
-      if (!result.ok) {
-        setDialogError(result.error);
-        setPassword("");
-        return;
+      try {
+        const result = await action({ password });
+        if (!result.ok) {
+          setDialogError(result.error);
+          setPassword("");
+          return;
+        }
+        await onChanged();
+        closeDialog();
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
       }
-      await onChanged();
-      closeDialog();
     });
   }, [mode, password, onChanged, closeDialog]);
 
@@ -64,12 +69,16 @@ export function PasswordRow({
     }
     setRowError(null);
     startTransition(async () => {
-      const result = await removePasswordAction();
-      if (!result.ok) {
-        setRowError(result.error);
-        return;
+      try {
+        const result = await removePasswordAction();
+        if (!result.ok) {
+          setRowError(result.error);
+          return;
+        }
+        await onChanged();
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
       }
-      await onChanged();
     });
   }, [onChanged]);
 
@@ -121,6 +130,8 @@ export function PasswordRow({
     </Button>
   );
 
+  if (defect !== null) throw defect.error;
+
   return (
     <>
       <CollectionView
@@ -132,7 +143,12 @@ export function PasswordRow({
         rowControls={{ password: actions }}
       />
 
-      {rowError ? <FeedbackNotice severity="error" title={rowError} /> : null}
+      {rowError ? (
+        <FeedbackNotice
+          content={{ tone: "Danger", title: rowError }}
+          announcement="Assertive"
+        />
+      ) : null}
 
       {mode === "set" ? (
         <Dialog open onClose={closeDialog} title="Set password">
@@ -154,7 +170,10 @@ export function PasswordRow({
               aria-label="New password"
             />
             {dialogError ? (
-              <FeedbackNotice severity="error" title={dialogError} />
+              <FeedbackNotice
+                content={{ tone: "Danger", title: dialogError }}
+                announcement="Assertive"
+              />
             ) : null}
             <div className={styles.rowActions}>
               <Button
@@ -197,7 +216,10 @@ export function PasswordRow({
               aria-label="New password"
             />
             {dialogError ? (
-              <FeedbackNotice severity="error" title={dialogError} />
+              <FeedbackNotice
+                content={{ tone: "Danger", title: dialogError }}
+                announcement="Assertive"
+              />
             ) : null}
             <div className={styles.rowActions}>
               <Button

@@ -15,8 +15,10 @@ import {
   it,
   vi,
 } from "vitest";
+import { Component, type ReactNode } from "react";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { ApiError } from "@/lib/api/client";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
@@ -43,6 +45,7 @@ import {
   useMobileChromeReaderScrollport,
 } from "@/lib/workspace/mobileChrome";
 import Nexus from "./Nexus";
+import { nexusErrorMessage } from "./useNexusController";
 
 const PAGE_ID = "11111111-1111-4111-8111-111111111111";
 const PAGE_REF = `page:${PAGE_ID}`;
@@ -72,6 +75,25 @@ let selectionResponse:
 let mediaFromUrlResponse: Promise<Response> | null;
 let viewport: ReturnType<typeof mockViewport>;
 let allowWorkspaceSessionWrite = false;
+
+class NexusDefectBoundary extends Component<
+  { children: ReactNode; onDefect: (error: unknown) => void },
+  { error: unknown | null }
+> {
+  state: { error: unknown | null } = { error: null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  componentDidCatch(error: unknown) {
+    this.props.onDefect(error);
+  }
+
+  render() {
+    return this.state.error ? <p>Nexus defect boundary</p> : this.props.children;
+  }
+}
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -301,6 +323,7 @@ function renderNexus(input: {
   readonly mobile?: boolean;
   readonly readerScrollportProbe?: boolean;
   readonly state?: WorkspaceState;
+  readonly onDefect?: (error: unknown) => void;
 } = {}) {
   const mobile = input.mobile ?? false;
   viewport = mockViewport(mobile);
@@ -331,7 +354,13 @@ function renderNexus(input: {
                     <GlobalPlayerProvider>
                       <ShareControllerProvider>
                         <WorkspaceProbe />
-                        <Nexus />
+                        {input.onDefect ? (
+                          <NexusDefectBoundary onDefect={input.onDefect}>
+                            <Nexus />
+                          </NexusDefectBoundary>
+                        ) : (
+                          <Nexus />
+                        )}
                       </ShareControllerProvider>
                     </GlobalPlayerProvider>
                   </LecternProvider>
@@ -403,6 +432,62 @@ afterEach(() => {
 });
 
 describe("Nexus shell contracts", () => {
+  it("maps only finite operation failures and preserves diagnostics", () => {
+    expect(
+      nexusErrorMessage(
+        new ApiError(0, "E_NETWORK", "offline", "req-nexus"),
+        "Command",
+      ),
+    ).toMatchObject({ tone: "Danger", requestId: "req-nexus" });
+
+    const sameSystem = new ApiError(500, "E_INTERNAL", "broken");
+    expect(() => nexusErrorMessage(sameSystem, "Command")).toThrow(sameSystem);
+
+    const unknownCode = new ApiError(409, "E_NEW_NEXUS_FAILURE", "new");
+    expect(() => nexusErrorMessage(unknownCode, "CreatePage")).toThrow(
+      unknownCode,
+    );
+
+    const nonApi = new Error("decoder failed");
+    expect(() => nexusErrorMessage(nonApi, "SaveHistory")).toThrow(nonApi);
+  });
+
+  it("routes an unknown journal code through owner state into the render boundary", async () => {
+    const onDefect = vi.fn();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    selectionResponse = Promise.resolve(
+      new Response(
+        JSON.stringify({
+          error: { code: "E_NEW_HISTORY_FAILURE", message: "new" },
+        }),
+        {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    try {
+      renderNexus({ mobile: true, onDefect });
+      await userEvent.click(
+        screen.getByRole("button", { name: "Open Nexus, 1 tab" }),
+      );
+      const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+      await userEvent.click(
+        within(dialog).getByRole("button", { name: /^Notes Place$/ }),
+      );
+
+      expect(await screen.findByText("Nexus defect boundary")).toBeVisible();
+      expect(onDefect).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E_NEW_HISTORY_FAILURE" }),
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("consumes the exact Root URL intent once and preserves unrelated URL state", async () => {
     window.history.replaceState(
       {},

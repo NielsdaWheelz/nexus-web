@@ -7,9 +7,16 @@
  * feedback instead of optimistically claiming the copy succeeded.
  */
 
+export class ClipboardWriteUnavailableError extends Error {
+  constructor() {
+    super("Clipboard write is unavailable.");
+    this.name = "ClipboardWriteUnavailableError";
+  }
+}
+
 function fallbackCopyText(value: string): void {
   if (typeof document === "undefined") {
-    throw new Error("Clipboard access is unavailable");
+    throw new ClipboardWriteUnavailableError();
   }
   const textArea = document.createElement("textarea");
   textArea.value = value;
@@ -20,11 +27,15 @@ function fallbackCopyText(value: string): void {
   textArea.select();
   try {
     if (!document.execCommand("copy")) {
-      throw new Error("Clipboard access was denied");
+      throw new ClipboardWriteUnavailableError();
     }
   } finally {
     document.body.removeChild(textArea);
   }
+}
+
+function isClipboardPermissionDenied(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "NotAllowedError";
 }
 
 export async function copyText(value: string): Promise<void> {
@@ -32,7 +43,8 @@ export async function copyText(value: string): Promise<void> {
     try {
       await navigator.clipboard.writeText(value);
       return;
-    } catch {
+    } catch (error) {
+      if (!isClipboardPermissionDenied(error)) throw error;
       fallbackCopyText(value);
       return;
     }

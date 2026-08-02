@@ -1,5 +1,5 @@
-import { act, render, renderHook, waitFor } from "@testing-library/react";
-import { createElement, useState, type ReactNode } from "react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { Component, createElement, useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
 import UnauthenticatedApiBoundary, {
@@ -30,6 +30,43 @@ const redirectToLoginForCurrentLocation = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/auth/client-return-target", () => ({
   redirectToLoginForCurrentLocation,
 }));
+
+class ResourceDefectBoundary extends Component<
+  { children: ReactNode; onDefect: (error: unknown) => void },
+  { error: unknown | null }
+> {
+  state = { error: null as unknown | null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  componentDidCatch(error: unknown): void {
+    this.props.onDefect(error);
+  }
+
+  render() {
+    if (this.state.error !== null) {
+      return <div role="alert">Resource defect</div>;
+    }
+    return this.props.children;
+  }
+}
+
+function ThrowingResource({ error }: { error: unknown }) {
+  const resource = useResource<string>({
+    cacheKey: "defect-resource",
+    load: async () => {
+      throw error;
+    },
+  });
+  return <div data-testid="resource-state">{resource.status}</div>;
+}
+
+function PrefetchedResource({ load }: { load: () => Promise<string> }) {
+  const resource = useResource<string>({ cacheKey: "k1", load });
+  return <div data-testid="resource-state">{resource.status}</div>;
+}
 
 describe("useResource", () => {
   afterEach(() => {
@@ -202,6 +239,33 @@ describe("useResource", () => {
     }
   });
 
+  it.each([
+    ["a non-ApiError", new Error("Resource invariant failed")],
+    [
+      "a same-system ApiError",
+      new ApiError(500, "E_INTERNAL", "Internal service detail"),
+    ],
+  ])("throws %s during render for the nearest boundary", async (_label, defect) => {
+    const onDefect = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      render(
+        <ResourceDefectBoundary onDefect={onDefect}>
+          <ThrowingResource error={defect} />
+        </ResourceDefectBoundary>,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent("Resource defect"),
+      );
+      expect(onDefect).toHaveBeenCalledWith(defect);
+      expect(screen.queryByTestId("resource-state")).not.toBeInTheDocument();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("hands unauthenticated API errors to the auth boundary", async () => {
     redirectToLoginForCurrentLocation.mockReturnValue(true);
     const load = vi.fn(async () => {
@@ -305,7 +369,7 @@ describe("useResource", () => {
     expect(load).not.toHaveBeenCalled();
   });
 
-  it("falls back to its own load when the pending prefetch rejects", async () => {
+  it("falls back to its own load when the pending prefetch rejects with a modeled ApiError", async () => {
     const cache = new ResourceCache({});
     let rejectPrefetch!: (reason: unknown) => void;
     cache.prefetch(
@@ -325,7 +389,7 @@ describe("useResource", () => {
     expect(result.current.status).toBe("loading");
 
     await act(async () => {
-      rejectPrefetch(new Error("prefetch failed"));
+      rejectPrefetch(new ApiError(404, "E_NOT_FOUND", "prefetch missing"));
       await flush();
     });
 
@@ -335,4 +399,50 @@ describe("useResource", () => {
     // The hook recovered by issuing its own fetch after the prefetch rejected.
     expect(load).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    ["a non-ApiError", new Error("prefetch invariant failed")],
+    [
+      "a same-system ApiError",
+      new ApiError(500, "E_INTERNAL", "Internal prefetch detail"),
+    ],
+  ])(
+    "throws pending-prefetch %s during render instead of retrying it",
+    async (_label, defect) => {
+      const cache = new ResourceCache({});
+      let rejectPrefetch!: (reason: unknown) => void;
+      cache.prefetch(
+        "k1",
+        () =>
+          new Promise<unknown>((_, reject) => {
+            rejectPrefetch = reject;
+          }),
+      );
+      const load = vi.fn(async () => "fresh");
+      const onDefect = vi.fn();
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        render(
+          <ResourceDefectBoundary onDefect={onDefect}>
+            <PrefetchedResource load={load} />
+          </ResourceDefectBoundary>,
+          { wrapper: cacheWrapper(cache) },
+        );
+
+        await act(async () => {
+          rejectPrefetch(defect);
+          await flush();
+        });
+
+        await waitFor(() =>
+          expect(screen.getByRole("alert")).toHaveTextContent("Resource defect"),
+        );
+        expect(onDefect).toHaveBeenCalledWith(defect);
+        expect(load).not.toHaveBeenCalled();
+      } finally {
+        consoleError.mockRestore();
+      }
+    },
+  );
 });

@@ -8,7 +8,14 @@ import {
 } from "react";
 import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
@@ -834,7 +841,13 @@ exhaustion: "Complete",
         entriesReadCount += 1;
         if (entriesReadCount === 1) return latePage;
         return Response.json(
-          { error: { code: "E_BAD_REQUEST", message: "Refresh failed" } },
+          {
+            error: {
+              code: "E_UPSTREAM",
+              message: "Refresh failed",
+              request_id: "req-library-refresh",
+            },
+          },
           { status: 400 },
         );
       }
@@ -922,8 +935,17 @@ exhaustion: "Complete",
       }),
     ).resolves.toEqual({
       kind: "Failed",
-      announcement: "Library failed to refresh",
+      announcement: "Library couldn’t be refreshed",
     });
+    expect(
+      await screen.findByText("Library couldn’t be refreshed"),
+    ).toBeVisible();
+    fireEvent.click(screen.getByText("Diagnostics"));
+    expect(
+      screen.getByText("Nexus request ID: req-library-refresh"),
+    ).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
     expect(
       screen.getByRole("link", { name: "Stable Library work" }),
     ).toBeVisible();
@@ -955,7 +977,7 @@ exhaustion: "Complete",
     expect(screen.getAllByText("No matching entry found so far.")).toHaveLength(
       1,
     );
-    expect(screen.getByText("Loading…")).toBeVisible();
+    expect(screen.getByText("Loading library…")).toBeVisible();
   });
 
   it("seeds editable library context into direct Add intent", async () => {
@@ -1469,7 +1491,7 @@ exhaustion: "Partial",
           return Response.json(
             {
               error: {
-                code: "E_FORBIDDEN",
+                code: "E_UPSTREAM",
                 message: "The requested view is unavailable",
               },
             },
@@ -2049,7 +2071,7 @@ exhaustion: "Partial",
 
     resolveConsumption(
       Response.json(
-        { error: { code: "E_INVALID", message: "rejected" } },
+        { error: { code: "E_NETWORK", message: "rejected" } },
         { status: 400 },
       ),
     );
@@ -2127,7 +2149,7 @@ exhaustion: "Complete",
 
     resolveFirst(
       Response.json(
-        { error: { code: "E_INVALID", message: "rejected" } },
+        { error: { code: "E_NETWORK", message: "rejected" } },
         { status: 400 },
       ),
     );
@@ -2548,7 +2570,7 @@ exhaustion: "Complete",
           return Response.json(
             {
               error: {
-                code: "E_FORBIDDEN",
+                code: "E_UPSTREAM",
                 message: "The requested view is unavailable",
               },
             },
@@ -2655,7 +2677,7 @@ exhaustion: "Complete",
           return Response.json(
             {
               error: {
-                code: "E_FORBIDDEN",
+                code: "E_UPSTREAM",
                 message: "Creator view is unavailable",
               },
             },
@@ -4105,7 +4127,7 @@ exhaustion: "Complete",
 
     resolveTitle(
       Response.json(
-        { error: { code: "E_FORBIDDEN", message: "no access" } },
+        { error: { code: "E_UPSTREAM", message: "temporarily unavailable" } },
         { status: 403 },
       ),
     );
@@ -4307,7 +4329,7 @@ exhaustion: "Complete",
     expect(confirmReset).toHaveBeenCalledWith(
       "Reset progress? This starts the item from the beginning. Notes and activity history are kept.",
     );
-    expect(await screen.findByText("Progress reset.")).toBeInTheDocument();
+    expect(screen.queryByText("Progress reset.")).not.toBeInTheDocument();
 
     // The consumption revision advanced, but an unfiltered AllItems(all) view is
     // consumption-insensitive: it keeps the immediate local patch and never

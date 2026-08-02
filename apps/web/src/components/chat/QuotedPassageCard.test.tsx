@@ -253,7 +253,7 @@ describe("QuotedPassageCard", () => {
       kind: "LoadFailed",
       intent: INTENT,
       error: {
-        severity: "error",
+        tone: "Danger",
         title: "Couldn't load the quoted passage",
         message: "The reader service didn't respond.",
       },
@@ -271,7 +271,7 @@ describe("QuotedPassageCard", () => {
     expect(screen.getByText("Couldn't load the quoted passage")).toBeInTheDocument();
     expect(screen.getByText("The reader service didn't respond.")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Retry loading quoted passage" }));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
@@ -295,7 +295,7 @@ describe("QuotedPassageCard", () => {
 
       expect(screen.getByText(title)).toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "Retry loading quoted passage" }),
+        screen.queryByRole("button", { name: "Retry" }),
       ).toBeNull();
       // Still removable so the user is never trapped.
       expect(
