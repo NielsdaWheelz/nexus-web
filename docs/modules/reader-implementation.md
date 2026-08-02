@@ -355,6 +355,11 @@ comes from the format-owned semantic viewport.
   `data-active-highlight-ids`.
 - PDF readers project highlights from visible page geometry and the current PDF
   viewport transform.
+- A committed PDF create or bounds edit enters a state-backed unreconciled-write
+  ledger. The visible page is the merge of its server snapshot and that ledger,
+  so page/render transitions cannot erase a successful write before read-back;
+  exact server geometry acknowledgement retires the entry, while a newer
+  external mutation refresh can supersede it.
 - Projection remeasures after reader typography, active fragment/section,
   rendered HTML, PDF zoom/page render epoch, active secondary surface, secondary
   width, or evidence data changes.

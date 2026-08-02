@@ -1350,6 +1350,14 @@ describe("PdfReader selection chat destinations", () => {
       await screen.findByTestId("pdf-highlight-committed-highlight-0"),
     ).toBeVisible();
 
+    act(() => {
+      pdfRuntimeState.eventBus?.dispatch("pagechanging", { pageNumber: 2 });
+      pdfRuntimeState.eventBus?.dispatch("pagechanging", { pageNumber: 1 });
+    });
+    expect(
+      screen.getByTestId("pdf-highlight-committed-highlight-0"),
+    ).toBeVisible();
+
     reconciliation.resolve({
       data: { page_number: 1, highlights: [] },
     });
@@ -1379,6 +1387,28 @@ describe("PdfReader selection chat destinations", () => {
     expect(
       screen.getByTestId("pdf-highlight-committed-highlight-0"),
     ).toBeVisible();
+
+    pdfRuntimeState.pageHighlights = [];
+    view.rerender(
+      <PdfReader mediaId="media-1" highlightRefreshToken={2} />,
+    );
+    await waitFor(() => {
+      expect(
+        vi
+          .mocked(apiFetch)
+          .mock.calls.filter(
+            ([path, init]) =>
+              path ===
+                "/api/media/media-1/pdf-highlights?page_number=1&mine_only=false" &&
+              (init?.method ?? "GET") === "GET",
+          ),
+      ).toHaveLength(4);
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("pdf-highlight-committed-highlight-0"),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("repositions from the retained PDF Range after native selection collapse", async () => {

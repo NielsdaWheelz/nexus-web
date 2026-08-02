@@ -264,6 +264,11 @@ interface ProjectedHighlightRect {
   height: number;
 }
 
+interface PendingCommittedHighlight {
+  highlight: PdfHighlightOut;
+  externalRefreshTokenAtCommit: number;
+}
+
 interface ViewerEventHandlers {
   pagechanging: (event: unknown) => void;
   pagesloaded: (event: unknown) => void;
@@ -511,6 +516,36 @@ function upsertCommittedPageHighlight(
   );
 }
 
+function samePdfHighlightProjection(
+  left: PdfHighlightOut,
+  right: PdfHighlightOut,
+): boolean {
+  const leftQuads = left.anchor.quads;
+  const rightQuads = right.anchor.quads;
+  return (
+    left.id === right.id &&
+    left.color === right.color &&
+    left.exact === right.exact &&
+    left.anchor.media_id === right.anchor.media_id &&
+    left.anchor.page_number === right.anchor.page_number &&
+    leftQuads.length === rightQuads.length &&
+    leftQuads.every((leftQuad, index) => {
+      const rightQuad = rightQuads[index];
+      return (
+        rightQuad !== undefined &&
+        leftQuad.x1 === rightQuad.x1 &&
+        leftQuad.y1 === rightQuad.y1 &&
+        leftQuad.x2 === rightQuad.x2 &&
+        leftQuad.y2 === rightQuad.y2 &&
+        leftQuad.x3 === rightQuad.x3 &&
+        leftQuad.y3 === rightQuad.y3 &&
+        leftQuad.x4 === rightQuad.x4 &&
+        leftQuad.y4 === rightQuad.y4
+      );
+    })
+  );
+}
+
 function isTextLayerEligibleNode(
   node: Node | null,
   textLayerRoot: HTMLElement | null,
@@ -754,10 +789,12 @@ export default function PdfReader({
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const highlightCreationInFlightRef = useRef(false);
-  const pendingCommittedHighlightsRef = useRef<Map<string, PdfHighlightOut>>(
-    new Map(),
-  );
-  const [pageHighlights, setPageHighlights] = useState<PdfHighlightOut[]>([]);
+  const [pendingCommittedHighlights, setPendingCommittedHighlights] = useState<
+    PendingCommittedHighlight[]
+  >([]);
+  const [serverPageHighlights, setServerPageHighlights] = useState<
+    PdfHighlightOut[]
+  >([]);
   const [signedUrlRefreshToken, setSignedUrlRefreshToken] = useState(0);
   const [localHighlightRefreshToken, setLocalHighlightRefreshToken] =
     useState(0);
@@ -844,6 +881,23 @@ export default function PdfReader({
         : null,
     load: (signal) => loadPageHighlights(mediaId, pageNumber, signal),
   });
+  const pageHighlights = useMemo(() => {
+    let projected = serverPageHighlights.filter(
+      (highlight) =>
+        highlight.anchor.media_id === mediaId &&
+        highlight.anchor.page_number === pageNumber,
+    );
+    for (const pending of pendingCommittedHighlights) {
+      const committed = pending.highlight;
+      if (
+        committed.anchor.media_id === mediaId &&
+        committed.anchor.page_number === pageNumber
+      ) {
+        projected = upsertCommittedPageHighlight(projected, committed);
+      }
+    }
+    return projected;
+  }, [mediaId, pageNumber, pendingCommittedHighlights, serverPageHighlights]);
 
   // Latest-value refs read by async callbacks (event handlers, RAF, etc.).
   onPageHighlightsChangeRef.current = onPageHighlightsChange;
@@ -852,8 +906,12 @@ export default function PdfReader({
   isMobileRef.current = isMobile;
 
   useEffect(() => {
-    pendingCommittedHighlightsRef.current.clear();
+    setPendingCommittedHighlights([]);
   }, [mediaId]);
+
+  useEffect(() => {
+    onPageHighlightsChangeRef.current?.(pageNumber, pageHighlights);
+  }, [pageHighlights, pageNumber]);
 
   useEffect(() => {
     return () => {
@@ -1449,8 +1507,7 @@ export default function PdfReader({
 
       if (targetPage !== pageNumberRef.current) {
         clearSelection();
-        setPageHighlights([]);
-        onPageHighlightsChangeRef.current?.(targetPage, []);
+        setServerPageHighlights([]);
       }
       pageNumberRef.current = targetPage;
       setPageNumber(targetPage);
@@ -1900,8 +1957,7 @@ export default function PdfReader({
         setNavigating(false);
         if (pageChanged) {
           clearSelection();
-          setPageHighlights([]);
-          onPageHighlightsChangeRef.current?.(nextPage, []);
+          setServerPageHighlights([]);
         }
         rememberPageScale(nextPage);
         setTextLayerUsable(isTextLayerUsableForPage(nextPage));
@@ -2477,15 +2533,21 @@ export default function PdfReader({
           createdHighlight?.anchor.type === "pdf_page_geometry" &&
           createdHighlight.anchor.media_id === mediaId
         ) {
-          pendingCommittedHighlightsRef.current.set(
-            createdHighlight.id,
-            createdHighlight,
-          );
-          if (createdHighlight.anchor.page_number === pageNumberRef.current) {
-            setPageHighlights((current) =>
-              upsertCommittedPageHighlight(current, createdHighlight),
+          setPendingCommittedHighlights((current) => {
+            const pending: PendingCommittedHighlight = {
+              highlight: createdHighlight,
+              externalRefreshTokenAtCommit: highlightRefreshToken,
+            };
+            const existingIndex = current.findIndex(
+              (candidate) => candidate.highlight.id === createdHighlight.id,
             );
-          }
+            if (existingIndex < 0) {
+              return [...current, pending];
+            }
+            return current.map((candidate, index) =>
+              index === existingIndex ? pending : candidate,
+            );
+          });
         }
         setLocalHighlightRefreshToken((value) => value + 1);
         onHighlightsMutated?.();
@@ -2505,6 +2567,7 @@ export default function PdfReader({
       buildSelectionQuads,
       clearSelection,
       editingHighlightId,
+      highlightRefreshToken,
       mediaId,
       pageHighlights,
       resolveTextLayerRootFromRange,
@@ -2566,8 +2629,7 @@ export default function PdfReader({
       let waitsForRender = false;
       setNavigating(true);
       clearSelection();
-      setPageHighlights([]);
-      onPageHighlightsChangeRef.current?.(nextPage, []);
+      setServerPageHighlights([]);
       pageNumberRef.current = nextPage;
       setPageNumber(nextPage);
 
@@ -2873,7 +2935,7 @@ export default function PdfReader({
     setReaderRestoreSettled(false);
     setSelection(null);
     setSelectionError(null);
-    setPageHighlights([]);
+    setServerPageHighlights([]);
     setTextLayerUsable(false);
     setTextGeometryReliable(true);
     pageNumberRef.current = startPage;
@@ -2994,31 +3056,33 @@ export default function PdfReader({
       setSelectionError("Failed to load PDF highlights for this page.");
       return;
     }
-    let reconciled = pageHighlightsResource.data;
-    for (const [highlightId, committed] of
-      pendingCommittedHighlightsRef.current) {
-      if (committed.anchor.media_id !== mediaId) {
-        pendingCommittedHighlightsRef.current.delete(highlightId);
-        continue;
-      }
-      if (
-        pageHighlightsResource.data.some(
-          (highlight) => highlight.id === highlightId,
-        )
-      ) {
-        pendingCommittedHighlightsRef.current.delete(highlightId);
-        continue;
-      }
-      if (committed.anchor.page_number === pageNumber) {
-        reconciled = upsertCommittedPageHighlight(reconciled, committed);
-      }
-    }
-    setPageHighlights(reconciled);
-    onPageHighlightsChangeRef.current?.(
-      pageNumber,
-      reconciled,
+    setServerPageHighlights(pageHighlightsResource.data);
+    setPendingCommittedHighlights((current) =>
+      current.filter((pending) => {
+        const committed = pending.highlight;
+        if (committed.anchor.media_id !== mediaId) {
+          return false;
+        }
+        if (committed.anchor.page_number !== pageNumber) {
+          return true;
+        }
+        const acknowledged = pageHighlightsResource.data.some((highlight) =>
+          samePdfHighlightProjection(highlight, committed),
+        );
+        if (acknowledged) {
+          return false;
+        }
+        return (
+          pending.externalRefreshTokenAtCommit === highlightRefreshToken
+        );
+      }),
     );
-  }, [mediaId, pageHighlightsResource, pageNumber]);
+  }, [
+    highlightRefreshToken,
+    mediaId,
+    pageHighlightsResource,
+    pageNumber,
+  ]);
 
   useEffect(() => {
     document.addEventListener("selectionchange", syncSelectionFromWindow);
