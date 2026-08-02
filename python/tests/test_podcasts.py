@@ -21,7 +21,13 @@ from nexus.services.billing_entitlements import (
     grant_entitlement_override,
     revoke_entitlement_override,
 )
-from nexus.services.browse.models import podcast_target, seal_target
+from nexus.services.browse.models import (
+    ResolvedEpisode,
+    ResolvedPodcast,
+    episode_target,
+    podcast_target,
+    seal_target,
+)
 from nexus.services.net.safe_fetch import SafeFetchResult
 from nexus.services.podcasts.deepgram_adapter import TranscriptionResult
 from nexus.services.podcasts.identity import (
@@ -561,6 +567,10 @@ def _bootstrap_user(auth_client, user_id: UUID) -> UUID:
         f"bootstrap failed for user {user_id}: {response.status_code} {response.text}"
     )
     return UUID(response.json()["data"]["default_library_id"])
+
+
+def _library_entry_refs(items: list[dict]) -> list[tuple[str, str]]:
+    return [(row["kind"], row[row["kind"]]["id"]) for row in items]
 
 
 def _set_plan(
@@ -1640,6 +1650,15 @@ class TestPodcastSubscriptionSyncLifecycle:
 
         podcast_id = _subscribe(auth_client, user_id, payload)["podcastId"]
 
+        all_before_sync = auth_client.get(
+            f"/libraries/{default_library_id}/entries",
+            headers=auth_headers(user_id),
+        )
+        assert all_before_sync.status_code == 200, all_before_sync.text
+        assert _library_entry_refs(all_before_sync.json()["data"]["items"]) == [
+            ("podcast", podcast_id)
+        ]
+
         job_result = _run_subscription_sync(
             direct_db,
             user_id,
@@ -1681,6 +1700,98 @@ class TestPodcastSubscriptionSyncLifecycle:
             "Episode Newest",
             "Episode Old",
         ]
+
+        all_after_sync = auth_client.get(
+            f"/libraries/{default_library_id}/entries",
+            headers=auth_headers(user_id),
+        )
+        assert all_after_sync.status_code == 200, all_after_sync.text
+        assert _library_entry_refs(all_after_sync.json()["data"]["items"]) == [
+            ("podcast", podcast_id)
+        ], (
+            "syncing physical child rows must not change the subscribed Podcast's All "
+            "root cardinality"
+        )
+
+        explicit_episode = {
+            "podcast_index_episode_ref": f"ep-explicit-{uuid4()}",
+            "guid": f"guid-explicit-{uuid4()}",
+            "title": "Episode Explicitly Added",
+            "audio_url": f"https://cdn.example.com/explicit-{uuid4()}.mp3",
+            "published_at": "2026-03-02T00:00:00Z",
+            "duration_seconds": 60,
+        }
+        resolved_podcast = ResolvedPodcast(
+            podcast_ref=provider_podcast_id,
+            title=payload["title"],
+            author=None,
+            feed_url=payload["feed_url"],
+            website_url=payload["website_url"],
+            image_url=payload["image_url"],
+            description=payload["description"],
+        )
+        resolved_episode = ResolvedEpisode(
+            podcast_ref=provider_podcast_id,
+            episode_ref=explicit_episode["podcast_index_episode_ref"],
+            title=explicit_episode["title"],
+            description=None,
+            audio_url=explicit_episode["audio_url"],
+            guid=explicit_episode["guid"],
+            published_at=datetime.fromisoformat(explicit_episode["published_at"]),
+            duration_seconds=explicit_episode["duration_seconds"],
+            podcast=resolved_podcast,
+        )
+        with patch(
+            "nexus.services.browse.service.resolve_podcast_discovery_target",
+            return_value=resolved_episode,
+        ):
+            explicit_add = auth_client.post(
+                "/podcast-episodes/from-discovery",
+                json={
+                    "target": seal_target(
+                        episode_target(
+                            provider_podcast_id,
+                            explicit_episode["podcast_index_episode_ref"],
+                        )
+                    ),
+                    "namedLibraryIds": [],
+                },
+                headers={
+                    **auth_headers(user_id),
+                    "Idempotency-Key": f"explicit-add-subscribed-episode-{uuid4()}",
+                },
+            )
+        assert explicit_add.status_code == 200, explicit_add.text
+        explicit_media_id = UUID(explicit_add.json()["data"]["mediaId"])
+
+        with direct_db.session() as session:
+            physical_explicit_entry = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM library_entries
+                    WHERE library_id = :library_id
+                      AND media_id = :media_id
+                    """
+                ),
+                {
+                    "library_id": default_library_id,
+                    "media_id": explicit_media_id,
+                },
+            ).scalar_one_or_none()
+        assert physical_explicit_entry == 1, (
+            "explicit Add must retain a physical Default episode entry even while its "
+            "active Podcast hides that child from All"
+        )
+
+        all_after_explicit_add = auth_client.get(
+            f"/libraries/{default_library_id}/entries",
+            headers=auth_headers(user_id),
+        )
+        assert all_after_explicit_add.status_code == 200, all_after_explicit_add.text
+        assert _library_entry_refs(all_after_explicit_add.json()["data"]["items"]) == [
+            ("podcast", podcast_id)
+        ], "explicitly adding a subscribed child to All must remain hidden behind its Podcast root"
 
     def test_sync_job_auto_queue_opt_in_appends_new_episodes_to_playback_queue(
         self, auth_client, monkeypatch, direct_db
@@ -4966,6 +5077,44 @@ class TestPodcastSubscriptionLifecycleClosure:
         podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(direct_db, user_id, podcast_id)
 
+        with direct_db.session() as session:
+            retained_episode_id = UUID(
+                str(
+                    session.execute(
+                        text(
+                            """
+                            SELECT m.id
+                            FROM podcast_episodes pe
+                            JOIN media m ON m.id = pe.media_id
+                            WHERE pe.podcast_id = :podcast_id
+                              AND m.title = 'Episode One'
+                            """
+                        ),
+                        {"podcast_id": podcast_id},
+                    ).scalar_one()
+                )
+            )
+
+        mark_finished = auth_client.post(
+            "/consumption/commands",
+            json={
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(retained_episode_id),
+            },
+            headers=auth_headers(user_id),
+        )
+        assert mark_finished.status_code == 200, mark_finished.text
+
+        all_while_subscribed = auth_client.get(
+            f"/libraries/{default_library_id}/entries",
+            headers=auth_headers(user_id),
+        )
+        assert all_while_subscribed.status_code == 200, all_while_subscribed.text
+        assert _library_entry_refs(all_while_subscribed.json()["data"]["items"]) == [
+            ("podcast", str(podcast_id))
+        ]
+
         episodes_by_podcast[provider_podcast_id].append(
             {
                 "podcast_index_episode_ref": "ep-m1-2",
@@ -5112,10 +5261,10 @@ class TestPodcastSubscriptionLifecycleClosure:
         # Episodes saved while subscribed are retained; nothing new is ingested for the
         # unsubscribed podcast.
         with direct_db.session() as session:
-            titles = session.execute(
+            retained_rows = session.execute(
                 text(
                     """
-                    SELECT m.title
+                    SELECT m.id, m.title
                     FROM library_entries lm
                     JOIN media m ON m.id = lm.media_id
                     WHERE lm.library_id = :library_id
@@ -5125,7 +5274,20 @@ class TestPodcastSubscriptionLifecycleClosure:
                 ),
                 {"library_id": default_library_id},
             ).fetchall()
-        assert [row[0] for row in titles] == ["Episode One"]
+        assert [(UUID(str(row[0])), row[1]) for row in retained_rows] == [
+            (retained_episode_id, "Episode One")
+        ]
+
+        all_after_unsubscribe = auth_client.get(
+            f"/libraries/{default_library_id}/entries",
+            headers=auth_headers(user_id),
+        )
+        assert all_after_unsubscribe.status_code == 200, all_after_unsubscribe.text
+        surfaced_rows = all_after_unsubscribe.json()["data"]["items"]
+        assert _library_entry_refs(surfaced_rows) == [("media", str(retained_episode_id))], (
+            "retained episodes must resurface as All roots once their subscription ends"
+        )
+        assert surfaced_rows[0]["media"]["read_state"] == "finished"
 
     def test_unsubscribe_removes_authorized_podcast_library_entries_and_keeps_saved_media(
         self, auth_client, monkeypatch, direct_db

@@ -19,12 +19,19 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from nexus.db.models import MediaKind, Podcast, PodcastEpisode
 from nexus.services import library_entries, library_governance
+from nexus.services.collection_revisions import CollectionFamily
 from nexus.services.sealed_handles import (
     seal_library_invitation,
     seal_user,
     unseal_library_invitation,
     unseal_user,
+)
+from nexus.services.signed_keyset_cursor import (
+    KeysetValue,
+    KeysetValueKind,
+    encode_signed_keyset_cursor,
 )
 from tests.factories import (
     add_media_to_library,
@@ -192,6 +199,45 @@ def _library_entry_media_ids(rows: list[dict]) -> list[str]:
     return [
         row["media"]["id"] for row in rows if row["kind"] == "media" and row["media"] is not None
     ]
+
+
+def _seed_podcast_episode_roots(
+    direct_db: DirectSessionManager,
+    *,
+    library_ids: list[UUID],
+    episode_count: int,
+) -> tuple[UUID, list[UUID]]:
+    podcast_id = uuid4()
+    with direct_db.session() as session:
+        session.add(
+            Podcast(
+                id=podcast_id,
+                provider="podcast_index",
+                provider_podcast_id=f"root-inventory-{podcast_id}",
+                title="Root Inventory Podcast",
+                feed_url=f"https://example.com/{podcast_id}.xml",
+            )
+        )
+        session.commit()
+    direct_db.register_cleanup("podcasts", "id", podcast_id)
+
+    media_ids: list[UUID] = []
+    for index in range(episode_count):
+        with direct_db.session() as session:
+            media_id = create_test_media(
+                session,
+                title=f"Root Inventory Episode {index}",
+                kind=MediaKind.podcast_episode.value,
+            )
+            session.add(PodcastEpisode(media_id=media_id, podcast_id=podcast_id))
+            for library_id in library_ids:
+                add_media_to_library(session, library_id, media_id)
+            session.commit()
+        media_ids.append(media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+    return podcast_id, media_ids
 
 
 def _decode_cursor_payload(cursor: str) -> dict:
@@ -1978,6 +2024,7 @@ class TestListLibraryMedia:
         episode_ref = f"episode-{media_id}"
 
         with direct_db.session() as session:
+            named_library_id = create_test_library(session, user_id, "Episode Hydration")
             session.execute(
                 text("""
                     INSERT INTO podcasts (
@@ -2147,8 +2194,11 @@ class TestListLibraryMedia:
             # threshold (position > 0 -> in_progress); no separate session/ledger
             # row is needed.
             add_media_to_library(session, UUID(library_id), media_id)
+            add_media_to_library(session, named_library_id, media_id)
             session.commit()
 
+        direct_db.register_cleanup("libraries", "id", named_library_id)
+        direct_db.register_cleanup("memberships", "library_id", named_library_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcast_episode_chapters", "media_id", media_id)
@@ -2161,13 +2211,12 @@ class TestListLibraryMedia:
         # longer disappears with the media row.
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
 
-        response = _list_library_entries(auth_client, user_id, library_id)
+        default_response = _list_library_entries(auth_client, user_id, library_id)
 
-        assert response.status_code == 200
-        data = _entry_items(response)
-        media_rows = [row for row in data if row["kind"] == "media"]
-        podcast_rows = [row for row in data if row["kind"] == "podcast"]
-        assert len(media_rows) == 1
+        assert default_response.status_code == 200
+        default_rows = _entry_items(default_response)
+        assert [row for row in default_rows if row["kind"] == "media"] == []
+        podcast_rows = [row for row in default_rows if row["kind"] == "podcast"]
         assert [row["podcast"]["id"] for row in podcast_rows] == [str(podcast_id)]
         assert podcast_rows[0]["subscription"]["value"]["defaultPlaybackSpeed"] == {
             "kind": "Present",
@@ -2177,6 +2226,27 @@ class TestListLibraryMedia:
             "kind": "Present",
             "value": "Natural",
         }
+
+        for params in (
+            {"entry_type": MediaKind.podcast_episode.value},
+            {"completion": "unfinished"},
+            {"projection": "in-progress"},
+        ):
+            filtered_default = _list_library_entries(
+                auth_client,
+                user_id,
+                library_id,
+                **params,
+            )
+            assert filtered_default.status_code == 200, filtered_default.text
+            assert _entry_items(filtered_default) == []
+
+        response = _list_library_entries(auth_client, user_id, str(named_library_id))
+        assert response.status_code == 200
+        data = _entry_items(response)
+        media_rows = [row for row in data if row["kind"] == "media"]
+        assert len(media_rows) == 1
+        assert [row for row in data if row["kind"] == "podcast"] == []
         media_row = media_rows[0]
         media = media_row["media"]
         assert media["id"] == str(media_id)
@@ -2607,6 +2677,129 @@ class TestDefaultLibraryVirtualView:
     system-library exclusion, and cursor scoping. Replaces the deleted
     closure/intrinsic materialization tests — there is no provenance table to
     assert on anymore, only the live query's observable behavior."""
+
+    def test_active_subscription_subsumes_episode_roots_for_viewer_and_count(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        subscribed_viewer = create_test_user_id()
+        unsubscribed_viewer = create_test_user_id()
+        subscribed_default = UUID(_default_library_id(auth_client, subscribed_viewer))
+        unsubscribed_default = UUID(_default_library_id(auth_client, unsubscribed_viewer))
+        podcast_id, episode_ids = _seed_podcast_episode_roots(
+            direct_db,
+            library_ids=[subscribed_default, unsubscribed_default],
+            episode_count=3,
+        )
+        standalone_ids = [
+            _create_default_media(
+                direct_db,
+                str(subscribed_default),
+                title=f"Standalone Root {index}",
+            )
+            for index in range(4)
+        ]
+
+        with direct_db.session() as session:
+            add_test_podcast_subscription(
+                session,
+                user_id=subscribed_viewer,
+                podcast_id=podcast_id,
+            )
+            session.commit()
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+
+        exhausted_rows: list[dict] = []
+        cursor = None
+        revision = None
+        page_count = 0
+        for _ in range(10):
+            subscribed = _list_library_entries(
+                auth_client,
+                subscribed_viewer,
+                str(subscribed_default),
+                limit=2,
+                **(
+                    {"cursor": cursor, "collection_revision": revision}
+                    if cursor is not None
+                    else {}
+                ),
+            )
+            assert subscribed.status_code == 200, subscribed.text
+            exhausted_rows.extend(_entry_items(subscribed))
+            page_count += 1
+            revision = _entry_revision(subscribed)
+            cursor = _entry_cursor(subscribed)
+            if cursor is None:
+                break
+
+        exhausted_roots = [
+            (
+                row["kind"],
+                row["media"]["id"] if row["kind"] == "media" else row["podcast"]["id"],
+            )
+            for row in exhausted_rows
+        ]
+        expected_roots = {
+            *(("media", str(media_id)) for media_id in standalone_ids),
+            ("podcast", str(podcast_id)),
+        }
+        assert page_count > 1
+        assert cursor is None
+        assert set(exhausted_roots) == expected_roots
+        assert len(exhausted_roots) == len(set(exhausted_roots))
+        assert not (
+            {str(media_id) for media_id in episode_ids}
+            & {target_id for kind, target_id in exhausted_roots if kind == "media"}
+        )
+
+        unfiled = _list_library_entries(
+            auth_client,
+            subscribed_viewer,
+            str(subscribed_default),
+            projection="unfiled",
+        )
+        assert unfiled.status_code == 200, unfiled.text
+        unfiled_rows = _entry_items(unfiled)
+        assert {row["media"]["id"] for row in unfiled_rows if row["kind"] == "media"} == {
+            str(media_id) for media_id in standalone_ids
+        }
+        assert [row for row in unfiled_rows if row["kind"] == "podcast"] == []
+
+        podcast_only = _list_library_entries(
+            auth_client,
+            subscribed_viewer,
+            str(subscribed_default),
+            entry_type="podcast",
+        )
+        assert podcast_only.status_code == 200, podcast_only.text
+        podcast_rows = _entry_items(podcast_only)
+        assert len(podcast_rows) == 1
+        assert podcast_rows[0]["kind"] == "podcast"
+        assert podcast_rows[0]["podcast"]["id"] == str(podcast_id)
+
+        unsubscribed = _list_library_entries(
+            auth_client,
+            unsubscribed_viewer,
+            str(unsubscribed_default),
+        )
+        assert unsubscribed.status_code == 200, unsubscribed.text
+        unsubscribed_rows = _entry_items(unsubscribed)
+        assert set(_library_entry_media_ids(unsubscribed_rows)) == {
+            str(media_id) for media_id in episode_ids
+        }
+        assert [row for row in unsubscribed_rows if row["kind"] == "podcast"] == []
+
+        with direct_db.session() as session:
+            assert library_entries.count_default_root_inventory(
+                session,
+                viewer_id=subscribed_viewer,
+                library_id=subscribed_default,
+            ) == len(exhausted_roots)
+            assert library_entries.count_default_root_inventory(
+                session,
+                viewer_id=unsubscribed_viewer,
+                library_id=unsubscribed_default,
+            ) == len(episode_ids)
 
     def test_direct_and_shared_media_appears_once_preferring_direct_entry(
         self, auth_client, direct_db: DirectSessionManager, _sharing_entitled
@@ -7257,6 +7450,44 @@ class TestLibraryEntryCursor:
         cursor = _entry_cursor(first)
         assert cursor is not None
         return cursor, _entry_revision(first)
+
+    def test_pre_root_subsumption_default_cursor_is_rejected(self, auth_client, direct_db):
+        user_id, default_id = self._seed(auth_client, direct_db)
+        _, revision = self._first_cursor(auth_client, user_id, default_id)
+        pre_cutover = encode_signed_keyset_cursor(
+            family=CollectionFamily.LibraryEntries.value,
+            query={
+                "libraryId": default_id,
+                "plan": [
+                    {"column": "title_key", "direction": "asc", "valueKind": "text"},
+                    {"column": "target_kind", "direction": "asc", "valueKind": "text"},
+                    {"column": "target_id", "direction": "desc", "valueKind": "uuid"},
+                ],
+                "view": {
+                    "entryType": {"kind": "all-types"},
+                    "order": {"sort": "title", "direction": "asc"},
+                    "projection": {"completion": "all", "kind": "all-items"},
+                },
+                "viewerId": str(user_id),
+            },
+            after=(
+                KeysetValue(KeysetValueKind.Text, "a"),
+                KeysetValue(KeysetValueKind.Text, "media"),
+                KeysetValue(KeysetValueKind.Uuid, uuid4()),
+            ),
+        )
+
+        response = _list_library_entries(
+            auth_client,
+            user_id,
+            default_id,
+            sort="title",
+            direction="asc",
+            cursor=pre_cutover,
+            collection_revision=revision,
+        )
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
     def test_cursor_bound_to_exact_view(self, auth_client, direct_db):
         user_id, default_id = self._seed(auth_client, direct_db)

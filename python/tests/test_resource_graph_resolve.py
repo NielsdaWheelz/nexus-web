@@ -38,7 +38,7 @@ from nexus.db.models import (
     ResourceEdge,
     ResourceExternalSnapshot,
 )
-from nexus.services import oracle_corpus
+from nexus.services import library_entries, oracle_corpus
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.contributor_taxonomy import contributor_match_key
@@ -750,6 +750,127 @@ def test_resolve_default_library_counts_distinct_virtual_media(
     assert not resolved.missing
     assert resolved.summary.endswith("(3 items)"), (
         f"expected 3 distinct virtual media (Direct, Shelved, Everywhere-once); "
+        f"got {resolved.summary!r}"
+    )
+
+
+def test_resolve_default_library_counts_subscribed_show_once_and_matches_root_list(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """A subscribed show subsumes its retained episode children in Default."""
+    default_library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert default_library_id is not None
+    podcast = Podcast(
+        id=uuid4(),
+        provider="podcastindex",
+        provider_podcast_id=uuid4().hex,
+        title="Container Show",
+        feed_url=f"https://example.org/feed-{uuid4().hex[:8]}.xml",
+    )
+    db_session.add(podcast)
+    db_session.flush()
+    episode_ids = [
+        create_test_media(
+            db_session,
+            title=f"Container Episode {ordinal}",
+            kind="podcast_episode",
+        )
+        for ordinal in range(2)
+    ]
+    for episode_id in episode_ids:
+        db_session.execute(
+            text(
+                """
+                INSERT INTO podcast_episodes (media_id, podcast_id, duration_seconds)
+                VALUES (:media_id, :podcast_id, 60)
+                """
+            ),
+            {"media_id": episode_id, "podcast_id": podcast.id},
+        )
+        add_media_to_library(db_session, default_library_id, episode_id)
+    standalone_media_id = create_test_media(db_session, title="Standalone")
+    add_media_to_library(db_session, default_library_id, standalone_media_id)
+    add_test_podcast_subscription(db_session, user_id=bootstrapped_user, podcast_id=podcast.id)
+    db_session.commit()
+
+    page = library_entries.list_library_entries(
+        db_session,
+        bootstrapped_user,
+        default_library_id,
+        view=library_entries.LibraryEntryView(
+            order=library_entries.Canonical(),
+            projection=library_entries.AllItems("all"),
+            entry_type=library_entries.AllTypes(),
+        ),
+    )
+    resolved = _resolve(db_session, f"library:{default_library_id}", viewer_id=bootstrapped_user)
+
+    assert len(page.items) == 2
+    assert library_entries.count_default_root_inventory(
+        db_session, viewer_id=bootstrapped_user, library_id=default_library_id
+    ) == len(page.items)
+    assert {item.kind for item in page.items} == {"media", "podcast"}
+    assert [item.media.id for item in page.items if item.kind == "media"] == [standalone_media_id]
+    assert [item.podcast.id for item in page.items if item.kind == "podcast"] == [podcast.id]
+    assert resolved.summary.endswith("(2 items)"), (
+        "resource-graph Default summary must use the same subsumed root count as the list; "
+        f"got {resolved.summary!r}"
+    )
+
+
+def test_resolve_default_library_keeps_episode_root_when_only_another_viewer_subscribes(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """A different viewer's subscription cannot suppress this viewer's Default root."""
+    default_library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert default_library_id is not None
+    other_user_id = uuid4()
+    ensure_user_and_default_library(db_session, other_user_id)
+    podcast = Podcast(
+        id=uuid4(),
+        provider="podcastindex",
+        provider_podcast_id=uuid4().hex,
+        title="Other Viewer's Show",
+        feed_url=f"https://example.org/feed-{uuid4().hex[:8]}.xml",
+    )
+    db_session.add(podcast)
+    db_session.flush()
+    episode_id = create_test_media(
+        db_session, title="Other Viewer's Episode", kind="podcast_episode"
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO podcast_episodes (media_id, podcast_id, duration_seconds)
+            VALUES (:media_id, :podcast_id, 60)
+            """
+        ),
+        {"media_id": episode_id, "podcast_id": podcast.id},
+    )
+    add_media_to_library(db_session, default_library_id, episode_id)
+    add_test_podcast_subscription(db_session, user_id=other_user_id, podcast_id=podcast.id)
+    db_session.commit()
+
+    page = library_entries.list_library_entries(
+        db_session,
+        bootstrapped_user,
+        default_library_id,
+        view=library_entries.LibraryEntryView(
+            order=library_entries.Canonical(),
+            projection=library_entries.AllItems("all"),
+            entry_type=library_entries.AllTypes(),
+        ),
+    )
+    resolved = _resolve(db_session, f"library:{default_library_id}", viewer_id=bootstrapped_user)
+
+    assert len(page.items) == 1
+    assert page.items[0].kind == "media"
+    assert page.items[0].media.id == episode_id
+    assert library_entries.count_default_root_inventory(
+        db_session, viewer_id=bootstrapped_user, library_id=default_library_id
+    ) == len(page.items)
+    assert resolved.summary.endswith("(1 items)"), (
+        "another viewer's subscription must not alter this viewer's Default resource summary; "
         f"got {resolved.summary!r}"
     )
 

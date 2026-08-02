@@ -1,5 +1,11 @@
 # Library Entry Type Filter + FilterRows Reflow Hard Cutover
 
+> **Podcast container-first All update (2026-08-02):**
+> [`podcast-container-first-all-hard-cutover.md`](podcast-container-first-all-hard-cutover.md)
+> makes exact type filtering consume Default/All's root-subsumed inventory.
+> `podcast` returns active subscription containers; `podcast_episode` excludes
+> their child episodes while the subscription remains active.
+
 **Status:** IMPLEMENTED AND VERIFIED · 2026-08-02
 **Type:** Hard cutover — one final path; no feature flag, legacy URL alias,
 fallback parser, dual filter, compatibility branch, or mixed layout policy

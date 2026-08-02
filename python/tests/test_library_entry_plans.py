@@ -37,7 +37,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import MediaKind
+from nexus.db.models import MediaKind, Podcast, PodcastEpisode
 from nexus.services import library_entries
 from nexus.services.library_entries import (
     Added,
@@ -52,6 +52,7 @@ from nexus.services.library_entries import (
 )
 from tests.factories import (
     add_media_to_library,
+    add_test_podcast_subscription,
     create_test_library,
     create_test_media,
     get_user_default_library,
@@ -116,6 +117,8 @@ def _seed_plan_fixture(db: Session, viewer_id: UUID) -> _Fixture:
     - Group D (3): named library B only, Unread (no consumption fact).
     - Group E (8): filed only in Default — 4 Finished, 4 Unread — Unfiled but a
       finished/unread subset so completion filtering does real work.
+    - Group F (20): Podcast-episode Media filed only in Default whose one active
+      parent subscription contributes a single Podcast root instead.
 
     So Default AllItems/Unfiled/InProgress each exceed the page limit (they get a
     real continuation page), while named-library A holds only ~10 entries.
@@ -127,10 +130,10 @@ def _seed_plan_fixture(db: Session, viewer_id: UUID) -> _Fixture:
 
     total = 0
 
-    def _media(title: str) -> UUID:
+    def _media(title: str, *, kind: str = MediaKind.web_article.value) -> UUID:
         nonlocal total
         total += 1
-        return create_test_media(db, title=title)
+        return create_test_media(db, title=title, kind=kind)
 
     # Group A: 100 default-only InProgress (unfiled candidates + InProgress core).
     for i in range(100):
@@ -172,10 +175,31 @@ def _seed_plan_fixture(db: Session, viewer_id: UUID) -> _Fixture:
         mid = _media(f"E default-only unread {i:03d}")
         add_media_to_library(db, default_id, mid)
 
+    # Group F: descendant episode storage remains in Default, while the active
+    # parent contributes the sole Default root for this family.
+    podcast_id = uuid4()
+    db.add(
+        Podcast(
+            id=podcast_id,
+            provider="podcast_index",
+            provider_podcast_id=f"plan-root-{podcast_id}",
+            title="Plan Root Podcast",
+            feed_url=f"https://example.com/{podcast_id}.xml",
+        )
+    )
+    add_test_podcast_subscription(db, user_id=viewer_id, podcast_id=podcast_id)
+    for i in range(20):
+        mid = _media(
+            f"F active-parent episode {i:03d}",
+            kind=MediaKind.podcast_episode.value,
+        )
+        db.add(PodcastEpisode(media_id=mid, podcast_id=podcast_id))
+        add_media_to_library(db, default_id, mid)
+
     db.commit()
 
-    # Reachable-through-Default (AllItems all) = every distinct media.
-    default_all = 100 + 6 + 4 + 4 + 3 + 8
+    # Default roots = 125 non-subsumed Media plus one active Podcast parent.
+    default_all = 100 + 6 + 4 + 4 + 3 + 8 + 1
     # Unfiled = direct-Default with no other non-system placement = A + E.
     default_unfiled = 100 + 8
     # InProgress = A + C.
@@ -287,7 +311,7 @@ class _PlanEvidence:
         ]
         # A candidate-correlated nested-loop blowup re-executes a real scan node
         # once per candidate; its loop count then scales with the candidate set
-        # rather than staying near the driving cardinality (~135 here). Bound
+        # rather than staying near the seeded cardinality (~145 here). Bound
         # generously (8x total media) so healthy plans pass with wide margin
         # while an O(N^2) per-candidate re-scan trips it.
         self.loop_bound: int = max(total_media * 8, 256)
@@ -372,6 +396,15 @@ class TestLibraryEntryPlanGate:
     ) -> None:
         viewer_id = bootstrapped_user
         fixture = _seed_plan_fixture(db_session, viewer_id)
+
+        assert (
+            library_entries.count_default_root_inventory(
+                db_session,
+                viewer_id=viewer_id,
+                library_id=fixture.default_library_id,
+            )
+            == fixture.default_all
+        )
 
         print("\n[library-entry plan gate] fixture cardinalities:")
         print(f"  total media seeded ............ {fixture.total_media}")
@@ -464,6 +497,16 @@ class TestLibraryEntryPlanGate:
                     order=Canonical(),
                     projection=AllItems("all"),
                     entry_type=ExactType("podcast"),
+                ),
+                False,
+            ),
+            (
+                "default Podcast episodes Canonical",
+                default_id,
+                LibraryEntryView(
+                    order=Canonical(),
+                    projection=AllItems("all"),
+                    entry_type=ExactType(MediaKind.podcast_episode),
                 ),
                 False,
             ),

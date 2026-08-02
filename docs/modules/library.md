@@ -142,8 +142,14 @@ Media is deduplicated by `media_id` (a direct entry in the viewer's own default
 library wins over an indirect shared-Library entry; ties within a kind resolve
 by earliest entry). The Podcast arm is virtual: Default stores no Podcast
 `library_entries` row and the DTO exposes `placement: Absent`, never a fabricated
-entry ID or position. Losing a membership removes that Library's Media
-contribution on the next read; unsubscribing removes the virtual show row.
+entry ID or position. The resulting union is root-subsumed before projection,
+exact-type filtering, ordering, pagination, and count: each active subscription
+contributes exactly one Podcast root and excludes all of that Podcast's child
+episode Media rows from All. The child entries remain physical facts. Therefore
+sync, backfill, and explicit Episode Add cannot increase a subscribed show's All
+root cardinality. Losing a membership removes that Library's Media contribution
+on the next read; unsubscribing removes the virtual show row and retained child
+episodes immediately resurface with their consumption state intact.
 
 - **The one actor-authorized filing command.**
   `library_entries.ensure_media_in_library` is the sole path that files media
@@ -181,7 +187,9 @@ contribution on the next read; unsubscribing removes the virtual show row.
   and compacts direct child placements through the Library owner; later removing
   the parent does not recreate them. Adding an episode to a Library that already
   contains its Podcast returns `IncludedThroughPodcast` rather than creating a
-  redundant child entry.
+  redundant child entry. Default/All instead applies the active subscription's
+  parent-over-child subsumption as the root-set read predicate above;
+  named-Library behavior is otherwise unchanged.
 - **Media deletion counts physical references only.** Whether a document
   media has any reference left — the question that gates last-reference
   teardown — is answered by counting physical `library_entries` rows for

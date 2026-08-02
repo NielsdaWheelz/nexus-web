@@ -24,6 +24,7 @@ from nexus.jobs.queue import (
 )
 from nexus.jobs.registry import get_default_registry
 from nexus.jobs.worker import JobWorker
+from nexus.services import library_entries
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_observation_seam import ContributorObservation
 from nexus.services.podcasts import backfill, ingest
@@ -35,6 +36,7 @@ from nexus.services.podcasts.backfill import (
 )
 from nexus.services.podcasts.feed import FeedBackfillPage
 from nexus.services.podcasts.ingest import SubscriptionIngestResult
+from tests.factories import get_user_default_library
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -467,6 +469,77 @@ def _register_ingest_cleanup(
             "dedupe_key",
             f"enrich-metadata:{media_id}",
         )
+
+
+def test_real_backfill_ingest_retains_child_behind_single_default_podcast_root(
+    direct_db: DirectSessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _seed_backfill(direct_db)
+    _, context = _claim(direct_db, fixture, worker_id="backfill-default-root")
+    monkeypatch.setattr(
+        backfill,
+        "fetch_feed_backfill_page",
+        lambda **_kwargs: FeedBackfillPage(
+            episodes=(_EPISODE,),
+            next_cursor=None,
+            source_limited=False,
+        ),
+    )
+
+    with direct_db.session() as db:
+        result = run_backfill_step(db, payload=fixture.payload, context=context)
+
+    _register_ingest_cleanup(direct_db, fixture)
+    assert result == {
+        "status": "Applied",
+        "processedCount": 1,
+        "addedCount": 1,
+        "terminal": True,
+    }
+
+    with direct_db.session() as db:
+        default_library_id = get_user_default_library(db, fixture.user_id)
+        assert default_library_id is not None
+        physical_child_ids = [
+            UUID(str(media_id))
+            for media_id in db.execute(
+                text(
+                    """
+                    SELECT entry.media_id
+                    FROM library_entries entry
+                    JOIN podcast_episodes episode ON episode.media_id = entry.media_id
+                    WHERE entry.library_id = :library_id
+                      AND episode.podcast_id = :podcast_id
+                    """
+                ),
+                {
+                    "library_id": default_library_id,
+                    "podcast_id": fixture.podcast_id,
+                },
+            ).scalars()
+        ]
+        page = library_entries.list_library_entries(
+            db,
+            fixture.user_id,
+            default_library_id,
+            view=library_entries.LibraryEntryView(
+                order=library_entries.Canonical(),
+                projection=library_entries.AllItems("all"),
+                entry_type=library_entries.AllTypes(),
+            ),
+        )
+        root_count = library_entries.count_default_root_inventory(
+            db,
+            viewer_id=fixture.user_id,
+            library_id=default_library_id,
+        )
+
+    assert len(physical_child_ids) == 1
+    assert len(page.items) == 1
+    assert page.items[0].kind == "podcast"
+    assert page.items[0].podcast.id == fixture.podcast_id
+    assert root_count == 1
 
 
 @pytest.mark.parametrize(

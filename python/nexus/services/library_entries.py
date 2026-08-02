@@ -2053,8 +2053,9 @@ def _cursor_query(
     library_id: UUID,
     view: LibraryEntryView,
     plan: Sequence[_SortKey],
+    is_default: bool,
 ) -> dict[str, object]:
-    return {
+    query: dict[str, object] = {
         "libraryId": str(library_id),
         "plan": [
             {
@@ -2067,10 +2068,19 @@ def _cursor_query(
         "view": _view_json(view),
         "viewerId": str(viewer_id),
     }
+    if is_default:
+        query["inventory"] = "RootSubsumed"
+    return query
 
 
 def _encode_view_cursor(
-    *, viewer_id: UUID, library_id: UUID, view: LibraryEntryView, plan: Sequence[_SortKey], row: Any
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    view: LibraryEntryView,
+    plan: Sequence[_SortKey],
+    is_default: bool,
+    row: Any,
 ) -> str:
     return encode_signed_keyset_cursor(
         family=CollectionFamily.LibraryEntries.value,
@@ -2079,6 +2089,7 @@ def _encode_view_cursor(
             library_id=library_id,
             view=view,
             plan=plan,
+            is_default=is_default,
         ),
         after=tuple(KeysetValue(key.value, row[key.column]) for key in plan),
     )
@@ -2091,6 +2102,7 @@ def _decode_view_cursor(
     library_id: UUID,
     view: LibraryEntryView,
     plan: Sequence[_SortKey],
+    is_default: bool,
 ) -> dict[str, object]:
     values = decode_signed_keyset_cursor(
         cursor,
@@ -2100,6 +2112,7 @@ def _decode_view_cursor(
             library_id=library_id,
             view=view,
             plan=plan,
+            is_default=is_default,
         ),
         expected_kinds=tuple(key.value for key in plan),
     )
@@ -2126,41 +2139,19 @@ def _finish_entry_page(
     return page_entries, next_cursor
 
 
-def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
-    """The final ``membership`` CTE (plus its inner CTEs when Default): complete,
-    already viewer-visibility-scoped physical rows exposing the canonical entry
-    columns. Non-default is one CTE; Default assembles the two-stage
-    media-deduplication before it.
+def _default_root_inventory_cte_sql(*, unfiled: bool) -> str:
+    """Canonical viewer-scoped Default root inventory.
 
-    ``unfiled`` (Default only — the service rejects it elsewhere) restricts the
-    Default set to media whose only viewer non-system membership entry is the
-    direct-Default one: ``bool_and(is_direct_default)`` over each media's
+    ``unfiled`` restricts the Default set to media whose only viewer non-system
+    membership entry is the direct-Default one: ``bool_and(is_direct_default)``
+    over each media's
     candidate group is true exactly when it has a direct-Default entry AND no
     other non-system membership entry. Shared-only media never enter the group
     with ``is_direct_default`` true, so they are excluded; system and
     inaccessible-foreign libraries are already outside ``candidate_entries``.
-    The final relation is materialized once so consumption-filtered views cannot
-    inline and re-run Library/Media membership work per engagement candidate."""
-    entry_cols = """
-        le.id,
-        le.library_id,
-        le.media_id,
-        le.podcast_id,
-        le.created_at,
-        le.position,
-        le.created_at AS added_at,
-        false AS is_virtual
-    """
-    if not is_default:
-        return f"""
-            membership AS MATERIALIZED (
-                SELECT {entry_cols}
-                FROM library_entries le
-                WHERE le.library_id = :library_id
-                  AND (le.podcast_id IS NOT NULL
-                       OR le.media_id IN ({visible_media_ids_cte_sql()}))
-            )
-        """
+    The final relation is materialized once so consumers cannot inline and
+    re-run membership work per candidate. An active parent Podcast subsumes its
+    normalized episode Media before any view projection or pagination."""
     unfiled_cte = (
         """unfiled_media AS (
             SELECT media_id FROM candidate_entries
@@ -2202,6 +2193,14 @@ def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
             JOIN libraries l ON l.id = le.library_id AND l.system_key IS NULL
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             WHERE le.media_id IN (SELECT media_id FROM default_media)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM podcast_episodes episode
+                  JOIN podcast_subscriptions subscription
+                    ON subscription.podcast_id = episode.podcast_id
+                   AND subscription.user_id = :viewer_id
+                  WHERE episode.media_id = le.media_id
+              )
         ),
         {unfiled_cte}
         ranked AS (
@@ -2226,6 +2225,52 @@ def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
             {subscription_union}
         )
     """
+
+
+def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
+    """Complete viewer-visible membership relation for one library listing."""
+    if is_default:
+        return _default_root_inventory_cte_sql(unfiled=unfiled)
+    return f"""
+        membership AS MATERIALIZED (
+            SELECT
+                le.id,
+                le.library_id,
+                le.media_id,
+                le.podcast_id,
+                le.created_at,
+                le.position,
+                le.created_at AS added_at,
+                false AS is_virtual
+            FROM library_entries le
+            WHERE le.library_id = :library_id
+              AND (le.podcast_id IS NOT NULL
+                   OR le.media_id IN ({visible_media_ids_cte_sql()}))
+        )
+    """
+
+
+def count_default_root_inventory(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+) -> int:
+    """Count the canonical complete root inventory for the viewer's Default."""
+    ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
+    if not ctx.is_default:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Root inventory count is only available for the default library",
+        )
+    count = db.execute(
+        text(f"""
+            WITH {_default_root_inventory_cte_sql(unfiled=False)}
+            SELECT count(*) FROM membership
+        """),
+        {"viewer_id": viewer_id, "library_id": library_id},
+    ).scalar_one()
+    return int(count)
 
 
 def _query_view_page(
@@ -2398,7 +2443,12 @@ def _query_view_page(
         rows=rows,
         limit=limit,
         build_cursor=lambda row: _encode_view_cursor(
-            viewer_id=viewer_id, library_id=library_id, view=view, plan=plan, row=row
+            viewer_id=viewer_id,
+            library_id=library_id,
+            view=view,
+            plan=plan,
+            is_default=is_default,
+            row=row,
         ),
     )
 
@@ -2452,6 +2502,7 @@ def list_library_entries(
             library_id=library_id,
             view=view,
             plan=_plan(view.order, is_default=ctx.is_default),
+            is_default=ctx.is_default,
         )
 
     items, next_cursor = _query_view_page(

@@ -28,25 +28,41 @@ test("@real-media Podcast refresh imports a newly published episode through the 
   test.setTimeout(180_000);
   const seed = readRealMediaSeed();
   const podcastId = String(seed.fixtures.podcast.podcast_id);
+  const retainedEpisodeId = String(seed.fixtures.podcast.media_id);
   const observedRequests: Request[] = [];
   page.on("request", (request) => observedRequests.push(request));
 
   copyFileSync(FEED_V1, ACTIVE_FEED);
   try {
+    const viewerResponse = await page.request.get("/api/me");
+    expect(viewerResponse.ok()).toBeTruthy();
+    const viewer = (await viewerResponse.json()) as {
+      data: { user_id: string; default_library_id: string };
+    };
+
+    await gotoRealMediaSinglePane(
+      page,
+      `/libraries/${viewer.data.default_library_id}`,
+    );
+    let pane = activeWorkspacePane(page);
+    await expect(
+      pane.getByRole("heading", { name: "All", level: 1 }),
+    ).toBeVisible();
+    await expect(
+      pane.locator(`[data-collection-row-id="${podcastId}"]`),
+    ).toBeVisible();
+    await expect(
+      pane.locator(`[data-collection-row-id="${retainedEpisodeId}"]`),
+    ).toHaveCount(0);
+
     await gotoRealMediaSinglePane(page, `/podcasts/${podcastId}`);
-    const pane = activeWorkspacePane(page);
+    pane = activeWorkspacePane(page);
     await expect(
       pane.getByRole("link", { name: "The Crew-4 Astronauts", exact: true }),
     ).toBeVisible();
     await expect(
       pane.getByRole("link", { name: NEW_EPISODE_TITLE, exact: true }),
     ).toHaveCount(0);
-
-    const viewerResponse = await page.request.get("/api/me");
-    expect(viewerResponse.ok()).toBeTruthy();
-    const viewer = (await viewerResponse.json()) as {
-      data: { user_id: string };
-    };
 
     copyFileSync(FEED_V2, ACTIVE_FEED);
     await openActivePaneOptions(page, "Refresh");
@@ -110,6 +126,21 @@ test("@real-media Podcast refresh imports a newly published episode through the 
     await expect(
       pane.locator('[aria-live="polite"]').filter({ hasText: "1 new episode" }),
     ).toBeVisible();
+
+    await gotoRealMediaSinglePane(
+      page,
+      `/libraries/${viewer.data.default_library_id}`,
+    );
+    pane = activeWorkspacePane(page);
+    await expect(
+      pane.locator(`[data-collection-row-id="${podcastId}"]`),
+    ).toBeVisible();
+    await expect(
+      pane.locator(`[data-collection-row-id="${retainedEpisodeId}"]`),
+    ).toHaveCount(0);
+    await expect(
+      pane.getByRole("link", { name: NEW_EPISODE_TITLE, exact: true }),
+    ).toHaveCount(0);
 
     const refreshHandle = admission.data.refreshRunHandle;
     expect(

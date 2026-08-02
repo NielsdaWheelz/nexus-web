@@ -687,29 +687,6 @@ def _load_media(
     return out
 
 
-def _count_default_virtual_items(db: Session, *, viewer_id: UUID, library_id: UUID) -> int:
-    """Count the Default All union: deduplicated Media plus active subscriptions."""
-    row = db.execute(
-        text(
-            f"""
-            SELECT
-                (
-                    SELECT COUNT(DISTINCT media_id)
-                    FROM ({library_entries.library_media_ids_cte_sql()}) AS virtual_media
-                )
-                +
-                (
-                    SELECT COUNT(*)
-                    FROM podcast_subscriptions
-                    WHERE user_id = :viewer_id
-                )
-            """
-        ),
-        {"viewer_id": viewer_id, "library_id": library_id},
-    ).fetchone()
-    return int(row[0]) if row is not None else 0
-
-
 def _load_library(
     db: Session, items: list[ResourceRef], *, viewer_id: UUID
 ) -> list[LoadedResource]:
@@ -734,7 +711,7 @@ def _load_library(
         db, [lid for lid in ids if lid not in own_default_ids]
     )
     virtual_counts = {
-        lid: _count_default_virtual_items(db, viewer_id=viewer_id, library_id=lid)
+        lid: library_entries.count_default_root_inventory(db, viewer_id=viewer_id, library_id=lid)
         for lid in own_default_ids
     }
     out: list[LoadedResource] = []
