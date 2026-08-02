@@ -170,6 +170,7 @@ function Harness({
     reportActivationFailure: () => undefined,
     retry: () => undefined,
     back: () => setPage({ kind: "Root" }),
+    openRoot: () => setPage({ kind: "Root" }),
     escape: () => {
       if (query.length > 0) setQuery("");
       else close();

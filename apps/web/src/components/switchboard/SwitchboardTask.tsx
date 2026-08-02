@@ -88,6 +88,7 @@ export interface MobileNexusTaskController {
   retry(source: MobileNexusFailureSource): void;
   back(): void;
   escape(): void;
+  openRoot(): void;
   close(): void;
   dismissAccepted(): void;
   guardClose(): DismissDecision;
