@@ -11,8 +11,8 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
+import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import {
   ApiError,
@@ -111,12 +111,17 @@ export default function LecternPaneBody() {
 
   const handleRemove = useCallback(
     (itemId: LecternItemId, triggerEl: HTMLButtonElement | null) => {
-      const row = triggerEl?.closest<HTMLElement>("[data-collection-row-id]");
-      const list = row?.closest('[role="list"]');
-      const rows = list
-        ? Array.from(list.querySelectorAll<HTMLElement>("[data-collection-row-id]"))
+      const queueSection = document.getElementById(queueSectionId);
+      const rows = queueSection
+        ? Array.from(
+            queueSection.querySelectorAll<HTMLElement>(
+              "[data-collection-row-id]",
+            ),
+          )
         : [];
-      const rowIndex = row ? rows.indexOf(row) : -1;
+      const rowIndex = rows.findIndex(
+        (row) => row.dataset.collectionRowId === itemId,
+      );
       const nextPrimary =
         rowIndex >= 0
           ? (rows[rowIndex + 1] ?? rows[rowIndex - 1])?.querySelector<HTMLElement>(
@@ -129,7 +134,7 @@ export default function LecternPaneBody() {
       });
       if (triggerEl) {
         requestAnimationFrame(() => {
-          (nextPrimary ?? document.getElementById(queueSectionId))?.focus();
+          (nextPrimary ?? queueSection)?.focus();
         });
       }
     },
@@ -261,7 +266,7 @@ export default function LecternPaneBody() {
   usePanePrimaryChrome({
     header: {
       kind: "section",
-      folio: { kind: "count", value: items.length, unit: "on the lectern" },
+      folio: { kind: "count", value: items.length, unit: "item" },
       pending: queueStatus === "loading",
     },
   });
@@ -323,10 +328,12 @@ export default function LecternPaneBody() {
     ) : undefined;
 
   return (
-    <PaneSurface state={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}>
-      <PaneSection
+    <PaneSurface
+      opener={<SectionOpener heading="Lectern" />}
+      state={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}
+    >
+      <section
         id={queueSectionId}
-        title="On the lectern"
         aria-label="On the lectern"
         tabIndex={-1}
       >
@@ -351,7 +358,7 @@ export default function LecternPaneBody() {
             },
           }}
         />
-      </PaneSection>
+      </section>
       <ReadingSlateSection
         returnScope="Lectern.ReadingSlate"
         destination={{ kind: "Lectern" }}

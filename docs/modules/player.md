@@ -20,6 +20,8 @@ pause shortening are specified by
 `docs/cutovers/android-native-player-pause-shortening-hard-cutover.md`.
 Observed activity and Stats are a separate Consumption capability; see
 [consumption-activity.md](consumption-activity.md).
+The final pane-body presentation contract is
+[Lectern editorial surface](../cutovers/lectern-editorial-surface-hard-cutover.md).
 
 ## Backend Owners
 

@@ -64,9 +64,7 @@
   }
 }
 
-/* Container step-down: keep the display line legible on narrow panes (phone
-   widths, split panes). A full per-pane container query is an S4 refinement. */
-@media (max-width: 34rem) {
+@container primaryPane (max-width: 34rem) {
   .display[data-scale="display"] {
     font-size: var(--text-2xl);
   }

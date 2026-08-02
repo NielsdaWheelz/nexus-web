@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
+import "@/app/globals.css";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
@@ -112,61 +113,105 @@ describe("ResourceRow", () => {
     expect(onActivate).not.toHaveBeenCalled();
   });
 
-  it("keeps action activation independent from button primary activation", async () => {
+  it("keeps independent controls above inert row activation", async () => {
     const onActivate = vi.fn();
+    const onPrimaryControl = vi.fn();
     const onAction = vi.fn();
     render(
       <ResourceList ariaLabel="Resources">
         <ResourceRow
           primary={{ kind: "button", label: "Open item", onActivate }}
           title="Item title"
+          supporting="Updated just now"
+          primaryControl={
+            <button type="button" onClick={onPrimaryControl}>
+              Play
+            </button>
+          }
           actions={<button onClick={onAction}>Row action</button>}
         />
       </ResourceList>,
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Play" }));
+    expect(onPrimaryControl).toHaveBeenCalledOnce();
+    expect(onActivate).not.toHaveBeenCalled();
+
     await userEvent.click(screen.getByRole("button", { name: "Row action" }));
     expect(onAction).toHaveBeenCalledOnce();
     expect(onActivate).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "Open item" }));
+    const primary = screen.getByRole("button", { name: "Open item" });
+    const primaryRect = primary.getBoundingClientRect();
+    const supportingRect = screen
+      .getByText("Updated just now")
+      .getBoundingClientRect();
+    await userEvent.click(primary, {
+      position: {
+        x: supportingRect.left - primaryRect.left + supportingRect.width / 2,
+        y: supportingRect.top - primaryRect.top + supportingRect.height / 2,
+      },
+    });
     expect(onActivate).toHaveBeenCalledOnce();
   });
 
-  it("keeps nested controls above the row activation target", async () => {
+  it("keeps supporting links above the row activation target", async () => {
     const onActivate = vi.fn();
-    const onAction = vi.fn();
+    const onSupporting = vi.fn();
     render(
       <ResourceList ariaLabel="Resources">
         <ResourceRow
           primary={{ kind: "button", label: "Open item", onActivate }}
           title="Item title"
-          supporting="Updated just now · 1 message"
-          actions={<button type="button" onClick={onAction}>More actions</button>}
+          supporting={
+            <a
+              href="https://example.test/messages"
+              onClick={(event) => {
+                event.preventDefault();
+                onSupporting();
+              }}
+            >
+              1 message
+            </a>
+          }
         />
       </ResourceList>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
-    expect(onAction).toHaveBeenCalledOnce();
+    const supporting = screen.getByRole("link", { name: "1 message" });
+    expect(supporting).toHaveAttribute("href", "https://example.test/messages");
+    await userEvent.click(supporting);
+    expect(onSupporting).toHaveBeenCalledOnce();
     expect(onActivate).not.toHaveBeenCalled();
   });
 
-  it.each([320, 390, 960])(
-    "stays within a populated %ipx container with the correct title clamp",
+  it.each([320, 390, 640, 960])(
+    "allocates a long title before independent controls in a %ipx container",
     (width) => {
       const titleText =
-        "A very long resource title that can occupy two lines without widening its container";
+        "The Architecture of Attention: A Field Guide to Reading, Listening, and Remembering Across Decades";
       render(
-        <div data-testid="host" style={{ width: `${width}px`, maxWidth: `${width}px` }}>
+        <div
+          data-testid="host"
+          style={{ width: `${width}px`, maxWidth: `${width}px` }}
+        >
+          <span
+            data-testid="canonical-gap"
+            aria-hidden="true"
+            style={{ position: "absolute", width: "var(--space-2)" }}
+          />
           <ResourceList ariaLabel="Resources">
             <ResourceRow
               primary={{ kind: "link", href: "/media/long-row" }}
               title={titleText}
-              supporting="Ada Author · February 2025 · A long compact context that must truncate"
-              status={<span>42% · ≈5 min left</span>}
-              primaryControl={<button type="button">Open</button>}
-              actions={<button type="button">…</button>}
+              supporting="Mina Okafor · Longform essay · Updated yesterday"
+              status={<span>42% read · 18 min left</span>}
+              primaryControl={<button type="button">Play</button>}
+              actions={
+                <button type="button" aria-label="More actions">
+                  •••
+                </button>
+              }
             />
           </ResourceList>
         </div>,
@@ -176,7 +221,6 @@ describe("ResourceRow", () => {
       expect(host.clientWidth).toBe(width);
       expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
       expect(horizontallyScrollableElements(host)).toEqual([]);
-      expect(screen.queryByRole("img")).toBeNull();
       const title = within(
         screen.getByRole("link", { name: titleText }),
       ).getByText(titleText);
@@ -189,8 +233,24 @@ describe("ResourceRow", () => {
         titleLineHeight * (width <= 520 ? 2 : 1) + 1,
       );
 
+      const canonicalGap = screen
+        .getByTestId("canonical-gap")
+        .getBoundingClientRect().width;
+      expect(canonicalGap).toBeGreaterThan(0);
+      const firstControlLeft = Math.min(
+        screen
+          .getByRole("button", { name: "Play" })
+          .getBoundingClientRect().left,
+        screen
+          .getByRole("button", { name: "More actions" })
+          .getBoundingClientRect().left,
+      );
+      expect(
+        firstControlLeft - title.getBoundingClientRect().right,
+      ).toBeGreaterThanOrEqual(canonicalGap);
+
       const support = screen.getByText(
-        "Ada Author · February 2025 · A long compact context that must truncate",
+        "Mina Okafor · Longform essay · Updated yesterday",
       );
       const supportStyle = getComputedStyle(support);
       expect(supportStyle.whiteSpace).toBe("nowrap");
@@ -198,7 +258,7 @@ describe("ResourceRow", () => {
         computedLineHeightPx(supportStyle) + 1,
       );
 
-      const state = screen.getByText("42% · ≈5 min left");
+      const state = screen.getByText("42% read · 18 min left");
       const stateStyle = getComputedStyle(state);
       expect(stateStyle.whiteSpace).toBe("nowrap");
       expect(state.getBoundingClientRect().height).toBeLessThanOrEqual(
@@ -209,9 +269,11 @@ describe("ResourceRow", () => {
           support.getBoundingClientRect().top - state.getBoundingClientRect().top,
         )).toBeLessThanOrEqual(2);
       }
-      expect(screen.getByText("…").getBoundingClientRect().right).toBeLessThanOrEqual(
-        host.getBoundingClientRect().right + 1,
-      );
+      expect(
+        screen
+          .getByRole("button", { name: "More actions" })
+          .getBoundingClientRect().right,
+      ).toBeLessThanOrEqual(host.getBoundingClientRect().right + 1);
     },
   );
 

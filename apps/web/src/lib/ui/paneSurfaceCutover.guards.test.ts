@@ -14,6 +14,7 @@ const standardPaneBodies = [
   "src/app/(authenticated)/browse/BrowsePaneBody.tsx",
   "src/app/(authenticated)/browse/preview/BrowsePreviewPaneBody.tsx",
   "src/app/(authenticated)/conversations/ConversationsPaneBody.tsx",
+  "src/app/(authenticated)/lectern/LecternPaneBody.tsx",
   "src/app/(authenticated)/libraries/LibrariesPaneBody.tsx",
   "src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx",
   "src/app/(authenticated)/notes/NotesPaneBody.tsx",
@@ -164,6 +165,22 @@ describe("pane surface/resource row cutover source gates", () => {
     expect(sourceText(planOwner)).toContain(
       "export const BROWSE_SECTION_PLAN",
     );
+  });
+
+  it("keeps Lectern on the singular flat editorial body contract", () => {
+    const lectern = sourceText(
+      "src/app/(authenticated)/lectern/LecternPaneBody.tsx",
+    );
+
+    expect(lectern.match(/<PaneSurface\b/g)).toHaveLength(1);
+    expect(lectern.match(/<SectionOpener\b/g)).toHaveLength(1);
+    expect(lectern.match(/<CollectionView\b/g)).toHaveLength(1);
+    expect(lectern).not.toMatch(
+      /from\s+["']@\/components\/ui\/PaneSection["']/,
+    );
+    expect(lectern).not.toContain("<PaneSection");
+    expect(lectern.match(/\bsurface\s*=\s*\{\s*false\s*\}/g)).toHaveLength(1);
+    expect(lectern.match(/\bunit\s*:\s*["']item["']/g)).toHaveLength(1);
   });
 
   it("keeps new primitives below pane runtime and domain layers", () => {

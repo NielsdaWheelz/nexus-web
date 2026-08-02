@@ -18,7 +18,10 @@ import { assumePaneVisitId } from "@/lib/workspace/schema";
 
 const MEDIA_A = "11111111-0000-4000-8000-000000000001";
 const MEDIA_B = "22222222-0000-4000-8000-000000000002";
+const MEDIA_C = "33333333-0000-4000-8000-000000000003";
 const ITEM_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const ITEM_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const ITEM_C = "cccccccc-0000-4000-8000-000000000003";
 const TEST_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000001",
 );
@@ -90,12 +93,19 @@ function installFetch({
   slateReads,
   unknownFirstPlacement = false,
   holdLecternInitial = false,
+  failLecternInitial = false,
+  failSlateReads = false,
+  initialQueue = [wireItem(ITEM_A, MEDIA_A, "Queued article")],
 }: {
   slateReads: unknown[][];
   unknownFirstPlacement?: boolean;
   holdLecternInitial?: boolean;
+  failLecternInitial?: boolean;
+  failSlateReads?: boolean;
+  initialQueue?: WireItem[];
 }) {
-  let queue = [wireItem(ITEM_A, MEDIA_A, "Queued article")];
+  let queue = initialQueue;
+  let lecternRead = 0;
   let slateRead = 0;
   let placementCount = 0;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -111,15 +121,38 @@ function installFetch({
           );
         });
       }
+      lecternRead += 1;
+      if (failLecternInitial && lecternRead === 1) {
+        return jsonResponse(
+          { error: { code: "E_UPSTREAM", message: "Lectern unavailable" } },
+          503,
+        );
+      }
       return jsonResponse({ data: { items: queue } });
     }
     if (path === "/api/lectern/slate" && method === "GET") {
+      if (failSlateReads) {
+        slateRead += 1;
+        return jsonResponse(
+          { error: { code: "E_UPSTREAM", message: "Slate unavailable" } },
+          503,
+        );
+      }
       const items = slateReads[Math.min(slateRead, slateReads.length - 1)] ?? [];
       slateRead += 1;
       return jsonResponse({ data: { items } });
     }
     if (path === "/api/lectern/commands" && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}"));
+      if (body.kind === "RemoveItem") {
+        queue = queue.filter((item) => item.itemId !== body.itemId);
+        return jsonResponse({
+          data: {
+            outcome: { kind: "Removed", itemId: body.itemId },
+            lectern: { items: queue },
+          },
+        });
+      }
       if (body.kind !== "PlaceItems") {
         throw new Error(`Unexpected Lectern command ${body.kind}`);
       }
@@ -187,6 +220,136 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("LecternPaneBody orientation", () => {
+  it("places one Lectern opener before the sovereign queue and subordinate Slate", async () => {
+    const suggested = wireSlateItem(MEDIA_B, "Suggested article");
+    installFetch({ slateReads: [[suggested]] });
+    render(withProviders(<LecternPaneBody />));
+
+    const queue = await screen.findByRole("region", {
+      name: "On the lectern",
+    });
+    const slate = await screen.findByRole("region", {
+      name: "At hand suggestions",
+    });
+    const heading = screen.getByRole("heading", {
+      level: 1,
+      name: "Lectern",
+    });
+
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(heading).toBeVisible();
+    expect(
+      await within(queue).findByRole("list", { name: "On the lectern" }),
+    ).toBeVisible();
+    expect(within(queue).queryByRole("heading", { level: 2 })).toBeNull();
+    expect(queue).toHaveAttribute("tabindex", "-1");
+    expect(
+      heading.compareDocumentPosition(queue) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(queue).not.toContainElement(slate);
+    expect(slate).not.toContainElement(queue);
+    expect(
+      queue.compareDocumentPosition(slate) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+});
+
+describe("LecternPaneBody states", () => {
+  it("recovers a queue read failure to the flat empty state with no Slate", async () => {
+    installFetch({
+      slateReads: [[]],
+      failLecternInitial: true,
+      initialQueue: [],
+    });
+    const user = userEvent.setup();
+    render(withProviders(<LecternPaneBody />));
+
+    const queue = screen.getByRole("region", { name: "On the lectern" });
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Lectern" }),
+    ).toBeVisible();
+    expect(await within(queue).findByRole("alert")).toHaveTextContent(
+      "Failed to load the Lectern",
+    );
+
+    await user.click(within(queue).getByRole("button", { name: "Retry" }));
+
+    expect(
+      await within(queue).findByText("Nothing on the lectern yet."),
+    ).toBeVisible();
+    expect(within(queue).queryByRole("heading", { level: 2 })).toBeNull();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "At hand suggestions" }),
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps the ready queue intact when the Slate initial read fails", async () => {
+    installFetch({ slateReads: [[]], failSlateReads: true });
+    render(withProviders(<LecternPaneBody />));
+
+    const queue = screen.getByRole("region", { name: "On the lectern" });
+    expect(
+      await within(queue).findByRole("link", { name: "Queued article" }),
+    ).toBeVisible();
+    const slate = await screen.findByRole("region", {
+      name: "At hand suggestions",
+    });
+    expect(
+      await within(slate).findByText("Couldn’t load suggestions."),
+    ).toBeVisible();
+    expect(within(slate).getByRole("button", { name: "Retry" })).toBeVisible();
+    expect(queue).not.toContainElement(slate);
+  });
+});
+
+describe("LecternPaneBody removal focus", () => {
+  it("moves focus to the next row, previous row, then queue as rows disappear", async () => {
+    installFetch({
+      slateReads: [[]],
+      initialQueue: [
+        wireItem(ITEM_A, MEDIA_A, "Alpha"),
+        wireItem(ITEM_B, MEDIA_B, "Bravo"),
+        wireItem(ITEM_C, MEDIA_C, "Charlie"),
+      ],
+    });
+    const user = userEvent.setup();
+    render(withProviders(<LecternPaneBody />));
+
+    const queue = screen.getByRole("region", { name: "On the lectern" });
+    await within(queue).findByRole("link", { name: "Charlie" });
+
+    async function remove(title: string) {
+      await user.click(
+        within(queue).getByRole("button", {
+          name: `More actions for ${title}`,
+        }),
+      );
+      await user.click(
+        screen.getByRole("menuitem", { name: "Remove from Lectern" }),
+      );
+    }
+
+    await remove("Bravo");
+    await waitFor(() =>
+      expect(within(queue).getByRole("link", { name: "Charlie" })).toHaveFocus(),
+    );
+
+    await remove("Charlie");
+    await waitFor(() =>
+      expect(within(queue).getByRole("link", { name: "Alpha" })).toHaveFocus(),
+    );
+
+    await remove("Alpha");
+    expect(
+      await within(queue).findByText("Nothing on the lectern yet."),
+    ).toBeVisible();
+    expect(queue).toHaveFocus();
+  });
+});
+
 describe("LecternPaneBody Slate host", () => {
   it("normalizes Add while the canonical Lectern snapshot is still loading", async () => {
     const suggested = wireSlateItem(MEDIA_B, "Suggested article");
@@ -196,6 +359,15 @@ describe("LecternPaneBody Slate host", () => {
     });
     const user = userEvent.setup();
     render(withProviders(<LecternPaneBody />));
+
+    const queue = screen.getByRole("region", { name: "On the lectern" });
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Lectern" }),
+    ).toBeVisible();
+    expect(within(queue).getByRole("status")).toHaveTextContent(
+      "Loading On the lectern",
+    );
+    expect(within(queue).queryByRole("heading", { level: 2 })).toBeNull();
 
     const add = await screen.findByRole("button", {
       name: "Add Suggested article to Lectern",

@@ -44,38 +44,21 @@ export default function ResourceRow({
   const primaryIsInteractive =
     primary.kind === "link" ||
     (primary.kind === "button" && !primary.disabled && !primary.busy);
-  const titleContent = (
-    <span className={styles.title} data-row-text dir="auto">
-      {title}
-    </span>
-  );
   const row = (
     <>
-      {primaryIsInteractive ? (
+      <div className={styles.titleCell} data-view-transition-part="title">
         <ResourceActivation
           primary={primary}
-          className={cx(styles.primary, styles.interactivePrimary)}
+          className={cx(
+            styles.primary,
+            primaryIsInteractive && styles.interactivePrimary,
+          )}
         >
-          {titleContent}
-        </ResourceActivation>
-      ) : null}
-      {!primaryIsInteractive ? (
-        <div className={styles.titleCell} data-view-transition-part="title">
-          <ResourceActivation primary={primary} className={styles.primary}>
-            {titleContent}
-          </ResourceActivation>
-        </div>
-      ) : (
-        <div
-          className={styles.titleCell}
-          data-view-transition-part="title"
-          aria-hidden="true"
-        >
-          <span className={styles.title} dir="auto">
+          <span className={styles.title} data-row-text dir="auto">
             {title}
           </span>
-        </div>
-      )}
+        </ResourceActivation>
+      </div>
       {supporting || status ? (
         <div className={styles.secondary}>
           {supporting ? <div className={styles.supporting}>{supporting}</div> : null}
