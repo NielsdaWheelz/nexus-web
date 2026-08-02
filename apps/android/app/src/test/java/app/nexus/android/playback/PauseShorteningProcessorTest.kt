@@ -3,6 +3,7 @@ package app.nexus.android.playback
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor.AudioFormat
+import androidx.media3.common.audio.AudioProcessor.StreamMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import org.junit.Assert.assertEquals
@@ -19,14 +20,14 @@ class PauseShorteningProcessorTest {
         val off = SilenceSkippingAudioProcessor()
         off.setEnabled(false)
         off.configure(AudioFormat(SAMPLE_RATE_HZ, 1, C.ENCODING_PCM_16BIT))
-        off.flush()
+        off.flush(StreamMetadata.DEFAULT)
         assertFalse(off.isActive)
         assertEquals(0, off.skippedFrames)
 
         val natural = SilenceSkippingAudioProcessor()
         natural.setEnabled(true)
         natural.configure(AudioFormat(SAMPLE_RATE_HZ, 1, C.ENCODING_PCM_16BIT))
-        natural.flush()
+        natural.flush(StreamMetadata.DEFAULT)
 
         val input = ByteBuffer
             .allocateDirect(SAMPLE_RATE_HZ * SILENCE_SECONDS * Short.SIZE_BYTES)

@@ -185,31 +185,41 @@ class NexusPlaybackServiceContractTest {
     }
 
     @Test
-    fun `capture blocks Stop until the natural end receipt is durable`() {
-        assertTrue(
-            playerCommandBlockedByLifecycleBarrier(
-                playerCommand = Player.COMMAND_STOP,
-                naturalEndCapturePending = true,
-                pendingNaturalEnd = false,
-                persistenceDrained = false,
-            )
+    fun `controller capabilities enforce the natural end lifecycle barrier`() {
+        val captureCommands = availableNexusPlayerCommandIds(
+            naturalEndCapturePending = true,
+            pendingNaturalEnd = false,
+            persistenceDrained = false,
         )
+        assertFalse(captureCommands.contains(Player.COMMAND_STOP))
+        assertFalse(captureCommands.contains(Player.COMMAND_PLAY_PAUSE))
+        assertTrue(captureCommands.contains(Player.COMMAND_SET_VOLUME))
+
+        val pendingReceiptCommands = availableNexusPlayerCommandIds(
+            naturalEndCapturePending = false,
+            pendingNaturalEnd = true,
+            persistenceDrained = false,
+        )
+        assertTrue(pendingReceiptCommands.contains(Player.COMMAND_STOP))
+        assertFalse(pendingReceiptCommands.contains(Player.COMMAND_PLAY_PAUSE))
         assertFalse(
-            playerCommandBlockedByLifecycleBarrier(
-                playerCommand = Player.COMMAND_STOP,
-                naturalEndCapturePending = false,
-                pendingNaturalEnd = true,
-                persistenceDrained = false,
-            )
+            pendingReceiptCommands.contains(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
         )
-        assertTrue(
-            playerCommandBlockedByLifecycleBarrier(
-                playerCommand = Player.COMMAND_PLAY_PAUSE,
-                naturalEndCapturePending = false,
-                pendingNaturalEnd = true,
-                persistenceDrained = false,
-            )
+    }
+
+    @Test
+    fun `drain blocks mutations but preserves teardown and read capabilities`() {
+        val drainedCommands = availableNexusPlayerCommandIds(
+            naturalEndCapturePending = false,
+            pendingNaturalEnd = false,
+            persistenceDrained = true,
         )
+
+        assertTrue(drainedCommands.contains(Player.COMMAND_STOP))
+        assertFalse(drainedCommands.contains(Player.COMMAND_PLAY_PAUSE))
+        assertFalse(drainedCommands.contains(Player.COMMAND_SEEK_FORWARD))
+        assertTrue(drainedCommands.contains(Player.COMMAND_GET_TIMELINE))
+        assertTrue(drainedCommands.contains(Player.COMMAND_SET_VOLUME))
     }
 
     @Test

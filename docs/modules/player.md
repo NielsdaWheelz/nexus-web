@@ -239,6 +239,11 @@ Lectern pane is the sole full-list editor).
   replacement native controller re-handshakes the account and pushes one
   authoritative full snapshot plus pending-receipt Presence; stale web state
   never drives the replacement service.
+- The service derives each Media3 controller's available player commands from
+  the current natural-end and persistence lifecycle barriers and updates them
+  synchronously whenever those barriers change. Controller seeks checkpoint
+  against Media3's authoritative pre-discontinuity position; no deprecated
+  command-interception callback owns policy or accounting.
 - Canonical natural end first persists one account/session-fenced native
   receipt. `LecternProvider.settleNaturalEnd` enters the existing FIFO without
   a live player session, installs the canonical result, and acknowledges only
