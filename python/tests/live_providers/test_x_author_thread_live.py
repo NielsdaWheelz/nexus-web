@@ -60,6 +60,7 @@ def test_live_x_author_thread_ingest_indexes_real_provider_thread(auth_client, d
     headers = auth_headers(user_id)
     auth_client.get("/me", headers=headers)
     direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("external_provider_events", "viewer_id", user_id)
 
     create_response = auth_client.post(
         "/media/from_url",
@@ -76,7 +77,14 @@ def test_live_x_author_thread_ingest_indexes_real_provider_thread(auth_client, d
     assert data["ingest_enqueued"] is True
 
     ingest_result = _run_source_attempt_for_media(direct_db, media_id)
-    resolved_media_id = UUID(str(ingest_result["media_id"]))
+    assert ingest_result["processing_status"] == "ready_for_reading", ingest_result
+    assert ingest_result["ingest_enqueued"] is False, ingest_result
+    assert ingest_result["metadata_enrichment"] is True, ingest_result
+    assert ingest_result["idempotency_outcome"] in {"refreshed", "reused"}, ingest_result
+    assert ("superseded_by_media_id" in ingest_result) is (
+        ingest_result["idempotency_outcome"] == "reused"
+    ), ingest_result
+    resolved_media_id = UUID(str(ingest_result.get("superseded_by_media_id", media_id)))
     if resolved_media_id != media_id:
         register_media_cleanup(direct_db, resolved_media_id)
         register_background_job_cleanup(direct_db, resolved_media_id)
@@ -100,8 +108,6 @@ def test_live_x_author_thread_ingest_indexes_real_provider_thread(auth_client, d
             .mappings()
             .one()
         )
-    direct_db.register_cleanup("external_provider_events", "id", provider_event["id"])
-
     media_trace = assert_media_ready(auth_client, headers, media_id)
     fragment_trace = assert_fragment_content_contains(direct_db, media_id, expected_text)
     evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "web_article", "web")

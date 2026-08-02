@@ -120,7 +120,9 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     )
     assert episodes_response.status_code == 200, episodes_response.text
     episode_rows = [
-        episode for episode in episodes_response.json()["data"] if episode.get("playback_source")
+        episode
+        for episode in episodes_response.json()["data"]["items"]
+        if episode["playerDescriptor"]["kind"] == "Present"
     ]
     assert episode_rows, sync_result
     with direct_db.session() as session:
