@@ -538,6 +538,35 @@ async function stopChromeGestureRecording(
   });
 }
 
+async function assertRecordedTouchBoundary(
+  scrollport: Locator,
+  boundary: "touchMoveAt" | "touchEndAt",
+): Promise<void> {
+  const observation = await scrollport.evaluate((element, boundaryName) => {
+    const recorderWindow = window as typeof window & {
+      __nexusMobileChromeGestureRecorder?: ChromeGestureRecording & {
+        scrollport: HTMLElement;
+      };
+    };
+    const recorder = recorderWindow.__nexusMobileChromeGestureRecorder;
+    return {
+      recordedAt: recorder?.[boundaryName] ?? null,
+      recorderPresent: recorder !== undefined,
+      sameScrollport: recorder?.scrollport === element,
+      scrollportConnected: element.isConnected,
+    };
+  }, boundary);
+  expect(
+    observation,
+    `CDP acknowledged ${boundary}, but the exact reader recorder did not observe it; observation=${JSON.stringify(observation)}`,
+  ).toMatchObject({
+    recorderPresent: true,
+    sameScrollport: true,
+    scrollportConnected: true,
+    recordedAt: expect.any(Number),
+  });
+}
+
 function expectContinuousTrustedGesture(
   recording: ChromeGestureRecording,
   allowTransitionDuringTouch: boolean,
@@ -638,9 +667,7 @@ async function dispatchTouchDrag(
         : box.y + Math.min(box.height - 100, Math.max(32, box.height * 0.28));
     const minStartY = 1 - Math.min(0, roundedDeltaY);
     const maxStartY = viewport.height - 2 - Math.max(0, roundedDeltaY);
-    return Math.round(
-      Math.min(maxStartY, Math.max(minStartY, rawStartY)),
-    );
+    return Math.round(Math.min(maxStartY, Math.max(minStartY, rawStartY)));
   };
   const roundedDeltaY = Math.round(fingerDeltaY);
   const startY = startYFor(roundedDeltaY);
@@ -756,22 +783,10 @@ async function dispatchTouchDrag(
         type: "touchMove",
         touchPoints: point(startY, x + touchSlopDeltaX),
       });
-      const touchMoveHandle = await page.waitForFunction(
-        () => {
-          const recorderWindow = window as typeof window & {
-            __nexusMobileChromeGestureRecorder?: {
-              touchMoveAt: number | null;
-            };
-          };
-          return (
-            typeof recorderWindow.__nexusMobileChromeGestureRecorder
-              ?.touchMoveAt === "number"
-          );
-        },
-        undefined,
-        { polling: "raf", timeout: 1_000 },
-      );
-      await touchMoveHandle.dispose();
+      // Input.dispatchTouchEvent acknowledges after Chromium has dispatched
+      // the boundary. Inspect the exact recorder synchronously: polling on a
+      // future animation frame adds scheduler timing without adding proof.
+      await assertRecordedTouchBoundary(scrollport, "touchMoveAt");
       await waitForAnimationFrame(page);
       await cdp.send("Input.dispatchTouchEvent", {
         type: "touchEnd",
@@ -779,22 +794,7 @@ async function dispatchTouchDrag(
       });
       touchActive = false;
     }
-    const touchEndHandle = await page.waitForFunction(
-      () => {
-        const recorderWindow = window as typeof window & {
-          __nexusMobileChromeGestureRecorder?: {
-            touchEndAt: number | null;
-          };
-        };
-        return (
-          typeof recorderWindow.__nexusMobileChromeGestureRecorder
-            ?.touchEndAt === "number"
-        );
-      },
-      undefined,
-      { polling: "raf", timeout: 1_000 },
-    );
-    await touchEndHandle.dispose();
+    await assertRecordedTouchBoundary(scrollport, "touchEndAt");
   } finally {
     try {
       if (touchActive && cdp) {
