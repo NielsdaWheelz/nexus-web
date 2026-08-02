@@ -321,13 +321,21 @@ accessibility-hidden native overlay covers exactly the combined top inset;
 system-bar icons remain light, and Android owns three-button navigation
 contrast. Android instrumentation owns the real-WebView native-to-CSS inset,
 top-protection, icon, full-window-bound, safe-control, and stale-value-clearing
-contracts.
+contracts. For native inset `N`, CSS inset `C`, and positive device-pixel ratio
+`D`, the permanent quantization contract is exact zero after native clearing;
+otherwise `N <= C * D < N + D`. CSS never under-covers native system UI and
+adds less than one CSS pixel of safe clearance.
 
 ## Fixed Chrome
 
 Fixed primary chrome is desktop-only. Pane bodies may publish fixed chrome, but
 mobile workspace mode makes that publication inert for desktop fixed-chrome
 rendering.
+
+The passive mobile reader position ribbon does not participate in fixed primary
+chrome. It remains reader-relative, uses the reader-owned semantic range, and
+consumes `--mobile-content-bottom-clearance` only for placement. See the
+[mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md).
 
 The reader Document Map overview rail is fixed primary chrome and remains
 desktop-only. Its markers activate contextual targets; it contains no generic

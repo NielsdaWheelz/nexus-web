@@ -104,6 +104,34 @@ function chromeSurfaces(
   ];
 }
 
+async function readPositionRibbonGeometry(ribbon: Locator) {
+  return ribbon.evaluate((element) => {
+    const band = element.querySelector<HTMLElement>(
+      '[data-testid="mobile-reader-position-band"]',
+    );
+    if (!band) {
+      throw new Error("The mobile reader position band is missing.");
+    }
+    const ribbonRect = element.getBoundingClientRect();
+    const bandRect = band.getBoundingClientRect();
+    return {
+      root: {
+        left: Math.round(ribbonRect.left * 100) / 100,
+        top: Math.round(ribbonRect.top * 100) / 100,
+        bottom: Math.round(ribbonRect.bottom * 100) / 100,
+        width: Math.round(ribbonRect.width * 100) / 100,
+        height: Math.round(ribbonRect.height * 100) / 100,
+        bottomClearance:
+          Math.round((window.innerHeight - ribbonRect.bottom) * 100) / 100,
+      },
+      band: {
+        start: Math.round((bandRect.left - ribbonRect.left) * 100) / 100,
+        width: Math.round(bandRect.width * 100) / 100,
+      },
+    };
+  });
+}
+
 const formats = [
   {
     name: "Web",
@@ -2502,15 +2530,82 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       );
       const pane = activeWorkspacePane(page);
       const scrollport = pane.getByLabel("PDF document");
+      const positionRibbon = pane.getByTestId(
+        "mobile-reader-position-ribbon",
+      );
       const firstPage = pane
         .locator('[data-testid^="pdf-page-surface-"]')
         .first();
       await expect(firstPage).toBeVisible({ timeout: 20_000 });
+      await expect(positionRibbon).toBeVisible({ timeout: 20_000 });
       const geometry = await readContentGeometry(scrollport, firstPage);
+      const ribbonGeometry = await readPositionRibbonGeometry(positionRibbon);
+      expect(
+        ribbonGeometry.root.bottomClearance,
+        `PDF ribbon must clear the 18px platform safe area; geometry=${JSON.stringify(ribbonGeometry)}`,
+      ).toBeGreaterThanOrEqual(18);
       await expectTrustedForwardRetreat(page, scrollport, true);
       expect(await readContentGeometry(scrollport, firstPage)).toEqual(
         geometry,
       );
+      expect(
+        (await readPositionRibbonGeometry(positionRibbon)).root,
+        "retreating PDF chrome must not move its safe-area-relative position ribbon",
+      ).toEqual(ribbonGeometry.root);
+
+      const portraitViewport = page.viewportSize();
+      if (!portraitViewport) {
+        throw new Error("Pixel 7 journey has no viewport size.");
+      }
+      await page.setViewportSize({
+        width: portraitViewport.height,
+        height: portraitViewport.width,
+      });
+      await expect(firstPage).toBeVisible();
+      await expect(positionRibbon).toBeVisible();
+      await waitForAnimationFrame(page);
+      await waitForAnimationFrame(page);
+      const landscapeRibbonGeometry = await readPositionRibbonGeometry(
+        positionRibbon,
+      );
+      expect(
+        landscapeRibbonGeometry.root.bottomClearance,
+        `rotated PDF ribbon must clear the 18px platform safe area; geometry=${JSON.stringify(landscapeRibbonGeometry)}`,
+      ).toBeGreaterThanOrEqual(18);
+      expect(
+        landscapeRibbonGeometry.root.width,
+        `rotated PDF ribbon did not adopt the landscape reader width; portrait=${JSON.stringify(ribbonGeometry)} landscape=${JSON.stringify(landscapeRibbonGeometry)}`,
+      ).toBeGreaterThan(ribbonGeometry.root.width);
+      const lastPage = pane
+        .locator('[data-testid^="pdf-page-surface-"]')
+        .last();
+      await scrollport.press("End");
+      await expect
+        .poll(async () =>
+          scrollport.evaluate(
+            (element) =>
+              Math.abs(
+                element.scrollTop -
+                  Math.max(0, element.scrollHeight - element.clientHeight),
+              ),
+          ),
+        )
+        .toBeLessThanOrEqual(1);
+      await expect(lastPage).toBeVisible();
+      await waitForAnimationFrame(page);
+      await waitForAnimationFrame(page);
+      const [lastPageBottom, ribbonTop] = await Promise.all([
+        lastPage.evaluate(
+          (element) => element.getBoundingClientRect().bottom,
+        ),
+        positionRibbon.evaluate(
+          (element) => element.getBoundingClientRect().top,
+        ),
+      ]);
+      expect(
+        ribbonTop - lastPageBottom,
+        "coarse-pointer landscape PDF terminal content must clear the safe-area-relative ribbon",
+      ).toBeGreaterThanOrEqual(0);
     } finally {
       await cdp.send("Emulation.setSafeAreaInsetsOverride", {
         insets: {
@@ -2655,9 +2750,17 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       await expect(page.getByRole("dialog", { name: "Nexus" })).toHaveCount(0);
       await expect(player).toBeVisible();
 
-      const scrollport =
-        activeWorkspacePane(page).getByTestId("document-viewport");
+      const pane = activeWorkspacePane(page);
+      const scrollport = pane.getByTestId("document-viewport");
+      const positionRibbon = pane.getByTestId(
+        "mobile-reader-position-ribbon",
+      );
       await expect(scrollport).toBeVisible({ timeout: 20_000 });
+      await expect(positionRibbon).toBeVisible({ timeout: 20_000 });
+      const nexusTrigger = page.getByRole("button", {
+        name: "Open Nexus, 2 tabs",
+      });
+      await expect(nexusTrigger).toBeVisible();
       await waitForAnimationFrame(page);
       await waitForAnimationFrame(page);
       await expect
@@ -2671,18 +2774,82 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
           return Math.abs(readerBottom - playerTop);
         })
         .toBeLessThanOrEqual(1);
+      const ribbonBottom = (
+        await readPositionRibbonGeometry(positionRibbon)
+      ).root.bottom;
+      const [playerTop, nexusTop] = await Promise.all([
+        player.evaluate((element) => element.getBoundingClientRect().top),
+        nexusTrigger.evaluate((element) => element.getBoundingClientRect().top),
+      ]);
+      expect(
+        Math.min(playerTop, nexusTop) - ribbonBottom,
+        "active Player and Nexus obstructions must remain below the reader position ribbon",
+      ).toBeGreaterThanOrEqual(0);
       const geometryBefore = await scrollport.evaluate((element) => ({
         clientHeight: element.clientHeight,
         clientWidth: element.clientWidth,
       }));
+      const ribbonGeometryBefore = await readPositionRibbonGeometry(
+        positionRibbon,
+      );
       await expectTrustedForwardRetreat(page, scrollport);
       await expect(player).toBeVisible();
+      await expect
+        .poll(
+          async () =>
+            (await readPositionRibbonGeometry(positionRibbon)).band,
+          {
+            message: `trusted Web scroll must move its semantic viewport band; before=${JSON.stringify(ribbonGeometryBefore.band)}`,
+          },
+        )
+        .not.toEqual(ribbonGeometryBefore.band);
       expect(
         await scrollport.evaluate((element) => ({
           clientHeight: element.clientHeight,
           clientWidth: element.clientWidth,
         })),
       ).toEqual(geometryBefore);
+      expect(
+        (await readPositionRibbonGeometry(positionRibbon)).root,
+        "retreating reader chrome moved the MiniPlayer-relative position ribbon",
+      ).toEqual(ribbonGeometryBefore.root);
+
+      const endLabel = pane.getByText("End of article", { exact: true });
+      await scrollport.press("End");
+      await expect
+        .poll(async () =>
+          scrollport.evaluate(
+            (element) =>
+              Math.abs(
+                element.scrollTop -
+                  Math.max(0, element.scrollHeight - element.clientHeight),
+              ),
+          ),
+        )
+        .toBeLessThanOrEqual(1);
+      await expect(endLabel).toBeVisible();
+      await waitForAnimationFrame(page);
+      await waitForAnimationFrame(page);
+      const [endLabelBottom, landscapeRibbonTop] = await Promise.all([
+        endLabel.evaluate(
+          (element) => element.getBoundingClientRect().bottom,
+        ),
+        positionRibbon.evaluate(
+          (element) => element.getBoundingClientRect().top,
+        ),
+      ]);
+      expect(
+        landscapeRibbonTop - endLabelBottom,
+        "coarse-pointer landscape Web terminal content must clear Player, Nexus, and the position ribbon",
+      ).toBeGreaterThanOrEqual(0);
+      await scrollport.press("Home");
+      await expect
+        .poll(async () =>
+          scrollport.evaluate((element) => Math.abs(element.scrollTop)),
+        )
+        .toBeLessThanOrEqual(1);
+      await waitForAnimationFrame(page);
+      await waitForAnimationFrame(page);
 
       await player
         .getByRole("button", { name: "More player controls" })
