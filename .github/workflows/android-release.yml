@@ -59,6 +59,10 @@ jobs:
             echo "Android releases must use an android-v* git tag."
             exit 1
           fi
+          if [ "$(git cat-file -t "$ANDROID_RELEASE_TAG")" != "tag" ]; then
+            echo "Android releases require an annotated git tag."
+            exit 1
+          fi
           tag_commit="$(git rev-parse "$ANDROID_RELEASE_TAG^{commit}")"
           head_commit="$(git rev-parse HEAD)"
           if [ "$tag_commit" != "$head_commit" ]; then
@@ -139,9 +143,10 @@ jobs:
             exit 1
           fi
 
-          tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$ANDROID_RELEASE_TAG" --jq .ref)"
-          if [ "$tag_ref" != "refs/tags/$ANDROID_RELEASE_TAG" ]; then
-            echo "$ANDROID_RELEASE_TAG is not an exact git tag."
+          tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$ANDROID_RELEASE_TAG")"
+          if [ "$(jq -r .ref <<< "$tag_json")" != "refs/tags/$ANDROID_RELEASE_TAG" ] || \
+            [ "$(jq -r .object.type <<< "$tag_json")" != "tag" ]; then
+            echo "$ANDROID_RELEASE_TAG is not an exact annotated git tag."
             exit 1
           fi
           tag_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$ANDROID_RELEASE_TAG" --jq .sha)"
@@ -231,6 +236,12 @@ jobs:
           if [ "$(jq -r .draft <<< "$current_release")" != "true" ] || \
             [ "$(jq -r .tag_name <<< "$current_release")" != "$ANDROID_RELEASE_TAG" ]; then
             echo "Release draft or tag changed before publication."
+            exit 1
+          fi
+          current_tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$ANDROID_RELEASE_TAG")"
+          if [ "$(jq -r .ref <<< "$current_tag_json")" != "refs/tags/$ANDROID_RELEASE_TAG" ] || \
+            [ "$(jq -r .object.type <<< "$current_tag_json")" != "tag" ]; then
+            echo "$ANDROID_RELEASE_TAG stopped being an exact annotated git tag."
             exit 1
           fi
           current_tag_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$ANDROID_RELEASE_TAG" --jq .sha)"

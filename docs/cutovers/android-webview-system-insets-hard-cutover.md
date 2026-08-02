@@ -159,8 +159,8 @@ Hard-cut `.github/workflows/android-release.yml` to two exclusive modes:
 The tag commit, APK version name/code, signer, and SHA-256 are release facts.
 Promotion reuses those facts; it does not derive replacements. A mismatch
 fails closed. Invalid drafts are deleted and rebuilt explicitly, never repaired
-in place. `nexus-android.commit` is internal release evidence, never an updater
-manifest, app API, or client capability.
+in place. `nexus-android.commit` is release-internal evidence, never a
+distribution contract, updater manifest, app API, or client capability.
 
 No updater service, rollout channel, manifest protocol, or compatibility lane
 is added.
