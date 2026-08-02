@@ -460,7 +460,10 @@ export function useNexusController(): NexusController {
         feedback.publish({
           kind: "Persistent",
           key: NEXUS_HISTORY_FEEDBACK_KEY,
-          announcement: "Assertive",
+          // Polite: a failed history write neither loses in-flight data nor
+          // blocks the current action; the record persists on the rail with
+          // Retry, so it need not interrupt speech.
+          announcement: "Polite",
           content: nexusErrorMessage(error, "SaveHistory"),
           actions: [
             {

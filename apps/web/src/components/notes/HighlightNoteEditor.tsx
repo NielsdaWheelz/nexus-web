@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FeedbackNotice,
   useFeedback,
+  type FeedbackAnnouncement,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import {
@@ -139,8 +140,13 @@ export default function HighlightNoteEditor({
 }) {
   const feedback = useFeedback();
   const [saveFailure, setSaveFailure] = useState<FeedbackContent | null>(null);
-  const [attachmentFeedback, setAttachmentFeedback] =
-    useState<FeedbackContent | null>(null);
+  // Announcement is decided by the situation, not derived from tone (Rule 10):
+  // a blocking attachment failure is Assertive; a harmless "attached, but
+  // source processing failed" degradation is Polite.
+  const [attachmentFeedback, setAttachmentFeedback] = useState<{
+    content: FeedbackContent;
+    announcement: FeedbackAnnouncement;
+  } | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const editVersionRef = useRef(0);
   const persistedBlockIdRef = useRef<string | null>(
@@ -346,11 +352,16 @@ export default function HighlightNoteEditor({
         onBodyChange={editable ? scheduleSave : undefined}
         onBlurFlush={flushSession}
         onOpenObject={openObject}
-        onFeedback={setAttachmentFeedback}
+        onFeedback={(content) =>
+          setAttachmentFeedback({ content, announcement: "Polite" })
+        }
         onError={(error) => {
           if (handleUnauthenticatedApiError(error)) return;
           try {
-            setAttachmentFeedback(attachmentErrorMessage(error));
+            setAttachmentFeedback({
+              content: attachmentErrorMessage(error),
+              announcement: "Assertive",
+            });
           } catch (caughtDefect) {
             setDefect({ error: caughtDefect });
           }
@@ -358,8 +369,8 @@ export default function HighlightNoteEditor({
       />
       {attachmentFeedback ? (
         <FeedbackNotice
-          content={attachmentFeedback}
-          announcement={attachmentFeedback.tone === "Danger" ? "Assertive" : "Polite"}
+          content={attachmentFeedback.content}
+          announcement={attachmentFeedback.announcement}
         />
       ) : null}
       {saveStatus === "failed" && saveFailure ? (

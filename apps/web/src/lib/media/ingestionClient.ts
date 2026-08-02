@@ -337,15 +337,13 @@ function uncertainUpload(
   identity: { mediaId: string; sourceAttemptId: string },
   error?: unknown,
 ): UploadIngestResult {
-  const feedback = mediaCaptureErrorMessage(
-    error,
-    "ConfirmUpload",
-  );
+  // The mapper owns tone (ConfirmUpload is Warning); do not re-author it here.
+  const feedback = mediaCaptureErrorMessage(error, "ConfirmUpload");
   return {
     kind: "AcceptedUncertain",
     mediaId: identity.mediaId,
     sourceAttemptId: identity.sourceAttemptId,
-    feedback: { ...feedback, tone: "Warning" },
+    feedback,
   };
 }
 

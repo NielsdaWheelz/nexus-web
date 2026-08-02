@@ -201,7 +201,10 @@ export function useCompletionUndo(): (input: CompletionUndoInput) => void {
           kind: "Persistent",
           key: feedbackKey,
           content,
-          announcement: "Assertive",
+          // Polite: Unread is already committed (no data loss) and reading is
+          // not blocked; the torn state persists on the rail with its Restore
+          // step until resolved.
+          announcement: "Polite",
           actions: [
             {
               label: "Restore",

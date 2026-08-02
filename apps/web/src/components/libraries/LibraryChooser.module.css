@@ -138,6 +138,18 @@
   .spinner {
     animation: none;
   }
+
+  /* Avoid a frozen partial arc: hide the spinning glyph and show a static
+     activity mark, matching Button's reduced-motion treatment. */
+  .spinner svg {
+    display: none;
+  }
+
+  .spinner::before {
+    content: "…";
+    font-size: 1.15em;
+    line-height: 0.8;
+  }
 }
 
 @keyframes spin {

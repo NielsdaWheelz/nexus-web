@@ -210,7 +210,7 @@ function Diagnostics({
       {copyUnavailable ? (
         <p
           className={styles.diagnosticsError}
-          role={parentOwnsAnnouncement ? undefined : "alert"}
+          role={parentOwnsAnnouncement ? undefined : "status"}
         >
           Diagnostics couldn’t be copied.
         </p>
@@ -365,14 +365,25 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       if (timer === undefined) return;
       const elapsedMs = Math.max(0, Date.now() - timer.startedAt);
       clearTimer(id);
-      const nextRecords = recordsRef.current.flatMap((record) => {
-        if (record.id !== id || record.kind !== "Hud") return [record];
-        const remainingMs = Math.max(0, record.remainingMs - elapsedMs);
-        return remainingMs === 0 ? [] : [{ ...record, remainingMs }];
-      });
-      commit(nextRecords);
+      const record = recordsRef.current.find(
+        (candidate): candidate is HudRecord =>
+          candidate.id === id && candidate.kind === "Hud",
+      );
+      if (record === undefined) return;
+      const remainingMs = Math.max(0, record.remainingMs - elapsedMs);
+      if (remainingMs === 0) {
+        // Time fully elapsed while paused: release the record and all of its
+        // pause/timer bookkeeping together rather than leaking the pause entry.
+        removeRecord(id);
+        return;
+      }
+      commit(
+        recordsRef.current.map((candidate) =>
+          candidate.id === id ? { ...candidate, remainingMs } : candidate,
+        ),
+      );
     },
-    [clearTimer, commit],
+    [clearTimer, commit, removeRecord],
   );
 
   const announce = useCallback((record: SignalRecord) => {
@@ -442,10 +453,21 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
           record.kind === "Hud" && !isSuppressed(record.key),
       );
       if (visibleHudRecords.length > MAX_HUDS) {
-        const evictedId = visibleHudRecords[0].id;
-        clearTimer(evictedId);
-        interactionPausesRef.current.delete(evictedId);
-        nextRecords = nextRecords.filter((record) => record.id !== evictedId);
+        // Evict the oldest HUD the user is not actively reading. A hovered or
+        // focused HUD is paused (WCAG 2.2.1 Timing Adjustable) and must not be
+        // yanked out from under the pointer; only when every rendered HUD is
+        // paused does the oldest fall back to eviction.
+        const evicted =
+          visibleHudRecords.find(
+            (record) =>
+              record.id !== id &&
+              (interactionPausesRef.current.get(record.id)?.size ?? 0) === 0,
+          ) ??
+          visibleHudRecords.find((record) => record.id !== id) ??
+          visibleHudRecords[0];
+        clearTimer(evicted.id);
+        interactionPausesRef.current.delete(evicted.id);
+        nextRecords = nextRecords.filter((record) => record.id !== evicted.id);
       }
 
       commit(nextRecords);
@@ -503,9 +525,14 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
               candidate.kind === "Hud" && !isSuppressed(candidate.key),
           );
           if (visibleHudRecords.length > MAX_HUDS) {
-            const evictedRecord = visibleHudRecords.find(
-              (candidate) => candidate.id !== record.id,
-            );
+            const evictedRecord =
+              visibleHudRecords.find(
+                (candidate) =>
+                  candidate.id !== record.id &&
+                  (interactionPausesRef.current.get(candidate.id)?.size ?? 0) ===
+                    0,
+              ) ??
+              visibleHudRecords.find((candidate) => candidate.id !== record.id);
             if (evictedRecord !== undefined) {
               clearTimer(evictedRecord.id);
               interactionPausesRef.current.delete(evictedRecord.id);
@@ -608,17 +635,33 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       {children}
       <div
         className={styles.announcer}
-        aria-label="Detached feedback announcements"
-        aria-live={
-          detachedAnnouncement?.policy === "Assertive" ? "assertive" : "polite"
-        }
+        role="status"
+        aria-live="polite"
         aria-atomic="true"
       >
-        {detachedAnnouncement ? (
-          <span key={detachedAnnouncement.sequence}>{detachedAnnouncement.text}</span>
+        {detachedAnnouncement?.policy === "Polite" ? (
+          <span key={detachedAnnouncement.sequence}>
+            {detachedAnnouncement.text}
+          </span>
         ) : null}
       </div>
-      <div className={styles.persistentRail} aria-label="Persistent feedback">
+      <div
+        className={styles.announcer}
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+      >
+        {detachedAnnouncement?.policy === "Assertive" ? (
+          <span key={detachedAnnouncement.sequence}>
+            {detachedAnnouncement.text}
+          </span>
+        ) : null}
+      </div>
+      <div
+        className={styles.persistentRail}
+        role="region"
+        aria-label="Persistent feedback"
+      >
         {visibleRecords
           .filter((record): record is PersistentRecord => record.kind === "Persistent")
           .map((record) => (
@@ -631,7 +674,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
             />
           ))}
       </div>
-      <div className={styles.hudViewport} aria-label="HUD feedback">
+      <div className={styles.hudViewport} role="region" aria-label="HUD feedback">
         {visibleRecords
           .filter((record): record is HudRecord => record.kind === "Hud")
           .map((record) => (

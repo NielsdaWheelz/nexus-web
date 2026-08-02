@@ -69,20 +69,20 @@ function publish(api: FeedbackContextValue, signal: DetachedFeedback): void {
   act(() => api.publish(signal));
 }
 
+// The visual record (detached article or FeedbackNotice) is always an <article>;
+// the two detached announcers are role="status"/"alert" live regions, never
+// <article>, so scoping to <article> distinguishes the visible record from the
+// announcer that may currently hold the same text.
 function feedbackArticle(title: string): HTMLElement {
-  const candidates = (["article", "status", "alert"] as const).flatMap((role) =>
-    screen.queryAllByRole(role),
-  );
-  const matches = candidates.filter(
-    (candidate) => within(candidate).queryByText(title) !== null,
-  );
-  const uniqueMatches = [...new Set(matches)];
-  if (uniqueMatches.length !== 1) {
+  const matches = screen
+    .queryAllByRole("article")
+    .filter((candidate) => within(candidate).queryByText(title) !== null);
+  if (matches.length !== 1) {
     throw new Error(
-      `Expected one feedback article containing ${title}; got ${uniqueMatches.length}.`,
+      `Expected one feedback article containing ${title}; got ${matches.length}.`,
     );
   }
-  return uniqueMatches[0];
+  return matches[0];
 }
 
 function visualTitles(matcher: string | RegExp): HTMLElement[] {
@@ -104,27 +104,37 @@ afterEach(() => {
 });
 
 describe("Nexus Signal System feedback owner", () => {
-  it("mounts one detached announcer before updates and keeps tone independent from urgency", () => {
+  it("mounts fixed-politeness detached announcers and keeps tone independent from urgency", () => {
     const { api } = renderFeedback();
-    const announcer = screen.getByLabelText("Detached feedback announcements");
+    const polite = screen.getByRole("status");
+    const assertive = screen.getByRole("alert");
     const persistentRail = screen.getByLabelText("Persistent feedback");
     const hudViewport = screen.getByLabelText("HUD feedback");
 
-    expect(announcer).toHaveTextContent("");
-    expect(screen.getAllByLabelText("Detached feedback announcements")).toHaveLength(1);
+    // Exactly one polite and one assertive announcer are pre-mounted with fixed
+    // politeness (never toggled at runtime); the visual lanes own no live role.
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(polite).toHaveAttribute("aria-live", "polite");
+    expect(assertive).toHaveAttribute("aria-live", "assertive");
+    expect(polite).toHaveTextContent("");
+    expect(assertive).toHaveTextContent("");
     expect(persistentRail).not.toHaveAttribute("aria-live");
     expect(hudViewport).not.toHaveAttribute("aria-live");
 
+    // A HUD speaks politely regardless of its (Danger) tone.
     publish(api, {
       kind: "Hud",
       key: "danger-hud",
       content: content("Removed", { tone: "Danger" }),
     });
 
-    expect(announcer).toHaveAttribute("aria-live", "polite");
-    expect(announcer).toHaveTextContent("Removed");
+    expect(polite).toHaveTextContent("Removed");
+    expect(assertive).toHaveTextContent("");
     expect(feedbackArticle("Removed")).not.toHaveAttribute("role");
 
+    // An assertive persistent record speaks through the fixed assertive region
+    // even with a Neutral tone; the polite region clears rather than switching.
     publish(api, {
       kind: "Persistent",
       key: "neutral-persistent",
@@ -132,10 +142,13 @@ describe("Nexus Signal System feedback owner", () => {
       announcement: "Assertive",
     });
 
-    expect(announcer).toHaveAttribute("aria-live", "assertive");
-    expect(announcer).toHaveTextContent("Account needs attention");
+    expect(assertive).toHaveTextContent("Account needs attention");
+    expect(polite).toHaveTextContent("");
     expect(feedbackArticle("Account needs attention")).not.toHaveAttribute("role");
-    expect(screen.getAllByLabelText("Detached feedback announcements")).toHaveLength(1);
+    expect(polite).toHaveAttribute("aria-live", "polite");
+    expect(assertive).toHaveAttribute("aria-live", "assertive");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 
   it("maps explicit scoped announcement policy without inferring it from tone", () => {
@@ -249,7 +262,7 @@ describe("Nexus Signal System feedback owner", () => {
     fireEvent.click(within(notice).getByText("Diagnostics"));
     fireEvent.click(within(notice).getByRole("button", { name: "Copy diagnostics" }));
 
-    expect(await within(notice).findByRole("alert")).toHaveTextContent(
+    expect(await within(notice).findByRole("status")).toHaveTextContent(
       "Diagnostics couldn’t be copied.",
     );
     const retry = within(notice).getByRole("button", { name: "Retry" });
@@ -323,7 +336,7 @@ describe("Nexus Signal System feedback owner", () => {
 
     publish(api, initial);
     const article = feedbackArticle("Saved");
-    const announcer = screen.getByLabelText("Detached feedback announcements");
+    const announcer = screen.getByRole("status");
     const visualMutations = vi.fn();
     const speechMutations = vi.fn();
     const visualObserver = new MutationObserver(visualMutations);
@@ -382,6 +395,25 @@ describe("Nexus Signal System feedback owner", () => {
     expect(visualTitles(/^HUD \d$/)).toHaveLength(SPEC.maxHuds);
   });
 
+  it("exempts a hovered HUD from eviction and drops the oldest non-paused HUD", () => {
+    vi.useFakeTimers();
+    const { api } = renderFeedback();
+
+    for (let index = 1; index <= SPEC.maxHuds; index += 1) {
+      publish(api, { kind: "Hud", key: `hud-${index}`, content: content(`HUD ${index}`) });
+    }
+    // The user hovers the oldest HUD to read it: its timer pauses (WCAG 2.2.1),
+    // so a HUD arriving over the cap must evict the oldest NON-paused HUD
+    // instead of yanking the one being read.
+    fireEvent.mouseEnter(feedbackArticle("HUD 1"));
+    publish(api, { kind: "Hud", key: "hud-4", content: content("HUD 4") });
+
+    expect(visualTitle("HUD 1")).toBeInTheDocument();
+    expect(visualTitle("HUD 2")).not.toBeInTheDocument();
+    expect(visualTitle("HUD 3")).toBeInTheDocument();
+    expect(visualTitle("HUD 4")).toBeInTheDocument();
+  });
+
   it("keeps the persistent rail uncapped and unresolved until its owner resolves it", () => {
     vi.useFakeTimers();
     const { api } = renderFeedback();
@@ -413,7 +445,7 @@ describe("Nexus Signal System feedback owner", () => {
 
   it("composes suppression leases and announces restoration only when hidden content changed", async () => {
     const { api } = renderFeedback();
-    const announcer = screen.getByLabelText("Detached feedback announcements");
+    const announcer = screen.getByRole("alert");
     const releaseFirst = api.suppress("profile-save");
     const releaseSecond = api.suppress("profile-save");
 
@@ -499,7 +531,7 @@ describe("Nexus Signal System feedback owner", () => {
     vi.useFakeTimers();
     const { api } = renderFeedback();
     publish(api, { kind: "Hud", key: "local-owner", content: content("Background saved") });
-    const announcer = screen.getByLabelText("Detached feedback announcements");
+    const announcer = screen.getByRole("status");
     const speechMutations = vi.fn();
     const observer = new MutationObserver(speechMutations);
     observer.observe(announcer, { attributes: true, childList: true, subtree: true });

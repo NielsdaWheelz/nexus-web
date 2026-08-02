@@ -1,57 +1,87 @@
 import { Component, type ReactNode } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError } from "@/lib/api/client";
-import { assumeMediaId } from "@/lib/lectern/contract";
-
-const {
-  canonicalInstall,
-  lecternResource,
-  onCanonicalInstall,
-  publish,
-  resolve,
-  setUnread,
-  placeItems,
-  undoCompletion,
-} = vi.hoisted(() => ({
-  canonicalInstall: { listener: null as null | ((event: unknown) => void) },
-  lecternResource: {
-    current: { status: "loading" } as
-      | { status: "loading" }
-      | { status: "ready"; data: { items: Array<{ mediaId: string }> } },
-  },
-  onCanonicalInstall: vi.fn(),
-  publish: vi.fn(),
-  resolve: vi.fn(),
-  setUnread: vi.fn(),
-  placeItems: vi.fn(),
-  undoCompletion: vi.fn(),
-}));
-
-vi.mock("@/components/feedback/Feedback", () => ({
-  useFeedback: () => ({ publish, resolve, suppress: vi.fn() }),
-}));
-
-vi.mock("@/lib/lectern/LecternProvider", () => ({
-  useLectern: () => ({
-    resource: lecternResource.current,
-    onCanonicalInstall,
-    setUnread,
-    placeItems,
-    undoCompletion,
-    getCanonicalSnapshot: () => ({ items: [] }),
-  }),
-}));
-
-vi.mock("@/lib/auth/UnauthenticatedApiBoundary", () => ({
-  handleUnauthenticatedApiError: () => false,
-}));
-
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
+import { assumeMediaId, type MediaId } from "@/lib/lectern/contract";
+import {
+  fetchInputPath,
+  jsonResponse,
+  stubFetch,
+} from "@/__tests__/helpers/fetch";
 import {
   CompletionUndoFeedbackOwner,
-  completionUndoRestoreFeedbackKey,
   useCompletionUndo,
 } from "./useCompletionUndo";
+
+// This suite drives the REAL LecternProvider and the REAL FeedbackProvider,
+// stubbing only the BFF fetch transport. Completion Undo therefore exercises the
+// real consumption/lectern FIFO and the real ApiError taxonomy, and every
+// assertion is against the real user-visible feedback DOM (the "HUD feedback" and
+// "Persistent feedback" regions) rather than a mocked feedback owner.
+
+const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
+const RESTORED_ITEM = "aaaaaaaa-1111-4111-8111-111111111111";
+const LECTERN_PATH = "/api/lectern";
+const CONSUMPTION_COMMANDS = "/api/consumption/commands";
+const LECTERN_COMMANDS = "/api/lectern/commands";
+
+function errorResponse(
+  status: number,
+  code: string,
+  message: string,
+): Response {
+  return jsonResponse({ error: { code, message } }, status);
+}
+
+/** A schema-valid `LecternItem` the real snapshot decoder accepts. */
+function wireItem(itemId: string, mediaId: string, title = "Restored media") {
+  return {
+    itemId,
+    mediaId,
+    kind: "web_article",
+    title,
+    subtitle: { kind: "Absent" },
+    href: `/media/${mediaId}`,
+    consumption: {
+      state: "Unread",
+      progress: { kind: "Absent" },
+      progressResettable: false,
+    },
+    activation: { kind: "Readable" },
+  };
+}
+
+/** A schema-valid `ConsumptionResult` for a status-only (SetUnread) success. */
+function consumptionResultWire(items: unknown[] = []) {
+  return {
+    outcome: { kind: "StateOnly" },
+    lectern: { items },
+    nextItem: { kind: "Absent" },
+    progressState: { kind: "Absent" },
+    completionHandle: { kind: "Absent" },
+    libraryEntriesCollectionRevision: 0,
+  };
+}
+
+/** A schema-valid `LecternResult` for a PlaceItems success. */
+function lecternResultWire(items: unknown[], itemIds: string[]) {
+  return {
+    outcome: { kind: "Placed", itemIds },
+    lectern: { items },
+  };
+}
+
+const hudRegion = () => screen.getByRole("region", { name: "HUD feedback" });
+const persistentRegion = () =>
+  screen.getByRole("region", { name: "Persistent feedback" });
 
 class TestBoundary extends Component<
   { children: ReactNode },
@@ -72,104 +102,189 @@ class TestBoundary extends Component<
   }
 }
 
-function Probe() {
+function LecternReadout() {
+  const { resource } = useLectern();
+  return <span>lectern:{resource.status}</span>;
+}
+
+function Probe({ mediaId }: { mediaId: MediaId }) {
   const offerUndo = useCompletionUndo();
+  const { placeItems } = useLectern();
   return (
-    <button
-      onClick={() =>
-        offerUndo({
-          mediaId: assumeMediaId("11111111-1111-4111-8111-111111111111"),
-          preCompletionSnapshot: { items: [] },
-          completedItemId: null,
-          completionHandle: { kind: "Absent" },
-        })
-      }
-    >
-      Offer Undo
-    </button>
+    <>
+      <button
+        onClick={() =>
+          offerUndo({
+            mediaId,
+            preCompletionSnapshot: { items: [] },
+            completedItemId: null,
+            completionHandle: { kind: "Absent" },
+          })
+        }
+      >
+        Offer Undo
+      </button>
+      <button
+        onClick={() => {
+          void placeItems({
+            mediaIds: [mediaId],
+            placement: { kind: "First" },
+          }).catch(() => {});
+        }}
+      >
+        External place
+      </button>
+    </>
   );
 }
 
+function renderHarness(mediaId: MediaId) {
+  return render(
+    <FeedbackProvider>
+      <LecternProvider>
+        <CompletionUndoFeedbackOwner />
+        <LecternReadout />
+        <TestBoundary>
+          <Probe mediaId={mediaId} />
+        </TestBoundary>
+      </LecternProvider>
+    </FeedbackProvider>,
+  );
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
 describe("useCompletionUndo defect routing", () => {
-  beforeEach(() => {
-    publish.mockReset();
-    resolve.mockReset();
-    onCanonicalInstall.mockReset();
-    canonicalInstall.listener = null;
-    lecternResource.current = { status: "loading" };
-    onCanonicalInstall.mockImplementation((listener) => {
-      canonicalInstall.listener = listener;
-      return () => {
-        canonicalInstall.listener = null;
-      };
+  it("offers one provider-timed ten-second Undo HUD, not a five-second passive one", () => {
+    vi.useFakeTimers();
+    stubFetch(async (input) => {
+      if (fetchInputPath(input) === LECTERN_PATH) {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch: ${fetchInputPath(input)}`);
     });
-    setUnread.mockReset();
-    placeItems.mockReset();
-    undoCompletion.mockReset();
+
+    renderHarness(assumeMediaId(MEDIA_ID));
+    fireEvent.click(screen.getByRole("button", { name: "Offer Undo" }));
+
+    // The offer publishes exactly one action HUD; the provider — not the caller —
+    // owns its lifetime.
+    expect(within(hudRegion()).getByText("Marked as finished")).toBeInTheDocument();
+    expect(
+      within(hudRegion()).getByRole("button", { name: "Undo" }),
+    ).toBeInTheDocument();
+
+    // A HUD carrying actions lives for the ten-second constant, not the
+    // five-second passive lifetime: present just before 10s...
+    act(() => vi.advanceTimersByTime(9_999));
+    expect(within(hudRegion()).getByText("Marked as finished")).toBeInTheDocument();
+    // ...and gone once the tenth second elapses.
+    act(() => vi.advanceTimersByTime(2));
+    expect(
+      within(hudRegion()).queryByText("Marked as finished"),
+    ).toBeNull();
   });
 
-  it("publishes one action HUD without caller timing and boundaries an unknown Undo code", async () => {
+  it("routes an unknown mark-unread code to the boundary without a second signal", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    setUnread.mockRejectedValue(
-      new ApiError(409, "E_NEW_COMPLETION_FAILURE", "unknown completion failure"),
-    );
     try {
-      render(
-        <TestBoundary>
-          <Probe />
-        </TestBoundary>,
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Offer Undo" }));
-
-      expect(publish).toHaveBeenCalledOnce();
-      const signal = publish.mock.calls[0]?.[0];
-      expect(signal).toMatchObject({
-        kind: "Hud",
-        content: { tone: "Success", title: "Marked as finished" },
-        actions: [{ label: "Undo" }],
+      stubFetch(async (input, init) => {
+        const path = fetchInputPath(input);
+        const method = init?.method ?? "GET";
+        if (path === LECTERN_PATH && method === "GET") {
+          return jsonResponse({ data: { items: [] } });
+        }
+        if (path === CONSUMPTION_COMMANDS && method === "POST") {
+          return errorResponse(
+            409,
+            "E_NEW_COMPLETION_FAILURE",
+            "unknown completion failure",
+          );
+        }
+        throw new Error(`Unexpected fetch: ${method} ${path}`);
       });
-      expect(signal).not.toHaveProperty("duration");
 
-      await act(async () => signal.actions[0].onClick());
-      await waitFor(() =>
-        expect(screen.getByLabelText("completion boundary")).toHaveTextContent(
-          "unknown completion failure",
-        ),
-      );
-      expect(publish).toHaveBeenCalledOnce();
+      renderHarness(assumeMediaId(MEDIA_ID));
+      await screen.findByText("lectern:ready");
+
+      fireEvent.click(screen.getByRole("button", { name: "Offer Undo" }));
+      fireEvent.click(within(hudRegion()).getByRole("button", { name: "Undo" }));
+
+      expect(
+        await screen.findByLabelText("completion boundary"),
+      ).toHaveTextContent("unknown completion failure");
+
+      // The action HUD was consumed on click and nothing replaced it: the
+      // unknown code became a render-thrown defect, never a second signal.
+      expect(within(hudRegion()).queryByRole("article")).toBeNull();
+      expect(within(persistentRegion()).queryByRole("article")).toBeNull();
     } finally {
       consoleError.mockRestore();
     }
   });
 
-  it("resolves stale restore feedback when an external canonical install restores the media", () => {
-    const mediaId = assumeMediaId("11111111-1111-4111-8111-111111111111");
-    render(<CompletionUndoFeedbackOwner />);
-
-    act(() => {
-      canonicalInstall.listener?.({
-        kind: "snapshot",
-        snapshot: { items: [{ mediaId }] },
-        unreadMediaIds: [],
-      });
+  it("resolves the durable restore record when a canonical install relists the media", async () => {
+    let placeCalls = 0;
+    stubFetch(async (input, init) => {
+      const path = fetchInputPath(input);
+      const method = init?.method ?? "GET";
+      if (path === LECTERN_PATH && method === "GET") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      if (path === CONSUMPTION_COMMANDS && method === "POST") {
+        // The mark-unread half of Undo succeeds.
+        return jsonResponse({ data: consumptionResultWire([]) });
+      }
+      if (path === LECTERN_COMMANDS && method === "POST") {
+        const body = JSON.parse(String(init?.body)) as { kind?: string };
+        if (body.kind !== "PlaceItems") {
+          throw new Error(`Unexpected Lectern command ${String(body.kind)}`);
+        }
+        placeCalls += 1;
+        if (placeCalls === 1) {
+          // The restore half fails definitively → durable persistent record.
+          return errorResponse(409, "E_LIMIT", "Lectern is full");
+        }
+        // A later external canonical install relists the media.
+        return jsonResponse({
+          data: lecternResultWire(
+            [wireItem(RESTORED_ITEM, MEDIA_ID)],
+            [RESTORED_ITEM],
+          ),
+        });
+      }
+      throw new Error(`Unexpected fetch: ${method} ${path}`);
     });
 
-    expect(resolve).toHaveBeenCalledWith(
-      completionUndoRestoreFeedbackKey(mediaId),
+    renderHarness(assumeMediaId(MEDIA_ID));
+    await screen.findByText("lectern:ready");
+
+    fireEvent.click(screen.getByRole("button", { name: "Offer Undo" }));
+    fireEvent.click(within(hudRegion()).getByRole("button", { name: "Undo" }));
+
+    // Marked unread, but the restore failed: a durable record retains only the
+    // remaining restore step.
+    const restoreRecord = await within(persistentRegion()).findByText(
+      "Marked unread; Lectern wasn’t restored",
     );
-  });
+    expect(restoreRecord).toBeInTheDocument();
+    expect(
+      within(persistentRegion()).getByRole("button", { name: "Restore" }),
+    ).toBeInTheDocument();
 
-  it("resolves stale restore feedback already satisfied by the ready resource", () => {
-    const mediaId = assumeMediaId("22222222-2222-4222-8222-222222222222");
-    lecternResource.current = {
-      status: "ready",
-      data: { items: [{ mediaId }] },
-    };
-
-    render(<CompletionUndoFeedbackOwner />);
-
-    expect(resolve).toHaveBeenCalledWith(
-      completionUndoRestoreFeedbackKey(mediaId),
+    // An external canonical install that relists the media resolves the stale
+    // restore record through the CompletionUndoFeedbackOwner.
+    fireEvent.click(screen.getByRole("button", { name: "External place" }));
+    await waitFor(() =>
+      expect(
+        within(persistentRegion()).queryByText(
+          "Marked unread; Lectern wasn’t restored",
+        ),
+      ).toBeNull(),
     );
   });
 });

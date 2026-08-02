@@ -240,7 +240,9 @@ export function useLinkComposer({
             feedback.publish({
               kind: "Persistent",
               key: feedbackKey,
-              announcement: "Assertive",
+              // Polite: an unconfirmed removal loses no data and does not block
+              // the current action; it persists on the rail with Retry.
+              announcement: "Polite",
               content: {
                 tone: "Warning",
                 title: "Removal outcome not confirmed",
@@ -254,10 +256,14 @@ export function useLinkComposer({
             });
             return;
           }
+          // A permanent undo failure (E_FORBIDDEN) cannot be retried and needs
+          // no durable rail: the link simply stays, and the Connections surface
+          // remains the durable place to manage it. Present it as a
+          // harmless-to-miss HUD rather than an actionless, never-resolved
+          // persistent record that could never be dismissed.
           feedback.publish({
-            kind: "Persistent",
+            kind: "Hud",
             key: feedbackKey,
-            announcement: "Assertive",
             content: linkErrorMessage(error, "Undo"),
           });
         } catch (caughtDefect) {

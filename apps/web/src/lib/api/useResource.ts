@@ -136,6 +136,10 @@ export function useResource<T, P>(
   }, [cache, seeded, claimSeed]);
 
   useEffect(() => {
+    // A defect recorded for a superseded key is stale once another key begins
+    // loading. Clear it so returning to a previously-defected key re-fetches
+    // instead of re-throwing the old defect during render.
+    setDefect((current) => (current && current.key !== cacheKey ? null : current));
     if (cacheKey === null) {
       setResourceState({ key: null, resource: { status: "idle" } });
       return;
@@ -161,6 +165,9 @@ export function useResource<T, P>(
             }
           },
           (error) => {
+            // justify-ignore-error: a cancelled adoption or an aborted
+            // in-flight prefetch is framework cancellation, not a modelable
+            // failure; the fresh fetch below (or the owning consumer) reports.
             if (cancelled || isAbortError(error)) return;
             if (handleUnauthenticatedApiError(error)) return;
             if (!isApiError(error) || isSameSystemApiDefect(error)) {

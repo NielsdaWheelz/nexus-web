@@ -196,9 +196,13 @@ class PaneRouteErrorBoundary extends Component<
     props: PaneRouteErrorBoundaryProps,
     state: { hasError: boolean; resetKey: string; retryKey: number },
   ): { hasError: false; resetKey: string; retryKey: number } | null {
+    // A route/visit change clears the error latch but must NOT reset retryKey:
+    // retryKey identifies an explicit user retry and keys the child subtree, so
+    // resetting it here would remount the whole PaneShell on ordinary in-pane
+    // navigation after a prior retry. Only an explicit retry advances retryKey.
     return props.resetKey === state.resetKey
       ? null
-      : { hasError: false, resetKey: props.resetKey, retryKey: 0 };
+      : { hasError: false, resetKey: props.resetKey, retryKey: state.retryKey };
   }
 
   static getDerivedStateFromError(): { hasError: true } {

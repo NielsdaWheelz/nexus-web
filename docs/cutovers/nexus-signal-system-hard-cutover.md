@@ -92,7 +92,10 @@ Link surface. Stale references to a generic toast do not preserve old behavior.
    become feedback records.
 4. Lifecycle and connection observation remain independent. Reconnect never
    retries, replays, or reruns work.
-5. Ordinary visible success is silent.
+5. Ordinary visible success is silent. When success is represented only by the
+   resulting object or control, that control exposes the change semantically
+   (accessible name, state, or focus); otherwise it is not silent success and
+   uses a polite confirmation.
 6. HUD content is harmless to miss. Its actions are optional accelerators also
    reachable from durable UI.
 7. Required action or unresolved global failure uses the persistent rail; it
@@ -191,14 +194,23 @@ Contract rules:
   with actions. These are provider-owned named constants; callers cannot set
   arbitrary durations.
 - At most three HUDs render. Eviction is admissible because HUDs are harmless to
-  miss. Persistent records use a separate uncapped, non-evicting lane.
+  miss. A hovered, focused, or otherwise paused HUD is exempt from eviction
+  (WCAG 2.2.1); eviction targets the oldest non-paused HUD, and only when every
+  rendered HUD is paused does the oldest fall back to eviction. Persistent
+  records use a separate uncapped, non-evicting lane.
+- A persistent record defaults to `Polite`. `Assertive` is permitted only when
+  the condition carries imminent data loss or blocks the user's current action,
+  and is justified per call site. A HUD is always polite.
 - A persistent owner republishes while unresolved and calls `resolve` when its
   canonical state leaves failure. It does not mirror lifecycle in the provider.
 - Same-key content updates in place. Identical republishes do not restart motion
   or announcement.
 - `suppress(key)` hides and silences a detached record while a scoped owner
-  presents it locally. Releasing the lease restores the visual record without
-  reannouncement unless content changed.
+  presents it locally. A scoped owner holds the lease before, or atomically
+  with, the first publish of that key so the record is born suppressed; the
+  provider announces only records that are not suppressed at publish time.
+  Releasing the lease restores the visual record without reannouncement unless
+  content changed.
 - Actions are browser callbacks because records are not persisted. A persisted
   semantic-action schema is out of scope.
 - `show`, `dismissByDedupeKey`, `suppressDedupeKey`, caller `duration`, generic
@@ -228,7 +240,9 @@ PaneLoadingState({
 `FeedbackNotice` maps `None` to visual-only markup, `Polite` to a status region,
 and `Assertive` to an alert. `FieldFeedback` has no implicit alert role; the form
 owner associates it through `aria-describedby` or `aria-errormessage` and owns
-submit-summary focus/announcement.
+submit-summary focus/announcement. `aria-errormessage` requires
+`aria-invalid="true"` on the control and is honored only while invalid;
+`aria-describedby` is the broader-support default.
 
 ## Composition And Ownership
 
@@ -242,7 +256,7 @@ submit-summary focus/announcement.
 | Pane refresh progress | `PaneShell` |
 | Local mutation busy state | `Button` or feature row |
 | Detached records/suppression/timers | `FeedbackProvider` |
-| Detached announcement | One pre-mounted provider live region |
+| Detached announcement | One pre-mounted polite and one pre-mounted assertive provider live region |
 | Scoped announcement | Explicit `FeedbackNotice`/`PaneLoadingState` caller |
 | Feedback visual grammar | `Feedback.module.css` and existing global tokens |
 | Routed-pane defect recovery | `PaneRouteErrorBoundary` |
@@ -252,9 +266,13 @@ The provider renders these children:
 1. application children;
 2. `PersistentFeedbackRail`, visual only;
 3. `FeedbackHudViewport`, visual only;
-4. one pre-mounted screen-reader announcer for detached transitions.
+4. two pre-mounted screen-reader announcers for detached transitions — one
+   polite (`role="status"`) and one assertive (`role="alert"`).
 
-Neither visual lane owns a live role. The announcer owns detached speech.
+Neither visual lane owns a live role. The two announcers own detached speech.
+Each announcer has a fixed politeness that is never toggled at runtime;
+a transition is routed to the region matching its announcement value (dynamically
+flipping `aria-live` on one region is not reliably honored by screen readers).
 Visual lanes never auto-focus. Existing modal/inert ownership governs keyboard
 reachability while a modal is active. Hidden-tab and hover/focus timer pausing
 remain.
@@ -274,7 +292,12 @@ remain.
   `AsyncResource<T>` gains no defect variant. Other `ApiError` values remain
   structured for endpoint/feature decoding.
 - Retry stays with the owner that can safely repeat frozen intent. Reconnect,
-  reconcile, rerun, replay, and Undo retain distinct labels and commands.
+  reconcile, rerun, and Undo retain distinct user-facing labels and commands;
+  replay is an internal mechanism and is never surfaced as a user label. Each
+  user-facing verb names a distinct action: Retry repeats the same failed action;
+  Rerun re-executes a completed run, producing a new run; Reconnect re-establishes
+  the live connection without repeating work; Reconcile resolves a
+  local-versus-canonical divergence; Undo reverses the just-completed action.
 - A near-origin failure remains near origin. Do not publish a detached duplicate.
 - Routed-pane Retry clears only that boundary's error latch and remounts the
   same route/visit. It never closes the pane or starts/retries domain work. The
@@ -293,6 +316,8 @@ remain.
 - Feedback uses the quiet press: paper/ink surfaces, typographic hierarchy,
   hairlines and a marginal tone rail before card fill/shadow. Danger is reserved
   for failure/destruction. Tone is redundant with icon, label, and edge shape.
+  Under `forced-colors: active`, the tone rail and hairlines map to system
+  border colors and tone stays conveyed by icon and label.
 - Working-to-terminal transitions update in place. Frequent actions receive no
   ceremony. Reduced motion replaces travel/pulse with immediate emphasis/fade.
 - Diagnostics collapse beneath primary copy with one `Copy diagnostics` action.
@@ -373,8 +398,9 @@ old API, or second feedback stylesheet.
   and offers direct focus-safe Retry.
 - Initial pane, button, refresh, and domain-operation loading each use their sole
   documented owner; no equivalent generic spinner/skeleton remains.
-- Tone and announcement are independently testable. Exactly one detached live
-  region is mounted before updates.
+- Tone and announcement are independently testable. Exactly one polite and one
+  assertive detached live region are mounted before any update; announcer
+  politeness is never toggled at runtime.
 - HUD timers pause while hidden and while hovered/focused. Identical same-key
   publication neither reanimates nor reannounces.
 - Light, night, high-contrast, 200% text, narrow mobile, keyboard-only,

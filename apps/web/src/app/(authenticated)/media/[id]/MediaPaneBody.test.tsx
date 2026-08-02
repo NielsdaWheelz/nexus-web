@@ -3728,7 +3728,7 @@ describe("MediaPaneBody pane sizing", () => {
       idempotencyKey: expect.any(String),
     });
     expect(
-      within(screen.getByLabelText("Persistent feedback")).getByText(
+      within(screen.getByLabelText("HUD feedback")).getByText(
         "Creating lesson…",
       ),
     ).toBeVisible();
