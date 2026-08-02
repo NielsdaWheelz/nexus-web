@@ -2,26 +2,14 @@ import {
   parseDiscoveryTargetHandle,
   type DiscoveryTargetHandle,
 } from "./contract";
-
-export const BROWSE_KINDS = [
-  "All",
-  "Pdf",
-  "Epub",
-  "WebArticle",
-  "Video",
-  "Podcast",
-] as const;
-export type BrowseQueryKind = (typeof BROWSE_KINDS)[number];
-
-export const BROWSE_SOURCES = [
-  "Nexus",
-  "ProjectGutenberg",
-  "Brave",
-  "YouTube",
-  "PodcastIndex",
-] as const;
-export type BrowseQuerySource = (typeof BROWSE_SOURCES)[number];
-export type BrowseQuerySort = "Relevance" | "Newest";
+import {
+  BROWSE_KINDS,
+  BROWSE_SOURCES,
+  browseSourcesForKind,
+  type BrowseQueryKind,
+  type BrowseQuerySort,
+  type BrowseQuerySource,
+} from "./plan";
 
 export interface BrowseQuery {
   readonly text: string;
@@ -49,23 +37,6 @@ function hasExactlyOne(
 
 function countCodePoints(value: string): number {
   return Array.from(value).length;
-}
-
-function applicableSources(kind: BrowseQueryKind): readonly BrowseQuerySource[] {
-  switch (kind) {
-    case "All":
-      return [];
-    case "Pdf":
-      return ["Nexus"];
-    case "Epub":
-      return ["Nexus", "ProjectGutenberg"];
-    case "WebArticle":
-      return ["Nexus", "Brave"];
-    case "Video":
-      return ["Nexus", "YouTube"];
-    case "Podcast":
-      return ["PodcastIndex"];
-  }
 }
 
 export function decodeBrowseQuery(params: URLSearchParams): BrowseQueryDecode {
@@ -113,7 +84,7 @@ export function decodeBrowseQuery(params: URLSearchParams): BrowseQueryDecode {
         : undefined;
   if (
     source === undefined ||
-    (source !== null && !applicableSources(kind).includes(source))
+    (source !== null && !browseSourcesForKind(kind).includes(source))
   ) {
     return { kind: "Invalid" };
   }

@@ -11,6 +11,8 @@ const contextRow = ["Context", "Row"].join("");
 const settingRow = ["Setting", "Row"].join("");
 const standardPaneBodies = [
   "src/app/(authenticated)/authors/[handle]/AuthorPaneBody.tsx",
+  "src/app/(authenticated)/browse/BrowsePaneBody.tsx",
+  "src/app/(authenticated)/browse/preview/BrowsePreviewPaneBody.tsx",
   "src/app/(authenticated)/conversations/ConversationsPaneBody.tsx",
   "src/app/(authenticated)/libraries/LibrariesPaneBody.tsx",
   "src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx",
@@ -106,6 +108,62 @@ describe("pane surface/resource row cutover source gates", () => {
     });
 
     expect(offenders).toEqual([]);
+  });
+
+  it("keeps Browse on the standard surface and collection paths", () => {
+    const browsePane = sourceText(
+      "src/app/(authenticated)/browse/BrowsePaneBody.tsx",
+    );
+    const previewPane = sourceText(
+      "src/app/(authenticated)/browse/preview/BrowsePreviewPaneBody.tsx",
+    );
+    const browseSection = sourceText(
+      "src/components/browse/BrowseSection.tsx",
+    );
+
+    for (const body of [browsePane, previewPane]) {
+      expect(body).toContain('from "@/components/ui/PaneSurface"');
+      expect(body).toContain("<PaneSurface");
+    }
+    expect(browsePane).not.toMatch(/<input\b/);
+    expect(browseSection).toContain(
+      'from "@/components/collections/CollectionView"',
+    );
+    expect(browseSection).toContain("<CollectionView");
+    expect(browseSection).not.toMatch(
+      /from\s+["'][^"']*PaneSection["']/,
+    );
+    expect(browseSection).not.toMatch(/<PaneSection\b/);
+  });
+
+  it("keeps Browse plan declarations in their pure owner", () => {
+    const planOwner = "src/lib/browse/plan.ts";
+    const duplicateDeclaration =
+      /\b(?:const ALL_SECTIONS|function (?:applicableSources|sectionKey|sourceOptions|visibleSections)|interface BrowseSectionIdentity)\b/;
+    const consumers = [
+      "src/app/(authenticated)/browse/BrowsePaneBody.tsx",
+      "src/components/browse/BrowseSection.tsx",
+      "src/lib/browse/contract.ts",
+      "src/lib/browse/query.ts",
+    ];
+    const planFiles = sourceFiles(join(APP_ROOT, "src"));
+
+    expect(
+      consumers.filter((path) => duplicateDeclaration.test(sourceText(path))),
+    ).toEqual([]);
+    for (const symbol of ["BROWSE_KINDS", "BROWSE_SOURCES"]) {
+      const declaration = new RegExp(
+        `\\b(?:export\\s+)?const\\s+${symbol}\\s*=`,
+      );
+      expect(
+        planFiles.filter((path) => declaration.test(sourceText(path))),
+      ).toEqual([planOwner]);
+    }
+    expect(sourceText("src/lib/browse/query.ts")).toContain('from "./plan"');
+    expect(sourceText("src/lib/browse/contract.ts")).toContain('from "./plan"');
+    expect(sourceText(planOwner)).toContain(
+      "export const BROWSE_SECTION_PLAN",
+    );
   });
 
   it("keeps new primitives below pane runtime and domain layers", () => {
@@ -233,9 +291,7 @@ describe("pane surface/resource row cutover source gates", () => {
     expect(literalOffenders).toEqual([]);
   });
 
-  it("has no legacy resultRows/pageList class hooks remaining in src/app", () => {
-    // These CSS module hooks lived in the deleted BrowsePaneBody; the guard stays
-    // as a forward-looking regression check even though Browse is gone.
+  it("has no retired resultRows/pageList class hooks remaining in src/app", () => {
     const offenders = sourceFiles(join(APP_ROOT, "src/app")).filter((p) => {
       const t = sourceText(p);
       return t.includes("styles.resultRows") || t.includes("styles.pageList");

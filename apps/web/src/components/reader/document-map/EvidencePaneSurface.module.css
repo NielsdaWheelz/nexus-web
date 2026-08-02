@@ -344,7 +344,7 @@
 }
 
 .attention .sectionHeading {
-  color: var(--status-warning-text);
+  color: var(--warning);
 }
 
 @media (max-width: 560px) {
@@ -375,19 +375,19 @@
   flex-direction: column;
   gap: 4px;
   padding: 8px 12px 10px;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--edge-subtle);
 }
 
 .connectionNoteLoading {
   margin: 0;
   font-size: var(--text-xs);
-  color: var(--ink-tertiary);
+  color: var(--ink-faint);
 }
 
 .connectionNoteRemoveButton {
   align-self: flex-start;
   font-size: var(--text-xs);
-  color: var(--ink-tertiary);
+  color: var(--ink-faint);
   background: none;
   border: none;
   padding: 2px 0;
@@ -395,5 +395,5 @@
 }
 
 .connectionNoteRemoveButton:hover {
-  color: var(--ink-secondary);
+  color: var(--ink-muted);
 }

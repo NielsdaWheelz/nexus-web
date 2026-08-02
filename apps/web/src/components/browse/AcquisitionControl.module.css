@@ -24,12 +24,12 @@
   border-inline-start: 1px solid color-mix(in srgb, currentColor 22%, transparent);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   background: var(--accent);
-  color: var(--accent-contrast);
+  color: var(--ink-on-accent);
   cursor: pointer;
 }
 
 .chevron:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 

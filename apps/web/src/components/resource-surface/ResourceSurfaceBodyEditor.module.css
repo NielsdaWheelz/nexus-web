@@ -26,7 +26,7 @@
 }
 
 .emptyRow {
-  color: var(--muted);
+  color: var(--ink-muted);
   font-size: var(--text-sm);
   min-height: 44px;
   padding: var(--space-3);
@@ -82,7 +82,7 @@
 }
 
 .resourceSummary {
-  color: var(--muted);
+  color: var(--ink-muted);
   font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -115,7 +115,7 @@
   align-items: center;
   background: transparent;
   border: 0;
-  color: var(--muted);
+  color: var(--ink-muted);
   cursor: text;
   display: flex;
   gap: var(--space-2);
@@ -138,12 +138,12 @@
 }
 
 .addItemSearch label {
-  color: var(--muted);
+  color: var(--ink-muted);
   font-size: var(--text-sm);
 }
 
 .addItemSearch input {
-  background: var(--canvas);
+  background: var(--surface-canvas);
   border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
   border-radius: var(--radius-md);
   color: var(--ink);

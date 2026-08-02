@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
-import PaneSection from "@/components/ui/PaneSection";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, type ApiPath } from "@/lib/api/client";
 import type { CursorPage } from "@/lib/api/useCursorPagination";
 import { useCursorPagination } from "@/lib/api/useCursorPagination";
 import { useResource, type AsyncResource } from "@/lib/api/useResource";
@@ -17,22 +16,14 @@ import {
 import {
   decodeBrowseSectionFailure,
   type BrowseCandidate,
-  type BrowseKind,
   type BrowsePage,
-  type BrowseSort,
-  type BrowseSource,
 } from "@/lib/browse/contract";
 import type { BrowseRequestRunner } from "@/lib/browse/requestGate";
+import type { BrowseSectionIdentity } from "@/lib/browse/plan";
 import { presentBrowseCandidate } from "@/lib/collections/presenters/browse";
 import styles from "@/app/(authenticated)/browse/browse.module.css";
 
 const PAGE_SIZE = 20;
-
-export interface BrowseSectionIdentity {
-  readonly kind: BrowseKind;
-  readonly source: BrowseSource;
-  readonly sort: BrowseSort;
-}
 
 export interface BrowseSectionFailureSnapshot {
   readonly status: number;
@@ -83,10 +74,6 @@ function restoreFailure(failure: BrowseSectionFailureSnapshot): ApiError {
   );
 }
 
-function assertNever(value: never): never {
-  throw new Error(`Unhandled browse section failure: ${JSON.stringify(value)}`);
-}
-
 function browseSectionErrorMessage(error: ApiError): string {
   if (error.code === "E_BROWSE_REQUEST_INTERRUPTED") return "Search paused";
   if (error.code === "E_NETWORK") return "Connection lost";
@@ -102,8 +89,12 @@ function browseSectionErrorMessage(error: ApiError): string {
       return failure.resetAt.kind === "Present"
         ? `Quota exhausted until ${new Date(failure.resetAt.value).toLocaleTimeString()}`
         : "Quota exhausted";
-    default:
-      return assertNever(failure);
+    default: {
+      const unhandled: never = failure;
+      throw new Error(
+        `Unhandled browse section failure: ${JSON.stringify(unhandled)}`,
+      );
+    }
   }
 }
 
@@ -125,6 +116,7 @@ export default function BrowseSection({
   ) => void;
   readonly runRequest: BrowseRequestRunner;
 }) {
+  const headingId = useId();
   const requestKey = `${query}\u0000${identity.kind}\u0000${identity.source}\u0000${identity.sort}`;
   const initialRestoreRef = useRef(restored);
   const [discardedRestore, setDiscardedRestore] = useState(false);
@@ -198,7 +190,9 @@ export default function BrowseSection({
       cursorPage(
         await runRequest(signal, () =>
           fetchBrowsePagePath(
-            href as `/api/${string}`,
+            // justify-type-assertion: buildMoreHref returns browsePagePath's
+            // ApiPath unchanged; useCursorPagination widens it to string.
+            href as ApiPath,
             { query, ...identity },
             signal,
           ),
@@ -279,7 +273,12 @@ export default function BrowseSection({
     statusRow = (
       <div className={styles.statusRow}>
         <span>{browseSectionErrorMessage(error)}</span>
-        <Button size="sm" variant="secondary" onClick={pagination.retry}>
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-label={`Retry ${label}`}
+          onClick={pagination.retry}
+        >
           Retry
         </Button>
       </div>
@@ -289,7 +288,10 @@ export default function BrowseSection({
   }
 
   return (
-    <PaneSection title={label} className={styles.section}>
+    <section className={styles.sourceSection} aria-labelledby={headingId}>
+      <h3 id={headingId} className={styles.sourceHeading}>
+        {label}
+      </h3>
       {statusRow}
       <CollectionView
         returnScope={`Browse.${identity.kind}.${identity.source}`}
@@ -312,6 +314,6 @@ export default function BrowseSection({
           </Button>
         </div>
       ) : null}
-    </PaneSection>
+    </section>
   );
 }

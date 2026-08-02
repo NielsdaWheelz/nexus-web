@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const APP_ROOT = process.cwd();
 const collectionCallers = [
+  "src/components/browse/BrowseSection.tsx",
   "src/app/(authenticated)/search/SearchPaneBody.tsx",
   "src/app/(authenticated)/libraries/LibrariesPaneBody.tsx",
   "src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx",

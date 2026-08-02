@@ -12,6 +12,7 @@ import PodcastOverview from "@/components/podcasts/PodcastOverview";
 import Button from "@/components/ui/Button";
 import MediaImage from "@/components/ui/MediaImage";
 import PaneSection from "@/components/ui/PaneSection";
+import PaneSurface from "@/components/ui/PaneSurface";
 import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -27,6 +28,7 @@ import {
 import {
   browsePreviewHref,
   type BrowsePreview,
+  type DiscoveryTargetHandle,
   type PreviewEpisodeItem,
   type PreviewEpisodePage,
 } from "@/lib/browse/contract";
@@ -151,12 +153,16 @@ export default function BrowsePreviewPaneBody() {
   const target = decoded.kind === "Valid" ? decoded.target : null;
   const resource = useResource<BrowsePreview>({
     cacheKey: target,
-    load: (signal) =>
-      fetchBrowsePreview({
-        target: target!,
+    load: (signal) => {
+      // justify-type-assertion: useResource never invokes load when cacheKey is
+      // null, so this closure runs only for a successfully decoded target.
+      const activeTarget = target as DiscoveryTargetHandle;
+      return fetchBrowsePreview({
+        target: activeTarget,
         limit: PREVIEW_EPISODE_PAGE_SIZE,
         signal,
-      }),
+      });
+    },
   });
   const [loadVideo, setLoadVideo] = useState(false);
   const { playPreviewAudio } = usePlayerCommands();
@@ -220,38 +226,40 @@ export default function BrowsePreviewPaneBody() {
 
   if (decoded.kind === "Invalid") {
     return (
-      <div className={styles.preview}>
-        <SectionOpener heading="Invalid preview link" scale="title" />
-        <FeedbackNotice
+      <PaneSurface
+        opener={<SectionOpener heading="Invalid preview link" scale="title" />}
+        state={<FeedbackNotice
           severity="warning"
           title="Invalid preview link"
           message="This link is malformed or obsolete."
-        />
+        />}
+      >
         <Button onClick={backToBrowse}>Back to Browse</Button>
-      </div>
+      </PaneSurface>
     );
   }
 
   if (resource.status === "idle" || resource.status === "loading" || ownedHref) {
-    return <PaneLoadingState label="Loading preview…" />;
+    return (
+      <PaneSurface state={<PaneLoadingState label="Loading preview…" />} />
+    );
   }
 
   if (resource.status === "error") {
     const invalid = resource.error.code === "E_INVALID_DISCOVERY_TARGET";
     const deleted = resource.error.code === "E_NOT_FOUND";
     if (!invalid && !deleted) throw resource.error;
+    const heading = invalid ? "Invalid preview link" : "No longer available";
     return (
-      <div className={styles.preview}>
-        <SectionOpener
-          heading={invalid ? "Invalid preview link" : "No longer available"}
-          scale="title"
-        />
-        <FeedbackNotice
+      <PaneSurface
+        opener={<SectionOpener heading={heading} scale="title" />}
+        state={<FeedbackNotice
           severity="warning"
-          title={invalid ? "Invalid preview link" : "No longer available"}
-        />
+          title={heading}
+        />}
+      >
         <Button onClick={backToBrowse}>Back to Browse</Button>
-      </div>
+      </PaneSurface>
     );
   }
 
@@ -317,8 +325,9 @@ export default function BrowsePreviewPaneBody() {
   );
 
   return (
-    <div className={styles.preview}>
-      <SectionOpener heading={resource.data.title} scale="title" />
+    <PaneSurface
+      opener={<SectionOpener heading={resource.data.title} scale="title" />}
+    >
       {resource.data.kind === "Podcast" ? (
         <>
           <PodcastOverview
@@ -424,6 +433,6 @@ export default function BrowsePreviewPaneBody() {
           {acquisition}
         </>
       )}
-    </div>
+    </PaneSurface>
   );
 }
