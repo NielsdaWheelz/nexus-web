@@ -18,8 +18,19 @@ function readViewportSafeAreaInsets(): {
   try {
     const computed = window.getComputedStyle(probe);
     const readInset = (edge: string, value: string): number => {
+      const property = `--viewport-safe-${edge}`;
+      const specified = document.documentElement.style
+        .getPropertyValue(property)
+        .trim();
+      const expectedEnvironment = `env(safe-area-inset-${edge})`;
+      if (
+        /var\(/i.test(specified) ||
+        (/env\(/i.test(specified) && specified !== expectedEnvironment)
+      ) {
+        throw new Error(`Viewport safe ${edge} has an invalid source.`);
+      }
       const token = computed
-        .getPropertyValue(`--viewport-safe-${edge}`)
+        .getPropertyValue(property)
         .trim();
       const globalKeyword =
         /^(?:inherit|initial|revert|revert-layer|unset)$/i.test(token);

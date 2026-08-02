@@ -125,6 +125,35 @@ describe("useAnchoredPosition", () => {
   });
   /* eslint-enable testing-library/no-node-access */
 
+  it("rejects safe-area indirection and noncanonical environment sources", () => {
+    const root = document.documentElement;
+    root.style.setProperty("--nested-safe-top", "0px");
+
+    try {
+      for (const token of [
+        "var(--nested-safe-top)",
+        "var(--missing-safe-top)",
+        "env(unknown-safe-top)",
+        "env(safe-area-inset-left)",
+      ]) {
+        root.style.setProperty("--viewport-safe-top", token);
+        expect(() =>
+          readViewportSafeBounds({ viewportPadding: 8 }),
+        ).toThrow(/top/);
+      }
+
+      root.style.setProperty(
+        "--viewport-safe-top",
+        "env(safe-area-inset-top)",
+      );
+      expect(() =>
+        readViewportSafeBounds({ viewportPadding: 8 }),
+      ).not.toThrow();
+    } finally {
+      root.style.removeProperty("--nested-safe-top");
+    }
+  });
+
   it("preserves zero-inset clamps and reclamps inside all four safe edges", async () => {
     const { rerender } = render(
       <Host
