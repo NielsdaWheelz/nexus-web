@@ -2531,6 +2531,9 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
   test("active global player preserves reader geometry and close returns focus safely", async ({
     page,
   }, testInfo) => {
+    const safeLeft = 144;
+    const safeRight = 32;
+    await page.setViewportSize({ width: 780, height: 360 });
     const audio = readSeed<AudioSeed>("activity-audio-media.json");
     const article = readSeed<ArticleSeed>("non-pdf-media.json");
     await page.route(`**${audio.stream_path}`, (route) =>
@@ -2542,6 +2545,19 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
     );
     await placeAudioInLectern(page, audio.media_id);
     await resetReaderProgress(page, article.media_id);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setSafeAreaInsetsOverride", {
+      insets: {
+        top: 0,
+        topMax: 0,
+        left: safeLeft,
+        leftMax: safeLeft,
+        bottom: 0,
+        bottomMax: 0,
+        right: safeRight,
+        rightMax: safeRight,
+      },
+    });
     try {
       await gotoWithWorkspaceSession(
         page,
@@ -2563,6 +2579,49 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
         .click();
       const player = page.getByRole("region", { name: "Media player" });
       await expect(player).toBeVisible();
+
+      const progress = player
+        .locator(':scope > span[aria-hidden="true"]')
+        .first();
+      const viewportWidth = await page.evaluate(() => window.innerWidth);
+      const [playerRect, progressRect, rowPadding, controlRects] =
+        await Promise.all([
+          player.evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            return { left: rect.left, right: rect.right };
+          }),
+          progress.evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            return { left: rect.left, right: rect.right };
+          }),
+          player.locator(":scope > :nth-child(2)").evaluate((element) => {
+            const style = getComputedStyle(element);
+            return {
+              left: Number.parseFloat(style.paddingLeft),
+              right: Number.parseFloat(style.paddingRight),
+            };
+          }),
+          player
+            .locator(
+              'button, a[href], input, select, textarea, [role="button"]',
+            )
+            .evaluateAll((elements) =>
+              elements
+                .map((element) => element.getBoundingClientRect())
+                .filter((rect) => rect.width > 0 && rect.height > 0)
+                .map((rect) => ({ left: rect.left, right: rect.right })),
+            ),
+        ]);
+      expect(playerRect.left).toBeCloseTo(0, 0);
+      expect(playerRect.right).toBeCloseTo(viewportWidth, 0);
+      expect(progressRect.left).toBeCloseTo(playerRect.left, 0);
+      expect(progressRect.right).toBeCloseTo(playerRect.right, 0);
+      expect(rowPadding).toEqual({ left: safeLeft, right: safeRight });
+      expect(controlRects.length).toBeGreaterThan(0);
+      for (const rect of controlRects) {
+        expect(rect.left).toBeGreaterThanOrEqual(safeLeft - 1);
+        expect(rect.right).toBeLessThanOrEqual(viewportWidth - safeRight + 1);
+      }
 
       await page.getByRole("button", { name: "Open Nexus, 2 tabs" }).tap();
       await page
@@ -2623,7 +2682,23 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       }
       await expectTrustedForwardRetreat(page, scrollport);
     } finally {
-      await removeAudioFromLectern(page, audio.media_id);
+      try {
+        await cdp.send("Emulation.setSafeAreaInsetsOverride", {
+          insets: {
+            top: 0,
+            topMax: 0,
+            left: 0,
+            leftMax: 0,
+            bottom: 0,
+            bottomMax: 0,
+            right: 0,
+            rightMax: 0,
+          },
+        });
+      } finally {
+        await cdp.detach();
+        await removeAudioFromLectern(page, audio.media_id);
+      }
     }
   });
 });

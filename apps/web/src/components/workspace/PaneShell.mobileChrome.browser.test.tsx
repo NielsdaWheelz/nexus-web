@@ -4,10 +4,12 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { Profiler, useCallback, useEffect, useRef, useState } from "react";
 import { page } from "vitest/browser";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import "@/app/globals.css";
 import MobilePaneBar from "@/components/appnav/MobilePaneBar";
 import NexusButton from "@/components/switchboard/NexusButton";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
@@ -120,8 +122,23 @@ function collapseProgress(surface: HTMLElement): number {
 }
 
 describe("PaneShell mobile Find chrome composition", () => {
-  it("keeps real chrome render-stable while Tracking, then pins Find and rebaselines after Close", async () => {
-    await page.viewport(390, 800);
+  afterEach(() => {
+    document.documentElement.style.removeProperty("--viewport-safe-left");
+    document.documentElement.style.removeProperty("--viewport-safe-right");
+  });
+
+  it("keeps asymmetric safe sides while real chrome tracks, pins Find, and rebaselines after Close", async () => {
+    await page.viewport(640, 360);
+    const safeLeft = 96;
+    const safeRight = 28;
+    document.documentElement.style.setProperty(
+      "--viewport-safe-left",
+      `${safeLeft}px`,
+    );
+    document.documentElement.style.setProperty(
+      "--viewport-safe-right",
+      `${safeRight}px`,
+    );
     let appBarRenders = 0;
     let paneShellRenders = 0;
     let nexusRenders = 0;
@@ -232,6 +249,45 @@ describe("PaneShell mobile Find chrome composition", () => {
       screen.getByRole("group", { name: "Reader controls" }),
     ).toBe(contextualRow);
     const options = screen.getByRole("button", { name: "Pane options" });
+
+    const paneShell = screen.getByTestId("pane-shell-root");
+    const paneBody = screen.getByTestId("pane-shell-body");
+    const reader = screen.getByTestId("reader-scrollport");
+    const paneRect = paneShell.getBoundingClientRect();
+    const expectFullPanePaint = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect();
+      expect(rect.left).toBeCloseTo(paneRect.left, 0);
+      expect(rect.right).toBeCloseTo(paneRect.right, 0);
+    };
+    const expectInsideSafeSides = (
+      element: HTMLElement,
+      owner: HTMLElement,
+    ) => {
+      const rect = element.getBoundingClientRect();
+      const ownerRect = owner.getBoundingClientRect();
+      expect(rect.left).toBeGreaterThanOrEqual(
+        ownerRect.left + safeLeft - 1,
+      );
+      expect(rect.right).toBeLessThanOrEqual(
+        ownerRect.right - safeRight + 1,
+      );
+    };
+    expectFullPanePaint(paneBody);
+    expectFullPanePaint(paneChrome);
+    expectInsideSafeSides(reader, paneBody);
+    expectInsideSafeSides(contextualRow, paneChrome);
+
+    const appBarRect = appBar.getBoundingClientRect();
+    expect(appBarRect.left).toBeCloseTo(0, 0);
+    expect(appBarRect.right).toBeCloseTo(window.innerWidth, 0);
+    for (const controls of screen.getAllByTestId("top-bar-controls")) {
+      expectInsideSafeSides(controls, appBar);
+    }
+    expectInsideSafeSides(
+      within(appBar).getByRole("heading", { name: "Document title" }),
+      appBar,
+    );
+    expectInsideSafeSides(options, appBar);
 
     await scrollReaderTo(24);
     await waitFor(() => {

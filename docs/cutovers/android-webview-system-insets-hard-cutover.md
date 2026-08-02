@@ -171,7 +171,8 @@ is added.
 | --- | --- |
 | Correct the independent physical oracle | `apps/android/app/src/androidTest/java/app/nexus/android/MainActivityTest.kt` |
 | Make exact-artifact promotion immutable | `.github/workflows/android-release.yml` |
-| Verify existing production owners; change only on demonstrated red | `MainActivity.kt`; `app/layout.tsx`; `app/globals.css`; `lib/mobileViewport/*`; named consumer styles |
+| Landscape safe-side owners | `apps/web/src/components/workspace/PaneShell.module.css`; `apps/web/src/components/appnav/AppNav.module.css`; `apps/web/src/components/player/MobileMiniPlayer.module.css` |
+| Focused safe-side proof | `apps/web/src/components/workspace/PaneShell.mobileChrome.browser.test.tsx`; `e2e/tests/mobile-reader-chrome.spec.ts` |
 | Record final contract and release evidence | this file; `docs/modules/workspace.md`; `README.md` only where current distribution prose changes |
 
 No planned backend, database, API, reader-state, playback-runtime, Nexus-state,
@@ -263,8 +264,27 @@ remains.
   physical px. Both failed with the intended diagnostics.
 - Same-renderer clearing passed 1/1; the full `RequiresWebViewM144` lane passed
   3/3 in 57 seconds.
-- This accepts only the M144 native-to-CSS boundary. No signed current-source
-  APK, product matrix, or release promotion is accepted.
+- Signed `android-v0.2.7` remained red on the same phone in landscape
+  three-button navigation: the native left system bar occupied physical
+  `[0,0][144,1080]`; pane Back `[24,90][168,237]`, the Lectern clickable row
+  beginning at x=72, and MiniPlayer Open beginning at x=36 intersected
+  `[0,144)`.
+- The scoped CSS correction keeps pane/chrome/player backgrounds and progress
+  full bleed while their existing body, contextual/app-bar, MiniPlayer row,
+  and status-row owners apply physical left/right safe tokens to content and
+  controls. It adds no bridge, store, or platform branch.
+- Focused green: `cd apps/web && bun run test:browser --
+  src/components/workspace/PaneShell.mobileChrome.browser.test.tsx` passed 1/1
+  in 2.61 seconds; `make test-e2e PLAYWRIGHT_ARGS='tests/mobile-reader-chrome.spec.ts
+  --project=mobile-chrome --grep "active global player preserves"'` passed
+  setup plus the grepped case, 2/2 in 2.4 minutes. Scoped ESLint, CSS token
+  lint, and E2E `tsc --noEmit` passed.
+- Repo-wide web TypeScript was stopped on the unrelated baseline
+  `src/__tests__/components/PaneShell.test.tsx:556` (`HTMLElement.labels`); it
+  is not scoped proof or a new feature red.
+- This accepts only the M144 native-to-CSS boundary. The correction is not yet
+  accepted on a deployed current SHA or fresh signed draft; product matrix and
+  release promotion remain blocked.
 
 ## Non-goals
 

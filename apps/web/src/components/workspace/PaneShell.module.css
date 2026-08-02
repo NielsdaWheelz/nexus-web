@@ -212,6 +212,8 @@
   left: 0;
   right: 0;
   z-index: 11;
+  padding-right: var(--viewport-safe-right);
+  padding-left: var(--viewport-safe-left);
   background: var(--surface-2);
   --mobile-chrome-collapse: 0;
   transform: translateY(
@@ -229,6 +231,11 @@
 
 .paneShell[data-mobile="true"] .chrome:empty {
   border-bottom: none;
+}
+
+.paneShell[data-mobile="true"] .body {
+  padding-right: var(--viewport-safe-right);
+  padding-left: var(--viewport-safe-left);
 }
 
 .paneShell[data-mobile="true"] .body[data-body-mode="standard"],

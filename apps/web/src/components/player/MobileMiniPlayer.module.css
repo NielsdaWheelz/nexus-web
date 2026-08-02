@@ -17,7 +17,10 @@
   min-height: 62px;
   align-items: center;
   gap: var(--space-1);
-  padding: var(--space-1) var(--space-2);
+  padding-top: var(--space-1);
+  padding-right: max(var(--space-2), var(--viewport-safe-right));
+  padding-bottom: var(--space-1);
+  padding-left: max(var(--space-2), var(--viewport-safe-left));
 }
 
 .row > :first-child {
@@ -42,7 +45,10 @@
 
 .miniPlayer > :last-child:not(:only-child) {
   min-height: var(--space-5);
-  padding: 0 var(--space-3) var(--space-1);
+  padding-top: 0;
+  padding-right: max(var(--space-3), var(--viewport-safe-right));
+  padding-bottom: var(--space-1);
+  padding-left: max(var(--space-3), var(--viewport-safe-left));
 }
 
 @media (forced-colors: active) {
