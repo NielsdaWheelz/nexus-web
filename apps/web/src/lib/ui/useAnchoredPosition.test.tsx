@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { useAnchoredPosition } from "./useAnchoredPosition";
 
@@ -27,6 +27,20 @@ function floating() {
 }
 
 describe("useAnchoredPosition", () => {
+  beforeEach(() => {
+    document.documentElement.style.setProperty("--viewport-safe-top", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-left", "0px");
+  });
+
+  afterEach(() => {
+    document.documentElement.style.removeProperty("--viewport-safe-top");
+    document.documentElement.style.removeProperty("--viewport-safe-right");
+    document.documentElement.style.removeProperty("--viewport-safe-bottom");
+    document.documentElement.style.removeProperty("--viewport-safe-left");
+  });
+
   it("places below the anchor with start alignment", async () => {
     render(
       <Host
@@ -77,6 +91,62 @@ describe("useAnchoredPosition", () => {
     await waitFor(() =>
       expect(floating().style.left).toBe(`${window.innerWidth - 8 - FLOAT_W}px`),
     );
+  });
+
+  it("preserves zero-inset clamps and reclamps inside all four safe edges", async () => {
+    const { rerender } = render(
+      <Host
+        anchor={new DOMRect(-20, -20, 10, 10)}
+        opts={{ enabled: true, placement: "above", align: "start" }}
+      />,
+    );
+    await waitFor(() => {
+      expect(floating().style.top).toBe("8px");
+      expect(floating().style.left).toBe("8px");
+    });
+
+    rerender(
+      <Host
+        anchor={new DOMRect(window.innerWidth, window.innerHeight, 10, 10)}
+        opts={{ enabled: true, placement: "below", align: "end" }}
+      />,
+    );
+    await waitFor(() => {
+      expect(floating().style.top).toBe(
+        `${window.innerHeight - 8 - FLOAT_H}px`,
+      );
+      expect(floating().style.left).toBe(
+        `${window.innerWidth - 8 - FLOAT_W}px`,
+      );
+    });
+
+    document.documentElement.style.setProperty("--viewport-safe-top", "11px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "13px");
+    document.documentElement.style.setProperty(
+      "--viewport-safe-bottom",
+      "17px",
+    );
+    document.documentElement.style.setProperty("--viewport-safe-left", "19px");
+    window.dispatchEvent(new Event("resize"));
+    await waitFor(() => {
+      expect(floating().style.top).toBe(
+        `${window.innerHeight - 8 - 17 - FLOAT_H}px`,
+      );
+      expect(floating().style.left).toBe(
+        `${window.innerWidth - 8 - 13 - FLOAT_W}px`,
+      );
+    });
+
+    rerender(
+      <Host
+        anchor={new DOMRect(-20, -20, 10, 10)}
+        opts={{ enabled: true, placement: "above", align: "start" }}
+      />,
+    );
+    await waitFor(() => {
+      expect(floating().style.top).toBe("19px");
+      expect(floating().style.left).toBe("27px");
+    });
   });
 
   it("places to the right of the anchor with start alignment", async () => {

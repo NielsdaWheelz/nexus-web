@@ -39,6 +39,8 @@
   border-radius: var(--radius-lg);
   background: var(--surface-canvas);
   min-width: 10rem;
+  overflow: auto;
+  overscroll-behavior: contain;
   box-shadow: var(--shadow-3);
 }
 

@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { clamp } from "@/lib/clamp";
+import { readViewportSafeBounds } from "@/lib/ui/viewportSafeArea";
 
 /**
  * Position a portaled floating element next to an anchor (a live element or a
@@ -55,9 +56,14 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
     const floating = ref.current;
     if (!enabled || !floating || !anchor) return;
     const a = anchor instanceof HTMLElement ? anchor.getBoundingClientRect() : anchor;
+    const bounds = readViewportSafeBounds({ viewportPadding });
+    const maxWidth = Math.max(0, bounds.right - bounds.left);
+    const maxHeight = Math.max(0, bounds.bottom - bounds.top);
+    floating.style.maxWidth = `${maxWidth}px`;
+    floating.style.maxHeight = `${maxHeight}px`;
     const f = floating.getBoundingClientRect();
-    const padMaxLeft = Math.max(viewportPadding, window.innerWidth - viewportPadding - f.width);
-    const padMaxTop = Math.max(viewportPadding, window.innerHeight - viewportPadding - f.height);
+    const maxLeft = Math.max(bounds.left, bounds.right - f.width);
+    const maxTop = Math.max(bounds.top, bounds.bottom - f.height);
 
     const horizontal = placement === "left" || placement === "right";
 
@@ -69,9 +75,17 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
       const leftSide = a.left - f.width - gap;
       left = placement === "right" ? right : leftSide;
       if (flip) {
-        if (placement === "right" && right + f.width > window.innerWidth - viewportPadding && leftSide >= viewportPadding) {
+        if (
+          placement === "right" &&
+          right + f.width > bounds.right &&
+          leftSide >= bounds.left
+        ) {
           left = leftSide;
-        } else if (placement === "left" && leftSide < viewportPadding && right + f.width <= window.innerWidth - viewportPadding) {
+        } else if (
+          placement === "left" &&
+          leftSide < bounds.left &&
+          right + f.width <= bounds.right
+        ) {
           left = right;
         }
       }
@@ -87,9 +101,17 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
       const above = a.top - f.height - gap;
       top = placement === "below" ? below : above;
       if (flip) {
-        if (placement === "below" && below + f.height > window.innerHeight - viewportPadding && above >= viewportPadding) {
+        if (
+          placement === "below" &&
+          below + f.height > bounds.bottom &&
+          above >= bounds.top
+        ) {
           top = above;
-        } else if (placement === "above" && above < viewportPadding && below + f.height <= window.innerHeight - viewportPadding) {
+        } else if (
+          placement === "above" &&
+          above < bounds.top &&
+          below + f.height <= bounds.bottom
+        ) {
           top = below;
         }
       }
@@ -103,10 +125,20 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
 
     setStyle({
       position: "fixed",
-      top: clamp(top, viewportPadding, padMaxTop),
-      left: clamp(left, viewportPadding, padMaxLeft),
+      top: clamp(top, bounds.top, maxTop),
+      left: clamp(left, bounds.left, maxLeft),
+      maxWidth,
+      maxHeight,
     });
-    setAnchorRect(a);
+    setAnchorRect((current) =>
+      current &&
+      current.x === a.x &&
+      current.y === a.y &&
+      current.width === a.width &&
+      current.height === a.height
+        ? current
+        : a,
+    );
   }, [anchor, enabled, placement, align, gap, viewportPadding, flip]);
 
   useLayoutEffect(() => {
@@ -116,11 +148,20 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
       return;
     }
     reposition();
+    const viewport = window.visualViewport;
+    const resizeObserver = new ResizeObserver(reposition);
+    const floating = ref.current;
+    if (floating) resizeObserver.observe(floating);
     window.addEventListener("scroll", reposition, true);
     window.addEventListener("resize", reposition);
+    viewport?.addEventListener("scroll", reposition);
+    viewport?.addEventListener("resize", reposition);
     return () => {
+      resizeObserver.disconnect();
       window.removeEventListener("scroll", reposition, true);
       window.removeEventListener("resize", reposition);
+      viewport?.removeEventListener("scroll", reposition);
+      viewport?.removeEventListener("resize", reposition);
     };
   }, [enabled, reposition]);
 
