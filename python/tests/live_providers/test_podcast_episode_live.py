@@ -109,7 +109,9 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
         user_id=user_id,
         podcast_id=podcast_id,
     )
-    assert sync_result.status == "Complete", sync_result
+    assert sync_result.status in {"Complete", "SourceLimited"}, sync_result
+    assert sync_result.source_limited is (sync_result.status == "SourceLimited"), sync_result
+    assert sync_result.new_episode_count > 0, sync_result
 
     episodes_response = auth_client.get(
         f"/podcasts/{podcast_id}/episodes",
@@ -173,6 +175,11 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
         {
             "podcast_title": candidate["title"],
             "podcast_id": str(podcast_id),
+            "sync": {
+                "status": sync_result.status,
+                "source_limited": sync_result.source_limited,
+                "new_episode_count": sync_result.new_episode_count,
+            },
             "media": media_trace,
             "evidence": evidence_trace,
             "search": search_trace,
