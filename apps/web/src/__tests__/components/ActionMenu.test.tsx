@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { flushSync } from "react-dom";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -14,6 +14,20 @@ function expectInside(inner: DOMRect, outer: DOMRect) {
 }
 
 describe("ActionMenu", () => {
+  beforeEach(() => {
+    document.documentElement.style.setProperty("--viewport-safe-top", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-left", "0px");
+  });
+
+  afterEach(() => {
+    document.documentElement.style.removeProperty("--viewport-safe-top");
+    document.documentElement.style.removeProperty("--viewport-safe-right");
+    document.documentElement.style.removeProperty("--viewport-safe-bottom");
+    document.documentElement.style.removeProperty("--viewport-safe-left");
+  });
+
   it("keeps an oversized player menu and its keyboard-selected close action inside the visual safe rectangle", async () => {
     const user = userEvent.setup();
     const root = document.documentElement;
@@ -25,7 +39,7 @@ describe("ActionMenu", () => {
     } as const;
     const onClosePlayer = vi.fn();
     const options: ActionDescriptor[] = [
-      ...Array.from({ length: 60 }, (_, index) => ({
+      ...Array.from({ length: 60 }, (_, index): ActionDescriptor => ({
         kind: "command",
         id: `player-action-${index}`,
         label: `Player action ${index + 1}`,

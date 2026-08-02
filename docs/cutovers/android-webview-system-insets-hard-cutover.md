@@ -98,6 +98,9 @@ No other production file may read `env(safe-area-inset-*)`. There is no native
 payload, JavaScript bridge, persisted schema, backend API, or capability/version
 negotiation.
 
+The shared viewport reader rejects missing or malformed inherited tokens;
+invalid geometry never normalizes to a real zero inset.
+
 ### Composition capability
 
 Keep the existing public API exactly:
@@ -288,8 +291,8 @@ remains.
   Android branch exists.
 - Focused ActionMenu sensitivity removed only the height constraint: its bottom
   reached 1117 CSS px against an 879 CSS px safe boundary. Restored focused
-  browser proof passed 37/37 across the anchored owner, FloatingActionSurface,
-  and actual oversized ActionMenu journey.
+  browser proof passed 38/38 across the anchored owner, FloatingActionSurface,
+  and an oversized ActionMenu browser-component scenario.
 - The scoped CSS correction keeps pane/chrome/player backgrounds and progress
   full bleed while their existing body, contextual/app-bar, MiniPlayer row,
   and status-row owners apply physical left/right safe tokens to content and

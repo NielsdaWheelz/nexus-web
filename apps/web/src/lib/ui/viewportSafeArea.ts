@@ -15,24 +15,39 @@ function readViewportSafeAreaInsets(): {
   probe.style.paddingLeft = "var(--viewport-safe-left)";
   document.body.appendChild(probe);
 
-  const readInset = (edge: string, value: string): number => {
-    const inset = Number.parseFloat(value);
-    if (!Number.isFinite(inset)) {
-      // justify-defect: these root tokens are owned CSS pixel lengths.
-      throw new Error(`Viewport safe ${edge} is not a CSS pixel length.`);
-    }
-    return inset;
-  };
-  const computed = window.getComputedStyle(probe);
-  const insets = {
-    top: readInset("top", computed.paddingTop),
-    right: readInset("right", computed.paddingRight),
-    bottom: readInset("bottom", computed.paddingBottom),
-    left: readInset("left", computed.paddingLeft),
-  };
+  try {
+    const computed = window.getComputedStyle(probe);
+    const readInset = (edge: string, value: string): number => {
+      const token = computed
+        .getPropertyValue(`--viewport-safe-${edge}`)
+        .trim();
+      const globalKeyword =
+        /^(?:inherit|initial|revert|revert-layer|unset)$/i.test(token);
+      if (
+        token === "" ||
+        globalKeyword ||
+        !CSS.supports("padding-top", token) ||
+        !CSS.supports("border-top-width", token)
+      ) {
+        // justify-defect: these owned tokens must resolve from nonnegative CSS lengths.
+        throw new Error(`Viewport safe ${edge} is not a CSS length.`);
+      }
+      const inset = Number.parseFloat(value);
+      if (!Number.isFinite(inset)) {
+        throw new Error(`Viewport safe ${edge} did not resolve to CSS pixels.`);
+      }
+      return inset;
+    };
 
-  probe.remove();
-  return insets;
+    return {
+      top: readInset("top", computed.paddingTop),
+      right: readInset("right", computed.paddingRight),
+      bottom: readInset("bottom", computed.paddingBottom),
+      left: readInset("left", computed.paddingLeft),
+    };
+  } finally {
+    probe.remove();
+  }
 }
 
 export function readViewportSafeBounds({

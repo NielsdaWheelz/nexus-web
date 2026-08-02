@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { useAnchoredPosition } from "./useAnchoredPosition";
+import { readViewportSafeBounds } from "./viewportSafeArea";
 
 const FLOAT_W = 100;
 const FLOAT_H = 40;
@@ -92,6 +93,37 @@ describe("useAnchoredPosition", () => {
       expect(floating().style.left).toBe(`${window.innerWidth - 8 - FLOAT_W}px`),
     );
   });
+
+  /* eslint-disable testing-library/no-node-access -- The hidden probe has no accessible query. */
+  it("fails loudly for missing or malformed safe-area tokens without leaking its probe", () => {
+    const root = document.documentElement;
+    const bodyChildCount = document.body.childElementCount;
+
+    root.style.removeProperty("--viewport-safe-top");
+    expect(() =>
+      readViewportSafeBounds({ viewportPadding: 8 }),
+    ).toThrow(/top/);
+    expect(document.body.childElementCount).toBe(bodyChildCount);
+
+    root.style.setProperty("--viewport-safe-top", "0px");
+    root.style.setProperty("--viewport-safe-right", "not-a-length");
+    expect(() =>
+      readViewportSafeBounds({ viewportPadding: 8 }),
+    ).toThrow(/right/);
+    expect(document.body.childElementCount).toBe(bodyChildCount);
+
+    for (const edge of ["top", "right", "bottom", "left"] as const) {
+      root.style.setProperty(
+        `--viewport-safe-${edge}`,
+        `env(safe-area-inset-${edge})`,
+      );
+    }
+    expect(() =>
+      readViewportSafeBounds({ viewportPadding: 8 }),
+    ).not.toThrow();
+    expect(document.body.childElementCount).toBe(bodyChildCount);
+  });
+  /* eslint-enable testing-library/no-node-access */
 
   it("preserves zero-inset clamps and reclamps inside all four safe edges", async () => {
     const { rerender } = render(
