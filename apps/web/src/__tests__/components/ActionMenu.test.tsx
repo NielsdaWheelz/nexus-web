@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { flushSync } from "react-dom";
-import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -14,7 +14,7 @@ function expectInside(inner: DOMRect, outer: DOMRect) {
 }
 
 describe("ActionMenu", () => {
-  beforeEach(() => {
+  beforeAll(() => {
     document.documentElement.style.setProperty("--viewport-safe-top", "0px");
     document.documentElement.style.setProperty("--viewport-safe-right", "0px");
     document.documentElement.style.setProperty("--viewport-safe-bottom", "0px");
@@ -22,6 +22,13 @@ describe("ActionMenu", () => {
   });
 
   afterEach(() => {
+    document.documentElement.style.setProperty("--viewport-safe-top", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-left", "0px");
+  });
+
+  afterAll(() => {
     document.documentElement.style.removeProperty("--viewport-safe-top");
     document.documentElement.style.removeProperty("--viewport-safe-right");
     document.documentElement.style.removeProperty("--viewport-safe-bottom");
@@ -123,7 +130,7 @@ describe("ActionMenu", () => {
       expect(onClosePlayer).toHaveBeenCalledTimes(1);
     } finally {
       for (const edge of Object.keys(safeInsets)) {
-        root.style.removeProperty(`--viewport-safe-${edge}`);
+        root.style.setProperty(`--viewport-safe-${edge}`, "0px");
       }
     }
   });

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { useAnchoredPosition } from "./useAnchoredPosition";
 import { readViewportSafeBounds } from "./viewportSafeArea";
@@ -28,7 +28,7 @@ function floating() {
 }
 
 describe("useAnchoredPosition", () => {
-  beforeEach(() => {
+  beforeAll(() => {
     document.documentElement.style.setProperty("--viewport-safe-top", "0px");
     document.documentElement.style.setProperty("--viewport-safe-right", "0px");
     document.documentElement.style.setProperty("--viewport-safe-bottom", "0px");
@@ -36,6 +36,13 @@ describe("useAnchoredPosition", () => {
   });
 
   afterEach(() => {
+    document.documentElement.style.setProperty("--viewport-safe-top", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-left", "0px");
+  });
+
+  afterAll(() => {
     document.documentElement.style.removeProperty("--viewport-safe-top");
     document.documentElement.style.removeProperty("--viewport-safe-right");
     document.documentElement.style.removeProperty("--viewport-safe-bottom");

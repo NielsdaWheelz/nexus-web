@@ -295,6 +295,8 @@ remains.
   reached 1117 CSS px against an 879 CSS px safe boundary. Restored focused
   browser proof passed 38/38 across the anchored owner, FloatingActionSurface,
   and an oversized ActionMenu browser-component scenario.
+- Final fixture teardown audit repeated that three-file browser proof three
+  consecutive times: every run passed 38/38 with no unhandled observer error.
 - The scoped CSS correction keeps pane/chrome/player backgrounds and progress
   full bleed while their existing body, contextual/app-bar, MiniPlayer row,
   and status-row owners apply physical left/right safe tokens to content and
