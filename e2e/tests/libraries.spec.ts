@@ -17,7 +17,11 @@ import {
 async function openLibraryFilters(pane: Locator): Promise<void> {
   const view = pane.getByRole("combobox", { name: "View" });
   if (!(await view.isVisible())) {
-    await pane.getByRole("button", { name: /^Filter(?:,|$)/ }).click();
+    const disclosure = pane.getByRole("button", { name: /^Filter(?:,|$)/ });
+    await expect(disclosure).toBeVisible({ timeout: 15_000 });
+    if ((await disclosure.getAttribute("aria-expanded")) !== "true") {
+      await disclosure.click();
+    }
   }
   await expect(view).toBeVisible({ timeout: 15_000 });
 }
@@ -470,7 +474,7 @@ test.describe("libraries", () => {
     }
   });
 
-  test("All → Unfiled placement and In Progress consumption reconcile in place, and reload preserves the exact view", async ({
+  test("Type, Unfiled, and In Progress reconcile in place and restore exactly", async ({
     page,
   }, testInfo) => {
     const librariesResponse = await page.request.get("/api/libraries");
@@ -526,11 +530,45 @@ test.describe("libraries", () => {
       const pane = activeWorkspacePane(page);
       await openLibraryFilters(pane);
       const viewSelect = pane.getByRole("combobox", { name: "View" });
+      const typeSelect = pane.getByRole("combobox", { name: "Type" });
       await expect(viewSelect).toBeVisible({ timeout: 15_000 });
+      await expect(typeSelect).toHaveValue("all-types");
       // The Default library presents as "All".
       await expect(
         pane.getByRole("heading", { name: "All", level: 1 }),
       ).toBeVisible();
+
+      const typedEntries = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          response.request().method() === "GET" &&
+          url.pathname === entriesPath &&
+          url.searchParams.get("entry_type") === "web_article"
+        );
+      });
+      await typeSelect.selectOption("web_article");
+      expect((await typedEntries).ok()).toBeTruthy();
+      await expect(typeSelect).toHaveValue("web_article");
+      await expect(typeSelect).toBeFocused();
+
+      // Pane Back/Forward stores the exact visit href, including Type.
+      const typedNavigationRow = pane.locator(
+        `[data-collection-row-id="${unfiledMediaId}"]`,
+      );
+      await typedNavigationRow.getByRole("link").first().click();
+      await pane
+        .getByRole("button", { name: "Go back in this pane" })
+        .click();
+      await openLibraryFilters(pane);
+      await expect(typeSelect).toHaveValue("web_article");
+      await pane
+        .getByRole("button", { name: "Go forward in this pane" })
+        .click();
+      await pane
+        .getByRole("button", { name: "Go back in this pane" })
+        .click();
+      await openLibraryFilters(pane);
+      await expect(typeSelect).toHaveValue("web_article");
 
       // View → Unfiled: the URL gains ?projection=unfiled and the entries endpoint
       // is requested with that projection.
@@ -651,6 +689,16 @@ test.describe("libraries", () => {
       expect((await undoEntries).ok()).toBeTruthy();
       await expect(inProgressRow).toHaveCount(0);
 
+      // Type remains exact identity through projection and consumption commits.
+      await expect(typeSelect).toHaveValue("web_article");
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => new URL(window.location.href).searchParams.get("entry_type"),
+          ),
+        )
+        .toBe("web_article");
+
       // A factual sort composes with the projection; the exact view is URL-owned.
       const sortSelect = pane.getByRole("combobox", { name: "Sort by" });
       await sortSelect.selectOption("title-asc");
@@ -662,10 +710,11 @@ test.describe("libraries", () => {
               url.searchParams.get("projection"),
               url.searchParams.get("sort"),
               url.searchParams.get("direction"),
+              url.searchParams.get("entry_type"),
             ].join("|");
           }),
         )
-        .toBe("in-progress|title|asc");
+        .toBe("in-progress|title|asc|web_article");
 
       // Reload the exact URL: projection and sort are restored from the pane URL.
       await page.reload({ waitUntil: "domcontentloaded" });
@@ -678,11 +727,15 @@ test.describe("libraries", () => {
       await expect(
         reloadedPane.getByRole("combobox", { name: "Sort by" }),
       ).toHaveValue("title-asc");
+      await expect(
+        reloadedPane.getByRole("combobox", { name: "Type" }),
+      ).toHaveValue("web_article");
       const reloadedUrl = new URL(page.url());
       expect(reloadedUrl.pathname).toBe(defaultHref);
       expect(reloadedUrl.searchParams.get("projection")).toBe("in-progress");
       expect(reloadedUrl.searchParams.get("sort")).toBe("title");
       expect(reloadedUrl.searchParams.get("direction")).toBe("asc");
+      expect(reloadedUrl.searchParams.get("entry_type")).toBe("web_article");
       await expect(
         reloadedPane.locator(`[data-collection-row-id="${inProgressMediaId}"]`),
       ).toHaveCount(0);

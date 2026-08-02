@@ -550,6 +550,72 @@ test.describe("pane chrome", () => {
     }
   });
 
+  test("reflows Library refinement chrome without local or document horizontal scrolling", async ({
+    page,
+  }, testInfo) => {
+    const librariesResponse = await page.request.get("/api/libraries");
+    expect(librariesResponse.ok()).toBeTruthy();
+    const libraries = (await librariesResponse.json()) as {
+      data: { items: Array<{ id: string; isDefault: boolean }> };
+    };
+    const library = libraries.data.items.find((item) => item.isDefault);
+    if (!library) throw new Error("Default library missing from E2E seed");
+
+    await page.setViewportSize({ width: 769, height: 844 });
+    const activePane = await gotoPaneChromePath(
+      page,
+      testInfo,
+      `/libraries/${library.id}`,
+    );
+    const resizeHandle = page
+      .getByRole("separator", { name: /^Resize pane / })
+      .first();
+    await resizeHandle.focus();
+    await resizeHandle.press("Home");
+    await activePane.getByRole("button", { name: /^Filter(?:,|$)/ }).click();
+
+    const row = activePane.getByTestId("pane-contextual-row");
+    await expect(
+      row.getByRole("searchbox", { name: "Filter library entries" }),
+    ).toBeVisible();
+    await expect(row.getByRole("combobox", { name: "Type" })).toBeVisible();
+    await expect(row.getByRole("combobox", { name: "View" })).toBeVisible();
+    await expect(row.getByRole("combobox", { name: "Sort by" })).toBeVisible();
+
+    const refinementGeometry = () =>
+      row.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          overflowX: style.overflowX,
+          overflowY: style.overflowY,
+          overflow: element.scrollWidth - element.clientWidth,
+        };
+      });
+    await expect.poll(refinementGeometry).toEqual({
+      overflowX: "visible",
+      overflowY: "visible",
+      overflow: 0,
+    });
+    await expectNoDocumentHorizontalOverflow(page);
+
+    await page.setViewportSize({ width: 1_280, height: 844 });
+    await page.evaluate(() => {
+      document.documentElement.style.zoom = "4";
+    });
+    try {
+      await expect.poll(refinementGeometry).toEqual({
+        overflowX: "visible",
+        overflowY: "visible",
+        overflow: 0,
+      });
+      await expectNoDocumentHorizontalOverflow(page);
+    } finally {
+      await page.evaluate(() => {
+        document.documentElement.style.zoom = "";
+      });
+    }
+  });
+
   test("mobile text, PDF, and direct media states consume the shared content offset", async ({
     page,
   }, testInfo) => {

@@ -1161,6 +1161,12 @@ export default function PaneShell({
               }
               className={styles.contextualRow}
               data-testid="pane-contextual-row"
+              data-contextual-row-variant={
+                effectiveContextualRow.kind === "Search" &&
+                effectiveContextualRow.publication.kind === "FilterRows"
+                  ? "Refinement"
+                  : "Instrument"
+              }
               role={
                 effectiveContextualRow.kind === "Instrument"
                   ? "group"

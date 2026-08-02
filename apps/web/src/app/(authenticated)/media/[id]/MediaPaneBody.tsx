@@ -6732,6 +6732,7 @@ export default function MediaPaneBody() {
         label: "PDF controls",
         content: (
           <PaneToolbar
+            variant="Instrument"
             controls={
               <>
                 <Button
@@ -6806,6 +6807,7 @@ export default function MediaPaneBody() {
         label: "EPUB controls",
         content: (
           <PaneToolbar
+            variant="Instrument"
             controls={
               <>
                 <Button

@@ -111,10 +111,16 @@ import type { LibraryOut } from "@/lib/libraries/contract";
 import { useLibraryMembers } from "@/lib/libraries/useLibraryMembers";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import {
+  CANONICAL_LIBRARY_VIEW,
+  LIBRARY_ENTRY_TYPE_OPTION_IDS,
+  activeLibraryDomainControlCount,
   completionOf,
   decodeLibraryView,
   encodeLibraryView,
+  entryTypeOptionLabel,
+  entryTypeOptionOf,
   formatLibraryView,
+  isInitialLibraryView,
   orderPresetIdsFor,
   orderToPresetId,
   presetIdToOrder,
@@ -124,8 +130,10 @@ import {
   projectionOptionsFor,
   projectionSupportsCompletion,
   withCompletion,
+  withEntryTypeOption,
   withProjectionOption,
   type DecodedLibraryView,
+  type LibraryEntryTypeOptionId,
   type LibraryEntryView,
   type LibraryOrderPresetId,
   type ProjectionOptionId,
@@ -335,17 +343,6 @@ function libraryEntryFilterFields(entry: LibraryEntry): readonly string[] {
   ];
 }
 
-// A canonical/all view is exactly the server's default order that the bootstrap
-// `libraryResource` already seeded; any factual order, projection, or unfinished
-// filter is a different first page fetched from the entries endpoint.
-function isInitialLibraryView(view: LibraryEntryView): boolean {
-  return (
-    view.order.kind === "Canonical" &&
-    view.projection.kind === "AllItems" &&
-    view.projection.completion === "all"
-  );
-}
-
 // A view whose row membership depends on canonical consumption facts: In
 // Progress (only InProgress rows) or any Unfinished completion (Finished rows
 // drop out). An unfiltered All-items view is consumption-insensitive, so a bare
@@ -364,11 +361,6 @@ function isInvalidViewError(error: unknown): boolean {
     (error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_CURSOR")
   );
 }
-
-const CANONICAL_VIEW: LibraryEntryView = {
-  order: { kind: "Canonical" },
-  projection: { kind: "AllItems", completion: "all" },
-};
 
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
@@ -419,6 +411,10 @@ export default function LibraryPaneBody() {
         next.delete("direction");
         next.delete("completion");
         next.delete("projection");
+        next.delete("entry_type");
+        next.delete("kind");
+        next.delete("type");
+        next.delete("types");
         return next;
       },
     }),
@@ -630,6 +626,7 @@ export default function LibraryPaneBody() {
   // Focus continuity: when an action removes the focused row, move focus to the
   // next filtered row, else the previous, else the canonical Pane Search target.
   const listRegionRef = useRef<HTMLDivElement | null>(null);
+  const typeSelectRef = useRef<HTMLSelectElement | null>(null);
   const viewSelectRef = useRef<HTMLSelectElement | null>(null);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
   const refreshListRecoveryButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -637,15 +634,25 @@ export default function LibraryPaneBody() {
   // A control to focus once the view/reconciliation it initiated commits. A
   // recovery action (Show all items, Clear filters, Show finished, Retry,
   // Refresh list) sets it; the matching commit applies and clears it.
-  const pendingCommitFocusRef = useRef<"View" | "HideFinished" | null>(null);
+  const pendingCommitFocusRef = useRef<
+    "Type" | "View" | "Sort" | "HideFinished" | null
+  >(null);
   const focusPendingControl = useCallback(() => {
     const target = pendingCommitFocusRef.current;
     if (target === null) return;
     pendingCommitFocusRef.current = null;
-    const element =
-      target === "View"
-        ? viewSelectRef.current
-        : document.getElementById(hideFinishedInputId);
+    const element = (() => {
+      switch (target) {
+        case "Type":
+          return typeSelectRef.current;
+        case "View":
+          return viewSelectRef.current;
+        case "Sort":
+          return sortSelectRef.current;
+        case "HideFinished":
+          return document.getElementById(hideFinishedInputId);
+      }
+    })();
     if (element instanceof HTMLElement) {
       requestAnimationFrame(() => element.focus());
     }
@@ -1348,7 +1355,7 @@ export default function LibraryPaneBody() {
         setController({
           library: libraryResource.data.library,
           entries: {
-            view: view ?? CANONICAL_VIEW,
+            view: view ?? CANONICAL_LIBRARY_VIEW,
             entries: libraryResource.data.entries,
             collectionRevision: libraryResource.data.collectionRevision,
             nextCursor: libraryResource.data.nextCursor,
@@ -2410,19 +2417,41 @@ export default function LibraryPaneBody() {
   const clearDomainFilters = useCallback(() => {
     dismissFilterQueryRef.current();
     pendingCommitFocusRef.current = "View";
-    setView(CANONICAL_VIEW);
+    setView(CANONICAL_LIBRARY_VIEW);
   }, [setView]);
   const domainFilterControls = useMemo(
     () =>
       invalidView || view === null ? undefined : (
         <>
           <label className={styles.selectField}>
+            <span>Type</span>
+            <Select
+              ref={typeSelectRef}
+              value={entryTypeOptionOf(view)}
+              onChange={(event) => {
+                pendingCommitFocusRef.current = "Type";
+                setView(
+                  withEntryTypeOption(
+                    view,
+                    event.target.value as LibraryEntryTypeOptionId,
+                  ),
+                );
+              }}
+            >
+              {LIBRARY_ENTRY_TYPE_OPTION_IDS.map((optionId) => (
+                <option key={optionId} value={optionId}>
+                  {entryTypeOptionLabel(optionId)}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className={styles.selectField}>
             <span>View</span>
             <Select
               ref={viewSelectRef}
               value={projectionOptionOf(view)}
               onChange={(event) => {
-                pendingCommitFocusRef.current = null;
+                pendingCommitFocusRef.current = "View";
                 setView(
                   withProjectionOption(
                     view,
@@ -2444,12 +2473,13 @@ export default function LibraryPaneBody() {
               ref={sortSelectRef}
               value={orderToPresetId(view.order)}
               onChange={(event) => {
-                pendingCommitFocusRef.current = null;
+                pendingCommitFocusRef.current = "Sort";
                 setView({
                   order: presetIdToOrder(
                     event.target.value as LibraryOrderPresetId,
                   ),
                   projection: view.projection,
+                  entryType: view.entryType,
                 });
               }}
             >
@@ -2465,13 +2495,14 @@ export default function LibraryPaneBody() {
               id={hideFinishedInputId}
               checked={completionOf(view) === "unfinished"}
               onCheckedChange={(checked) => {
-                pendingCommitFocusRef.current = null;
+                pendingCommitFocusRef.current = "HideFinished";
                 setView(withCompletion(view, checked ? "unfinished" : "all"));
               }}
               label="Hide finished"
             />
           ) : null}
-          {projectionOptionOf(view) !== "all-items" ||
+          {entryTypeOptionOf(view) !== "all-types" ||
+          projectionOptionOf(view) !== "all-items" ||
           view.order.kind !== "Canonical" ||
           completionOf(view) === "unfinished" ? (
             <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
@@ -2492,11 +2523,7 @@ export default function LibraryPaneBody() {
     ],
   );
   const activeDomainControlCount =
-    view === null
-      ? 0
-      : Number(projectionOptionOf(view) !== "all-items") +
-        Number(view.order.kind !== "Canonical") +
-        Number(completionOf(view) === "unfinished");
+    view === null ? 0 : activeLibraryDomainControlCount(view);
   const getFilterStatus = useCallback(
     (query: string) => {
       const visibleCount = visibleEntries.filter((entry) =>
@@ -2707,7 +2734,7 @@ export default function LibraryPaneBody() {
             size="sm"
             onClick={() => {
               search.onDismiss();
-              setDecodedView({ kind: "Valid", view: CANONICAL_VIEW });
+              setDecodedView({ kind: "Valid", view: CANONICAL_LIBRARY_VIEW });
             }}
           >
             Reset view
@@ -2744,6 +2771,7 @@ export default function LibraryPaneBody() {
     committedView?.order.kind === "Canonical" &&
     committedView.projection.kind === "AllItems" &&
     committedView.projection.completion === "all" &&
+    committedView.entryType.kind === "AllTypes" &&
     controller?.entries.exhaustion === "Complete" &&
     entryExhaustion.kind === "Complete";
   const entryFooter = <CollectionExhaustionNotice state={entryExhaustion} />;
@@ -3089,6 +3117,7 @@ export default function LibraryPaneBody() {
     setView({
       order: committedView.order,
       projection: { kind: "AllItems", completion: "all" },
+      entryType: committedView.entryType,
     });
   };
   const recoverShowFinished = () => {
@@ -3098,7 +3127,24 @@ export default function LibraryPaneBody() {
   };
   // Closed-union empty-state precedence (never inferred from counts).
   const emptyStateNotice = (() => {
-    const projection = committedView?.projection ?? CANONICAL_VIEW.projection;
+    const exactEntryType =
+      committedView?.entryType.kind === "ExactType"
+        ? committedView.entryType.value
+        : null;
+    const projection =
+      committedView?.projection ?? CANONICAL_LIBRARY_VIEW.projection;
+    if (exactEntryType !== null) {
+      return (
+        <FeedbackNotice
+          severity="neutral"
+          title={`No matches for “${entryTypeOptionLabel(exactEntryType)}” in this view.`}
+        >
+          <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
+            Clear filters
+          </Button>
+        </FeedbackNotice>
+      );
+    }
     if (projection.kind === "InProgress") {
       return (
         <FeedbackNotice severity="neutral" title="Nothing in progress.">
@@ -3151,7 +3197,7 @@ export default function LibraryPaneBody() {
         size="sm"
         onClick={() => {
           search.onDismiss();
-          setDecodedView({ kind: "Valid", view: CANONICAL_VIEW });
+          setDecodedView({ kind: "Valid", view: CANONICAL_LIBRARY_VIEW });
         }}
       >
         Reset view

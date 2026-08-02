@@ -64,6 +64,13 @@
   min-width: 0;
 }
 
+.contextualRow[data-contextual-row-variant="Refinement"] {
+  flex: 0 0 auto;
+  block-size: auto;
+  overflow: visible;
+  overscroll-behavior-inline: auto;
+}
+
 .contextualRow :where(button, [role="button"]) {
   min-inline-size: var(--size-md);
   min-block-size: var(--size-md);
@@ -189,6 +196,12 @@
 }
 
 .paneShell[data-mobile="true"] .contextualRow :where(input, select) {
+  min-block-size: var(--size-xl);
+}
+
+.paneShell[data-mobile="true"]
+  .contextualRow[data-contextual-row-variant="Refinement"]
+  :where(label) {
   min-block-size: var(--size-xl);
 }
 

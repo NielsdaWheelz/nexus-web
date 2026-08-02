@@ -1,7 +1,12 @@
-// Library-specific view: closed order/projection/completion types plus a
+// Library-specific view: closed order/projection/completion/type values plus a
 // strict, total URLSearchParams <-> LibraryEntryView codec, view-selector
 // helpers, and exact product labels. See
-// docs/cutovers/library-all-and-smart-views-hard-cutover.md.
+// docs/cutovers/library-entry-type-filter-and-filter-row-reflow-hard-cutover.md.
+
+import {
+  LIBRARY_MEDIA_KINDS,
+  type LibraryMediaKind,
+} from "@/lib/libraries/mediaKind";
 
 export type SortDirection = "asc" | "desc";
 
@@ -19,10 +24,23 @@ export type LibraryEntryProjection =
   | { kind: "Unfiled"; completion: Completion }
   | { kind: "InProgress" };
 
+export type LibraryExactEntryType = LibraryMediaKind | "podcast";
+
+export type LibraryEntryType =
+  | { kind: "AllTypes" }
+  | { kind: "ExactType"; value: LibraryExactEntryType };
+
 export interface LibraryEntryView {
   order: LibraryEntryOrder;
   projection: LibraryEntryProjection;
+  entryType: LibraryEntryType;
 }
+
+export const CANONICAL_LIBRARY_VIEW: LibraryEntryView = {
+  order: { kind: "Canonical" },
+  projection: { kind: "AllItems", completion: "all" },
+  entryType: { kind: "AllTypes" },
+};
 
 export type DecodedLibraryView =
   | { kind: "Valid"; view: LibraryEntryView }
@@ -45,6 +63,31 @@ function isFactualSortKey(value: string): value is FactualSortKey {
 
 function isSortDirection(value: string | null): value is SortDirection {
   return value === "asc" || value === "desc";
+}
+
+function isLibraryExactEntryType(
+  value: string,
+): value is LibraryExactEntryType {
+  return (
+    value === "podcast" ||
+    LIBRARY_MEDIA_KINDS.some((mediaKind) => mediaKind === value)
+  );
+}
+
+function decodeEntryType(params: URLSearchParams): LibraryEntryType | null {
+  const values = params.getAll("entry_type");
+  if (values.length === 0) {
+    return { kind: "AllTypes" };
+  }
+  const value = values[0];
+  if (
+    values.length !== 1 ||
+    value === undefined ||
+    !isLibraryExactEntryType(value)
+  ) {
+    return null;
+  }
+  return { kind: "ExactType", value };
 }
 
 function orderForFactualSort(
@@ -80,6 +123,14 @@ function decodeOrder(params: URLSearchParams): LibraryEntryOrder | null {
 
 /** Strict, total decode. Never normalizes or falls back on a recognized-but-bad value. */
 export function decodeLibraryView(params: URLSearchParams): DecodedLibraryView {
+  if (params.has("kind") || params.has("type") || params.has("types")) {
+    return { kind: "Invalid" };
+  }
+  const entryType = decodeEntryType(params);
+  if (entryType === null) {
+    return { kind: "Invalid" };
+  }
+
   const rawCompletion = params.get("completion");
   let completion: Completion;
   if (rawCompletion === null) {
@@ -106,15 +157,25 @@ export function decodeLibraryView(params: URLSearchParams): DecodedLibraryView {
     return { kind: "Invalid" };
   }
 
+  if (
+    entryType.kind === "ExactType" &&
+    entryType.value === "podcast" &&
+    !(
+      projection.kind === "AllItems" && projection.completion === "all"
+    )
+  ) {
+    return { kind: "Invalid" };
+  }
+
   const order = decodeOrder(params);
   if (order === null) {
     return { kind: "Invalid" };
   }
 
-  return { kind: "Valid", view: { order, projection } };
+  return { kind: "Valid", view: { order, projection, entryType } };
 }
 
-/** Copies `current`, replaces the view-owned keys, preserves everything else. */
+/** Replaces view-owned/forbidden-alias keys and preserves unrelated pane keys. */
 export function encodeLibraryView(
   view: LibraryEntryView,
   current: URLSearchParams,
@@ -124,6 +185,10 @@ export function encodeLibraryView(
   next.delete("direction");
   next.delete("completion");
   next.delete("projection");
+  next.delete("entry_type");
+  next.delete("kind");
+  next.delete("type");
+  next.delete("types");
   switch (view.order.kind) {
     case "Canonical":
       break;
@@ -161,6 +226,15 @@ export function encodeLibraryView(
   if (completionOf(view) === "unfinished") {
     next.set("completion", "unfinished");
   }
+  switch (view.entryType.kind) {
+    case "AllTypes":
+      break;
+    case "ExactType":
+      next.set("entry_type", view.entryType.value);
+      break;
+    default:
+      assertNever(view.entryType);
+  }
   return next;
 }
 
@@ -168,6 +242,83 @@ export function encodeLibraryView(
 export function buildLibraryEntriesQuery(view: LibraryEntryView): string {
   const qs = encodeLibraryView(view, new URLSearchParams()).toString();
   return qs ? `?${qs}` : "";
+}
+
+export const LIBRARY_ENTRY_TYPE_OPTION_IDS = [
+  "all-types",
+  "web_article",
+  "epub",
+  "pdf",
+  "video",
+  "podcast_episode",
+  "podcast",
+] as const;
+
+export type LibraryEntryTypeOptionId =
+  (typeof LIBRARY_ENTRY_TYPE_OPTION_IDS)[number];
+
+export function entryTypeOptionLabel(id: LibraryEntryTypeOptionId): string {
+  switch (id) {
+    case "all-types":
+      return "All types";
+    case "web_article":
+      return "Web articles";
+    case "epub":
+      return "EPUBs";
+    case "pdf":
+      return "PDFs";
+    case "video":
+      return "Videos";
+    case "podcast_episode":
+      return "Podcast episodes";
+    case "podcast":
+      return "Podcast shows";
+    default:
+      return assertNever(id);
+  }
+}
+
+export function entryTypeOptionOf(
+  view: LibraryEntryView,
+): LibraryEntryTypeOptionId {
+  switch (view.entryType.kind) {
+    case "AllTypes":
+      return "all-types";
+    case "ExactType":
+      return view.entryType.value;
+    default:
+      return assertNever(view.entryType);
+  }
+}
+
+export function withEntryTypeOption(
+  view: LibraryEntryView,
+  id: LibraryEntryTypeOptionId,
+): LibraryEntryView {
+  let entryType: LibraryEntryType;
+  switch (id) {
+    case "all-types":
+      entryType = { kind: "AllTypes" };
+      break;
+    case "web_article":
+    case "epub":
+    case "pdf":
+    case "video":
+    case "podcast_episode":
+    case "podcast":
+      entryType = { kind: "ExactType", value: id };
+      break;
+    default:
+      return assertNever(id);
+  }
+  return {
+    order: view.order,
+    projection:
+      id === "podcast"
+        ? { kind: "AllItems", completion: "all" }
+        : view.projection,
+    entryType,
+  };
 }
 
 export type ProjectionOptionId = "all-items" | "unfiled" | "in-progress";
@@ -215,7 +366,13 @@ export function completionOf(view: LibraryEntryView): Completion {
 }
 
 export function projectionSupportsCompletion(view: LibraryEntryView): boolean {
-  return view.projection.kind !== "InProgress";
+  return (
+    view.projection.kind !== "InProgress" &&
+    !(
+      view.entryType.kind === "ExactType" &&
+      view.entryType.value === "podcast"
+    )
+  );
 }
 
 /**
@@ -227,13 +384,31 @@ export function withProjectionOption(
   id: ProjectionOptionId,
 ): LibraryEntryView {
   const completion = completionOf(view);
+  const entryType: LibraryEntryType =
+    id !== "all-items" &&
+    view.entryType.kind === "ExactType" &&
+    view.entryType.value === "podcast"
+      ? { kind: "AllTypes" }
+      : view.entryType;
   switch (id) {
     case "all-items":
-      return { order: view.order, projection: { kind: "AllItems", completion } };
+      return {
+        order: view.order,
+        projection: { kind: "AllItems", completion },
+        entryType,
+      };
     case "unfiled":
-      return { order: view.order, projection: { kind: "Unfiled", completion } };
+      return {
+        order: view.order,
+        projection: { kind: "Unfiled", completion },
+        entryType,
+      };
     case "in-progress":
-      return { order: view.order, projection: { kind: "InProgress" } };
+      return {
+        order: view.order,
+        projection: { kind: "InProgress" },
+        entryType,
+      };
     default:
       return assertNever(id);
   }
@@ -244,11 +419,25 @@ export function withCompletion(
   view: LibraryEntryView,
   completion: Completion,
 ): LibraryEntryView {
+  if (
+    view.entryType.kind === "ExactType" &&
+    view.entryType.value === "podcast"
+  ) {
+    return view;
+  }
   switch (view.projection.kind) {
     case "AllItems":
-      return { order: view.order, projection: { kind: "AllItems", completion } };
+      return {
+        order: view.order,
+        projection: { kind: "AllItems", completion },
+        entryType: view.entryType,
+      };
     case "Unfiled":
-      return { order: view.order, projection: { kind: "Unfiled", completion } };
+      return {
+        order: view.order,
+        projection: { kind: "Unfiled", completion },
+        entryType: view.entryType,
+      };
     case "InProgress":
       return view;
     default:
@@ -256,16 +445,41 @@ export function withCompletion(
   }
 }
 
-/** Exact product label: `{projection} · {order}[ · unfinished only]`. */
+/** Exact product label: `{projection}[ · active type] · {order}[ · unfinished only]`. */
 export function formatLibraryView(
   view: LibraryEntryView,
   isDefaultLibrary: boolean,
 ): string {
   const projectionLabel = projectionOptionLabel(projectionOptionOf(view));
   const orderLabel = presetLabel(orderToPresetId(view.order), isDefaultLibrary);
+  const entryTypeLabel =
+    view.entryType.kind === "AllTypes"
+      ? ""
+      : ` · ${entryTypeOptionLabel(view.entryType.value)}`;
   const unfinishedOnly =
     completionOf(view) === "unfinished" && projectionSupportsCompletion(view);
-  return `${projectionLabel} · ${orderLabel}${unfinishedOnly ? " · unfinished only" : ""}`;
+  const completionLabel = unfinishedOnly ? " · unfinished only" : "";
+  return `${projectionLabel}${entryTypeLabel} · ${orderLabel}${completionLabel}`;
+}
+
+export function isInitialLibraryView(view: LibraryEntryView): boolean {
+  return (
+    view.order.kind === "Canonical" &&
+    view.projection.kind === "AllItems" &&
+    view.projection.completion === "all" &&
+    view.entryType.kind === "AllTypes"
+  );
+}
+
+export function activeLibraryDomainControlCount(
+  view: LibraryEntryView,
+): number {
+  return (
+    Number(projectionOptionOf(view) !== "all-items") +
+    Number(view.order.kind !== "Canonical") +
+    Number(completionOf(view) === "unfinished") +
+    Number(view.entryType.kind !== "AllTypes")
+  );
 }
 
 export type LibraryOrderPresetId =

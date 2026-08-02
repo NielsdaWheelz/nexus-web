@@ -18,6 +18,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cdp, page, userEvent } from "vitest/browser";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneShell from "@/components/workspace/PaneShell";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
@@ -41,6 +42,8 @@ import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneToolbar from "@/components/ui/PaneToolbar";
+import Select from "@/components/ui/Select";
+import Toggle from "@/components/ui/Toggle";
 import {
   MobileChromeProvider,
   useMobileChrome,
@@ -377,12 +380,201 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  document.documentElement.style.removeProperty("font-size");
+  document.documentElement.style.removeProperty("zoom");
   if (!mobileViewportActive) return;
   await page.viewport(1_280, 720);
   mobileViewportActive = false;
 });
 
 describe("PaneShell", () => {
+  it.each([
+    { name: "320px compressed", viewportWidth: 320, paneWidth: 320 },
+    { name: "390px compact", viewportWidth: 390, paneWidth: 390 },
+    { name: "479px compact boundary", viewportWidth: 479, paneWidth: 479 },
+    { name: "480px comfortable boundary", viewportWidth: 480, paneWidth: 480 },
+    { name: "960px wide", viewportWidth: 960, paneWidth: 960 },
+    {
+      name: "320px at 200% text scale",
+      viewportWidth: 320,
+      paneWidth: 320,
+      fontSize: "200%",
+    },
+    {
+      name: "320px equivalent at 400% zoom",
+      viewportWidth: 1_280,
+      paneWidth: 320,
+      zoom: "4",
+    },
+    {
+      name: "390px mobile touch-target geometry",
+      viewportWidth: 390,
+      paneWidth: 390,
+      isMobile: true,
+    },
+  ])(
+    "reflows a $name refinement row without local or document horizontal scrolling",
+    async ({ viewportWidth, paneWidth, fontSize, zoom, isMobile = false }) => {
+      await page.viewport(viewportWidth, 800);
+      mobileViewportActive = true;
+      if (fontSize) document.documentElement.style.fontSize = fontSize;
+      if (zoom) document.documentElement.style.zoom = zoom;
+      render(
+        paneTree({
+          isActive: true,
+          isMobile,
+          sizing: paneSizing({
+            widthPx: paneWidth,
+            minWidthPx: 320,
+            maxWidthPx: 1_400,
+          }),
+          children: (
+            <PrimaryChromeProbe
+              publication={{
+                search: {
+                  kind: "FilterRows",
+                  query: "",
+                  inputLabel: "Filter library entries",
+                  placeholder: "Filter entries",
+                  onQueryChange: vi.fn(),
+                  onDismiss: vi.fn(),
+                  rowStatus: {
+                    kind: "Complete",
+                    visibleCount: 12,
+                    totalCount: 12,
+                    unit: { singular: "entry", plural: "entries" },
+                  },
+                  activeDomainControlCount: 1,
+                  filters: (
+                    <>
+                      <label
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          minWidth: 120,
+                        }}
+                      >
+                        Type
+                        <Select aria-label="Type" defaultValue="web_article">
+                          <option value="web_article">Web articles</option>
+                        </Select>
+                      </label>
+                      <label
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          minWidth: 120,
+                        }}
+                      >
+                        View
+                        <Select aria-label="View" defaultValue="all">
+                          <option value="all">All items</option>
+                        </Select>
+                      </label>
+                      <label
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          minWidth: 120,
+                        }}
+                      >
+                        Sort by
+                        <Select aria-label="Sort by" defaultValue="published">
+                          <option value="published">
+                            Publication date — newest first
+                          </option>
+                        </Select>
+                      </label>
+                      <Toggle
+                        checked
+                        label="Hide finished"
+                        onCheckedChange={vi.fn()}
+                      />
+                    </>
+                  ),
+                  controls: <Button type="button">Clear filters</Button>,
+                },
+              }}
+            />
+          ),
+        }),
+      );
+
+      const user = userEvent.setup();
+      if (isMobile) {
+        await waitFor(() => expect(dispatchPaneSearchRequest()).toBe(true));
+      } else {
+        await user.click(
+          await screen.findByRole("button", { name: /^Filter(?:,|$)/ }),
+        );
+      }
+      const row = await screen.findByTestId("pane-contextual-row");
+      expect(horizontallyScrollableElements(row)).toEqual([]);
+      expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
+      expect(
+        Math.max(
+          document.body.scrollWidth,
+          document.documentElement.scrollWidth,
+        ),
+      ).toBeLessThanOrEqual(window.innerWidth + 1);
+
+      const input = within(row).getByRole("searchbox", {
+        name: "Filter library entries",
+      });
+      const type = within(row).getByRole("combobox", { name: "Type" });
+      const view = within(row).getByRole("combobox", { name: "View" });
+      const sort = within(row).getByRole("combobox", { name: "Sort by" });
+      const hideFinished = within(row).getByRole("checkbox", {
+        name: "Hide finished",
+      });
+      const clear = within(row).getByRole("button", { name: "Clear filters" });
+      const close = within(row).getByRole("button", { name: "Close search" });
+      for (const control of [input, type, view, sort, clear, close]) {
+        const rect = control.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        expect(rect.left).toBeGreaterThanOrEqual(rowRect.left);
+        expect(rect.right).toBeLessThanOrEqual(rowRect.right);
+        if (isMobile) expect(rect.height).toBeGreaterThanOrEqual(44);
+      }
+
+      input.focus();
+      for (const next of [type, view, sort, hideFinished, clear, close]) {
+        await user.tab();
+        expect(next).toHaveFocus();
+      }
+
+      if (paneWidth < 360) {
+        const availableWidth = input.getBoundingClientRect().width;
+        for (const field of [type, view, sort]) {
+          expect(field.getBoundingClientRect().width).toBeGreaterThanOrEqual(
+            availableWidth - 1,
+          );
+        }
+      }
+
+      if (isMobile) {
+        const toggleLabel = hideFinished.labels?.item(0);
+        if (!toggleLabel) throw new Error("Hide finished has no label target");
+        expect(toggleLabel.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+      }
+
+      if (paneWidth < 480) {
+        expect(input.getBoundingClientRect().top).toBeLessThan(
+          type.getBoundingClientRect().top,
+        );
+        expect(type.getBoundingClientRect().top).toBeLessThan(
+          close.getBoundingClientRect().top,
+        );
+      }
+
+      expect(getComputedStyle(row).overflowX).toBe("visible");
+      expect(getComputedStyle(row).overflowY).toBe("visible");
+      expect(row.getBoundingClientRect().height).toBeGreaterThanOrEqual(
+        isMobile ? 48 : 40,
+      );
+    },
+  );
+
   it("renders one shell-owned labelled instrument group with native button order", async () => {
     const user = userEvent.setup();
     render(
@@ -398,6 +590,7 @@ describe("PaneShell", () => {
                 label: "PDF controls",
                 content: (
                   <PaneToolbar
+                    variant="Instrument"
                     controls={(
                       <>
                         <Button type="button" variant="ghost" size="sm">
@@ -449,6 +642,7 @@ describe("PaneShell", () => {
                 label: "PDF controls",
                 content: (
                   <PaneToolbar
+                    variant="Instrument"
                     controls={<Button type="button">Next page</Button>}
                   />
                 ),
@@ -519,6 +713,7 @@ describe("PaneShell", () => {
                 label: "EPUB controls",
                 content: (
                   <PaneToolbar
+                    variant="Instrument"
                     controls={(
                       <>
                         <Button

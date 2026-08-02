@@ -3,6 +3,12 @@
 Status: IMPLEMENTED — 2026-07-31
 Type: atomic hard cutover
 
+> **Refinement-row update (2026-08-02):**
+> [`library-entry-type-filter-and-filter-row-reflow-hard-cutover.md`](library-entry-type-filter-and-filter-row-reflow-hard-cutover.md)
+> supersedes the single-line/local-inline-overflow rule for `FilterRows` only.
+> Refinement rows reflow; `FindOccurrences` and reader instruments retain the
+> single-line instrument contract.
+
 ## Questions And Locked Defaults
 
 Open questions: none.

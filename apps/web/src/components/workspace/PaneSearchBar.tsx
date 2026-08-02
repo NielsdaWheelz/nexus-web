@@ -418,6 +418,9 @@ const PaneSearchBar = forwardRef<
       }}
     >
       <PaneToolbar
+        variant={
+          publication.kind === "FilterRows" ? "Refinement" : "Instrument"
+        }
         search={
           <SearchInput
             ref={ref}

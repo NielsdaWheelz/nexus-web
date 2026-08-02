@@ -231,11 +231,28 @@ afterEach(() => {
 });
 
 describe("LibraryPaneBody (Default library)", () => {
-  it("filters locally by title and contributor credit fields only", async () => {
+  it("filters a committed Type view locally by title and contributor credit fields only", async () => {
     const user = userEvent.setup();
     const fetchSpy = stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
+      if (
+        fetchInputPathWithSearch(input) ===
+        `/api/libraries/${LIBRARY_ID}/entries?entry_type=web_article`
+      ) {
+        return Response.json({
+          data: {
+            items: [
+              mediaEntryWire("entry-1", FIRST_MEDIA_ID, "Alpha Work"),
+              mediaEntryWire("entry-2", SECOND_MEDIA_ID, "Beta Work", {
+                contributors: [contributor],
+              }),
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
+        });
+      }
       throw new Error(`Unexpected fetch: ${fetchInputPathWithSearch(input)}`);
     });
     const contributor = {
@@ -248,7 +265,7 @@ describe("LibraryPaneBody (Default library)", () => {
       ordinal: 0,
     };
     const view = renderHydratedPane({
-      href: `/libraries/${LIBRARY_ID}`,
+      href: `/libraries/${LIBRARY_ID}?entry_type=web_article`,
       resources: {
         [LIBRARY_ID]: {
           library: seededDefaultLibrary(),
@@ -287,7 +304,7 @@ describe("LibraryPaneBody (Default library)", () => {
     ).not.toBeInTheDocument();
     expect(
       fetchCallsForPath(fetchSpy, `/api/libraries/${LIBRARY_ID}/entries`),
-    ).toHaveLength(0);
+    ).toHaveLength(1);
     expect(view.onReplacePane).not.toHaveBeenCalled();
   });
 
@@ -344,6 +361,21 @@ describe("LibraryPaneBody (Default library)", () => {
     expect(
       screen.getByRole("option", { name: "In Progress" }),
     ).toBeInTheDocument();
+
+    const typeSelect = screen.getByRole("combobox", { name: "Type" });
+    expect(
+      within(typeSelect)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual([
+      "All types",
+      "Web articles",
+      "EPUBs",
+      "PDFs",
+      "Videos",
+      "Podcast episodes",
+      "Podcast shows",
+    ]);
 
     // No reorder UX: reorder is gated to editable non-default Canonical +
     // AllItems(all), so no per-row Move up/down renders even though
@@ -763,6 +795,103 @@ describe("LibraryPaneBody (Default library)", () => {
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "View" })).toHaveFocus(),
     );
+  });
+
+  it("normalizes Podcast shows with View, names the typed empty state, and keeps focus", async () => {
+    const user = userEvent.setup();
+    const requestedPaths: string[] = [];
+    let resolvePodcastPage!: (response: Response) => void;
+    const podcastPage = new Promise<Response>((resolve) => {
+      resolvePodcastPage = resolve;
+    });
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?entry_type=podcast`) {
+        requestedPaths.push(path);
+        return podcastPage;
+      }
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?projection=in-progress`) {
+        requestedPaths.push(path);
+        return Response.json({
+          data: {
+            items: [],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+
+    render(
+      <StatefulDefaultPane
+        initialHref={`/libraries/${LIBRARY_ID}`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededDefaultLibrary(),
+            entries: [
+              seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed"),
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+            exhaustion: "Complete",
+          },
+        }}
+      />,
+    );
+
+    const typeSelect = await screen.findByRole("combobox", { name: "Type" });
+    typeSelect.focus();
+    await user.selectOptions(typeSelect, "podcast");
+
+    expect(
+      screen.getByRole("link", { name: "Canonical Seed" }),
+    ).toBeVisible();
+    await screen.findByText(
+      "Loading All items · Podcast shows · Recently added. Showing All items · Recently added.",
+    );
+    await act(async () => {
+      resolvePodcastPage(
+        Response.json({
+          data: {
+            items: [],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
+        }),
+      );
+    });
+
+    await screen.findByText(
+      "No matches for “Podcast shows” in this view.",
+    );
+    expect(typeSelect).toHaveValue("podcast");
+    expect(typeSelect).toHaveFocus();
+    expect(screen.getByRole("combobox", { name: "View" })).toHaveValue(
+      "all-items",
+    );
+    expect(
+      screen.queryByRole("checkbox", { name: "Hide finished" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("default-pane-href")).toHaveTextContent(
+      `/libraries/${LIBRARY_ID}?entry_type=podcast`,
+    );
+
+    const viewSelect = screen.getByRole("combobox", { name: "View" });
+    await user.selectOptions(viewSelect, "in-progress");
+
+    await screen.findByText("Nothing in progress.");
+    expect(viewSelect).toHaveFocus();
+    expect(typeSelect).toHaveValue("all-types");
+    expect(screen.getByTestId("default-pane-href")).toHaveTextContent(
+      `/libraries/${LIBRARY_ID}?projection=in-progress`,
+    );
+    expect(requestedPaths).toEqual([
+      `/api/libraries/${LIBRARY_ID}/entries?entry_type=podcast`,
+      `/api/libraries/${LIBRARY_ID}/entries?projection=in-progress`,
+    ]);
   });
 
   it("renders the Unfiled unfinished empty state with a Clear filters recovery", async () => {

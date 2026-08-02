@@ -4,6 +4,12 @@ Status: SOURCE CUTOVER VERIFIED — 2026-07-29; production cutover pending
 Type: hard cutover
 Date: 2026-07-29
 
+> **Library Type update (2026-08-02):**
+> [`library-entry-type-filter-and-filter-row-reflow-hard-cutover.md`](library-entry-type-filter-and-filter-row-reflow-hard-cutover.md)
+> supersedes the no-new-domain-filter boundary for the Library-entry `Type`
+> facet only. Type joins the existing server-owned domain controls; local text
+> remains visit-local and request-free.
+
 Open questions: none.
 
 Governing contracts:

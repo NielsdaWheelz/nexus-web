@@ -577,9 +577,7 @@ exhaustion: "Complete",
       const host = screen.getByTestId(`library-host-${width}`);
       expect(host.clientWidth).toBe(width);
       expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
-      expect(horizontallyScrollableElements(host)).toEqual(
-        width < 480 ? ["Pane contextual controls"] : [],
-      );
+      expect(horizontallyScrollableElements(host)).toEqual([]);
       expect(screen.getByRole("list", { name: LIBRARY_NAME })).toBeVisible();
       expect(screen.queryByRole("img")).toBeNull();
       expect(screen.queryByRole("progressbar")).toBeNull();
@@ -3154,13 +3152,22 @@ exhaustion: "Complete",
     expect(screen.getByText(`Added ${expectedAdded}`)).toBeInTheDocument();
   });
 
-  it("hides reorder handles under a factual sort even when reorder is otherwise allowed", async () => {
+  it.each([
+    {
+      name: "a factual sort",
+      query: "sort=title&direction=asc",
+    },
+    {
+      name: "an exact Type",
+      query: "entry_type=pdf",
+    },
+  ])("hides reorder handles under $name", async ({ query }) => {
     stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       if (
         fetchInputPathWithSearch(input) ===
-        `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
+        `/api/libraries/${LIBRARY_ID}/entries?${query}`
       ) {
         return Response.json({
           data: {
@@ -3188,7 +3195,7 @@ exhaustion: "Complete",
     });
 
     renderHydratedPane({
-      href: `/libraries/${LIBRARY_ID}?sort=title&direction=asc`,
+      href: `/libraries/${LIBRARY_ID}?${query}`,
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
@@ -3210,7 +3217,8 @@ exhaustion: "Complete",
     expect(
       await screen.findByRole("link", { name: "Alpha Work" }),
     ).toBeInTheDocument();
-    // Reorder is gated to the canonical/all view, so no per-row Move up/down.
+    // Reorder is gated to the complete canonical All-types view, so no per-row
+    // Move up/down is exposed.
     await userEvent
       .setup()
       .click(

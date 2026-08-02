@@ -240,16 +240,18 @@ pass **No additional libraries**; Podcast Subscribe, episode Add, and OPML pass
 
 ## Frontend entry-view lifecycle
 
-The pane URL owns the requested `LibraryEntryView` (order + projection); the
-Library controller owns one committed exact collection
+The pane URL owns the requested `LibraryEntryView` (order + projection + entry
+type); the Library controller owns one committed exact collection
 `{view, entries, collectionRevision, nextCursor, exhaustion}`.
 A same-visit query replacement is in-place: pane chrome, controls, focus, live
 ShellScroll position, Slate, and Companion stay mounted while the exact first
 page loads. The full query remains runtime/history identity.
 `lib/libraries/libraryView.ts` is the sole owner of the closed view types, the
-strict URL codec, API query construction, projection/order option
-availability, and the exact `{projection label} · {order label}[ · unfinished
-only]` view formatting.
+strict URL codec, API query construction, projection/order option availability,
+entry-type transitions, and exact view formatting. The closed inventory is All
+types plus Web articles, EPUBs, PDFs, Videos, Podcast episodes, and Podcast
+shows. Omitted `entry_type` means All types; Podcast shows compose only with All
+items / show finished.
 
 - A keyed `useResource` request is latest-wins; only a result associated with
   the current requested view commits.
@@ -268,7 +270,7 @@ only]` view formatting.
 - While requested and committed views differ, prior rows and row navigation
   remain available; continuation, reorder, and entry mutations do not. Reorder
   exists only for a complete, editable, non-default
-  `Canonical + All items (all)` view.
+  `Canonical + All items (all) + All types` view.
 - Failure retains and labels the prior committed collection. Network/5xx
   exhaustion offers **Retry**; an invalid cursor or changed revision offers
   **Refresh list**, which requests the first page of the same view without
@@ -285,11 +287,11 @@ only]` view formatting.
 Pane-local Filter is a visit-local view over the committed rows. It matches
 presented entry title and contributor display/credited names after the
 server-owned projection and before the existing order. It never enters
-`LibraryEntryView`, request, cursor, snapshot, or folio identity. `View`, `Sort
-by`, and `Hide finished` render in expanded Pane Search; when collapsed, the
-Filter action marks their non-default state. A query-key row change bypasses
-the collection View Transition, while domain commits and mutations retain the
-existing transition and requested/committed lifecycle.
+`LibraryEntryView`, request, cursor, snapshot, or folio identity. `Type`, `View`,
+`Sort by`, and applicable `Hide finished` render in expanded Pane Search; when
+collapsed, the Filter action marks their non-default state. A query-key row
+change bypasses the collection View Transition, while domain commits and
+mutations retain the existing transition and requested/committed lifecycle.
 
 See
 [library-entry-view-continuity-hard-cutover.md](../cutovers/library-entry-view-continuity-hard-cutover.md).

@@ -8,6 +8,10 @@ import {
   type PublicationDate,
 } from "@/lib/dates/publicationDate";
 import {
+  LIBRARY_MEDIA_KINDS,
+  type LibraryMediaKind,
+} from "@/lib/libraries/mediaKind";
+import {
   expectBoolean,
   expectExactRecord,
   expectFiniteNumber,
@@ -17,13 +21,6 @@ import {
 } from "@/lib/validation";
 
 const INT32_MAX = 2_147_483_647;
-const MEDIA_KINDS = [
-  "web_article",
-  "epub",
-  "pdf",
-  "podcast_episode",
-  "video",
-] as const;
 const PROCESSING_STATUSES = [
   "pending",
   "extracting",
@@ -32,8 +29,6 @@ const PROCESSING_STATUSES = [
   "suspended",
 ] as const;
 const READ_STATES = ["unread", "in_progress", "finished"] as const;
-
-export type LibraryMediaKind = (typeof MEDIA_KINDS)[number];
 
 export interface ReadingTimeEstimate {
   totalMinutes: PositiveMinutes;
@@ -155,7 +150,11 @@ export function decodeLibraryReadingTimeEntry(
     media.published_date,
     "Library media published_date",
   );
-  const mediaKind = expectOneOf(media.kind, MEDIA_KINDS, "Library media kind");
+  const mediaKind = expectOneOf(
+    media.kind,
+    LIBRARY_MEDIA_KINDS,
+    "Library media kind",
+  );
   const sourceHost = decodeSourceHost(mediaKind, media.canonical_source_url);
   const processingStatus = expectOneOf(
     media.processing_status,
