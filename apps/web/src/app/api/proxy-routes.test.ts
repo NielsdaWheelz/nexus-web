@@ -62,6 +62,7 @@ describe("BFF API route shape", () => {
       const relativePath = relative(process.cwd(), route).split(sep).join("/");
       const usesAppProxy =
         source.includes("proxyToFastAPI") ||
+        source.includes("proxyMediaAssetToFastAPI") ||
         (DELEGATED_APP_PROXY_ROUTES.has(relativePath) &&
           source.includes("proxyConsumptionRead"));
       const usesExtensionProxy = source.includes("proxyExtensionToFastAPI");

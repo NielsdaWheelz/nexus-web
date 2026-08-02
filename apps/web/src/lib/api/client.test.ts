@@ -4,6 +4,7 @@ import {
   apiFetch,
   apiKeepaliveJson,
   apiPostFormData,
+  decodeApiPayload,
   isSameSystemApiDefect,
 } from "./client";
 
@@ -21,6 +22,38 @@ describe("same-system API defects", () => {
     expect(
       isSameSystemApiDefect(new ApiError(502, "E_UPSTREAM", "Unavailable")),
     ).toBe(false);
+  });
+
+  it("classifies strict payload decoder failures without weakening them", () => {
+    expect(() =>
+      decodeApiPayload(
+        { data: { legacy: true } },
+        () => {
+          throw new TypeError("expected canonical fields");
+        },
+        "GET /api/media/{id}/navigation",
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        status: 200,
+        code: "E_INVALID_RESPONSE",
+        message:
+          "GET /api/media/{id}/navigation returned an invalid response: expected canonical fields",
+      }),
+    );
+  });
+
+  it("preserves an API error raised by a payload decoder", () => {
+    const error = new ApiError(200, "E_INTERNAL", "decoder invariant failed");
+    expect(() =>
+      decodeApiPayload(
+        {},
+        () => {
+          throw error;
+        },
+        "GET /api/example",
+      ),
+    ).toThrow(error);
   });
 });
 
@@ -43,6 +76,23 @@ describe("apiFetch", () => {
       code: "E_INVALID_RESPONSE",
       message: "API returned a non-JSON response",
     });
+  });
+
+  it("classifies only a rejected fetch as a network failure", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new TypeError("Failed to fetch"),
+    );
+
+    await expect(apiFetch("/api/libraries")).rejects.toEqual(
+      new ApiError(0, "E_NETWORK", "Network request failed"),
+    );
+  });
+
+  it("preserves aborts at the fetch boundary", async () => {
+    const abort = new DOMException("Aborted", "AbortError");
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(abort);
+
+    await expect(apiFetch("/api/libraries")).rejects.toBe(abort);
   });
 
   it("allows successful empty responses", async () => {

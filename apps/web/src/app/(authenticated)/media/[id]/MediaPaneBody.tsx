@@ -66,6 +66,7 @@ import HighlightQuickNoteComposer, {
 import {
   ApiError,
   apiFetch,
+  decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
@@ -1778,7 +1779,11 @@ export default function MediaPaneBody() {
         `/api/media/${id}/navigation`,
         { signal },
       );
-      const navResp = decodeMediaNavigationResponse(rawNavigation);
+      const navResp = decodeApiPayload(
+        rawNavigation,
+        decodeMediaNavigationResponse,
+        "GET /api/media/{id}/navigation",
+      );
       return readNavigationPayload(navResp);
     },
     [id, readNavigationPayload],

@@ -14,7 +14,7 @@ describe("requestWithRetry", () => {
     const controller = new AbortController();
     const request = vi
       .fn<(signal: AbortSignal) => Promise<string>>()
-      .mockRejectedValueOnce(new Error("offline"))
+      .mockRejectedValueOnce(new ApiError(0, "E_NETWORK", "offline"))
       .mockRejectedValueOnce(new ApiError(503, "E_UPSTREAM", "down"))
       .mockResolvedValueOnce("ready");
 
@@ -23,6 +23,18 @@ describe("requestWithRetry", () => {
 
     await expect(result).resolves.toBe("ready");
     expect(request).toHaveBeenCalledTimes(3);
+  });
+
+  it("never relabels or retries an unexpected same-system defect", async () => {
+    const defect = new TypeError("Navigation response violated its contract");
+    const request = vi.fn(async () => {
+      throw defect;
+    });
+
+    await expect(
+      requestWithRetry(request, new AbortController().signal),
+    ).rejects.toBe(defect);
+    expect(request).toHaveBeenCalledOnce();
   });
 
   it("never retries client errors", async () => {

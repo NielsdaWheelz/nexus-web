@@ -67,6 +67,29 @@ export function isUnauthenticatedApiError(error: unknown): error is ApiError {
 }
 
 /**
+ * Translate a strict same-system payload decoder failure into the API defect
+ * taxonomy without weakening the decoder or misclassifying the failure as a
+ * network problem.
+ */
+export function decodeApiPayload<T>(
+  body: unknown,
+  decode: (body: unknown) => T,
+  context: string,
+): T {
+  try {
+    return decode(body);
+  } catch (error) {
+    if (isApiError(error)) throw error;
+    const reason = error instanceof Error ? error.message : "Invalid response";
+    throw new ApiError(
+      200,
+      "E_INVALID_RESPONSE",
+      `${context} returned an invalid response: ${reason}`,
+    );
+  }
+}
+
+/**
  * Response shape for API errors.
  */
 interface ErrorResponse {
@@ -136,6 +159,23 @@ function isPlainGetRequest(options: RequestInit): boolean {
     options.body === undefined &&
     options.signal === undefined
   );
+}
+
+/**
+ * Own the browser transport boundary: only a rejected fetch is a network
+ * failure. Parsing and contract decoders run outside this boundary so defects
+ * cannot be relabeled as connectivity problems or enter the retry schedule.
+ */
+async function fetchApiResponse(
+  path: ApiPath,
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(path, init);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    throw new ApiError(0, "E_NETWORK", "Network request failed");
+  }
 }
 
 async function parseApiResponse<T>(response: Response): Promise<T> {
@@ -209,7 +249,7 @@ export async function apiFetch<T>(
       return inFlight as Promise<T>;
     }
 
-    const request = fetch(path, init)
+    const request = fetchApiResponse(path, init)
       .then((response) => parseApiResponse<T>(response))
       .finally(() => {
         inFlightGetRequests.delete(key);
@@ -218,7 +258,7 @@ export async function apiFetch<T>(
     return request;
   }
 
-  const response = await fetch(path, init);
+  const response = await fetchApiResponse(path, init);
   return parseApiResponse<T>(response);
 }
 
@@ -227,7 +267,7 @@ export async function apiCommand204(
   path: ApiPath,
   options: RequestInit,
 ): Promise<void> {
-  const response = await fetch(path, {
+  const response = await fetchApiResponse(path, {
     ...options,
     method: normalizeMethod(options.method),
     headers: {
@@ -249,7 +289,7 @@ export async function apiPostFormData<T>(
   path: ApiPath,
   formData: FormData,
 ): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetchApiResponse(path, {
     method: "POST",
     body: formData,
   });
@@ -261,7 +301,7 @@ export async function apiKeepaliveJson(
   path: ApiPath,
   body: unknown,
 ): Promise<void> {
-  const response = await fetch(path, {
+  const response = await fetchApiResponse(path, {
     method: "PUT",
     keepalive: true,
     headers: { "Content-Type": "application/json" },

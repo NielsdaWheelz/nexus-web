@@ -377,6 +377,33 @@ describe("proxyToFastAPI", () => {
     expect(await response.json()).toEqual({ data: [] });
   });
 
+  it("lets the browser-facing runtime frame a transformed response body", async () => {
+    const payload = JSON.stringify({ data: [{ id: "library-1" }] });
+    const backendFetch = mockBackendFetch(
+      async () =>
+        new Response(payload, {
+          headers: {
+            "content-type": "application/json",
+            // Upstream framing can become stale when fetch or the hosting
+            // runtime decodes or re-encodes the body before browser delivery.
+            "content-length": "7",
+            "x-request-id": "request-1",
+          },
+        }),
+    );
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: { cookie: sessionCookie() },
+      }),
+      "/libraries",
+      deps({ backendFetch }),
+    );
+
+    expect(response.headers.get("content-length")).toBeNull();
+    expect(await response.text()).toBe(payload);
+  });
+
   it("preserves API timing and appends the BFF header phase", async () => {
     const backendFetch = mockBackendFetch(async () =>
       Response.json(
@@ -727,6 +754,7 @@ describe("proxyPublicToFastAPI", () => {
     expect(headers.get("x-nexus-internal")).toBe("internal-secret");
     expect(headers.get("if-none-match")).toBe('"old"');
     expect(headers.get("x-request-id")).toBe("request-1");
+    expect(headers.get("accept-encoding")).toBe("identity");
     expect(headers.get("cookie")).toBeNull();
     expect(headers.get("authorization")).toBeNull();
 

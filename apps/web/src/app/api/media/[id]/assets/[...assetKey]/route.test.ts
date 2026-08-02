@@ -63,6 +63,7 @@ describe("GET /api/media/:id/assets/:assetKey*", () => {
     expect(new Headers(init.headers).get("authorization")).toBe(
       "Bearer test-access-token"
     );
+    expect(new Headers(init.headers).get("accept-encoding")).toBe("identity");
   });
 
   it("forwards EPUB asset response headers required by the reader", async () => {
@@ -163,13 +164,13 @@ describe("GET /api/media/:id/assets/:assetKey*", () => {
     expect(response.headers.get("content-range")).toBeNull();
   });
 
-  it("forwards upstream content-length while preserving the streamed body", async () => {
+  it("preserves identity-encoded representation length and body bytes", async () => {
     const body = JSON.stringify({ data: [{ name: "Library A" }] });
     const fetchMock = vi.fn<typeof fetch>(
       async () =>
         new Response(body, {
           headers: {
-            "content-length": "7",
+            "content-length": String(new TextEncoder().encode(body).byteLength),
             "content-type": "application/json",
           },
         })
@@ -194,7 +195,9 @@ describe("GET /api/media/:id/assets/:assetKey*", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-length")).toBe("7");
+    expect(response.headers.get("content-length")).toBe(
+      String(new TextEncoder().encode(body).byteLength)
+    );
     expect(await response.json()).toEqual({ data: [{ name: "Library A" }] });
   });
 });

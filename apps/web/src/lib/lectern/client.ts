@@ -5,7 +5,7 @@
  * server resource composition and browser fetches share one isomorphic owner.
  */
 
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, decodeApiPayload } from "@/lib/api/client";
 import {
   decodeConsumptionResult,
   decodeDataEnvelope,
@@ -23,7 +23,12 @@ export async function getLectern(options: {
   cache?: RequestCache;
 } = {}): Promise<LecternSnapshot> {
   const body = await apiFetch<unknown>("/api/lectern", options);
-  return decodeDataEnvelope(body, decodeLecternSnapshot, "GET /api/lectern");
+  return decodeApiPayload(
+    body,
+    (raw) =>
+      decodeDataEnvelope(raw, decodeLecternSnapshot, "GET /api/lectern"),
+    "GET /api/lectern",
+  );
 }
 
 export async function postLecternCommand(
@@ -35,9 +40,14 @@ export async function postLecternCommand(
     body: JSON.stringify(command),
     signal,
   });
-  return decodeDataEnvelope(
+  return decodeApiPayload(
     body,
-    decodeLecternResult,
+    (raw) =>
+      decodeDataEnvelope(
+        raw,
+        decodeLecternResult,
+        "POST /api/lectern/commands",
+      ),
     "POST /api/lectern/commands",
   );
 }
@@ -51,9 +61,14 @@ export async function postConsumptionCommand(
     body: JSON.stringify(command),
     signal,
   });
-  return decodeDataEnvelope(
+  return decodeApiPayload(
     body,
-    decodeConsumptionResult,
+    (raw) =>
+      decodeDataEnvelope(
+        raw,
+        decodeConsumptionResult,
+        "POST /api/consumption/commands",
+      ),
     "POST /api/consumption/commands",
   );
 }

@@ -1,5 +1,4 @@
 import {
-  ApiError,
   isApiError,
   isSameSystemApiDefect,
   isUnauthenticatedApiError,
@@ -9,16 +8,6 @@ import { isAbortError } from "@/lib/errors";
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 250;
 const MAX_DELAY_MS = 2000;
-
-function normalizeRequestError(error: unknown): ApiError {
-  return isApiError(error)
-    ? error
-    : new ApiError(
-        0,
-        "E_NETWORK",
-        error instanceof Error ? error.message : "Request failed",
-      );
-}
 
 function retryDelay(attempt: number): number {
   const delay = Math.min(
@@ -66,14 +55,15 @@ export async function requestWithRetry<T>(
       if (signal.aborted || isAbortError(error)) {
         throw error;
       }
-      const unauthenticated = Boolean(isUnauthenticatedApiError(error));
+      if (isUnauthenticatedApiError(error)) {
+        throw error;
+      }
       const retryable =
-        !isApiError(error) ||
-        (!unauthenticated &&
-          !isSameSystemApiDefect(error) &&
-          error.status >= 500);
+        isApiError(error) &&
+        (error.code === "E_NETWORK" ||
+          (!isSameSystemApiDefect(error) && error.status >= 500));
       if (!retryable || attempt === MAX_ATTEMPTS) {
-        throw normalizeRequestError(error);
+        throw error;
       }
       await waitForRetry(retryDelay(attempt), signal);
     }
