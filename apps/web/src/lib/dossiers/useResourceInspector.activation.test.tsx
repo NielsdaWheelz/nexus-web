@@ -65,6 +65,27 @@ function InspectorOwner() {
   return null;
 }
 
+function InspectorCompanionOwner() {
+  const { companionAction } = useResourceInspector({
+    scheme: "media",
+    handle: MEDIA_ID,
+    bodies: { linkedItems: <div>Evidence</div> },
+  });
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        if (companionAction?.kind !== "command") {
+          throw new Error("Expected the resource Companion command");
+        }
+        companionAction.onSelect({ triggerEl: event.currentTarget });
+      }}
+    >
+      Open resource Companion
+    </button>
+  );
+}
+
 function SearchInspectorOwner() {
   const composition = useResourceInspector({
     scheme: "media",
@@ -258,6 +279,101 @@ describe("useResourceInspector workspace activation", () => {
   it("defects when a non-LibraryMembership scheme supplies Members", () => {
     expect(() => render(<DefectiveMembersOwner />)).toThrow(
       /Members requires LibraryMembership sharing/,
+    );
+  });
+
+  it("reasserts its exact publication before requesting the Companion surface", async () => {
+    const publishSecondary = vi.fn();
+    const requestSecondarySurface = vi.fn();
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        visitId={TEST_VISIT_ID}
+        isActive
+        href={MEDIA_HREF}
+        routeId="media"
+        routeKey={`media:${MEDIA_HREF}`}
+        canGoBack={false}
+        canGoForward={false}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onActivateWorkspaceTarget={vi.fn(() => ({
+          kind: "Unchanged" as const,
+          paneId: "pane-1",
+        }))}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        onRequestSecondarySurface={requestSecondarySurface}
+      >
+        <PaneSecondaryContext.Provider value={publishSecondary}>
+          <InspectorCompanionOwner />
+        </PaneSecondaryContext.Provider>
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() =>
+      expect(
+        publishSecondary.mock.calls.some(([publication]) => publication !== null),
+      ).toBe(true),
+    );
+    publishSecondary.mockClear();
+    requestSecondarySurface.mockClear();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open resource Companion" }),
+    );
+
+    expect(publishSecondary).toHaveBeenCalledOnce();
+    expect(publishSecondary).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupId: "resource-inspector",
+        defaultSurfaceId: "resource-evidence",
+      }),
+    );
+    expect(requestSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "resource-evidence",
+      expect.any(HTMLButtonElement),
+    );
+    expect(publishSecondary.mock.invocationCallOrder[0]).toBeLessThan(
+      requestSecondarySurface.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("uses its route-owned publication as the capability without a workspace publication sink", async () => {
+    const requestSecondarySurface = vi.fn();
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        visitId={TEST_VISIT_ID}
+        isActive
+        href={MEDIA_HREF}
+        routeId="media"
+        routeKey={`media:${MEDIA_HREF}`}
+        canGoBack={false}
+        canGoForward={false}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onActivateWorkspaceTarget={vi.fn(() => ({
+          kind: "Unchanged" as const,
+          paneId: "pane-1",
+        }))}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        onRequestSecondarySurface={requestSecondarySurface}
+      >
+        <InspectorCompanionOwner />
+      </PaneRuntimeProvider>,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open resource Companion" }),
+    );
+
+    expect(requestSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "resource-evidence",
+      expect.any(HTMLButtonElement),
     );
   });
 

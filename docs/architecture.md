@@ -804,7 +804,11 @@ linked-items policy, Forks, and default surface order; the committed TypeScript
 projection is parity-tested. Every eligible resource implies Dossier.
 `useResourceInspector` composes one stable publication and Companion action per
 pane from route-owned Contents/Evidence/Context/Forks/Connections bodies plus
-the shared Dossier body.
+the shared Dossier body. Selecting that action validates the requested surface
+against its route-owned publication and, when attached to the workspace host,
+synchronously reasserts the same publication before requesting its surface, so
+publication cleanup and command acceptance cannot race or silently discard a
+valid first click.
 
 The backend separates three owners:
 

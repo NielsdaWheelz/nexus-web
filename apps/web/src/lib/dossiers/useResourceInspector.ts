@@ -264,7 +264,7 @@ export function useResourceInspector({
     forks,
     searchResults,
   ]);
-  usePaneSecondary(publication);
+  const requestPublishedSecondarySurface = usePaneSecondary(publication);
 
   // --- Companion action ------------------------------------------------------
   const regionId =
@@ -309,16 +309,15 @@ export function useResourceInspector({
   const openTargetRef = useRef(openTarget);
   openTargetRef.current = openTarget;
 
-  const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
   const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
   const onOpen = useCallback(
     (trigger: HTMLButtonElement | null) => {
       const target = openTargetRef.current;
-      if (target && requestSecondarySurface) {
-        requestSecondarySurface(target, { returnFocusTo: trigger });
+      if (target) {
+        requestPublishedSecondarySurface(target, { returnFocusTo: trigger });
       }
     },
-    [requestSecondarySurface],
+    [requestPublishedSecondarySurface],
   );
   const onClose = useCallback(() => {
     closeSecondaryPane?.();
