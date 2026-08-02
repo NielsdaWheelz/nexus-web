@@ -37,11 +37,14 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.db.models import MediaKind
 from nexus.services import library_entries
 from nexus.services.library_entries import (
     Added,
     AllItems,
+    AllTypes,
     Canonical,
+    ExactType,
     InProgress,
     LibraryEntryView,
     Title,
@@ -320,6 +323,25 @@ def _run_case(
         cursor=cursor,
         collection_revision=collection_revision,
     )
+    if isinstance(view.entry_type, ExactType):
+        final_select = sql.rsplit("FROM facts", maxsplit=1)[1]
+        predicate = (
+            "AND facts.target_kind = 'podcast'"
+            if view.entry_type.value == "podcast"
+            else "AND facts.target_kind = 'media' AND facts.media_kind = :entry_type"
+        )
+        assert predicate in final_select, f"{label}: exact-Type predicate missing from final SELECT"
+        predicate_offset = final_select.index(predicate)
+        assert predicate_offset < final_select.index("LIMIT :limit"), (
+            f"{label}: exact-Type predicate must precede limit+1"
+        )
+        if cursor is not None:
+            assert predicate_offset < final_select.index(":ks_"), (
+                f"{label}: exact-Type predicate must precede the continuation keyset"
+            )
+        assert params["limit"] == _PAGE_LIMIT + 1, (
+            f"{label}: service must fetch limit+1 after applying exact Type"
+        )
     explain_sql = text(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {sql}")
     # One warm-up execution before the measured EXPLAIN ANALYZE (spec: "after one
     # warm-up"); the capture call above already ran the query once too.
@@ -370,55 +392,93 @@ class TestLibraryEntryPlanGate:
             (
                 "default AllItems(all) Canonical",
                 default_id,
-                LibraryEntryView(order=Canonical(), projection=AllItems("all")),
+                LibraryEntryView(
+                    order=Canonical(), projection=AllItems("all"), entry_type=AllTypes()
+                ),
                 True,
             ),
             (
                 "default AllItems(unfinished) Canonical",
                 default_id,
-                LibraryEntryView(order=Canonical(), projection=AllItems("unfinished")),
+                LibraryEntryView(
+                    order=Canonical(),
+                    projection=AllItems("unfinished"),
+                    entry_type=AllTypes(),
+                ),
                 False,
             ),
             (
                 "default Unfiled(all) Canonical",
                 default_id,
-                LibraryEntryView(order=Canonical(), projection=Unfiled("all")),
+                LibraryEntryView(
+                    order=Canonical(), projection=Unfiled("all"), entry_type=AllTypes()
+                ),
                 True,
             ),
             (
                 "default Unfiled(unfinished) Canonical",
                 default_id,
-                LibraryEntryView(order=Canonical(), projection=Unfiled("unfinished")),
+                LibraryEntryView(
+                    order=Canonical(),
+                    projection=Unfiled("unfinished"),
+                    entry_type=AllTypes(),
+                ),
                 False,
             ),
             (
                 "default InProgress Canonical",
                 default_id,
-                LibraryEntryView(order=Canonical(), projection=InProgress()),
+                LibraryEntryView(order=Canonical(), projection=InProgress(), entry_type=AllTypes()),
                 True,
             ),
             (
                 "default AllItems(all) Title asc",
                 default_id,
-                LibraryEntryView(order=Title("asc"), projection=AllItems("all")),
+                LibraryEntryView(
+                    order=Title("asc"), projection=AllItems("all"), entry_type=AllTypes()
+                ),
                 False,
             ),
             (
                 "default AllItems(all) Added desc",
                 default_id,
-                LibraryEntryView(order=Added("desc"), projection=AllItems("all")),
+                LibraryEntryView(
+                    order=Added("desc"), projection=AllItems("all"), entry_type=AllTypes()
+                ),
+                False,
+            ),
+            (
+                "default Web articles Canonical",
+                default_id,
+                LibraryEntryView(
+                    order=Canonical(),
+                    projection=AllItems("all"),
+                    entry_type=ExactType(MediaKind.web_article),
+                ),
+                True,
+            ),
+            (
+                "default Podcast shows Canonical",
+                default_id,
+                LibraryEntryView(
+                    order=Canonical(),
+                    projection=AllItems("all"),
+                    entry_type=ExactType("podcast"),
+                ),
                 False,
             ),
             (
                 "named AllItems(all) Canonical",
                 named_id,
-                LibraryEntryView(order=Canonical(), projection=AllItems("all")),
+                LibraryEntryView(
+                    order=Canonical(), projection=AllItems("all"), entry_type=AllTypes()
+                ),
                 False,
             ),
             (
                 "named InProgress Canonical",
                 named_id,
-                LibraryEntryView(order=Canonical(), projection=InProgress()),
+                LibraryEntryView(order=Canonical(), projection=InProgress(), entry_type=AllTypes()),
                 False,
             ),
         ]

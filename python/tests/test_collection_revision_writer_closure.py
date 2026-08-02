@@ -65,6 +65,7 @@ def _first_entry_page(db: Session, *, viewer_id: UUID, library_id: UUID):
         view=library_entries.LibraryEntryView(
             order=library_entries.Canonical(),
             projection=library_entries.AllItems(completion="all"),
+            entry_type=library_entries.AllTypes(),
         ),
         limit=1,
     )
@@ -86,6 +87,7 @@ def _assert_stale_entry_continuation(
             view=library_entries.LibraryEntryView(
                 order=library_entries.Canonical(),
                 projection=library_entries.AllItems(completion="all"),
+                entry_type=library_entries.AllTypes(),
             ),
             limit=1,
             cursor=page.next_cursor.value,

@@ -5319,6 +5319,7 @@ class TestPodcastSubscriptionLifecycleClosure:
         """
         from nexus.services.library_entries import (
             AllItems,
+            AllTypes,
             Canonical,
             LibraryEntryView,
             list_library_entries,
@@ -5446,6 +5447,7 @@ class TestPodcastSubscriptionLifecycleClosure:
                 view=LibraryEntryView(
                     order=Canonical(),
                     projection=AllItems("all"),
+                    entry_type=AllTypes(),
                 ),
                 limit=200,
             )

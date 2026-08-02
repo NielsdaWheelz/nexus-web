@@ -6395,6 +6395,181 @@ class TestLibraryEntryViewParsing:
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
 
+class TestLibraryEntryTypeFilter:
+    """The committed Library type lens is strict, exhaustive, and cursor-bound."""
+
+    def test_each_exact_type_returns_all_and_only_its_entries(self, auth_client, direct_db):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Typed Library")
+            media_by_kind = {
+                kind: create_test_media(session, title=title, kind=kind)
+                for kind, title in (
+                    ("web_article", "Article"),
+                    ("epub", "Book"),
+                    ("pdf", "Paper"),
+                    ("video", "Film"),
+                    ("podcast_episode", "Episode"),
+                )
+            }
+            for media_id in media_by_kind.values():
+                add_media_to_library(session, library_id, media_id)
+
+            podcast_id = uuid4()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+                    VALUES (:id, 'podcast_index', :provider_id, 'Show', :feed_url)
+                    """
+                ),
+                {
+                    "id": podcast_id,
+                    "provider_id": f"typed-{podcast_id}",
+                    "feed_url": f"https://example.com/{podcast_id}.xml",
+                },
+            )
+            add_test_podcast_subscription(session, user_id=user_id, podcast_id=podcast_id)
+            session.execute(
+                text(
+                    "INSERT INTO library_entries (library_id, podcast_id, position) "
+                    "VALUES (:library_id, :podcast_id, 5)"
+                ),
+                {"library_id": library_id, "podcast_id": podcast_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        for media_id in media_by_kind.values():
+            direct_db.register_cleanup("media", "id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
+
+        all_entries = _list_library_entries(auth_client, user_id, str(library_id))
+        assert all_entries.status_code == 200, all_entries.text
+        assert len(_entry_items(all_entries)) == 6
+
+        for entry_type, expected_id in (*media_by_kind.items(), ("podcast", podcast_id)):
+            response = _list_library_entries(
+                auth_client, user_id, str(library_id), entry_type=entry_type
+            )
+            assert response.status_code == 200, f"{entry_type}: {response.text}"
+            rows = _entry_items(response)
+            assert len(rows) == 1, f"{entry_type}: {rows}"
+            row = rows[0]
+            actual_id = row["media"]["id"] if row["kind"] == "media" else row["podcast"]["id"]
+            assert actual_id == str(expected_id), f"{entry_type}: {row}"
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "entry_type=",
+            "entry_type=all",
+            "entry_type=other",
+            "entry_type=pdf&entry_type=epub",
+            "kind=pdf",
+            "type=pdf",
+            "types=pdf",
+            "entry_type=podcast&completion=unfinished",
+            "entry_type=podcast&projection=unfiled",
+            "entry_type=podcast&projection=in-progress",
+        ],
+    )
+    def test_invalid_aliased_and_incompatible_type_queries_are_rejected(self, auth_client, query):
+        user_id = create_test_user_id()
+        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+        response = auth_client.get(
+            f"/libraries/{library_id}/entries?{query}", headers=auth_headers(user_id)
+        )
+        assert response.status_code == 400, f"{query}: {response.text}"
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST", query
+
+    def test_exact_type_filters_before_keyset_and_limit_and_binds_cursor(
+        self, auth_client, direct_db
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Typed Pagination")
+            seeded: list[tuple[str, UUID]] = []
+            for position, (kind, title) in enumerate(
+                (
+                    ("web_article", "Article A"),
+                    ("pdf", "PDF A"),
+                    ("web_article", "Article B"),
+                    ("pdf", "PDF B"),
+                    ("web_article", "Article C"),
+                )
+            ):
+                media_id = create_test_media(session, title=title, kind=kind)
+                session.execute(
+                    text(
+                        "INSERT INTO library_entries (library_id, media_id, position) "
+                        "VALUES (:library_id, :media_id, :position)"
+                    ),
+                    {
+                        "library_id": library_id,
+                        "media_id": media_id,
+                        "position": position,
+                    },
+                )
+                seeded.append((kind, media_id))
+            session.commit()
+
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        for _, media_id in seeded:
+            direct_db.register_cleanup("media", "id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+
+        expected = [str(media_id) for kind, media_id in seeded if kind == "web_article"]
+        collected: list[str] = []
+        cursor = None
+        revision = None
+        first_cursor = None
+        for _ in range(4):
+            response = _list_library_entries(
+                auth_client,
+                user_id,
+                str(library_id),
+                entry_type="web_article",
+                limit=1,
+                **(
+                    {"cursor": cursor, "collection_revision": revision}
+                    if cursor is not None
+                    else {}
+                ),
+            )
+            assert response.status_code == 200, response.text
+            assert len(_entry_items(response)) == 1
+            collected.extend(_view_ids(response))
+            revision = _entry_revision(response)
+            cursor = _entry_cursor(response)
+            if first_cursor is None:
+                first_cursor = cursor
+            if cursor is None:
+                break
+        assert collected == expected
+        assert first_cursor is not None
+
+        cross_type = _list_library_entries(
+            auth_client,
+            user_id,
+            str(library_id),
+            entry_type="pdf",
+            cursor=first_cursor,
+            collection_revision=revision,
+        )
+        assert cross_type.status_code == 400, cross_type.text
+        assert cross_type.json()["error"]["code"] == "E_INVALID_CURSOR"
+
+
 class TestLibraryEntryViewLenses:
     """Factual view lenses over a physical non-default library (spec ordering
     rules + AC2/AC3/AC4/AC5/AC8). Every assertion is through the API response."""
