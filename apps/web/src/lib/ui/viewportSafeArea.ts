@@ -1,3 +1,5 @@
+const RESOLUTION_SENTINEL_PX = 1;
+
 function readViewportSafeAreaInsets(): {
   top: number;
   right: number;
@@ -6,55 +8,31 @@ function readViewportSafeAreaInsets(): {
 } {
   const probe = document.createElement("div");
   probe.style.position = "fixed";
-  probe.style.inset = "0";
   probe.style.visibility = "hidden";
   probe.style.pointerEvents = "none";
-  probe.style.paddingTop = "var(--viewport-safe-top)";
-  probe.style.paddingRight = "var(--viewport-safe-right)";
-  probe.style.paddingBottom = "var(--viewport-safe-bottom)";
-  probe.style.paddingLeft = "var(--viewport-safe-left)";
   document.body.appendChild(probe);
 
   try {
-    const computed = window.getComputedStyle(probe);
-    const readInset = (edge: string, value: string): number => {
-      const property = `--viewport-safe-${edge}`;
-      const specified = document.documentElement.style
-        .getPropertyValue(property)
-        .trim();
-      const expectedEnvironment = `env(safe-area-inset-${edge})`;
-      if (
-        /var\(/i.test(specified) ||
-        (/env\(/i.test(specified) && specified !== expectedEnvironment)
-      ) {
-        throw new Error(`Viewport safe ${edge} has an invalid source.`);
-      }
-      const token = computed
-        .getPropertyValue(property)
-        .trim();
-      const globalKeyword =
-        /^(?:inherit|initial|revert|revert-layer|unset)$/i.test(token);
-      if (
-        token === "" ||
-        globalKeyword ||
-        !CSS.supports("padding-top", token) ||
-        !CSS.supports("border-top-width", token)
-      ) {
-        // justify-defect: these owned tokens must resolve from nonnegative CSS lengths.
-        throw new Error(`Viewport safe ${edge} is not a CSS length.`);
-      }
-      const inset = Number.parseFloat(value);
-      if (!Number.isFinite(inset)) {
-        throw new Error(`Viewport safe ${edge} did not resolve to CSS pixels.`);
+    const readInset = (edge: string): number => {
+      probe.style.letterSpacing = `calc(${RESOLUTION_SENTINEL_PX}px + var(--viewport-safe-${edge}))`;
+      const encoded = window.getComputedStyle(probe).letterSpacing;
+      const match = encoded.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))px$/);
+      const inset = match
+        ? Number.parseFloat(match[1]) - RESOLUTION_SENTINEL_PX
+        : Number.NaN;
+      if (!Number.isFinite(inset) || inset < 0) {
+        throw new Error(
+          `Viewport safe ${edge} did not resolve to nonnegative CSS pixels.`,
+        );
       }
       return inset;
     };
 
     return {
-      top: readInset("top", computed.paddingTop),
-      right: readInset("right", computed.paddingRight),
-      bottom: readInset("bottom", computed.paddingBottom),
-      left: readInset("left", computed.paddingLeft),
+      top: readInset("top"),
+      right: readInset("right"),
+      bottom: readInset("bottom"),
+      left: readInset("left"),
     };
   } finally {
     probe.remove();

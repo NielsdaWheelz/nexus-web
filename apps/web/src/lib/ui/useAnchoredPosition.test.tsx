@@ -95,21 +95,48 @@ describe("useAnchoredPosition", () => {
   });
 
   /* eslint-disable testing-library/no-node-access -- The hidden probe has no accessible query. */
-  it("fails loudly for missing or malformed safe-area tokens without leaking its probe", () => {
+  it("reads resolved inset geometry and rejects invalid values without leaking its probe", () => {
     const root = document.documentElement;
     const bodyChildCount = document.body.childElementCount;
+    const expectTopRejected = () => {
+      expect(() =>
+        readViewportSafeBounds({ viewportPadding: 8 }),
+      ).toThrow(/top/);
+      expect(document.body.childElementCount).toBe(bodyChildCount);
+    };
 
     root.style.removeProperty("--viewport-safe-top");
-    expect(() =>
-      readViewportSafeBounds({ viewportPadding: 8 }),
-    ).toThrow(/top/);
-    expect(document.body.childElementCount).toBe(bodyChildCount);
+    expectTopRejected();
+
+    for (const token of [
+      "not-a-length",
+      "var(--missing-safe-top)",
+      "env(unknown-safe-top)",
+      "-1px",
+      "50%",
+    ]) {
+      root.style.setProperty("--viewport-safe-top", token);
+      expectTopRejected();
+    }
 
     root.style.setProperty("--viewport-safe-top", "0px");
-    root.style.setProperty("--viewport-safe-right", "not-a-length");
-    expect(() =>
-      readViewportSafeBounds({ viewportPadding: 8 }),
-    ).toThrow(/right/);
+    root.style.setProperty("--viewport-safe-right", "12.5px");
+    root.style.setProperty("--viewport-safe-bottom", "0.25px");
+    root.style.setProperty("--viewport-safe-left", "17.75px");
+    const viewport = window.visualViewport;
+    const viewportLeft = viewport?.offsetLeft ?? 0;
+    const viewportTop = viewport?.offsetTop ?? 0;
+    const viewportWidth = viewport?.width ?? window.innerWidth;
+    const viewportHeight = viewport?.height ?? window.innerHeight;
+    const bounds = readViewportSafeBounds({ viewportPadding: 8 });
+    expect(bounds.left).toBeCloseTo(viewportLeft + 8 + 17.75);
+    expect(bounds.top).toBe(viewportTop + 8);
+    expect(bounds.right).toBeCloseTo(
+      viewportLeft + viewportWidth - 8 - 12.5,
+    );
+    expect(bounds.bottom).toBeCloseTo(
+      viewportTop + viewportHeight - 8 - 0.25,
+    );
     expect(document.body.childElementCount).toBe(bodyChildCount);
 
     for (const edge of ["top", "right", "bottom", "left"] as const) {
@@ -124,35 +151,6 @@ describe("useAnchoredPosition", () => {
     expect(document.body.childElementCount).toBe(bodyChildCount);
   });
   /* eslint-enable testing-library/no-node-access */
-
-  it("rejects safe-area indirection and noncanonical environment sources", () => {
-    const root = document.documentElement;
-    root.style.setProperty("--nested-safe-top", "0px");
-
-    try {
-      for (const token of [
-        "var(--nested-safe-top)",
-        "var(--missing-safe-top)",
-        "env(unknown-safe-top)",
-        "env(safe-area-inset-left)",
-      ]) {
-        root.style.setProperty("--viewport-safe-top", token);
-        expect(() =>
-          readViewportSafeBounds({ viewportPadding: 8 }),
-        ).toThrow(/top/);
-      }
-
-      root.style.setProperty(
-        "--viewport-safe-top",
-        "env(safe-area-inset-top)",
-      );
-      expect(() =>
-        readViewportSafeBounds({ viewportPadding: 8 }),
-      ).not.toThrow();
-    } finally {
-      root.style.removeProperty("--nested-safe-top");
-    }
-  });
 
   it("preserves zero-inset clamps and reclamps inside all four safe edges", async () => {
     const { rerender } = render(

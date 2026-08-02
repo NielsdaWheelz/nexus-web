@@ -98,9 +98,10 @@ No other production file may read `env(safe-area-inset-*)`. There is no native
 payload, JavaScript bridge, persisted schema, backend API, or capability/version
 negotiation.
 
-The shared viewport reader rejects missing or malformed inherited tokens,
-variable indirection, and noncanonical environment sources. Invalid geometry
-never normalizes to a real zero inset.
+The shared viewport reader accepts only finite, nonnegative geometry resolved to
+CSS pixels. Missing, malformed, unresolved, negative, and non-length values
+never normalize to a real zero inset. Exact environment-source mapping remains
+owned statically by the declarations above.
 
 ### Composition capability
 
@@ -292,7 +293,7 @@ remains.
   Android branch exists.
 - Focused ActionMenu sensitivity removed only the height constraint: its bottom
   reached 1117 CSS px against an 879 CSS px safe boundary. Restored focused
-  browser proof passed 39/39 across the anchored owner, FloatingActionSurface,
+  browser proof passed 38/38 across the anchored owner, FloatingActionSurface,
   and an oversized ActionMenu browser-component scenario.
 - The scoped CSS correction keeps pane/chrome/player backgrounds and progress
   full bleed while their existing body, contextual/app-bar, MiniPlayer row,
