@@ -1,128 +1,89 @@
 # Android WebView System Insets — Hard Cutover
 
-**Status:** IMPLEMENTED — physical-device acceptance required
+**Status:** APPROVED — source path implemented; proof and release blocked
 
-**Type:** hard cutover
+**Last verified:** 2026-08-02
 
-**Date:** 2026-07-31
+**Boundary:** Android system insets, existing mobile viewport composition, and
+exact-artifact Android release; 80/20 slice
 
-**Boundary:** Android web shell plus existing mobile viewport composition; 80/20 slice
+Follow [`docs/rules/`](../rules/index.md) and the
+[testing standards](../local-rules/testing-standards.md). This is the sole
+governing cutover document for this concern.
 
-No product question blocks implementation. This design assumes the controlled
-device runs Android System WebView M144 or newer. An older renderer is an
-unsupported environment to update, not a compatibility case.
+## Questions and assumptions
 
-Follow [`docs/rules/`](../rules/index.md), especially cleanliness, simplicity,
-boundaries, frontend, correctness, and the
-[testing standards](../local-rules/testing-standards.md).
+No product question blocks implementation.
 
-## Decision
+- The controlled device runs Android System WebView M144 or newer. Older
+  WebView is an environment to update, not a compatibility target.
+- Nexus remains a self-distributed, one-user APK using the existing GitHub
+  Release workflow and signing identity.
+- Edge-to-edge paint is intentional. Only interactive/content geometry stays
+  inside the safe rectangle.
+- The current source architecture is the intended final architecture. Scope is
+  proof, immutable release, and demonstrated defects only.
 
-Keep edge-to-edge. Repair its ownership boundary once.
+Stop and revise this spec before adding a native bridge, updater/version API,
+feature flag, second inset store, or feature redesign.
 
-Android passes original `systemBars` and `displayCutout` insets to the
-full-window WebView. WebView M144+ publishes them through the four standard CSS
-`safe-area-inset-*` values. One root CSS adapter names those values. The
-existing `MobileViewportProvider` composes the bottom safe area with Nexus,
-Player, and modal-keyboard obstructions. Features consume only those outputs.
+## Decision and philosophy
+
+Repair platform geometry once, at its boundary; compose product obstructions
+once, at the root; let features consume policy-free outputs.
 
 ```text
-Android systemBars + displayCutout
+Android systemBars | displayCutout
   -> original, unconsumed WindowInsets
-  -> WebView M144+ CSS safe-area-inset-*
+  -> full-window WebView M144+ / viewport-fit=cover
+  -> CSS safe-area-inset-*
   -> --viewport-safe-{top,right,bottom,left}
-  -> MobileViewportProvider bottom composition
-  -> reader / player / Nexus / overlays
-
-Android IME
-  -> WebView visual-viewport resize
-  -> existing useKeyboardInset / mobile modal lifecycle
-  -> existing --mobile-overlay-keyboard-inset
+  -> MobileViewportProvider + Nexus / Player / overlay keyboard
+  -> reader, panes, player, Nexus, tasks, sheets
 ```
 
-Philosophy: paint to the physical edge; keep interactive content inside the
-safe rectangle. Platform geometry is boundary data, not feature policy.
-
-This document supersedes only the safe-area/native-system-bar ownership clauses
-in the mobile viewport section of [`docs/modules/workspace.md`](../modules/workspace.md).
-Reader chrome, Nexus, Player, sheets, and full-screen tasks retain their current
-owners and behavior.
+The platform owns unsafe geometry. The app owns composition. Features never
+infer bar heights, navigation mode, OEM, Android, or WebView version.
 
 ## Goals
 
-1. Reader endings, MiniPlayer controls, Nexus, Now Playing, sheets, and task
-   controls remain visible and operable above every Android system bar.
-2. One native-to-web inset path and one web composition owner exist.
-3. Portrait, landscape, cutouts, gesture navigation, and three-button
-   navigation obey the same contract.
-4. Backgrounds remain edge-to-edge without unsafe hit targets or dead content.
-5. The cut deletes duplicate safe-area reads and lowers total complexity.
-
-## Non-goals
-
-- No JavaScript/native message bridge, injected inset payload, or second source
-  combined with CSS `env()`.
-- No support path, warning screen, or updater UI for WebView before M144.
-- No IME, `MobileSheet`, full-screen-task, reader-motion, Player, or Nexus UX
-  redesign.
-- No immersive mode, hidden system bars, custom navigation bar, predictive
-  Back, edge-gesture redesign, or `systemGestures()` composition.
-- No foldable hinge/viewport-segment policy, docked side-keyboard support, or
-  `safe-area-max-inset-*` browser-chin optimization.
-- No target/min SDK change, broad AndroidX upgrade, iOS-specific change,
-  backend/API/database schema, feature flag, or analytics.
+1. Terminal reader content and every playback/Nexus/overlay control remain
+   visible, focusable, and operable outside Android system UI.
+2. Preserve edge-to-edge backgrounds in gesture and three-button navigation.
+3. Keep one native handoff, one raw CSS adapter, and one obstruction composer.
+4. Promote the exact signed APK physically accepted on the device.
+5. Delete the superseded proof/release paths; add no compatibility path.
 
 ## Target behavior
 
-| Situation | Required result |
+| State | Required result |
 | --- | --- |
-| Gesture navigation | Canvas bleeds behind the transparent gesture region; every control stays above its safe bottom edge. |
-| Three-button navigation | Android owns the translucent contrast scrim; web controls and final content stay above the full navigation-bar inset. |
-| Status bar / top cutout | Existing black native protection and light icons remain; web headers and controls start inside the safe top edge. |
-| Landscape / side cutout | Interactive content respects left and right safe edges; no portrait-only bottom assumption. |
-| Reader, no Player | Final content and reader commands remain reachable above system UI and Nexus. |
-| Reader with Player | Final content clears the larger active obstruction; Nexus sits above Player plus its existing gap. |
-| MiniPlayer | Its surface paints to the physical bottom; its interactive row remains inside the safe rectangle. |
-| Now Playing / Nexus task / sheet | The frame fills the viewport; header, body, and actions respect all applicable safe edges. |
-| Nexus retreats | Its existing transform and inertness remain correct; safe-area changes do not alter the motion policy. |
-| IME opens/closes | Existing visual-viewport/keyboard handling keeps focus visible, restores cleanly, and never double-counts the navigation inset. |
-| Rotation / resize | Insets and composed clearances update without stale or ghost padding, focus loss, or reader-position jump. |
+| Gesture navigation | Canvas may bleed behind the gesture region; content and controls do not. |
+| Three-button navigation | Android owns its contrast scrim; the full navigation inset remains clear. |
+| Top bar / cutout | Black native protection and light icons remain; web interaction starts inside the safe top. |
+| Landscape / side cutout | Left/right safe edges are honored without portrait-specific branching. |
+| Reader / PDF / panes | Terminal content clears the largest active bottom obstruction and can be selected/activated. |
+| MiniPlayer / Nexus | Player includes its own safe bottom; Nexus remains above Player plus its existing gap. |
+| Tasks / Now Playing / sheets | Background fills the frame; header, body, and actions honor applicable safe edges. |
+| IME open/close | Existing visual-viewport path keeps focus visible and restores exact pre-IME clearance without double counting. |
+| Rotation / resize | Current insets replace old insets; no ghost gap, overlap, focus loss, or reader-position jump. |
 
-## Final architecture and contracts
+## Final architecture
 
-### 1. Android window boundary
+### Native boundary
 
-- Pin only `androidx.activity:activity-ktx:1.13.0`; keep other dependency and
-  SDK versions unchanged.
-- Call `enableEdgeToEdge(...)` before `super.onCreate`.
-- Use a transparent, light-icon status style and the automatic navigation
-  style forced to dark appearance. Result: transparent gesture navigation,
-  platform contrast scrim for button navigation, light icons throughout.
-- Keep the accessibility-hidden black status protection as an overlay. Size it
-  from `systemBars | displayCutout` top. It never pads or resizes the WebView.
-- Keep the WebView and root at full window bounds.
-- Root and WebView inset listeners return the exact original `WindowInsets`.
-  Never consume, zero, copy, serialize, or convert them in app code.
-- Delete `configureStatusBarColor`, deprecated `window.statusBarColor`, manual
-  `setDecorFitsSystemWindows(false)`, and manual icon-controller setup replaced
-  by `enableEdgeToEdge`.
-- Add no bottom protection view. The system owns three-button protection; the
-  web surface owns edge-to-edge paint.
+`MainActivity` owns Android window policy.
 
-Reference setup:
+- `enableEdgeToEdge` runs before `super.onCreate`.
+- Root and WebView retain full window bounds.
+- The root listener returns the exact original `WindowInsets`; the full-window
+  WebView receives and returns them unconsumed. App code does not copy,
+  serialize, convert, or inject them.
+- The accessibility-hidden black top protection is sized from
+  `systemBars | displayCutout` top and never pads the WebView.
+- No bottom protection view exists. Android owns three-button protection.
 
-```kotlin
-enableEdgeToEdge(
-    statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-    navigationBarStyle = SystemBarStyle.auto(
-        lightScrim = Color.BLACK,
-        darkScrim = Color.BLACK,
-        detectDarkMode = { true },
-    ),
-)
-```
-
-### 2. CSS platform schema
+### Platform schema
 
 `apps/web/src/app/globals.css` is the sole raw safe-area adapter:
 
@@ -131,28 +92,15 @@ enableEdgeToEdge(
 --viewport-safe-right: env(safe-area-inset-right);
 --viewport-safe-bottom: env(safe-area-inset-bottom);
 --viewport-safe-left: env(safe-area-inset-left);
-
---mobile-content-bottom-clearance: var(--viewport-safe-bottom);
---mobile-nexus-bottom-offset: var(--viewport-safe-bottom);
---mobile-overlay-keyboard-inset: 0px;
 ```
 
-Rules:
+No other production file may read `env(safe-area-inset-*)`. There is no native
+payload, JavaScript bridge, persisted schema, backend API, or capability/version
+negotiation.
 
-- No component, hook, or module outside `globals.css` reads
-  `env(safe-area-inset-*)`.
-- Consumers use the canonical token without a numeric or `env()` fallback.
-- Top/side/full-screen geometry consumes `--viewport-safe-*` directly.
-- Ordinary mobile scroll owners consume
-  `--mobile-content-bottom-clearance`, never the raw bottom token.
-- Fixed Nexus consumes `--mobile-nexus-bottom-offset` plus its existing gap.
-- Background paint may cross a safe edge. Text, controls, selection handles,
-  focused targets, and terminal scroll content may not.
-- No hard-coded status/navigation-bar height exists.
+### Composition capability
 
-### 3. Mobile viewport composition
-
-Keep the public capability unchanged:
+Keep the existing public API exactly:
 
 ```ts
 type MobileFixedObstructionId = "Nexus" | "Player";
@@ -163,135 +111,131 @@ interface MobileViewportCapability {
     element: HTMLElement,
   ): () => void;
   reportMobileOverlayKeyboardInset(px: number): () => void;
+  subscribeContentBottomClearance(listener: () => void): () => void;
 }
 ```
 
-Keep `model.ts`, obstruction measurement, duplicate-registration defects,
-ordered keyboard reports, and `window.innerHeight` projection unchanged.
-
-Only change the two composed publications:
+`MobileViewportProvider` remains the sole composer:
 
 ```text
 --mobile-content-bottom-clearance
-  = max(--viewport-safe-bottom, Nexus rect, Player rect, active overlay keyboard)
+  = max(safe bottom, Nexus rect, Player rect, active overlay keyboard)
 
 --mobile-nexus-bottom-offset
-  = max(--viewport-safe-bottom, Player rect)
+  = max(safe bottom, Player rect)
 ```
 
-On provider teardown, removing inline publications reveals the root safe-area
-defaults. There is no transient zero state and no second platform-inset store.
+Duplicate obstruction identity is a defect. Teardown removes inline
+publications and reveals root safe-area defaults. IME and system bars remain
+distinct inputs.
 
-### 4. Intra-system composition
+### Consumer contract
 
-| Consumer family | Input | Rule |
-| --- | --- | --- |
-| Reader/chat/PDF/collection scroll roots | `--mobile-content-bottom-clearance` | Apply terminal padding and scroll padding at the real scroll owner. |
-| MiniPlayer | `--viewport-safe-bottom` | Safe-area space belongs inside the player surface; the registered rect therefore includes it. |
-| Nexus wrapper | `--mobile-nexus-bottom-offset`, `--viewport-safe-right` | Preserve current 48 px wrapper, gap, measurement, and retreat distance. |
-| Full-screen tasks / Now Playing | four `--viewport-safe-*` tokens | One frame; page-owned header/body apply the appropriate edge. |
-| MobileSheet | `--viewport-safe-bottom` plus existing keyboard token | Safe area and IME remain distinct inputs; preserve shrink behavior. |
-| FloatingActionSurface | root tokens plus composed bottom clearance | Read token-computed pixels from its existing probe; do not read `env()` directly or add a store. |
+| Owner | Input and rule |
+| --- | --- |
+| Reader, chat, PDF, pane scroll roots | Use composed content clearance for terminal padding and scroll padding at the real scroll owner. |
+| MiniPlayer | Put safe-bottom space inside the registered Player surface. |
+| Nexus | Use composed Nexus offset and existing gap; preserve retreat/inertness behavior. |
+| Full-screen tasks / Now Playing | Use the four root safe tokens at the frame-owned edge. |
+| MobileSheet | Compose root safe bottom with the existing keyboard token; preserve shrink behavior. |
+| Floating surfaces | Reuse the existing root-token probe/subscription; add no store or platform branch. |
 
-Features never branch on Android, navigation mode, WebView version, OEM, or
-shell capability.
+Background paint may cross a safe edge. Text, controls, focus targets,
+selection handles, and terminal scroll content may not.
+
+## Release capability contract
+
+Hard-cut `.github/workflows/android-release.yml` to two exclusive modes:
+
+1. **Build draft:** an `android-v*` tag builds, signs, verifies, hashes, and
+   uploads one draft APK plus a plain one-line `nexus-android.commit` witness
+   for its resolved tag commit. Existing assets are never clobbered.
+2. **Promote stable:** manual dispatch receives `tag` and
+   `verified_apk_sha256`, downloads the existing draft assets and commit
+   witness, validates each, resolves the annotated tag commit, requires exact
+   witness equality, then verifies the supplied device-accepted hash before
+   publishing. It never checks out, builds, signs, uploads, or mutates assets.
+
+The tag commit, APK version name/code, signer, and SHA-256 are release facts.
+Promotion reuses those facts; it does not derive replacements. A mismatch
+fails closed. Invalid drafts are deleted and rebuilt explicitly, never repaired
+in place. `nexus-android.commit` is internal release evidence, never an updater
+manifest, app API, or client capability.
+
+No updater service, rollout channel, manifest protocol, or compatibility lane
+is added.
 
 ## Scope and files
 
-| Area | Files / action |
+| Action | Files |
 | --- | --- |
-| Native setup | `apps/android/app/build.gradle.kts`; `MainActivity.kt`; `MainActivityTest.kt` |
-| CSS owner/composer | `apps/web/src/app/globals.css`; `lib/mobileViewport/MobileViewportProvider.tsx` and focused tests |
-| Direct-read cut | `SelectionPopover.module.css`; `AppNav.module.css`; `AddPanel.module.css`; `Nexus.module.css`; `MobileMiniPlayer.module.css`; `MobileNowPlaying.module.css`; `ShareOverlay.module.css`; `switchboard.module.css`; `FloatingActionSurface.tsx`; `HoverPreview.module.css`; `MobileSheet.module.css`; `PaneShell.module.css` |
-| Normative docs | `docs/modules/workspace.md`; update overlapping module prose only after proof |
+| Correct the independent physical oracle | `apps/android/app/src/androidTest/java/app/nexus/android/MainActivityTest.kt` |
+| Make exact-artifact promotion immutable | `.github/workflows/android-release.yml` |
+| Verify existing production owners; change only on demonstrated red | `MainActivity.kt`; `app/layout.tsx`; `app/globals.css`; `lib/mobileViewport/*`; named consumer styles |
+| Record final contract and release evidence | this file; `docs/modules/workspace.md`; `README.md` only where current distribution prose changes |
 
-Do not touch `mobileViewport/model.ts`, feature state/controllers, reader
-motion, player runtime, Nexus controller, overlay lifecycle, backend, or schema
-files unless demonstrated-red evidence disproves this boundary diagnosis. Stop
-and revise this spec before expanding scope.
+No planned backend, database, API, reader-state, playback-runtime, Nexus-state,
+motion, overlay-lifecycle, SDK, target/min SDK, or dependency change exists.
 
-## Implementation plan
+## Hard-cut plan
 
-1. **Demonstrate red on the affected device.** Record OS/API, OEM/model,
-   navigation mode, orientation, System WebView package/version, native
-   `systemBars/displayCutout/ime`, CSS safe-area values, layout/visual viewport,
-   and actual Nexus/Player/reader control rectangles. A missing device is
-   `not_run`, not green.
-2. **Repair native dispatch.** Pin Activity, install modern edge-to-edge styles,
-   preserve the top overlay, and forward original insets to the WebView.
-3. **Hard-cut web ownership.** Define four root tokens, replace every direct
-   safe-area read, and make provider publications compose from the root bottom
-   token. Delete old fallbacks and obsolete tests/comments.
-4. **Prove the boundary.** Add one real-WebView instrumentation fixture and
-   update focused web owner tests. Do not add production diagnostic APIs,
-   test-only selectors, delays, or mocks of the native/WebView handoff.
-5. **Physical acceptance, residue search, docs.** Run the matrix below, then
-   update `workspace.md` to the final ownership model.
+1. Replace the density-naive fixed one-physical-pixel equality oracle. For each
+   edge, independently prove: CSS never under-protects native geometry;
+   conservative excess is less than one CSS pixel in physical units; native
+   zero clears to CSS zero. Keep the safe-control and full-window assertions.
+   Do not merely widen a constant tolerance.
+2. Demonstrate oracle sensitivity: a representative under-protected edge and a
+   retained stale inset must each fail.
+3. Run focused Android, web compositor, reader/player/Nexus/sheet, static, and
+   workflow checks. Delete obsolete exact-equality and asset-clobber paths.
+4. Tag the intended SHA. Let the existing signing workflow create one draft.
+5. Install that draft, record its SHA-256, and run physical acceptance.
+6. Promote only that hash. Update status to `ACCEPTED` with evidence.
+
+Any current signed-product failure expands scope only to its demonstrated
+owner. Revise this document before crossing another boundary.
 
 ## Acceptance criteria
 
-### Demonstrated-red and automated proof
+### Automated boundary proof
 
-- Before the fix, the affected-device capture shows at least one real control
-  or terminal content rectangle intersecting native system UI. Preserve the
-  capture with the test evidence.
-- Android instrumentation loads an inline `viewport-fit=cover` probe page in
-  the real WebView; no production seam or network server is used.
-- For each side, `CSS safe inset * window.devicePixelRatio` equals the native
-  `systemBars | displayCutout` inset within one physical pixel.
-- A fixed probe control's rectangle is wholly inside the CSS safe rectangle.
-- The WebView/root still equal window bounds; the top protection is black,
-  accessibility-hidden, and exactly the combined top inset; system icons are
-  light.
-- Rotate once and prove old inset values are cleared rather than retained.
-- Focused provider tests prove safe-area-only, Player, Nexus, keyboard, stacked
-  keyboard report, unregister, and teardown composition.
-- Existing focused reader chrome, Player surface, Nexus, sheet, and
-  `FloatingActionSurface` tests remain green. Browser-only tests do not claim
-  native handoff coverage.
+- All three M144 WebView scenarios pass on the controlled device: actual
+  insets, same-renderer nonzero-to-zero clearing, and rotation recreation.
+- For every edge, `css_px * devicePixelRatio >= native_physical_px`, excess is
+  `< devicePixelRatio` (allowing only floating-point comparison epsilon), and
+  native zero yields CSS zero.
+- The probe control is wholly inside the CSS safe rectangle; WebView/root equal
+  window bounds; top protection and icon behavior are correct.
+- Focused web tests cover safe-only, Player, Nexus, keyboard, stacked reports,
+  unregister, teardown, and named consumers.
+- `make check-android`, focused frontend checks, `make check-workflows`, and the
+  signed release proof pass. Each proof is reported separately.
 
-### Current environment evidence
+### Signed physical product
 
-On 2026-07-31, [hosted CI run 30682028416](https://github.com/NielsdaWheelz/nexus-web/actions/runs/30682028416)
-established the available automation boundary:
+On the affected phone with M144+ WebView, verify the signed draft APK in
+gesture and three-button navigation, portrait and landscape, Player
+absent/present, Nexus visible/retreated, reader terminal content, MiniPlayer,
+Now Playing, one Nexus task, one sheet, and one root text-entry flow.
 
-- API 34 and API 35 hosted shell-regression lanes passed after compiling the
-  M144 scenarios and excluding only `RequiresWebViewM144` at runtime.
-- Google's newest published canary image, `android-36-ext19`, booted and ran all
-  three focused scenarios, but its System WebView was `133.0.6943.137`; every
-  scenario failed at the unchanged M144 capability guard.
-- Hosted CI therefore does not claim native system-inset handoff acceptance.
-  The M144 instrumentation run and physical-device matrix remain `not_run`, not
-  green.
+- Every visible interactive/content rectangle is outside native system UI.
+- Terminal content can be exposed, focused, selected, and activated.
+- Backgrounds reach intended physical edges; no phantom gap appears.
+- IME dismissal restores exact pre-IME clearance.
+- Rotation does not retain prior-edge insets or disturb content position.
+- Playback, selection, focus, Back, Nexus motion/inertness, reduced motion, and
+  a TalkBack smoke do not regress.
+- Record OS/device, navigation mode, orientation, WebView version, tag SHA,
+  signer, APK version, APK SHA-256, and one screenshot per navigation mode.
 
-Run `make test-android-system-insets` against the controlled M144+ device before
-claiming this cutover accepted or publishing an Android APK that includes it.
+### Release proof
 
-### Physical-device matrix
-
-Run on the affected phone with System WebView M144+:
-
-- gesture and three-button navigation;
-- portrait and landscape/cutout;
-- Player absent/present;
-- Nexus visible/retreated;
-- reader at final content, MiniPlayer, Now Playing, Nexus full-screen task,
-  one sheet, and one root text-entry flow;
-- IME open/close and rotation while focused;
-- reduced motion; TalkBack as a separate accessibility smoke.
-
-For every state:
-
-- all visible interactive rectangles fit inside the safe rectangle;
-- final scroll content can be exposed, focused, and activated;
-- no control is hidden behind system UI and no phantom bottom gap appears;
-- canvas/player backgrounds reach the physical edge as designed;
-- Nexus remains above Player and preserves its current motion/inertness;
-- IME dismissal restores the exact pre-IME platform clearance;
-- no reader position, selection, playback, focus, or Back behavior regresses.
-
-Capture one screenshot per navigation mode and record the WebView version.
-Absent physical-device evidence leaves acceptance incomplete.
+- The stable APK SHA-256 equals the physically accepted draft SHA-256.
+- The draft `nexus-android.commit` witness is one valid commit SHA and equals
+  the commit currently resolved by the annotated release tag.
+- Stable promotion performs no build, signing, upload, or asset clobber.
+- The release tag resolves to the recorded commit and the stable install URL
+  serves the recorded signer/version/hash.
 
 ### Hard-cut residue
 
@@ -304,9 +248,30 @@ rg -n 'setDecorFitsSystemWindows|statusBarColor|nexusViewport|native.*inset|inse
 # no superseded inset path
 ```
 
-No compatibility branch, native inset payload/schema, feature-local safe-area
-formula, navigation-mode conditional, magic bar height, stale owner comment, or
-dead test remains.
+No compatibility branch, inset payload/schema, feature-local safe formula,
+navigation-mode conditional, magic bar height, rebuild-on-promote path,
+`--clobber`, stale owner prose, dead proof, or client-facing commit manifest
+remains.
+
+## Current demonstrated evidence
+
+- Installed stable `android-v0.2.6` on Android 16 / WebView 150 overlaps the
+  144-physical-pixel three-button navigation bar; Retry intersects it by 42 px.
+- Current source on the same phone passes actual-inset and rotation scenarios.
+  The clearing scenario is red only because synthetic 43 physical px is
+  conservatively represented as 45 at DPR 3, outside the obsolete 1 px oracle.
+- Focused web owner/consumer tests pass. No signed current-source APK has yet
+  completed product acceptance. Release remains blocked.
+
+## Non-goals
+
+- No reader/listener/TTS UX, reader chrome, Nexus, Player, sheet, keyboard,
+  motion, predictive Back, or edge-gesture redesign.
+- No immersive mode, hidden bars, custom navigation bar, foldable hinge,
+  viewport-segment, side-keyboard, or browser-chin optimization.
+- No WebView-before-M144 fallback, warning, updater, telemetry, feature flag,
+  bridge, dual path, or backward compatibility.
+- No broad AndroidX/SDK upgrade, iOS-specific work, backend, API, or schema.
 
 ## Primary references
 
@@ -314,5 +279,3 @@ dead test remains.
 - [Android WebView window insets](https://developer.android.com/develop/ui/views/layout/webapps/understand-window-insets)
 - [Chromium WebView inset contract](https://chromium.googlesource.com/chromium/src/+/main/android_webview/docs/insets.md)
 - [AndroidX `enableEdgeToEdge`](https://developer.android.com/reference/androidx/activity/EdgeToEdge)
-- [AndroidX Activity releases](https://developer.android.com/jetpack/androidx/releases/activity)
-- [Chrome edge-to-edge CSS guidance](https://developer.chrome.com/docs/css-ui/edge-to-edge)
