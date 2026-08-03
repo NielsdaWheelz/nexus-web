@@ -111,7 +111,10 @@ describe("BFF response streaming", () => {
       "authenticated proxy consumed the upstream body before returning",
     ).toBe(false);
     expect(forwardedAuthorization).toBe(`Bearer ${ACCESS_TOKEN}`);
-    expect(response.headers.get("content-length")).toBe(String(byteLength));
+    expect(
+      response.headers.get("content-length"),
+      "structured API responses must not forward the upstream hop-specific length",
+    ).toBeNull();
     expect(response.headers.get("content-type")).toBe("application/json");
     expect(response.headers.get("x-request-id")).toBe("fastapi-request");
     expect(response.headers.get("server-timing")).toMatch(
