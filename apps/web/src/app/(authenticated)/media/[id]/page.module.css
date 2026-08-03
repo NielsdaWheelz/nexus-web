@@ -257,6 +257,15 @@
   scrollbar-width: thin;
 }
 
+.textDocumentReaderFrame {
+  display: flex;
+  flex-direction: column;
+}
+
+.textDocumentViewport {
+  height: auto;
+}
+
 .documentViewport:focus-visible {
   outline: 2px solid var(--reader-accent, var(--accent));
   outline-offset: -2px;
@@ -824,12 +833,37 @@
   font-size: var(--text-xs);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 768px),
+  (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
   .documentViewport {
     padding-top: var(--mobile-pane-content-offset);
-    padding-bottom: var(--mobile-content-bottom-clearance);
     scroll-padding-top: var(--mobile-pane-content-offset);
+  }
+
+  .documentViewport:not(.textDocumentViewport) {
+    padding-bottom: var(--mobile-content-bottom-clearance);
     scroll-padding-bottom: var(--mobile-content-bottom-clearance);
+  }
+
+  .textDocumentReaderFrame {
+    padding-bottom: var(--mobile-reader-paint-bottom-inset);
+  }
+
+  .textDocumentViewport {
+    padding-bottom: max(
+      0px,
+      calc(
+        var(--mobile-content-bottom-clearance) -
+          var(--mobile-nexus-bottom-offset)
+      )
+    );
+    scroll-padding-bottom: max(
+      0px,
+      calc(
+        var(--mobile-content-bottom-clearance) -
+          var(--mobile-nexus-bottom-offset)
+      )
+    );
   }
 
   .mobileDocumentState {

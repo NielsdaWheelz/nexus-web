@@ -297,7 +297,10 @@ export function PlayerPlaybackPanel({
             </Button>
           ) : null}
           {rate.remember.kind === "Failed" ? (
-            <FeedbackNotice feedback={rate.remember.error} announce={false} />
+            <FeedbackNotice
+              content={rate.remember.error}
+              announcement="None"
+            />
           ) : null}
         </div>
       ) : null}
@@ -382,7 +385,10 @@ export function PlayerPlaybackPanel({
           ) : null}
           {pauseMutation?.kind === "Failed" ? (
             <div className={styles.pauseFailure}>
-              <FeedbackNotice feedback={pauseMutation.error} />
+              <FeedbackNotice
+                content={pauseMutation.error}
+                announcement="None"
+              />
               {pauseMutation.retryable ? (
                 <Button
                   variant="secondary"

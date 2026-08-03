@@ -6,13 +6,11 @@ import CollectionView from "@/components/collections/CollectionView";
 import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
 import {
   FeedbackNotice,
-  toFeedback,
-  useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
+import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import {
   ApiError,
@@ -76,6 +74,86 @@ function snapshotItems(
   return resourceData ? resourceData.items : [];
 }
 
+type LecternErrorOperation = "Load" | "Remove" | "Reorder" | "ResetProgress";
+
+/** Exhaustive copy adapter for the Lectern pane's modeled error channel. */
+function lecternErrorMessage(
+  error: unknown,
+  operation: LecternErrorOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  const requestId = error.requestId;
+  const title =
+    operation === "Load"
+      ? "Lectern couldn’t be loaded"
+      : operation === "Remove"
+        ? "Item wasn’t removed from Lectern"
+        : operation === "Reorder"
+          ? "Lectern wasn’t reordered"
+          : "Progress wasn’t reset";
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and retry.",
+        requestId,
+      };
+    case "E_TIMEOUT":
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The server took too long to respond. Retry the change.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_NOT_FOUND":
+      if (operation !== "Remove" && operation !== "ResetProgress") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "This item is no longer available. Review the current Lectern before trying again.",
+        requestId,
+      };
+    case "E_MEDIA_NOT_FOUND":
+      if (operation !== "ResetProgress") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "This item is no longer available.",
+        requestId,
+      };
+    case "E_INVALID_REQUEST":
+      if (operation === "Reorder") {
+        return {
+          tone: "Danger",
+          title,
+          message: "Lectern changed while you were reordering. Review the current order and try again.",
+          requestId,
+        };
+      }
+      if (operation === "ResetProgress") {
+        return {
+          tone: "Danger",
+          title,
+          message: "Progress can no longer be reset for this item.",
+          requestId,
+        };
+      }
+      throw error;
+    default:
+      throw error;
+  }
+}
+
 export default function LecternPaneBody() {
   const {
     resource,
@@ -86,8 +164,8 @@ export default function LecternPaneBody() {
     resetProgress,
   } = useLectern();
   const { playAudio } = usePlayerCommands();
-  const toast = useFeedback();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const queueSectionId = useId();
   const paneRuntime = usePaneRuntime();
   const isPaneActive = usePaneIsActive();
@@ -109,45 +187,64 @@ export default function LecternPaneBody() {
         : "loading";
   usePaneReturnReady(queueStatus !== "loading");
 
+  const presentFailure = useCallback(
+    (error: unknown, operation: LecternErrorOperation) => {
+      try {
+        setFeedback(lecternErrorMessage(error, operation));
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+      }
+    },
+    [],
+  );
+
   const handleRemove = useCallback(
     (itemId: LecternItemId, triggerEl: HTMLButtonElement | null) => {
-      const row = triggerEl?.closest<HTMLElement>("[data-collection-row-id]");
-      const list = row?.closest('[role="list"]');
-      const rows = list
-        ? Array.from(list.querySelectorAll<HTMLElement>("[data-collection-row-id]"))
+      const queueSection = document.getElementById(queueSectionId);
+      const rows = queueSection
+        ? Array.from(
+            queueSection.querySelectorAll<HTMLElement>(
+              "[data-collection-row-id]",
+            ),
+          )
         : [];
-      const rowIndex = row ? rows.indexOf(row) : -1;
+      const rowIndex = rows.findIndex(
+        (row) => row.dataset.collectionRowId === itemId,
+      );
       const nextPrimary =
         rowIndex >= 0
           ? (rows[rowIndex + 1] ?? rows[rowIndex - 1])?.querySelector<HTMLElement>(
               "[data-row-focusable]",
             )
           : undefined;
+      setFeedback(null);
       void removeItem(itemId).catch((err) => {
         if (handleUnauthenticatedApiError(err)) return;
-        setFeedback(toFeedback(err, { fallback: "Failed to remove from the Lectern" }));
+        presentFailure(err, "Remove");
       });
       if (triggerEl) {
         requestAnimationFrame(() => {
-          (nextPrimary ?? document.getElementById(queueSectionId))?.focus();
+          (nextPrimary ?? queueSection)?.focus();
         });
       }
     },
-    [queueSectionId, removeItem],
+    [presentFailure, queueSectionId, removeItem],
   );
 
   const handleReorder = useCallback(
     (itemIds: LecternItemId[]) => {
+      setFeedback(null);
       void setOrder(itemIds).catch((err) => {
         if (handleUnauthenticatedApiError(err)) return;
-        setFeedback(toFeedback(err, { fallback: "Failed to reorder the Lectern" }));
+        presentFailure(err, "Reorder");
       });
     },
-    [setOrder],
+    [presentFailure, setOrder],
   );
 
   const handleResetProgress = useCallback(
     async (item: LecternItem) => {
+      setFeedback(null);
       try {
         const outcome = await runProgressReset({
           mediaId: item.mediaId,
@@ -156,14 +253,12 @@ export default function LecternPaneBody() {
           resetProgress,
         });
         if (outcome.kind === "Cancelled") return;
-        toast.show({ severity: "success", title: "Progress reset." });
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-        setFeedback(toFeedback(error, { fallback: "Failed to reset progress" }));
+        presentFailure(error, "ResetProgress");
       }
     },
-    [resetProgress, toast],
+    [presentFailure, resetProgress],
   );
 
   const acceptSlateTarget = useCallback<ReadingSlateAccept>(
@@ -206,15 +301,13 @@ export default function LecternPaneBody() {
           },
         });
       } catch (error) {
+        if (!isApiError(error) || isSameSystemApiDefect(error)) {
+          setDefect({ error });
+          return Promise.resolve({ kind: "Abandoned" });
+        }
         return Promise.resolve({
           kind: "Rejected",
-          error: isApiError(error)
-            ? error
-            : new ApiError(
-                0,
-                "E_LECTERN_DEFECT",
-                error instanceof Error ? error.message : "Lectern unavailable",
-              ),
+          error,
         });
       }
       return new Promise((resolve) => {
@@ -230,7 +323,6 @@ export default function LecternPaneBody() {
             if (!observing) return;
             observing = false;
             options.signal.removeEventListener("abort", abandon);
-            toast.show({ severity: "success", title: "Added to Lectern" });
             resolve({ kind: "Accepted" });
           },
           (error: unknown) => {
@@ -241,27 +333,26 @@ export default function LecternPaneBody() {
               resolve({ kind: "Abandoned" });
               return;
             }
+            if (!isApiError(error) || isSameSystemApiDefect(error)) {
+              setDefect({ error });
+              resolve({ kind: "Abandoned" });
+              return;
+            }
             resolve({
               kind: "Rejected",
-              error: isApiError(error)
-                ? error
-                : new ApiError(
-                    0,
-                    "E_NETWORK",
-                    error instanceof Error ? error.message : "Request failed",
-                  ),
+              error,
             });
           },
         );
       });
     },
-    [placeItems, resource.status, toast],
+    [placeItems, resource.status],
   );
 
   usePanePrimaryChrome({
     header: {
       kind: "section",
-      folio: { kind: "count", value: items.length, unit: "on the lectern" },
+      folio: { kind: "count", value: items.length, unit: "item" },
       pending: queueStatus === "loading",
     },
   });
@@ -314,19 +405,25 @@ export default function LecternPaneBody() {
   const queueError =
     resource.status === "error" ? (
       <FeedbackNotice
-        feedback={toFeedback(resource.error, { fallback: "Failed to load the Lectern" })}
-      >
-        <Button variant="secondary" size="sm" onClick={resource.retry}>
-          Retry
-        </Button>
-      </FeedbackNotice>
+        content={lecternErrorMessage(resource.error, "Load")}
+        announcement="Assertive"
+        actions={[{ label: "Retry", onClick: resource.retry }]}
+      />
     ) : undefined;
 
+  if (defect) throw defect.error;
+
   return (
-    <PaneSurface state={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}>
-      <PaneSection
+    <PaneSurface
+      opener={<SectionOpener heading="Lectern" />}
+      state={
+        feedback ? (
+          <FeedbackNotice content={feedback} announcement="Assertive" />
+        ) : undefined
+      }
+    >
+      <section
         id={queueSectionId}
-        title="On the lectern"
         aria-label="On the lectern"
         tabIndex={-1}
       >
@@ -351,7 +448,7 @@ export default function LecternPaneBody() {
             },
           }}
         />
-      </PaneSection>
+      </section>
       <ReadingSlateSection
         returnScope="Lectern.ReadingSlate"
         destination={{ kind: "Lectern" }}

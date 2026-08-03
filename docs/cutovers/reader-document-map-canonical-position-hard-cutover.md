@@ -27,8 +27,11 @@ One format-owned capture publishes one semantic viewport. Cursor persistence,
 Consumption activity, and the desktop overview rail consume that capture. The
 rail owns presentation only and performs no scroll discovery or position math.
 
-The shipped surface remains the desktop **Document Map overview rail**. Do not
-introduce a second Reader Map product, store, route, or API.
+The shipped surface in this cut remains the desktop **Document Map overview
+rail**. The later passive mobile position surface is owned by the
+[`mobile-reader-position-ribbon` cutover](mobile-reader-position-ribbon-hard-cutover.md),
+which reuses this cut's semantic projection without introducing another Reader
+Map product, store, route, or API.
 
 ## Goals
 
@@ -54,7 +57,9 @@ In scope:
 
 Non-goals:
 
-- mobile chrome or mobile reader redesign;
+- mobile chrome or mobile reader redesign in this cut; the later passive mobile
+  position surface is owned by the
+  [`mobile-reader-position-ribbon` cutover](mobile-reader-position-ribbon-hard-cutover.md);
 - cursor, Consumption, completion, reset, CAS, or reader-state API changes;
 - a visible last-location or high-water layer in this cut;
 - drag scrubbing, time remaining, read-wear, heatmaps, analytics, gaze, or ML;

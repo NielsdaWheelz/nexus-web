@@ -20,6 +20,7 @@ export interface ConnectionsComposerDraft {
 }
 
 export interface ConnectionsPendingAttachment {
+  clientMutationId: string;
   mediaId: string;
   sourceAttemptId: string;
   label: string;

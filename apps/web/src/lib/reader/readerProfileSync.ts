@@ -14,7 +14,11 @@
  * flush, and revalidation generations; every decision lives here.
  */
 
-import { isApiError, type ApiError } from "@/lib/api/client";
+import {
+  isApiError,
+  isSameSystemApiDefect,
+  type ApiError,
+} from "@/lib/api/client";
 import { isRecord } from "@/lib/validation";
 import {
   isReaderFocusMode,
@@ -99,7 +103,7 @@ export function parseReaderProfile(value: unknown): ReaderProfile {
 }
 
 export type ReaderProfileRetryableFailure =
-  | { kind: "TransientApi"; error: ApiError } // 408, 429, or 5xx
+  | { kind: "TransientApi"; error: ApiError } // network, rate limit, or BFF deadline
   | { kind: "Transport"; error: TypeError | DOMException }
   | { kind: "AttemptDeadlineExceeded" };
 
@@ -117,6 +121,7 @@ export type ReaderProfileSaveFailure =
  */
 export function classifyReaderProfileSaveError(error: unknown): ReaderProfileSaveFailure {
   if (isApiError(error)) {
+    if (isSameSystemApiDefect(error)) throw error;
     if (error.status === 403) {
       if (error.code === "E_FORBIDDEN") {
         return { kind: "Forbidden", error };
@@ -124,7 +129,11 @@ export function classifyReaderProfileSaveError(error: unknown): ReaderProfileSav
       // E_INTERNAL_ONLY and unknown 403 codes are contract defects.
       throw error;
     }
-    if (error.status === 408 || error.status === 429 || error.status >= 500) {
+    if (
+      error.code === "E_NETWORK" ||
+      error.code === "E_UPSTREAM_TIMEOUT" ||
+      error.code === "E_RATE_LIMITED"
+    ) {
       return { kind: "TransientApi", error };
     }
     throw error;

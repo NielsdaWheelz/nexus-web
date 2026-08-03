@@ -17,7 +17,6 @@ import {
   ApiError,
   apiFetch,
   isApiError,
-  isSameSystemApiDefect,
 } from "@/lib/api/client";
 import { present, type Presence } from "@/lib/api/presence";
 import {
@@ -37,8 +36,8 @@ import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import { retryMediaMetadata } from "@/lib/media/ingestionClient";
 import {
   FeedbackNotice,
-  toFeedback,
-  useFeedback,
+  type FeedbackAnnouncement,
+  type FeedbackActions,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
@@ -109,12 +108,22 @@ import {
 } from "@/lib/panes/paneRuntime";
 import type { LibraryOut } from "@/lib/libraries/contract";
 import { useLibraryMembers } from "@/lib/libraries/useLibraryMembers";
+import {
+  libraryRequestErrorMessage,
+  type LibraryRequest,
+} from "@/lib/libraries/libraryRequestErrorMessage";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import {
+  CANONICAL_LIBRARY_VIEW,
+  LIBRARY_ENTRY_TYPE_OPTION_IDS,
+  activeLibraryDomainControlCount,
   completionOf,
   decodeLibraryView,
   encodeLibraryView,
+  entryTypeOptionLabel,
+  entryTypeOptionOf,
   formatLibraryView,
+  isInitialLibraryView,
   orderPresetIdsFor,
   orderToPresetId,
   presetIdToOrder,
@@ -124,8 +133,10 @@ import {
   projectionOptionsFor,
   projectionSupportsCompletion,
   withCompletion,
+  withEntryTypeOption,
   withProjectionOption,
   type DecodedLibraryView,
+  type LibraryEntryTypeOptionId,
   type LibraryEntryView,
   type LibraryOrderPresetId,
   type ProjectionOptionId,
@@ -300,14 +311,10 @@ function appendUniqueEntries(
   return merged;
 }
 
-function toLibraryAddError(error: unknown): ApiError {
-  return isApiError(error)
-    ? error
-    : new ApiError(
-        0,
-        "E_NETWORK",
-        error instanceof Error ? error.message : "Request failed",
-      );
+interface LibraryPaneFeedback {
+  readonly content: FeedbackContent;
+  readonly actions?: FeedbackActions;
+  readonly announcement?: FeedbackAnnouncement;
 }
 
 // The one full-date formatter for the "Added …" row line; the whole instant is
@@ -335,17 +342,6 @@ function libraryEntryFilterFields(entry: LibraryEntry): readonly string[] {
   ];
 }
 
-// A canonical/all view is exactly the server's default order that the bootstrap
-// `libraryResource` already seeded; any factual order, projection, or unfinished
-// filter is a different first page fetched from the entries endpoint.
-function isInitialLibraryView(view: LibraryEntryView): boolean {
-  return (
-    view.order.kind === "Canonical" &&
-    view.projection.kind === "AllItems" &&
-    view.projection.completion === "all"
-  );
-}
-
 // A view whose row membership depends on canonical consumption facts: In
 // Progress (only InProgress rows) or any Unfinished completion (Finished rows
 // drop out). An unfiltered All-items view is consumption-insensitive, so a bare
@@ -365,11 +361,6 @@ function isInvalidViewError(error: unknown): boolean {
   );
 }
 
-const CANONICAL_VIEW: LibraryEntryView = {
-  order: { kind: "Canonical" },
-  projection: { kind: "AllItems", completion: "all" },
-};
-
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
   if (!id) {
@@ -383,7 +374,6 @@ export default function LibraryPaneBody() {
   ).activateTarget;
   const isPaneActive = usePaneIsActive();
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
-  const feedback = useFeedback();
   const lectern = useLectern();
   const offerCompletionUndo = useCompletionUndo();
 
@@ -419,6 +409,10 @@ export default function LibraryPaneBody() {
         next.delete("direction");
         next.delete("completion");
         next.delete("projection");
+        next.delete("entry_type");
+        next.delete("kind");
+        next.delete("type");
+        next.delete("types");
         return next;
       },
     }),
@@ -548,7 +542,28 @@ export default function LibraryPaneBody() {
   const refreshingPodcastIds = useStringIdSet();
   const podcastRowRefreshControllersRef = useRef(new Set<AbortController>());
   const unsubscribingPodcastIds = useStringIdSet();
-  const [error, setError] = useState<FeedbackContent | null>(null);
+  const [error, setError] = useState<LibraryPaneFeedback | null>(null);
+  const [authorityFeedback, setAuthorityFeedback] =
+    useState<FeedbackContent | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const presentFailure = useCallback(
+    (
+      requestError: unknown,
+      title: string,
+      request: LibraryRequest,
+      retry?: { readonly label: string; readonly onClick: () => void },
+    ): void => {
+      try {
+        setError({
+          content: libraryRequestErrorMessage(requestError, { title, request }),
+          actions: retry ? [{ label: retry.label, onClick: retry.onClick }] : undefined,
+        });
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+      }
+    },
+    [],
+  );
   const [reorderBusy, setReorderBusy] = useState(false);
   // The revisions the committed page was fetched at. A reacted-to advance beyond
   // this baseline drives one reconciliation of the current view. When the pane is
@@ -630,22 +645,32 @@ export default function LibraryPaneBody() {
   // Focus continuity: when an action removes the focused row, move focus to the
   // next filtered row, else the previous, else the canonical Pane Search target.
   const listRegionRef = useRef<HTMLDivElement | null>(null);
+  const typeSelectRef = useRef<HTMLSelectElement | null>(null);
   const viewSelectRef = useRef<HTMLSelectElement | null>(null);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  const refreshListRecoveryButtonRef = useRef<HTMLButtonElement | null>(null);
   const hideFinishedInputId = `library-hide-finished-${id}`;
   // A control to focus once the view/reconciliation it initiated commits. A
   // recovery action (Show all items, Clear filters, Show finished, Retry,
   // Refresh list) sets it; the matching commit applies and clears it.
-  const pendingCommitFocusRef = useRef<"View" | "HideFinished" | null>(null);
+  const pendingCommitFocusRef = useRef<
+    "Type" | "View" | "Sort" | "HideFinished" | null
+  >(null);
   const focusPendingControl = useCallback(() => {
     const target = pendingCommitFocusRef.current;
     if (target === null) return;
     pendingCommitFocusRef.current = null;
-    const element =
-      target === "View"
-        ? viewSelectRef.current
-        : document.getElementById(hideFinishedInputId);
+    const element = (() => {
+      switch (target) {
+        case "Type":
+          return typeSelectRef.current;
+        case "View":
+          return viewSelectRef.current;
+        case "Sort":
+          return sortSelectRef.current;
+        case "HideFinished":
+          return document.getElementById(hideFinishedInputId);
+      }
+    })();
     if (element instanceof HTMLElement) {
       requestAnimationFrame(() => element.focus());
     }
@@ -791,12 +816,19 @@ export default function LibraryPaneBody() {
   );
   const announceLibraryAuthorityLoss = useCallback(
     (message: string) =>
-      feedback.show({
-        severity: "warning",
-        title: message,
+      setAuthorityFeedback({
+        tone: "Warning",
+        title: "Library access changed",
+        message,
       }),
-    [feedback],
+    [],
   );
+  useEffect(() => {
+    if (currentLibrary?.canManageMembers === true) {
+      setAuthorityFeedback(null);
+    }
+  }, [currentLibrary?.canManageMembers]);
+  useEffect(() => setAuthorityFeedback(null), [id]);
   const membersActive =
     isPaneActive &&
     paneRuntime?.secondaryPane?.groupId === "resource-inspector" &&
@@ -1175,11 +1207,6 @@ export default function LibraryPaneBody() {
     entryReconciliationSerialRef.current += 1;
     setEntryReconciliationRequest(null);
     committedSnapshotRef.current = controllerRef.current;
-    setError(
-      toFeedback(requestError, {
-        fallback: "Library failed to refresh",
-      }),
-    );
     rejectPendingLibraryRevalidation(requestError);
   }, [
     entryReconciliationFetch.error,
@@ -1193,7 +1220,13 @@ export default function LibraryPaneBody() {
     ) {
       return;
     }
-    refreshListRecoveryButtonRef.current?.focus();
+    const scope =
+      listRegionRef.current?.closest<HTMLElement>("[data-pane-content]") ??
+      document;
+    const button = Array.from(
+      scope.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((candidate) => candidate.textContent?.trim() === "Refresh list");
+    button?.focus();
   }, [entryReconciliationFetch.error, entryReconciliationRequest]);
 
   useEffect(() => {
@@ -1348,7 +1381,7 @@ export default function LibraryPaneBody() {
         setController({
           library: libraryResource.data.library,
           entries: {
-            view: view ?? CANONICAL_VIEW,
+            view: view ?? CANONICAL_LIBRARY_VIEW,
             entries: libraryResource.data.entries,
             collectionRevision: libraryResource.data.collectionRevision,
             nextCursor: libraryResource.data.nextCursor,
@@ -1370,10 +1403,14 @@ export default function LibraryPaneBody() {
         router.push("/libraries");
         return;
       }
-      setError(
-        toFeedback(libraryResource.error, {
-          fallback: "Failed to load library",
-        }),
+      presentFailure(
+        libraryResource.error,
+        "Library couldn’t be loaded",
+        "LibraryRead",
+        {
+          label: "Retry",
+          onClick: libraryResource.retry,
+        },
       );
       setController(null);
     }
@@ -1383,6 +1420,7 @@ export default function LibraryPaneBody() {
     id,
     isInitialView,
     libraryResource,
+    presentFailure,
     router,
     view,
   ]);
@@ -1470,10 +1508,6 @@ export default function LibraryPaneBody() {
     revisionsAreStale,
   ]);
 
-  const firstPageDefect =
-    firstPageError !== null && isSameSystemApiDefect(firstPageError)
-      ? firstPageError
-      : null;
   // The pane-level spinner is reserved for the pre-metadata state: no committed
   // page AND no route-resource metadata yet. Once metadata is known the pane
   // renders its toolbar and the polite status node instead.
@@ -1549,8 +1583,13 @@ export default function LibraryPaneBody() {
         return Promise.resolve({ kind: "Abandoned" });
       }
       const targetId = slateTargetId(target);
+      const clientMutationId = crypto.randomUUID();
       const frozenAttempt = () =>
-        addLibraryPlacement({ kind: target.kind, id: targetId }, id);
+        addLibraryPlacement(
+          { kind: target.kind, id: targetId },
+          id,
+          { clientMutationId },
+        );
 
       return new Promise((resolve) => {
         let observing = true;
@@ -1571,14 +1610,6 @@ export default function LibraryPaneBody() {
               options.signal.removeEventListener("abort", abandon);
               // The placement writer already published to the placement
               // revision store; that revision reconciles the committed view.
-              feedback.show({
-                severity: "success",
-                title: `Added to ${
-                  currentLibrary
-                    ? libraryPresentation(currentLibrary).name
-                    : "library"
-                }`,
-              });
               resolve({ kind: "Accepted" });
             },
             (error: unknown) => {
@@ -1590,7 +1621,29 @@ export default function LibraryPaneBody() {
                 resolve({ kind: "Abandoned" });
                 return;
               }
-              const apiError = toLibraryAddError(error);
+              if (!isApiError(error)) {
+                observing = false;
+                options.signal.removeEventListener("abort", abandon);
+                setDefect({ error });
+                resolve({ kind: "Abandoned" });
+                return;
+              }
+              const apiError = error;
+              try {
+                libraryRequestErrorMessage(
+                  apiError,
+                  {
+                    title: "Item wasn’t added",
+                    request: "PlacementMutation",
+                  },
+                );
+              } catch (caughtDefect) {
+                observing = false;
+                options.signal.removeEventListener("abort", abandon);
+                setDefect({ error: caughtDefect });
+                resolve({ kind: "Abandoned" });
+                return;
+              }
               if (apiError.status >= 400 && apiError.status < 500) {
                 observing = false;
                 options.signal.removeEventListener("abort", abandon);
@@ -1613,7 +1666,7 @@ export default function LibraryPaneBody() {
         runAttempt();
       });
     },
-    [committedView, currentLibrary, feedback, id, viewIsCommitted],
+    [committedView, id, viewIsCommitted],
   );
 
   const runMediaProcessingMutation = useCallback(
@@ -1622,7 +1675,7 @@ export default function LibraryPaneBody() {
       busySet: StringIdSet;
       action: "retry" | "refresh";
       successTitle: string;
-      errorFallback: string;
+      errorTitle: string;
     }) => {
       if (args.busySet.has(args.mediaId)) return;
       args.busySet.add(args.mediaId);
@@ -1640,20 +1693,16 @@ export default function LibraryPaneBody() {
             ...projection.capabilityPatch,
           },
         }));
-        feedback.show(projection.feedback);
         clearAllVisitData();
         reconcileAfterMutationRef.current("SafePatch");
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
-        if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-        feedback.show({
-          ...toFeedback(err, { fallback: args.errorFallback }),
-        });
+        presentFailure(err, args.errorTitle, "EntryMutation");
       } finally {
         args.busySet.remove(args.mediaId);
       }
     },
-    [clearAllVisitData, feedback, patchMediaInViews],
+    [clearAllVisitData, patchMediaInViews, presentFailure],
   );
 
   const handleRetryProcessing = useCallback(
@@ -1663,7 +1712,7 @@ export default function LibraryPaneBody() {
         busySet: retryingMediaIds,
         action: "retry",
         successTitle: "Processing retry started.",
-        errorFallback: "Failed to retry processing",
+        errorTitle: "Processing retry wasn’t started",
       }),
     [retryingMediaIds, runMediaProcessingMutation],
   );
@@ -1675,7 +1724,7 @@ export default function LibraryPaneBody() {
         busySet: refreshingMediaIds,
         action: "refresh",
         successTitle: "Source refresh started.",
-        errorFallback: "Failed to refresh source",
+        errorTitle: "Source refresh wasn’t started",
       }),
     [refreshingMediaIds, runMediaProcessingMutation],
   );
@@ -1686,30 +1735,20 @@ export default function LibraryPaneBody() {
       retryingMetadataMediaIds.add(mediaId);
       try {
         await retryMediaMetadata(mediaId);
-        feedback.show({
-          severity: "success",
-          title: "Metadata re-enrichment started.",
-        });
         clearAllVisitData();
         reconcileAfterMutationRef.current("Unknown");
       } catch (metadataError) {
         if (handleUnauthenticatedApiError(metadataError)) return;
-        if (
-          !isApiError(metadataError) ||
-          isSameSystemApiDefect(metadataError)
-        ) {
-          throw metadataError;
-        }
-        feedback.show(
-          toFeedback(metadataError, {
-            fallback: "Failed to re-enrich metadata",
-          }),
+        presentFailure(
+          metadataError,
+          "Metadata enrichment wasn’t started",
+          "EntryMutation",
         );
       } finally {
         retryingMetadataMediaIds.remove(mediaId);
       }
     },
-    [clearAllVisitData, feedback, retryingMetadataMediaIds],
+    [clearAllVisitData, presentFailure, retryingMetadataMediaIds],
   );
 
   const handleDeleteMedia = useCallback(
@@ -1735,12 +1774,7 @@ export default function LibraryPaneBody() {
               candidate.media.id !== entry.media.id,
           ),
         );
-        if (result.kind === "Deleting") {
-          feedback.show({
-            severity: "info",
-            title: "Deleting from your library",
-          });
-        } else {
+        if (result.kind !== "Deleting") {
           committedRevisionsRef.current = {
             ...committedRevisionsRef.current,
             placement: libraryPlacementSnapshot().revision,
@@ -1757,12 +1791,7 @@ export default function LibraryPaneBody() {
         }
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
-        if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-        feedback.show({
-          ...toFeedback(err, {
-            fallback: "Failed to remove media",
-          }),
-        });
+        presentFailure(err, "Media wasn’t removed", "EntryMutation");
       } finally {
         deletingMediaIds.remove(entry.media.id);
       }
@@ -1771,9 +1800,9 @@ export default function LibraryPaneBody() {
       clearAllVisitData,
       captureFocusNeighbor,
       deletingMediaIds,
-      feedback,
       installEntryCollectionRevision,
       isDefaultLibrary,
+      presentFailure,
       setEntries,
     ],
   );
@@ -1854,10 +1883,7 @@ export default function LibraryPaneBody() {
           }),
         );
         if (handleUnauthenticatedApiError(err)) return;
-        if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-        feedback.show({
-          ...toFeedback(err, { fallback: "Failed to update read state" }),
-        });
+        presentFailure(err, "Read state wasn’t updated", "EntryMutation");
       } finally {
         if (
           consumptionOperationTokensRef.current.get(mediaId) === operationToken
@@ -1870,11 +1896,11 @@ export default function LibraryPaneBody() {
     [
       entries,
       clearPendingFocusNeighbor,
-      feedback,
       installEntryCollectionRevision,
       lectern,
       offerCompletionUndo,
       patchMediaInViews,
+      presentFailure,
       setEntries,
       resettingProgressMediaIds,
       updatingConsumptionMediaIds,
@@ -1924,7 +1950,6 @@ export default function LibraryPaneBody() {
           ...committedRevisionsRef.current,
           consumption: consumptionProjectionSnapshot().revision,
         };
-        feedback.show({ severity: "success", title: "Progress reset." });
         installEntryCollectionRevision(
           outcome.result.libraryEntriesCollectionRevision,
         );
@@ -1932,10 +1957,7 @@ export default function LibraryPaneBody() {
       } catch (error) {
         clearPendingFocusNeighbor();
         if (handleUnauthenticatedApiError(error)) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-        feedback.show(
-          toFeedback(error, { fallback: "Failed to reset progress" }),
-        );
+        presentFailure(error, "Progress wasn’t reset", "EntryMutation");
       } finally {
         resettingProgressMediaIds.remove(mediaId);
       }
@@ -1944,10 +1966,10 @@ export default function LibraryPaneBody() {
       committedView,
       clearPendingFocusNeighbor,
       captureFocusNeighbor,
-      feedback,
       installEntryCollectionRevision,
       lectern.resetProgress,
       patchMediaInViews,
+      presentFailure,
       resettingProgressMediaIds,
       updatingConsumptionMediaIds,
       viewIsCommitted,
@@ -1963,19 +1985,15 @@ export default function LibraryPaneBody() {
           mediaIds: [parseMediaId(mediaId)],
           placement: { kind: "Last" },
         });
-        feedback.show({ severity: "success", title: "Added to Lectern" });
         clearAllVisitData();
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
-        if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-        feedback.show({
-          ...toFeedback(err, { fallback: "Failed to add to Lectern" }),
-        });
+        presentFailure(err, "Item wasn’t added to Lectern", "LecternMutation");
       } finally {
         addingToLecternMediaIds.remove(mediaId);
       }
     },
-    [addingToLecternMediaIds, clearAllVisitData, feedback, lectern],
+    [addingToLecternMediaIds, clearAllVisitData, lectern, presentFailure],
   );
 
   const handleRemoveFromLectern = useCallback(
@@ -1987,19 +2005,16 @@ export default function LibraryPaneBody() {
         clearAllVisitData();
       } catch (removeError) {
         if (handleUnauthenticatedApiError(removeError)) return;
-        if (!isApiError(removeError) || isSameSystemApiDefect(removeError)) {
-          throw removeError;
-        }
-        feedback.show(
-          toFeedback(removeError, {
-            fallback: "Failed to remove from Lectern",
-          }),
+        presentFailure(
+          removeError,
+          "Item wasn’t removed from Lectern",
+          "LecternMutation",
         );
       } finally {
         removingFromLecternMediaIds.remove(mediaId);
       }
     },
-    [clearAllVisitData, feedback, lectern, removingFromLecternMediaIds],
+    [clearAllVisitData, lectern, presentFailure, removingFromLecternMediaIds],
   );
 
   const handleRefreshPodcast = async (
@@ -2008,6 +2023,7 @@ export default function LibraryPaneBody() {
     const podcastId = entry.podcast.id;
     if (refreshingPodcastIds.has(podcastId)) return;
     refreshingPodcastIds.add(podcastId);
+    setError(null);
     const controller = new AbortController();
     podcastRowRefreshControllersRef.current.add(controller);
     try {
@@ -2019,23 +2035,31 @@ export default function LibraryPaneBody() {
         },
       );
       await revalidateLibraryEntries(controller.signal);
-      feedback.show({
-        severity:
-          result.kind === "Failed"
-            ? "error"
-            : result.kind === "Complete"
-              ? "success"
-              : "warning",
-        title: result.announcement,
-      });
+      if (result.kind !== "Complete") {
+        setError({
+          content: {
+            tone: result.kind === "Failed" ? "Danger" : "Warning",
+            title: result.announcement,
+          },
+          actions: [
+            {
+              label: "Retry",
+              onClick: () => void handleRefreshPodcast(entry),
+            },
+          ],
+        });
+      }
     } catch (refreshError) {
       if (isAbortError(refreshError)) return;
       if (handleUnauthenticatedApiError(refreshError)) return;
-      if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
-        throw refreshError;
-      }
-      feedback.show(
-        { severity: "error", title: "Library failed to refresh" },
+      presentFailure(
+        refreshError,
+        "Podcast wasn’t refreshed",
+        "PodcastMutation",
+        {
+          label: "Retry",
+          onClick: () => void handleRefreshPodcast(entry),
+        },
       );
     } finally {
       podcastRowRefreshControllersRef.current.delete(controller);
@@ -2098,16 +2122,10 @@ export default function LibraryPaneBody() {
       reconcileAfterMutationRef.current("SafeRebase");
     } catch (unsubscribeError) {
       if (handleUnauthenticatedApiError(unsubscribeError)) return;
-      if (
-        !isApiError(unsubscribeError) ||
-        isSameSystemApiDefect(unsubscribeError)
-      ) {
-        throw unsubscribeError;
-      }
-      feedback.show(
-        toFeedback(unsubscribeError, {
-          fallback: "Failed to unsubscribe from podcast",
-        }),
+      presentFailure(
+        unsubscribeError,
+        "Podcast wasn’t unsubscribed",
+        "PodcastMutation",
       );
     } finally {
       unsubscribingPodcastIds.remove(podcastId);
@@ -2140,12 +2158,10 @@ export default function LibraryPaneBody() {
       router.push("/libraries");
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-      setError(
-        toFeedback(err, {
-          fallback: "Failed to delete library",
-        }),
-      );
+      presentFailure(err, "Library wasn’t deleted", "LibraryMutation", {
+        label: "Retry",
+        onClick: () => void handleDeleteLibrary(),
+      });
     } finally {
       deletingLibraryRef.current = false;
       setDeletingLibrary(false);
@@ -2300,18 +2316,11 @@ export default function LibraryPaneBody() {
         if (generation !== reorderGenerationRef.current) return;
         setEntries(previousEntries);
         if (handleUnauthenticatedApiError(err)) return;
-        if (isApiError(err)) {
-          setError(
-            toFeedback(err, {
-              fallback: "Failed to reorder library entries",
-            }),
-          );
-          return;
-        }
-        setError({
-          severity: "error",
-          title: "Failed to reorder library entries",
-        });
+        presentFailure(
+          err,
+          "Library entries weren’t reordered",
+          "EntryMutation",
+        );
       })
       .finally(() => {
         if (generation !== reorderGenerationRef.current) return;
@@ -2410,19 +2419,41 @@ export default function LibraryPaneBody() {
   const clearDomainFilters = useCallback(() => {
     dismissFilterQueryRef.current();
     pendingCommitFocusRef.current = "View";
-    setView(CANONICAL_VIEW);
+    setView(CANONICAL_LIBRARY_VIEW);
   }, [setView]);
   const domainFilterControls = useMemo(
     () =>
       invalidView || view === null ? undefined : (
         <>
           <label className={styles.selectField}>
+            <span>Type</span>
+            <Select
+              ref={typeSelectRef}
+              value={entryTypeOptionOf(view)}
+              onChange={(event) => {
+                pendingCommitFocusRef.current = "Type";
+                setView(
+                  withEntryTypeOption(
+                    view,
+                    event.target.value as LibraryEntryTypeOptionId,
+                  ),
+                );
+              }}
+            >
+              {LIBRARY_ENTRY_TYPE_OPTION_IDS.map((optionId) => (
+                <option key={optionId} value={optionId}>
+                  {entryTypeOptionLabel(optionId)}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className={styles.selectField}>
             <span>View</span>
             <Select
               ref={viewSelectRef}
               value={projectionOptionOf(view)}
               onChange={(event) => {
-                pendingCommitFocusRef.current = null;
+                pendingCommitFocusRef.current = "View";
                 setView(
                   withProjectionOption(
                     view,
@@ -2444,12 +2475,13 @@ export default function LibraryPaneBody() {
               ref={sortSelectRef}
               value={orderToPresetId(view.order)}
               onChange={(event) => {
-                pendingCommitFocusRef.current = null;
+                pendingCommitFocusRef.current = "Sort";
                 setView({
                   order: presetIdToOrder(
                     event.target.value as LibraryOrderPresetId,
                   ),
                   projection: view.projection,
+                  entryType: view.entryType,
                 });
               }}
             >
@@ -2465,13 +2497,14 @@ export default function LibraryPaneBody() {
               id={hideFinishedInputId}
               checked={completionOf(view) === "unfinished"}
               onCheckedChange={(checked) => {
-                pendingCommitFocusRef.current = null;
+                pendingCommitFocusRef.current = "HideFinished";
                 setView(withCompletion(view, checked ? "unfinished" : "all"));
               }}
               label="Hide finished"
             />
           ) : null}
-          {projectionOptionOf(view) !== "all-items" ||
+          {entryTypeOptionOf(view) !== "all-types" ||
+          projectionOptionOf(view) !== "all-items" ||
           view.order.kind !== "Canonical" ||
           completionOf(view) === "unfinished" ? (
             <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
@@ -2492,11 +2525,7 @@ export default function LibraryPaneBody() {
     ],
   );
   const activeDomainControlCount =
-    view === null
-      ? 0
-      : Number(projectionOptionOf(view) !== "all-items") +
-        Number(view.order.kind !== "Canonical") +
-        Number(completionOf(view) === "unfinished");
+    view === null ? 0 : activeLibraryDomainControlCount(view);
   const getFilterStatus = useCallback(
     (query: string) => {
       const visibleCount = visibleEntries.filter((entry) =>
@@ -2577,6 +2606,42 @@ export default function LibraryPaneBody() {
       linkedItems: connectionsBody,
     },
   });
+  const retryLibraryRefreshRef = useRef<() => void>(() => {});
+  const retryLibraryRefresh = useCallback(() => {
+    const controller = new AbortController();
+    setError(null);
+    void runPodcastRefresh(
+      { kind: "Library", libraryId: id },
+      { signal: controller.signal, onProgress: () => {} },
+    )
+      .then(async (result) => {
+        await revalidateLibraryEntries(controller.signal);
+        if (result.kind === "Complete") return;
+        setError({
+          content: {
+            tone: result.kind === "Failed" ? "Danger" : "Warning",
+            title: result.announcement,
+          },
+          actions: [
+            { label: "Retry", onClick: () => retryLibraryRefreshRef.current() },
+          ],
+        });
+      })
+      .catch((refreshError: unknown) => {
+        if (isAbortError(refreshError)) return;
+        if (handleUnauthenticatedApiError(refreshError)) return;
+        presentFailure(
+          refreshError,
+          "Library couldn’t be refreshed",
+          "PodcastMutation",
+          {
+            label: "Retry",
+            onClick: () => retryLibraryRefreshRef.current(),
+          },
+        );
+      });
+  }, [id, presentFailure, revalidateLibraryEntries]);
+  retryLibraryRefreshRef.current = retryLibraryRefresh;
   const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
     async ({ signal, reportProgress }) => {
       try {
@@ -2599,9 +2664,26 @@ export default function LibraryPaneBody() {
         };
       } catch (refreshError: unknown) {
         if (isAbortError(refreshError)) throw refreshError;
+        const content = libraryRequestErrorMessage(
+          refreshError,
+          {
+            title: "Library couldn’t be refreshed",
+            request: "PodcastMutation",
+          },
+        );
+        setError({
+          content,
+          announcement: "None",
+          actions: [
+            {
+              label: "Retry",
+              onClick: () => retryLibraryRefreshRef.current(),
+            },
+          ],
+        });
         return {
           kind: "Failed",
-          announcement: "Library failed to refresh",
+          announcement: content.title,
         };
       }
     },
@@ -2677,18 +2759,32 @@ export default function LibraryPaneBody() {
     return () => cancelAnimationFrame(pendingFocusRafRef.current);
   }, [paneId, visibleRowSignature]);
 
-  if (firstPageDefect !== null) {
-    throw firstPageDefect;
-  }
+  if (defect !== null) throw defect.error;
+
+  const firstPageFailureContent =
+    firstPageError === null
+      ? null
+      : isInvalidViewError(firstPageError)
+        ? { tone: "Danger" as const, title: "Invalid library view" }
+        : libraryRequestErrorMessage(
+            firstPageError,
+            {
+              title: "Library entries couldn’t be loaded",
+              request: "EntryRead",
+            },
+          );
 
   if (loading) {
     return (
       <>
-        <PaneLoadingState />
+        <PaneLoadingState label="Loading library…" announcement="Polite" />
         {filterQuery.trim() && filteredEntries.length === 0 ? (
           <FeedbackNotice
-            severity="neutral"
-            title="No matching entry found so far."
+            content={{
+              tone: "Neutral",
+              title: "No matching entry found so far.",
+            }}
+            announcement="None"
           />
         ) : null}
       </>
@@ -2701,36 +2797,40 @@ export default function LibraryPaneBody() {
   if (!knownLibrary) {
     if (viewInvalid) {
       return (
-        <FeedbackNotice severity="error" title="Invalid library view">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              search.onDismiss();
-              setDecodedView({ kind: "Valid", view: CANONICAL_VIEW });
-            }}
-          >
-            Reset view
-          </Button>
-        </FeedbackNotice>
+        <FeedbackNotice
+          content={{ tone: "Danger", title: "Invalid library view" }}
+          announcement="Assertive"
+          actions={[
+            {
+              label: "Reset view",
+              onClick: () => {
+                search.onDismiss();
+                setDecodedView({
+                  kind: "Valid",
+                  view: CANONICAL_LIBRARY_VIEW,
+                });
+              },
+            },
+          ]}
+        />
       );
     }
     if (failedFirstPage !== null) {
       return (
         <FeedbackNotice
-          feedback={toFeedback(failedFirstPage.error, {
-            fallback: "Failed to load library entries",
-          })}
-        >
-          <Button variant="secondary" size="sm" onClick={failedFirstPage.retry}>
-            Retry
-          </Button>
-        </FeedbackNotice>
+          content={firstPageFailureContent!}
+          announcement="Assertive"
+          actions={[{ label: "Retry", onClick: failedFirstPage.retry }]}
+        />
       );
     }
     return (
       <FeedbackNotice
-        {...(error ?? { severity: "error", title: "Library not found" })}
+        content={
+          error?.content ?? { tone: "Danger", title: "Library not found" }
+        }
+        announcement="Assertive"
+        actions={error?.actions}
       />
     );
   }
@@ -2744,60 +2844,57 @@ export default function LibraryPaneBody() {
     committedView?.order.kind === "Canonical" &&
     committedView.projection.kind === "AllItems" &&
     committedView.projection.completion === "all" &&
+    committedView.entryType.kind === "AllTypes" &&
     controller?.entries.exhaustion === "Complete" &&
     entryExhaustion.kind === "Complete";
   const entryFooter = <CollectionExhaustionNotice state={entryExhaustion} />;
+  const retryEntryReconciliation = entryReconciliationRequest
+    ? () =>
+        requestEntryReconciliation(
+          entryReconciliationRequest.view,
+          {
+            placement: libraryPlacementSnapshot().revision,
+            consumption: consumptionProjectionSnapshot().revision,
+          },
+          entryReconciliationRequest.recovery,
+        )
+    : null;
   const entryReconciliationNotice = entryReconciliationRequest ? (
-      entryReconciliationFetch.error === null ? (
-      <FeedbackNotice severity="neutral" title="Refreshing library entries…" />
-      ) : entryReconciliationRequest.recovery === "RefreshList" ? (
-      <FeedbackNotice severity="warning" title="List changed while loading">
-          <Button
-            ref={refreshListRecoveryButtonRef}
-            variant="secondary"
-            size="sm"
-            onClick={() =>
-              requestEntryReconciliation(
-                entryReconciliationRequest.view,
-                {
-                  placement: libraryPlacementSnapshot().revision,
-                  consumption: consumptionProjectionSnapshot().revision,
-                },
-                "RefreshList",
-              )
-            }
-          >
-            Refresh list
-          </Button>
-        </FeedbackNotice>
-      ) : (
-        <FeedbackNotice
-          feedback={toFeedback(
-            toLibraryAddError(entryReconciliationFetch.error),
-            {
-              fallback: "Failed to refresh library entries",
-            },
-          )}
-        >
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() =>
-              requestEntryReconciliation(
-                entryReconciliationRequest.view,
-                {
-                  placement: libraryPlacementSnapshot().revision,
-                  consumption: consumptionProjectionSnapshot().revision,
-                },
-                entryReconciliationRequest.recovery,
-              )
-            }
-          >
-            Retry
-          </Button>
-        </FeedbackNotice>
-      )
-    ) : null;
+    entryReconciliationFetch.error === null ? (
+      <FeedbackNotice
+        content={{ tone: "Neutral", title: "Refreshing library entries…" }}
+        announcement="Polite"
+      />
+    ) : entryReconciliationRequest.recovery === "RefreshList" ? (
+      <FeedbackNotice
+        content={{ tone: "Warning", title: "List changed while loading" }}
+        announcement="Assertive"
+        actions={[
+          {
+            label: "Refresh list",
+            onClick: retryEntryReconciliation!,
+          },
+        ]}
+      />
+    ) : (
+      <FeedbackNotice
+        content={libraryRequestErrorMessage(
+          entryReconciliationFetch.error,
+          {
+            title: "Library entries couldn’t be refreshed",
+            request: "EntryRead",
+          },
+        )}
+        announcement="Assertive"
+        actions={[
+          {
+            label: "Retry",
+            onClick: retryEntryReconciliation!,
+          },
+        ]}
+      />
+    )
+  ) : null;
   // The single polite status node lives OUTSIDE the busy collection and points
   // at it via aria-controls. Requested/committed labels are the one formatter.
   const requestedViewLabel =
@@ -3089,6 +3186,7 @@ export default function LibraryPaneBody() {
     setView({
       order: committedView.order,
       projection: { kind: "AllItems", completion: "all" },
+      entryType: committedView.entryType,
     });
   };
   const recoverShowFinished = () => {
@@ -3098,65 +3196,83 @@ export default function LibraryPaneBody() {
   };
   // Closed-union empty-state precedence (never inferred from counts).
   const emptyStateNotice = (() => {
-    const projection = committedView?.projection ?? CANONICAL_VIEW.projection;
+    const exactEntryType =
+      committedView?.entryType.kind === "ExactType"
+        ? committedView.entryType.value
+        : null;
+    const projection =
+      committedView?.projection ?? CANONICAL_LIBRARY_VIEW.projection;
+    if (exactEntryType !== null) {
+      return (
+        <FeedbackNotice
+          content={{
+            tone: "Neutral",
+            title: `No matches for “${entryTypeOptionLabel(exactEntryType)}” in this view.`,
+          }}
+          announcement="Polite"
+          actions={[{ label: "Clear filters", onClick: clearDomainFilters }]}
+        />
+      );
+    }
     if (projection.kind === "InProgress") {
       return (
-        <FeedbackNotice severity="neutral" title="Nothing in progress.">
-          <Button variant="secondary" size="sm" onClick={recoverToAllItems}>
-            Show all items
-          </Button>
-        </FeedbackNotice>
+        <FeedbackNotice
+          content={{ tone: "Neutral", title: "Nothing in progress." }}
+          announcement="Polite"
+          actions={[{ label: "Show all items", onClick: recoverToAllItems }]}
+        />
       );
     }
     if (projection.kind === "Unfiled") {
       return projection.completion === "all" ? (
-        <FeedbackNotice severity="neutral" title="Everything is filed.">
-          <Button variant="secondary" size="sm" onClick={recoverToAllItems}>
-            Show all items
-          </Button>
-        </FeedbackNotice>
+        <FeedbackNotice
+          content={{ tone: "Neutral", title: "Everything is filed." }}
+          announcement="Polite"
+          actions={[{ label: "Show all items", onClick: recoverToAllItems }]}
+        />
       ) : (
-        <FeedbackNotice severity="neutral" title="No unfinished unfiled items.">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={clearDomainFilters}
-          >
-            Clear filters
-          </Button>
-        </FeedbackNotice>
+        <FeedbackNotice
+          content={{
+            tone: "Neutral",
+            title: "No unfinished unfiled items.",
+          }}
+          announcement="Polite"
+          actions={[{ label: "Clear filters", onClick: clearDomainFilters }]}
+        />
       );
     }
     return projection.completion === "all" ? (
       <FeedbackNotice
-        severity="neutral"
-        title={
-          isDefaultLibrary
+        content={{
+          tone: "Neutral",
+          title: isDefaultLibrary
             ? "No media yet."
-            : "No podcasts or media in this library yet."
-        }
+            : "No podcasts or media in this library yet.",
+        }}
+        announcement="Polite"
       />
     ) : (
-      <FeedbackNotice severity="neutral" title="No unfinished items.">
-        <Button variant="secondary" size="sm" onClick={recoverShowFinished}>
-          Show finished
-        </Button>
-      </FeedbackNotice>
+      <FeedbackNotice
+        content={{ tone: "Neutral", title: "No unfinished items." }}
+        announcement="Polite"
+        actions={[{ label: "Show finished", onClick: recoverShowFinished }]}
+      />
     );
   })();
   const mainBody = invalidView ? (
-    <FeedbackNotice severity="error" title="Invalid library view">
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => {
-          search.onDismiss();
-          setDecodedView({ kind: "Valid", view: CANONICAL_VIEW });
-        }}
-      >
-        Reset view
-      </Button>
-    </FeedbackNotice>
+    <FeedbackNotice
+      content={{ tone: "Danger", title: "Invalid library view" }}
+      announcement="Assertive"
+      actions={[
+        {
+          label: "Reset view",
+          onClick: () => {
+            search.onDismiss();
+            setDecodedView({ kind: "Valid", view: CANONICAL_LIBRARY_VIEW });
+          },
+        },
+      ]}
+    />
   ) : filteredEntries.length > 0 ? (
     <CollectionView
       returnScope="Library.Entries"
@@ -3198,14 +3314,20 @@ export default function LibraryPaneBody() {
   ) : filterQuery.trim() ? (
     entryCollectionComplete ? (
       <FeedbackNotice
-        severity="neutral"
-        title="No entries match this filter."
+        content={{
+          tone: "Neutral",
+          title: "No entries match this filter.",
+        }}
+        announcement="Polite"
       />
     ) : (
       <>
         <FeedbackNotice
-          severity="neutral"
-          title="No matching entry found so far."
+          content={{
+            tone: "Neutral",
+            title: "No matching entry found so far.",
+          }}
+          announcement="Polite"
         />
         {entryFooter}
       </>
@@ -3233,9 +3355,21 @@ export default function LibraryPaneBody() {
       <PaneSurface
         opener={<SectionOpener heading={entriesAccessibleName} scale="title" />}
         state={
-          error || entryReconciliationNotice ? (
+          error || authorityFeedback || entryReconciliationNotice ? (
             <>
-              {error ? <FeedbackNotice {...error} /> : null}
+              {error ? (
+                <FeedbackNotice
+                  content={error.content}
+                  announcement={error.announcement ?? "Assertive"}
+                  actions={error.actions}
+                />
+              ) : null}
+              {authorityFeedback ? (
+                <FeedbackNotice
+                  content={authorityFeedback}
+                  announcement="Assertive"
+                />
+              ) : null}
               {entryReconciliationNotice}
             </>
           ) : null

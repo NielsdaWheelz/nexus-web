@@ -12,8 +12,14 @@ import {
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import styles from "./ReaderCitation.module.css";
-import { copyText as copyToClipboard } from "@/lib/ui/copyText";
-import { useFeedback } from "@/components/feedback/Feedback";
+import {
+  ClipboardWriteUnavailableError,
+  copyText as copyToClipboard,
+} from "@/lib/ui/copyText";
+import {
+  FeedbackNotice,
+  useFeedback,
+} from "@/components/feedback/Feedback";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { secondaryActivationForResource } from "@/lib/resources/activation";
@@ -40,6 +46,10 @@ export default function ReaderCitation({
   const href = hrefForResourceActivation(activation);
   const [showPreview, setShowPreview] = useState(false);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
+    null,
+  );
+  const [copyFailure, setCopyFailure] = useState(false);
   const hoverTimerRef = useRef<number | null>(null);
   const citationRef = useRef<HTMLElement | null>(null);
   const activationTarget = useMemo(
@@ -80,6 +90,27 @@ export default function ReaderCitation({
   const hasPreviewActions = Boolean(activationTarget || href || copyText);
   const externalHref =
     href?.startsWith("http://") || href?.startsWith("https://");
+  const copyCitation = useCallback(async () => {
+    if (!copyText) return;
+    try {
+      await copyToClipboard(copyText);
+      setCopyFailure(false);
+      feedback.publish({
+        kind: "Hud",
+        content: {
+          tone: "Success",
+          title: "Citation copied",
+        },
+      });
+      closePreview();
+    } catch (error) {
+      if (!(error instanceof ClipboardWriteUnavailableError)) {
+        setAsyncDefect({ error });
+        return;
+      }
+      setCopyFailure(true);
+    }
+  }, [closePreview, copyText, feedback]);
 
   const previewBody =
     preview.title ||
@@ -133,31 +164,26 @@ export default function ReaderCitation({
                 Open source
               </button>
             ) : null}
-            {copyText ? (
+            {copyText && !copyFailure ? (
               <button
                 type="button"
                 className={styles.previewAction}
-                onClick={async (event) => {
+                onClick={(event) => {
                   event.stopPropagation();
-                  try {
-                    await copyToClipboard(copyText);
-                    feedback.show({
-                      severity: "success",
-                      title: "Citation copied",
-                    });
-                    closePreview();
-                  } catch {
-                    feedback.show({
-                      severity: "error",
-                      title: "Citation could not be copied",
-                    });
-                  }
+                  void copyCitation();
                 }}
               >
                 Copy citation
               </button>
             ) : null}
           </div>
+        ) : null}
+        {copyFailure ? (
+          <FeedbackNotice
+            content={{ tone: "Danger", title: "Citation wasn’t copied" }}
+            announcement="Assertive"
+            actions={[{ label: "Retry", onClick: () => void copyCitation() }]}
+          />
         ) : null}
       </>
     ) : null;
@@ -174,6 +200,8 @@ export default function ReaderCitation({
         {previewBody}
       </HoverPreview>
     ) : null;
+
+  if (asyncDefect !== null) throw asyncDefect.error;
 
   if (href && !target) {
     return (

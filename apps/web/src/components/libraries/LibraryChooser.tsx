@@ -2,7 +2,10 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, Loader2, Lock, Plus } from "lucide-react";
-import Button from "@/components/ui/Button";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import Input from "@/components/ui/Input";
 import LibraryColorDot from "@/components/LibraryColorDot";
 import styles from "./LibraryChooser.module.css";
@@ -43,7 +46,7 @@ export interface LibraryChooserProps {
   loading: boolean;
   status: string;
   emptyState: string | null;
-  error: { message: string; onRetry: (() => void) | null } | null;
+  error: { content: FeedbackContent; onRetry: (() => void) | null } | null;
   create: { name: string; pending: boolean; onCreate: () => void } | null;
   loadMore: { pending: boolean; onLoadMore: () => void } | null;
 }
@@ -56,7 +59,6 @@ type Actionable =
 const READ_ONLY_SHORT = "Read only";
 const LOAD_MORE_IDLE = "Load more libraries";
 const LOAD_MORE_LOADING = "Loading more libraries…";
-const RETRY_LABEL = "Retry";
 
 export default function LibraryChooser({
   query,
@@ -275,18 +277,23 @@ export default function LibraryChooser({
           onKeyDown={onKeyDown}
         />
       </div>
-      <div id={statusId} role="status" className={styles.srOnly}>
-        {status}
+      <div
+        id={statusId}
+        role={error === null ? "status" : undefined}
+        className={styles.srOnly}
+      >
+        {error === null ? status : ""}
       </div>
       {error !== null ? (
-        <div role="alert" className={styles.errorRow}>
-          <span className={styles.errorText}>{error.message}</span>
-          {error.onRetry !== null ? (
-            <Button variant="secondary" size="sm" onClick={error.onRetry}>
-              {RETRY_LABEL}
-            </Button>
-          ) : null}
-        </div>
+        <FeedbackNotice
+          content={error.content}
+          announcement="Assertive"
+          actions={
+            error.onRetry === null
+              ? undefined
+              : [{ label: "Retry", onClick: error.onRetry }]
+          }
+        />
       ) : null}
       <div
         id={listboxId}

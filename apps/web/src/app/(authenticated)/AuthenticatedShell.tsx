@@ -13,6 +13,7 @@ import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { CompletionUndoFeedbackOwner } from "@/lib/lectern/useCompletionUndo";
 import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
 import { ReaderProfileSaveFeedback } from "@/lib/reader/ReaderProfileSaveFeedback";
@@ -131,6 +132,7 @@ function AuthenticatedWorkspace({
                   runtime: LecternProvider -> GlobalPlayerProvider -> workspace
                   + the shell-owned player surfaces. */}
               <LecternProvider>
+                <CompletionUndoFeedbackOwner />
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
                     <OfflineMediaProvider accountId={accountId}>

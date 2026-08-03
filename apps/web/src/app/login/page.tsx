@@ -25,14 +25,23 @@ interface LoginPageProps {
 
 // A forced sign-out is a calm, expected state, not an error; an OAuth failure
 // is an error. The message text is the discriminant.
-function toInitialFeedback(message: string | null): FeedbackContent | null {
+function toInitialFeedback(message: string | null): {
+  content: FeedbackContent;
+  announcement: "Polite" | "Assertive";
+} | null {
   if (!message) {
     return null;
   }
   if (message === SESSION_ENDED_MESSAGE) {
-    return { severity: "info", title: "You were signed out.", message };
+    return {
+      content: { tone: "Info", title: "You were signed out.", message },
+      announcement: "Polite",
+    };
   }
-  return { severity: "error", title: message };
+  return {
+    content: { tone: "Danger", title: message },
+    announcement: "Assertive",
+  };
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {

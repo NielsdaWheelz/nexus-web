@@ -18,9 +18,9 @@ import {
 } from "react";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
@@ -86,6 +86,42 @@ interface SearchSnapshot {
 const SEARCH_VISIT_DATA =
   definePaneVisitDataKey<SearchSnapshot>("Search.Results");
 const EMPTY_SEARCH_ROWS: readonly SearchResultRowViewModel[] = [];
+
+function searchErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "Search couldn’t be completed",
+        message: "Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    case "E_INVALID_CURSOR":
+      return {
+        tone: "Danger",
+        title: "More results couldn’t be loaded",
+        message: "Retry from the current results.",
+        requestId: error.requestId,
+      };
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title: "This search isn’t valid",
+        message: "Adjust the query or filters and retry.",
+        requestId: error.requestId,
+      };
+    case "E_NOT_FOUND":
+    case "E_CONVERSATION_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title: "The search scope is no longer available",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
 
 function queryKey(query: SearchQuery): string {
   return searchQueryToParams(query).toString();
@@ -250,6 +286,7 @@ export default function SearchPaneBody() {
 
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState<FeedbackContent | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const moreAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -298,7 +335,7 @@ export default function SearchPaneBody() {
   const hasSearched = controller?.hasSearched ?? false;
   const error =
     controller === null && firstPage.error !== null
-      ? toFeedback(firstPage.error, { fallback: "Search failed" })
+      ? searchErrorMessage(firstPage.error)
       : moreError;
   usePaneReturnReady(controller !== null || firstPage.error !== null);
 
@@ -326,7 +363,11 @@ export default function SearchPaneBody() {
         );
       } catch (err) {
         if (isAbortError(err) || handleUnauthenticatedApiError(err)) return;
-        setMoreError(toFeedback(err, { fallback: "Search failed" }));
+        try {
+          setMoreError(searchErrorMessage(err));
+        } catch (caughtDefect) {
+          setDefect({ error: caughtDefect });
+        }
       } finally {
         if (moreAbortRef.current === controller) setLoadingMore(false);
       }
@@ -422,8 +463,15 @@ export default function SearchPaneBody() {
   const notice =
     error || searching ? (
       <>
-        {error ? <FeedbackNotice feedback={error} /> : null}
-        {searching ? <FeedbackNotice severity="info">Searching…</FeedbackNotice> : null}
+        {error ? (
+          <FeedbackNotice content={error} announcement="Assertive" />
+        ) : null}
+        {searching ? (
+          <FeedbackNotice
+            content={{ tone: "Info", title: "Searching…" }}
+            announcement="None"
+          />
+        ) : null}
       </>
     ) : undefined;
 
@@ -431,7 +479,10 @@ export default function SearchPaneBody() {
   // before any search, then "no results" once a search has returned nothing.
   const empty = hasSearched ? (
     <div className={styles.emptyResults}>
-      <FeedbackNotice severity="neutral">No results found.</FeedbackNotice>
+      <FeedbackNotice
+        content={{ tone: "Neutral", title: "No results found." }}
+        announcement="None"
+      />
       {filtersActive ? (
         <Button variant="secondary" size="md" onClick={clearAllFilters}>
           Clear filters
@@ -439,10 +490,17 @@ export default function SearchPaneBody() {
       ) : null}
     </div>
   ) : (
-    <FeedbackNotice severity="info">
-      Search everything in your Nexus. Narrow with the kind chips or filters.
-    </FeedbackNotice>
+    <FeedbackNotice
+      content={{
+        tone: "Info",
+        title: "Search everything in your Nexus",
+        message: "Narrow with the kind chips or filters.",
+      }}
+      announcement="None"
+    />
   );
+
+  if (defect) throw defect.error;
 
   return (
     <CollectionView

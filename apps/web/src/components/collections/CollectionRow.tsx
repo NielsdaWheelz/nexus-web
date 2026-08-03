@@ -18,7 +18,10 @@ import {
 } from "@/lib/api/client";
 import { present } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
+import {
+  useFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import ActionMenu from "@/components/ui/ActionMenu";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
@@ -61,6 +64,43 @@ import styles from "./CollectionRow.module.css";
 
 function assertNever(value: never, context: string): never {
   throw new Error(`${context}: ${JSON.stringify(value)}`);
+}
+
+function resourceChatErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "Couldn't start a chat",
+        message: "Check your connection and try again.",
+        requestId: error.requestId,
+      };
+    case "E_UPSTREAM_TIMEOUT":
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title: "Couldn't start a chat",
+        message: "Please wait a moment, then try again.",
+        requestId: error.requestId,
+      };
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title: "This resource is no longer available",
+        message: "Refresh the collection to see the latest resources.",
+        requestId: error.requestId,
+      };
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title: "A chat can't be started for this resource",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
 }
 
 function renderContext(context: CollectionContext): ReactNode {
@@ -320,6 +360,11 @@ function ResourceCollectionRowActionMenu({
   const busyIdsRef = useRef<ReadonlySet<ResourceActionId>>(EMPTY_BUSY_IDS);
   const [busyIds, setBusyIds] =
     useState<ReadonlySet<ResourceActionId>>(EMPTY_BUSY_IDS);
+  const [contractDefect, setContractDefect] = useState<{
+    error: unknown;
+  } | null>(null);
+
+  if (contractDefect !== null) throw contractDefect.error;
 
   if (publication.groups.core.length > 0) {
     // justify-defect: CollectionRow is the sole universal-core owner at this
@@ -360,7 +405,7 @@ function ResourceCollectionRowActionMenu({
                 options: paneShareOpenOptions(detail.triggerEl, runtime.paneId),
               });
             },
-            chat: async (subject) => {
+            chat: async function startChat(subject) {
               const actionId = RESOURCE_ACTION_CATALOG.Chat.id;
               if (busyIdsRef.current.has(actionId)) return;
               const nextBusyIds = new Set(busyIdsRef.current).add(actionId);
@@ -381,14 +426,20 @@ function ResourceCollectionRowActionMenu({
                 });
               } catch (error) {
                 if (handleUnauthenticatedApiError(error)) return;
-                if (!isApiError(error) || isSameSystemApiDefect(error)) {
-                  throw error;
+                try {
+                  feedback.publish({
+                    kind: "Hud",
+                    content: resourceChatErrorMessage(error),
+                    actions: [
+                      {
+                        label: "Retry",
+                        onClick: () => void startChat(subject),
+                      },
+                    ],
+                  });
+                } catch (defect) {
+                  setContractDefect({ error: defect });
                 }
-                feedback.show(
-                  toFeedback(error, {
-                    fallback: "Failed to start resource chat",
-                  }),
-                );
               } finally {
                 const remainingBusyIds = new Set(busyIdsRef.current);
                 remainingBusyIds.delete(actionId);

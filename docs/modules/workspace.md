@@ -84,6 +84,9 @@ expanded row, focus, and active-pane request consumption. `WorkspaceHost`
 arbitrates bindable `Pane.Search` before the editable-target guard, so
 Cmd/Ctrl+F reaches Page and Note editors; it prevents native Find only when the
 active pane consumes the request. Cmd/Ctrl+K remains Nexus retrieval.
+If the live browser viewport leads React during a responsive host replacement,
+the arbiter carries one pane-and-route-fenced Search handoff; the incoming
+`PaneShell` acknowledges it only after its current publication is ready.
 
 `menu` is an `ActionPublication`. Resource panes publish an explicit canonical
 target and the four semantic groups `core | operations | relationships | view`;
@@ -322,13 +325,21 @@ accessibility-hidden native overlay covers exactly the combined top inset;
 system-bar icons remain light, and Android owns three-button navigation
 contrast. Android instrumentation owns the real-WebView native-to-CSS inset,
 top-protection, icon, full-window-bound, safe-control, and stale-value-clearing
-contracts.
+contracts. For native inset `N`, CSS inset `C`, and positive device-pixel ratio
+`D`, the permanent quantization contract is exact zero after native clearing;
+otherwise `N <= C * D < N + D`. CSS never under-covers native system UI and
+adds less than one CSS pixel of safe clearance.
 
 ## Fixed Chrome
 
 Fixed primary chrome is desktop-only. Pane bodies may publish fixed chrome, but
 mobile workspace mode makes that publication inert for desktop fixed-chrome
 rendering.
+
+The passive mobile reader position ribbon does not participate in fixed primary
+chrome. It remains reader-relative, uses the reader-owned semantic range, and
+consumes `--mobile-content-bottom-clearance` only for placement. See the
+[mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md).
 
 The reader Document Map overview rail is fixed primary chrome and remains
 desktop-only. Its markers activate contextual targets; it contains no generic

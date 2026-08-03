@@ -2,9 +2,13 @@
 
 import { useCallback, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { apiFetch } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
@@ -31,6 +35,96 @@ interface UseEpisodeTranscriptControllerArgs {
   onMutationCommitted: () => void;
 }
 
+type TranscriptRequestOperation = "Batch" | "Episode";
+
+function transcriptRequestErrorMessage(
+  error: unknown,
+  operation: TranscriptRequestOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const requestId = error.requestId;
+  const title =
+    operation === "Batch"
+      ? "Batch transcripts weren’t requested"
+      : "Transcript wasn’t requested";
+  switch (error.code) {
+    case "E_NETWORK":
+      return { tone: "Danger", title, message: "Check your connection and retry.", requestId };
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The transcription service took too long to respond. Retry the request.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return { tone: "Danger", title, message: "Wait a moment, then retry.", requestId };
+    case "E_MEDIA_NOT_FOUND":
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title,
+        message: "This episode is no longer available. Refresh the pane.",
+        requestId,
+      };
+    case "E_MEDIA_NOT_READY":
+      return {
+        tone: "Danger",
+        title,
+        message: "This episode is still preparing. Wait for it to settle, then retry.",
+        requestId,
+      };
+    case "E_PODCAST_QUOTA_EXCEEDED":
+      return {
+        tone: "Danger",
+        title,
+        message: "There isn’t enough transcription quota for this request.",
+        requestId,
+      };
+    case "E_BILLING_REQUIRED":
+    case "E_BILLING_DISABLED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Transcription isn’t available on this account. Review billing settings.",
+        requestId,
+      };
+    case "E_INVALID_KIND":
+      if (operation !== "Episode") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "Transcription isn’t available for this media.",
+        requestId,
+      };
+    case "E_TRANSCRIPT_UNAVAILABLE":
+      if (operation !== "Episode") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "No transcript is available from this source.",
+        requestId,
+      };
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title,
+        message: "The eligible episode set changed. Refresh the pane, then retry.",
+        requestId,
+      };
+    case "E_SELECTION_CHANGED":
+      if (operation !== "Batch") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "The eligible episode set changed. Review the current list, then retry.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
 /**
  * Owns the episode-transcript subsystem for the podcast-detail pane: per-episode
  * forecast/reason/request state, the provisioning poll, and the batch + single
@@ -48,6 +142,7 @@ export function useEpisodeTranscriptController({
   reload,
   onMutationCommitted,
 }: UseEpisodeTranscriptControllerArgs) {
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   const [batchTranscriptBusy, setBatchTranscriptBusy] = useState(false);
   const [batchTranscriptSummary, setBatchTranscriptSummary] = useState<
     string | null
@@ -61,6 +156,16 @@ export function useEpisodeTranscriptController({
   const [transcriptReasonByMediaId, setTranscriptReasonByMediaId] = useState<
     Record<string, TranscriptRequestReason>
   >({});
+  const reportRequestError = useCallback(
+    (error: unknown, operation: TranscriptRequestOperation) => {
+      try {
+        setError(transcriptRequestErrorMessage(error, operation));
+      } catch (defect) {
+        setAsyncDefect({ error: defect });
+      }
+    },
+    [setError],
+  );
 
   // Reset per-episode forecast state when the underlying episode set is
   // replaced (route change / reload). The pane clears `episodes` then refills it.
@@ -128,16 +233,13 @@ export function useEpisodeTranscriptController({
       reload();
     } catch (requestError) {
       if (handleUnauthenticatedApiError(requestError)) return;
-      setError(
-        toFeedback(requestError, {
-          fallback: "Failed to request batch transcripts",
-        }),
-      );
+      reportRequestError(requestError, "Batch");
     } finally {
       setBatchTranscriptBusy(false);
     }
   }, [
     podcastId,
+    reportRequestError,
     reload,
     selection,
     setError,
@@ -227,11 +329,7 @@ export function useEpisodeTranscriptController({
         reload();
       } catch (requestError) {
         if (handleUnauthenticatedApiError(requestError)) return;
-        setError(
-          toFeedback(requestError, {
-            fallback: "Failed to request transcript",
-          }),
-        );
+        reportRequestError(requestError, "Episode");
       } finally {
         requestingTranscriptMediaIds.remove(mediaId);
       }
@@ -240,6 +338,7 @@ export function useEpisodeTranscriptController({
       fetchTranscriptForecast,
       onMutationCommitted,
       reload,
+      reportRequestError,
       requestingTranscriptMediaIds,
       setEpisodes,
       setError,
@@ -247,6 +346,8 @@ export function useEpisodeTranscriptController({
       transcriptRequestForecastByMediaId,
     ],
   );
+
+  if (asyncDefect !== null) throw asyncDefect.error;
 
   return {
     batchTranscriptBusy,

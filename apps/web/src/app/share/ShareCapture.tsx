@@ -4,7 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { decodeAuthenticatedAccount } from "@/lib/account/contract";
-import { isUnauthenticatedApiError } from "@/lib/api/client";
+import {
+  isApiError,
+  isSameSystemApiDefect,
+  isUnauthenticatedApiError,
+} from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { createRandomId } from "@/lib/createRandomId";
@@ -38,6 +42,21 @@ type CaptureResult =
       reason: "Capture" | "Unauthenticated";
       feedback: FeedbackContent;
     };
+
+function shareCaptureErrorContent(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "Couldn’t save",
+        message: "Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
 
 export default function ShareCapture({
   text,
@@ -123,15 +142,35 @@ export default function ShareCapture({
             path: `/daily/${frozen.localDate}`,
           },
         ]);
-      } catch {
-        setResults([
-          {
-            label: trimmed,
-            ok: false,
-            reason: "Capture",
-            feedback: { severity: "error", title: "Couldn’t save" },
-          },
-        ]);
+      } catch (error) {
+        if (isUnauthenticatedApiError(error)) {
+          setResults([
+            {
+              label: trimmed,
+              ok: false,
+              reason: "Unauthenticated",
+              feedback: {
+                tone: "Danger",
+                title: "Sign in to save this",
+                message: "Open Nexus, sign in, then share again.",
+                requestId: error.requestId,
+              },
+            },
+          ]);
+          return;
+        }
+        try {
+          setResults([
+            {
+              label: trimmed,
+              ok: false,
+              reason: "Capture",
+              feedback: shareCaptureErrorContent(error),
+            },
+          ]);
+        } catch (captureDefect) {
+          setDefect({ error: captureDefect });
+        }
       }
     })();
   }, [trimmed, urls.length, calendarTimeZone, attempt]);
@@ -171,7 +210,7 @@ export default function ShareCapture({
                 ok: false,
                 reason: "Unauthenticated",
                 feedback: {
-                  severity: "error",
+                  tone: "Danger",
                   title: "Sign in to save this",
                   message: "Open Nexus, sign in, then share again.",
                 },
@@ -210,6 +249,7 @@ export default function ShareCapture({
       url,
       libraryIds: selectedDestinations.map((destination) => destination.id),
       idempotencyKey,
+      operation: "SaveSource",
     });
     return result.ok ? result : { ...result, reason: "Capture" };
   }
@@ -306,7 +346,7 @@ export default function ShareCapture({
             label: trimmed,
             ok: false,
             reason: "Capture",
-            feedback: { severity: "error", title: "Couldn’t save" },
+            feedback: shareCaptureErrorContent(accountResource.error),
           },
         ]
       : null);

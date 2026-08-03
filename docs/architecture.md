@@ -805,7 +805,11 @@ linked-items policy, Forks, and default surface order; the committed TypeScript
 projection is parity-tested. Every eligible resource implies Dossier.
 `useResourceInspector` composes one stable publication and Companion action per
 pane from route-owned Contents/Evidence/Context/Forks/Connections bodies plus
-the shared Dossier body.
+the shared Dossier body. Selecting that action validates the requested surface
+against its route-owned publication and, when attached to the workspace host,
+synchronously reasserts the same publication before requesting its surface, so
+publication cleanup and command acceptance cannot race or silently discard a
+valid first click.
 
 The backend separates three owners:
 
@@ -1131,10 +1135,18 @@ predicates in `auth/permissions.py`; the search/object readers read
 - **The default library's read surface is a live, deduplicated personal
   "All" query**, not a materialized or backfilled set. It is the union of the
   distinct Media reachable through the viewer's _current_ non-system
-  memberships and the viewer's active Podcast subscriptions. Media is
-  deduplicated by `media_id` — a direct default entry wins the tie, else the
-  earliest entry. Losing a membership removes that Library's Media contribution
-  on the next read; deleting a subscription removes its virtual Podcast row.
+  memberships and the viewer's active Podcast subscriptions, followed by one
+  root-subsumption step: an active subscription contributes its virtual Podcast
+  root and suppresses every child episode Media row from All. Subsumption runs
+  before projection, exact-type filtering, ordering, pagination, and count.
+  Child `library_entries` remain physical facts, so live sync and historical
+  backfill do not change the subscribed show's All root cardinality; when the
+  subscription is deleted, retained episodes immediately resurface with their
+  consumption state intact. Outside Default/All, named-Library parent/child
+  placement rules are unchanged. Media is otherwise deduplicated by `media_id`
+  — a direct default entry wins the tie, else the earliest entry. Losing a
+  membership removes that Library's Media contribution on the next read;
+  deleting a subscription removes its virtual Podcast row.
   Default Podcast rows expose absent placement rather than a fabricated entry
   ID or position. Filing media into the default library directly — the one
   actor-authorized filing command in `library_entries.ensure_media_in_library`
@@ -1277,7 +1289,11 @@ or full-list replacement semantics.
 episode identity, live feed sync, the independent historical backfill, and
 explicit Transcribe after acquisition. A subscription exists exactly while its
 row exists. Named Podcast placement is only `library_entries(podcast_id)`;
-Default/All projects active subscriptions virtually.
+Default/All projects active subscriptions virtually as one Podcast root and
+hides their retained child episode roots. Episode acquisition and sync still
+write physical Media placement; root hiding is a read predicate, not deletion.
+Unsubscribe removes the virtual parent predicate, so retained episodes resurface
+with their existing consumption state.
 
 Subscribe enqueues one live sync and one `podcast_subscription_backfills` chain.
 The live path keeps current episodes fresh while the backfill walks history in

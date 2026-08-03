@@ -142,7 +142,7 @@
 .materializeButton {
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: var(--on-accent);
+  color: var(--ink-on-accent);
   border-radius: var(--radius-lg);
   padding: var(--space-2) var(--space-3);
   font-size: var(--text-sm);

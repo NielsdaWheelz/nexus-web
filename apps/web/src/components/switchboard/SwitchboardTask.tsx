@@ -2,6 +2,10 @@
 
 import { useRef, type MouseEvent, type ReactNode } from "react";
 import AccountMenu from "@/components/appnav/AccountMenu";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import AddPanel, {
   type AddDismissalConfirmation,
 } from "@/components/nexus/AddPanel";
@@ -61,6 +65,10 @@ export interface MobileNexusTaskController {
   readonly browseChoiceActions: readonly NexusAction[];
   readonly managedPanes: readonly NexusManagedPane[];
   readonly managedClosedPanes: readonly NexusManagedClosedPane[];
+  readonly managedTabsFeedback: {
+    readonly content: FeedbackContent;
+    readonly paneId: string;
+  } | null;
   setQuery(query: string): void;
   setActiveEntry(key: NexusEntryKey): void;
   openEntryActions(entry: NexusEntry): void;
@@ -71,10 +79,16 @@ export interface MobileNexusTaskController {
     activation: NexusTargetActivation,
     entry?: NexusEntry,
   ): Promise<NexusDispatchOutcome>;
-  reportActivationFailure(error: unknown): void;
+  reportActivationFailure(
+    error: unknown,
+    retry: () => void,
+    target: MaterializedNexusTarget,
+    activation: NexusTargetActivation,
+  ): void;
   retry(source: MobileNexusFailureSource): void;
   back(): void;
   escape(): void;
+  openRoot(): void;
   close(): void;
   dismissAccepted(): void;
   guardClose(): DismissDecision;
@@ -87,6 +101,8 @@ export interface MobileNexusTaskController {
   setLibraryNameDraft(name: string): void;
   submitLibrary(): void;
   retryPageCreation(): void;
+  retryCommandFailure(): void;
+  retryBlockedOperation(): void;
   manageTabs(): void;
   openManagedPane(paneId: string): void;
   closeManagedPane(paneId: string): void;
@@ -100,12 +116,13 @@ function assertNever(value: never): never {
 }
 
 function CreationStatus({
-  failed,
+  submit,
   onRetry,
 }: {
-  failed: boolean;
+  submit: Extract<NexusPage, { kind: "CreatePage" }>["submit"];
   onRetry(): void;
 }) {
+  const failed = submit.kind === "Retryable";
   return (
     <div className={styles.page}>
       <header className={styles.header}>
@@ -113,12 +130,15 @@ function CreationStatus({
           New page
         </h2>
       </header>
-      <p>{failed ? "Couldn’t create page." : "Creating page…"}</p>
       {failed ? (
-        <button type="button" onClick={onRetry}>
-          Retry
-        </button>
-      ) : null}
+        <FeedbackNotice
+          content={submit.content}
+          announcement="Assertive"
+          actions={[{ label: "Retry", onClick: onRetry }]}
+        />
+      ) : (
+        <p>Creating page…</p>
+      )}
     </div>
   );
 }
@@ -126,12 +146,14 @@ function CreationStatus({
 export default function SwitchboardTask({
   controller,
   active,
+  returnFocusTo,
   activeAddDefect,
   onAddDefect,
   onClearAddDefect,
 }: {
   controller: MobileNexusTaskController;
   active: boolean;
+  returnFocusTo: () => HTMLElement | null;
   activeAddDefect: boolean;
   onAddDefect(error: unknown): void;
   onClearAddDefect(): void;
@@ -238,6 +260,24 @@ export default function SwitchboardTask({
             unavailableAnnouncement={controller.announcement}
           />
         );
+      case "CommandFailed":
+        return (
+          <div className={styles.page}>
+            <header className={styles.header}>
+              <h2 tabIndex={-1} data-switchboard-heading>
+                Command needs attention
+              </h2>
+            </header>
+            <FeedbackNotice
+              content={page.content}
+              announcement="Assertive"
+              actions={[
+                { label: "Retry", onClick: controller.retryCommandFailure },
+                { label: "Back", onClick: controller.openRoot },
+              ]}
+            />
+          </div>
+        );
       case "ChooseCreate":
         return (
           <ChooseCreatePage
@@ -270,7 +310,37 @@ export default function SwitchboardTask({
             onRestore={controller.restoreManagedPane}
             onRetryRetained={controller.retryRetainedActivation}
             onCancelRetained={controller.cancelRetainedActivation}
+            feedback={controller.managedTabsFeedback}
           />
+        );
+      case "OperationBlocked":
+        return (
+          <div className={styles.page}>
+            <h2 tabIndex={-1} data-switchboard-heading>
+              {page.title}
+            </h2>
+            <FeedbackNotice
+              content={{
+                tone: "Warning",
+                title: page.title,
+                message: page.message,
+              }}
+              announcement="Assertive"
+              actions={
+                page.retry === null
+                  ? [{ label: "Back", onClick: back }]
+                  : [
+                      {
+                        label: "Retry",
+                        onClick: controller.retryBlockedOperation,
+                      },
+                      { label: "Back", onClick: back },
+                    ]
+              }
+            >
+              {page.manualValue ? <code>{page.manualValue}</code> : null}
+            </FeedbackNotice>
+          </div>
         );
       case "UnsupportedLink":
         return (
@@ -297,7 +367,7 @@ export default function SwitchboardTask({
       case "CreatePage":
         return (
           <CreationStatus
-            failed={page.submit.kind === "Retryable"}
+            submit={page.submit}
             onRetry={controller.retryPageCreation}
           />
         );
@@ -361,9 +431,7 @@ export default function SwitchboardTask({
         }}
         ariaLabel={activeAddDefect ? "Add needs attention" : controller.dialogLabel}
         initialFocus={(container) => controller.initialFocus(container, true)}
-        returnFocusTo={() =>
-          document.querySelector<HTMLElement>("[data-nexus-return-focus]")
-        }
+        returnFocusTo={returnFocusTo}
         skipReturnFocus={controller.shouldSuppressReturnFocusOnClose}
         focusKey={controller.focusKey}
       >

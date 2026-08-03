@@ -16,7 +16,6 @@ import {
 import { Link, Paperclip, Sparkles } from "lucide-react";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ResourceTargetListbox, {
@@ -40,12 +39,14 @@ import {
   type ResourceActionId,
 } from "@/lib/actions/resourceActions";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { createRandomId } from "@/lib/createRandomId";
 import {
   getFileUploadError,
   isMediaIngestionDefect,
   projectUploadReference,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
+import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import {
   queryConnections,
   type ConnectionOut,
@@ -135,6 +136,163 @@ const CONNECTION_PANEL_KINDS: EdgeKind[] = [
   "contradicts",
 ];
 
+export type ConnectionOperation =
+  | "Load"
+  | "Chat"
+  | "Unlink"
+  | "Dismiss"
+  | "CreateLink"
+  | "RecordStance"
+  | "ConnectAttachment"
+  | "ScanStatus"
+  | "StartScan";
+
+function connectionOperationTitle(operation: ConnectionOperation): string {
+  switch (operation) {
+    case "Load":
+      return "Connections couldn’t be loaded";
+    case "Chat":
+      return "Chat wasn’t started";
+    case "Unlink":
+      return "Connection wasn’t unlinked";
+    case "Dismiss":
+      return "Connection wasn’t dismissed";
+    case "CreateLink":
+      return "Link wasn’t created";
+    case "RecordStance":
+      return "Stance wasn’t recorded";
+    case "ConnectAttachment":
+      return "File was saved, but its connection wasn’t created";
+    case "ScanStatus":
+      return "Scan status couldn’t be checked";
+    case "StartScan":
+      return "Scan wasn’t started";
+  }
+}
+
+/** Finite Connections-domain copy adapter; unknown codes remain defects. */
+export function connectionErrorMessage(
+  error: unknown,
+  operation: ConnectionOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  const title = connectionOperationTitle(operation);
+  const requestId = error.requestId;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and retry.",
+        requestId,
+      };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "Nexus couldn’t complete that request. Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title,
+        message: "The connection or one of its objects is no longer available. Reload Connections.",
+        requestId,
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title,
+        message: "This account can’t make that change.",
+        requestId,
+      };
+    case "E_BAD_REQUEST":
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title,
+        message: "That request is no longer valid. Review the connection and retry.",
+        requestId,
+      };
+    case "E_LINK_SELF":
+      if (operation !== "CreateLink" && operation !== "RecordStance") {
+        throw error;
+      }
+      return {
+        tone: "Danger",
+        title,
+        message: "An item can’t link to itself. Choose another target.",
+        requestId,
+      };
+    case "E_LINK_CAPABILITY":
+      if (
+        operation !== "CreateLink" &&
+        operation !== "RecordStance" &&
+        operation !== "ConnectAttachment"
+      ) {
+        throw error;
+      }
+      return {
+        tone: "Danger",
+        title,
+        message: "This source or target doesn’t support links. Choose another target.",
+        requestId,
+      };
+    case "E_LINK_TARGET_AMBIGUOUS":
+      if (operation !== "CreateLink") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "That passage matches more than once. Choose a more specific target.",
+        requestId,
+      };
+    case "E_LINK_TARGET_STALE":
+      if (operation !== "CreateLink") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "That passage changed. Search for it again, then retry.",
+        requestId,
+      };
+    case "E_HIGHLIGHT_CONFLICT":
+      if (operation !== "CreateLink") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "The selected passage changed. Select it again, then retry.",
+        requestId,
+      };
+    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
+      if (operation !== "CreateLink") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "The link request changed. Close Link, then try again.",
+        requestId,
+      };
+    case "E_CONFLICT":
+      if (operation !== "Dismiss") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "This proposal changed. Reload Connections, then retry.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
 export default function ConnectionsSurface({
   resourceRef,
   composerController,
@@ -177,11 +335,9 @@ export default function ConnectionsSurface({
     }),
   });
   const loading = connectionsResource.status === "loading";
-  const error: FeedbackContent | null =
+  const loadFailure: unknown | null =
     connectionsResource.status === "error"
-      ? toFeedback(connectionsResource.error, {
-          fallback: "Connections could not be loaded.",
-        })
+      ? connectionsResource.error
       : null;
 
   const connections: Connection[] =
@@ -271,6 +427,12 @@ export default function ConnectionsSurface({
     [activateTarget],
   );
 
+  if (scan.defectState !== null) throw scan.defectState.error;
+  const error =
+    loadFailure === null
+      ? null
+      : connectionErrorMessage(loadFailure, "Load");
+
   return (
     <section className={styles.backlinks} aria-label="Connections">
       <div className={styles.header}>
@@ -304,7 +466,13 @@ export default function ConnectionsSurface({
           ) : null}
         </div>
       </div>
-      {scan.feedback ? <FeedbackNotice feedback={scan.feedback} /> : null}
+      {scan.feedback ? (
+        <FeedbackNotice
+          content={scan.feedback}
+          announcement="Assertive"
+          actions={[{ label: "Retry", onClick: () => void scan.retry() }]}
+        />
+      ) : null}
       {scanning ? (
         <p className={styles.scanVoice}>Scanning…</p>
       ) : scanVoice ? (
@@ -320,9 +488,18 @@ export default function ConnectionsSurface({
         controller={composerController}
       />
       {loading ? (
-        <FeedbackNotice severity="info" title="Loading connections..." />
+        <FeedbackNotice
+          content={{ tone: "Info", title: "Loading connections…" }}
+          announcement="Polite"
+        />
       ) : null}
-      {!loading && error ? <FeedbackNotice feedback={error} /> : null}
+      {!loading && error ? (
+        <FeedbackNotice
+          content={error}
+          announcement="Assertive"
+          actions={[{ label: "Retry", onClick: reloadConnections }]}
+        />
+      ) : null}
       {!loading && !error && connections.length === 0 ? (
         <p className={styles.empty}>
           {scannable
@@ -369,16 +546,20 @@ function ConnectionRow({
   const [busyIds, setBusyIds] = useState<ReadonlySet<ResourceActionId>>(
     () => new Set(),
   );
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [feedback, setFeedback] = useState<{
+    readonly content: FeedbackContent;
+    readonly retry: () => void;
+  } | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
 
   async function runAction({
     id,
     execute,
-    failure,
+    operation,
   }: {
     id: ResourceActionId;
     execute: () => Promise<void>;
-    failure: string;
+    operation: "Chat" | "Unlink" | "Dismiss";
   }) {
     if (busyRef.current.has(id)) return;
     busyRef.current.add(id);
@@ -388,8 +569,14 @@ function ConnectionRow({
       await execute();
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-      setFeedback(toFeedback(error, { fallback: failure }));
+      try {
+        setFeedback({
+          content: connectionErrorMessage(error, operation),
+          retry: () => void runAction({ id, execute, operation }),
+        });
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+      }
     } finally {
       busyRef.current.delete(id);
       setBusyIds(new Set(busyRef.current));
@@ -434,7 +621,7 @@ function ConnectionRow({
                   disposition: { kind: "Adopt" },
                 }),
             }),
-          failure: "Chat could not be started.",
+          operation: "Chat",
         }),
     },
   });
@@ -455,7 +642,7 @@ function ConnectionRow({
                 }
                 onChanged();
               },
-              failure: "Connection could not be unlinked.",
+              operation: "Unlink",
             });
           },
         })
@@ -471,7 +658,7 @@ function ConnectionRow({
                   await dismissSynapseEdge(connection.edgeId);
                   onChanged();
                 },
-                failure: "Connection could not be dismissed.",
+                operation: "Dismiss",
               });
             },
           })
@@ -480,6 +667,8 @@ function ConnectionRow({
     ...core,
     relationships: relationship ? [relationship] : [],
   });
+
+  if (defect !== null) throw defect.error;
 
   return (
     <div
@@ -527,7 +716,13 @@ function ConnectionRow({
           label={`Actions for ${connection.label}`}
         />
       ) : null}
-      {feedback ? <FeedbackNotice feedback={feedback} /> : null}
+      {feedback ? (
+        <FeedbackNotice
+          content={feedback.content}
+          announcement="Assertive"
+          actions={[{ label: "Retry", onClick: feedback.retry }]}
+        />
+      ) : null}
     </div>
   );
 }
@@ -575,6 +770,31 @@ function ConnectionComposer({
   } = draft;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const createIntentRef = useRef<{
+    key: string;
+    clientMutationId: string;
+  } | null>(null);
+
+  function presentConnectionFailure(
+    error: unknown,
+    operation: "CreateLink" | "RecordStance" | "ConnectAttachment",
+  ) {
+    try {
+      controller.update({ feedback: connectionErrorMessage(error, operation) });
+    } catch (caughtDefect) {
+      setDefect({ error: caughtDefect });
+    }
+  }
+
+  function presentCaptureFailure(error: unknown) {
+    try {
+      controller.update({
+        feedback: mediaCaptureErrorMessage(error, "AddAttachment"),
+      });
+    } catch (caughtDefect) {
+      setDefect({ error: caughtDefect });
+    }
+  }
 
   // Once a target is picked the field shows its label but the picker closes —
   // an empty search key disables `useResourceTargetSearch` entirely.
@@ -669,7 +889,7 @@ function ConnectionComposer({
     if (targetRef === null || selected === null) {
       controller.update({
         feedback: {
-          severity: "warning",
+          tone: "Warning",
           title: "Choose a result from the search.",
         },
       });
@@ -678,7 +898,7 @@ function ConnectionComposer({
     if (targetRef === selfRef) {
       controller.update({
         feedback: {
-          severity: "warning",
+          tone: "Warning",
           title: "A resource cannot connect to itself.",
         },
       });
@@ -687,7 +907,7 @@ function ConnectionComposer({
     if (kind !== "context" && selected.kind === "passage") {
       controller.update({
         feedback: {
-          severity: "warning",
+          tone: "Warning",
           title: "A stance needs a resource target, not a passage.",
         },
       });
@@ -696,7 +916,15 @@ function ConnectionComposer({
     controller.update({ submitting: true });
     try {
       if (kind === "context") {
+        const intentKey = JSON.stringify({ selfRef, target: toLinkTarget(selected) });
+        if (createIntentRef.current?.key !== intentKey) {
+          createIntentRef.current = {
+            key: intentKey,
+            clientMutationId: createRandomId("link"),
+          };
+        }
         await createLink({
+          clientMutationId: createIntentRef.current.clientMutationId,
           source: { kind: "resource", ref: selfRef },
           target: toLinkTarget(selected),
         });
@@ -704,17 +932,14 @@ function ConnectionComposer({
         await putStance({ sourceRef: selfRef, targetRef, kind });
       }
       controller.update({ query: "", selected: null, activeKey: null });
+      createIntentRef.current = null;
       onChanged();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      controller.update({
-        feedback: toFeedback(err, {
-          fallback:
-            kind === "context"
-              ? "Link could not be created."
-              : "Stance could not be recorded.",
-        }),
-      });
+      presentConnectionFailure(
+        err,
+        kind === "context" ? "CreateLink" : "RecordStance",
+      );
     } finally {
       controller.update({ submitting: false });
     }
@@ -731,7 +956,7 @@ function ConnectionComposer({
         const uploadError = getFileUploadError(file);
         if (uploadError) {
           controller.update({
-            feedback: { severity: "error", title: uploadError },
+            feedback: { tone: "Danger", title: uploadError },
           });
           continue;
         }
@@ -746,6 +971,7 @@ function ConnectionComposer({
             libraryIds: [],
             onAcceptedIdentity: ({ mediaId, sourceAttemptId }) => {
               const pending: ConnectionsPendingAttachment = {
+                clientMutationId: createRandomId("link"),
                 mediaId,
                 sourceAttemptId,
                 label: file.name,
@@ -781,11 +1007,7 @@ function ConnectionComposer({
             return;
           }
           if (handleUnauthenticatedApiError(error)) return;
-          controller.update({
-            feedback: toFeedback(error, {
-              fallback: "Attachment could not be added.",
-            }),
-          });
+          presentCaptureFailure(error);
           continue;
         }
         if (!accepted.pending || !accepted.edge) {
@@ -799,7 +1021,7 @@ function ConnectionComposer({
         const { warning } = projectUploadReference({
           result: upload,
           processingFailureFeedback: {
-            severity: "warning",
+            tone: "Warning",
             title: "Attachment was added, but source processing failed.",
           },
         });
@@ -817,12 +1039,7 @@ function ConnectionComposer({
             return;
           }
           if (handleUnauthenticatedApiError(edge.error)) return;
-          controller.update({
-            feedback: toFeedback(edge.error, {
-              fallback:
-                "File was saved, but its connection could not be created.",
-            }),
-          });
+          presentConnectionFailure(edge.error, "ConnectAttachment");
           continue;
         }
         controller.update((current) => ({
@@ -859,11 +1076,7 @@ function ConnectionComposer({
         return;
       }
       if (handleUnauthenticatedApiError(error)) return;
-      controller.update({
-        feedback: toFeedback(error, {
-          fallback: "File was saved, but its connection could not be created.",
-        }),
-      });
+      presentConnectionFailure(error, "ConnectAttachment");
     } finally {
       controller.update({ attaching: false });
     }
@@ -1016,7 +1229,9 @@ function ConnectionComposer({
               ))}
             </ul>
           ) : null}
-          {feedback ? <FeedbackNotice feedback={feedback} /> : null}
+          {feedback ? (
+            <FeedbackNotice content={feedback} announcement="Assertive" />
+          ) : null}
         </form>
       </ConnectionComposerProjection>
     </ConnectionComposerDefectBoundary>
@@ -1078,9 +1293,13 @@ class ConnectionComposerDefectBoundary extends Component<
     return (
       <div hidden={!this.props.active} className={styles.composer}>
         <FeedbackNotice
-          severity="error"
-          title="Connections need attention"
-          message="Nexus preserved any accepted file identity. Continue to review its connection."
+          content={{
+            tone: "Danger",
+            title: "Connections need attention",
+            message:
+              "Nexus preserved any accepted file identity. Continue to review its connection.",
+          }}
+          announcement="Assertive"
         />
         <Button
           ref={this.actionRef}
@@ -1114,6 +1333,7 @@ function createAttachmentLink(
   pending: ConnectionsPendingAttachment,
 ): Promise<unknown> {
   return createLink({
+    clientMutationId: pending.clientMutationId,
     source: { kind: "resource", ref: sourceRef },
     target: { kind: "resource", ref: `media:${pending.mediaId}` },
   });
@@ -1138,10 +1358,16 @@ function useSynapseScan({
 }): {
   phase: "idle" | "requesting" | "polling";
   feedback: FeedbackContent | null;
+  defectState: { error: unknown } | null;
   start: () => Promise<void>;
+  retry: () => Promise<void>;
 } {
   const [phase, setPhase] = useState<"idle" | "requesting" | "polling">("idle");
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [failureOperation, setFailureOperation] = useState<
+    "ScanStatus" | "StartScan" | null
+  >(null);
+  const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
   const deadlineRef = useRef(0);
 
   // A tab switch unmounts the section mid-scan; one status read on mount
@@ -1157,7 +1383,12 @@ function useSynapseScan({
       })
       .catch((err) => {
         // Best-effort resume probe; a manual scan surfaces real errors.
-        if (!cancelled) handleUnauthenticatedApiError(err);
+        if (cancelled || handleUnauthenticatedApiError(err)) return;
+        try {
+          connectionErrorMessage(err, "ScanStatus");
+        } catch (caughtDefect) {
+          setDefectState({ error: caughtDefect });
+        }
       });
     return () => {
       cancelled = true;
@@ -1179,15 +1410,19 @@ function useSynapseScan({
       } catch (err) {
         setPhase("idle");
         if (handleUnauthenticatedApiError(err)) return;
-        setFeedback(
-          toFeedback(err, { fallback: "Scan status could not be checked." }),
-        );
+        try {
+          setFeedback(connectionErrorMessage(err, "ScanStatus"));
+          setFailureOperation("ScanStatus");
+        } catch (caughtDefect) {
+          setDefectState({ error: caughtDefect });
+        }
       }
     },
   });
 
   const start = useCallback(async () => {
     setFeedback(null);
+    setFailureOperation(null);
     setPhase("requesting");
     try {
       const scan = await requestSynapseScan(selfRef);
@@ -1202,9 +1437,45 @@ function useSynapseScan({
     } catch (err) {
       setPhase("idle");
       if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(toFeedback(err, { fallback: "Scan could not be started." }));
+      try {
+        setFeedback(connectionErrorMessage(err, "StartScan"));
+        setFailureOperation("StartScan");
+      } catch (caughtDefect) {
+        setDefectState({ error: caughtDefect });
+      }
     }
   }, [onSettled, selfRef]);
 
-  return { phase, feedback, start };
+  const retryStatus = useCallback(async () => {
+    setFeedback(null);
+    setFailureOperation(null);
+    setPhase("requesting");
+    try {
+      const status = await fetchSynapseScanStatus(selfRef);
+      if (status === "idle") {
+        setPhase("idle");
+        onSettled();
+        return;
+      }
+      deadlineRef.current = Date.now() + SYNAPSE_SCAN_TIMEOUT_MS;
+      setPhase("polling");
+    } catch (err) {
+      setPhase("idle");
+      if (handleUnauthenticatedApiError(err)) return;
+      try {
+        setFeedback(connectionErrorMessage(err, "ScanStatus"));
+        setFailureOperation("ScanStatus");
+      } catch (caughtDefect) {
+        setDefectState({ error: caughtDefect });
+      }
+    }
+  }, [onSettled, selfRef]);
+
+  return {
+    phase,
+    feedback,
+    defectState,
+    start,
+    retry: failureOperation === "ScanStatus" ? retryStatus : start,
+  };
 }

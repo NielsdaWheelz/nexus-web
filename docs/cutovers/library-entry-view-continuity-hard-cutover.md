@@ -16,6 +16,11 @@ Status: IMPLEMENTED AND VERIFIED — 2026-07-24
 > changes only physical control placement and the final empty-neighbor focus
 > target. Requested/committed ownership, retained rows, and exact-view commits
 > remain authoritative here.
+>
+> **Library Type update (2026-08-02):**
+> [`library-entry-type-filter-and-filter-row-reflow-hard-cutover.md`](library-entry-type-filter-and-filter-row-reflow-hard-cutover.md)
+> extends exact view identity through URL, API, and cursor with one entry-type
+> facet. The in-place latest-wins lifecycle and retained-row rules below stand.
 
 Type: hard cutover. No feature flag, compatibility branch, legacy lifecycle,
 silent fallback, or released intermediate state.

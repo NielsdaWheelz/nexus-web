@@ -14,7 +14,8 @@ import type { RenderEnvironment, ViewportKind } from "./types";
 const MOBILE_QUERY =
   "(max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse)";
 
-function browserViewportKind(): ViewportKind {
+/** Read the canonical browser projection synchronously at an input boundary. */
+export function getBrowserViewportKind(): ViewportKind {
   return window.matchMedia(MOBILE_QUERY).matches ? "mobile" : "desktop";
 }
 
@@ -44,7 +45,7 @@ export function RenderEnvironmentProvider({
   );
   const viewportKind = useSyncExternalStore(
     subscribeToViewport,
-    browserViewportKind,
+    getBrowserViewportKind,
     serverViewportKind,
   );
   const [viewportHydrated, setViewportHydrated] = useState(false);

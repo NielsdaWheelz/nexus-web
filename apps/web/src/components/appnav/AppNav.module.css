@@ -428,7 +428,10 @@
   align-items: center;
   block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
   min-block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
-  padding: var(--viewport-safe-top) var(--space-2) 0;
+  padding-top: var(--viewport-safe-top);
+  padding-right: max(var(--space-2), var(--viewport-safe-right));
+  padding-bottom: 0;
+  padding-left: max(var(--space-2), var(--viewport-safe-left));
   background: var(--surface-2);
   border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
   transform: translateY(calc(-100% * var(--mobile-chrome-collapse)));

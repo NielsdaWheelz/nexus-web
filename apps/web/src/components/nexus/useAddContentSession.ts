@@ -1,10 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import {
-  toFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -16,6 +13,7 @@ import {
   createLibrary,
   type LibraryDestinationSelection,
 } from "@/lib/libraries/client";
+import { libraryRequestErrorMessage } from "@/lib/libraries/libraryRequestErrorMessage";
 import {
   addMediaFromUrl,
   getFileUploadError,
@@ -141,19 +139,60 @@ function acceptedUncertainItem(
   };
 }
 
-function placementErrorMessage(
+export function addContentPlacementErrorMessage(
   error: unknown,
-  fallback = "Libraries could not be updated.",
-): FeedbackContent | null {
-  if (isSameSystemApiDefect(error)) return null;
-  if (
-    isApiError(error) ||
-    error instanceof TypeError ||
-    error instanceof DOMException
-  ) {
-    return toFeedback(error, { fallback });
+  title = "Libraries couldn’t be updated",
+): FeedbackContent {
+  return libraryRequestErrorMessage(error, {
+    title,
+    request: "PlacementMutation",
+  });
+}
+
+/** Finite OPML-import copy adapter; contract and unknown failures defect. */
+export function opmlImportErrorMessage(error: unknown): FeedbackContent {
+  if (error instanceof PodcastOpmlEncodingError) {
+    return { tone: "Danger", title: error.message };
   }
-  return null;
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  const title = "OPML couldn’t be imported";
+  const requestId = error.requestId;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and retry.",
+        requestId,
+      };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_INVALID_REQUEST":
+    case "E_BAD_REQUEST":
+      return {
+        tone: "Danger",
+        title,
+        message: "Review the OPML file and selected libraries, then retry.",
+        requestId,
+      };
+    case "E_FORBIDDEN":
+    case "E_LIBRARY_FORBIDDEN":
+    case "E_LIBRARY_NOT_FOUND":
+      return libraryRequestErrorMessage(error, {
+        title,
+        request: "PlacementMutation",
+      });
+    default:
+      throw error;
+  }
 }
 
 function requireIndexedItem<T>(items: readonly T[], index: number): T {
@@ -272,12 +311,12 @@ export function useAddContentSession(): AddContentSessionController {
         placementProgressByMediaIdRef.current,
       ),
       acceptanceFeedback: {
-        severity: "warning",
+        tone: "Warning",
         title: "Stopped · acceptance status unknown",
         message: "Server changes that already committed may remain.",
       },
       operationFeedback: {
-        severity: "warning",
+        tone: "Warning",
         title: "Stopped before completion",
         message: "Server changes that already committed may remain.",
       },
@@ -303,7 +342,7 @@ export function useAddContentSession(): AddContentSessionController {
       apply({
         kind: "SetUrlFeedback",
         feedback: {
-          severity: "error",
+          tone: "Danger",
           title: "Paste one or more http:// or https:// URLs.",
         },
       });
@@ -340,7 +379,7 @@ export function useAddContentSession(): AddContentSessionController {
               fileKind: fileKind ?? "Unsupported",
             },
             feedback: {
-              severity: "error",
+              tone: "Danger",
               title: error ?? "Only PDF and EPUB files are supported.",
             },
           };
@@ -422,7 +461,7 @@ export function useAddContentSession(): AddContentSessionController {
           ? {
               kind: "Invalid",
               input: { kind: "File", file },
-              feedback: { severity: "error", title: error },
+              feedback: { tone: "Danger", title: error },
             }
           : { kind: "Ready", file },
       });
@@ -539,7 +578,7 @@ export function useAddContentSession(): AddContentSessionController {
               {
                 kind: "AcceptedUncertain",
                 ...identity,
-                feedback: { ...failure.feedback, severity: "warning" },
+                feedback: { ...failure.feedback, tone: "Warning" },
               },
             ),
           });
@@ -549,14 +588,7 @@ export function useAddContentSession(): AddContentSessionController {
       if (handleUnauthenticatedApiError(outcome.error)) {
         apply({
           kind: "ResolveItem",
-          item: {
-            kind: "Rejected",
-            id: item.id,
-            intent: item,
-            feedback: toFeedback(outcome.error, {
-              fallback: "Authentication required.",
-            }),
-          },
+          item,
         });
         return;
       }
@@ -614,7 +646,7 @@ export function useAddContentSession(): AddContentSessionController {
         });
       }
       apply({ kind: "StartMutation", operation });
-      let defect: unknown;
+      let defectState: { error: unknown } | null = null;
       let acceptedIdentityBlocked = false;
       try {
         const libraryIds = item.intent.destinations.map(
@@ -684,7 +716,7 @@ export function useAddContentSession(): AddContentSessionController {
           const failure = acceptanceErrorMessage(error);
           if (failure.kind === "Defect") {
             acceptedIdentityBlocked = true;
-            defect = failure.error;
+            defectState = { error: failure.error };
           } else {
             apply({
               kind: "ResolveItem",
@@ -694,7 +726,7 @@ export function useAddContentSession(): AddContentSessionController {
                 {
                   kind: "AcceptedUncertain",
                   ...identity,
-                  feedback: { ...failure.feedback, severity: "warning" },
+                  feedback: { ...failure.feedback, tone: "Warning" },
                 },
               ),
             });
@@ -704,13 +736,13 @@ export function useAddContentSession(): AddContentSessionController {
         } else {
           const failure = acceptanceErrorMessage(error);
           if (failure.kind === "Defect") {
-            defect = failure.error;
+            defectState = { error: failure.error };
           } else if (item.kind === "AcceptedUncertain") {
             apply({
               kind: "ResolveItem",
               item: {
                 ...item,
-                feedback: { ...failure.feedback, severity: "warning" },
+                feedback: { ...failure.feedback, tone: "Warning" },
               },
             });
           } else {
@@ -734,7 +766,7 @@ export function useAddContentSession(): AddContentSessionController {
           apply({ kind: "FinishMutation" });
         }
       }
-      if (defect !== undefined) throw defect;
+      if (defectState !== null) throw defectState.error;
     },
     [apply],
   );
@@ -748,7 +780,7 @@ export function useAddContentSession(): AddContentSessionController {
         opml: {
           kind: "Invalid",
           input: { kind: "NoFile" },
-          feedback: { severity: "error", title: "Choose an OPML or XML file." },
+          feedback: { tone: "Danger", title: "Choose an OPML or XML file." },
         },
       });
       return;
@@ -761,7 +793,7 @@ export function useAddContentSession(): AddContentSessionController {
     const signal = sessionAbortRef.current.signal;
     apply({ kind: "StartMutation", operation: { kind: "ImportOpml" } });
     apply({ kind: "SetOpml", opml: { kind: "Importing", file } });
-    let defect: unknown;
+    let defectState: { error: unknown } | null = null;
     try {
       const replayIdentity = await podcastOpmlReplayIdentity({
         file,
@@ -797,45 +829,29 @@ export function useAddContentSession(): AddContentSessionController {
         isAbortError(error)
       )
         return;
-      if (isSameSystemApiDefect(error)) {
-        apply({ kind: "SetOpml", opml: current.opml });
-        defect = error;
-      } else if (handleUnauthenticatedApiError(error)) {
+      if (handleUnauthenticatedApiError(error)) {
         apply({ kind: "SetOpml", opml: current.opml });
         return;
-      } else if (error instanceof PodcastOpmlEncodingError) {
-        apply({
-          kind: "SetOpml",
-          opml: {
-            kind: "Failed",
-            file,
-            feedback: { severity: "error", title: error.message },
-          },
-        });
-      } else if (
-        isApiError(error) ||
-        error instanceof TypeError ||
-        error instanceof DOMException
-      ) {
-        apply({
-          kind: "SetOpml",
-          opml: {
-            kind: "Failed",
-            file,
-            feedback: toFeedback(error, {
-              fallback: "OPML could not be imported.",
-            }),
-          },
-        });
       } else {
-        apply({ kind: "SetOpml", opml: current.opml });
-        defect = error;
+        try {
+          apply({
+            kind: "SetOpml",
+            opml: {
+              kind: "Failed",
+              file,
+              feedback: opmlImportErrorMessage(error),
+            },
+          });
+        } catch (caughtDefect: unknown) {
+          apply({ kind: "SetOpml", opml: current.opml });
+          defectState = { error: caughtDefect };
+        }
       }
     } finally {
       if (generation === generationRef.current)
         apply({ kind: "FinishMutation" });
     }
-    if (defect !== undefined) throw defect;
+    if (defectState !== null) throw defectState.error;
   }, [apply]);
 
   const runPlacement = useCallback(
@@ -883,18 +899,18 @@ export function useAddContentSession(): AddContentSessionController {
         if (outcome.kind === "Rejected") {
           if (!signal.aborted && !isAbortError(outcome.error)) {
             if (handleUnauthenticatedApiError(outcome.error)) return;
-            const feedback = placementErrorMessage(
-              outcome.error,
-              "Libraries could not be loaded.",
-            );
-            if (feedback === null) {
-              defects.push(outcome.error);
-            } else {
+            try {
+              const feedback = addContentPlacementErrorMessage(
+                outcome.error,
+                "Libraries couldn’t be loaded",
+              );
               apply({
                 kind: "SetPlacement",
                 mediaId,
                 placement: { kind: "LoadFailed", feedback },
               });
+            } catch (caughtDefect: unknown) {
+              defects.push(caughtDefect);
             }
           }
           return;
@@ -949,7 +965,7 @@ export function useAddContentSession(): AddContentSessionController {
             await removeLibraryPlacement(
               { kind: "Media", id: mediaId },
               command.libraryId,
-              { signal },
+              { clientMutationId: crypto.randomUUID(), signal },
             );
           }
           const started = placementProgressByMediaIdRef.current.get(mediaId);
@@ -1016,15 +1032,8 @@ export function useAddContentSession(): AddContentSessionController {
               });
               return;
             }
-            const feedback = placementErrorMessage(outcome.error);
-            if (feedback === null) {
-              apply({
-                kind: "SetPlacement",
-                mediaId: work.mediaId,
-                placement: { kind: "Ready", libraries: work.libraries },
-              });
-              defects.push(outcome.error);
-            } else {
+            try {
+              const feedback = addContentPlacementErrorMessage(outcome.error);
               apply({
                 kind: "SetPlacement",
                 mediaId: work.mediaId,
@@ -1035,6 +1044,13 @@ export function useAddContentSession(): AddContentSessionController {
                   feedback,
                 },
               });
+            } catch (caughtDefect: unknown) {
+              apply({
+                kind: "SetPlacement",
+                mediaId: work.mediaId,
+                placement: { kind: "Ready", libraries: work.libraries },
+              });
+              defects.push(caughtDefect);
             }
           }
           return;
@@ -1056,19 +1072,14 @@ export function useAddContentSession(): AddContentSessionController {
             placement: { kind: "Ready", libraries: outcome.value },
           });
           publishLibraryPlacementChange([command.libraryId]);
-          if (placementErrorMessage(work.error) === null) {
-            defects.push(work.error);
+          try {
+            addContentPlacementErrorMessage(work.error);
+          } catch (caughtDefect: unknown) {
+            defects.push(caughtDefect);
           }
         } else {
-          const feedback = placementErrorMessage(work.error);
-          if (feedback === null) {
-            apply({
-              kind: "SetPlacement",
-              mediaId: work.mediaId,
-              placement: { kind: "Ready", libraries: outcome.value },
-            });
-            defects.push(work.error);
-          } else {
+          try {
+            const feedback = addContentPlacementErrorMessage(work.error);
             apply({
               kind: "SetPlacement",
               mediaId: work.mediaId,
@@ -1079,6 +1090,13 @@ export function useAddContentSession(): AddContentSessionController {
                 feedback,
               },
             });
+          } catch (caughtDefect: unknown) {
+            apply({
+              kind: "SetPlacement",
+              mediaId: work.mediaId,
+              placement: { kind: "Ready", libraries: outcome.value },
+            });
+            defects.push(caughtDefect);
           }
         }
       });
@@ -1147,23 +1165,23 @@ export function useAddContentSession(): AddContentSessionController {
           });
           return;
         }
-        const feedback = placementErrorMessage(
-          outcome.error,
-          "Libraries could not be loaded.",
-        );
-        if (feedback === null) {
-          apply({
-            kind: "SetPlacement",
-            mediaId,
-            placement: previous,
-          });
-          defects.push(outcome.error);
-        } else {
+        try {
+          const feedback = addContentPlacementErrorMessage(
+            outcome.error,
+            "Libraries couldn’t be loaded",
+          );
           apply({
             kind: "SetPlacement",
             mediaId,
             placement: { kind: "LoadFailed", feedback },
           });
+        } catch (caughtDefect: unknown) {
+          apply({
+            kind: "SetPlacement",
+            mediaId,
+            placement: previous,
+          });
+          defects.push(caughtDefect);
         }
       });
       if (defects.length > 0) throw defects[0];

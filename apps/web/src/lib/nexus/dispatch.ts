@@ -23,7 +23,10 @@ import type {
   ShareOpenOptions,
   ShareTarget,
 } from "@/lib/sharing/types";
-import { copyText } from "@/lib/ui/copyText";
+import {
+  ClipboardWriteUnavailableError,
+  copyText,
+} from "@/lib/ui/copyText";
 import type {
   WorkspaceTarget,
   WorkspaceTargetActivationRequest,
@@ -105,6 +108,12 @@ export const KEYBOARD_NEXUS_TARGET_ACTIVATION: NexusTargetActivation = {
 
 export type NexusDispatchOutcome =
   | { kind: "Stayed" }
+  | {
+      kind: "OperationBlocked";
+      reason: "AndroidRestricted" | "ClipboardUnavailable";
+      title: string;
+      message?: string;
+    }
   | { kind: "NavigationAccepted" }
   | {
       kind: "DailyPageAccepted";
@@ -257,20 +266,21 @@ export function dispatchNexusTarget(
   context: NexusDispatchCtx,
   activation: NexusTargetActivation,
 ): NexusDispatchResult {
-  const blockedByAndroid = (href: string): boolean => {
+  const blockedByAndroid = (href: string): NexusDispatchOutcome | null => {
     if (!isAndroidShellRestrictedHref(href, context.androidShell)) {
-      return false;
+      return null;
     }
-    context.feedback.show({
-      severity: "warning",
-      title: "Local Vault is not available in the Android app.",
-    });
-    return true;
+    return {
+      kind: "OperationBlocked",
+      reason: "AndroidRestricted",
+      title: "Local Vault isn’t available in the Android app",
+    };
   };
 
   switch (target.kind) {
-    case "InternalHref":
-      if (blockedByAndroid(target.href)) return { kind: "Stayed" };
+    case "InternalHref": {
+      const blocked = blockedByAndroid(target.href);
+      if (blocked) return blocked;
       if (resolvePaneRoute(target.href).id === "search") {
         requestSearchInputFocus();
       }
@@ -279,13 +289,12 @@ export function dispatchNexusTarget(
         context,
         activation,
       );
+    }
     case "ResourceOpen": {
-      if (
-        target.subject.activation.kind === "route" &&
-        target.subject.activation.href !== null &&
-        blockedByAndroid(target.subject.activation.href)
-      ) {
-        return { kind: "Stayed" };
+      if (target.subject.activation.kind === "route") {
+        const href = target.subject.activation.href;
+        const blocked = href === null ? null : blockedByAndroid(href);
+        if (blocked) return blocked;
       }
       let outcome: NexusDispatchOutcome = { kind: "Stayed" };
       executeResourceOpen({
@@ -361,13 +370,7 @@ export function dispatchNexusTarget(
           mediaIds: [parseMediaId(target.mediaId)],
           placement: { kind: "Last" },
         }),
-      ).then(() => {
-          context.feedback.show({
-            severity: "success",
-            title: "Added to Lectern",
-          });
-          return { kind: "Stayed" };
-        });
+      ).then(() => ({ kind: "Stayed" }));
     case "NewConversation":
       return activateTarget(
         {
@@ -400,17 +403,29 @@ export function dispatchNexusTarget(
       context.openShare(target.target, context.shareOptions());
       return { kind: "NavigationAccepted" };
     case "CopyExternalLink":
-      return copyText(target.href).then(() => {
-        context.feedback.show({
-          severity: "success",
-          title: "External link copied",
-        });
-        return { kind: "Stayed" };
-      });
+      return copyText(target.href).then(
+        () => {
+          context.feedback.publish({
+            kind: "Hud",
+            content: { tone: "Success", title: "External link copied" },
+          });
+          return { kind: "Stayed" };
+        },
+        (error: unknown) => {
+          if (!(error instanceof ClipboardWriteUnavailableError)) throw error;
+          return {
+            kind: "OperationBlocked",
+            reason: "ClipboardUnavailable",
+            title: "External link wasn’t copied",
+            message: "Copy it manually or retry the same link.",
+          };
+        },
+      );
     case "PaneOpen": {
       const pane = context.panes.find((candidate) => candidate.id === target.paneId);
       if (!pane) return { kind: "Stayed" };
-      if (blockedByAndroid(pane.href)) return { kind: "Stayed" };
+      const blocked = blockedByAndroid(pane.href);
+      if (blocked) return blocked;
       if (activation.disposition.kind === "Fork") {
         return activateTarget(
           { href: pane.href, labelHint: pane.label },

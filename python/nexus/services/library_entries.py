@@ -31,6 +31,7 @@ from nexus.auth.permissions import (
 )
 from nexus.config import get_settings
 from nexus.db.errors import TransactionRestart
+from nexus.db.models import MediaKind
 from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
@@ -170,12 +171,36 @@ type LibraryEntryProjection = AllItems | Unfiled | InProgress
 
 
 @dataclass(frozen=True, slots=True)
+class AllTypes:
+    """All media kinds and Podcast shows."""
+
+
+type LibraryMediaKind = Literal[
+    MediaKind.web_article,
+    MediaKind.epub,
+    MediaKind.pdf,
+    MediaKind.video,
+    MediaKind.podcast_episode,
+]
+type LibraryExactEntryType = LibraryMediaKind | Literal["podcast"]
+
+
+@dataclass(frozen=True, slots=True)
+class ExactType:
+    value: LibraryExactEntryType
+
+
+type LibraryEntryType = AllTypes | ExactType
+
+
+@dataclass(frozen=True, slots=True)
 class LibraryEntryView:
     order: LibraryEntryOrder
     projection: LibraryEntryProjection
+    entry_type: LibraryEntryType
 
 
-_VIEW_QUERY_KEYS = frozenset({"sort", "direction", "completion", "projection"})
+_VIEW_QUERY_KEYS = frozenset({"sort", "direction", "completion", "projection", "entry_type"})
 _FACTUAL_SORTS: dict[str, type[Title | Creator | Published | Added]] = {
     "title": Title,
     "creator": Creator,
@@ -198,7 +223,39 @@ def parse_entries_query(
     order = _parse_order(query.parameters.get("sort"), query.parameters.get("direction"))
     completion = _parse_completion(query.parameters.get("completion"))
     projection = _parse_projection(query.parameters.get("projection"), completion)
-    return LibraryEntryView(order=order, projection=projection), query
+    entry_type = _parse_entry_type(query.parameters.get("entry_type"))
+    if (
+        isinstance(entry_type, ExactType)
+        and entry_type.value == "podcast"
+        and (not isinstance(projection, AllItems) or projection.completion != "all")
+    ):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Podcast shows support only the complete all-items view",
+        )
+    return LibraryEntryView(order=order, projection=projection, entry_type=entry_type), query
+
+
+def _parse_entry_type(value: str | None) -> LibraryEntryType:
+    match value:
+        case None:
+            return AllTypes()
+        case "web_article":
+            return ExactType(MediaKind.web_article)
+        case "epub":
+            return ExactType(MediaKind.epub)
+        case "pdf":
+            return ExactType(MediaKind.pdf)
+        case "video":
+            return ExactType(MediaKind.video)
+        case "podcast_episode":
+            return ExactType(MediaKind.podcast_episode)
+        case "podcast":
+            return ExactType("podcast")
+        case _:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Unsupported Library entry type"
+            )
 
 
 def _parse_projection(value: str | None, completion: Completion) -> LibraryEntryProjection:
@@ -1969,8 +2026,25 @@ def _projection_json(projection: LibraryEntryProjection) -> dict[str, str]:
             assert_never(projection)
 
 
+def _entry_type_json(entry_type: LibraryEntryType) -> dict[str, str]:
+    match entry_type:
+        case AllTypes():
+            return {"kind": "all-types"}
+        case ExactType(value):
+            return {
+                "kind": "exact-type",
+                "value": value if value == "podcast" else value.value,
+            }
+        case _:
+            assert_never(entry_type)
+
+
 def _view_json(view: LibraryEntryView) -> dict[str, Any]:
-    return {"order": _order_json(view.order), "projection": _projection_json(view.projection)}
+    return {
+        "entryType": _entry_type_json(view.entry_type),
+        "order": _order_json(view.order),
+        "projection": _projection_json(view.projection),
+    }
 
 
 def _cursor_query(
@@ -1979,8 +2053,9 @@ def _cursor_query(
     library_id: UUID,
     view: LibraryEntryView,
     plan: Sequence[_SortKey],
+    is_default: bool,
 ) -> dict[str, object]:
-    return {
+    query: dict[str, object] = {
         "libraryId": str(library_id),
         "plan": [
             {
@@ -1993,10 +2068,19 @@ def _cursor_query(
         "view": _view_json(view),
         "viewerId": str(viewer_id),
     }
+    if is_default:
+        query["inventory"] = "RootSubsumed"
+    return query
 
 
 def _encode_view_cursor(
-    *, viewer_id: UUID, library_id: UUID, view: LibraryEntryView, plan: Sequence[_SortKey], row: Any
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    view: LibraryEntryView,
+    plan: Sequence[_SortKey],
+    is_default: bool,
+    row: Any,
 ) -> str:
     return encode_signed_keyset_cursor(
         family=CollectionFamily.LibraryEntries.value,
@@ -2005,6 +2089,7 @@ def _encode_view_cursor(
             library_id=library_id,
             view=view,
             plan=plan,
+            is_default=is_default,
         ),
         after=tuple(KeysetValue(key.value, row[key.column]) for key in plan),
     )
@@ -2017,6 +2102,7 @@ def _decode_view_cursor(
     library_id: UUID,
     view: LibraryEntryView,
     plan: Sequence[_SortKey],
+    is_default: bool,
 ) -> dict[str, object]:
     values = decode_signed_keyset_cursor(
         cursor,
@@ -2026,6 +2112,7 @@ def _decode_view_cursor(
             library_id=library_id,
             view=view,
             plan=plan,
+            is_default=is_default,
         ),
         expected_kinds=tuple(key.value for key in plan),
     )
@@ -2052,41 +2139,19 @@ def _finish_entry_page(
     return page_entries, next_cursor
 
 
-def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
-    """The final ``membership`` CTE (plus its inner CTEs when Default): complete,
-    already viewer-visibility-scoped physical rows exposing the canonical entry
-    columns. Non-default is one CTE; Default assembles the two-stage
-    media-deduplication before it.
+def _default_root_inventory_cte_sql(*, unfiled: bool) -> str:
+    """Canonical viewer-scoped Default root inventory.
 
-    ``unfiled`` (Default only — the service rejects it elsewhere) restricts the
-    Default set to media whose only viewer non-system membership entry is the
-    direct-Default one: ``bool_and(is_direct_default)`` over each media's
+    ``unfiled`` restricts the Default set to media whose only viewer non-system
+    membership entry is the direct-Default one: ``bool_and(is_direct_default)``
+    over each media's
     candidate group is true exactly when it has a direct-Default entry AND no
     other non-system membership entry. Shared-only media never enter the group
     with ``is_direct_default`` true, so they are excluded; system and
     inaccessible-foreign libraries are already outside ``candidate_entries``.
-    The final relation is materialized once so consumption-filtered views cannot
-    inline and re-run Library/Media membership work per engagement candidate."""
-    entry_cols = """
-        le.id,
-        le.library_id,
-        le.media_id,
-        le.podcast_id,
-        le.created_at,
-        le.position,
-        le.created_at AS added_at,
-        false AS is_virtual
-    """
-    if not is_default:
-        return f"""
-            membership AS MATERIALIZED (
-                SELECT {entry_cols}
-                FROM library_entries le
-                WHERE le.library_id = :library_id
-                  AND (le.podcast_id IS NOT NULL
-                       OR le.media_id IN ({visible_media_ids_cte_sql()}))
-            )
-        """
+    The final relation is materialized once so consumers cannot inline and
+    re-run membership work per candidate. An active parent Podcast subsumes its
+    normalized episode Media before any view projection or pagination."""
     unfiled_cte = (
         """unfiled_media AS (
             SELECT media_id FROM candidate_entries
@@ -2128,6 +2193,14 @@ def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
             JOIN libraries l ON l.id = le.library_id AND l.system_key IS NULL
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             WHERE le.media_id IN (SELECT media_id FROM default_media)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM podcast_episodes episode
+                  JOIN podcast_subscriptions subscription
+                    ON subscription.podcast_id = episode.podcast_id
+                   AND subscription.user_id = :viewer_id
+                  WHERE episode.media_id = le.media_id
+              )
         ),
         {unfiled_cte}
         ranked AS (
@@ -2152,6 +2225,52 @@ def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
             {subscription_union}
         )
     """
+
+
+def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
+    """Complete viewer-visible membership relation for one library listing."""
+    if is_default:
+        return _default_root_inventory_cte_sql(unfiled=unfiled)
+    return f"""
+        membership AS MATERIALIZED (
+            SELECT
+                le.id,
+                le.library_id,
+                le.media_id,
+                le.podcast_id,
+                le.created_at,
+                le.position,
+                le.created_at AS added_at,
+                false AS is_virtual
+            FROM library_entries le
+            WHERE le.library_id = :library_id
+              AND (le.podcast_id IS NOT NULL
+                   OR le.media_id IN ({visible_media_ids_cte_sql()}))
+        )
+    """
+
+
+def count_default_root_inventory(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+) -> int:
+    """Count the canonical complete root inventory for the viewer's Default."""
+    ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
+    if not ctx.is_default:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Root inventory count is only available for the default library",
+        )
+    count = db.execute(
+        text(f"""
+            WITH {_default_root_inventory_cte_sql(unfiled=False)}
+            SELECT count(*) FROM membership
+        """),
+        {"viewer_id": viewer_id, "library_id": library_id},
+    ).scalar_one()
+    return int(count)
 
 
 def _query_view_page(
@@ -2232,6 +2351,21 @@ def _query_view_page(
         projection_clause = "AND facts.read_state = 'InProgress'"
     else:
         projection_clause = ""
+    match view.entry_type:
+        case AllTypes():
+            entry_type_clause = ""
+            entry_type_param = None
+        case ExactType(value):
+            if value == "podcast":
+                entry_type_clause = "AND facts.target_kind = 'podcast'"
+                entry_type_param = None
+            else:
+                entry_type_clause = (
+                    "AND facts.target_kind = 'media' AND facts.media_kind = :entry_type"
+                )
+                entry_type_param = value.value
+        case _:
+            assert_never(view.entry_type)
     keyset_clause = _keyset_clause(plan) if after is not None else ""
     order_by = ", ".join(f"facts.{key.column} {key.direction.upper()}" for key in plan)
 
@@ -2240,6 +2374,8 @@ def _query_view_page(
         "library_id": library_id,
         "limit": limit + 1,
     }
+    if entry_type_param is not None:
+        params["entry_type"] = entry_type_param
     if after is not None:
         params.update(after)
 
@@ -2257,6 +2393,7 @@ def _query_view_page(
                         membership.position,
                         membership.is_virtual,
                         md.created_at AS media_created_at,
+                        md.kind AS media_kind,
                         {added_at_expr} AS added_at,
                         CASE
                             WHEN membership.media_id IS NOT NULL THEN 'media'
@@ -2288,6 +2425,7 @@ def _query_view_page(
                     published_date, published_missing
                 FROM facts
                 WHERE 1 = 1
+                  {entry_type_clause}
                   {projection_clause}
                   {keyset_clause}
                 ORDER BY {order_by}
@@ -2305,7 +2443,12 @@ def _query_view_page(
         rows=rows,
         limit=limit,
         build_cursor=lambda row: _encode_view_cursor(
-            viewer_id=viewer_id, library_id=library_id, view=view, plan=plan, row=row
+            viewer_id=viewer_id,
+            library_id=library_id,
+            view=view,
+            plan=plan,
+            is_default=is_default,
+            row=row,
         ),
     )
 
@@ -2325,9 +2468,10 @@ def list_library_entries(
     The view's ``order`` selects Canonical (Default's `media.created_at DESC`,
     else the physical position order) or one of the factual sorts; the
     ``projection`` (AllItems/Unfiled/In Progress, with completion where it carries
-    one) filters the set before ordering. Unfiled is valid only for the viewer's
-    own Default. Every page is a true keyset over the view's total order; the
-    returned cursor is bound to this exact viewer/library/view.
+    one) and ``entry_type`` compose as set predicates before ordering. Unfiled is
+    valid only for the viewer's own Default. Every page is a true keyset over the
+    view's total order; the returned cursor is bound to this exact
+    viewer/library/view.
     """
     ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
     current_revision = (
@@ -2358,6 +2502,7 @@ def list_library_entries(
             library_id=library_id,
             view=view,
             plan=_plan(view.order, is_default=ctx.is_default),
+            is_default=ctx.is_default,
         )
 
     items, next_cursor = _query_view_page(

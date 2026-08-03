@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import NexusButton from "@/components/switchboard/NexusButton";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import SwitchboardRecovery from "@/components/switchboard/SwitchboardRecovery";
@@ -28,6 +29,23 @@ function desktopWorkflow(input: {
     case "Root":
     case "EntryActions":
       return undefined;
+    case "CommandFailed":
+      content = (
+        <section className={styles.workflowPage}>
+          <h2 tabIndex={-1} data-switchboard-heading>
+            Command needs attention
+          </h2>
+          <FeedbackNotice
+            content={page.content}
+            announcement="Assertive"
+            actions={[
+              { label: "Retry", onClick: controller.retryCommandFailure },
+              { label: "Back", onClick: controller.openRoot },
+            ]}
+          />
+        </section>
+      );
+      break;
     case "UnsupportedLink":
       content = (
         <section className={styles.workflowPage}>
@@ -81,16 +99,17 @@ function desktopWorkflow(input: {
           <h2 tabIndex={-1} data-switchboard-heading>
             New page
           </h2>
-          <p>
-            {page.submit.kind === "Retryable"
-              ? page.submit.message
-              : `Creating “${page.titleDraft}”…`}
-          </p>
           {page.submit.kind === "Retryable" ? (
-            <button type="button" onClick={controller.retryPageCreation}>
-              Retry
-            </button>
-          ) : null}
+            <FeedbackNotice
+              content={page.submit.content}
+              announcement="Assertive"
+              actions={[
+                { label: "Retry", onClick: controller.retryPageCreation },
+              ]}
+            />
+          ) : (
+            <p>{`Creating “${page.titleDraft}”…`}</p>
+          )}
         </section>
       );
       break;
@@ -138,6 +157,36 @@ function desktopWorkflow(input: {
         />
       );
       break;
+    case "OperationBlocked":
+      content = (
+        <section className={styles.workflowPage}>
+          <h2 tabIndex={-1} data-switchboard-heading>
+            {page.title}
+          </h2>
+          <FeedbackNotice
+            content={{
+              tone: "Warning",
+              title: page.title,
+              message: page.message,
+            }}
+            announcement="Assertive"
+            actions={
+              page.retry === null
+                ? [{ label: "Back", onClick: controller.back }]
+                : [
+                    {
+                      label: "Retry",
+                      onClick: controller.retryBlockedOperation,
+                    },
+                    { label: "Back", onClick: controller.back },
+                  ]
+            }
+          >
+            {page.manualValue ? <code>{page.manualValue}</code> : null}
+          </FeedbackNotice>
+        </section>
+      );
+      break;
     case "ManageTabs":
       content = (
         <ManageTabsPage
@@ -150,6 +199,7 @@ function desktopWorkflow(input: {
           onRestore={controller.restoreManagedPane}
           onRetryRetained={controller.retryRetainedActivation}
           onCancelRetained={controller.cancelRetainedActivation}
+          feedback={controller.managedTabsFeedback}
         />
       );
       break;
@@ -186,6 +236,29 @@ export default function Nexus() {
   );
   const clearAddDefect = useCallback(() => setAddDefect(null), []);
   const viewport = useViewportState();
+  const pendingMobileNexusOpenerRef = useRef<HTMLButtonElement>(null);
+  const currentMobileNexusButtonRef = useRef<HTMLButtonElement>(null);
+  const openRoot = controller.openRoot;
+  const setCurrentMobileNexusButton = useCallback(
+    (node: HTMLButtonElement | null) => {
+      currentMobileNexusButtonRef.current = node;
+    },
+    [],
+  );
+  const openMobileNexus = useCallback(
+    (opener: HTMLButtonElement) => {
+      pendingMobileNexusOpenerRef.current = opener;
+      openRoot();
+    },
+    [openRoot],
+  );
+  const resolveMobileNexusReturnFocus = useCallback(() => {
+    const opener = pendingMobileNexusOpenerRef.current;
+    pendingMobileNexusOpenerRef.current = null;
+    if (opener?.isConnected) return opener;
+    const current = currentMobileNexusButtonRef.current;
+    return current?.isConnected ? current : null;
+  }, []);
   const waitingForViewport = controller.open && !viewport.hydrated;
   const workflow = desktopWorkflow({
     controller,
@@ -203,6 +276,7 @@ export default function Nexus() {
       <SwitchboardTask
         controller={controller}
         active={controller.open && viewport.isMobile}
+        returnFocusTo={resolveMobileNexusReturnFocus}
         activeAddDefect={addDefect?.sessionId === sessionId}
         onAddDefect={reportAddDefect}
         onClearAddDefect={clearAddDefect}
@@ -211,7 +285,8 @@ export default function Nexus() {
         <NexusButton
           paneCount={controller.paneCount}
           switchboardOpen={controller.open}
-          onOpen={controller.openRoot}
+          onOpen={openMobileNexus}
+          onButtonNodeChange={setCurrentMobileNexusButton}
         />
       ) : null}
       {!viewport.isMobile && !waitingForViewport ? (

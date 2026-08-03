@@ -9,12 +9,13 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from "react";
-import { apiFetch } from "@/lib/api/client";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
-  PDF_PASSWORD_PROTECTED_MESSAGE,
-  toFeedback,
-} from "@/components/feedback/Feedback";
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import type { PdfReaderResumeState } from "@/lib/reader/types";
 import type {
   ReaderPositionIntent,
@@ -264,6 +265,11 @@ interface ProjectedHighlightRect {
   height: number;
 }
 
+interface PendingCommittedHighlight {
+  highlight: PdfHighlightOut;
+  externalRefreshTokenAtCommit: number;
+}
+
 interface ViewerEventHandlers {
   pagechanging: (event: unknown) => void;
   pagesloaded: (event: unknown) => void;
@@ -450,13 +456,67 @@ function isLikelySignedUrlExpiryError(error: unknown): boolean {
   );
 }
 
-function toUserFacingError(error: unknown): string {
+function pdfReaderErrorMessage(error: unknown): string {
   if (isPasswordPdfError(error)) {
-    return PDF_PASSWORD_PROTECTED_MESSAGE;
+    const presentation = mediaErrorMessage({
+      kind: "Source",
+      processingStatus: "failed",
+      lastErrorCode: "E_PDF_PASSWORD_REQUIRED",
+      capabilities: { can_retry: false, can_refresh_source: false },
+      sourceUrl: null,
+    });
+    if (!presentation) {
+      // justify-defect: the canonical password projection is exhaustive.
+      throw new Error("PDF password failure has no canonical presentation.");
+    }
+    return presentation.title;
   }
-  return toFeedback(error, {
-    fallback: "Unable to load this PDF right now. Please retry.",
-  }).title;
+  if (isApiError(error)) {
+    if (isSameSystemApiDefect(error)) throw error;
+    switch (error.code) {
+      case "E_NETWORK":
+        return "Unable to load this PDF. Check your connection and retry.";
+      case "E_UPSTREAM":
+      case "E_UPSTREAM_TIMEOUT":
+        return "Unable to load this PDF. Retry in a moment.";
+      case "E_RATE_LIMITED":
+        return "Unable to load this PDF. Wait a moment, then retry.";
+      case "E_MEDIA_NOT_FOUND":
+      case "E_NOT_FOUND":
+      case "E_STORAGE_MISSING":
+      case "E_HIGHLIGHT_NOT_FOUND":
+        return "This PDF is no longer available.";
+      case "E_MEDIA_NOT_READY":
+        return "This PDF is still preparing.";
+      case "E_FORBIDDEN":
+        return "This account can’t open this PDF.";
+      case "E_STORAGE_ERROR":
+      case "E_SIGN_DOWNLOAD_FAILED":
+        return "Secure file access couldn’t be refreshed. Retry.";
+      case "E_BAD_REQUEST":
+      case "E_INVALID_REQUEST":
+      case "E_HIGHLIGHT_CONFLICT":
+        return "The PDF changed. Refresh the item, then retry.";
+      default:
+        throw error;
+    }
+  }
+  const name =
+    typeof error === "object" && error !== null
+      ? (error as { name?: unknown }).name
+      : null;
+  switch (name) {
+    case "InvalidPDFException":
+      return "This PDF file is invalid.";
+    case "MissingPDFException":
+      return "This PDF file is no longer available.";
+    case "UnexpectedResponseException":
+      return "Secure file access couldn’t be refreshed. Retry.";
+    default:
+      // justify-defect: unknown PDF.js and viewer lifecycle failures are not
+      // modeled product outcomes.
+      throw error;
+  }
 }
 
 function signedUrlAccessFromResponse(
@@ -508,6 +568,36 @@ function upsertCommittedPageHighlight(
   }
   return highlights.map((highlight, index) =>
     index === existingIndex ? committed : highlight,
+  );
+}
+
+function samePdfHighlightProjection(
+  left: PdfHighlightOut,
+  right: PdfHighlightOut,
+): boolean {
+  const leftQuads = left.anchor.quads;
+  const rightQuads = right.anchor.quads;
+  return (
+    left.id === right.id &&
+    left.color === right.color &&
+    left.exact === right.exact &&
+    left.anchor.media_id === right.anchor.media_id &&
+    left.anchor.page_number === right.anchor.page_number &&
+    leftQuads.length === rightQuads.length &&
+    leftQuads.every((leftQuad, index) => {
+      const rightQuad = rightQuads[index];
+      return (
+        rightQuad !== undefined &&
+        leftQuad.x1 === rightQuad.x1 &&
+        leftQuad.y1 === rightQuad.y1 &&
+        leftQuad.x2 === rightQuad.x2 &&
+        leftQuad.y2 === rightQuad.y2 &&
+        leftQuad.x3 === rightQuad.x3 &&
+        leftQuad.y3 === rightQuad.y3 &&
+        leftQuad.x4 === rightQuad.x4 &&
+        leftQuad.y4 === rightQuad.y4
+      );
+    })
   );
 }
 
@@ -742,6 +832,7 @@ export default function PdfReader({
   const [navigating, setNavigating] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   const [pageNumber, setPageNumber] = useState(startPageNumberRef.current ?? 1);
   const [numPages, setNumPages] = useState(0);
   const [zoom, setZoom] = useState(startZoomRef.current ?? 1);
@@ -753,8 +844,27 @@ export default function PdfReader({
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const reportReaderError = useCallback((failure: unknown) => {
+    try {
+      setError(pdfReaderErrorMessage(failure));
+    } catch (defect) {
+      setAsyncDefect({ error: defect });
+    }
+  }, []);
+  const reportSelectionError = useCallback((failure: unknown) => {
+    try {
+      setSelectionError(pdfReaderErrorMessage(failure));
+    } catch (defect) {
+      setAsyncDefect({ error: defect });
+    }
+  }, []);
   const highlightCreationInFlightRef = useRef(false);
-  const [pageHighlights, setPageHighlights] = useState<PdfHighlightOut[]>([]);
+  const [pendingCommittedHighlights, setPendingCommittedHighlights] = useState<
+    PendingCommittedHighlight[]
+  >([]);
+  const [serverPageHighlights, setServerPageHighlights] = useState<
+    PdfHighlightOut[]
+  >([]);
   const [signedUrlRefreshToken, setSignedUrlRefreshToken] = useState(0);
   const [localHighlightRefreshToken, setLocalHighlightRefreshToken] =
     useState(0);
@@ -841,12 +951,37 @@ export default function PdfReader({
         : null,
     load: (signal) => loadPageHighlights(mediaId, pageNumber, signal),
   });
+  const pageHighlights = useMemo(() => {
+    let projected = serverPageHighlights.filter(
+      (highlight) =>
+        highlight.anchor.media_id === mediaId &&
+        highlight.anchor.page_number === pageNumber,
+    );
+    for (const pending of pendingCommittedHighlights) {
+      const committed = pending.highlight;
+      if (
+        committed.anchor.media_id === mediaId &&
+        committed.anchor.page_number === pageNumber
+      ) {
+        projected = upsertCommittedPageHighlight(projected, committed);
+      }
+    }
+    return projected;
+  }, [mediaId, pageNumber, pendingCommittedHighlights, serverPageHighlights]);
 
   // Latest-value refs read by async callbacks (event handlers, RAF, etc.).
   onPageHighlightsChangeRef.current = onPageHighlightsChange;
   onHighlightTapRef.current = onHighlightTap;
   onHighlightHoverRef.current = onHighlightHover;
   isMobileRef.current = isMobile;
+
+  useEffect(() => {
+    setPendingCommittedHighlights([]);
+  }, [mediaId]);
+
+  useEffect(() => {
+    onPageHighlightsChangeRef.current?.(pageNumber, pageHighlights);
+  }, [pageHighlights, pageNumber]);
 
   useEffect(() => {
     return () => {
@@ -987,13 +1122,6 @@ export default function PdfReader({
     }
     settleReaderPositioning();
   }, [mobileChromeEnabled, settleReaderPositioning]);
-
-  useEffect(() => {
-    if (error === null) {
-      return;
-    }
-    settleReaderPositioning();
-  }, [error, settleReaderPositioning]);
 
   useEffect(() => () => settleReaderPositioning(), [settleReaderPositioning]);
 
@@ -1139,11 +1267,19 @@ export default function PdfReader({
       publishPendingSemanticViewport,
     );
   }, [publishPendingSemanticViewport]);
-  const invalidateSemanticViewportLayout = useCallback(() => {
+  const invalidateSemanticViewport = useCallback(() => {
     semanticLayoutGenerationRef.current += 1;
     latestSemanticViewportRef.current = null;
     onSemanticViewportChangeRef.current?.(null);
   }, []);
+
+  useEffect(() => {
+    if (error === null) {
+      return;
+    }
+    settleReaderPositioning();
+    invalidateSemanticViewport();
+  }, [error, invalidateSemanticViewport, settleReaderPositioning]);
 
   const applyStartPageProgression = useCallback(() => {
     const targetProgression = pendingStartPageProgressionRef.current;
@@ -1188,13 +1324,13 @@ export default function PdfReader({
       return;
     }
     const observer = new ResizeObserver(() => {
-      invalidateSemanticViewportLayout();
+      invalidateSemanticViewport();
       scheduleSemanticViewportCapture();
     });
     observer.observe(viewport);
     observer.observe(content);
     return () => observer.disconnect();
-  }, [invalidateSemanticViewportLayout, scheduleSemanticViewportCapture]);
+  }, [invalidateSemanticViewport, scheduleSemanticViewportCapture]);
 
   const getTextLayerRootForPage = useCallback(
     (targetPage: number): HTMLElement | null => {
@@ -1442,8 +1578,7 @@ export default function PdfReader({
 
       if (targetPage !== pageNumberRef.current) {
         clearSelection();
-        setPageHighlights([]);
-        onPageHighlightsChangeRef.current?.(targetPage, []);
+        setServerPageHighlights([]);
       }
       pageNumberRef.current = targetPage;
       setPageNumber(targetPage);
@@ -1893,8 +2028,7 @@ export default function PdfReader({
         setNavigating(false);
         if (pageChanged) {
           clearSelection();
-          setPageHighlights([]);
-          onPageHighlightsChangeRef.current?.(nextPage, []);
+          setServerPageHighlights([]);
         }
         rememberPageScale(nextPage);
         setTextLayerUsable(isTextLayerUsableForPage(nextPage));
@@ -1925,7 +2059,7 @@ export default function PdfReader({
                 "pagesloaded/currentScaleValue",
               );
             } catch (error) {
-              setError(toUserFacingError(error));
+              reportReaderError(error);
             } finally {
               pendingViewerScaleRef.current = null;
             }
@@ -1944,7 +2078,7 @@ export default function PdfReader({
                 "pagesloaded/currentPageNumber",
               );
             } catch (error) {
-              setError(toUserFacingError(error));
+              reportReaderError(error);
             } finally {
               pendingViewerPageRef.current = null;
             }
@@ -1964,7 +2098,7 @@ export default function PdfReader({
             );
           }
           scheduleIntrinsicWidthPublish();
-          invalidateSemanticViewportLayout();
+          invalidateSemanticViewport();
           scheduleSemanticViewportCapture();
         });
         const findRuntime = pendingPdfFindRuntimeRef.current;
@@ -1988,7 +2122,7 @@ export default function PdfReader({
           : pageNumberRef.current;
 
         markPageSurface(renderedPage, event.source);
-        invalidateSemanticViewportLayout();
+        invalidateSemanticViewport();
         rememberPageScale(renderedPage, event.source);
         const renderedZoom = readViewerZoom(pdfViewer) ?? zoomRef.current;
         if (!event.error) {
@@ -2072,7 +2206,9 @@ export default function PdfReader({
           return;
         }
         if (!expiryError) {
-          console.error("PDF annotation layer render failed:", event.error);
+          setAsyncDefect({
+            error: toViewerLifecycleError("annotationlayerrendered", event.error),
+          });
         }
       };
 
@@ -2100,11 +2236,12 @@ export default function PdfReader({
       clearSelection,
       evaluatePageGeometryReliability,
       ensurePdfJsViewer,
-      invalidateSemanticViewportLayout,
+      invalidateSemanticViewport,
       isTextLayerUsableForPage,
       markPageSurface,
       mediaId,
       readerScrollPositioner,
+      reportReaderError,
       rememberPageScale,
       restorePdfFindOrigin,
       revealPdfFindMatch,
@@ -2138,7 +2275,7 @@ export default function PdfReader({
           typeof value === "string" && value.length > 0,
       );
       semanticSourceKeyRef.current = `${mediaId}:pdf:${fingerprint ?? runId}`;
-      invalidateSemanticViewportLayout();
+      invalidateSemanticViewport();
 
       const boundedPage = clamp(targetPage, 1, doc.numPages);
       pageNumberRef.current = boundedPage;
@@ -2172,7 +2309,7 @@ export default function PdfReader({
     },
     [
       initializeViewerIfNeeded,
-      invalidateSemanticViewportLayout,
+      invalidateSemanticViewport,
       mediaId,
       removeOverlayLayers,
     ],
@@ -2468,11 +2605,23 @@ export default function PdfReader({
 
         if (
           createdHighlight?.anchor.type === "pdf_page_geometry" &&
-          createdHighlight.anchor.page_number === pageNumberRef.current
+          createdHighlight.anchor.media_id === mediaId
         ) {
-          setPageHighlights((current) =>
-            upsertCommittedPageHighlight(current, createdHighlight),
-          );
+          setPendingCommittedHighlights((current) => {
+            const pending: PendingCommittedHighlight = {
+              highlight: createdHighlight,
+              externalRefreshTokenAtCommit: highlightRefreshToken,
+            };
+            const existingIndex = current.findIndex(
+              (candidate) => candidate.highlight.id === createdHighlight.id,
+            );
+            if (existingIndex < 0) {
+              return [...current, pending];
+            }
+            return current.map((candidate, index) =>
+              index === existingIndex ? pending : candidate,
+            );
+          });
         }
         setLocalHighlightRefreshToken((value) => value + 1);
         onHighlightsMutated?.();
@@ -2480,7 +2629,7 @@ export default function PdfReader({
         return createdHighlight;
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return null;
-        setSelectionError(toUserFacingError(err));
+        reportSelectionError(err);
         return null;
       } finally {
         highlightCreationInFlightRef.current = false;
@@ -2492,6 +2641,7 @@ export default function PdfReader({
       buildSelectionQuads,
       clearSelection,
       editingHighlightId,
+      highlightRefreshToken,
       mediaId,
       pageHighlights,
       resolveTextLayerRootFromRange,
@@ -2499,6 +2649,7 @@ export default function PdfReader({
       textGeometryReliable,
       textLayerUsable,
       onHighlightsMutated,
+      reportSelectionError,
     ],
   );
 
@@ -2553,8 +2704,7 @@ export default function PdfReader({
       let waitsForRender = false;
       setNavigating(true);
       clearSelection();
-      setPageHighlights([]);
-      onPageHighlightsChangeRef.current?.(nextPage, []);
+      setServerPageHighlights([]);
       pageNumberRef.current = nextPage;
       setPageNumber(nextPage);
 
@@ -2590,7 +2740,7 @@ export default function PdfReader({
           requestSignedUrlRecovery(nextPage, currentRun);
         } else {
           waitsForRender = false;
-          setError(toUserFacingError(err));
+          reportReaderError(err);
         }
       } finally {
         if (currentRun === runRef.current) {
@@ -2607,6 +2757,7 @@ export default function PdfReader({
       numPages,
       pageHasRenderedAtZoom,
       requestSignedUrlRecovery,
+      reportReaderError,
       settleReaderPositioning,
       waitForReaderPositioningRender,
     ],
@@ -2809,7 +2960,7 @@ export default function PdfReader({
         try {
           applyViewerScale(viewer, zoom, "zoomEffect/currentScaleValue");
         } catch (error) {
-          setError(toUserFacingError(error));
+          reportReaderError(error);
           return;
         }
       } else {
@@ -2819,7 +2970,7 @@ export default function PdfReader({
       setPageScale(zoom);
       setPageRenderEpoch((value) => value + 1);
       window.requestAnimationFrame(() => {
-        invalidateSemanticViewportLayout();
+        invalidateSemanticViewport();
         setTextGeometryReliable(
           evaluatePageGeometryReliability(pageNumberRef.current),
         );
@@ -2829,8 +2980,9 @@ export default function PdfReader({
     });
   }, [
     evaluatePageGeometryReliability,
-    invalidateSemanticViewportLayout,
+    invalidateSemanticViewport,
     readerScrollPositioner,
+    reportReaderError,
     scheduleIntrinsicWidthPublish,
     scheduleSemanticViewportCapture,
     zoom,
@@ -2860,7 +3012,7 @@ export default function PdfReader({
     setReaderRestoreSettled(false);
     setSelection(null);
     setSelectionError(null);
-    setPageHighlights([]);
+    setServerPageHighlights([]);
     setTextLayerUsable(false);
     setTextGeometryReliable(true);
     pageNumberRef.current = startPage;
@@ -2915,7 +3067,11 @@ export default function PdfReader({
     let active = true;
 
     if (signedUrlResource.status === "error") {
-      setError(toUserFacingError(signedUrlResource.error));
+      if (handleUnauthenticatedApiError(signedUrlResource.error)) {
+        setLoading(false);
+        return;
+      }
+      reportReaderError(signedUrlResource.error);
       setLoading(false);
       setRecovering(false);
       recoveringFromRenderErrorRef.current = false;
@@ -2946,7 +3102,7 @@ export default function PdfReader({
       } catch (err) {
         if (active && runId === runRef.current) {
           onFindRuntimeReadyRef.current?.(null);
-          setError(toUserFacingError(err));
+          if (!handleUnauthenticatedApiError(err)) reportReaderError(err);
         }
       } finally {
         if (active && runId === runRef.current) {
@@ -2966,6 +3122,7 @@ export default function PdfReader({
     attachDocumentToViewer,
     openDocument,
     replaceDocument,
+    reportReaderError,
     signedUrlResource,
     teardownViewer,
   ]);
@@ -2978,15 +3135,39 @@ export default function PdfReader({
       return;
     }
     if (pageHighlightsResource.status === "error") {
-      setSelectionError("Failed to load PDF highlights for this page.");
+      if (!handleUnauthenticatedApiError(pageHighlightsResource.error)) {
+        reportSelectionError(pageHighlightsResource.error);
+      }
       return;
     }
-    setPageHighlights(pageHighlightsResource.data);
-    onPageHighlightsChangeRef.current?.(
-      pageNumber,
-      pageHighlightsResource.data,
+    setServerPageHighlights(pageHighlightsResource.data);
+    setPendingCommittedHighlights((current) =>
+      current.filter((pending) => {
+        const committed = pending.highlight;
+        if (committed.anchor.media_id !== mediaId) {
+          return false;
+        }
+        if (committed.anchor.page_number !== pageNumber) {
+          return true;
+        }
+        const acknowledged = pageHighlightsResource.data.some((highlight) =>
+          samePdfHighlightProjection(highlight, committed),
+        );
+        if (acknowledged) {
+          return false;
+        }
+        return (
+          pending.externalRefreshTokenAtCommit === highlightRefreshToken
+        );
+      }),
     );
-  }, [pageHighlightsResource, pageNumber]);
+  }, [
+    highlightRefreshToken,
+    mediaId,
+    pageHighlightsResource,
+    pageNumber,
+    reportSelectionError,
+  ]);
 
   useEffect(() => {
     document.addEventListener("selectionchange", syncSelectionFromWindow);
@@ -3345,7 +3526,7 @@ export default function PdfReader({
         try {
           applyPdfViewportPage(boundedPage, "ReaderRestore");
         } catch (error) {
-          setError(toUserFacingError(error));
+          reportReaderError(error);
           settleReaderPositioning();
           viewportIntentRef.current = null;
           readerRestoreSettledRef.current = true;
@@ -3382,6 +3563,7 @@ export default function PdfReader({
       beginReaderPositioning,
       numPages,
       pageHasRenderedAtZoom,
+      reportReaderError,
       scheduleSemanticViewportCapture,
       settleReaderPositioning,
       waitForReaderPositioningRender,
@@ -3452,6 +3634,8 @@ export default function PdfReader({
     showBusy,
     zoomPercent,
   ]);
+
+  if (asyncDefect) throw asyncDefect.error;
 
   const selectionPopoverProps =
     selection && viewerContainerRef.current

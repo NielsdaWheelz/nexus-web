@@ -12,7 +12,7 @@ export function AuthenticatedShellSkeleton() {
     <div className={layout.layout} data-testid="shell-skeleton">
       <div className={styles.rail} aria-hidden />
       <main className={layout.main}>
-        <PaneLoadingState />
+        <PaneLoadingState label="Loading workspace…" announcement="None" />
       </main>
     </div>
   );

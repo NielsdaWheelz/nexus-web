@@ -11,7 +11,6 @@ import {
   type ReaderFocusMode,
 } from "@/lib/reader/types";
 import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import SectionOpener from "@/components/ui/SectionOpener";
@@ -44,7 +43,7 @@ export default function SettingsReaderPaneBody() {
     setColumnWidth,
     retrySave,
   } = useReaderContext();
-  const { suppressDedupeKey } = useFeedback();
+  const { suppress } = useFeedback();
   const isActive = usePaneIsActive();
   usePaneReturnReady(true);
 
@@ -56,8 +55,8 @@ export default function SettingsReaderPaneBody() {
     if (!isActive) {
       return;
     }
-    return suppressDedupeKey(READER_PROFILE_SAVE_FEEDBACK_KEY);
-  }, [isActive, suppressDedupeKey]);
+    return suppress(READER_PROFILE_SAVE_FEEDBACK_KEY);
+  }, [isActive, suppress]);
 
   // Controls stay interactive while Pending or SaveFailed; only the terminal
   // Forbidden state disables persistence controls.
@@ -71,13 +70,18 @@ export default function SettingsReaderPaneBody() {
     <PaneSurface opener={<SectionOpener heading="Reader" />}>
       <PaneSection title="Appearance">
         {isActive && failure && (
-          <FeedbackNotice severity="error" {...toReaderProfileSaveErrorMessage(failure)}>
-            {persistence.state === "SaveFailed" && (
-              <Button variant="secondary" onClick={retrySave}>
-                Retry
-              </Button>
-            )}
-          </FeedbackNotice>
+          <FeedbackNotice
+            content={{
+              tone: "Danger",
+              ...toReaderProfileSaveErrorMessage(failure),
+            }}
+            announcement="Assertive"
+            actions={
+              persistence.state === "SaveFailed"
+                ? [{ label: "Retry", onClick: retrySave }]
+                : undefined
+            }
+          />
         )}
 
         <div className={styles.form}>

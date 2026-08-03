@@ -107,6 +107,7 @@ interface PodcastEpisodeListProps {
   busyEpisodeActionKeys: StringIdSet;
   markingEpisodeIds: StringIdSet;
   expandedShowNotesMediaIds: StringIdSet;
+  unconfirmedMetadataMediaIds: ReadonlySet<string>;
   lecternItemsByMediaId: ReadonlyMap<string, LecternItemId>;
   playNextDisabledMediaId: string | null;
   /** Whether the Lectern snapshot is Ready; its mutations defect until then. */
@@ -149,6 +150,7 @@ export default function PodcastEpisodeList({
   busyEpisodeActionKeys,
   markingEpisodeIds,
   expandedShowNotesMediaIds,
+  unconfirmedMetadataMediaIds,
   lecternItemsByMediaId,
   playNextDisabledMediaId,
   lecternReady,
@@ -232,7 +234,9 @@ export default function PodcastEpisodeList({
               },
             }
           : { kind: "Unavailable" },
-        retryMetadata: episode.capabilities.can_retry_metadata
+        retryMetadata:
+          episode.capabilities.can_retry_metadata &&
+          !unconfirmedMetadataMediaIds.has(episode.id)
           ? {
               kind: "Available",
               execute: async () => {
@@ -565,14 +569,15 @@ export default function PodcastEpisodeList({
         empty={
           !error && (localFilterActive || !loading) ? (
             <FeedbackNotice
-              severity="neutral"
-              title={
-                localFilterActive
+              content={{
+                tone: "Neutral",
+                title: localFilterActive
                   ? !loading && exhaustion.kind === "Complete"
                     ? "No episodes match this filter."
                     : "No matching episode found so far."
-                  : "No episodes found for this podcast."
-              }
+                  : "No episodes found for this podcast.",
+              }}
+              announcement="None"
             />
           ) : null
         }

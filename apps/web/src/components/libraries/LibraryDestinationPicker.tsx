@@ -295,9 +295,15 @@ export default function LibraryDestinationPicker({
         : null;
 
   const chooserError = error
-    ? { message: error, onRetry: () => setRetryNonce((n) => n + 1) }
+    ? {
+        content: { tone: "Danger" as const, title: error },
+        onRetry: () => setRetryNonce((n) => n + 1),
+      }
     : moreError
-      ? { message: moreError, onRetry: () => void loadMore() }
+      ? {
+          content: { tone: "Danger" as const, title: moreError },
+          onRetry: () => void loadMore(),
+        }
       : null;
 
   if (defect) throw defect.error;

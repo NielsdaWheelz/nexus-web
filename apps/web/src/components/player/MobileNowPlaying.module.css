@@ -50,9 +50,10 @@
   gap: var(--space-4);
   overflow-x: hidden;
   overflow-y: auto;
-  padding: var(--space-5) max(var(--space-5), var(--viewport-safe-right))
-    max(var(--space-6), var(--viewport-safe-bottom))
-    max(var(--space-5), var(--viewport-safe-left));
+  margin-right: var(--viewport-safe-right);
+  margin-bottom: var(--viewport-safe-bottom);
+  margin-left: var(--viewport-safe-left);
+  padding: var(--space-5) var(--space-5) var(--space-6);
 }
 
 .artworkField {

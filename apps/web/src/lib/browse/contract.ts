@@ -12,6 +12,7 @@ import {
   parseMediaImageProxySrc,
   type MediaImageProxySrc,
 } from "@/lib/media/imageProxy";
+import { BROWSE_KINDS, BROWSE_SOURCES } from "./plan";
 
 declare const DISCOVERY_TARGET_HANDLE: unique symbol;
 
@@ -279,21 +280,6 @@ export function browsePreviewHref(target: DiscoveryTargetHandle): string {
   return `/browse/preview?target=${encodeURIComponent(target)}`;
 }
 
-const BROWSE_KINDS: readonly BrowseKind[] = [
-  "Pdf",
-  "Epub",
-  "WebArticle",
-  "Video",
-  "Podcast",
-];
-const BROWSE_SOURCES: readonly BrowseSource[] = [
-  "Nexus",
-  "ProjectGutenberg",
-  "Brave",
-  "YouTube",
-  "PodcastIndex",
-];
-
 function string(raw: unknown, context: string): string {
   if (typeof raw !== "string" || raw.length === 0) {
     throw new TypeError(`${context} must be a non-empty string`);
@@ -317,6 +303,14 @@ function literal<T extends string>(
     throw new TypeError(`${context} has an unsupported value`);
   }
   return raw as T;
+}
+
+function browseKind(raw: unknown, context: string): BrowseKind {
+  const kind = literal(raw, BROWSE_KINDS, context);
+  if (kind === "All") {
+    throw new TypeError(`${context} has an unsupported value`);
+  }
+  return kind;
 }
 
 function nonnegativeInteger(raw: unknown, context: string): number {
@@ -449,7 +443,7 @@ function decodeCandidate(raw: unknown, index: number): BrowseCandidate {
     ],
     context,
   );
-  const kind = literal(value.kind, BROWSE_KINDS, `${context}.kind`);
+  const kind = browseKind(value.kind, `${context}.kind`);
   const source = literal(value.source, BROWSE_SOURCES, `${context}.source`);
   const common = decodeCommon(value, context);
   const resolution = decodeResolution(
@@ -556,7 +550,7 @@ export function decodeBrowsePage(raw: unknown): BrowsePage {
   }
   return {
     query: string(value.query, "BrowsePage.query"),
-    kind: literal(value.kind, BROWSE_KINDS, "BrowsePage.kind"),
+    kind: browseKind(value.kind, "BrowsePage.kind"),
     source: literal(value.source, BROWSE_SOURCES, "BrowsePage.source"),
     sort: decodePresence(value.sort, (raw) =>
       literal(raw, ["Relevance", "Newest"] as const, "BrowsePage.sort.value"),

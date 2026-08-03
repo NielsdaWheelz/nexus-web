@@ -11,7 +11,7 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
-import { toMediaCaptureFeedback } from "@/lib/media/captureFeedback";
+import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import { type DocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import { isRecord } from "@/lib/validation";
 
@@ -337,15 +337,13 @@ function uncertainUpload(
   identity: { mediaId: string; sourceAttemptId: string },
   error?: unknown,
 ): UploadIngestResult {
-  const feedback = toMediaCaptureFeedback(
-    error,
-    "Nexus accepted this file, but its upload status could not be confirmed.",
-  );
+  // The mapper owns tone (ConfirmUpload is Warning); do not re-author it here.
+  const feedback = mediaCaptureErrorMessage(error, "ConfirmUpload");
   return {
     kind: "AcceptedUncertain",
     mediaId: identity.mediaId,
     sourceAttemptId: identity.sourceAttemptId,
-    feedback: { ...feedback, severity: "warning" },
+    feedback,
   };
 }
 

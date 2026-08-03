@@ -8,8 +8,8 @@
 .bar {
   height: 0.75em;
   border-radius: var(--radius-xs);
-  background: var(--surface-3);
-  animation: pane-loading-pulse 1800ms ease-in-out infinite;
+  background: color-mix(in srgb, var(--ink-faint) 20%, var(--surface-2));
+  animation: pane-loading-pulse calc(var(--duration-deliberate) * 3) ease-in-out infinite;
 }
 
 .bar:nth-child(1) {
@@ -31,5 +31,12 @@
   }
   50% {
     opacity: 0.7;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar {
+    animation: none;
+    opacity: 0.55;
   }
 }

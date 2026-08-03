@@ -1,13 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import {
   FieldFeedback,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import { apiFetch } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import {
@@ -22,6 +25,35 @@ import styles from "./oracle.module.css";
 
 const QUESTION_MAX = 280;
 
+function oracleCreateErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "The reading couldn’t begin",
+        message: "Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title: "The oracle is busy",
+        message: "Wait a moment, then retry.",
+        requestId: error.requestId,
+      };
+    case "E_TOKEN_BUDGET_EXCEEDED":
+      return {
+        tone: "Danger",
+        title: "The reading couldn’t begin",
+        message: "The platform AI allowance has been reached.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
 export default function OracleLandingPaneBody() {
   const activateTarget = requirePaneRuntime(
     usePaneRuntime(),
@@ -32,6 +64,8 @@ export default function OracleLandingPaneBody() {
   const [question, setQuestion] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<FeedbackContent | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const questionErrorId = useId();
   // Pane bodies are lazy chunks: on a cold load the Suspense boundary suspends and
   // remounts at hydration, so an SSR-visible controlled textarea filled before the
   // chunk lands would have its value stranded/reset. Keep the input inert until this
@@ -48,7 +82,7 @@ export default function OracleLandingPaneBody() {
       const cleaned = question.trim();
       if (cleaned.length === 0 || cleaned.length > QUESTION_MAX) {
         setSubmitError({
-          severity: "error",
+          tone: "Danger",
           title:
             cleaned.length === 0
               ? "Ask one question."
@@ -70,11 +104,11 @@ export default function OracleLandingPaneBody() {
         });
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
-        setSubmitError(
-          toFeedback(error, {
-            fallback: "The oracle could not begin a reading. Please try again.",
-          }),
-        );
+        try {
+          setSubmitError(oracleCreateErrorMessage(error));
+        } catch (caughtDefect) {
+          setDefect({ error: caughtDefect });
+        }
         setSubmitting(false);
       }
     },
@@ -82,6 +116,7 @@ export default function OracleLandingPaneBody() {
   );
 
   const remaining = QUESTION_MAX - question.length;
+  if (defect) throw defect.error;
 
   return (
     <OracleThemeWrapper>
@@ -103,6 +138,8 @@ export default function OracleLandingPaneBody() {
               rows={3}
               disabled={submitting || !mounted}
               aria-label="Oracle question"
+              aria-invalid={submitError !== null || undefined}
+              aria-describedby={submitError === null ? undefined : questionErrorId}
             />
             <div className={styles.askMeta}>
               <span className={styles.askCount} aria-live="polite">
@@ -116,7 +153,7 @@ export default function OracleLandingPaneBody() {
                 {submitting ? "Consulting…" : "Consult the oracle"}
               </button>
             </div>
-            <FieldFeedback feedback={submitError} />
+            <FieldFeedback id={questionErrorId} content={submitError} />
           </form>
 
           <OracleAlephGrid />

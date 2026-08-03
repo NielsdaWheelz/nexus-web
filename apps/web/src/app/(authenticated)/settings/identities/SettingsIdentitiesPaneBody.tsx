@@ -68,7 +68,10 @@ export default function SettingsIdentitiesPaneBody() {
   });
   const [identities, setIdentities] = useState<LinkedIdentity[]>([]);
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const [notice, setNotice] = useState<FeedbackContent | null>(null);
+  const [loadFailure, setLoadFailure] = useState<"Initial" | "Refresh" | null>(
+    null,
+  );
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [unlinkingIdentityId, setUnlinkingIdentityId] = useState<string | null>(
     null
   );
@@ -81,15 +84,21 @@ export default function SettingsIdentitiesPaneBody() {
   // Imperative refresh after mutations (unlink, password change). The initial
   // load is owned by useResource above; this re-reads the server action.
   const loadIdentities = useCallback(async () => {
-    const result = await loadLinkedIdentities();
-    if (!result.ok) {
-      setError({ severity: "error", title: LOAD_FAILED_MESSAGE });
-      setIdentities([]);
-      return;
-    }
+    try {
+      const result = await loadLinkedIdentities();
+      if (!result.ok) {
+        setError({ tone: "Danger", title: LOAD_FAILED_MESSAGE });
+        setLoadFailure("Refresh");
+        setIdentities([]);
+        return;
+      }
 
-    setIdentities(result.identities);
-    setError(null);
+      setIdentities(result.identities);
+      setError(null);
+      setLoadFailure(null);
+    } catch (caughtDefect) {
+      setDefect({ error: caughtDefect });
+    }
   }, []);
 
   useEffect(() => {
@@ -97,8 +106,10 @@ export default function SettingsIdentitiesPaneBody() {
     if (initialIdentities.data.ok) {
       setIdentities(initialIdentities.data.identities);
       setError(null);
+      setLoadFailure(null);
     } else {
-      setError({ severity: "error", title: LOAD_FAILED_MESSAGE });
+      setError({ tone: "Danger", title: LOAD_FAILED_MESSAGE });
+      setLoadFailure("Initial");
       setIdentities([]);
     }
   }, [initialIdentities]);
@@ -111,12 +122,13 @@ export default function SettingsIdentitiesPaneBody() {
   const handleUnlinkIdentity = useCallback(
     async (identity: LinkedIdentity) => {
       if (!mayUnlinkIdentity(identities, identity.id)) {
-        setError({ severity: "error", title: KEEP_ONE_IDENTITY_MESSAGE });
+        setError({ tone: "Danger", title: KEEP_ONE_IDENTITY_MESSAGE });
+        setLoadFailure(null);
         return;
       }
 
       setError(null);
-      setNotice(null);
+      setLoadFailure(null);
       setUnlinkingIdentityId(identity.id);
 
       try {
@@ -125,15 +137,14 @@ export default function SettingsIdentitiesPaneBody() {
           identity.provider
         );
         if (!result.ok) {
-          setError({ severity: "error", title: UNLINK_FAILED_MESSAGE });
+          setError({ tone: "Danger", title: UNLINK_FAILED_MESSAGE });
+          setLoadFailure(null);
           return;
         }
 
-        setNotice({
-          severity: "success",
-          title: `${formatIdentityProvider(identity.provider)} sign-in was removed.`,
-        });
         await loadIdentities();
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
       } finally {
         setUnlinkingIdentityId(null);
       }
@@ -141,21 +152,44 @@ export default function SettingsIdentitiesPaneBody() {
     [identities, loadIdentities]
   );
 
+  if (initialIdentities.status === "error") throw initialIdentities.error;
+  if (defect !== null) throw defect.error;
+
   return (
     <PaneSurface opener={<SectionOpener heading="Linked Identities" />}>
       <PaneSection>
         <div className={styles.content}>
-        {loading && <PaneLoadingState />}
-        {error ? <FeedbackNotice feedback={error} /> : null}
-        {notice ? <FeedbackNotice feedback={notice} /> : null}
+        {loading && (
+          <PaneLoadingState label="Loading identities…" announcement="Polite" />
+        )}
+        {error ? (
+          <FeedbackNotice
+            content={error}
+            announcement="Assertive"
+            actions={
+              loadFailure === null
+                ? undefined
+                : [
+                    {
+                      label: "Retry",
+                      onClick: () => void loadIdentities(),
+                    },
+                  ]
+            }
+          />
+        ) : null}
 
-        {!loading && identities.length === 0 && (
-          <FeedbackNotice severity="neutral">
-            No linked identities were found for this account.
-          </FeedbackNotice>
+        {!loading && loadFailure === null && identities.length === 0 && (
+          <FeedbackNotice
+            content={{
+              tone: "Neutral",
+              title: "No linked identities were found for this account.",
+            }}
+            announcement="Polite"
+          />
         )}
 
-        {!loading && identities.length > 0 && (
+        {!loading && loadFailure === null && identities.length > 0 && (
           <CollectionView
             returnScope="Settings.Identities.Linked"
             rows={identities.map((identity) => {
@@ -186,12 +220,18 @@ export default function SettingsIdentitiesPaneBody() {
           />
         )}
 
-        <PasswordRow identities={identities} onChanged={loadIdentities} />
+        {loadFailure === null ? (
+          <PasswordRow identities={identities} onChanged={loadIdentities} />
+        ) : null}
 
-        {connectableProviders.length === 0 ? (
-          <FeedbackNotice severity="success">
-            Google and GitHub are already linked for this account.
-          </FeedbackNotice>
+        {loadFailure !== null ? null : connectableProviders.length === 0 ? (
+          <FeedbackNotice
+            content={{
+              tone: "Neutral",
+              title: "Google and GitHub are already linked for this account.",
+            }}
+            announcement="None"
+          />
         ) : (
           <div className={styles.linkButtons}>
             {connectableProviders.map((provider) => (

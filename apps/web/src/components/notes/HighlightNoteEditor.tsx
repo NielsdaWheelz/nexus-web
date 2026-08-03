@@ -1,7 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  useFeedback,
+  type FeedbackAnnouncement,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import {
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -17,7 +26,89 @@ import NoteBodyEditor from "@/components/notes/NoteBodyEditor";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { isRecord } from "@/lib/validation";
+import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import styles from "./HighlightNoteEditor.module.css";
+
+type HighlightNoteOperation = "Save" | "OpenLinkedObject";
+
+function highlightNoteErrorMessage(
+  error: unknown,
+  operation: HighlightNoteOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  const title =
+    operation === "Save" ? "Highlight note wasn’t saved" : "Linked object wasn’t opened";
+  const requestId = error.requestId;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and try again.",
+        requestId,
+      };
+    case "E_UPSTREAM_TIMEOUT":
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Please wait a moment, then try again.",
+        requestId,
+      };
+    case "E_NOT_FOUND":
+      if (operation !== "Save") throw error;
+      return {
+        tone: "Danger",
+        title: "This highlight is no longer available",
+        message: "Copy any unsaved note text before refreshing the reader.",
+        requestId,
+      };
+    case "E_NOTE_CONFLICT":
+      if (operation !== "Save") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "This note changed elsewhere. Discard this draft or refresh the reader.",
+        requestId,
+      };
+    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
+      if (operation !== "Save") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "This saved request no longer matches the draft. Discard it and try again.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
+function attachmentErrorMessage(error: unknown): FeedbackContent {
+  if (isApiError(error)) {
+    return mediaCaptureErrorMessage(error, "AddAttachment");
+  }
+  if (!(error instanceof Error)) throw error;
+
+  const modeledLocalFailure =
+    error.message === "Select the note body or empty it before attaching a file." ||
+    error.message === "Attach one file at a time here." ||
+    error.message === "Only PDF and EPUB files are supported." ||
+    /^(PDF|EPUB) files must not be empty\.$/.test(error.message) ||
+    /^(PDF|EPUB) files must be \d+ MB or smaller\.$/.test(error.message) ||
+    error.message === "Couldn’t save";
+  if (!modeledLocalFailure) throw error;
+
+  return {
+    tone: "Danger",
+    title: "Attachment wasn’t added",
+    message:
+      error.message === "Couldn’t save"
+        ? "Check the URL and try again."
+        : error.message,
+  };
+}
 
 export default function HighlightNoteEditor({
   highlightId,
@@ -48,6 +139,15 @@ export default function HighlightNoteEditor({
   onOpenLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
 }) {
   const feedback = useFeedback();
+  const [saveFailure, setSaveFailure] = useState<FeedbackContent | null>(null);
+  // Announcement is decided by the situation, not derived from tone (Rule 10):
+  // a blocking attachment failure is Assertive; a harmless "attached, but
+  // source processing failed" degradation is Polite.
+  const [attachmentFeedback, setAttachmentFeedback] = useState<{
+    content: FeedbackContent;
+    announcement: FeedbackAnnouncement;
+  } | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const editVersionRef = useRef(0);
   const persistedBlockIdRef = useRef<string | null>(
     note?.note_block_id ?? null,
@@ -147,7 +247,11 @@ export default function HighlightNoteEditor({
     draftMetadata: () => ({ blockId: draftBlockId }),
     onError: (error) => {
       if (handleUnauthenticatedApiError(error)) return;
-      feedback.show(toFeedback(error, { fallback: "Failed to save note" }));
+      try {
+        setSaveFailure(highlightNoteErrorMessage(error, "Save"));
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+      }
     },
   });
   const {
@@ -187,6 +291,7 @@ export default function HighlightNoteEditor({
   const scheduleSave = useCallback(
     (body: NoteBodyValue) => {
       editVersionRef.current += 1;
+      setSaveFailure(null);
       onLocalChange?.();
       scheduleSessionSave(body);
     },
@@ -211,9 +316,20 @@ export default function HighlightNoteEditor({
         href = resolved?.resourceItem.route ?? null;
       } catch (error: unknown) {
         if (handleUnauthenticatedApiError(error)) return;
-        feedback.show(
-          toFeedback(error, { fallback: "Linked object could not be opened." }),
-        );
+        try {
+          feedback.publish({
+            kind: "Hud",
+            content: highlightNoteErrorMessage(error, "OpenLinkedObject"),
+            actions: [
+              {
+                label: "Retry",
+                onClick: () => void openObject(objectType, objectId, disposition),
+              },
+            ],
+          });
+        } catch (caughtDefect) {
+          setDefect({ error: caughtDefect });
+        }
         return;
       }
       if (!href) return;
@@ -221,6 +337,8 @@ export default function HighlightNoteEditor({
     },
     [feedback, onOpenLink],
   );
+
+  if (defect) throw defect.error;
 
   return (
     <div className={styles.shell} data-editable={editable ? "true" : "false"}>
@@ -234,20 +352,56 @@ export default function HighlightNoteEditor({
         onBodyChange={editable ? scheduleSave : undefined}
         onBlurFlush={flushSession}
         onOpenObject={openObject}
-        onFeedback={feedback.show}
+        onFeedback={(content) =>
+          setAttachmentFeedback({ content, announcement: "Polite" })
+        }
         onError={(error) => {
           if (handleUnauthenticatedApiError(error)) return;
-          feedback.show(
-            toFeedback(error, { fallback: "Attachment could not be added." }),
-          );
+          try {
+            setAttachmentFeedback({
+              content: attachmentErrorMessage(error),
+              announcement: "Assertive",
+            });
+          } catch (caughtDefect) {
+            setDefect({ error: caughtDefect });
+          }
         }}
       />
-      <NoteDraftRecovery
-        status={saveStatus}
-        hasRecoveredDraft={hasRecoveredDraft}
-        onRetry={retrySession}
-        onDiscard={discardRecoveredDraft}
-      />
+      {attachmentFeedback ? (
+        <FeedbackNotice
+          content={attachmentFeedback.content}
+          announcement={attachmentFeedback.announcement}
+        />
+      ) : null}
+      {saveStatus === "failed" && saveFailure ? (
+        <FeedbackNotice
+          content={saveFailure}
+          announcement="Assertive"
+          actions={[
+            {
+              label: "Retry",
+              onClick: () => {
+                setSaveFailure(null);
+                retrySession();
+              },
+            },
+            {
+              label: "Discard",
+              onClick: () => {
+                setSaveFailure(null);
+                discardRecoveredDraft();
+              },
+            },
+          ]}
+        />
+      ) : (
+        <NoteDraftRecovery
+          status={saveStatus}
+          hasRecoveredDraft={hasRecoveredDraft}
+          onRetry={retrySession}
+          onDiscard={discardRecoveredDraft}
+        />
+      )}
     </div>
   );
 }

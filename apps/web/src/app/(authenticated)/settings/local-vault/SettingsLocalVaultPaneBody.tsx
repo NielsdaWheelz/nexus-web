@@ -1,13 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { pluralize } from "@/lib/text/pluralize";
-import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import {
   getVaultAutoSync,
   hasVaultPermission,
@@ -27,6 +30,10 @@ import SectionOpener from "@/components/ui/SectionOpener";
 import Pill from "@/components/ui/Pill";
 import Toggle from "@/components/ui/Toggle";
 import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
+import {
+  localVaultErrorMessage,
+  type LocalVaultOperation,
+} from "@/lib/vault/localVaultErrorMessage";
 import styles from "./page.module.css";
 
 type VaultStatus = "notConnected" | "needsPermission" | "synced" | "syncing" | "conflicts" | "error";
@@ -63,6 +70,11 @@ export default function SettingsLocalVaultPaneBody() {
   const [status, setStatus] = useState<VaultStatus>("notConnected");
   const [message, setMessage] = useState("Choose a local folder for your Markdown vault.");
   const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<{
+    operation: LocalVaultOperation;
+    content: FeedbackContent;
+  } | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const initResource = useResource<LocalVaultInitResult>({
     cacheKey: androidShell ? null : "settings-local-vault:init",
     load: async () => {
@@ -100,12 +112,20 @@ export default function SettingsLocalVaultPaneBody() {
       initResource.status === "ready" ||
       initResource.status === "error",
   );
+  const initFailure = useMemo(
+    () =>
+      initResource.status === "error"
+        ? localVaultErrorMessage(initResource.error, "LoadSettings")
+        : null,
+    [initResource],
+  );
 
   useEffect(() => {
     if (initResource.status === "ready") {
       setSupported(initResource.data.supported);
       setAutoSyncState(initResource.data.autoSync);
       setDirectoryHandle(initResource.data.directoryHandle);
+      setFailure(null);
       if (!initResource.data.supported || !initResource.data.directoryHandle) {
         setStatus("notConnected");
         setMessage("Choose a local folder for your Markdown vault.");
@@ -123,17 +143,26 @@ export default function SettingsLocalVaultPaneBody() {
 
     if (initResource.status === "error") {
       setStatus("error");
-      setMessage(toFeedback(initResource.error, { fallback: "Failed to load local vault settings" }).title);
+      if (initFailure) {
+        setFailure({ operation: "LoadSettings", content: initFailure });
+      }
     }
-  }, [initResource]);
+  }, [initFailure, initResource]);
 
-  const showError = useCallback((error: unknown, fallback: string) => {
+  const showError = useCallback((error: unknown, operation: LocalVaultOperation) => {
     if (handleUnauthenticatedApiError(error)) return;
-    setStatus("error");
-    setMessage(toFeedback(error, { fallback }).title);
+    try {
+      const content = localVaultErrorMessage(error, operation);
+      if (!content) return;
+      setStatus("error");
+      setFailure({ operation, content });
+    } catch (caughtDefect) {
+      setDefect({ error: caughtDefect });
+    }
   }, []);
 
   const connectFolder = useCallback(async () => {
+    setFailure(null);
     setBusy(true);
     try {
       const handle = await pickVaultDirectory();
@@ -149,7 +178,7 @@ export default function SettingsLocalVaultPaneBody() {
       setStatus("synced");
       setMessage("Folder connected. Nexus can read and write this vault.");
     } catch (error) {
-      showError(error, "Failed to connect folder");
+      showError(error, "ConnectFolder");
     } finally {
       setBusy(false);
     }
@@ -161,6 +190,7 @@ export default function SettingsLocalVaultPaneBody() {
       setMessage("Connect a local folder first.");
       return;
     }
+    setFailure(null);
     setBusy(true);
     setStatus("syncing");
     try {
@@ -178,7 +208,7 @@ export default function SettingsLocalVaultPaneBody() {
           : "Vault written to the connected folder."
       );
     } catch (error) {
-      showError(error, "Failed to export vault");
+      showError(error, "ExportVault");
     } finally {
       setBusy(false);
     }
@@ -190,6 +220,7 @@ export default function SettingsLocalVaultPaneBody() {
       setMessage("Connect a local folder first.");
       return;
     }
+    setFailure(null);
     setBusy(true);
     setStatus("syncing");
     try {
@@ -211,7 +242,7 @@ export default function SettingsLocalVaultPaneBody() {
           : `Applied ${pluralize(files.length, "local edit")} and refreshed the folder.`
       );
     } catch (error) {
-      showError(error, "Failed to sync vault");
+      showError(error, "SyncVault");
     } finally {
       setBusy(false);
     }
@@ -222,14 +253,20 @@ export default function SettingsLocalVaultPaneBody() {
     setAutoSyncState(checked);
   }, []);
 
+  if (defect) throw defect.error;
+
   if (androidShell) {
     return (
       <PaneSurface opener={<SectionOpener heading="Local Vault" />}>
         <PaneSection>
-          <FeedbackNotice severity="info">
-            Local Vault is not available in the Android app. Use a supported desktop browser to
-            connect and sync a local folder.
-          </FeedbackNotice>
+          <FeedbackNotice
+            content={{
+              tone: "Info",
+              title: "Local Vault isn’t available in the Android app",
+              message: "Use a supported desktop browser to connect and sync a local folder.",
+            }}
+            announcement="None"
+          />
         </PaneSection>
       </PaneSurface>
     );
@@ -239,9 +276,14 @@ export default function SettingsLocalVaultPaneBody() {
     return (
       <PaneSurface opener={<SectionOpener heading="Local Vault" />}>
         <PaneSection>
-          <FeedbackNotice severity="error">
-            This browser cannot connect a writable local folder. Use a supported desktop browser.
-          </FeedbackNotice>
+          <FeedbackNotice
+            content={{
+              tone: "Info",
+              title: "This browser can’t connect a writable local folder",
+              message: "Use a supported desktop browser.",
+            }}
+            announcement="None"
+          />
         </PaneSection>
       </PaneSurface>
     );
@@ -251,10 +293,35 @@ export default function SettingsLocalVaultPaneBody() {
     <PaneSurface opener={<SectionOpener heading="Local Vault" />}>
       <PaneSection>
         <div className={styles.content}>
-        <div className={styles.statusRow}>
-          <Pill tone={statusVariant(status)}>{statusLabel(status)}</Pill>
-          <span className={styles.statusText}>{message}</span>
-        </div>
+        {failure ? (
+          <FeedbackNotice
+            content={failure.content}
+            announcement="Assertive"
+            actions={[
+              {
+                label: "Retry",
+                onClick:
+                  failure.operation === "LoadSettings"
+                    ? () => {
+                        if (initResource.status === "error") {
+                          setFailure(null);
+                          initResource.retry();
+                        }
+                      }
+                    : failure.operation === "ConnectFolder"
+                      ? () => void connectFolder()
+                      : failure.operation === "ExportVault"
+                        ? () => void exportVault()
+                        : () => void syncVault(),
+              },
+            ]}
+          />
+        ) : (
+          <div className={styles.statusRow}>
+            <Pill tone={statusVariant(status)}>{statusLabel(status)}</Pill>
+            <span className={styles.statusText}>{message}</span>
+          </div>
+        )}
 
         <div className={styles.buttonRow}>
           <Button

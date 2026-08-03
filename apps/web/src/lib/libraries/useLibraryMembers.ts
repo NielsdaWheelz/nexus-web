@@ -6,10 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  toFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import {
   isApiError,
   isSameSystemApiDefect,
@@ -148,13 +145,94 @@ function isAmbiguousCommandError(error: unknown): boolean {
 
 export function libraryGovernanceErrorMessage(
   error: unknown,
-  fallback: string,
-): FeedbackContent | null {
-  if (isSameSystemApiDefect(error)) return null;
-  if (isApiError(error) || error instanceof TypeError) {
-    return toFeedback(error, { fallback });
+  title: string,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  const requestId = error.requestId;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and try again.",
+        requestId,
+      };
+    case "E_UPSTREAM_TIMEOUT":
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Please wait a moment, then try again.",
+        requestId,
+      };
+    case "E_LIBRARY_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title,
+        message: "This library is no longer available.",
+        requestId,
+      };
+    case "E_FORBIDDEN":
+    case "E_OWNER_REQUIRED":
+    case "E_OWNER_EXIT_FORBIDDEN":
+    case "E_LIBRARY_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title,
+        message: "Your library permissions changed. Refresh Library access and try again.",
+        requestId,
+      };
+    case "E_INVITE_ALREADY_EXISTS":
+      return {
+        tone: "Danger",
+        title,
+        message: "This person already has a pending invitation.",
+        requestId,
+      };
+    case "E_INVITE_MEMBER_EXISTS":
+      return {
+        tone: "Danger",
+        title,
+        message: "This person is already a library member.",
+        requestId,
+      };
+    case "E_INVITE_NOT_PENDING":
+    case "E_INVITE_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title,
+        message: "This invitation is no longer pending. Refresh members and invitations.",
+        requestId,
+      };
+    case "E_OWNERSHIP_TRANSFER_INVALID":
+      return {
+        tone: "Danger",
+        title,
+        message: "Ownership can be transferred only to a current library member.",
+        requestId,
+      };
+    default:
+      throw error;
   }
-  return null;
+}
+
+type GovernanceFailure =
+  | { kind: "Modeled"; content: FeedbackContent }
+  | { kind: "Defect"; defect: unknown };
+
+function classifyGovernanceFailure(
+  error: unknown,
+  title: string,
+): GovernanceFailure {
+  try {
+    return {
+      kind: "Modeled",
+      content: libraryGovernanceErrorMessage(error, title),
+    };
+  } catch (defect) {
+    return { kind: "Defect", defect };
+  }
 }
 
 export function useLibraryMembers({
@@ -168,7 +246,7 @@ export function useLibraryMembers({
     initialLibraryGovernanceState(libraryId),
   );
   const [announcement, setAnnouncement] = useState("");
-  const [defect, setDefect] = useState<unknown>(null);
+  const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
   const stateRef = useRef(state);
   const readAbortRef = useRef<AbortController | null>(null);
   const pageAbortRef = useRef<{
@@ -219,7 +297,7 @@ export function useLibraryMembers({
     searchSequenceRef.current += 1;
     wasMembersActiveRef.current = false;
     setAnnouncement("");
-    setDefect(null);
+    setDefectState(null);
     commit((current) => resetLibraryGovernanceState(current, libraryId));
   }, [commit, libraryId]);
 
@@ -526,17 +604,18 @@ export function useLibraryMembers({
         return;
       }
       if (isLibraryContractDefect(error)) {
-        setDefect(error);
+        setDefectState({ error });
         return;
       }
-      const feedback = libraryGovernanceErrorMessage(
+      const failure = classifyGovernanceFailure(
         error,
         "Library members could not be loaded.",
       );
-      if (feedback === null) {
-        setDefect(error);
+      if (failure.kind === "Defect") {
+        setDefectState({ error: failure.defect });
         return;
       }
+      const feedback = failure.content;
       commit((latest) => {
         if (!acceptsLibraryGovernanceSettlement(latest, token)) return latest;
         if (before.kind !== "Ready") {
@@ -632,17 +711,18 @@ export function useLibraryMembers({
           return;
         }
         if (isUserSearchContractDefect(error)) {
-          setDefect(error);
+          setDefectState({ error });
           return;
         }
-        const feedback = libraryGovernanceErrorMessage(
+        const failure = classifyGovernanceFailure(
           error,
           "People could not be searched.",
         );
-        if (feedback === null) {
-          setDefect(error);
+        if (failure.kind === "Defect") {
+          setDefectState({ error: failure.defect });
           return;
         }
+        const feedback = failure.content;
         commit((latest) =>
           acceptsLibrarySearchSettlement(latest, token, sequence)
             ? {
@@ -667,7 +747,7 @@ export function useLibraryMembers({
     async (
       operation: CommandWithoutEpoch,
       execute: () => Promise<unknown>,
-      fallback: string,
+      failureTitle: string,
       successMessage: string,
     ) => {
       const current = stateRef.current;
@@ -689,17 +769,21 @@ export function useLibraryMembers({
       );
 
       let commandError: unknown = null;
-      let commandDefect: unknown = null;
+      let commandFeedback: FeedbackContent | null = null;
+      let commandDefect: { error: unknown } | null = null;
       try {
         await execute();
       } catch (error) {
-        if (
-          isLibraryContractDefect(error) ||
-          libraryGovernanceErrorMessage(error, fallback) === null
-        ) {
-          commandDefect = error;
+        if (isLibraryContractDefect(error)) {
+          commandDefect = { error };
         } else {
-          commandError = error;
+          const failure = classifyGovernanceFailure(error, failureTitle);
+          if (failure.kind === "Defect") {
+            commandDefect = { error: failure.defect };
+          } else {
+            commandError = error;
+            commandFeedback = failure.content;
+          }
         }
       }
       if (!acceptsLibraryGovernanceSettlement(stateRef.current, token)) {
@@ -733,7 +817,7 @@ export function useLibraryMembers({
           commit((latest) =>
             clearLibraryGovernanceAuthority(latest, token),
           );
-          if (commandDefect !== null) setDefect(commandDefect);
+          if (commandDefect !== null) setDefectState(commandDefect);
           return;
         }
         if (observation.kind === "AuthorityLost") {
@@ -743,7 +827,7 @@ export function useLibraryMembers({
           commit((latest) =>
             clearLibraryGovernanceAuthority(latest, token),
           );
-          if (commandDefect !== null) setDefect(commandDefect);
+          if (commandDefect !== null) setDefectState(commandDefect);
           return;
         }
         const pages = observation.governance;
@@ -759,10 +843,7 @@ export function useLibraryMembers({
               snapshot: {
                 ...next.snapshot,
                 refreshFeedback:
-                  libraryGovernanceErrorMessage(
-                    commandError,
-                    fallback,
-                  ) ?? next.snapshot.refreshFeedback,
+                  commandFeedback ?? next.snapshot.refreshFeedback,
               },
             };
           }
@@ -784,7 +865,7 @@ export function useLibraryMembers({
           return next;
         });
         if (commandDefect !== null) {
-          setDefect(commandDefect);
+          setDefectState(commandDefect);
         } else if (commandError === null) {
           setAnnouncement("");
           requestAnimationFrame(() => setAnnouncement(successMessage));
@@ -802,22 +883,21 @@ export function useLibraryMembers({
           return;
         }
         if (isLibraryContractDefect(reconciliationError)) {
-          setDefect(reconciliationError);
+          setDefectState({ error: reconciliationError });
           return;
         }
-        const reconciliationFeedback =
-          libraryGovernanceErrorMessage(
-            reconciliationError,
-            "Library governance could not be reconciled.",
-          );
-        if (reconciliationFeedback === null) {
-          setDefect(reconciliationError);
+        const reconciliationFailure = classifyGovernanceFailure(
+          reconciliationError,
+          "Library governance could not be reconciled.",
+        );
+        if (reconciliationFailure.kind === "Defect") {
+          setDefectState({ error: reconciliationFailure.defect });
           return;
         }
         const ambiguous =
           commandError === null || isAmbiguousCommandError(commandError);
         const feedback: FeedbackContent = {
-          severity: "warning",
+          tone: "Warning",
           title: ambiguous
             ? "The outcome is not yet confirmed."
             : "Library authority could not be revalidated.",
@@ -828,7 +908,7 @@ export function useLibraryMembers({
           markLibraryGovernanceUnconfirmed(latest, token, feedback),
         );
         if (commandDefect !== null) {
-          setDefect(commandDefect);
+          setDefectState(commandDefect);
         }
       }
     },
@@ -969,7 +1049,7 @@ export function useLibraryMembers({
           return;
         }
         if (isLibraryContractDefect(error)) {
-          setDefect(error);
+          setDefectState({ error });
           return;
         }
         if (
@@ -979,16 +1059,17 @@ export function useLibraryMembers({
           await ensureFresh();
           return;
         }
-        const feedback = libraryGovernanceErrorMessage(
+        const failure = classifyGovernanceFailure(
           error,
           kind === "members"
             ? "More members could not be loaded."
             : "More invitations could not be loaded.",
         );
-        if (feedback === null) {
-          setDefect(error);
+        if (failure.kind === "Defect") {
+          setDefectState({ error: failure.defect });
           return;
         }
+        const feedback = failure.content;
         commit((latest) => {
           if (
             !acceptsLibraryGovernanceSettlement(latest, token) ||
@@ -1067,7 +1148,7 @@ export function useLibraryMembers({
     [commit],
   );
 
-  if (defect) throw defect;
+  if (defectState !== null) throw defectState.error;
   if (library === null || state.libraryId !== libraryId) return null;
   const inviteSelectedUser = async () => {
     const selected = stateRef.current.draft.selectedUser;

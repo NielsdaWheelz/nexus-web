@@ -156,10 +156,14 @@ export function OfflineMediaProvider({
       downloadSpecReader,
       ownedOrigin ?? window.location.origin,
       (message) =>
-        feedback.show({
-          severity: "error",
-          title: message,
-          dedupeKey: "offline-media-command",
+        feedback.publish({
+          kind: "Hud",
+          key: "offline-media-command",
+          content: {
+            tone: "Warning",
+            title: "Offline download wasn’t changed",
+            message,
+          },
         }),
       (error) => {
         if (!current) return;
@@ -175,6 +179,7 @@ export function OfflineMediaProvider({
       .then(() => {
         if (!current) return;
         connected = true;
+        feedback.resolve("offline-media-connect");
         setSession({
           accountId,
           capability: { kind: "Ready", controller, store },
@@ -184,14 +189,22 @@ export function OfflineMediaProvider({
         if (!current || isAbortError(error)) return;
         controller.dispose();
         setSession({ accountId, capability: UNAVAILABLE });
-        const title =
-          error instanceof OfflineMediaRejectedError
-            ? offlineMediaRejectionMessage(error.code)
-            : "Offline downloads are unavailable.";
-        feedback.show({
-          severity: "error",
-          title,
-          dedupeKey: "offline-media-connect",
+        if (!(error instanceof OfflineMediaRejectedError)) {
+          setAsyncDefect(
+            error instanceof Error
+              ? error
+              : new Error("Offline media connection failed"),
+          );
+          return;
+        }
+        feedback.publish({
+          kind: "Hud",
+          key: "offline-media-connect",
+          content: {
+            tone: "Warning",
+            title: "Offline downloads are unavailable",
+            message: offlineMediaRejectionMessage(error.code),
+          },
         });
       });
 

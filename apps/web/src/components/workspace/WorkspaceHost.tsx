@@ -32,6 +32,7 @@ import MobileSecondaryPaneHost from "@/components/workspace/MobileSecondaryPaneH
 import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { getBrowserViewportKind } from "@/lib/renderEnvironment/provider";
 import { matchesKeyEvent } from "@/lib/keybindings";
 import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
 import { useKeybindings } from "@/lib/keybindingsProvider";
@@ -94,6 +95,7 @@ import type {
   WorkspaceTargetActivationRequest,
   WorkspaceTargetActivationResult,
 } from "@/lib/workspace/targetActivation";
+import Button from "@/components/ui/Button";
 import { usePaneCanvas } from "./usePaneCanvas";
 import PaneRouteBoundary from "./PaneRouteBoundary";
 import {
@@ -135,6 +137,13 @@ interface WorkspaceHostPane {
   content: React.ReactNode;
 }
 
+interface PendingResponsivePaneSearchDelivery {
+  readonly id: number;
+  readonly paneId: string;
+  readonly routeKey: string;
+  readonly targetIsMobile: boolean;
+}
+
 interface RuntimePaneLayoutRecord {
   routeKey: string;
   layout: PaneRuntimeLayout;
@@ -171,20 +180,26 @@ interface PaneRouteErrorBoundaryProps {
 
 class PaneRouteErrorBoundary extends Component<
   PaneRouteErrorBoundaryProps,
-  { hasError: boolean; resetKey: string }
+  { hasError: boolean; resetKey: string; retryKey: number }
 > {
+  private failureRegion: HTMLElement | null = null;
+
   constructor(props: PaneRouteErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false, resetKey: props.resetKey };
+    this.state = { hasError: false, resetKey: props.resetKey, retryKey: 0 };
   }
 
   static getDerivedStateFromProps(
     props: PaneRouteErrorBoundaryProps,
-    state: { hasError: boolean; resetKey: string },
-  ): { hasError: false; resetKey: string } | null {
+    state: { hasError: boolean; resetKey: string; retryKey: number },
+  ): { hasError: false; resetKey: string; retryKey: number } | null {
+    // A route/visit change clears the error latch but must NOT reset retryKey:
+    // retryKey identifies an explicit user retry and keys the child subtree, so
+    // resetting it here would remount the whole PaneShell on ordinary in-pane
+    // navigation after a prior retry. Only an explicit retry advances retryKey.
     return props.resetKey === state.resetKey
       ? null
-      : { hasError: false, resetKey: props.resetKey };
+      : { hasError: false, resetKey: props.resetKey, retryKey: state.retryKey };
   }
 
   static getDerivedStateFromError(): { hasError: true } {
@@ -200,6 +215,31 @@ class PaneRouteErrorBoundary extends Component<
     );
   }
 
+  componentDidMount(): void {
+    if (this.state.hasError) {
+      this.failureRegion?.focus();
+    }
+  }
+
+  componentDidUpdate(
+    _previousProps: PaneRouteErrorBoundaryProps,
+    previousState: { hasError: boolean; resetKey: string; retryKey: number },
+  ): void {
+    if (!previousState.hasError && this.state.hasError) {
+      this.failureRegion?.focus();
+    }
+  }
+
+  private retry = (): void => {
+    // This remounts only the routed pane subtree. It does not alter the visit,
+    // close the pane, or invoke any domain operation.
+    this.setState((state) => ({
+      hasError: false,
+      resetKey: state.resetKey,
+      retryKey: state.retryKey + 1,
+    }));
+  };
+
   render() {
     return (
       <div
@@ -210,13 +250,26 @@ class PaneRouteErrorBoundary extends Component<
       >
         {this.state.hasError ? (
           <section
-            className={styles.unsupported}
-            aria-label="Pane failed to render"
+            ref={(element) => {
+              this.failureRegion = element;
+            }}
+            className={styles.paneFailure}
+            role="alert"
+            aria-labelledby={`pane-failure-heading-${this.props.paneId}`}
+            tabIndex={-1}
           >
-            This pane failed to render. Close it and retry.
+            <h2 id={`pane-failure-heading-${this.props.paneId}`}>
+              This pane couldn’t load
+            </h2>
+            <p>Retry this pane. Your other panes are still available.</p>
+            <Button variant="secondary" size="sm" onClick={this.retry}>
+              Retry pane
+            </Button>
           </section>
         ) : (
-          this.props.children
+          <div key={this.state.retryKey} className={styles.paneFailureRetryRoot}>
+            {this.props.children}
+          </div>
         )}
       </div>
     );
@@ -777,6 +830,11 @@ function WorkspaceHost() {
   pendingPaneEntryDeliveryByPaneIdRef.current =
     pendingPaneEntryDeliveryByPaneId;
   const previousIsMobileRef = useRef(isMobile);
+  const nextResponsivePaneSearchDeliveryIdRef = useRef(0);
+  const [
+    pendingResponsivePaneSearchDelivery,
+    setPendingResponsivePaneSearchDelivery,
+  ] = useState<PendingResponsivePaneSearchDelivery | null>(null);
   const secondaryReturnFocusByPaneIdRef = useRef<Map<string, HTMLElement>>(
     new Map(),
   );
@@ -1569,6 +1627,12 @@ function WorkspaceHost() {
     scrollPaneIntoView(state.activePrimaryPaneId);
   }, [state.activePrimaryPaneId, scrollPaneIntoView]);
 
+  const acknowledgeResponsivePaneSearchDelivery = useCallback((id: number) => {
+    setPendingResponsivePaneSearchDelivery((current) =>
+      current?.id === id ? null : current,
+    );
+  }, []);
+
   const handleActivatePane = useCallback(
     (paneId: string, options?: { focusPane?: boolean }) => {
       const shouldFocusPane = options?.focusPane !== false;
@@ -1596,7 +1660,25 @@ function WorkspaceHost() {
         searchCombo &&
         matchesKeyEvent(searchCombo, event)
       ) {
-        if (dispatchPaneSearchRequest()) {
+        const consumed = dispatchPaneSearchRequest();
+        if (consumed) {
+          const targetIsMobile = getBrowserViewportKind() === "mobile";
+          const routeKey = currentRouteKeyByPaneIdRef.current.get(
+            state.activePrimaryPaneId,
+          );
+          // The outgoing projection established capability synchronously, but a
+          // live responsive transition will replace its shell. Carry one exact
+          // delivery to the incoming route instead of losing the command.
+          setPendingResponsivePaneSearchDelivery(
+            targetIsMobile === isMobile || !routeKey
+              ? null
+              : {
+                  id: ++nextResponsivePaneSearchDeliveryIdRef.current,
+                  paneId: state.activePrimaryPaneId,
+                  routeKey,
+                  targetIsMobile,
+                },
+          );
           event.preventDefault();
         }
         return;
@@ -1633,6 +1715,7 @@ function WorkspaceHost() {
     state.activePrimaryPaneId,
     keybindings,
     handleActivatePane,
+    isMobile,
   ]);
 
   // --- Close handler ---
@@ -1781,6 +1864,20 @@ function WorkspaceHost() {
                       onChromeMouseDown={handleChromeMouseDown}
                       isActive={pane.isActive}
                       isMobile={isMobile}
+                      responsiveSearchHandoff={
+                        pendingResponsivePaneSearchDelivery?.paneId ===
+                          pane.paneId &&
+                        pendingResponsivePaneSearchDelivery.routeKey ===
+                          pane.routeKey &&
+                        pendingResponsivePaneSearchDelivery.targetIsMobile ===
+                          isMobile
+                          ? {
+                              id: pendingResponsivePaneSearchDelivery.id,
+                              onConsumed:
+                                acknowledgeResponsivePaneSearchDelivery,
+                            }
+                          : null
+                      }
                     >
                       {pane.content}
                     </PaneShell>

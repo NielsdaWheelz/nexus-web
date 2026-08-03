@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  AlertCircle,
   Ban,
   BookOpen,
   ChevronDown,
@@ -10,7 +9,10 @@ import {
   X,
 } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
@@ -282,21 +284,11 @@ function FailedBody({
 }) {
   return (
     <div className={styles.notice}>
-      <AlertCircle size={15} aria-hidden="true" className={styles.noticeIcon} />
-      <div className={styles.noticeBody}>
-        <p className={styles.noticeTitle}>{error.title}</p>
-        {error.message ? <p className={styles.noticeDetail}>{error.message}</p> : null}
-        <div className={styles.noticeActions}>
-          <button
-            type="button"
-            className={styles.retry}
-            onClick={onRetry}
-            aria-label="Retry loading quoted passage"
-          >
-            Retry
-          </button>
-        </div>
-      </div>
+      <FeedbackNotice
+        content={error}
+        announcement="None"
+        actions={[{ label: "Retry", onClick: onRetry }]}
+      />
     </div>
   );
 }

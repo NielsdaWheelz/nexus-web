@@ -1,9 +1,10 @@
 "use client";
 
 import {
-  AlertCircle,
-  CheckCircle2,
+  Circle,
+  CircleCheckBig,
   Info,
+  OctagonAlert,
   TriangleAlert,
   X,
 } from "lucide-react";
@@ -15,18 +16,22 @@ import {
   useMemo,
   useRef,
   useState,
+  type FocusEvent,
   type ReactNode,
 } from "react";
 import Button from "@/components/ui/Button";
-import { isApiError, type ApiError } from "@/lib/api/client";
+import {
+  ClipboardWriteUnavailableError,
+  copyText,
+} from "@/lib/ui/copyText";
 import styles from "./Feedback.module.css";
 
-type FeedbackSeverity = "neutral" | "info" | "success" | "warning" | "error";
+export type FeedbackTone = "Neutral" | "Info" | "Success" | "Warning" | "Danger";
 
-export const PDF_PASSWORD_PROTECTED_MESSAGE = "This PDF is password-protected";
+export type FeedbackAnnouncement = "None" | "Polite" | "Assertive";
 
 export interface FeedbackContent {
-  severity: FeedbackSeverity;
+  tone: FeedbackTone;
   title: string;
   message?: string;
   requestId?: string;
@@ -37,446 +42,707 @@ export interface FeedbackAction {
   onClick: () => void;
 }
 
-/** One action, or an ordered pair (e.g. "Undo · Add note to link"). */
-type FeedbackActions = FeedbackAction | FeedbackAction[];
+export type FeedbackActions =
+  | readonly [FeedbackAction]
+  | readonly [FeedbackAction, FeedbackAction];
 
-function feedbackActionList(action: FeedbackActions | undefined): FeedbackAction[] {
-  if (!action) return [];
-  return Array.isArray(action) ? action : [action];
+export type DetachedFeedback =
+  | {
+      kind: "Hud";
+      key?: string;
+      content: FeedbackContent;
+      actions?: FeedbackActions;
+    }
+  | {
+      kind: "Persistent";
+      key: string;
+      content: FeedbackContent;
+      announcement: "Polite" | "Assertive";
+      actions?: FeedbackActions;
+    };
+
+export interface FeedbackContextValue {
+  publish(signal: DetachedFeedback): void;
+  resolve(key: string): void;
+  suppress(key: string): () => void;
 }
 
-interface ToastFeedback extends FeedbackContent {
+type SignalRecordBase = {
   id: number;
-  dedupeKey?: string;
-  action?: FeedbackActions;
-  duration: number;
-  exiting: boolean;
-}
+  key?: string;
+  content: FeedbackContent;
+  actions?: FeedbackActions;
+  revision: number;
+  announcedRevision: number;
+};
 
-interface FeedbackContextValue {
-  show: (feedback: FeedbackContent & {
-    action?: FeedbackActions;
-    dedupeKey?: string;
-    duration?: number;
-  }) => void;
-  /** Permanently dismiss any owned toast whose dedupeKey matches. No-op if none exists. */
-  dismissByDedupeKey: (key: string) => void;
-  /**
-   * Acquire a scoped presentation lease for a dedupeKey: while at least one
-   * lease is held, a toast with that dedupeKey is not rendered or announced,
-   * but its record stays owned by the provider. Leases compose by count;
-   * returns a release function that is idempotent per call.
-   */
-  suppressDedupeKey: (key: string) => () => void;
-}
+type HudRecord = SignalRecordBase & {
+  kind: "Hud";
+  remainingMs: number;
+};
+
+type PersistentRecord = SignalRecordBase & {
+  kind: "Persistent";
+  key: string;
+  announcement: "Polite" | "Assertive";
+};
+
+type SignalRecord = HudRecord | PersistentRecord;
+type PauseReason = "Hover" | "Focus";
+type TimerState = {
+  handle: ReturnType<typeof setTimeout>;
+  startedAt: number;
+};
+type DetachedAnnouncement = {
+  sequence: number;
+  policy: "Polite" | "Assertive";
+  text: string;
+};
+
+const HUD_WITHOUT_ACTIONS_MS = 5_000;
+const HUD_WITH_ACTIONS_MS = 10_000;
+const MAX_HUDS = 3;
 
 const FeedbackContext = createContext<FeedbackContextValue | null>(null);
 
-const EXIT_MS = 150;
-const MAX_TOASTS = 5;
-
-function iconFor(severity: FeedbackSeverity) {
-  if (severity === "success") return <CheckCircle2 size={16} aria-hidden="true" />;
-  if (severity === "warning") return <TriangleAlert size={16} aria-hidden="true" />;
-  if (severity === "error") return <AlertCircle size={16} aria-hidden="true" />;
-  return <Info size={16} aria-hidden="true" />;
-}
-
-function roleFor(severity: FeedbackSeverity) {
-  return severity === "error" ? "alert" : "status";
-}
-
-function apiErrorTitle(error: ApiError, fallback: string) {
-  if (error.code === "E_INTERNAL") return fallback;
-  if (error.code === "E_AUTH_UNAVAILABLE") return "Authentication is temporarily unavailable";
-  if (error.code === "E_UNAUTHENTICATED") return "Authentication required";
-  if (error.code === "E_FORBIDDEN") return "You do not have access";
-  if (error.code === "E_BILLING_REQUIRED") return "This action requires a paid plan";
-  if (error.code === "E_BILLING_DISABLED") return "Billing is temporarily unavailable";
-  if (error.code === "E_BILLING_NOT_CONFIGURED") return "Billing is temporarily unavailable";
-  if (error.code === "E_RATE_LIMITED") return "Too many requests";
-  if (error.code === "E_TOKEN_BUDGET_EXCEEDED") return "Token budget exceeded";
-  if (error.code === "E_KEY_INVALID_FORMAT") return "Check the API key format";
-  if (error.code === "E_KEY_PROVIDER_INVALID") return "That API key provider is not supported";
-  if (error.code === "E_KEY_NOT_FOUND") return "API key not found";
-  if (error.code === "E_KEY_TEST_FAILED") return "Provider test failed";
-  if (error.code === "E_MEDIA_NOT_READY") return "This item is not ready yet";
-  if (error.code === "E_HIGHLIGHT_CONFLICT") return "That highlight changed. Reload and try again.";
-  if (error.code === "E_AUTHOR_ALREADY_LISTED") return "That author is already listed for this role.";
-  if (error.code === "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH")
-    return "That author change changed. Reload and try again.";
-  if (error.code === "E_PDF_PASSWORD_REQUIRED") return PDF_PASSWORD_PROTECTED_MESSAGE;
-  if (error.code === "E_FILE_TOO_LARGE") return "That file is too large";
-  if (error.code === "E_CAPTURE_TOO_LARGE") return "That capture is too large";
-  if (error.code === "E_INVALID_FILE_TYPE") return "That file type is not supported";
-  if (error.code === "E_INGEST_FAILED") return "We couldn't process this item";
-  if (error.code === "E_INGEST_TIMEOUT") return "Processing timed out";
-  if (error.code === "E_UPSTREAM_TIMEOUT") return "Backend service timed out";
-  if (error.code === "E_X_PROVIDER_CREDITS_DEPLETED") return "X imports are temporarily unavailable";
-  if (error.code === "E_X_PROVIDER_AUTH_REJECTED") return "X imports are temporarily unavailable";
-  if (error.code === "E_X_PROVIDER_RATE_LIMITED") return "X is rate limiting imports";
-  if (error.code === "E_X_PROVIDER_TIMEOUT") return "X import timed out";
-  if (error.code === "E_X_PROVIDER_UNAVAILABLE") return "X imports are temporarily unavailable";
-  if (error.code === "E_X_POST_UNAVAILABLE") return "That X post is not available";
-  if (error.code === "E_TRANSCRIPT_UNAVAILABLE") return "Transcript unavailable";
-  if (error.code === "E_TRANSCRIPTION_FAILED") return "Transcription failed";
-  if (error.code === "E_TRANSCRIPTION_TIMEOUT") return "Transcription timed out";
-  if (error.code === "E_BROWSE_PROVIDER_UNAVAILABLE") return "Browse is temporarily unavailable";
-  if (error.code === "E_PODCAST_PROVIDER_UNAVAILABLE") return "Podcast search is temporarily unavailable";
-  if (error.code === "E_MESSAGE_TOO_LONG") return "The message is too long";
-  if (error.code === "E_CONTEXT_TOO_LARGE") return "The context is too large";
-  if (error.code === "E_CONVERSATION_BUSY") return "This conversation is already responding";
-  return fallback;
-}
-
-export function toFeedback(
-  error: unknown,
-  options: { fallback: string; severity?: FeedbackSeverity }
-): FeedbackContent {
-  if (isApiError(error)) {
-    return {
-      severity: options.severity ?? "error",
-      title: apiErrorTitle(error, options.fallback),
-      requestId: error.requestId,
-    };
+function toneIcon(tone: FeedbackTone): ReactNode {
+  switch (tone) {
+    case "Neutral":
+      return <Circle size={15} aria-hidden="true" />;
+    case "Info":
+      return <Info size={16} aria-hidden="true" />;
+    case "Success":
+      return <CircleCheckBig size={16} aria-hidden="true" />;
+    case "Warning":
+      return <TriangleAlert size={16} aria-hidden="true" />;
+    case "Danger":
+      return <OctagonAlert size={16} aria-hidden="true" />;
   }
+}
 
-  return {
-    severity: options.severity ?? "error",
-    title: options.fallback,
+function announcementRole(
+  announcement: FeedbackAnnouncement,
+): "status" | "alert" | undefined {
+  switch (announcement) {
+    case "None":
+      return undefined;
+    case "Polite":
+      return "status";
+    case "Assertive":
+      return "alert";
+  }
+}
+
+function signalAnnouncement(record: SignalRecord): "Polite" | "Assertive" {
+  return record.kind === "Hud" ? "Polite" : record.announcement;
+}
+
+function announcementText(content: FeedbackContent): string {
+  return content.message ? `${content.title}. ${content.message}` : content.title;
+}
+
+function hasSameContent(left: FeedbackContent, right: FeedbackContent): boolean {
+  return (
+    left.tone === right.tone &&
+    left.title === right.title &&
+    left.message === right.message &&
+    left.requestId === right.requestId
+  );
+}
+
+function hasSameActions(
+  left: FeedbackActions | undefined,
+  right: FeedbackActions | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return (
+    left.length === right.length &&
+    left.every((action, index) => action.label === right[index]?.label)
+  );
+}
+
+function hasSamePresentation(record: SignalRecord, signal: DetachedFeedback): boolean {
+  if (record.kind !== signal.kind) return false;
+  if (!hasSameContent(record.content, signal.content)) return false;
+  if (!hasSameActions(record.actions, signal.actions)) return false;
+  if (record.kind === "Hud") return signal.kind === "Hud";
+  return signal.kind === "Persistent" && record.announcement === signal.announcement;
+}
+
+function feedbackDuration(actions: FeedbackActions | undefined): number {
+  return actions === undefined ? HUD_WITHOUT_ACTIONS_MS : HUD_WITH_ACTIONS_MS;
+}
+
+function Diagnostics({
+  requestId,
+  parentOwnsAnnouncement,
+}: {
+  requestId: string;
+  parentOwnsAnnouncement: boolean;
+}) {
+  const text = `Nexus request ID: ${requestId}`;
+  const [copyUnavailable, setCopyUnavailable] = useState(false);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const copy = async () => {
+    try {
+      await copyText(text);
+      setCopyUnavailable(false);
+    } catch (error) {
+      if (error instanceof ClipboardWriteUnavailableError) {
+        setCopyUnavailable(true);
+        return;
+      }
+      setAsyncDefect({ error });
+    }
   };
+
+  if (asyncDefect !== null) throw asyncDefect.error;
+
+  return (
+    <details className={styles.diagnostics}>
+      <summary>Diagnostics</summary>
+      <div className={styles.diagnosticsBody}>
+        <code>{text}</code>
+        <Button variant="ghost" size="sm" onClick={() => void copy()}>
+          {copyUnavailable ? "Retry" : "Copy diagnostics"}
+        </Button>
+      </div>
+      {copyUnavailable ? (
+        <p
+          className={styles.diagnosticsError}
+          role={parentOwnsAnnouncement ? undefined : "status"}
+        >
+          Diagnostics couldn’t be copied.
+        </p>
+      ) : null}
+    </details>
+  );
+}
+
+function SignalArticle({
+  content,
+  actions,
+  children,
+  className,
+  role,
+  onAction,
+  onDismiss,
+  onMouseEnter,
+  onMouseLeave,
+  onFocusCapture,
+  onBlurCapture,
+}: {
+  content: FeedbackContent;
+  actions?: FeedbackActions;
+  children?: ReactNode;
+  className?: string;
+  role?: "status" | "alert";
+  onAction(actionIndex: number): void;
+  onDismiss?: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+  onFocusCapture?: () => void;
+  onBlurCapture?: (event: FocusEvent<HTMLElement>) => void;
+}) {
+  return (
+    <article
+      className={[styles.signal, styles[content.tone], className]
+        .filter(Boolean)
+        .join(" ")}
+      role={role}
+      aria-atomic={role === undefined ? undefined : "true"}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onFocusCapture={onFocusCapture}
+      onBlurCapture={onBlurCapture}
+    >
+      <div className={styles.toneMark}>
+        <span className={styles.icon}>{toneIcon(content.tone)}</span>
+        <span className={styles.toneLabel}>{content.tone}</span>
+      </div>
+      <div className={styles.body}>
+        <p className={styles.title}>{content.title}</p>
+        {content.message ? <p className={styles.message}>{content.message}</p> : null}
+        {children ? <div className={styles.supporting}>{children}</div> : null}
+        {content.requestId ? (
+          <Diagnostics
+            requestId={content.requestId}
+            parentOwnsAnnouncement={role !== undefined}
+          />
+        ) : null}
+        {actions ? (
+          <div className={styles.actions}>
+            {actions.map((action, index) => (
+              <Button
+                key={`${index}-${action.label}`}
+                variant="secondary"
+                size="sm"
+                onClick={() => onAction(index)}
+              >
+                {action.label}
+              </Button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {onDismiss ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          className={styles.dismiss}
+          onClick={onDismiss}
+          aria-label={`Dismiss ${content.title}`}
+        >
+          <X size={16} aria-hidden="true" />
+        </Button>
+      ) : null}
+    </article>
+  );
 }
 
 export function FeedbackProvider({ children }: { children: ReactNode }) {
-  const [toasts, setToasts] = useState<ToastFeedback[]>([]);
-  const toastsRef = useRef<ToastFeedback[]>([]);
-  const nextId = useRef(1);
-  const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
-  // Pending exit-animation removals, keyed by toast id, so a same-dedupeKey
-  // show() inside the exit window can revive the record instead of having the
-  // stale removal silently delete it.
-  const exitTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
-  // Lease counts per dedupeKey for suppressDedupeKey. Source of truth lives in
-  // the ref (so acquire/release counting is synchronous and unaffected by
-  // React batching); suppressTick only forces a re-render to re-evaluate it.
-  const suppressCounts = useRef<Map<string, number>>(new Map());
-  const [, setSuppressTick] = useState(0);
+  const [records, setRecords] = useState<SignalRecord[]>([]);
+  const recordsRef = useRef<SignalRecord[]>([]);
+  const nextIdRef = useRef(1);
+  const timersRef = useRef<Map<number, TimerState>>(new Map());
+  const interactionPausesRef = useRef<Map<number, Set<PauseReason>>>(new Map());
+  const suppressionCountsRef = useRef<Map<string, number>>(new Map());
+  const [, setSuppressionEpoch] = useState(0);
+  const announcementSequenceRef = useRef(0);
+  const [detachedAnnouncement, setDetachedAnnouncement] =
+    useState<DetachedAnnouncement | null>(null);
 
-  const clearTimer = useCallback((id: number) => {
-    const timer = timers.current.get(id);
-    if (timer) {
-      clearTimeout(timer);
-      timers.current.delete(id);
-    }
+  const commit = useCallback((nextRecords: SignalRecord[]) => {
+    recordsRef.current = nextRecords;
+    setRecords(nextRecords);
   }, []);
 
-  const isSuppressed = useCallback(
-    (dedupeKey?: string) => Boolean(dedupeKey && (suppressCounts.current.get(dedupeKey) ?? 0) > 0),
-    []
-  );
+  const clearTimer = useCallback((id: number) => {
+    const timer = timersRef.current.get(id);
+    if (timer === undefined) return;
+    clearTimeout(timer.handle);
+    timersRef.current.delete(id);
+  }, []);
 
-  const dismiss = useCallback(
+  const removeRecord = useCallback(
     (id: number) => {
       clearTimer(id);
-      const exitingToasts = toastsRef.current.map((toast) =>
-        toast.id === id ? { ...toast, exiting: true } : toast
+      interactionPausesRef.current.delete(id);
+      const nextRecords = recordsRef.current.filter((record) => record.id !== id);
+      if (nextRecords.length !== recordsRef.current.length) commit(nextRecords);
+    },
+    [clearTimer, commit],
+  );
+
+  const isSuppressed = useCallback((key: string | undefined): boolean => {
+    return Boolean(key && (suppressionCountsRef.current.get(key) ?? 0) > 0);
+  }, []);
+
+  const scheduleHud = useCallback(
+    (id: number) => {
+      clearTimer(id);
+      const record = recordsRef.current.find(
+        (candidate): candidate is HudRecord =>
+          candidate.id === id && candidate.kind === "Hud",
       );
-      toastsRef.current = exitingToasts;
-      setToasts(exitingToasts);
-      const pendingExit = exitTimers.current.get(id);
-      if (pendingExit) {
-        clearTimeout(pendingExit);
+      if (record === undefined || record.remainingMs <= 0) return;
+      if (document.visibilityState === "hidden") return;
+      if (isSuppressed(record.key)) return;
+      if ((interactionPausesRef.current.get(id)?.size ?? 0) > 0) return;
+
+      timersRef.current.set(id, {
+        startedAt: Date.now(),
+        handle: setTimeout(() => removeRecord(id), record.remainingMs),
+      });
+    },
+    [clearTimer, isSuppressed, removeRecord],
+  );
+
+  const pauseHud = useCallback(
+    (id: number) => {
+      const timer = timersRef.current.get(id);
+      if (timer === undefined) return;
+      const elapsedMs = Math.max(0, Date.now() - timer.startedAt);
+      clearTimer(id);
+      const record = recordsRef.current.find(
+        (candidate): candidate is HudRecord =>
+          candidate.id === id && candidate.kind === "Hud",
+      );
+      if (record === undefined) return;
+      const remainingMs = Math.max(0, record.remainingMs - elapsedMs);
+      if (remainingMs === 0) {
+        // Time fully elapsed while paused: release the record and all of its
+        // pause/timer bookkeeping together rather than leaking the pause entry.
+        removeRecord(id);
+        return;
       }
-      exitTimers.current.set(
-        id,
-        setTimeout(() => {
-          exitTimers.current.delete(id);
-          const remainingToasts = toastsRef.current.filter((toast) => toast.id !== id);
-          toastsRef.current = remainingToasts;
-          setToasts(remainingToasts);
-        }, EXIT_MS)
+      commit(
+        recordsRef.current.map((candidate) =>
+          candidate.id === id ? { ...candidate, remainingMs } : candidate,
+        ),
       );
     },
-    [clearTimer]
+    [clearTimer, commit, removeRecord],
   );
 
-  // A suppressed toast's dismiss timer is cleared while hidden (like the
-  // visibilitychange pause below) so it is never auto-dismissed invisibly;
-  // releasing the last lease reschedules a fresh full-duration timer.
-  const scheduleDismiss = useCallback(
-    (toast: Pick<ToastFeedback, "id" | "duration" | "dedupeKey">) => {
-      clearTimer(toast.id);
-      if (toast.duration <= 0) return;
-      if (isSuppressed(toast.dedupeKey)) return;
-      timers.current.set(toast.id, setTimeout(() => dismiss(toast.id), toast.duration));
-    },
-    [clearTimer, dismiss, isSuppressed]
-  );
+  const announce = useCallback((record: SignalRecord) => {
+    announcementSequenceRef.current += 1;
+    setDetachedAnnouncement({
+      sequence: announcementSequenceRef.current,
+      policy: signalAnnouncement(record),
+      text: announcementText(record.content),
+    });
+  }, []);
 
-  const show = useCallback(
-    (feedback: FeedbackContent & {
-      action?: FeedbackActions;
-      dedupeKey?: string;
-      duration?: number;
-    }) => {
-      // Actionable toasts never auto-dismiss: a click target that vanishes
-      // out from under the user defeats the action.
-      const duration =
-        feedback.duration ?? (feedbackActionList(feedback.action).length > 0 ? 0 : 5000);
-      if (feedback.dedupeKey) {
-        const existing = toastsRef.current.find(
-          (toast) => toast.dedupeKey === feedback.dedupeKey
+  const publish = useCallback(
+    (signal: DetachedFeedback) => {
+      const existing =
+        signal.key === undefined
+          ? undefined
+          : recordsRef.current.find((record) => record.key === signal.key);
+
+      if (existing && hasSamePresentation(existing, signal)) {
+        // Keep behavior closures fresh without mutating the rendered presentation.
+        recordsRef.current = recordsRef.current.map((record) =>
+          record.id === existing.id ? { ...record, actions: signal.actions } : record,
         );
-        if (existing) {
-          // Reviving mid-exit must cancel the pending removal, or the stale
-          // timeout would silently delete the refreshed record.
-          const pendingExit = exitTimers.current.get(existing.id);
-          if (pendingExit) {
-            clearTimeout(pendingExit);
-            exitTimers.current.delete(existing.id);
-          }
-          // Optional presentation fields are overwritten, not merged: a
-          // re-show that omits action/message/requestId means they no longer
-          // apply (e.g. Forbidden replacing SaveFailed must drop Retry).
-          const updatedToasts = toastsRef.current.map((toast) =>
-            toast.id === existing.id
-              ? {
-                  ...toast,
-                  ...feedback,
-                  message: feedback.message,
-                  requestId: feedback.requestId,
-                  action: feedback.action,
-                  duration,
-                  exiting: false,
-                }
-              : toast
-          );
-          toastsRef.current = updatedToasts;
-          setToasts(updatedToasts);
-          scheduleDismiss({ id: existing.id, duration, dedupeKey: feedback.dedupeKey });
-          return;
-        }
+        return;
       }
 
-      const toast = {
-        ...feedback,
-        id: nextId.current++,
-        duration,
-        exiting: false,
-      };
-      const previousToasts = toastsRef.current;
-      const nextToasts = [...previousToasts, toast].slice(-MAX_TOASTS);
-      for (const previousToast of previousToasts) {
-        if (!nextToasts.some((nextToast) => nextToast.id === previousToast.id)) {
-          clearTimer(previousToast.id);
-        }
+      const id = existing?.id ?? nextIdRef.current++;
+      const revision = (existing?.revision ?? 0) + 1;
+      const suppressed = isSuppressed(signal.key);
+      const announcedRevision = suppressed ? (existing?.announcedRevision ?? 0) : revision;
+      let nextRecord: SignalRecord;
+
+      if (signal.kind === "Hud") {
+        nextRecord = {
+          id,
+          kind: "Hud",
+          key: signal.key,
+          content: signal.content,
+          actions: signal.actions,
+          revision,
+          announcedRevision,
+          remainingMs: feedbackDuration(signal.actions),
+        };
+      } else {
+        nextRecord = {
+          id,
+          kind: "Persistent",
+          key: signal.key,
+          content: signal.content,
+          actions: signal.actions,
+          announcement: signal.announcement,
+          revision,
+          announcedRevision,
+        };
       }
-      toastsRef.current = nextToasts;
-      setToasts(nextToasts);
-      scheduleDismiss(toast);
+
+      if (existing) {
+        clearTimer(existing.id);
+        if (existing.kind !== signal.kind) interactionPausesRef.current.delete(existing.id);
+      }
+
+      let nextRecords = existing
+        ? recordsRef.current.map((record) => (record.id === id ? nextRecord : record))
+        : [...recordsRef.current, nextRecord];
+      const visibleHudRecords = nextRecords.filter(
+        (record): record is HudRecord =>
+          record.kind === "Hud" && !isSuppressed(record.key),
+      );
+      if (visibleHudRecords.length > MAX_HUDS) {
+        // Evict the oldest HUD the user is not actively reading. A hovered or
+        // focused HUD is paused (WCAG 2.2.1 Timing Adjustable) and must not be
+        // yanked out from under the pointer; only when every rendered HUD is
+        // paused does the oldest fall back to eviction.
+        const evicted =
+          visibleHudRecords.find(
+            (record) =>
+              record.id !== id &&
+              (interactionPausesRef.current.get(record.id)?.size ?? 0) === 0,
+          ) ??
+          visibleHudRecords.find((record) => record.id !== id) ??
+          visibleHudRecords[0];
+        clearTimer(evicted.id);
+        interactionPausesRef.current.delete(evicted.id);
+        nextRecords = nextRecords.filter((record) => record.id !== evicted.id);
+      }
+
+      commit(nextRecords);
+      if (!suppressed) announce(nextRecord);
+      if (nextRecord.kind === "Hud" && nextRecords.some((record) => record.id === id)) {
+        scheduleHud(id);
+      }
     },
-    [clearTimer, scheduleDismiss]
+    [announce, clearTimer, commit, isSuppressed, scheduleHud],
   );
 
-  const dismissByDedupeKey = useCallback(
+  const resolve = useCallback(
     (key: string) => {
-      const existing = toastsRef.current.find((toast) => toast.dedupeKey === key);
-      if (existing) dismiss(existing.id);
+      const record = recordsRef.current.find((candidate) => candidate.key === key);
+      if (record) removeRecord(record.id);
     },
-    [dismiss]
+    [removeRecord],
   );
 
-  const suppressDedupeKey = useCallback(
+  const suppress = useCallback(
     (key: string) => {
-      const previousCount = suppressCounts.current.get(key) ?? 0;
-      suppressCounts.current.set(key, previousCount + 1);
+      const previousCount = suppressionCountsRef.current.get(key) ?? 0;
+      suppressionCountsRef.current.set(key, previousCount + 1);
       if (previousCount === 0) {
-        for (const toast of toastsRef.current) {
-          if (toast.dedupeKey === key) clearTimer(toast.id);
+        const record = recordsRef.current.find((candidate) => candidate.key === key);
+        if (record?.kind === "Hud") {
+          pauseHud(record.id);
+          interactionPausesRef.current.delete(record.id);
         }
+        // pauseHud has no state update when the HUD was already paused.
+        setSuppressionEpoch((epoch) => epoch + 1);
       }
-      setSuppressTick((tick) => tick + 1);
 
       let released = false;
       return () => {
         if (released) return;
         released = true;
-        const count = suppressCounts.current.get(key) ?? 0;
-        if (count <= 1) {
-          suppressCounts.current.delete(key);
-          for (const toast of toastsRef.current) {
-            if (toast.dedupeKey === key) scheduleDismiss(toast);
-          }
-        } else {
-          suppressCounts.current.set(key, count - 1);
+        const count = suppressionCountsRef.current.get(key) ?? 0;
+        if (count > 1) {
+          suppressionCountsRef.current.set(key, count - 1);
+          return;
         }
-        setSuppressTick((tick) => tick + 1);
+
+        suppressionCountsRef.current.delete(key);
+        const record = recordsRef.current.find((candidate) => candidate.key === key);
+        if (record === undefined) {
+          setSuppressionEpoch((epoch) => epoch + 1);
+          return;
+        }
+
+        let nextRecords = recordsRef.current;
+        if (record.kind === "Hud") {
+          const visibleHudRecords = nextRecords.filter(
+            (candidate): candidate is HudRecord =>
+              candidate.kind === "Hud" && !isSuppressed(candidate.key),
+          );
+          if (visibleHudRecords.length > MAX_HUDS) {
+            const evictedRecord =
+              visibleHudRecords.find(
+                (candidate) =>
+                  candidate.id !== record.id &&
+                  (interactionPausesRef.current.get(candidate.id)?.size ?? 0) ===
+                    0,
+              ) ??
+              visibleHudRecords.find((candidate) => candidate.id !== record.id);
+            if (evictedRecord !== undefined) {
+              clearTimer(evictedRecord.id);
+              interactionPausesRef.current.delete(evictedRecord.id);
+              nextRecords = nextRecords.filter(
+                (candidate) => candidate.id !== evictedRecord.id,
+              );
+            }
+          }
+        }
+
+        if (record.announcedRevision < record.revision) {
+          const restoredRecord = {
+            ...record,
+            announcedRevision: record.revision,
+          } as SignalRecord;
+          commit(
+            nextRecords.map((candidate) =>
+              candidate.id === restoredRecord.id ? restoredRecord : candidate,
+            ),
+          );
+          announce(restoredRecord);
+        } else if (nextRecords !== recordsRef.current) {
+          commit(nextRecords);
+        } else {
+          setSuppressionEpoch((epoch) => epoch + 1);
+        }
+
+        if (record.kind === "Hud") scheduleHud(record.id);
       };
     },
-    [clearTimer, scheduleDismiss]
+    [announce, clearTimer, commit, isSuppressed, pauseHud, scheduleHud],
   );
 
-  const value = useMemo(
-    () => ({ show, dismissByDedupeKey, suppressDedupeKey }),
-    [show, dismissByDedupeKey, suppressDedupeKey]
+  const setPauseReason = useCallback(
+    (id: number, reason: PauseReason, paused: boolean) => {
+      const reasons = interactionPausesRef.current.get(id) ?? new Set<PauseReason>();
+      if (paused) {
+        if (reasons.has(reason)) return;
+        reasons.add(reason);
+        interactionPausesRef.current.set(id, reasons);
+        pauseHud(id);
+        return;
+      }
+
+      reasons.delete(reason);
+      if (reasons.size === 0) {
+        interactionPausesRef.current.delete(id);
+        scheduleHud(id);
+      } else {
+        interactionPausesRef.current.set(id, reasons);
+      }
+    },
+    [pauseHud, scheduleHud],
+  );
+
+  const runAction = useCallback(
+    (id: number, actionIndex: number) => {
+      const record = recordsRef.current.find((candidate) => candidate.id === id);
+      const action = record?.actions?.[actionIndex];
+      if (record === undefined || action === undefined) return;
+      if (record.kind === "Persistent") {
+        action.onClick();
+        return;
+      }
+      try {
+        action.onClick();
+      } finally {
+        removeRecord(id);
+      }
+    },
+    [removeRecord],
   );
 
   useEffect(() => {
-    const timerMap = timers.current;
-    const pauseHiddenTimers = () => {
-      if (document.visibilityState === "hidden") {
-        for (const toast of toastsRef.current) {
-          clearTimer(toast.id);
-        }
-        return;
-      }
-      for (const toast of toastsRef.current) {
-        scheduleDismiss(toast);
+    const timers = timersRef.current;
+    const handleVisibilityChange = () => {
+      for (const record of recordsRef.current) {
+        if (record.kind !== "Hud") continue;
+        if (document.visibilityState === "hidden") pauseHud(record.id);
+        else scheduleHud(record.id);
       }
     };
 
-    document.addEventListener("visibilitychange", pauseHiddenTimers);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
-      document.removeEventListener("visibilitychange", pauseHiddenTimers);
-      for (const timer of timerMap.values()) {
-        clearTimeout(timer);
-      }
-      timerMap.clear();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      for (const timer of timers.values()) clearTimeout(timer.handle);
+      timers.clear();
     };
-  }, [clearTimer, scheduleDismiss]);
+  }, [pauseHud, scheduleHud]);
+
+  const value = useMemo(
+    () => ({ publish, resolve, suppress }),
+    [publish, resolve, suppress],
+  );
+  const visibleRecords = records.filter((record) => !isSuppressed(record.key));
 
   return (
     <FeedbackContext.Provider value={value}>
       {children}
-      <div className={styles.toastViewport} aria-label="Notifications">
-        {toasts
-          .filter((toast) => !isSuppressed(toast.dedupeKey))
-          .map((toast) => (
-            <div
-              key={toast.id}
-              className={`${styles.toast} ${styles[toast.severity]} ${
-                toast.exiting ? styles.exiting : ""
-              }`}
-              role={roleFor(toast.severity)}
-              aria-live={toast.severity === "error" ? "assertive" : "polite"}
-              aria-atomic="true"
-              onMouseEnter={() => clearTimer(toast.id)}
-              onFocusCapture={() => clearTimer(toast.id)}
-              onMouseLeave={() => scheduleDismiss(toast)}
-              onBlurCapture={() => scheduleDismiss(toast)}
-            >
-              <div className={styles.icon}>{iconFor(toast.severity)}</div>
-              <div className={styles.body}>
-                <div className={styles.title}>{toast.title}</div>
-                {toast.message ? <div className={styles.message}>{toast.message}</div> : null}
-                {toast.requestId ? (
-                  <div className={styles.meta}>Nexus request ID: {toast.requestId}</div>
-                ) : null}
-                {feedbackActionList(toast.action).length > 0 ? (
-                  <div className={styles.actions}>
-                    {feedbackActionList(toast.action).map((action, index) => (
-                      <Button
-                        key={`${index}-${action.label}`}
-                        variant="secondary"
-                        size="sm"
-                        className={styles.action}
-                        onClick={() => {
-                          action.onClick();
-                          dismiss(toast.id);
-                        }}
-                      >
-                        {action.label}
-                      </Button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                className={styles.dismiss}
-                onClick={() => dismiss(toast.id)}
-                aria-label={`Dismiss ${toast.title}`}
-              >
-                <X size={16} aria-hidden="true" />
-              </Button>
-            </div>
+      <div
+        className={styles.announcer}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {detachedAnnouncement?.policy === "Polite" ? (
+          <span key={detachedAnnouncement.sequence}>
+            {detachedAnnouncement.text}
+          </span>
+        ) : null}
+      </div>
+      <div
+        className={styles.announcer}
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+      >
+        {detachedAnnouncement?.policy === "Assertive" ? (
+          <span key={detachedAnnouncement.sequence}>
+            {detachedAnnouncement.text}
+          </span>
+        ) : null}
+      </div>
+      <div
+        className={styles.persistentRail}
+        role="region"
+        aria-label="Persistent feedback"
+      >
+        {visibleRecords
+          .filter((record): record is PersistentRecord => record.kind === "Persistent")
+          .map((record) => (
+            <SignalArticle
+              key={record.id}
+              content={record.content}
+              actions={record.actions}
+              className={styles.persistent}
+              onAction={(actionIndex) => runAction(record.id, actionIndex)}
+            />
+          ))}
+      </div>
+      <div className={styles.hudViewport} role="region" aria-label="HUD feedback">
+        {visibleRecords
+          .filter((record): record is HudRecord => record.kind === "Hud")
+          .map((record) => (
+            <SignalArticle
+              key={record.id}
+              content={record.content}
+              actions={record.actions}
+              className={styles.hud}
+              onAction={(actionIndex) => runAction(record.id, actionIndex)}
+              onDismiss={() => removeRecord(record.id)}
+              onMouseEnter={() => setPauseReason(record.id, "Hover", true)}
+              onMouseLeave={() => setPauseReason(record.id, "Hover", false)}
+              onFocusCapture={() => setPauseReason(record.id, "Focus", true)}
+              onBlurCapture={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) {
+                  setPauseReason(record.id, "Focus", false);
+                }
+              }}
+            />
           ))}
       </div>
     </FeedbackContext.Provider>
   );
 }
 
-export function useFeedback() {
+export function useFeedback(): FeedbackContextValue {
   const context = useContext(FeedbackContext);
-  if (!context) {
+  if (context === null) {
     throw new Error("useFeedback must be used within a FeedbackProvider");
   }
   return context;
 }
 
 export function FeedbackNotice({
-  feedback,
-  severity,
-  title,
-  message,
-  requestId,
+  content,
+  announcement,
+  actions,
   children,
-  className,
-  announce = true,
 }: {
-  feedback?: FeedbackContent | null;
-  severity?: FeedbackSeverity;
-  title?: string;
-  message?: string;
-  requestId?: string;
+  content: FeedbackContent;
+  announcement: FeedbackAnnouncement;
+  actions?: FeedbackActions;
   children?: ReactNode;
-  className?: string;
-  announce?: boolean;
 }) {
-  const resolvedSeverity = feedback?.severity ?? severity ?? "info";
-  const resolvedTitle = feedback?.title ?? title;
-  const resolvedMessage = feedback?.message ?? message;
-  const resolvedRequestId = feedback?.requestId ?? requestId;
-
   return (
-    <div
-      className={`${styles.notice} ${styles[resolvedSeverity]} ${className ?? ""}`}
-      role={announce ? roleFor(resolvedSeverity) : undefined}
-      aria-live={
-        announce
-          ? resolvedSeverity === "error"
-            ? "assertive"
-            : "polite"
-          : undefined
-      }
-      aria-atomic={announce ? "true" : undefined}
+    <SignalArticle
+      content={content}
+      actions={actions}
+      className={styles.notice}
+      role={announcementRole(announcement)}
+      onAction={(actionIndex) => actions?.[actionIndex]?.onClick()}
     >
-      <div className={styles.icon}>{iconFor(resolvedSeverity)}</div>
-      <div className={styles.body}>
-        {resolvedTitle ? <div className={styles.title}>{resolvedTitle}</div> : children}
-        {resolvedMessage ? <div className={styles.message}>{resolvedMessage}</div> : null}
-        {resolvedTitle && children ? <div className={styles.message}>{children}</div> : null}
-        {resolvedRequestId ? (
-          <div className={styles.meta}>Nexus request ID: {resolvedRequestId}</div>
-        ) : null}
-      </div>
-    </div>
+      {children}
+    </SignalArticle>
   );
 }
 
 export function FieldFeedback({
-  feedback,
   id,
+  content,
 }: {
-  feedback: FeedbackContent | null;
-  id?: string;
+  id: string;
+  content: FeedbackContent | null;
 }) {
-  if (!feedback) return null;
+  if (content === null) return null;
   return (
-    <div id={id} className={`${styles.field} ${styles[feedback.severity]}`} role="alert">
-      {feedback.title}
+    <div id={id} className={`${styles.field} ${styles[content.tone]}`}>
+      {content.title}
     </div>
   );
 }

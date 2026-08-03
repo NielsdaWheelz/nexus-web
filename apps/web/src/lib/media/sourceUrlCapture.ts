@@ -3,7 +3,8 @@ import { isApiError, isUnauthenticatedApiError } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
 import {
   mediaCaptureStatus,
-  toMediaCaptureFeedback,
+  mediaCaptureErrorMessage,
+  type MediaCaptureOperation,
 } from "@/lib/media/captureFeedback";
 import {
   addMediaFromUrl,
@@ -43,13 +44,13 @@ export async function captureSourceUrl({
   url,
   libraryIds,
   idempotencyKey,
-  fallback,
+  operation,
   signal,
 }: {
   url: string;
   libraryIds: readonly string[];
   idempotencyKey?: string;
-  fallback?: string;
+  operation: Extract<MediaCaptureOperation, "SaveSource" | "AddAttachment">;
   signal?: AbortSignal;
 }): Promise<SourceUrlCaptureResult> {
   try {
@@ -85,7 +86,7 @@ export async function captureSourceUrl({
     return {
       label: url,
       ok: false,
-      feedback: toMediaCaptureFeedback(error, fallback),
+      feedback: mediaCaptureErrorMessage(error, operation),
     };
   }
 }

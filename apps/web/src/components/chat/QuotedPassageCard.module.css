@@ -105,8 +105,7 @@
 
 .remove::before,
 .disclosure::before,
-.sourceButton::before,
-.retry::before {
+.sourceButton::before {
   content: "";
   position: absolute;
   top: 50%;
@@ -290,31 +289,6 @@
   overflow-wrap: anywhere;
 }
 
-.noticeActions {
-  margin-top: var(--space-1);
-}
-
-.retry {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 10px;
-  border: var(--stroke-hairline) solid var(--edge-strong);
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--ink);
-  font-size: var(--text-xs);
-  cursor: pointer;
-  transition:
-    background var(--duration-fast) var(--ease-glide),
-    border-color var(--duration-fast) var(--ease-glide);
-}
-
-.retry:hover {
-  background: var(--surface-hover);
-  border-color: var(--ink-faint);
-}
-
 .srOnly {
   position: absolute;
   width: 1px;
@@ -335,8 +309,7 @@
 
   .remove,
   .disclosure,
-  .sourceButton,
-  .retry {
+  .sourceButton {
     transition: none;
   }
 }

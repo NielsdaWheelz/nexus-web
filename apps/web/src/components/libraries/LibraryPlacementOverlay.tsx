@@ -31,8 +31,8 @@ export default function LibraryPlacementOverlay({
     state.failure === null
       ? null
       : state.failure.kind === "Retry"
-        ? { message: state.failure.message, onRetry: state.failure.retry }
-        : { message: state.failure.message, onRetry: null };
+        ? { content: state.failure.content, onRetry: state.failure.retry }
+        : { content: state.failure.content, onRetry: null };
 
   return (
     <>

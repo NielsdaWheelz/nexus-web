@@ -1,39 +1,74 @@
 .toolbar {
   display: flex;
-  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-2);
-  width: 100%;
-  min-width: 0;
+  inline-size: 100%;
+  min-inline-size: 0;
 }
 
 .search {
   flex: 1 1 200px;
-  min-inline-size: 8rem;
+  min-inline-size: 0;
 }
 
 .filters {
   display: flex;
-  flex: 0 0 auto;
-  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-2);
-  white-space: nowrap;
+  min-inline-size: 0;
 }
 
 .controls {
   display: flex;
-  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
+  min-inline-size: 0;
   margin-inline-start: auto;
-  white-space: nowrap;
 }
 
 .controls:only-child {
   flex: 1 1 auto;
   min-width: 0;
   margin-inline-start: 0;
+}
+
+.instrument {
+  flex-wrap: nowrap;
+}
+
+.instrument .search {
+  min-inline-size: 8rem;
+}
+
+.instrument .filters,
+.instrument .controls {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.instrument .controls:only-child {
+  flex: 1 1 auto;
+}
+
+.refinement {
+  flex-wrap: wrap;
+}
+
+.refinement .filters,
+.refinement .controls {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  max-inline-size: 100%;
+}
+
+.refinement .filters {
+  white-space: normal;
+}
+
+.refinement .filters > * {
+  min-inline-size: 0;
+  max-inline-size: 100%;
 }
 
 .toolbar :where(button, [role="button"]) {
@@ -43,4 +78,31 @@
 
 .toolbar :where(input, select) {
   min-block-size: var(--size-md);
+}
+
+@container primaryPane (max-width: 479px) {
+  .refinement {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .refinement .search,
+  .refinement .filters,
+  .refinement .controls {
+    flex: 0 1 auto;
+    inline-size: 100%;
+    min-inline-size: 0;
+    margin-inline-start: 0;
+  }
+
+  .refinement .controls {
+    justify-content: flex-end;
+  }
+}
+
+@container primaryPane (max-width: 359px) {
+  .refinement .filters > :where(label):has(select) {
+    flex: 1 1 100%;
+    inline-size: 100%;
+  }
 }

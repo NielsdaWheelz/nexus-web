@@ -17,6 +17,7 @@ import { isRecord } from "@/lib/validation";
 import { appendDailyDraftText, captureDailySurface, createDailyDraft, dailyDraftBodyChanged, draftNoteRef, loadDailySurface, pendingDailyBody, surfaceContainsDailyDraft, type DailySurfaceSessionOptions } from "@/lib/resourceSurface/dailySurfacePersistence";
 import { acknowledgeDailyDraftHandoff, clearDailyDraft, readDailyDraft, writeDailyDraft, type DailyDraft, type DailyDraftHandoff } from "@/lib/notes/dailyDraftStore";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
+import { copyText } from "@/lib/ui/copyText";
 
 const IDLE_DELAY_MS = 1500;
 const MAX_WAIT_MS = 5000;
@@ -1078,11 +1079,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       ? { daily: dailyDraft, resource: resourceDraft }
       : dailyDraft ?? resourceDraft;
     if (!draft) return;
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(draft, null, 2));
-    } catch (error) {
-      onErrorRef.current?.(error);
-    }
+    await copyText(JSON.stringify(draft, null, 2));
   }, []);
   useEffect(() => {
     const flushWhenHidden = () => { if (document.visibilityState === "hidden") saveIntrinsics(); };

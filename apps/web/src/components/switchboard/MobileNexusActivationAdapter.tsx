@@ -37,7 +37,12 @@ export interface MobileNexusActivationAdapterProps {
     activation: NexusTargetActivation,
     entry?: NexusEntry,
   ): Promise<NexusDispatchOutcome>;
-  onError(error: unknown): void;
+  onError(
+    error: unknown,
+    retry: () => void,
+    target: MaterializedNexusTarget,
+    activation: NexusTargetActivation,
+  ): void;
 }
 
 function availableTarget(action: NexusAction): NexusTarget {
@@ -90,7 +95,12 @@ const MobileNexusActivationAdapter = forwardRef<
         case "Standard": {
           activationSequenceRef.current += 1;
           const materialized = materialize(target);
-          void dispatchPrepared(materialized, activation, entry).catch(onError);
+          const retry = () => {
+            void dispatchPrepared(materialized, activation, entry).catch(
+              (error: unknown) => onError(error, retry, materialized, activation),
+            );
+          };
+          retry();
           return;
         }
         case "DailyTextHandoff": {
@@ -125,6 +135,28 @@ const MobileNexusActivationAdapter = forwardRef<
             handoff.cancel(returnFocus);
             throw error;
           }
+          const retry = () => {
+            handoff.focus();
+            handoff.prepare(dailyTarget);
+            activationSequenceRef.current += 1;
+            const retrySequence = activationSequenceRef.current;
+            void dispatchPrepared(materialized, activation, entry).then(
+              (outcome) => {
+                if (activationSequenceRef.current !== retrySequence) return;
+                if (outcome.kind === "DailyPageAccepted") {
+                  handoff.accept(dailyTarget, outcome);
+                } else {
+                  handoff.cancel(returnFocus);
+                }
+              },
+              (error: unknown) => {
+                if (activationSequenceRef.current === retrySequence) {
+                  handoff.cancel(returnFocus);
+                }
+                onError(error, retry, materialized, activation);
+              },
+            );
+          };
           void dispatched.then(
             (outcome) => {
               if (activationSequenceRef.current !== activationSequence) {
@@ -140,7 +172,7 @@ const MobileNexusActivationAdapter = forwardRef<
               if (activationSequenceRef.current === activationSequence) {
                 handoff.cancel(returnFocus);
               }
-              onError(error);
+              onError(error, retry, materialized, activation);
             },
           );
           return;

@@ -67,7 +67,6 @@ const BLOCKED_REQUEST_HEADERS = new Set([
 const ALLOWED_RESPONSE_HEADERS = new Set([
   "x-request-id",
   "content-type",
-  "content-length",
   "cache-control",
   "etag",
   "vary",
@@ -78,6 +77,14 @@ const ALLOWED_RESPONSE_HEADERS = new Set([
   "content-range",
   "location",
   "server-timing",
+]);
+
+// Private EPUB assets are the one authenticated byte-serving lane. It may
+// forward representation length because its upstream request explicitly
+// requires identity encoding; structured API responses never forward length.
+const MEDIA_ASSET_RESPONSE_HEADERS = new Set([
+  ...ALLOWED_RESPONSE_HEADERS,
+  "content-length",
 ]);
 
 /**
@@ -93,7 +100,8 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
 /**
  * Response headers forwarded for PUBLIC owned assets (oracle plates).
  * Unlike ALLOWED_RESPONSE_HEADERS this INCLUDES content-length because the
- * public asset proxy streams the upstream body through without recomputing it.
+ * public asset proxy requires identity encoding upstream and streams those
+ * exact representation bytes through without recomputing them.
  * set-cookie/authorization/x-internal-* are implicitly blocked because only
  * allowlisted headers are forwarded.
  */
@@ -141,6 +149,21 @@ interface ProxyDeps {
   };
 }
 
+interface AuthenticatedProxyResponsePolicy {
+  readonly allowedHeaders: ReadonlySet<string>;
+  readonly requireIdentityEncoding: boolean;
+}
+
+const STRUCTURED_RESPONSE_POLICY: AuthenticatedProxyResponsePolicy = {
+  allowedHeaders: ALLOWED_RESPONSE_HEADERS,
+  requireIdentityEncoding: false,
+};
+
+const MEDIA_ASSET_RESPONSE_POLICY: AuthenticatedProxyResponsePolicy = {
+  allowedHeaders: MEDIA_ASSET_RESPONSE_HEADERS,
+  requireIdentityEncoding: true,
+};
+
 interface ExtensionProxyOptions {
   defaultAccept?: string;
   defaultContentType?: string;
@@ -162,7 +185,10 @@ function getOrGenerateRequestId(
   return generateFn();
 }
 
-function shouldForwardResponseHeader(headerName: string): boolean {
+function shouldForwardResponseHeader(
+  headerName: string,
+  allowedHeaders: ReadonlySet<string>,
+): boolean {
   const lowerName = headerName.toLowerCase();
 
   // Explicitly blocked headers are never forwarded
@@ -176,7 +202,7 @@ function shouldForwardResponseHeader(headerName: string): boolean {
   }
 
   // Only forward headers on the allowlist
-  return ALLOWED_RESPONSE_HEADERS.has(lowerName);
+  return allowedHeaders.has(lowerName);
 }
 
 function shouldForwardRequestHeader(headerName: string): boolean {
@@ -263,10 +289,11 @@ async function createDefaultDeps(): Promise<ProxyDeps> {
   };
 }
 
-export async function proxyToFastAPIWithDeps(
+async function proxyAuthenticatedToFastAPIWithDeps(
   request: Request,
   path: string,
-  deps: ProxyDeps
+  deps: ProxyDeps,
+  responsePolicy: AuthenticatedProxyResponsePolicy,
 ): Promise<Response> {
   const proxyStartedAt = performance.now();
   // Validate path does not contain query string (caller error)
@@ -418,6 +445,12 @@ export async function proxyToFastAPIWithDeps(
   if (deps.config.internalSecret) {
     headers.set("X-Nexus-Internal", deps.config.internalSecret);
   }
+  if (responsePolicy.requireIdentityEncoding) {
+    // The lane forwards byte-count and range metadata, so the upstream
+    // representation must not be compressed and transparently decoded by
+    // fetch before it reaches the browser-facing response.
+    headers.set("Accept-Encoding", "identity");
+  }
 
   // Forward request body for non-GET/HEAD methods as raw bytes.
   let body: ArrayBuffer | undefined;
@@ -438,11 +471,13 @@ export async function proxyToFastAPIWithDeps(
       signal: ctl.signal,
     });
 
-    // The body is forwarded unchanged, so its framing metadata remains exact.
-    // Filtering still prevents private upstream headers from reaching clients.
+    // Each caller supplies one explicit representation policy. Structured API
+    // responses exclude hop-specific Content-Length and let the browser-facing
+    // runtime frame the body. The byte-serving asset policy can preserve it
+    // only because that lane requires identity encoding upstream.
     const responseHeaders = new Headers();
     response.headers.forEach((value, key) => {
-      if (shouldForwardResponseHeader(key)) {
+      if (shouldForwardResponseHeader(key, responsePolicy.allowedHeaders)) {
         responseHeaders.set(key, value);
       }
     });
@@ -501,6 +536,32 @@ export async function proxyToFastAPI(
   return proxyToFastAPIWithDeps(request, path, deps);
 }
 
+export async function proxyToFastAPIWithDeps(
+  request: Request,
+  path: string,
+  deps: ProxyDeps,
+): Promise<Response> {
+  return proxyAuthenticatedToFastAPIWithDeps(
+    request,
+    path,
+    deps,
+    STRUCTURED_RESPONSE_POLICY,
+  );
+}
+
+export async function proxyMediaAssetToFastAPI(
+  request: Request,
+  path: string,
+): Promise<Response> {
+  const deps = await createDefaultDeps();
+  return proxyAuthenticatedToFastAPIWithDeps(
+    request,
+    path,
+    deps,
+    MEDIA_ASSET_RESPONSE_POLICY,
+  );
+}
+
 export async function proxyPublicToFastAPI(
   request: Request,
   path: string
@@ -541,6 +602,7 @@ export async function proxyPublicToFastAPIWithDeps(
   if (ifNoneMatch) {
     headers.set("if-none-match", ifNoneMatch);
   }
+  headers.set("Accept-Encoding", "identity");
   headers.set(REQUEST_ID_HEADER, requestId);
   if (internalSecret) {
     headers.set("X-Nexus-Internal", internalSecret);
@@ -663,6 +725,7 @@ export async function proxyResourceShareToFastAPIWithDeps(
   }
 
   const headers = new Headers({ [REQUEST_ID_HEADER]: requestId });
+  headers.set("Accept-Encoding", "identity");
   const shareToken = request.headers.get("x-nexus-share-token");
   if (shareToken) {
     headers.set("X-Nexus-Share-Token", shareToken);
@@ -788,6 +851,7 @@ export async function proxyExtensionToFastAPI(
   if (internalSecret) {
     headers.set("X-Nexus-Internal", internalSecret);
   }
+  headers.set("Accept-Encoding", "identity");
 
   let body: ArrayBuffer | undefined;
   if (request.method !== "GET" && request.method !== "HEAD") {

@@ -54,6 +54,12 @@ import kotlin.time.Duration.Companion.milliseconds
 
 internal const val NATIVE_PLAYER_TIMELINE_INTERVAL_MS = 250L
 
+private data class PlayerCommandBarrier(
+    val naturalEndCapturePending: Boolean,
+    val pendingNaturalEnd: Boolean,
+    val persistenceDrained: Boolean,
+)
+
 internal val NEXUS_PLAYER_COMMAND_IDS: Set<Int> = linkedSetOf(
     Player.COMMAND_PLAY_PAUSE,
     Player.COMMAND_PREPARE,
@@ -74,11 +80,21 @@ internal val NEXUS_PLAYER_COMMAND_IDS: Set<Int> = linkedSetOf(
 
 @SuppressLint("WrongConstant")
 @OptIn(UnstableApi::class)
-private fun nexusPlayerCommands(): Player.Commands {
+private fun nexusPlayerCommands(
+    naturalEndCapturePending: Boolean,
+    pendingNaturalEnd: Boolean,
+    persistenceDrained: Boolean,
+): Player.Commands {
     // The collection is a closed registry of Player.Command constants. The
     // IntDef type is erased only by the collection-to-vararg conversion.
     return Player.Commands.Builder()
-        .addAll(*NEXUS_PLAYER_COMMAND_IDS.toIntArray())
+        .addAll(
+            *availableNexusPlayerCommandIds(
+                naturalEndCapturePending = naturalEndCapturePending,
+                pendingNaturalEnd = pendingNaturalEnd,
+                persistenceDrained = persistenceDrained,
+            ).toIntArray()
+        )
         .build()
 }
 
@@ -200,6 +216,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private var discontinuityPrepared = false
     private var naturalEndCapturePending = false
     private var persistenceDrained = false
+    private var installedPlayerCommandBarrier: PlayerCommandBarrier? = null
     private var activePlaybackSource: OfflinePlaybackSource? = null
 
     override fun onCreate() {
@@ -345,8 +362,10 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         if (activityDiscontinuityRequiresSplit(reason)) {
             if (!discontinuityPrepared) {
                 consumptionRecorder.beforeManualDiscontinuity()
+                checkpointSavedTime(oldPosition.positionMs)
+            } else {
+                checkpointSavedTime()
             }
-            checkpointSavedTime()
             startSavedTimeEpoch()
             discontinuityPrepared = false
             consumptionRecorder.afterManualDiscontinuity()
@@ -355,54 +374,13 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     private inner class SessionCallback : MediaSession.Callback {
-        override fun onPlayerCommandRequest(
-            session: MediaSession,
-            controller: MediaSession.ControllerInfo,
-            playerCommand: Int,
-        ): Int {
-            if (
-                playerCommandBlockedByLifecycleBarrier(
-                    playerCommand = playerCommand,
-                    naturalEndCapturePending = naturalEndCapturePending,
-                    pendingNaturalEnd = matchingPendingReceipt() is Presence.Present,
-                    persistenceDrained = persistenceDrained,
-                )
-            ) {
-                return SessionResult.RESULT_ERROR_INVALID_STATE
-            }
-            if (playerCommand in CHECKPOINTED_PLAYER_COMMANDS) {
-                checkpointSavedTime()
-            }
-            if (playerCommand in SEEK_PLAYER_COMMANDS) {
-                prepareForDiscontinuity()
-            }
-            return SessionResult.RESULT_SUCCESS
-        }
-
         override fun onConnect(
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): MediaSession.ConnectionResult {
-            val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
-                .buildUpon()
-                .apply {
-                    if (
-                        isTrustedNexusController(
-                            applicationContext.packageName,
-                            controller.packageName,
-                        )
-                    ) {
-                        NEXUS_CUSTOM_SESSION_ACTIONS.forEach {
-                            add(SessionCommand(it, Bundle.EMPTY))
-                        }
-                        add(SessionCommand(ACTION_WEB_VISIBILITY, Bundle.EMPTY))
-                        add(SessionCommand(ACTION_EVENT, Bundle.EMPTY))
-                    }
-                }
-                .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
-                .setAvailableSessionCommands(commands)
-                .setAvailablePlayerCommands(nexusPlayerCommands())
+                .setAvailableSessionCommands(sessionCommands(controller))
+                .setAvailablePlayerCommands(currentPlayerCommands())
                 .build()
         }
 
@@ -604,6 +582,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         preferences.discardForeignReceipt(command.accountId)
         accountId = command.accountId
         consumptionRecorder.retryPersistence()
+        refreshControllerAvailableCommands()
         return PlayerWire.connected(
             command.requestId,
             snapshot(),
@@ -965,6 +944,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         }
         checkpointSavedTime()
         persistenceDrained = true
+        refreshControllerAvailableCommands()
         val future = SettableFuture.create<SessionResult>()
         consumptionRecorder.drain(
             deadlineMs = NATIVE_PLAYER_COMMAND_DEADLINE_MS - 250,
@@ -1011,9 +991,11 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         }
         val account = accountId ?: return
         naturalEndCapturePending = true
+        publishSnapshot()
         consumptionRecorder.captureNaturalEnd { terminal ->
             if (accountId != account) {
                 naturalEndCapturePending = false
+                refreshControllerAvailableCommands()
                 return@captureNaturalEnd
             }
             val descriptor = canonical.session.descriptor
@@ -1311,11 +1293,16 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         )
     }
 
-    private fun checkpointSavedTime() {
+    private fun checkpointSavedTime(
+        sourcePositionMs: Long = max(
+            0,
+            if (::player.isInitialized) player.currentPosition else 0,
+        ),
+    ) {
         val canonical = loaded as? LoadedSession.Canonical
         val added = savedTime.checkpoint(
             audioProcessorChain.skippedOutputFrameCount,
-            max(0, if (::player.isInitialized) player.currentPosition else 0),
+            max(0, sourcePositionMs),
             sampleRateHz,
             canonical?.rateState?.base ?: 1.0,
             canonical != null &&
@@ -1345,6 +1332,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         if (!::mediaSession.isInitialized) {
             return
         }
+        refreshControllerAvailableCommands()
         if (
             playerSnapshotBlockedByNaturalEnd(
                 canonicalLoaded = loaded is LoadedSession.Canonical,
@@ -1355,6 +1343,61 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             return
         }
         broadcast(PlayerWire.snapshotChanged(snapshot()))
+    }
+
+    private fun sessionCommands(
+        controller: MediaSession.ControllerInfo,
+    ): SessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
+        .buildUpon()
+        .apply {
+            if (
+                isTrustedNexusController(
+                    applicationContext.packageName,
+                    controller.packageName,
+                )
+            ) {
+                NEXUS_CUSTOM_SESSION_ACTIONS.forEach {
+                    add(SessionCommand(it, Bundle.EMPTY))
+                }
+                add(SessionCommand(ACTION_WEB_VISIBILITY, Bundle.EMPTY))
+                add(SessionCommand(ACTION_EVENT, Bundle.EMPTY))
+            }
+        }
+        .build()
+
+    private fun currentPlayerCommandBarrier(): PlayerCommandBarrier = PlayerCommandBarrier(
+        naturalEndCapturePending = naturalEndCapturePending,
+        pendingNaturalEnd = matchingPendingReceipt() is Presence.Present,
+        persistenceDrained = persistenceDrained,
+    )
+
+    private fun currentPlayerCommands(): Player.Commands {
+        val barrier = currentPlayerCommandBarrier()
+        return nexusPlayerCommands(
+            naturalEndCapturePending = barrier.naturalEndCapturePending,
+            pendingNaturalEnd = barrier.pendingNaturalEnd,
+            persistenceDrained = barrier.persistenceDrained,
+        )
+    }
+
+    private fun refreshControllerAvailableCommands() {
+        val barrier = currentPlayerCommandBarrier()
+        if (barrier == installedPlayerCommandBarrier) {
+            return
+        }
+        val playerCommands = nexusPlayerCommands(
+            naturalEndCapturePending = barrier.naturalEndCapturePending,
+            pendingNaturalEnd = barrier.pendingNaturalEnd,
+            persistenceDrained = barrier.persistenceDrained,
+        )
+        mediaSession.connectedControllers.forEach { controller ->
+            mediaSession.setAvailableCommands(
+                controller,
+                sessionCommands(controller),
+                playerCommands,
+            )
+        }
+        installedPlayerCommandBarrier = barrier
     }
 
     private fun broadcast(message: String) {
@@ -1439,8 +1482,6 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             Player.COMMAND_SEEK_BACK,
             Player.COMMAND_SEEK_FORWARD,
         )
-        private val SEEK_PLAYER_COMMANDS = CHECKPOINTED_PLAYER_COMMANDS -
-            setOf(Player.COMMAND_PLAY_PAUSE, Player.COMMAND_STOP)
         internal val PENDING_END_BLOCKED_PLAYER_COMMANDS =
             CHECKPOINTED_PLAYER_COMMANDS - Player.COMMAND_STOP
 
@@ -1481,6 +1522,19 @@ internal fun playerCommandBlockedByLifecycleBarrier(
             (pendingNaturalEnd || persistenceDrained) &&
                 playerCommand in NexusPlaybackService.PENDING_END_BLOCKED_PLAYER_COMMANDS
             )
+
+internal fun availableNexusPlayerCommandIds(
+    naturalEndCapturePending: Boolean,
+    pendingNaturalEnd: Boolean,
+    persistenceDrained: Boolean,
+): Set<Int> = NEXUS_PLAYER_COMMAND_IDS.filterTo(linkedSetOf()) { playerCommand ->
+    !playerCommandBlockedByLifecycleBarrier(
+        playerCommand = playerCommand,
+        naturalEndCapturePending = naturalEndCapturePending,
+        pendingNaturalEnd = pendingNaturalEnd,
+        persistenceDrained = persistenceDrained,
+    )
+}
 
 internal fun playerSnapshotBlockedByNaturalEnd(
     canonicalLoaded: Boolean,

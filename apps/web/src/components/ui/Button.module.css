@@ -126,7 +126,8 @@
 }
 
 .hiddenLabel {
-  visibility: hidden;
+  /* Keep the visible label out of sight without removing the button name. */
+  opacity: 0;
 }
 
 .label {
@@ -149,5 +150,19 @@
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    border: 0;
+    animation: none;
+  }
+
+  .spinner::before {
+    content: "…";
+    display: block;
+    font-size: 1.15em;
+    line-height: 0.8;
   }
 }

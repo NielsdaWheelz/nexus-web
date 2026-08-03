@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback } from "react";
-import { toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useCallback, useState } from "react";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
@@ -20,6 +20,83 @@ import {
   type PodcastUnsubscribeResult,
 } from "./podcastSubscriptions";
 
+type PodcastSubscriptionOperation =
+  | "LoadLibraries"
+  | "AddToLibrary"
+  | "RemoveFromLibrary"
+  | "Refresh"
+  | "Unsubscribe";
+
+function podcastSubscriptionTitle(operation: PodcastSubscriptionOperation): string {
+  switch (operation) {
+    case "LoadLibraries":
+      return "Podcast libraries couldn’t be loaded";
+    case "AddToLibrary":
+      return "Podcast wasn’t added to the library";
+    case "RemoveFromLibrary":
+      return "Podcast wasn’t removed from the library";
+    case "Refresh":
+      return "New episodes couldn’t be checked";
+    case "Unsubscribe":
+      return "Podcast wasn’t unsubscribed";
+  }
+}
+
+/** Finite product-copy adapter for podcast subscription mutations. */
+function podcastSubscriptionErrorMessage(
+  error: unknown,
+  operation: PodcastSubscriptionOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const requestId = error.requestId;
+  const title = podcastSubscriptionTitle(operation);
+  switch (error.code) {
+    case "E_NETWORK":
+      return { tone: "Danger", title, message: "Check your connection and retry.", requestId };
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The server took too long to respond. Retry the action.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return { tone: "Danger", title, message: "Wait a moment, then retry.", requestId };
+    case "E_CONFLICT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The subscription changed. Refresh the pane, then retry.",
+        requestId,
+      };
+    case "E_NOT_FOUND":
+    case "E_PODCAST_NOT_FOUND":
+    case "E_LIBRARY_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title,
+        message: "The podcast or library is no longer available. Refresh the pane.",
+        requestId,
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title,
+        message: "This account can’t make that change.",
+        requestId,
+      };
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title,
+        message: "The subscription settings changed. Refresh the pane, then retry.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
 /**
  * The shared network core of the five podcast-subscription handlers, used by
  * both the list pane (keyed by podcast id) and the detail pane (single
@@ -32,10 +109,21 @@ import {
 export function usePodcastSubscriptionActions(
   onError: (feedback: FeedbackContent) => void,
 ) {
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   // Busy key for add/remove: `${libraryId}:${podcastId}`.
   const busyLibraryPlacementKeys = useStringIdSet();
   const refreshingPodcastIds = useStringIdSet();
   const unsubscribingPodcastIds = useStringIdSet();
+  const reportError = useCallback(
+    (error: unknown, operation: PodcastSubscriptionOperation) => {
+      try {
+        onError(podcastSubscriptionErrorMessage(error, operation));
+      } catch (defect) {
+        setAsyncDefect({ error: defect });
+      }
+    },
+    [onError],
+  );
 
   const loadLibraries = useCallback(
     async (podcastId: string): Promise<LibraryPlacementOption[] | null> => {
@@ -43,16 +131,11 @@ export function usePodcastSubscriptionActions(
         return await listLibraryPlacements({ kind: "Podcast", id: podcastId });
       } catch (loadError) {
         if (handleUnauthenticatedApiError(loadError)) return null;
-        if (!isApiError(loadError) || isSameSystemApiDefect(loadError)) {
-          throw loadError;
-        }
-        onError(
-          toFeedback(loadError, { fallback: "Failed to load podcast libraries" }),
-        );
+        reportError(loadError, "LoadLibraries");
         return null;
       }
     },
-    [onError],
+    [reportError],
   );
 
   const addToLibrary = useCallback(
@@ -67,23 +150,17 @@ export function usePodcastSubscriptionActions(
         await addLibraryPlacement(
           { kind: "Podcast", id: podcastId },
           libraryId,
+          { clientMutationId: crypto.randomUUID() },
         );
         onSuccess();
       } catch (mutationError) {
         if (handleUnauthenticatedApiError(mutationError)) return;
-        if (!isApiError(mutationError) || isSameSystemApiDefect(mutationError)) {
-          throw mutationError;
-        }
-        onError(
-          toFeedback(mutationError, {
-            fallback: "Failed to add podcast to library",
-          }),
-        );
+        reportError(mutationError, "AddToLibrary");
       } finally {
         busyLibraryPlacementKeys.remove(busyKey);
       }
     },
-    [busyLibraryPlacementKeys, onError],
+    [busyLibraryPlacementKeys, reportError],
   );
 
   const removeFromLibrary = useCallback(
@@ -98,23 +175,17 @@ export function usePodcastSubscriptionActions(
         await removeLibraryPlacement(
           { kind: "Podcast", id: podcastId },
           libraryId,
+          { clientMutationId: crypto.randomUUID() },
         );
         onSuccess();
       } catch (mutationError) {
         if (handleUnauthenticatedApiError(mutationError)) return;
-        if (!isApiError(mutationError) || isSameSystemApiDefect(mutationError)) {
-          throw mutationError;
-        }
-        onError(
-          toFeedback(mutationError, {
-            fallback: "Failed to remove podcast from library",
-          }),
-        );
+        reportError(mutationError, "RemoveFromLibrary");
       } finally {
         busyLibraryPlacementKeys.remove(busyKey);
       }
     },
-    [busyLibraryPlacementKeys, onError],
+    [busyLibraryPlacementKeys, reportError],
   );
 
   const checkForNewEpisodes = useCallback(
@@ -140,19 +211,12 @@ export function usePodcastSubscriptionActions(
       } catch (refreshError) {
         if (isAbortError(refreshError)) return;
         if (handleUnauthenticatedApiError(refreshError)) return;
-        if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
-          throw refreshError;
-        }
-        onError(
-          toFeedback(refreshError, {
-            fallback: "Failed to check for new episodes",
-          }),
-        );
+        reportError(refreshError, "Refresh");
       } finally {
         refreshingPodcastIds.remove(podcastId);
       }
     },
-    [onError, refreshingPodcastIds],
+    [refreshingPodcastIds, reportError],
   );
 
   // Confirms (loading fresh library placement for the prompt) then unsubscribes.
@@ -184,24 +248,16 @@ export function usePodcastSubscriptionActions(
         return true;
       } catch (unsubscribeError) {
         if (handleUnauthenticatedApiError(unsubscribeError)) return false;
-        if (
-          !isApiError(unsubscribeError) ||
-          isSameSystemApiDefect(unsubscribeError)
-        ) {
-          throw unsubscribeError;
-        }
-        onError(
-          toFeedback(unsubscribeError, {
-            fallback: "Failed to unsubscribe from podcast",
-          }),
-        );
+        reportError(unsubscribeError, "Unsubscribe");
         return false;
       } finally {
         unsubscribingPodcastIds.remove(podcastId);
       }
     },
-    [loadLibraries, onError, unsubscribingPodcastIds],
+    [loadLibraries, reportError, unsubscribingPodcastIds],
   );
+
+  if (asyncDefect !== null) throw asyncDefect.error;
 
   return {
     busyLibraryPlacementKeys,

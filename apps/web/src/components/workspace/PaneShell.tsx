@@ -58,8 +58,11 @@ import type {
 } from "@/lib/panes/paneRouteModel";
 import type { PaneRouteShareIdentity } from "@/lib/panes/paneResourceLocator";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
+import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import {
   executeResourceChat,
   executeResourceLibraryPlacement,
@@ -105,6 +108,34 @@ const PANE_REFRESH_ARM_DISTANCE_PX = 72;
 const PANE_REFRESH_MAX_OFFSET_PX = 96;
 const PANE_REFRESH_DRAG_RESISTANCE = 0.45;
 const PANE_REFRESH_SETTLED_MS = 900;
+
+function paneShellChatErrorMessage(error: ApiError): FeedbackContent {
+  switch (error.code) {
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title: "You don’t have permission to start this chat.",
+        requestId: error.requestId,
+      };
+    case "E_NOT_FOUND":
+    case "E_BAD_REQUEST":
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title: "A chat about this resource couldn’t begin.",
+        requestId: error.requestId,
+      };
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "It’s unclear whether the chat began.",
+        message: "Check your chats before trying again.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
 
 type PaneRefreshState =
   | { readonly kind: "Idle" }
@@ -207,6 +238,10 @@ interface PaneShellProps {
   onChromeMouseDown?: (event: React.MouseEvent<HTMLElement>) => void;
   isActive?: boolean;
   isMobile?: boolean;
+  responsiveSearchHandoff?: {
+    readonly id: number;
+    readonly onConsumed: (id: number) => void;
+  } | null;
   children: React.ReactNode;
 }
 
@@ -232,6 +267,7 @@ export default function PaneShell({
   onChromeMouseDown,
   isActive = false,
   isMobile = false,
+  responsiveSearchHandoff = null,
   children,
 }: PaneShellProps) {
   if (returnMementoEnabled && bodyMode !== "standard") {
@@ -243,7 +279,6 @@ export default function PaneShell({
     // justify-defect: PaneShell execution requires pane-scoped navigation.
     throw new Error("PaneShell must be used inside PaneRuntimeProvider");
   }
-  const feedback = useFeedback();
   const panePerformance = useMemo(
     () => ({
       activationRouteId: resolveWorkspaceActivationRouteId(paneRuntime.href),
@@ -308,6 +343,8 @@ export default function PaneShell({
   const currentFilterRowsContinuityKeyRef = useRef(filterRowsContinuityKey);
   currentFilterRowsContinuityKeyRef.current = filterRowsContinuityKey;
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const [chatError, setChatError] = useState<FeedbackContent | null>(null);
   const [primaryChromeRecord, setPrimaryChromeRecord] = useState<{
     readonly routeKey: string;
     readonly publication: PanePrimaryChromePublication;
@@ -428,7 +465,7 @@ export default function PaneShell({
         refreshExecutionRef.current = null;
         commitRefreshState({ kind: "Idle" });
         if (execution.controller.signal.aborted || isAbortError(error)) return;
-        throw error;
+        setAsyncDefect({ error });
       }
     })();
   }, [
@@ -621,6 +658,20 @@ export default function PaneShell({
     return true;
   }, [focusSearchInput, paneId]);
   usePaneSearchRequested(openSearch);
+  const consumedSearchRequestIdRef = useRef<number | null>(null);
+  // A browser resize can lead the React projection by one input event. Consume
+  // the route-fenced host handoff only after this shell has republished Search.
+  useLayoutEffect(() => {
+    if (
+      responsiveSearchHandoff === null ||
+      consumedSearchRequestIdRef.current === responsiveSearchHandoff.id ||
+      !openSearch()
+    ) {
+      return;
+    }
+    consumedSearchRequestIdRef.current = responsiveSearchHandoff.id;
+    responsiveSearchHandoff.onConsumed(responsiveSearchHandoff.id);
+  }, [acceptedSearch, openSearch, responsiveSearchHandoff]);
   const closeSearch = useCallback(() => {
     searchExpandedRef.current = false;
     setExpandedSearchIdentity(null);
@@ -907,6 +958,7 @@ export default function PaneShell({
         },
         chat: async (subject) => {
           if (chatBusyRefs.current.has(subject.ref)) return;
+          setChatError(null);
           chatBusyRefs.current.add(subject.ref);
           setChatBusySubjects(new Set(chatBusyRefs.current));
           try {
@@ -924,12 +976,15 @@ export default function PaneShell({
             });
           } catch (error: unknown) {
             if (handleUnauthenticatedApiError(error)) return;
-            if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-            feedback.show(
-              toFeedback(error, {
-                fallback: "A conversation about this resource could not begin.",
-              }),
-            );
+            if (!isApiError(error) || isSameSystemApiDefect(error)) {
+              setAsyncDefect({ error });
+              return;
+            }
+            try {
+              setChatError(paneShellChatErrorMessage(error));
+            } catch (defect) {
+              setAsyncDefect({ error: defect });
+            }
           } finally {
             chatBusyRefs.current.delete(subject.ref);
             setChatBusySubjects(new Set(chatBusyRefs.current));
@@ -967,7 +1022,6 @@ export default function PaneShell({
     acceptedRefresh,
     chatBusySubjects,
     effectiveMenu,
-    feedback,
     openLibraryPlacement,
     openShare,
     activateTarget,
@@ -1082,6 +1136,8 @@ export default function PaneShell({
     "--pane-refresh-offset": `${refreshIndicatorOffsetPx}px`,
   };
 
+  if (asyncDefect !== null) throw asyncDefect.error;
+
   return (
     <section
       className={styles.paneShell}
@@ -1142,6 +1198,12 @@ export default function PaneShell({
               }
               className={styles.contextualRow}
               data-testid="pane-contextual-row"
+              data-contextual-row-variant={
+                effectiveContextualRow.kind === "Search" &&
+                effectiveContextualRow.publication.kind === "FilterRows"
+                  ? "Refinement"
+                  : "Instrument"
+              }
               role={
                 effectiveContextualRow.kind === "Instrument"
                   ? "group"
@@ -1187,6 +1249,9 @@ export default function PaneShell({
             }
             style={bodyStyle}
           >
+            {chatError ? (
+              <FeedbackNotice content={chatError} announcement="Assertive" />
+            ) : null}
             <NexusPanePerformanceContext.Provider
               value={panePerformance}
             >

@@ -49,7 +49,7 @@
   color: var(--danger);
 }
 
-.feedback[data-severity="warning"] {
+.feedback[data-tone="Warning"] {
   color: var(--warning);
 }
 

@@ -1,8 +1,8 @@
 /**
  * User-authored Link mutation client. Mirrors `nexus/schemas/resource_graph.py`
  * (CreateLinkRequest/CreateLinkOut, PutLinkNoteRequest/LinkNoteOut); refs travel
- * as `<scheme>:<uuid>` strings. `client_mutation_id` is minted here at the call
- * boundary via the canonical id helper so a network retry replays idempotently.
+ * as `<scheme>:<uuid>` strings. The confirming feature freezes
+ * `client_mutation_id` with its intent so every retry replays idempotently.
  */
 
 import type { ApiPath } from "@/lib/api/client";
@@ -58,6 +58,7 @@ export interface LinkPassageTarget {
 export type LinkTarget = LinkResourceTarget | LinkPassageTarget;
 
 export interface CreateLinkInput {
+  clientMutationId: string;
   source: LinkSource;
   target: LinkTarget;
 }
@@ -76,7 +77,7 @@ export async function createLink(
     {
       method: "POST",
       body: JSON.stringify({
-        client_mutation_id: createRandomId("link"),
+        client_mutation_id: input.clientMutationId,
         source: input.source,
         target: input.target,
       }),

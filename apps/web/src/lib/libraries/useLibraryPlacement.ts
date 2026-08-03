@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toFeedback } from "@/components/feedback/Feedback";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
@@ -15,6 +15,7 @@ import {
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
 
 type PlacementOp = "Add" | "Remove";
+type PlacementRequest = "Load" | PlacementOp;
 
 // One media/podcast's standing library placement as a closed phase union.
 // `rows` is always the last authoritative decoded inventory; the post-204
@@ -27,6 +28,7 @@ type Phase =
       rows: LibraryPlacementOption[];
       libraryId: string;
       op: PlacementOp;
+      clientMutationId: string;
     }
   | {
       kind: "Reconciling";
@@ -39,26 +41,40 @@ type Phase =
       rows: LibraryPlacementOption[];
       libraryId: string;
       op: PlacementOp;
-      message: string;
+      content: FeedbackContent;
     }
   | {
       kind: "CommandFailed";
       rows: LibraryPlacementOption[];
       libraryId: string;
       op: PlacementOp;
-      message: string;
+      content: FeedbackContent;
+      clientMutationId: string;
     }
-  | { kind: "LoadFailed"; message: string }
-  | { kind: "Unavailable"; message: string };
+  | {
+      kind: "Unconfirmed";
+      rows: LibraryPlacementOption[];
+      libraryId: string;
+      op: PlacementOp;
+      content: FeedbackContent;
+    }
+  | {
+      kind: "ObservingUnconfirmed";
+      rows: LibraryPlacementOption[];
+      libraryId: string;
+      op: PlacementOp;
+    }
+  | { kind: "LoadFailed"; content: FeedbackContent }
+  | { kind: "Unavailable"; content: FeedbackContent };
 
 type FailureClass =
   | { kind: "Defect"; defect: unknown }
-  | { kind: "Terminal"; message: string }
-  | { kind: "Transient"; message: string };
+  | { kind: "Terminal"; content: FeedbackContent }
+  | { kind: "Transient"; content: FeedbackContent };
 
 export type LibraryPlacementFailure =
-  | { kind: "Retry"; message: string; retry: () => void }
-  | { kind: "Terminal"; message: string };
+  | { kind: "Retry"; content: FeedbackContent; retry: () => void }
+  | { kind: "Terminal"; content: FeedbackContent };
 
 export interface LibraryPlacementState {
   libraries: LibraryPlacementOption[];
@@ -82,23 +98,92 @@ function assertNever(phase: never): never {
   throw new Error(`Unreachable placement phase: ${JSON.stringify(phase)}`);
 }
 
-function fallbackMessage(op: PlacementOp): string {
-  return op === "Add"
-    ? "Failed to add item to library"
-    : "Failed to remove item from library";
+function placementFailureTitle(request: PlacementRequest): string {
+  switch (request) {
+    case "Load":
+      return "Libraries couldn’t be loaded";
+    case "Add":
+      return "Item wasn’t added to the library";
+    case "Remove":
+      return "Item wasn’t removed from the library";
+  }
 }
 
 function libraryPlacementErrorMessage(
   error: unknown,
-  fallback: string,
-): string {
-  if (isApiError(error) && !isSameSystemApiDefect(error)) {
-    return toFeedback(error, { fallback }).title;
+  request: PlacementRequest,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  const title = placementFailureTitle(request);
+  const requestId = error.requestId;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and try again.",
+        requestId,
+      };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Please wait a moment, then try again.",
+        requestId,
+      };
+    case "E_MEDIA_NOT_FOUND":
+    case "E_NOT_FOUND":
+      return { tone: "Danger", title, message: UNAVAILABLE_MESSAGE, requestId };
+    case "E_LIBRARY_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title,
+        message: "This library is no longer available.",
+        requestId,
+      };
+    case "E_FORBIDDEN":
+    case "E_DEFAULT_LIBRARY_FORBIDDEN":
+    case "E_LIBRARY_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title,
+        message: "You no longer have permission to change this library.",
+        requestId,
+      };
+    case "E_MEDIA_LAST_REFERENCE":
+      if (request === "Remove") {
+        return {
+          tone: "Danger",
+          title,
+          message: "This item must remain in at least one library.",
+          requestId,
+        };
+      }
+      throw error;
+    case "E_MEDIA_DELETING":
+      return {
+        tone: "Danger",
+        title,
+        message: "This item is being removed and can't be placed right now.",
+        requestId,
+      };
+    case "E_PODCAST_REPLACES_EPISODES":
+      if (request === "Add") {
+        return {
+          tone: "Danger",
+          title,
+          message:
+            "Remove individually filed episodes before adding this podcast to the library.",
+          requestId,
+        };
+      }
+      throw error;
+    default:
+      throw error;
   }
-  if (error instanceof TypeError) {
-    return toFeedback(error, { fallback }).title;
-  }
-  throw error;
 }
 
 // Terminal codes raised by the list/mutation service owners when the media or
@@ -110,16 +195,35 @@ function isTargetGone(error: unknown): boolean {
   );
 }
 
-function classifyFailure(error: unknown, fallback: string): FailureClass {
-  let message: string;
+function classifyFailure(error: unknown, request: PlacementRequest): FailureClass {
+  let content: FeedbackContent;
   try {
-    message = libraryPlacementErrorMessage(error, fallback);
+    content = libraryPlacementErrorMessage(error, request);
   } catch (defect) {
     return { kind: "Defect", defect };
   }
   return isTargetGone(error)
-    ? { kind: "Terminal", message }
-    : { kind: "Transient", message };
+    ? { kind: "Terminal", content }
+    : { kind: "Transient", content };
+}
+
+function isMutationSettlementUnknown(error: unknown): boolean {
+  return (
+    isApiError(error) &&
+    !isSameSystemApiDefect(error) &&
+    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM_TIMEOUT")
+  );
+}
+
+function unconfirmedContent(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  return {
+    tone: "Warning",
+    title: "Placement couldn’t be confirmed",
+    message:
+      "Check authoritative Library state before deciding whether to try the change again.",
+    requestId: error.requestId,
+  };
 }
 
 // Project only the server-confirmed membership flip for one library id. Never
@@ -138,7 +242,7 @@ export function useLibraryPlacement(
   session: LibraryPlacementSession | null,
 ): LibraryPlacementState {
   const [phase, setPhase] = useState<Phase>({ kind: "Loading" });
-  const [defect, setDefect] = useState<unknown>(null);
+  const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
   const phaseRef = useRef<Phase>(phase);
   const sessionKeyRef = useRef(session?.key);
   const listAbortRef = useRef<AbortController | null>(null);
@@ -156,16 +260,16 @@ export function useLibraryPlacement(
   );
 
   const settleFailure = useCallback(
-    (outcome: FailureClass, transient: (message: string) => Phase) => {
+    (outcome: FailureClass, transient: (content: FeedbackContent) => Phase) => {
       switch (outcome.kind) {
         case "Defect":
-          setDefect(outcome.defect);
+          setDefectState({ error: outcome.defect });
           return;
         case "Terminal":
-          transition({ kind: "Unavailable", message: UNAVAILABLE_MESSAGE });
+          transition({ kind: "Unavailable", content: outcome.content });
           return;
         case "Transient":
-          transition(transient(outcome.message));
+          transition(transient(outcome.content));
           return;
       }
     },
@@ -179,8 +283,8 @@ export function useLibraryPlacement(
       target: LibraryPlacementTarget,
       key: number,
       pending: Phase,
-      transient: (message: string) => Phase,
-      fallback: string,
+      transient: (content: FeedbackContent) => Phase,
+      request: PlacementRequest,
     ) => {
       listAbortRef.current?.abort();
       const abort = new AbortController();
@@ -195,7 +299,7 @@ export function useLibraryPlacement(
         if (isAbortError(error)) return;
         if (handleUnauthenticatedApiError(error)) return;
         if (!isCurrentGet(key, abort)) return;
-        settleFailure(classifyFailure(error, fallback), transient);
+        settleFailure(classifyFailure(error, request), transient);
       } finally {
         if (isCurrentGet(key, abort)) listAbortRef.current = null;
       }
@@ -209,8 +313,8 @@ export function useLibraryPlacement(
         target,
         key,
         { kind: "Loading" },
-        (message) => ({ kind: "LoadFailed", message }),
-        "Couldn’t load your libraries.",
+        (content) => ({ kind: "LoadFailed", content }),
+        "Load",
       ),
     [runList],
   );
@@ -227,14 +331,19 @@ export function useLibraryPlacement(
         target,
         key,
         { kind: "Reconciling", rows, libraryId, op },
-        () => ({
+        (failureContent) => ({
           kind: "ReconcileFailed",
           rows,
           libraryId,
           op,
-          message: RECONCILE_FAILED_MESSAGE,
+          content: {
+            tone: "Warning",
+            title: "Library placement needs to be refreshed",
+            message: RECONCILE_FAILED_MESSAGE,
+            requestId: failureContent.requestId,
+          },
         }),
-        fallbackMessage(op),
+        op,
       ),
     [runList],
   );
@@ -249,17 +358,38 @@ export function useLibraryPlacement(
       rows: LibraryPlacementOption[],
       libraryId: string,
       op: PlacementOp,
+      clientMutationId: string,
     ) => {
-      transition({ kind: "Mutating", rows, libraryId, op });
+      transition({ kind: "Mutating", rows, libraryId, op, clientMutationId });
       try {
-        if (op === "Add") await addLibraryPlacement(target, libraryId);
-        else await removeLibraryPlacement(target, libraryId);
+        if (op === "Add") {
+          await addLibraryPlacement(target, libraryId, { clientMutationId });
+        } else {
+          await removeLibraryPlacement(target, libraryId, { clientMutationId });
+        }
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
         if (sessionKeyRef.current !== key) return;
+        if (isMutationSettlementUnknown(error)) {
+          transition({
+            kind: "Unconfirmed",
+            rows,
+            libraryId,
+            op,
+            content: unconfirmedContent(error),
+          });
+          return;
+        }
         settleFailure(
-          classifyFailure(error, fallbackMessage(op)),
-          (message) => ({ kind: "CommandFailed", rows, libraryId, op, message }),
+          classifyFailure(error, op),
+          (content) => ({
+            kind: "CommandFailed",
+            rows,
+            libraryId,
+            op,
+            content,
+            clientMutationId,
+          }),
         );
         return;
       }
@@ -276,14 +406,21 @@ export function useLibraryPlacement(
     (libraryId: string, op: PlacementOp) => {
       if (!session) return;
       const current = phaseRef.current;
-      if (current.kind !== "Ready" && current.kind !== "CommandFailed") return;
-      void runCommand(session.target, session.key, current.rows, libraryId, op);
+      if (current.kind !== "Ready") return;
+      void runCommand(
+        session.target,
+        session.key,
+        current.rows,
+        libraryId,
+        op,
+        crypto.randomUUID(),
+      );
     },
     [runCommand, session],
   );
 
   useEffect(() => {
-    setDefect(null);
+    setDefectState(null);
     if (!session) {
       listAbortRef.current?.abort();
       listAbortRef.current = null;
@@ -297,7 +434,7 @@ export function useLibraryPlacement(
     };
   }, [load, session, transition]);
 
-  if (defect !== null) throw defect;
+  if (defectState !== null) throw defectState.error;
 
   const addToLibrary = (libraryId: string) => start(libraryId, "Add");
   const removeFromLibrary = (libraryId: string) => start(libraryId, "Remove");
@@ -343,8 +480,18 @@ export function useLibraryPlacement(
         addToLibrary,
         removeFromLibrary,
       };
+    case "ObservingUnconfirmed":
+      return {
+        libraries: phase.rows,
+        loading: true,
+        commandsDisabled: true,
+        pendingLibraryId: phase.libraryId,
+        failure: null,
+        addToLibrary,
+        removeFromLibrary,
+      };
     case "ReconcileFailed": {
-      const { rows, libraryId, op, message } = phase;
+      const { rows, libraryId, op, content } = phase;
       return {
         libraries: projectMembership(rows, libraryId, op),
         loading: false,
@@ -352,7 +499,7 @@ export function useLibraryPlacement(
         pendingLibraryId: libraryId,
         failure: {
           kind: "Retry",
-          message,
+          content,
           retry: () => {
             if (session) void reconcile(session.target, session.key, rows, libraryId, op);
           },
@@ -362,16 +509,64 @@ export function useLibraryPlacement(
       };
     }
     case "CommandFailed": {
-      const { libraryId, op, message } = phase;
+      const { rows, libraryId, op, content, clientMutationId } = phase;
       return {
-        libraries: phase.rows,
+        libraries: rows,
         loading: false,
         commandsDisabled: false,
         pendingLibraryId: null,
         failure: {
           kind: "Retry",
-          message,
-          retry: () => start(libraryId, op),
+          content,
+          retry: () => {
+            if (session) {
+              void runCommand(
+                session.target,
+                session.key,
+                rows,
+                libraryId,
+                op,
+                clientMutationId,
+              );
+            }
+          },
+        },
+        addToLibrary,
+        removeFromLibrary,
+      };
+    }
+    case "Unconfirmed": {
+      const { rows, libraryId, op, content } = phase;
+      return {
+        libraries: rows,
+        loading: false,
+        commandsDisabled: true,
+        pendingLibraryId: libraryId,
+        failure: {
+          kind: "Retry",
+          content,
+          retry: () => {
+            if (!session) return;
+            void runList(
+              session.target,
+              session.key,
+              { kind: "ObservingUnconfirmed", rows, libraryId, op },
+              (failureContent) => ({
+                kind: "Unconfirmed",
+                rows,
+                libraryId,
+                op,
+                content: {
+                  tone: "Warning",
+                  title: "Placement couldn’t be confirmed",
+                  message:
+                    "Authoritative Library state still couldn’t be loaded. Retry the check before making another change.",
+                  requestId: failureContent.requestId,
+                },
+              }),
+              "Load",
+            );
+          },
         },
         addToLibrary,
         removeFromLibrary,
@@ -385,7 +580,7 @@ export function useLibraryPlacement(
         pendingLibraryId: null,
         failure: {
           kind: "Retry",
-          message: phase.message,
+          content: phase.content,
           retry: () => {
             if (session) void load(session.target, session.key);
           },
@@ -399,7 +594,7 @@ export function useLibraryPlacement(
         loading: false,
         commandsDisabled: true,
         pendingLibraryId: null,
-        failure: { kind: "Terminal", message: phase.message },
+        failure: { kind: "Terminal", content: phase.content },
         addToLibrary,
         removeFromLibrary,
       };

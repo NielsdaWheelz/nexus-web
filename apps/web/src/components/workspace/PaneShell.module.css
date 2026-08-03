@@ -64,6 +64,13 @@
   min-width: 0;
 }
 
+.contextualRow[data-contextual-row-variant="Refinement"] {
+  flex: 0 0 auto;
+  block-size: auto;
+  overflow: visible;
+  overscroll-behavior-inline: auto;
+}
+
 .contextualRow :where(button, [role="button"]) {
   min-inline-size: var(--size-md);
   min-block-size: var(--size-md);
@@ -192,6 +199,12 @@
   min-block-size: var(--size-xl);
 }
 
+.paneShell[data-mobile="true"]
+  .contextualRow[data-contextual-row-variant="Refinement"]
+  :where(label) {
+  min-block-size: var(--size-xl);
+}
+
 /* The contextual row sits below the fixed app bar and shares its retreat phase. */
 .paneShell[data-mobile="true"] .chrome {
   position: absolute;
@@ -199,6 +212,8 @@
   left: 0;
   right: 0;
   z-index: 11;
+  padding-right: var(--viewport-safe-right);
+  padding-left: var(--viewport-safe-left);
   background: var(--surface-2);
   --mobile-chrome-collapse: 0;
   transform: translateY(
@@ -216,6 +231,11 @@
 
 .paneShell[data-mobile="true"] .chrome:empty {
   border-bottom: none;
+}
+
+.paneShell[data-mobile="true"] .body {
+  padding-right: var(--viewport-safe-right);
+  padding-left: var(--viewport-safe-left);
 }
 
 .paneShell[data-mobile="true"] .body[data-body-mode="standard"],

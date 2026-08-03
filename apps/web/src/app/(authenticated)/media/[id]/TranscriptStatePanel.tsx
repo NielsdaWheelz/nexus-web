@@ -1,11 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { planLabel } from "@/lib/billing/planLabel";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
-import { toFeedback } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { isAbortError } from "@/lib/errors";
 import {
@@ -46,6 +53,78 @@ interface TranscriptStatePanelProps {
   onTranscriptStateChange: (update: TranscriptRuntimeUpdate) => void;
 }
 
+function transcriptRequestErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const requestId = error.requestId;
+  const title = "Transcript wasn’t requested";
+  switch (error.code) {
+    case "E_NETWORK":
+      return { tone: "Danger", title, message: "Check your connection and retry.", requestId };
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The transcription service took too long to respond. Retry the request.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return { tone: "Danger", title, message: "Wait a moment, then retry.", requestId };
+    case "E_MEDIA_NOT_FOUND":
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title,
+        message: "This episode is no longer available. Return to your podcast.",
+        requestId,
+      };
+    case "E_MEDIA_NOT_READY":
+      return {
+        tone: "Danger",
+        title,
+        message: "This episode is still preparing. Wait for it to settle, then retry.",
+        requestId,
+      };
+    case "E_PODCAST_QUOTA_EXCEEDED":
+      return {
+        tone: "Danger",
+        title,
+        message: "There isn’t enough transcription quota for this request.",
+        requestId,
+      };
+    case "E_BILLING_REQUIRED":
+    case "E_BILLING_DISABLED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Transcription isn’t available on this account. Review billing settings.",
+        requestId,
+      };
+    case "E_INVALID_KIND":
+      return {
+        tone: "Danger",
+        title,
+        message: "Transcription isn’t available for this media.",
+        requestId,
+      };
+    case "E_TRANSCRIPT_UNAVAILABLE":
+      return {
+        tone: "Danger",
+        title,
+        message: "No transcript is available from this source.",
+        requestId,
+      };
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title,
+        message: "The episode changed. Refresh it, then retry.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
 export default function TranscriptStatePanel({
   mediaId,
   transcriptState,
@@ -56,7 +135,8 @@ export default function TranscriptStatePanel({
   const [transcriptRequestInFlight, setTranscriptRequestInFlight] = useState(false);
   const [transcriptRequestForecast, setTranscriptRequestForecast] =
     useState<TranscriptRequestForecast | null>(null);
-  const [requestError, setRequestError] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState<FeedbackContent | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   const onTranscriptStateChangeRef = useRef(onTranscriptStateChange);
   const billingDisabled = billingAccount?.billing_enabled === false;
   const transcriptionLocked = billingAccount != null && !billingAccount.can_transcribe;
@@ -172,6 +252,11 @@ export default function TranscriptStatePanel({
         if (!controller.signal.aborted && !isAbortError(error)) {
           if (handleUnauthenticatedApiError(error)) return;
           setTranscriptRequestForecast(null);
+          try {
+            transcriptRequestErrorMessage(error);
+          } catch (defect) {
+            setAsyncDefect({ error: defect });
+          }
         }
       }
     };
@@ -189,7 +274,11 @@ export default function TranscriptStatePanel({
     onPoll: async () => {
       await refreshTranscriptState().catch((error) => {
         if (handleUnauthenticatedApiError(error)) return;
-        // Keep the request UI responsive even if one poll cycle fails.
+        try {
+          transcriptRequestErrorMessage(error);
+        } catch (defect) {
+          setAsyncDefect({ error: defect });
+        }
       });
     },
     pollIntervalMs: TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
@@ -241,7 +330,11 @@ export default function TranscriptStatePanel({
       }
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
-      setRequestError(toFeedback(error, { fallback: "Failed to request transcript." }).title);
+      try {
+        setRequestError(transcriptRequestErrorMessage(error));
+      } catch (defect) {
+        setAsyncDefect({ error: defect });
+      }
     } finally {
       setTranscriptRequestInFlight(false);
     }
@@ -253,6 +346,11 @@ export default function TranscriptStatePanel({
     refreshTranscriptState,
     transcriptionLocked,
   ]);
+
+  if (asyncDefect !== null) throw asyncDefect.error;
+  const requestFailure = requestError ? (
+    <FeedbackNotice content={requestError} announcement="Assertive" />
+  ) : null;
 
   if (transcriptionLocked) {
     return (
@@ -307,7 +405,7 @@ export default function TranscriptStatePanel({
         {transcriptRequestForecast && !transcriptRequestForecast.fitsBudget ? (
           <p>Not enough monthly transcription quota for this request.</p>
         ) : null}
-        {requestError ? <p>{requestError}</p> : null}
+        {requestFailure}
       </div>
     );
   }
@@ -320,7 +418,7 @@ export default function TranscriptStatePanel({
             ? "Transcript request queued."
             : "Transcript transcription is currently running."}
         </p>
-        {requestError ? <p>{requestError}</p> : null}
+        {requestFailure}
       </div>
     );
   }
@@ -329,7 +427,6 @@ export default function TranscriptStatePanel({
     return (
       <div className={styles.notReady}>
         <p>Transcript unavailable for this episode.</p>
-        <p>Error: E_TRANSCRIPT_UNAVAILABLE</p>
       </div>
     );
   }
@@ -338,7 +435,7 @@ export default function TranscriptStatePanel({
     <div className={styles.notReady}>
       <p>This media is still being processed.</p>
       {transcriptCoverage ? <p>Coverage: {transcriptCoverage}</p> : null}
-      {requestError ? <p>{requestError}</p> : null}
+      {requestFailure}
     </div>
   );
 }

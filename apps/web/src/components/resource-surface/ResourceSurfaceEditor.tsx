@@ -12,7 +12,6 @@ import {
 import Button from "@/components/ui/Button";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import NoteBodyEditor, {
@@ -23,6 +22,10 @@ import ResourceSurfaceBodyEditor from "@/components/resource-surface/ResourceSur
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { createRandomId } from "@/lib/createRandomId";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import {
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { activateResource } from "@/lib/resources/activation";
 import { fetchResourceSurface } from "@/lib/resourceSurface/api";
 import {
@@ -40,6 +43,7 @@ import {
   subscribeDailyDraft,
 } from "@/lib/notes/dailyDraftStore";
 import { getPaneScrollContainer } from "@/lib/reader/paneScroll";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
@@ -53,6 +57,94 @@ import styles from "./ResourceSurfaceEditor.module.css";
 const EMPTY_NOTE_BODY = {
   type: "paragraph",
 } as Record<string, unknown>;
+
+export type ResourceSurfaceOperation =
+  | "Load"
+  | "Save"
+  | "OpenLinkedObject"
+  | "Edit";
+
+function resourceSurfaceOperationTitle(
+  operation: ResourceSurfaceOperation,
+): string {
+  switch (operation) {
+    case "Load":
+      return "This surface couldn’t be loaded";
+    case "Save":
+      return "Changes couldn’t be saved";
+    case "OpenLinkedObject":
+      return "Linked object couldn’t be opened";
+    case "Edit":
+      return "This surface couldn’t be edited";
+  }
+}
+
+/** Finite surface-domain copy adapter; contract and unknown failures defect. */
+export function resourceSurfaceErrorMessage(
+  error: unknown,
+  operation: ResourceSurfaceOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  const title = resourceSurfaceOperationTitle(operation);
+  const requestId = error.requestId;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and retry.",
+        requestId,
+      };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "Nexus couldn’t complete the request. Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title,
+        message: "This resource is no longer available.",
+        requestId,
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title,
+        message: "This account can’t make that change.",
+        requestId,
+      };
+    case "E_BAD_REQUEST":
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title,
+        message: "That change is no longer valid. Reload the surface and review it.",
+        requestId,
+      };
+    case "E_RESOURCE_CONFLICT":
+      if (operation !== "Save" && operation !== "Edit") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "This resource changed elsewhere. Reload it, then retry your saved draft.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
 
 export interface DailyResourceSurfaceEditorSource {
   accountId: string;
@@ -138,6 +230,11 @@ export default function ResourceSurfaceEditor({
     sourceRef: string;
     feedback: FeedbackContent;
   } | null>(null);
+  const [defectState, setDefectState] = useState<{
+    sourceRef: string;
+    error: unknown;
+  } | null>(null);
+  const [loadSerial, setLoadSerial] = useState(0);
   const [bodyFocus, setBodyFocus] = useState({
     occurrenceId: null as string | null,
     serial: 0,
@@ -154,6 +251,8 @@ export default function ResourceSurfaceEditor({
       : null;
   const feedback =
     feedbackState?.sourceRef === ownerKey ? feedbackState.feedback : null;
+  const ownedDefectState =
+    defectState?.sourceRef === ownerKey ? defectState : null;
   const setFeedback = useCallback(
     (next: FeedbackContent | null) =>
       setFeedbackState(
@@ -161,6 +260,9 @@ export default function ResourceSurfaceEditor({
       ),
     [ownerKey],
   );
+  const retryLoad = useCallback(() => {
+    setLoadSerial((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     if (!loadSourceRef) {
@@ -170,6 +272,7 @@ export default function ResourceSurfaceEditor({
     let active = true;
     setLoadedState(null);
     setFeedbackState(null);
+    setDefectState(null);
     void fetchResourceSurface(loadSourceRef)
       .then((surface) => {
         if (!active) return;
@@ -177,22 +280,36 @@ export default function ResourceSurfaceEditor({
       })
       .catch((error: unknown) => {
         if (!active || handleUnauthenticatedApiError(error)) return;
-        setFeedbackState({
-          sourceRef: ownerKey,
-          feedback: toFeedback(error, {
-            fallback: "This surface could not be loaded.",
-          }),
-        });
+        try {
+          setFeedbackState({
+            sourceRef: ownerKey,
+            feedback: resourceSurfaceErrorMessage(error, "Load"),
+          });
+        } catch (caughtDefect: unknown) {
+          setDefectState({ sourceRef: ownerKey, error: caughtDefect });
+        }
       });
     return () => {
       active = false;
     };
-  }, [isDaily, loadSourceRef, ownerKey]);
+  }, [isDaily, loadSerial, loadSourceRef, ownerKey]);
+
+  if (ownedDefectState !== null) throw ownedDefectState.error;
 
   if (daily) {
     if (daily.materializedSourceRef) {
-      if (feedback && !loaded) return <FeedbackNotice {...feedback} />;
-      if (!loaded) return <PaneLoadingState />;
+      if (feedback && !loaded) {
+        return (
+          <FeedbackNotice
+            content={feedback}
+            announcement="Assertive"
+            actions={[{ label: "Retry", onClick: retryLoad }]}
+          />
+        );
+      }
+      if (!loaded) {
+        return <PaneLoadingState label="Loading resource…" announcement="Polite" />;
+      }
     }
     return (
       <LoadedResourceSurfaceEditor
@@ -216,8 +333,18 @@ export default function ResourceSurfaceEditor({
     );
   }
   if (!sourceRef) throw new Error("ResourceSurfaceEditor requires a source");
-  if (feedback && !loaded) return <FeedbackNotice {...feedback} />;
-  if (!loaded) return <PaneLoadingState />;
+  if (feedback && !loaded) {
+    return (
+      <FeedbackNotice
+        content={feedback}
+        announcement="Assertive"
+        actions={[{ label: "Retry", onClick: retryLoad }]}
+      />
+    );
+  }
+  if (!loaded) {
+    return <PaneLoadingState label="Loading resource…" announcement="Polite" />;
+  }
   return (
     <LoadedResourceSurfaceEditor
       key={sourceRef}
@@ -295,14 +422,28 @@ function LoadedResourceSurfaceEditor({
   const sessionRef = useRef<
     ResourceSurfaceSession | DailyResourceSurfaceSession | null
   >(null);
+  const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
+  const [recoveryCopyFeedback, setRecoveryCopyFeedback] =
+    useState<FeedbackContent | null>(null);
+  const presentFailure = useCallback(
+    (error: unknown, operation: ResourceSurfaceOperation) => {
+      if (handleUnauthenticatedApiError(error)) return;
+      try {
+        setFeedback(resourceSurfaceErrorMessage(error, operation));
+      } catch (caughtDefect: unknown) {
+        setDefectState({ error: caughtDefect });
+      }
+    },
+    [setFeedback],
+  );
   const reportError = useCallback((error: unknown) => {
     if (handleUnauthenticatedApiError(error)) return;
-    setFeedback(
-      toFeedback(error, {
-        fallback: "Changes are saved on this device until you retry.",
-      }),
-    );
-  }, [setFeedback]);
+    try {
+      resourceSurfaceErrorMessage(error, "Save");
+    } catch (caughtDefect: unknown) {
+      setDefectState({ error: caughtDefect });
+    }
+  }, []);
   const beforePrepend = useCallback((noteRef: string) => {
     const row = surfaceRootRef.current?.querySelector<HTMLElement>(
       `[data-note-ref="${noteRef}"]`,
@@ -357,8 +498,23 @@ function LoadedResourceSurfaceEditor({
           sourceRef: sourceRef!,
           initialSurface: initialSurface!,
           onError: reportError,
-        },
+      },
   );
+  const copyRecovery = useCallback(() => {
+    setRecoveryCopyFeedback(null);
+    void session.copyRecovery().catch((error: unknown) => {
+      if (error instanceof ClipboardWriteUnavailableError) {
+        setRecoveryCopyFeedback({
+          tone: "Warning",
+          title: "Recovery draft wasn’t copied",
+          message:
+            "Clipboard access is unavailable. Retry when clipboard access is enabled.",
+        });
+        return;
+      }
+      setDefectState({ error });
+    });
+  }, [session]);
   sessionRef.current = session;
   const surface = session.surface;
   useLayoutEffect(() => {
@@ -491,20 +647,17 @@ function LoadedResourceSurfaceEditor({
         const href = resolved?.resourceItem.route;
         if (!href) {
           setFeedback({
-            severity: "warning",
-            title: "Linked object could not be opened.",
+            tone: "Warning",
+            title: "Linked object couldn’t be opened",
           });
           return;
         }
         activateTarget({ target: { href }, disposition });
       } catch (error: unknown) {
-        if (handleUnauthenticatedApiError(error)) return;
-        setFeedback(
-          toFeedback(error, { fallback: "Linked object could not be opened." }),
-        );
+        presentFailure(error, "OpenLinkedObject");
       }
     },
-    [activateTarget, setFeedback],
+    [activateTarget, presentFailure, setFeedback],
   );
 
   const dailySession = "provisional" in session ? session : null;
@@ -516,6 +669,8 @@ function LoadedResourceSurfaceEditor({
     ],
     [provisional, surface],
   );
+  if (defectState !== null) throw defectState.error;
+
   const source = surface?.source ?? null;
   const masthead =
     source?.content.kind === "page_title" ? (
@@ -546,11 +701,7 @@ function LoadedResourceSurfaceEditor({
         }
         onOpenObject={openObject}
         onFeedback={setFeedback}
-        onError={(error) =>
-          setFeedback(
-            toFeedback(error, { fallback: "This note could not be edited." }),
-          )
-        }
+        onError={(error) => presentFailure(error, "Edit")}
       />
     ) : dailyTitle !== null ? (
       <input
@@ -572,10 +723,23 @@ function LoadedResourceSurfaceEditor({
         <div
           className={styles.recovery}
           data-state={failed ? "failed" : "recovered"}
-          role={failed ? "alert" : "status"}
-          aria-live="polite"
         >
-          <span>
+          <span
+            role={
+              recoveryCopyFeedback
+                ? undefined
+                : failed
+                  ? "alert"
+                  : "status"
+            }
+            aria-live={
+              recoveryCopyFeedback
+                ? undefined
+                : failed
+                  ? "assertive"
+                  : "polite"
+            }
+          >
             {failed
               ? "Changes are saved here until you retry."
               : "Recovered unsaved changes."}
@@ -594,14 +758,23 @@ function LoadedResourceSurfaceEditor({
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => void session.copyRecovery()}
+              onClick={copyRecovery}
             >
               Copy
             </Button>
           </span>
+          {recoveryCopyFeedback ? (
+            <FeedbackNotice
+              content={recoveryCopyFeedback}
+              announcement="Assertive"
+              actions={[{ label: "Retry", onClick: copyRecovery }]}
+            />
+          ) : null}
         </div>
       ) : null}
-      {feedback ? <FeedbackNotice {...feedback} /> : null}
+      {feedback ? (
+        <FeedbackNotice content={feedback} announcement="Assertive" />
+      ) : null}
       <div className={styles.masthead}>{masthead}</div>
       <ResourceSurfaceBodyEditor
         sourceRef={surface?.source.item.ref}
@@ -638,13 +811,7 @@ function LoadedResourceSurfaceEditor({
             : null
         }
         onInputHandoffClaimed={dailySession?.acknowledgeInputHandoff}
-        onError={(error) =>
-          setFeedback(
-            toFeedback(error, {
-              fallback: "This surface could not be edited.",
-            }),
-          )
-        }
+        onError={(error) => presentFailure(error, "Edit")}
       />
     </div>
   );

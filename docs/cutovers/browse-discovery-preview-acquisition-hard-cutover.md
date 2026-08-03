@@ -1,5 +1,11 @@
 # Browse, Preview, And Acquisition — Hard Cutover
 
+> **Podcast container-first All update (2026-08-02):**
+> [`podcast-container-first-all-hard-cutover.md`](podcast-container-first-all-hard-cutover.md)
+> supersedes only this document's claim that child episodes of an active
+> subscription appear as independent All roots. Episode acquisition and physical
+> retention, named-Library placement, sync, and backfill contracts remain here.
+
 **Status:** IMPLEMENTED · LOCALLY VERIFIED · Rev 5 · 2026-07-29
 **Type:** Hard cutover — no legacy paths, compatibility fallbacks, dual writes, or compatibility decoders
 **Scope:** One-user production-shaped prototype; smallest coherent Browse release

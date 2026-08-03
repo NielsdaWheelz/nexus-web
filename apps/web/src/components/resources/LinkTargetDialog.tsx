@@ -10,6 +10,11 @@ import ResourceTargetListbox, {
 } from "@/components/resources/ResourceTargetListbox";
 import type { ResourceTarget } from "@/lib/resources/resourceTargets";
 import type { LinkTarget } from "@/lib/resourceGraph/links";
+import {
+  FeedbackNotice,
+  type FeedbackActions,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import styles from "./LinkTargetDialog.module.css";
 
 const LISTBOX_ID = "link-target-listbox";
@@ -33,6 +38,11 @@ export interface LinkTargetDialogProps {
   /** True while the caller's `createLink` is in flight — the dialog goes busy
    * and blocks a second pick (§ Target Behavior item 4). */
   busy?: boolean;
+  /** A create failure remains in this open Link surface with exact Retry. */
+  failure?: {
+    content: FeedbackContent;
+    actions: FeedbackActions;
+  } | null;
   /**
    * Fires with the picked target's ref, mapped straight onto the `Link`
    * mutation's own `LinkTarget` shape, plus the picked row's display `label`
@@ -58,6 +68,7 @@ export default function LinkTargetDialog({
   sourceRef,
   excludeRefs,
   busy = false,
+  failure,
   onPick,
   onClose,
 }: LinkTargetDialogProps) {
@@ -173,6 +184,13 @@ export default function LinkTargetDialog({
           onHover={(target) => setActiveKey(resourceTargetKey(target))}
           onPick={pick}
         />
+        {failure ? (
+          <FeedbackNotice
+            content={failure.content}
+            announcement="Assertive"
+            actions={failure.actions}
+          />
+        ) : null}
       </div>
     </div>,
     document.body,

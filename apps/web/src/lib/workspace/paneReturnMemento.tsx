@@ -182,6 +182,12 @@ interface PaneReturnMementoService extends PaneReturnMementoCommands {
     key: PaneVisitDataKey<T>;
     capture: () => T | null;
   }): () => void;
+  publishVisitData<T>(input: {
+    visitId: PaneVisitId;
+    routeKey: string;
+    key: PaneVisitDataKey<T>;
+    value: T | null;
+  }): void;
   readVisitData<T>(input: {
     visitId: PaneVisitId;
     routeKey: string;
@@ -511,6 +517,47 @@ export function PaneReturnMementoProvider({
       }
     }
   }, [removeVisitData]);
+
+  const publishVisitData = useCallback(
+    <T,>(input: {
+      visitId: PaneVisitId;
+      routeKey: string;
+      key: PaneVisitDataKey<T>;
+      value: T | null;
+    }) => {
+      const state = stateRef.current;
+      if (state.blockedCaptureVisits.has(input.visitId)) {
+        return;
+      }
+      const previous = state.visitData.get(input.visitId);
+      const slots = new Map(
+        previous?.routeKey === input.routeKey ? previous.slots : [],
+      );
+      const keyIdentity = visitDataKeyIdentity(input.key);
+      if (input.value === null) {
+        slots.delete(keyIdentity);
+      } else {
+        jsonBytes(input.value);
+        slots.set(keyIdentity, { value: input.value });
+      }
+      let bytes = 0;
+      for (const slot of slots.values()) {
+        bytes += jsonBytes(slot.value);
+      }
+      removeVisitData(input.visitId);
+      if (slots.size === 0 || bytes > MAX_PANE_VISIT_DATA_BYTES) {
+        return;
+      }
+      state.visitData.set(input.visitId, {
+        routeKey: input.routeKey,
+        slots,
+        bytes,
+      });
+      state.visitDataBytes += bytes;
+      enforceVisitDataBudget();
+    },
+    [enforceVisitDataBudget, removeVisitData],
+  );
 
   const routeIsReady = useCallback(
     (visitId: PaneVisitId, routeKey: string): boolean => {
@@ -1076,6 +1123,7 @@ export function PaneReturnMementoProvider({
       reconcileVisitTopology,
       registerScrollport,
       registerCaptureGetter,
+      publishVisitData,
       readVisitData,
       registerReadiness,
     }),
@@ -1085,6 +1133,7 @@ export function PaneReturnMementoProvider({
       clearVisit,
       readVisitData,
       reconcileVisitTopology,
+      publishVisitData,
       registerCaptureGetter,
       registerReadiness,
       registerScrollport,
@@ -1253,12 +1302,45 @@ export function usePaneReturnDescendantReady(input: {
   ]);
 }
 
+/**
+ * Returns the restoration sampled for this exact mounted ownership epoch.
+ * Live publications remain available to a later composition remount without
+ * feeding the owner's current commit back as a new restoration event.
+ */
 export function usePaneVisitData<T>(
   key: PaneVisitDataKey<T>,
   captureCommitted: () => T | null,
 ): T | null {
   const service = usePaneReturnMementoService();
   const scope = usePaneReturnVisitScope();
+  const restorationRef = useRef<{
+    readonly service: PaneReturnMementoService;
+    readonly visitId: PaneVisitId;
+    readonly routeKey: string;
+    readonly key: PaneVisitDataKey<T>;
+    readonly value: T | null;
+  } | null>(null);
+  let restoration = restorationRef.current;
+  if (
+    restoration === null ||
+    restoration.service !== service ||
+    restoration.visitId !== scope.visitId ||
+    restoration.routeKey !== scope.routeKey ||
+    restoration.key !== key
+  ) {
+    restoration = {
+      service,
+      visitId: scope.visitId,
+      routeKey: scope.routeKey,
+      key,
+      value: service.readVisitData({
+        visitId: scope.visitId,
+        routeKey: scope.routeKey,
+        key,
+      }),
+    };
+    restorationRef.current = restoration;
+  }
   const committedCaptureRef = useRef(captureCommitted);
   useLayoutEffect(() => {
     committedCaptureRef.current = captureCommitted;
@@ -1273,11 +1355,15 @@ export function usePaneVisitData<T>(
       }),
     [key, scope.routeKey, scope.visitId, service],
   );
-  return service.readVisitData({
-    visitId: scope.visitId,
-    routeKey: scope.routeKey,
-    key,
+  useLayoutEffect(() => {
+    service.publishVisitData({
+      visitId: scope.visitId,
+      routeKey: scope.routeKey,
+      key,
+      value: committedCaptureRef.current(),
+    });
   });
+  return restoration.value;
 }
 
 export function useClearAllPaneVisitData(): () => void {

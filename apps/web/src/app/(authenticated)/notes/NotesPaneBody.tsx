@@ -6,13 +6,14 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import {
   FeedbackNotice,
-  toFeedback,
+  type FeedbackActions,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import CollectionView from "@/components/collections/CollectionView";
 import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   requirePaneRuntime,
@@ -36,6 +37,82 @@ import styles from "./notes.module.css";
 
 const EMPTY_NOTE_PAGES: readonly NotePageSummary[] = [];
 
+export type NotesOperation = "Load" | "CreatePage" | "OpenToday";
+
+interface CreatePageIntent {
+  readonly replay: { readonly pageId: string; readonly title: string };
+  readonly focusTarget: "body" | "title";
+}
+
+function notesOperationTitle(operation: NotesOperation): string {
+  switch (operation) {
+    case "Load":
+      return "Notes couldn’t be loaded";
+    case "CreatePage":
+      return "Page couldn’t be created";
+    case "OpenToday":
+      return "Today couldn’t be opened";
+  }
+}
+
+/** Finite Notes-domain copy adapter; contract and unknown failures defect. */
+export function notesErrorMessage(
+  error: unknown,
+  operation: NotesOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  const title = notesOperationTitle(operation);
+  const requestId = error.requestId;
+  switch (error.code) {
+    case "E_NETWORK":
+      if (operation === "OpenToday") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and retry.",
+        requestId,
+      };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+      if (operation === "OpenToday") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "Nexus couldn’t complete the request. Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      if (operation === "OpenToday") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_BAD_REQUEST":
+    case "E_INVALID_REQUEST":
+      if (operation !== "CreatePage") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "Change the page title, then submit it again.",
+        requestId,
+      };
+    case "E_RESOURCE_CONFLICT":
+      if (operation !== "CreatePage") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message:
+          "The saved create request conflicts with another page. Change the title, then submit it again.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
 export default function NotesPaneBody() {
   const openDailyPage = useOpenDailyPage();
   const activateTarget = requirePaneRuntime(
@@ -48,7 +125,13 @@ export default function NotesPaneBody() {
     setValue: setTitle,
     inputProps: titleInputProps,
   } = useHydrationPreservedInput();
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [operationFeedback, setOperationFeedback] = useState<{
+    content: FeedbackContent;
+    retry: "CreatePage" | "OpenToday" | null;
+  } | null>(null);
+  const [failedCreateIntent, setFailedCreateIntent] =
+    useState<CreatePageIntent | null>(null);
+  const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
   const pageCreateReplayRef = useRef<{
     pageId: string;
     title: string;
@@ -120,19 +203,24 @@ export default function NotesPaneBody() {
   useEffect(() => {
     if (pagesResource.status === "ready") {
       setLocalPages(pagesResource.data);
-      setFeedback(null);
-      return;
-    }
-    if (pagesResource.status === "error") {
-      setFeedback(
-        toFeedback(pagesResource.error, {
-          fallback: "Notes could not be loaded.",
-        }),
-      );
     }
   }, [pagesResource]);
 
+  const captureFailure = useCallback(
+    (error: unknown, operation: NotesOperation): FeedbackContent | null => {
+      if (handleUnauthenticatedApiError(error)) return null;
+      try {
+        return notesErrorMessage(error, operation);
+      } catch (caughtDefect: unknown) {
+        setDefectState({ error: caughtDefect });
+        return null;
+      }
+    },
+    [],
+  );
+
   const viewToday = useCallback(() => {
+    setOperationFeedback(null);
     try {
       openDailyPage(
         {
@@ -143,12 +231,49 @@ export default function NotesPaneBody() {
         PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
       );
     } catch (error: unknown) {
-      if (handleUnauthenticatedApiError(error)) return;
-      setFeedback(toFeedback(error, { fallback: "Could not open today." }));
+      const content = captureFailure(error, "OpenToday");
+      if (content) {
+        setOperationFeedback({ content, retry: "OpenToday" });
+      }
     }
-  }, [openDailyPage]);
+  }, [captureFailure, openDailyPage]);
 
-  const createPage = useCallback(async () => {
+  const attemptCreatePage = useCallback(async (intent: CreatePageIntent) => {
+    setOperationFeedback(null);
+    try {
+      const page = await createNotePage(intent.replay);
+      pageCreateReplayRef.current = null;
+      setFailedCreateIntent(null);
+      setLocalPages((current) => [page, ...(current ?? resourcePages ?? [])]);
+      setTitle("");
+      setPendingNoteFocus({
+        pageId: page.id,
+        target: intent.focusTarget,
+      });
+      activateTarget({
+        target: { href: `/pages/${page.id}`, labelHint: page.title },
+        disposition: { kind: "Follow" },
+      });
+    } catch (error: unknown) {
+      const content = captureFailure(error, "CreatePage");
+      if (content) {
+        const replayable =
+          isApiError(error) &&
+          (error.code === "E_NETWORK" ||
+            error.code === "E_UPSTREAM" ||
+            error.code === "E_UPSTREAM_TIMEOUT" ||
+            error.code === "E_RATE_LIMITED");
+        setFailedCreateIntent(replayable ? intent : null);
+        if (!replayable) pageCreateReplayRef.current = null;
+        setOperationFeedback({
+          content,
+          retry: replayable ? "CreatePage" : null,
+        });
+      }
+    }
+  }, [activateTarget, captureFailure, resourcePages, setTitle]);
+
+  const createPage = useCallback(() => {
     const trimmedTitle = title.trim();
     const nextTitle = trimmedTitle || "Untitled";
     const replay =
@@ -156,26 +281,38 @@ export default function NotesPaneBody() {
         ? pageCreateReplayRef.current
         : { pageId: crypto.randomUUID(), title: nextTitle };
     pageCreateReplayRef.current = replay;
-    try {
-      const page = await createNotePage(replay);
-      pageCreateReplayRef.current = null;
-      setLocalPages((current) => [page, ...(current ?? resourcePages ?? [])]);
-      setTitle("");
-      setPendingNoteFocus({
-        pageId: page.id,
-        target: trimmedTitle ? "body" : "title",
-      });
-      activateTarget({
-        target: { href: `/pages/${page.id}`, labelHint: page.title },
-        disposition: { kind: "Follow" },
-      });
-    } catch (error: unknown) {
-      if (handleUnauthenticatedApiError(error)) return;
-      setFeedback(
-        toFeedback(error, { fallback: "Page could not be created." }),
-      );
-    }
-  }, [activateTarget, resourcePages, setTitle, title]);
+    void attemptCreatePage({
+      replay,
+      focusTarget: trimmedTitle ? "body" : "title",
+    });
+  }, [attemptCreatePage, title]);
+
+  const retryFailedCreate = useCallback(() => {
+    if (failedCreateIntent) void attemptCreatePage(failedCreateIntent);
+  }, [attemptCreatePage, failedCreateIntent]);
+
+  if (defectState !== null) throw defectState.error;
+
+  const loadFeedback =
+    pagesResource.status === "error"
+      ? {
+          content: notesErrorMessage(pagesResource.error, "Load"),
+          actions: [
+            { label: "Retry", onClick: pagesResource.retry },
+          ] as FeedbackActions,
+        }
+      : null;
+  const operationActions: FeedbackActions | undefined = operationFeedback
+    ? operationFeedback.retry === "CreatePage"
+      ? [{ label: "Retry", onClick: retryFailedCreate }]
+      : operationFeedback.retry === "OpenToday"
+        ? [{ label: "Retry", onClick: viewToday }]
+        : undefined
+    : undefined;
+  const visibleFeedback = loadFeedback ??
+    (operationFeedback
+      ? { content: operationFeedback.content, actions: operationActions }
+      : null);
 
   return (
     <CollectionView
@@ -189,29 +326,41 @@ export default function NotesPaneBody() {
       }}
       opener={<SectionOpener heading="Notes" />}
       notice={
-        feedback ? (
-          <FeedbackNotice feedback={feedback} />
+        visibleFeedback ? (
+          <FeedbackNotice
+            content={visibleFeedback.content}
+            announcement="Assertive"
+            actions={visibleFeedback.actions}
+          />
         ) : filterQuery.trim() &&
           pagesResource.status !== "ready" &&
           filteredPages.length === 0 ? (
           <FeedbackNotice
-            severity="neutral"
-            title="No matching page found so far."
+            content={{
+              tone: "Neutral",
+              title: "No matching page found so far.",
+            }}
+            announcement="None"
           />
         ) : undefined
       }
       empty={
-        feedback ? undefined : filterQuery.trim() ? (
+        visibleFeedback ? undefined : filterQuery.trim() ? (
           <FeedbackNotice
-            severity="neutral"
-            title={
-              pagesResource.status === "ready"
-                ? "No pages match this filter."
-                : "No matching page found so far."
-            }
+            content={{
+              tone: "Neutral",
+              title:
+                pagesResource.status === "ready"
+                  ? "No pages match this filter."
+                  : "No matching page found so far.",
+            }}
+            announcement="None"
           />
         ) : (
-          <FeedbackNotice severity="neutral">No pages yet.</FeedbackNotice>
+          <FeedbackNotice
+            content={{ tone: "Neutral", title: "No pages yet." }}
+            announcement="None"
+          />
         )
       }
       toolbar={

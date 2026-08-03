@@ -98,8 +98,13 @@ that matter:
   The row owns the nullable playback-rate and pause-shortening defaults;
   nullable pause shortening projects as `Presence<Off | Natural>` and means
   use the Android device default.
-  Default/All projects active subscriptions virtually and stores no Podcast
-  entry. Subscribe and OPML add named destinations; unsubscribe uses
+  Default/All stores no Podcast entry. Each active subscription projects one
+  virtual Podcast root and suppresses all child episode Media roots before
+  projection, type filtering, ordering, pagination, and count. Sync, backfill,
+  and explicit Episode Add retain physical child entries but cannot change that
+  root cardinality. Unsubscribe removes the virtual parent and retained episodes
+  resurface in All with their consumption state intact. Subscribe and OPML add
+  named destinations; unsubscribe uses
   `remove_unsubscribed_podcast_placements` to remove viewer-owned unshared
   placements and report retained shared placements. Within a named Library,
   parent Podcast placement subsumes direct episode placement.

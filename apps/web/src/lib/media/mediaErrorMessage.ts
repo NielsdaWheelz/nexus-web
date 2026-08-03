@@ -120,7 +120,50 @@ function sourceErrorMessage(
           ? { kind: "Retry" }
           : { kind: "None" },
       };
-    default:
+    case "E_BILLING_REQUIRED":
+      // Retrying the same source cannot clear a billing requirement, so the
+      // copy is causal and offers no futile Retry.
+      return {
+        kind: "Source",
+        severity: "error",
+        title: "Import needs billing set up.",
+        explanation: "This import isn’t available on the current plan.",
+        action: { kind: "None" },
+      };
+    case "E_PODCAST_QUOTA_EXCEEDED":
+    case "E_X_PROVIDER_CREDITS_DEPLETED":
+      // An exhausted import allowance is not cleared by retrying the same
+      // source, so the copy is causal and offers no futile Retry.
+      return {
+        kind: "Source",
+        severity: "error",
+        title: "Import allowance reached.",
+        explanation:
+          "This source can’t be imported right now because an import allowance was used up.",
+        action: { kind: "None" },
+      };
+    case null:
+    case undefined:
+    case "E_CAPTURE_TOO_LARGE":
+    case "E_FILE_TOO_LARGE":
+    case "E_INGEST_FAILED":
+    case "E_INGEST_TIMEOUT":
+    case "E_INVALID_CONTENT_TYPE":
+    case "E_INVALID_REQUEST":
+    case "E_PODCAST_PROVIDER_UNAVAILABLE":
+    case "E_SANITIZATION_FAILED":
+    case "E_SIGN_UPLOAD_FAILED":
+    case "E_SOURCE_FETCH_FAILED":
+    case "E_SSRF_BLOCKED":
+    case "E_STORAGE_ERROR":
+    case "E_STORAGE_MISSING":
+    case "E_TRANSCRIPTION_FAILED":
+    case "E_TRANSCRIPTION_TIMEOUT":
+    case "E_TRANSCRIPT_UNAVAILABLE":
+    case "E_X_POST_UNAVAILABLE":
+    case "E_X_PROVIDER_AUTH_REJECTED":
+    case "E_X_PROVIDER_RATE_LIMITED":
+    case "E_X_PROVIDER_TIMEOUT":
       return {
         kind: "Source",
         severity: "error",
@@ -132,6 +175,11 @@ function sourceErrorMessage(
           ? { kind: "Retry" }
           : { kind: "None" },
       };
+    default:
+      // justify-defect: last_error_code is decoded same-system source state.
+      throw new Error(
+        `Unsupported media source error code: ${input.lastErrorCode}`,
+      );
   }
 }
 

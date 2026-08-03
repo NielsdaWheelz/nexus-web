@@ -375,7 +375,10 @@ def list_library_entries(
     order. ``projection=unfiled|in-progress`` selects a fixed entry projection
     (omitted means all items; ``unfiled`` is Default-only) and an optional
     ``completion=unfinished`` composes with all-items/unfiled projections only.
-    The whole query is parsed strictly (see ``library_entries.parse_entries_query``).
+    ``entry_type=web_article|epub|pdf|video|podcast_episode|podcast`` selects one
+    exact type; omission means all types. Podcast shows support only the complete
+    all-items view. The whole query is parsed strictly (see
+    ``library_entries.parse_entries_query``).
     """
     view, query = library_entries.parse_entries_query(request.query_params.multi_items())
     page = library_entries.list_library_entries(

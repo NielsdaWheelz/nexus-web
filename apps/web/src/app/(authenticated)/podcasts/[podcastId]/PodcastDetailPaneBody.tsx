@@ -70,7 +70,6 @@ import PaneSection from "@/components/ui/PaneSection";
 import SectionOpener from "@/components/ui/SectionOpener";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -120,6 +119,148 @@ import { runPodcastRefresh } from "@/lib/podcasts/refresh";
 import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 
 const EPISODES_PAGE_SIZE = 100;
+
+type PodcastDetailOperation =
+  | "Load"
+  | "Backfill"
+  | "RetryProcessing"
+  | "RefreshSource"
+  | "RetryMetadata"
+  | "DeleteEpisode"
+  | "MarkPlayed"
+  | "ResetProgress"
+  | "LoadNotes"
+  | "MarkAllPlayed"
+  | "Lectern"
+  | "PaneRefresh";
+
+function podcastDetailErrorTitle(operation: PodcastDetailOperation): string {
+  switch (operation) {
+    case "Load":
+      return "Podcast details couldn’t be loaded";
+    case "Backfill":
+      return "Podcast backlog retry wasn’t started";
+    case "RetryProcessing":
+      return "Episode processing retry wasn’t started";
+    case "RefreshSource":
+      return "Episode source refresh wasn’t started";
+    case "RetryMetadata":
+      return "Episode metadata enrichment wasn’t started";
+    case "DeleteEpisode":
+      return "Episode wasn’t removed";
+    case "MarkPlayed":
+      return "Episode state wasn’t changed";
+    case "ResetProgress":
+      return "Episode progress wasn’t reset";
+    case "LoadNotes":
+      return "Episode notes couldn’t be loaded";
+    case "MarkAllPlayed":
+      return "Episodes weren’t marked as played";
+    case "Lectern":
+      return "Lectern wasn’t updated";
+    case "PaneRefresh":
+      return "Podcast wasn’t refreshed";
+  }
+}
+
+/** Finite product-copy adapter for podcast-detail endpoint failures. */
+function podcastDetailErrorMessage(
+  error: unknown,
+  operation: PodcastDetailOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const requestId = error.requestId;
+  const title = podcastDetailErrorTitle(operation);
+  switch (error.code) {
+    case "E_NETWORK":
+      return { tone: "Danger", title, message: "Check your connection and retry.", requestId };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The server took too long to respond. Retry the action.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return { tone: "Danger", title, message: "Wait a moment, then retry.", requestId };
+    case "E_MEDIA_NOT_FOUND":
+    case "E_PODCAST_NOT_FOUND":
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title,
+        message: "This podcast or episode is no longer available. Refresh the pane.",
+        requestId,
+      };
+    case "E_MEDIA_NOT_READY":
+      return {
+        tone: "Danger",
+        title,
+        message: "This episode is still preparing. Wait for it to settle, then retry.",
+        requestId,
+      };
+    case "E_RETRY_INVALID_STATE":
+      if (
+        operation !== "RetryProcessing" &&
+        operation !== "RefreshSource" &&
+        operation !== "RetryMetadata"
+      ) {
+        throw error;
+      }
+      return {
+        tone: "Danger",
+        title,
+        message:
+          operation === "RetryMetadata"
+            ? "Metadata can be retried only after this episode is ready to read."
+            : "The source state changed. Review its current status before trying again.",
+        requestId,
+      };
+    case "E_RETRY_NOT_ALLOWED":
+      if (operation !== "RetryProcessing" && operation !== "RefreshSource") {
+        throw error;
+      }
+      return {
+        tone: "Danger",
+        title,
+        message:
+          operation === "RetryProcessing"
+            ? "This source can’t be retried. Add a new source instead."
+            : "This source can’t be refreshed. Add a new source instead.",
+        requestId,
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title,
+        message: "This account can’t make that change.",
+        requestId,
+      };
+    case "E_CONFLICT":
+    case "E_READER_STATE_CONFLICT":
+    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
+      return {
+        tone: "Danger",
+        title,
+        message: "The episode changed. Refresh the pane, then retry.",
+        requestId,
+      };
+    case "E_BAD_REQUEST":
+    case "E_INVALID_REQUEST":
+      if (error.code === "E_BAD_REQUEST" && operation !== "PaneRefresh") {
+        throw error;
+      }
+      return {
+        tone: "Danger",
+        title,
+        message: "The requested change is no longer valid. Refresh the pane and retry.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
 
 const MediaAuthorsEditor = lazy(
   () =>
@@ -201,7 +342,6 @@ export default function PodcastDetailPaneBody() {
   const refreshFallbackSnapshotRef =
     useRef<PodcastDetailSnapshot | null>(null);
   const reconciliationPendingRef = useRef(false);
-  const reconciliationSuccessRef = useRef<string | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(
     PODCAST_DETAIL_VISIT_DATA,
@@ -318,6 +458,7 @@ export default function PodcastDetailPaneBody() {
     [busyEpisodeActionKeys],
   );
   const markingEpisodeIds = useStringIdSet();
+  const unconfirmedMetadataMediaIds = useStringIdSet();
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const expandedShowNotesMediaIds = useStringIdSet();
   const episodeUrlSyncedRef = useRef(false);
@@ -326,6 +467,19 @@ export default function PodcastDetailPaneBody() {
     restored !== null,
   );
   const [error, setError] = useState<FeedbackContent | null>(null);
+  const [metadataRetryUnconfirmedNotice, setMetadataRetryUnconfirmedNotice] =
+    useState<FeedbackContent | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const captureDetailError = useCallback(
+    (detailError: unknown, operation: PodcastDetailOperation) => {
+      try {
+        setError(podcastDetailErrorMessage(detailError, operation));
+      } catch (defect) {
+        setAsyncDefect({ error: defect });
+      }
+    },
+    [],
+  );
   const [reloadNonce, setReloadNonce] = useState(0);
   const reloadNonceRef = useRef(0);
   const pendingPodcastDetailRevalidationRef =
@@ -569,7 +723,7 @@ export default function PodcastDetailPaneBody() {
   useEffect(() => {
     if (!podcastId) {
       setLoading(false);
-      setError({ severity: "error", title: "Podcast id is missing" });
+      setError(null);
       return;
     }
 
@@ -581,13 +735,7 @@ export default function PodcastDetailPaneBody() {
 
     if (podcastDetailResource.status === "ready") {
       applyPodcastDetailLoad(podcastDetailResource.data);
-      const successTitle = reconciliationSuccessRef.current;
-      reconciliationSuccessRef.current = null;
-      setError(
-        successTitle === null
-          ? null
-          : { severity: "success", title: successTitle },
-      );
+      setError(null);
       setLoading(false);
       const pending = pendingPodcastDetailRevalidationRef.current;
       if (
@@ -600,24 +748,23 @@ export default function PodcastDetailPaneBody() {
     }
 
     if (podcastDetailResource.status === "error") {
-      reconciliationSuccessRef.current = null;
       reconciliationPendingRef.current = false;
       setSuppressInitialLoad(true);
       committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
       refreshFallbackSnapshotRef.current = null;
-      setError(
-        toFeedback(podcastDetailResource.error, {
-          fallback: "Failed to load podcast detail",
-        }),
+      const pending = pendingPodcastDetailRevalidationRef.current;
+      captureDetailError(
+        podcastDetailResource.error,
+        pending?.nonce === reloadNonce ? "PaneRefresh" : "Load",
       );
       setLoading(false);
-      const pending = pendingPodcastDetailRevalidationRef.current;
       if (pending?.nonce === reloadNonce) {
         rejectPendingPodcastDetailRevalidation(podcastDetailResource.error);
       }
     }
   }, [
     applyPodcastDetailLoad,
+    captureDetailError,
     episodeQueryIdentity,
     podcastDetailResource,
     podcastId,
@@ -981,24 +1128,16 @@ export default function PodcastDetailPaneBody() {
           : current,
       );
       clearAllVisitData();
-      setError({
-        severity: result.outcome === "Retried" ? "success" : "info",
-        title:
-          result.outcome === "Retried"
-            ? "Backlog retry started."
-            : "Backlog no longer needs retry.",
-      });
+      setError(null);
     } catch (caught) {
       if (handleUnauthenticatedApiError(caught)) return;
-      if (!isApiError(caught) || isSameSystemApiDefect(caught)) throw caught;
-      setError(
-        toFeedback(caught, { fallback: "Couldn’t retry the podcast backlog." }),
-      );
+      captureDetailError(caught, "Backfill");
     } finally {
       setBackfillRetryBusy(false);
     }
   }, [
     backfillRetryBusy,
+    captureDetailError,
     clearAllVisitData,
     detail?.subscription?.backfill.state,
     podcastId,
@@ -1039,25 +1178,19 @@ export default function PodcastDetailPaneBody() {
               : episode,
           ),
         );
-        setError(projection.feedback);
+        setError(null);
         clearAllVisitData();
         reload();
       } catch (retryError) {
         if (handleUnauthenticatedApiError(retryError)) return;
-        if (!isApiError(retryError) || isSameSystemApiDefect(retryError)) {
-          throw retryError;
-        }
-        setError(
-          toFeedback(retryError, {
-            fallback: "Failed to retry episode processing",
-          }),
-        );
+        captureDetailError(retryError, "RetryProcessing");
       } finally {
         finishEpisodeAction(busyKey);
       }
     },
     [
       beginEpisodeAction,
+      captureDetailError,
       clearAllVisitData,
       finishEpisodeAction,
       reload,
@@ -1099,25 +1232,19 @@ export default function PodcastDetailPaneBody() {
               : episode,
           ),
         );
-        setError(projection.feedback);
+        setError(null);
         clearAllVisitData();
         reload();
       } catch (refreshError) {
         if (handleUnauthenticatedApiError(refreshError)) return;
-        if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
-          throw refreshError;
-        }
-        setError(
-          toFeedback(refreshError, {
-            fallback: "Failed to refresh episode source",
-          }),
-        );
+        captureDetailError(refreshError, "RefreshSource");
       } finally {
         finishEpisodeAction(busyKey);
       }
     },
     [
       beginEpisodeAction,
+      captureDetailError,
       clearAllVisitData,
       finishEpisodeAction,
       reload,
@@ -1127,6 +1254,7 @@ export default function PodcastDetailPaneBody() {
 
   const handleRetryEpisodeMetadata = useCallback(
     async (mediaId: string) => {
+      if (unconfirmedMetadataMediaIds.has(mediaId)) return;
       const busyKey = beginEpisodeAction(
         mediaId,
         RESOURCE_ACTION_CATALOG.RetryMetadata.id,
@@ -1135,30 +1263,39 @@ export default function PodcastDetailPaneBody() {
       setError(null);
       try {
         await retryMediaMetadata(mediaId);
-        setError({
-          severity: "success",
-          title: "Metadata re-enrichment started.",
-        });
         clearAllVisitData();
         reload();
       } catch (metadataError) {
         if (handleUnauthenticatedApiError(metadataError)) return;
         if (
-          !isApiError(metadataError) ||
-          isSameSystemApiDefect(metadataError)
+          isApiError(metadataError) &&
+          (metadataError.code === "E_NETWORK" ||
+            metadataError.code === "E_UPSTREAM_TIMEOUT")
         ) {
-          throw metadataError;
+          unconfirmedMetadataMediaIds.add(mediaId);
+          setMetadataRetryUnconfirmedNotice({
+            tone: "Warning",
+            title: "Metadata request couldn’t be confirmed",
+            message: "Its status is being checked. Don’t start it again yet.",
+            requestId: metadataError.requestId,
+          });
+          clearAllVisitData();
+          reload();
+          return;
         }
-        setError(
-          toFeedback(metadataError, {
-            fallback: "Failed to re-enrich episode metadata",
-          }),
-        );
+        captureDetailError(metadataError, "RetryMetadata");
       } finally {
         finishEpisodeAction(busyKey);
       }
     },
-    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction, reload],
+    [
+      beginEpisodeAction,
+      captureDetailError,
+      clearAllVisitData,
+      finishEpisodeAction,
+      reload,
+      unconfirmedMetadataMediaIds,
+    ],
   );
 
   const handleDeleteEpisode = useCallback(
@@ -1184,18 +1321,14 @@ export default function PodcastDetailPaneBody() {
         reload();
       } catch (deleteError) {
         if (handleUnauthenticatedApiError(deleteError)) return;
-        if (!isApiError(deleteError) || isSameSystemApiDefect(deleteError)) {
-          throw deleteError;
-        }
-        setError(
-          toFeedback(deleteError, { fallback: "Failed to delete episode" }),
-        );
+        captureDetailError(deleteError, "DeleteEpisode");
       } finally {
         finishEpisodeAction(busyKey);
       }
     },
     [
       beginEpisodeAction,
+      captureDetailError,
       captureEpisodeFocusNeighbor,
       clearAllVisitData,
       finishEpisodeAction,
@@ -1281,22 +1414,14 @@ export default function PodcastDetailPaneBody() {
       } catch (markError) {
         setEpisodes(previousEpisodes);
         if (handleUnauthenticatedApiError(markError)) return;
-        if (!isApiError(markError) || isSameSystemApiDefect(markError)) {
-          throw markError;
-        }
-        setError(
-          toFeedback(markError, {
-            fallback: isCompleted
-              ? "Failed to mark episode as played"
-              : "Failed to mark episode as unplayed",
-          }),
-        );
+        captureDetailError(markError, "MarkPlayed");
       } finally {
         markingEpisodeIds.remove(mediaId);
       }
     },
     [
       applyEpisodeCompletionState,
+      captureDetailError,
       clearAllVisitData,
       captureEpisodeFocusNeighbor,
       episodeStateFilter,
@@ -1362,18 +1487,17 @@ export default function PodcastDetailPaneBody() {
               : [];
           }),
         );
-        reconciliationSuccessRef.current = "Progress reset.";
         reload();
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-        setError(toFeedback(error, { fallback: "Failed to reset progress" }));
+        captureDetailError(error, "ResetProgress");
       } finally {
         finishEpisodeAction(busyKey);
       }
     },
     [
       beginEpisodeAction,
+      captureDetailError,
       captureEpisodeFocusNeighbor,
       episodeStateFilter,
       finishEpisodeAction,
@@ -1413,12 +1537,10 @@ export default function PodcastDetailPaneBody() {
         })
         .catch((loadError) => {
           if (handleUnauthenticatedApiError(loadError)) return;
-          setError(
-            toFeedback(loadError, { fallback: "Failed to load episode notes" }),
-          );
+          captureDetailError(loadError, "LoadNotes");
         });
     },
-    [episodes, expandedShowNotesMediaIds, setEpisodes],
+    [captureDetailError, episodes, expandedShowNotesMediaIds, setEpisodes],
   );
 
   const handleMarkAllAsPlayed = useCallback(async () => {
@@ -1446,19 +1568,15 @@ export default function PodcastDetailPaneBody() {
           state: episodeStateFilter,
         }),
       });
-      reconciliationSuccessRef.current = "Episodes marked as played.";
       reload();
     } catch (markError) {
       if (handleUnauthenticatedApiError(markError)) return;
-      setError(
-        toFeedback(markError, {
-          fallback: "Failed to mark episodes as played",
-        }),
-      );
+      captureDetailError(markError, "MarkAllPlayed");
     } finally {
       setMarkAllAsPlayedBusy(false);
     }
   }, [
+    captureDetailError,
     episodeFilterRows.query,
     episodeStateFilter,
     episodes,
@@ -1496,7 +1614,6 @@ export default function PodcastDetailPaneBody() {
       mediaId: string,
       actionId: EpisodeActionId,
       execute: () => Promise<unknown>,
-      failure: string,
     ) => {
       const busyKey = beginEpisodeAction(mediaId, actionId);
       if (busyKey === null) return;
@@ -1506,15 +1623,12 @@ export default function PodcastDetailPaneBody() {
         clearAllVisitData();
       } catch (lecternError) {
         if (handleUnauthenticatedApiError(lecternError)) return;
-        if (!isApiError(lecternError) || isSameSystemApiDefect(lecternError)) {
-          throw lecternError;
-        }
-        setError(toFeedback(lecternError, { fallback: failure }));
+        captureDetailError(lecternError, "Lectern");
       } finally {
         finishEpisodeAction(busyKey);
       }
     },
-    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction],
+    [beginEpisodeAction, captureDetailError, clearAllVisitData, finishEpisodeAction],
   );
 
   const handlePlayNext = useCallback(
@@ -1532,7 +1646,6 @@ export default function PodcastDetailPaneBody() {
             mediaIds: [assumeMediaId(mediaId)],
             placement,
           }),
-        "Failed to place episode next on Lectern",
       );
     },
     [lectern, playerState, runEpisodeLecternMutation],
@@ -1548,7 +1661,6 @@ export default function PodcastDetailPaneBody() {
             mediaIds: [assumeMediaId(mediaId)],
             placement: { kind: "Last" },
           }),
-        "Failed to add episode to Lectern",
       );
     },
     [lectern, runEpisodeLecternMutation],
@@ -1560,7 +1672,6 @@ export default function PodcastDetailPaneBody() {
         mediaId,
         RESOURCE_ACTION_CATALOG.RemoveFromLectern.id,
         () => lectern.removeItem(itemId),
-        "Failed to remove episode from Lectern",
       );
     },
     [lectern, runEpisodeLecternMutation],
@@ -1593,6 +1704,13 @@ export default function PodcastDetailPaneBody() {
         };
       } catch (refreshError: unknown) {
         if (isAbortError(refreshError)) throw refreshError;
+        if (!handleUnauthenticatedApiError(refreshError)) {
+          try {
+            podcastDetailErrorMessage(refreshError, "PaneRefresh");
+          } catch (defect) {
+            setAsyncDefect({ error: defect });
+          }
+        }
         return {
           kind: "Failed",
           announcement: "Podcast failed to refresh",
@@ -1676,6 +1794,8 @@ export default function PodcastDetailPaneBody() {
     search: episodeFilterRows.publication,
   });
 
+  if (asyncDefect !== null) throw asyncDefect.error;
+
   const podcastLibraryCount = podcastLibraries.filter(
     (library) => library.isInLibrary,
   ).length;
@@ -1692,6 +1812,7 @@ export default function PodcastDetailPaneBody() {
         busyEpisodeActionKeys={busyEpisodeActionKeys}
         markingEpisodeIds={markingEpisodeIds}
         expandedShowNotesMediaIds={expandedShowNotesMediaIds}
+        unconfirmedMetadataMediaIds={unconfirmedMetadataMediaIds.ids}
         lecternItemsByMediaId={lecternItemsByMediaId}
         playNextDisabledMediaId={playNextDisabledMediaId}
         lecternReady={lectern.resource.status === "ready"}
@@ -1718,7 +1839,10 @@ export default function PodcastDetailPaneBody() {
   if (!podcastId) {
     return (
       <>
-        <FeedbackNotice severity="error" title="Podcast id is missing." />
+        <FeedbackNotice
+          content={{ tone: "Danger", title: "Podcast id is missing." }}
+          announcement="Assertive"
+        />
       </>
     );
   }
@@ -1758,8 +1882,18 @@ export default function PodcastDetailPaneBody() {
           </div>
         </div>
         <PaneSection>
-          {loading && <PaneLoadingState />}
-          {error && <FeedbackNotice feedback={error} />}
+          {loading && (
+            <PaneLoadingState label="Loading podcast…" announcement="Polite" />
+          )}
+          {error && (
+            <FeedbackNotice content={error} announcement="Assertive" />
+          )}
+          {metadataRetryUnconfirmedNotice && (
+            <FeedbackNotice
+              content={metadataRetryUnconfirmedNotice}
+              announcement="Assertive"
+            />
+          )}
           {!loading && detail && (
             <PodcastOverview
               title={detail.podcast.title}

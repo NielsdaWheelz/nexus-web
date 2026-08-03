@@ -1,5 +1,11 @@
 # Library All And Smart Views Hard Cutover
 
+> **Podcast container-first All update (2026-08-02):**
+> [`podcast-container-first-all-hard-cutover.md`](podcast-container-first-all-hard-cutover.md)
+> supersedes only the flat Default/All root-set claim for active subscriptions.
+> Their child episode Media rows remain physical but are excluded before view
+> projection, type filtering, ordering, pagination, and count.
+
 > **Finite-list update (2026-07-29):**
 > [`complete-collection-lists-hard-cutover.md`](complete-collection-lists-hard-cutover.md)
 > replaces this document's entry cursor envelope, `Load More`, and terminal

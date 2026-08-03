@@ -9,7 +9,11 @@ import {
   useTransition,
   type FormEvent,
 } from "react";
-import { apiFetch } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   FeedbackNotice,
@@ -22,7 +26,6 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import SectionOpener from "@/components/ui/SectionOpener";
 import {
   DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
-  DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
   EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
 } from "@/lib/auth/messages";
 import {
@@ -33,7 +36,10 @@ import { useResource } from "@/lib/api/useResource";
 import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import { changeEmailAction } from "./actions";
 import styles from "./page.module.css";
-import { copyText } from "@/lib/ui/copyText";
+import {
+  ClipboardWriteUnavailableError,
+  copyText,
+} from "@/lib/ui/copyText";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import {
   decodeAuthenticatedAccountProfile,
@@ -42,6 +48,60 @@ import {
 
 interface AccountResponse {
   data: unknown;
+}
+
+type AccountOperation = "Load" | "DisplayName" | "CalendarTimeZone";
+
+/** Exhaustive copy projection for the finite `/api/me` browser error channel. */
+function accountErrorMessage(
+  error: unknown,
+  operation: AccountOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  const requestId = error.requestId;
+  const title =
+    operation === "Load"
+      ? "Account settings couldn’t be loaded"
+      : operation === "DisplayName"
+        ? DISPLAY_NAME_CHANGE_FAILURE_MESSAGE
+        : "Calendar time zone couldn’t be updated";
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and retry.",
+        requestId,
+      };
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "The server took too long to respond. Retry the change.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_INVALID_REQUEST":
+      if (operation === "Load") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message:
+          operation === "DisplayName"
+            ? "Enter a display name between 1 and 80 characters."
+            : "Enter an IANA time zone such as America/Los_Angeles.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
 }
 
 export default function SettingsAccountPaneBody() {
@@ -57,6 +117,13 @@ export default function SettingsAccountPaneBody() {
         : null,
     [accountResource],
   );
+  const accountLoadFailure =
+    accountResource.status === "error"
+      ? {
+          content: accountErrorMessage(accountResource.error, "Load"),
+          retry: accountResource.retry,
+        }
+      : null;
   const [contractDefect, setContractDefect] = useState<{
     error: unknown;
   } | null>(null);
@@ -71,8 +138,12 @@ export default function SettingsAccountPaneBody() {
         await copyText(address);
         setIngestAddressCopied(true);
         setTimeout(() => setIngestAddressCopied(false), 2000);
-      } catch {
-        setIngestAddressCopyFailed(true);
+      } catch (error) {
+        if (error instanceof ClipboardWriteUnavailableError) {
+          setIngestAddressCopyFailed(true);
+          return;
+        }
+        setContractDefect({ error });
       }
     },
     []
@@ -81,9 +152,10 @@ export default function SettingsAccountPaneBody() {
   const [currentEmail, setCurrentEmail] = useState("");
   const [emailInput, setEmailInput] = useState("");
   const emailDirtyRef = useRef(false);
-  const [emailFeedback, setEmailFeedback] = useState<FeedbackContent | null>(
-    null
-  );
+  const [emailFeedback, setEmailFeedback] = useState<{
+    content: FeedbackContent;
+    announcement: "Polite" | "Assertive";
+  } | null>(null);
   const [emailPending, startEmailTransition] = useTransition();
 
   const [currentDisplayName, setCurrentDisplayName] = useState("");
@@ -132,17 +204,6 @@ export default function SettingsAccountPaneBody() {
       }
       return;
     }
-
-    if (accountResource.status === "error") {
-      setDisplayNameFeedback({
-        severity: "error",
-        title: DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
-      });
-      setCalendarTimeZoneFeedback({
-        severity: "error",
-        title: "Calendar time zone could not be loaded.",
-      });
-    }
   }, [accountProfile, accountResource.status]);
 
   const handleEmailSubmit = useCallback(
@@ -152,7 +213,10 @@ export default function SettingsAccountPaneBody() {
       startEmailTransition(async () => {
         const result = await changeEmailAction({ email: emailInput });
         if (!result.ok) {
-          setEmailFeedback({ severity: "error", title: result.error });
+          setEmailFeedback({
+            content: { tone: "Danger", title: result.error },
+            announcement: "Assertive",
+          });
           return;
         }
         const normalized = emailInput.trim().toLowerCase();
@@ -160,8 +224,11 @@ export default function SettingsAccountPaneBody() {
         setEmailInput(normalized);
         emailDirtyRef.current = false;
         setEmailFeedback({
-          severity: "success",
-          title: EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
+          content: {
+            tone: "Info",
+            title: EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
+          },
+          announcement: "Polite",
         });
       });
     },
@@ -183,20 +250,18 @@ export default function SettingsAccountPaneBody() {
           setCurrentDisplayName(name);
           setDisplayNameInput(name);
           displayNameDirtyRef.current = false;
-          setDisplayNameFeedback({
-            severity: "success",
-            title: DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
-          });
+          setDisplayNameFeedback(null);
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
           if (isAuthenticatedAccountContractDefect(error)) {
             setContractDefect({ error });
             return;
           }
-          setDisplayNameFeedback({
-            severity: "error",
-            title: DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
-          });
+          try {
+            setDisplayNameFeedback(accountErrorMessage(error, "DisplayName"));
+          } catch (defect) {
+            setContractDefect({ error: defect });
+          }
         }
       });
     },
@@ -222,20 +287,20 @@ export default function SettingsAccountPaneBody() {
           setCalendarTimeZoneInput(calendarTimeZone);
           calendarTimeZoneDirtyRef.current = false;
           setCalendarTimeZone(calendarTimeZone);
-          setCalendarTimeZoneFeedback({
-            severity: "success",
-            title: "Calendar time zone updated.",
-          });
+          setCalendarTimeZoneFeedback(null);
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
           if (isAuthenticatedAccountContractDefect(error)) {
             setContractDefect({ error });
             return;
           }
-          setCalendarTimeZoneFeedback({
-            severity: "error",
-            title: "Calendar time zone could not be updated.",
-          });
+          try {
+            setCalendarTimeZoneFeedback(
+              accountErrorMessage(error, "CalendarTimeZone"),
+            );
+          } catch (defect) {
+            setContractDefect({ error: defect });
+          }
         }
       });
     },
@@ -248,7 +313,24 @@ export default function SettingsAccountPaneBody() {
     <PaneSurface opener={<SectionOpener heading="Account" />}>
       <PaneSection title="Email">
         <form className={styles.form} onSubmit={handleEmailSubmit}>
-          {emailFeedback ? <FeedbackNotice feedback={emailFeedback} /> : null}
+          {accountLoadFailure ? (
+            <FeedbackNotice
+              content={accountLoadFailure.content}
+              announcement="Assertive"
+              actions={[
+                {
+                  label: "Retry",
+                  onClick: accountLoadFailure.retry,
+                },
+              ]}
+            />
+          ) : null}
+          {emailFeedback ? (
+            <FeedbackNotice
+              content={emailFeedback.content}
+              announcement={emailFeedback.announcement}
+            />
+          ) : null}
           <p className={styles.current}>Current: {currentEmail}</p>
           <label className={styles.field}>
             <span className={styles.label}>New email</span>
@@ -282,7 +364,10 @@ export default function SettingsAccountPaneBody() {
       <PaneSection title="Display name">
         <form className={styles.form} onSubmit={handleDisplayNameSubmit}>
           {displayNameFeedback ? (
-            <FeedbackNotice feedback={displayNameFeedback} />
+            <FeedbackNotice
+              content={displayNameFeedback}
+              announcement="Assertive"
+            />
           ) : null}
           <p className={styles.current}>Current: {currentDisplayName || "(not set)"}</p>
           <label className={styles.field}>
@@ -319,7 +404,10 @@ export default function SettingsAccountPaneBody() {
       <PaneSection title="Calendar time zone">
         <form className={styles.form} onSubmit={handleCalendarTimeZoneSubmit}>
           {calendarTimeZoneFeedback ? (
-            <FeedbackNotice feedback={calendarTimeZoneFeedback} />
+            <FeedbackNotice
+              content={calendarTimeZoneFeedback}
+              announcement="Assertive"
+            />
           ) : null}
           <p className={styles.current}>
             Current: {currentCalendarTimeZone}

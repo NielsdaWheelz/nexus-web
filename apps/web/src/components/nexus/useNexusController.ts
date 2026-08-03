@@ -8,7 +8,10 @@ import {
   useRef,
   useState,
 } from "react";
-import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
+import {
+  useFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import {
   apiFetch,
@@ -29,10 +32,7 @@ import {
   subscribeDailyDraft,
   type DailyDraft,
 } from "@/lib/notes/dailyDraftStore";
-import {
-  useOpenDailyPage,
-  resolveDailyLocalDate,
-} from "@/lib/notes/openDailyPage";
+import { useOpenDailyPage, resolveDailyLocalDate } from "@/lib/notes/openDailyPage";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { getNexusCommand, NEXUS_COMMAND_IDS } from "@/lib/nexus/commands";
 import {
@@ -95,7 +95,10 @@ import { usePaneWarm } from "@/lib/panes/paneWarm";
 import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
 import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import { usePlayerCommands, usePlayerSession } from "@/lib/player/globalPlayer";
+import {
+  usePlayerCommands,
+  usePlayerSession,
+} from "@/lib/player/globalPlayer";
 import {
   ResourceOpenablesContractDefect,
   searchOpenableResources,
@@ -147,9 +150,7 @@ interface NexusHistoryResponse {
 }
 
 export interface NexusManagedPane extends NexusPane {
-  readonly activationRouteId: ReturnType<
-    typeof resolveWorkspaceActivationRouteId
-  >;
+  readonly activationRouteId: ReturnType<typeof resolveWorkspaceActivationRouteId>;
 }
 
 export interface NexusManagedClosedPane {
@@ -182,6 +183,10 @@ export interface NexusController {
   readonly desktop: DesktopNexusController;
   readonly managedPanes: readonly NexusManagedPane[];
   readonly managedClosedPanes: readonly NexusManagedClosedPane[];
+  readonly managedTabsFeedback: {
+    readonly content: FeedbackContent;
+    readonly paneId: string;
+  } | null;
   readonly createChoiceActions: readonly NexusAction[];
   readonly browseChoiceActions: readonly NexusAction[];
   setQuery(query: string): void;
@@ -199,7 +204,12 @@ export interface NexusController {
     activation: NexusTargetActivation,
     entry?: NexusEntry,
   ): Promise<NexusDispatchOutcome>;
-  reportActivationFailure(error: unknown): void;
+  reportActivationFailure(
+    error: unknown,
+    retry: () => void,
+    target: MaterializedNexusTarget,
+    activation: NexusTargetActivation,
+  ): void;
   retry(source: DesktopNexusSource): void;
   openTarget(target: NexusTarget): void;
   openAddTarget(target: NexusTarget): void;
@@ -216,6 +226,8 @@ export interface NexusController {
   setLibraryNameDraft(name: string): void;
   submitLibrary(): void;
   retryPageCreation(): void;
+  retryCommandFailure(): void;
+  retryBlockedOperation(): void;
   manageTabs(): void;
   openManagedPane(paneId: string): void;
   closeManagedPane(paneId: string): void;
@@ -230,6 +242,7 @@ const EMPTY_SEARCH: readonly SearchResultRowViewModel[] = [];
 const OPENABLE_DEBOUNCE_MS = 80;
 const SEARCH_DEBOUNCE_MS = 160;
 const BUSY_DELAY_MS = 150;
+const NEXUS_HISTORY_FEEDBACK_KEY = "nexus-history-save";
 const OPENABLE_CACHE_LIMIT = 32;
 const EMPTY_NEXUS_GROUPS: NexusProjection["groups"] = [];
 const EMPTY_NEXUS_PROJECTION_BY_SURFACE: Readonly<
@@ -258,12 +271,106 @@ type PendingDismissal = {
   readonly intent: ExitIntent;
 };
 
-function isRetryableWorkflowFailure(error: unknown): boolean {
-  return (
-    isApiError(error) ||
-    error instanceof TypeError ||
-    error instanceof DOMException
-  );
+export type NexusOperation =
+  | "SaveHistory"
+  | "Command"
+  | "CreatePage"
+  | "CreateLibrary";
+
+function nexusOperationTitle(operation: NexusOperation): string {
+  switch (operation) {
+    case "SaveHistory":
+      return "Nexus history wasn’t saved";
+    case "Command":
+      return "Command couldn’t be completed";
+    case "CreatePage":
+      return "Page couldn’t be created";
+    case "CreateLibrary":
+      return "Library couldn’t be created";
+  }
+}
+
+/** Finite Nexus-operation copy adapter; contract and unknown failures defect. */
+export function nexusErrorMessage(
+  error: unknown,
+  operation: NexusOperation,
+): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+
+  const title = nexusOperationTitle(operation);
+  const requestId = error.requestId;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and retry.",
+        requestId,
+      };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title,
+        message: "Nexus couldn’t complete the request. Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Wait a moment, then retry.",
+        requestId,
+      };
+    case "E_NOT_FOUND":
+    case "E_MEDIA_NOT_FOUND":
+    case "E_CONVERSATION_NOT_FOUND":
+      if (operation !== "Command") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "The selected resource is no longer available.",
+        requestId,
+      };
+    case "E_FORBIDDEN":
+    case "E_LIBRARY_FORBIDDEN":
+      if (operation === "SaveHistory") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "This account can’t make that change.",
+        requestId,
+      };
+    case "E_BAD_REQUEST":
+    case "E_INVALID_REQUEST":
+      if (operation === "SaveHistory") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "Review the request and retry.",
+        requestId,
+      };
+    case "E_NAME_INVALID":
+      if (operation !== "CreateLibrary") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "Enter a non-reserved library name between 1 and 100 characters.",
+        requestId,
+      };
+    case "E_RESOURCE_CONFLICT":
+      if (operation !== "CreatePage" && operation !== "CreateLibrary") {
+        throw error;
+      }
+      return {
+        tone: "Danger",
+        title,
+        message: "The saved create request conflicts with another resource.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
 }
 
 function actionTarget(action: NexusAction): NexusTarget | null {
@@ -320,9 +427,7 @@ export function useNexusController(): NexusController {
   });
   const [typedActionActiveKey, setTypedActionActiveKey] =
     useState<NexusEntryKey | null>(null);
-  const [blankActiveKey, setBlankActiveKey] = useState<NexusEntryKey | null>(
-    null,
-  );
+  const [blankActiveKey, setBlankActiveKey] = useState<NexusEntryKey | null>(null);
   const [actionsRequest, setActionsRequest] =
     useState<DesktopNexusActionsRequest | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -331,35 +436,57 @@ export function useNexusController(): NexusController {
   const [historyEnabled, setHistoryEnabled] = useState(false);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [showBusy, setShowBusy] = useState(false);
+  const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
+  const [managedTabsFeedback, setManagedTabsFeedback] = useState<{
+    content: FeedbackContent;
+    paneId: string;
+  } | null>(null);
   const [pendingDismissal, setPendingDismissal] =
     useState<PendingDismissal | null>(null);
   const [todayDraft, setTodayDraft] = useState<DailyDraft | null>(() => {
     if (typeof window === "undefined") return null;
-    const localDate = resolveDailyLocalDate(
-      { kind: "Today" },
-      calendarTimeZone,
-    );
+    const localDate = resolveDailyLocalDate({ kind: "Today" }, calendarTimeZone);
     return readDailyDraft(accountId, localDate);
   });
   const userMovedRef = useRef(false);
   const suppressReturnFocusRef = useRef(false);
   const requestIdRef = useRef(0);
-  const openablesCacheRef = useRef(
-    new Map<string, ResourceOpenableSearchResponse>(),
-  );
+  const commandFailureRetryRef = useRef<(() => void) | null>(null);
+  const openablesCacheRef = useRef(new Map<string, ResourceOpenableSearchResponse>());
   const handleHistoryWriteError = useCallback(
-    (error: unknown) => {
+    (error: unknown, retry: () => void) => {
       if (handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-      feedback.show(
-        toFeedback(error, { fallback: "Nexus history was not saved" }),
-      );
+      try {
+        feedback.publish({
+          kind: "Persistent",
+          key: NEXUS_HISTORY_FEEDBACK_KEY,
+          // Polite: a failed history write neither loses in-flight data nor
+          // blocks the current action; the record persists on the rail with
+          // Retry, so it need not interrupt speech.
+          announcement: "Polite",
+          content: nexusErrorMessage(error, "SaveHistory"),
+          actions: [
+            {
+              label: "Retry",
+              onClick: () => {
+                feedback.resolve(NEXUS_HISTORY_FEEDBACK_KEY);
+                retry();
+              },
+            },
+          ],
+        });
+      } catch (caughtDefect: unknown) {
+        setDefectState({ error: caughtDefect });
+      }
     },
     [feedback],
   );
   const markHistoryCommitted = useCallback(
-    () => setHistoryRevision((value) => value + 1),
-    [],
+    () => {
+      feedback.resolve(NEXUS_HISTORY_FEEDBACK_KEY);
+      setHistoryRevision((value) => value + 1);
+    },
+    [feedback],
   );
   const recordSelection = useNexusSelectionJournal({
     foregroundActive: open,
@@ -417,8 +544,7 @@ export function useNexusController(): NexusController {
     () =>
       recentlyClosedPanes.map((snapshot) => ({
         id: snapshot.pane.id,
-        label: resolveWorkspacePaneLabel(snapshot.pane, runtimeLabelByPaneId)
-          .label,
+        label: resolveWorkspacePaneLabel(snapshot.pane, runtimeLabelByPaneId).label,
       })),
     [recentlyClosedPanes, runtimeLabelByPaneId],
   );
@@ -529,8 +655,7 @@ export function useNexusController(): NexusController {
         : null;
     return {
       recent: (baseData?.recent ?? EMPTY_RECENT).filter(
-        (entry) =>
-          !isAndroidShellRestrictedHref(entry.target_href, androidShell),
+        (entry) => !isAndroidShellRestrictedHref(entry.target_href, androidShell),
       ),
       frecencyByHref:
         (parsed.text ? typedData?.frecency_by_href : null) ??
@@ -554,8 +679,7 @@ export function useNexusController(): NexusController {
     openablesError instanceof ResourceOpenablesContractDefect ||
     isSameSystemApiDefect(openablesError)
       ? openablesError
-      : ownedError instanceof SearchContractDefect ||
-          isSameSystemApiDefect(ownedError)
+      : ownedError instanceof SearchContractDefect || isSameSystemApiDefect(ownedError)
         ? ownedError
         : null;
   if (contractDefect) throw contractDefect;
@@ -769,22 +893,54 @@ export function useNexusController(): NexusController {
     [accountId, calendarTimeZone],
   );
   const fail = useCallback(
-    (error: unknown) => {
+    (
+      error: unknown,
+      retry: {
+        target: MaterializedNexusTarget;
+        activation: NexusTargetActivation;
+        attempt: () => void;
+      },
+    ) => {
       if (handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-      feedback.show(toFeedback(error, { fallback: "Command failed" }));
+      try {
+        const content = nexusErrorMessage(error, "Command");
+        commandFailureRetryRef.current = retry.attempt;
+        setPage({
+          kind: "CommandFailed",
+          content,
+          target: retry.target,
+          activation: retry.activation,
+        });
+      } catch (caughtDefect: unknown) {
+        setDefectState({ error: caughtDefect });
+      }
     },
-    [feedback],
+    [],
   );
   const applyNavigationOutcome = useCallback(
     (
       outcome: NexusDispatchOutcome,
       activation: NexusTargetActivation,
       retained: Omit<RetainedActivation, "target" | "activation">,
+      target?: MaterializedNexusTarget,
     ) => {
       switch (outcome.kind) {
         case "Stayed":
         case "WorkflowRequested":
+          return;
+        case "OperationBlocked":
+          setPage({
+            kind: "OperationBlocked",
+            title: outcome.title,
+            message: outcome.message,
+            manualValue:
+              target?.kind === "CopyExternalLink" ? target.href : undefined,
+            retry:
+              outcome.reason === "ClipboardUnavailable" &&
+              target?.kind === "CopyExternalLink"
+                ? { target, activation }
+                : null,
+          });
           return;
         case "NavigationAccepted":
         case "DailyPageAccepted":
@@ -805,6 +961,15 @@ export function useNexusController(): NexusController {
     },
     [],
   );
+  const reportActivationFailure = useCallback(
+    (
+      error: unknown,
+      attempt: () => void,
+      target: MaterializedNexusTarget,
+      activation: NexusTargetActivation,
+    ) => fail(error, { target, activation, attempt }),
+    [fail],
+  );
   const dispatchWorkspaceTarget = useCallback(
     (input: {
       readonly target: WorkspaceTarget;
@@ -819,18 +984,27 @@ export function useNexusController(): NexusController {
         href: input.target.href,
         labelHint: input.target.labelHint,
       });
-      void settleNexusDispatch(() =>
-        dispatchNexusTarget(target, dispatchCtx, input.activation),
-      )
-        .then((outcome) => {
-          applyNavigationOutcome(outcome, input.activation, {
-            source: input.source,
-            completion: input.completion ?? absent(),
-            returnTo: input.returnTo,
-          });
-          if (outcome.kind === "NavigationAccepted") input.onAccepted?.();
-        })
-        .catch(fail);
+      const attempt = () => {
+        void settleNexusDispatch(() =>
+          dispatchNexusTarget(target, dispatchCtx, input.activation),
+        )
+          .then((outcome) => {
+            applyNavigationOutcome(outcome, input.activation, {
+              source: input.source,
+              completion: input.completion ?? absent(),
+              returnTo: input.returnTo,
+            }, target);
+            if (outcome.kind === "NavigationAccepted") input.onAccepted?.();
+          })
+          .catch((error: unknown) =>
+            fail(error, {
+              target,
+              activation: input.activation,
+              attempt,
+            }),
+          );
+      };
+      attempt();
     },
     [applyNavigationOutcome, dispatchCtx, fail, materialize],
   );
@@ -863,11 +1037,12 @@ export function useNexusController(): NexusController {
         })
         .catch((error: unknown) => {
           if (handleUnauthenticatedApiError(error)) return;
-          if (
-            isSameSystemApiDefect(error) ||
-            !isRetryableWorkflowFailure(error)
-          ) {
-            throw error;
+          let content: FeedbackContent;
+          try {
+            content = nexusErrorMessage(error, "CreatePage");
+          } catch (caughtDefect: unknown) {
+            setDefectState({ error: caughtDefect });
+            return;
           }
           setPage({
             kind: "CreatePage",
@@ -876,9 +1051,7 @@ export function useNexusController(): NexusController {
             activation: input.activation,
             submit: {
               kind: "Retryable",
-              message: toFeedback(error, {
-                fallback: "Couldn’t create page. Retry",
-              }).title,
+              content,
             },
           });
         });
@@ -967,11 +1140,8 @@ export function useNexusController(): NexusController {
         if (outcome.kind === "WorkflowRequested") {
           handleWorkflowRequest(outcome, rootReturnPoint);
         } else {
-          applyNavigationOutcome(outcome, activation, retained);
-          if (
-            outcome.kind === "Stayed" &&
-            target.kind === "ResumeCurrentPlayback"
-          ) {
+          applyNavigationOutcome(outcome, activation, retained, target);
+          if (outcome.kind === "Stayed" && target.kind === "ResumeCurrentPlayback") {
             setOpen(false);
           }
         }
@@ -1013,7 +1183,12 @@ export function useNexusController(): NexusController {
       }
       setAnnouncement("");
       const prepared = materialize(action.availability.target);
-      void dispatch(prepared, activation, entry).catch(fail);
+      const attempt = () => {
+        void dispatch(prepared, activation, entry).catch((error: unknown) =>
+          fail(error, { target: prepared, activation, attempt }),
+        );
+      };
+      attempt();
     },
     [dispatch, fail, materialize],
   );
@@ -1042,7 +1217,9 @@ export function useNexusController(): NexusController {
       }
       const entry = projection.groups
         .flatMap((group) => group.entries)
-        .find((candidate) => nexusEntryKeyValue(candidate.key) === keyValue);
+        .find((candidate) =>
+          nexusEntryKeyValue(candidate.key) === keyValue,
+        );
       const target = entry ? actionTarget(entry.primaryAction) : null;
       if (target?.kind === "InternalHref") warmPane(target.href);
       if (
@@ -1084,11 +1261,7 @@ export function useNexusController(): NexusController {
     if (page.kind !== "CreateLibrary" || page.submit.kind === "Running") return;
     const name = page.nameDraft.trim();
     if (!name) return;
-    const frozen = {
-      ...page,
-      nameDraft: name,
-      submit: { kind: "Running" } as const,
-    };
+    const frozen = { ...page, nameDraft: name, submit: { kind: "Running" } as const };
     setPage(frozen);
     void createLibrary({ libraryId: frozen.libraryId, name })
       .then((library) => {
@@ -1103,29 +1276,25 @@ export function useNexusController(): NexusController {
       })
       .catch((error: unknown) => {
         if (handleUnauthenticatedApiError(error)) return;
-        if (
-          isSameSystemApiDefect(error) ||
-          !isRetryableWorkflowFailure(error)
-        ) {
-          throw error;
+        let content: FeedbackContent;
+        try {
+          content = nexusErrorMessage(error, "CreateLibrary");
+        } catch (caughtDefect: unknown) {
+          setDefectState({ error: caughtDefect });
+          return;
         }
         setPage({
           ...frozen,
           submit: {
             kind: "Retryable",
-            message: toFeedback(error, {
-              fallback: "Couldn’t create library. Retry",
-            }).title,
+            content,
           },
         });
       });
   }, [dispatchWorkspaceTarget, invalidateOpenables, page, rootReturnPoint]);
   const setLibraryNameDraft = useCallback((name: string) => {
     setPage((current) => {
-      if (
-        current.kind !== "CreateLibrary" ||
-        current.submit.kind === "Running"
-      ) {
+      if (current.kind !== "CreateLibrary" || current.submit.kind === "Running") {
         return current;
       }
       return {
@@ -1148,6 +1317,30 @@ export function useNexusController(): NexusController {
       returnTo: rootReturnPoint,
     });
   }, [page, rootReturnPoint, runPageCreation]);
+  const retryCommandFailure = useCallback(() => {
+    if (page.kind !== "CommandFailed") return;
+    const attempt = commandFailureRetryRef.current;
+    setPage({ kind: "Root" });
+    attempt?.();
+  }, [page.kind]);
+  const retryBlockedOperation = useCallback(() => {
+    if (page.kind !== "OperationBlocked" || page.retry === null) return;
+    const frozenRetry = page.retry;
+    const attempt = () => {
+      void dispatch(frozenRetry.target, frozenRetry.activation)
+        .then((outcome) => {
+          if (outcome.kind === "Stayed") setPage({ kind: "Root" });
+        })
+        .catch((error: unknown) =>
+          fail(error, {
+            target: frozenRetry.target,
+            activation: frozenRetry.activation,
+            attempt,
+          }),
+        );
+    };
+    attempt();
+  }, [dispatch, fail, page]);
 
   const restoreRoot = useCallback(() => setPage({ kind: "Root" }), []);
   const restoreReturnPoint = useCallback((returnTo: NexusReturnPoint) => {
@@ -1169,6 +1362,7 @@ export function useNexusController(): NexusController {
     setPage({ kind: "Root" });
   }, []);
   const manageTabs = useCallback(() => {
+    setManagedTabsFeedback(null);
     setPage((current) =>
       current.kind === "ActivationBlocked"
         ? {
@@ -1186,24 +1380,44 @@ export function useNexusController(): NexusController {
           ? page.origin.retained
           : null;
     if (!retained) return;
-    void settleNexusDispatch(() =>
-      dispatchNexusTarget(retained.target, dispatchCtx, retained.activation),
-    )
-      .then((outcome) => {
-        applyNavigationOutcome(outcome, retained.activation, {
-          source: retained.source,
-          completion: retained.completion,
-          returnTo: retained.returnTo,
-        });
-        if (
-          outcome.kind === "NavigationAccepted" ||
-          outcome.kind === "DailyPageAccepted"
-        ) {
-          restoreReturnPoint(retained.returnTo);
-        }
-      })
-      .catch(fail);
-  }, [applyNavigationOutcome, dispatchCtx, fail, page, restoreReturnPoint]);
+    const attempt = () => {
+      void settleNexusDispatch(() =>
+        dispatchNexusTarget(retained.target, dispatchCtx, retained.activation),
+      )
+        .then((outcome) => {
+          applyNavigationOutcome(
+            outcome,
+            retained.activation,
+            {
+              source: retained.source,
+              completion: retained.completion,
+              returnTo: retained.returnTo,
+            },
+            retained.target,
+          );
+          if (
+            outcome.kind === "NavigationAccepted" ||
+            outcome.kind === "DailyPageAccepted"
+          ) {
+            restoreReturnPoint(retained.returnTo);
+          }
+        })
+        .catch((error: unknown) =>
+          fail(error, {
+            target: retained.target,
+            activation: retained.activation,
+            attempt,
+          }),
+        );
+    };
+    attempt();
+  }, [
+    applyNavigationOutcome,
+    dispatchCtx,
+    fail,
+    page,
+    restoreReturnPoint,
+  ]);
   const cancelRetainedActivation = useCallback(() => {
     const retained =
       page.kind === "ActivationBlocked"
@@ -1225,25 +1439,26 @@ export function useNexusController(): NexusController {
     },
     [activatePane, panes, restorePane, state.activePrimaryPaneId],
   );
-  const closeManagedPane = useCallback(
-    (paneId: string) => closePane(paneId),
-    [closePane],
-  );
+  const closeManagedPane = useCallback((paneId: string) => closePane(paneId), [closePane]);
   const restoreManagedPane = useCallback(
     (paneId: string) => {
       const restored = restoreClosedPane(paneId);
       if (restored.kind === "Rejected") {
-        feedback.show({
-          severity: "warning",
-          title: "Tab limit reached",
-          message: "Close a tab, then restore this one.",
+        setManagedTabsFeedback({
+          paneId,
+          content: {
+            tone: "Warning",
+            title: "Tab limit reached",
+            message: "Close a tab, then restore this one.",
+          },
         });
         return;
       }
+      setManagedTabsFeedback(null);
       suppressReturnFocusRef.current = true;
       setOpen(false);
     },
-    [feedback, restoreClosedPane],
+    [restoreClosedPane],
   );
 
   const performExit = useCallback(
@@ -1262,34 +1477,39 @@ export function useNexusController(): NexusController {
           setOpen(false);
           return;
         case "Navigate": {
-          const activation =
-            intent.activation ?? PROGRAMMATIC_NEXUS_TARGET_ACTIVATION;
+          const activation = intent.activation ?? PROGRAMMATIC_NEXUS_TARGET_ACTIVATION;
           const target = materialize(intent.target);
-          void settleNexusDispatch(() =>
-            dispatchNexusTarget(target, dispatchCtx, activation),
-          )
-            .then((outcome) => {
-              if (outcome.kind === "WorkflowRequested") {
-                handleWorkflowRequest(outcome, rootReturnPoint);
-                return;
-              }
-              applyNavigationOutcome(
-                outcome,
-                activation,
-                intent.retained ?? {
-                  source: page.kind === "Add" ? "Import" : "Place",
-                  completion: absent(),
-                  returnTo: rootReturnPoint,
-                },
+          const attempt = () => {
+            void settleNexusDispatch(() =>
+              dispatchNexusTarget(target, dispatchCtx, activation),
+            )
+              .then((outcome) => {
+                if (outcome.kind === "WorkflowRequested") {
+                  handleWorkflowRequest(outcome, rootReturnPoint);
+                  return;
+                }
+                applyNavigationOutcome(
+                  outcome,
+                  activation,
+                  intent.retained ?? {
+                    source: page.kind === "Add" ? "Import" : "Place",
+                    completion: absent(),
+                    returnTo: rootReturnPoint,
+                  },
+                  target,
+                );
+                if (
+                  outcome.kind === "NavigationAccepted" ||
+                  outcome.kind === "DailyPageAccepted"
+                ) {
+                  discardAddSession();
+                }
+              })
+              .catch((error: unknown) =>
+                fail(error, { target, activation, attempt }),
               );
-              if (
-                outcome.kind === "NavigationAccepted" ||
-                outcome.kind === "DailyPageAccepted"
-              ) {
-                discardAddSession();
-              }
-            })
-            .catch(fail);
+          };
+          attempt();
           return;
         }
         case "Replace": {
@@ -1323,10 +1543,19 @@ export function useNexusController(): NexusController {
           if (detail.kind === "QuickAction") {
             const command = getNexusCommand(detail.actionId);
             const target = materialize(command.target({ argument: "" }));
-            void dispatch(
-              target,
-              PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
-            ).catch(fail);
+            const attempt = () => {
+              void dispatch(
+                target,
+                PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
+              ).catch((error: unknown) =>
+                fail(error, {
+                  target,
+                  activation: PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
+                  attempt,
+                }),
+              );
+            };
+            attempt();
           }
           return;
         }
@@ -1362,12 +1591,7 @@ export function useNexusController(): NexusController {
       }
       return "accepted";
     },
-    [
-      addSession.dirty,
-      addSession.state.mutation.kind,
-      page.kind,
-      pendingDismissal,
-    ],
+    [addSession.dirty, addSession.state.mutation.kind, page.kind, pendingDismissal],
   );
   const requestExit = useCallback(
     (intent: ExitIntent) => {
@@ -1390,10 +1614,7 @@ export function useNexusController(): NexusController {
     }
     requestExit({ kind: "Root" });
   }, [addSession.state.branch, page, requestExit, restoreReturnPoint]);
-  const close = useCallback(
-    () => requestExit({ kind: "Close" }),
-    [requestExit],
-  );
+  const close = useCallback(() => requestExit({ kind: "Close" }), [requestExit]);
   const escape = useCallback(() => {
     if (page.kind === "Root" && query.trim()) {
       setQuery("");
@@ -1420,10 +1641,7 @@ export function useNexusController(): NexusController {
     }
     return guardExit({ kind: "Close" });
   }, [back, guardExit, page.kind, query, setQuery]);
-  const dismissAccepted = useCallback(
-    () => performExit({ kind: "Close" }),
-    [performExit],
-  );
+  const dismissAccepted = useCallback(() => performExit({ kind: "Close" }), [performExit]);
   const openTarget = useCallback(
     (target: NexusTarget) =>
       requestExit({
@@ -1505,9 +1723,7 @@ export function useNexusController(): NexusController {
         );
       }
       if (page.kind === "CreateLibrary") {
-        return container.querySelector<HTMLElement>(
-          "[data-switchboard-library-name]",
-        );
+        return container.querySelector<HTMLElement>("[data-switchboard-library-name]");
       }
       if (page.kind === "Add") {
         return resolveAddPanelInitialFocus(container, isMobile, {
@@ -1578,8 +1794,7 @@ export function useNexusController(): NexusController {
         return;
       }
       for (const [actionId, combo] of Object.entries(keybindings)) {
-        if (actionId === "Nexus.Open" || !matchesKeyEvent(combo, event))
-          continue;
+        if (actionId === "Nexus.Open" || !matchesKeyEvent(combo, event)) continue;
         const command = NEXUS_COMMAND_IDS.includes(actionId as NexusCommandId)
           ? getNexusCommand(actionId as NexusCommandId)
           : null;
@@ -1618,9 +1833,13 @@ export function useNexusController(): NexusController {
   );
   const browseChoiceActions = useMemo(
     () =>
-      page.kind === "ChooseBrowse" ? nexusBrowseChoiceActions(page.query) : [],
+      page.kind === "ChooseBrowse"
+        ? nexusBrowseChoiceActions(page.query)
+        : [],
     [page],
   );
+  if (defectState !== null) throw defectState.error;
+
   const desktop: DesktopNexusController = {
     open,
     projection,
@@ -1670,6 +1889,7 @@ export function useNexusController(): NexusController {
     desktop,
     managedPanes: panes,
     managedClosedPanes,
+    managedTabsFeedback,
     createChoiceActions,
     browseChoiceActions,
     setQuery,
@@ -1679,7 +1899,7 @@ export function useNexusController(): NexusController {
     activateAction,
     materialize,
     dispatch,
-    reportActivationFailure: fail,
+    reportActivationFailure,
     retry,
     openTarget,
     openAddTarget,
@@ -1696,6 +1916,8 @@ export function useNexusController(): NexusController {
     setLibraryNameDraft,
     submitLibrary,
     retryPageCreation,
+    retryCommandFailure,
+    retryBlockedOperation,
     manageTabs,
     openManagedPane,
     closeManagedPane,

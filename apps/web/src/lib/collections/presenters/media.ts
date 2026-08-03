@@ -19,10 +19,8 @@ import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionSummaryOut } from "@/lib/resourceGraph/connections";
 import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
-import type {
-  LibraryMediaKind,
-  ReadingTimeEstimatePresence,
-} from "@/lib/libraries/readingTime";
+import type { LibraryMediaKind } from "@/lib/libraries/mediaKind";
+import type { ReadingTimeEstimatePresence } from "@/lib/libraries/readingTime";
 
 export interface MediaPresenterItem extends ReadStateFields {
   id: string;

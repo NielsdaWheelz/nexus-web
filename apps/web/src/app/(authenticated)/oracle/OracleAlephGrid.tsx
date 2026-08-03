@@ -2,7 +2,11 @@
 
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import MediaImage from "@/components/ui/MediaImage";
 import { requireOraclePlateImageSrc } from "@/lib/media/oraclePlateImage";
@@ -20,6 +24,21 @@ interface OracleSummary {
   status: string;
 }
 
+function oracleReadingsErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "The Aleph couldn’t be loaded",
+        message: "Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
 export default function OracleAlephGrid() {
   const paneRuntime = usePaneRuntime();
   const readingsResource = useResource<{ data: OracleSummary[] }>({
@@ -30,10 +49,8 @@ export default function OracleAlephGrid() {
   if (readingsResource.status === "error") {
     return (
       <FeedbackNotice
-        feedback={toFeedback(readingsResource.error, {
-          fallback: "The Aleph could not be loaded.",
-        })}
-        className={styles.oracleFeedback}
+        content={oracleReadingsErrorMessage(readingsResource.error)}
+        announcement="Assertive"
       />
     );
   }

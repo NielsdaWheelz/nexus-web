@@ -15,6 +15,7 @@ import { useActiveMobileViewport } from "@/lib/mobileViewport/MobileViewportProv
 import { cx } from "@/lib/ui/cx";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { readViewportSafeBounds } from "@/lib/ui/viewportSafeArea";
 import styles from "./FloatingActionSurface.module.css";
 
 export type FloatingActionDismissReason = "outside-click" | "escape" | "scroll";
@@ -594,26 +595,18 @@ function viewportBounds(
   isMobileViewport: boolean,
   viewportPadding: number,
 ): ViewportBounds {
-  const visualViewport = window.visualViewport;
-  const safeAreaInsets = readSafeAreaInsets();
-  const viewportLeft = visualViewport?.offsetLeft ?? 0;
-  const viewportTop = visualViewport?.offsetTop ?? 0;
-  const viewportWidth = visualViewport?.width ?? window.innerWidth;
-  const viewportHeight = visualViewport?.height ?? window.innerHeight;
-  const mobileContentBottomClearance = isMobileViewport
-    ? readMobileContentBottomClearance()
-    : safeAreaInsets.bottom;
+  const safeBounds = isMobileViewport
+    ? readViewportSafeBounds({
+        viewportPadding,
+        bottomClearance: readMobileContentBottomClearance(),
+      })
+    : readViewportSafeBounds({ viewportPadding });
 
   return {
-    minLeft: viewportLeft + viewportPadding + safeAreaInsets.left,
-    minTop: viewportTop + viewportPadding + safeAreaInsets.top,
-    maxLeft:
-      viewportLeft + viewportWidth - viewportPadding - safeAreaInsets.right,
-    maxTop:
-      viewportTop +
-      viewportHeight -
-      viewportPadding -
-      mobileContentBottomClearance,
+    minLeft: safeBounds.left,
+    minTop: safeBounds.top,
+    maxLeft: safeBounds.right,
+    maxTop: safeBounds.bottom,
   };
 }
 
@@ -627,35 +620,6 @@ function readMobileContentBottomClearance(): number {
   const clearance = readPx(window.getComputedStyle(probe).height);
   probe.remove();
   return clearance;
-}
-
-function readSafeAreaInsets(): {
-  top: number;
-  right: number;
-  bottom: number;
-  left: number;
-} {
-  const probe = document.createElement("div");
-  probe.style.position = "fixed";
-  probe.style.inset = "0";
-  probe.style.visibility = "hidden";
-  probe.style.pointerEvents = "none";
-  probe.style.paddingTop = "var(--viewport-safe-top)";
-  probe.style.paddingRight = "var(--viewport-safe-right)";
-  probe.style.paddingBottom = "var(--viewport-safe-bottom)";
-  probe.style.paddingLeft = "var(--viewport-safe-left)";
-  document.body.appendChild(probe);
-
-  const computed = window.getComputedStyle(probe);
-  const insets = {
-    top: readPx(computed.paddingTop),
-    right: readPx(computed.paddingRight),
-    bottom: readPx(computed.paddingBottom),
-    left: readPx(computed.paddingLeft),
-  };
-
-  probe.remove();
-  return insets;
 }
 
 function readPx(rawValue: string | null | undefined): number {

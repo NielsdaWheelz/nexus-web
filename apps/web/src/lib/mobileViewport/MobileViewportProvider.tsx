@@ -218,6 +218,10 @@ export function MobileViewportProvider({
       `max(var(--viewport-safe-bottom), ${projection.playerBottomClearancePx}px)`,
     );
     root.style.setProperty(
+      "--mobile-reader-paint-bottom-inset",
+      `max(0px, calc(var(--viewport-safe-bottom) - ${projection.playerBottomClearancePx}px))`,
+    );
+    root.style.setProperty(
       "--mobile-overlay-keyboard-inset",
       `${projection.overlayKeyboardInsetPx}px`,
     );
@@ -278,6 +282,7 @@ export function MobileViewportProvider({
       const root = document.documentElement;
       root.style.removeProperty("--mobile-content-bottom-clearance");
       root.style.removeProperty("--mobile-nexus-bottom-offset");
+      root.style.removeProperty("--mobile-reader-paint-bottom-inset");
       root.style.removeProperty("--mobile-overlay-keyboard-inset");
     },
     [],

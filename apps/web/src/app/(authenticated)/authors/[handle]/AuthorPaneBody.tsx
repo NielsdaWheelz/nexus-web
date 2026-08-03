@@ -23,11 +23,9 @@ import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import {
   FeedbackNotice,
   FieldFeedback,
-  toFeedback,
-  useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import { isApiError } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { contributorResource } from "@/lib/api/resource";
 import type {
   CollectionCursor,
@@ -82,6 +80,67 @@ const AUTHOR_VISIT_DATA =
   definePaneVisitDataKey<AuthorPaneSeed>("Author.Works");
 const NO_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
 const ZERO_REVISION = 0 as CollectionRevision;
+
+function authorLoadErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title: "This author is no longer available",
+        requestId: error.requestId,
+      };
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "This author couldn’t be loaded",
+        message: "Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
+function authorRenameErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "The change couldn’t be confirmed",
+        message: "Retry to safely check whether it was saved.",
+        requestId: error.requestId,
+      };
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title: "This author is no longer available",
+        requestId: error.requestId,
+      };
+    case "E_FORBIDDEN":
+      return {
+        tone: "Danger",
+        title: "You can’t rename this author",
+        requestId: error.requestId,
+      };
+    case "E_INVALID_REQUEST":
+      return {
+        tone: "Danger",
+        title: "Enter a valid author name",
+        requestId: error.requestId,
+      };
+    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
+      return {
+        tone: "Danger",
+        title: "The name wasn’t updated",
+        message: "Retry the saved draft.",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
 
 interface PendingAuthorRevalidation {
   readonly version: number;
@@ -154,6 +213,7 @@ export default function AuthorPaneBody() {
 
   const [data, setData] = useState<AuthorPaneSeed | null>(restored);
   const [error, setError] = useState<FeedbackContent | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
 
   const loading =
@@ -164,7 +224,7 @@ export default function AuthorPaneBody() {
   useEffect(() => {
     if (restored === null) setData(null);
     setError(
-      handle ? null : { severity: "error", title: "Author handle is missing" },
+      handle ? null : { tone: "Danger", title: "Author handle is missing" },
     );
     setRenameOpen(false);
   }, [handle, restored]);
@@ -187,11 +247,11 @@ export default function AuthorPaneBody() {
       allowResourceAdoptionRef.current
     ) {
       setRefreshingWorks(false);
-      setError(
-        toFeedback(initialAuthor.error, {
-          fallback: "Couldn't load this author.",
-        }),
-      );
+      try {
+        setError(authorLoadErrorMessage(initialAuthor.error));
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+      }
       const pending = pendingAuthorRevalidationRef.current;
       if (pending?.version === firstPageVersion) {
         pendingAuthorRevalidationRef.current = null;
@@ -400,11 +460,19 @@ export default function AuthorPaneBody() {
           activateTarget={activateTarget}
         />
       ) : connectionsResource.kind === "Loading" ? (
-        <FeedbackNotice severity="info" title="Loading connections…" />
+        <FeedbackNotice
+          content={{ tone: "Info", title: "Loading connections…" }}
+          announcement="None"
+        />
       ) : (
-        <FeedbackNotice severity="neutral" title="Connections unavailable">
-          This author’s resource identity could not be resolved.
-        </FeedbackNotice>
+        <FeedbackNotice
+          content={{
+            tone: "Neutral",
+            title: "Connections unavailable",
+            message: "This author’s resource identity could not be resolved.",
+          }}
+          announcement="None"
+        />
       ),
     [activateTarget, connectionsComposerController, connectionsResource],
   );
@@ -470,19 +538,28 @@ export default function AuthorPaneBody() {
     [clearAllVisitData],
   );
 
+  if (defect) throw defect.error;
+
   return (
     <PaneSurface
       state={
         loading || (error && !data) ? (
           <>
-            {loading ? <PaneLoadingState /> : null}
+            {loading ? (
+              <PaneLoadingState label="Loading author…" announcement="Polite" />
+            ) : null}
             {loading && filterQuery.trim() ? (
               <FeedbackNotice
-                severity="neutral"
-                title="No matching work found so far."
+                content={{
+                  tone: "Neutral",
+                  title: "No matching work found so far.",
+                }}
+                announcement="None"
               />
             ) : null}
-            {error && !data ? <FeedbackNotice feedback={error} /> : null}
+            {error && !data ? (
+              <FeedbackNotice content={error} announcement="Assertive" />
+            ) : null}
           </>
         ) : null
       }
@@ -532,19 +609,27 @@ export default function AuthorPaneBody() {
               collectionBusy={exhaustion.kind === "Draining"}
               surface={false}
               notice={
-                error && data ? <FeedbackNotice feedback={error} /> : undefined
+                error && data ? (
+                  <FeedbackNotice content={error} announcement="Assertive" />
+                ) : undefined
               }
               empty={
                 filterQuery.trim() ? (
                   exhaustion.kind === "Complete" ? (
                     <FeedbackNotice
-                      severity="neutral"
-                      title="No works match this filter."
+                      content={{
+                        tone: "Neutral",
+                        title: "No works match this filter.",
+                      }}
+                      announcement="None"
                     />
                   ) : (
                     <FeedbackNotice
-                      severity="neutral"
-                      title="No matching work found so far."
+                      content={{
+                        tone: "Neutral",
+                        title: "No matching work found so far.",
+                      }}
+                      announcement="None"
                     />
                   )
                 ) : (
@@ -580,10 +665,10 @@ function RenameAuthorDialog({
   onClose: () => void;
   onRenamed: (detail: ContributorDetail) => void;
 }) {
-  const toast = useFeedback();
   const [value, setValue] = useState(currentName);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const intentRef = useRef(createMutationIntent());
   const emptyErrorId = useId();
 
@@ -593,7 +678,7 @@ function RenameAuthorDialog({
   const canSave = !isBlank && !isUnchanged && !saving;
 
   const emptyFeedback = useMemo<FeedbackContent | null>(
-    () => (isBlank ? { severity: "error", title: "Enter a name." } : null),
+    () => (isBlank ? { tone: "Danger", title: "Enter a name." } : null),
     [isBlank],
   );
 
@@ -610,7 +695,6 @@ function RenameAuthorDialog({
       });
       intentRef.current.discard();
       onRenamed(detail);
-      toast.show({ severity: "success", title: "Author name updated." });
       onClose();
     } catch (renameError) {
       if (handleUnauthenticatedApiError(renameError)) return;
@@ -622,21 +706,20 @@ function RenameAuthorDialog({
         if (renameError.code === "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH") {
           intentRef.current.rotate();
         }
-        setNotice(
-          toFeedback(renameError, { fallback: "Couldn't update the name." }),
-        );
+        try {
+          setNotice(authorRenameErrorMessage(renameError));
+        } catch (caughtDefect) {
+          setDefect({ error: caughtDefect });
+        }
       } else {
-        // Transport/timeout: the server may have committed. Keep the same key so a
-        // retry replays idempotently and resolves the ambiguity (DP-1).
-        setNotice({
-          severity: "error",
-          title: "Couldn't confirm the change. Try again.",
-        });
+        setDefect({ error: renameError });
       }
     } finally {
       setSaving(false);
     }
   }
+
+  if (defect) throw defect.error;
 
   return (
     <Dialog open title="Edit name" onClose={onClose}>
@@ -655,8 +738,10 @@ function RenameAuthorDialog({
             onChange={(nextEvent) => setValue(nextEvent.target.value)}
           />
         </label>
-        <FieldFeedback feedback={emptyFeedback} id={emptyErrorId} />
-        {notice ? <FeedbackNotice feedback={notice} /> : null}
+        <FieldFeedback content={emptyFeedback} id={emptyErrorId} />
+        {notice ? (
+          <FeedbackNotice content={notice} announcement="Assertive" />
+        ) : null}
         <div className={styles.renameActions}>
           <Button type="button" variant="secondary" size="md" onClick={onClose}>
             Cancel

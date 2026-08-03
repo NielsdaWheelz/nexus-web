@@ -480,7 +480,7 @@ export default function NoteBodyEditor({
         const { warning } = projectUploadReference({
           result: upload,
           processingFailureFeedback: {
-            severity: "warning",
+            tone: "Warning",
             title: "File was attached, but source processing failed.",
           },
         });
@@ -506,7 +506,11 @@ export default function NoteBodyEditor({
       attachmentBusyRef.current = true;
       view.setProps({ editable: () => false });
       try {
-        const result = await captureSourceUrl({ url, libraryIds: [] });
+        const result = await captureSourceUrl({
+          url,
+          libraryIds: [],
+          operation: "AddAttachment",
+        });
         if (!result.ok) {
           onErrorRef.current?.(new Error(result.feedback.title));
           return;
@@ -518,7 +522,7 @@ export default function NoteBodyEditor({
         }
         if (result.sourceFailed) {
           onFeedbackRef.current?.({
-            severity: "warning",
+            tone: "Warning",
             title: "URL was attached, but source processing failed.",
           });
         }

@@ -11,6 +11,10 @@ import {
 } from "@/lib/dates/publicationDate";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import {
+  LIBRARY_MEDIA_KINDS,
+  type LibraryMediaKind,
+} from "@/lib/libraries/mediaKind";
+import {
   decodePodcastSyncStatus,
   type PodcastSyncStatus,
 } from "@/lib/podcasts/types";
@@ -21,7 +25,6 @@ import {
 } from "@/lib/player/pauseShortening";
 import {
   decodeLibraryReadingTimeEntry,
-  type LibraryMediaKind,
   type ReadingTimeEstimatePresence,
 } from "@/lib/libraries/readingTime";
 import {
@@ -36,13 +39,6 @@ import {
   expectString,
 } from "@/lib/validation";
 
-const MEDIA_KINDS = [
-  "web_article",
-  "epub",
-  "pdf",
-  "podcast_episode",
-  "video",
-] as const;
 const PROCESSING_STATUSES = [
   "pending",
   "extracting",
@@ -162,7 +158,11 @@ function decodeMedia(raw: unknown): LibraryMediaListWire {
   );
   return {
     id: expectString(media.id, "Library media list item.id"),
-    kind: expectOneOf(media.kind, MEDIA_KINDS, "Library media list item.kind"),
+    kind: expectOneOf(
+      media.kind,
+      LIBRARY_MEDIA_KINDS,
+      "Library media list item.kind",
+    ),
     title: expectString(media.title, "Library media list item.title"),
     created_at: expectString(
       media.created_at,

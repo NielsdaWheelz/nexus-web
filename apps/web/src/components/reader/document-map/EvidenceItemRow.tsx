@@ -14,7 +14,6 @@ import {
 } from "lucide-react";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import HighlightActionBar from "@/components/highlights/HighlightActionBar";
@@ -33,6 +32,7 @@ import {
 import {
   isApiError,
   isSameSystemApiDefect,
+  type ApiError,
 } from "@/lib/api/client";
 import { absent } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -67,6 +67,25 @@ import { useShareController } from "@/lib/sharing/controller";
 import { anchoredRowForEvidenceItem } from "@/lib/reader/marginItems";
 import type { AnchoredReaderRow } from "../useAnchoredReaderProjection";
 import styles from "./EvidencePaneSurface.module.css";
+
+function evidenceActionErrorMessage(error: ApiError, title: string): FeedbackContent {
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title: "It’s unclear whether this action completed.",
+        message: "Check the result before trying again.",
+        requestId: error.requestId,
+      };
+    case "E_INVALID_REQUEST":
+    case "E_BAD_REQUEST":
+    case "E_FORBIDDEN":
+    case "E_NOT_FOUND":
+      return { tone: "Danger", title, requestId: error.requestId };
+    default:
+      throw error;
+  }
+}
 
 export interface EvidenceHighlightActions {
   canQuoteToChat: boolean;
@@ -534,6 +553,7 @@ function EvidenceResourceActionMenu({
     () => new Set(),
   );
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
 
   async function runAction({
     id,
@@ -552,13 +572,22 @@ function EvidenceResourceActionMenu({
       await execute();
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-      setFeedback(toFeedback(error, { fallback: failure }));
+      if (!isApiError(error) || isSameSystemApiDefect(error)) {
+        setAsyncDefect({ error });
+        return;
+      }
+      try {
+        setFeedback(evidenceActionErrorMessage(error, failure));
+      } catch (defect) {
+        setAsyncDefect({ error: defect });
+      }
     } finally {
       busyRef.current.delete(id);
       setBusyIds(new Set(busyRef.current));
     }
   }
+
+  if (asyncDefect !== null) throw asyncDefect.error;
 
   const core = resolveResourceCoreActions({
     target,
@@ -641,7 +670,9 @@ function EvidenceResourceActionMenu({
   return (
     <>
       <ActionMenu options={options} label={`Actions for ${label}`} />
-      {feedback ? <FeedbackNotice feedback={feedback} /> : null}
+      {feedback ? (
+        <FeedbackNotice content={feedback} announcement="Assertive" />
+      ) : null}
     </>
   );
 }

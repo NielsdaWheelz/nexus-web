@@ -50,9 +50,10 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
     children,
     disabled,
     type,
+    "aria-busy": ariaBusy,
     ...rest
   },
-  ref
+  ref,
 ) {
   const cls = [
     styles.button,
@@ -81,8 +82,8 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
       type={type ?? "button"}
       className={cls}
       disabled={disabled || loading}
-      aria-busy={loading || undefined}
       {...rest}
+      aria-busy={loading ? true : ariaBusy}
     >
       {loading ? (
         <span className={styles.spinner} aria-hidden="true" />
