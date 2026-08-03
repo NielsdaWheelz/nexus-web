@@ -576,7 +576,19 @@ def _prepare_isolated_python_environment(worktree: Path) -> None:
         return
     environment = {
         key: value
-        for key in ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "XDG_CACHE_HOME")
+        # UV_CACHE_DIR matters under CI's setup-uv, which points uv at a managed
+        # cache; without it the offline sync falls back to an empty default cache
+        # and cannot resolve the locked dependencies.
+        for key in (
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "PATH",
+            "TMPDIR",
+            "TZ",
+            "UV_CACHE_DIR",
+            "XDG_CACHE_HOME",
+        )
         if (value := os.environ.get(key)) is not None
     }
     try:
@@ -597,9 +609,14 @@ def _prepare_isolated_python_environment(worktree: Path) -> None:
             capture_output=True,
             text=True,
         )
-    except (OSError, subprocess.CalledProcessError) as error:
+    except OSError as error:
         raise SensitivityError(
             "isolated locked Python environment could not be materialized from the local cache"
+        ) from error
+    except subprocess.CalledProcessError as error:
+        raise SensitivityError(
+            "isolated locked Python environment could not be materialized from the local "
+            f"cache: {(error.stderr or error.stdout or '').strip()[-1000:]}"
         ) from error
     environment_root = project / ".venv"
     if environment_root.is_symlink() or not environment_root.is_dir():
