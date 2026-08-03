@@ -98,6 +98,11 @@ No other production file may read `env(safe-area-inset-*)`. There is no native
 payload, JavaScript bridge, persisted schema, backend API, or capability/version
 negotiation.
 
+The shared viewport reader accepts only finite, nonnegative geometry resolved to
+CSS pixels. Missing, malformed, unresolved, negative, and non-length values
+never normalize to a real zero inset. Exact environment-source mapping remains
+owned statically by the declarations above.
+
 ### Composition capability
 
 Keep the existing public API exactly:
@@ -138,7 +143,7 @@ distinct inputs.
 | Nexus | Use composed Nexus offset and existing gap; preserve retreat/inertness behavior. |
 | Full-screen tasks / Now Playing | Use the four root safe tokens at the frame-owned edge. |
 | MobileSheet | Compose root safe bottom with the existing keyboard token; preserve shrink behavior. |
-| Floating surfaces | Reuse the existing root-token probe/subscription; add no store or platform branch. |
+| Floating surfaces | Resolve all four root tokens against `visualViewport`; constrain before measuring, clamp into that safe rectangle, and make oversized actions scrollable. Reposition on viewport resize/scroll and intrinsic size changes. Preserve zero-inset geometry; add no store or platform branch. |
 
 Background paint may cross a safe edge. Text, controls, focus targets,
 selection handles, and terminal scroll content may not.
@@ -173,6 +178,8 @@ is added.
 | Make exact-artifact promotion immutable | `.github/workflows/android-release.yml` |
 | Landscape safe-side owners | `apps/web/src/components/workspace/PaneShell.module.css`; `apps/web/src/components/appnav/AppNav.module.css`; `apps/web/src/components/player/MobileMiniPlayer.module.css` |
 | Focused safe-side proof | `apps/web/src/components/workspace/PaneShell.mobileChrome.browser.test.tsx`; `e2e/tests/mobile-reader-chrome.spec.ts` |
+| Anchored safe-rectangle owner | `apps/web/src/lib/ui/useAnchoredPosition.ts`; `apps/web/src/lib/ui/viewportSafeArea.ts`; `apps/web/src/components/ui/FloatingActionSurface.tsx`; `apps/web/src/components/ui/ActionMenu.module.css` |
+| Focused anchored proof | `apps/web/src/lib/ui/useAnchoredPosition.test.tsx`; existing `apps/web/src/components/ui/FloatingActionSurface.test.tsx`; `apps/web/src/__tests__/components/ActionMenu.test.tsx` |
 | Record final contract and release evidence | this file; `docs/modules/workspace.md`; `README.md` only where current distribution prose changes |
 
 No planned backend, database, API, reader-state, playback-runtime, Nexus-state,
@@ -209,6 +216,9 @@ owner. Revise this document before crossing another boundary.
   window bounds; top protection and icon behavior are correct.
 - Focused web tests cover safe-only, Player, Nexus, keyboard, stacked reports,
   unregister, teardown, and named consumers.
+- Focused anchored tests preserve zero-inset placement, prove all four safe
+  edges, and keep an oversized ActionMenu contained, keyboard-reachable, and
+  activatable.
 - `make check-android`, focused frontend checks, `make check-workflows`, and the
   signed release proof pass. Each proof is reported separately.
 
@@ -273,6 +283,20 @@ remains.
   landscape at rotation 3: the native navigation bar began at physical y=1035,
   but MiniPlayer Open Now Playing ended at y=1041; the other player controls
   ended at y=1023.
+- Signed `android-v0.2.9` exposed the canonical anchored-surface red in the same
+  gesture landscape: the native navigation bar began at physical y=1035, while
+  the player ActionMenu `Close player` item occupied `[1800,990][2250,1080]`.
+  Only the portion above the native bar was tappable.
+- The anchored-position owner now resolves four root insets against
+  `visualViewport`, constrains before measuring, and observes viewport and
+  intrinsic-size changes. ActionMenu owns scroll containment; no player or
+  Android branch exists.
+- Focused ActionMenu sensitivity removed only the height constraint: its bottom
+  reached 1117 CSS px against an 879 CSS px safe boundary. Restored focused
+  browser proof passed 38/38 across the anchored owner, FloatingActionSurface,
+  and an oversized ActionMenu browser-component scenario.
+- Final fixture teardown audit repeated that three-file browser proof three
+  consecutive times: every run passed 38/38 with no unhandled observer error.
 - The scoped CSS correction keeps pane/chrome/player backgrounds and progress
   full bleed while their existing body, contextual/app-bar, MiniPlayer row,
   and status-row owners apply physical left/right safe tokens to content and

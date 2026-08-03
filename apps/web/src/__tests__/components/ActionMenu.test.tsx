@@ -1,11 +1,140 @@
 import { useState } from "react";
 import { flushSync } from "react-dom";
-import { describe, it, expect, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import ActionMenu from "@/components/ui/ActionMenu";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+
+function expectInside(inner: DOMRect, outer: DOMRect) {
+  expect(inner.left).toBeGreaterThanOrEqual(outer.left);
+  expect(inner.top).toBeGreaterThanOrEqual(outer.top);
+  expect(inner.right).toBeLessThanOrEqual(outer.right);
+  expect(inner.bottom).toBeLessThanOrEqual(outer.bottom);
+}
 
 describe("ActionMenu", () => {
+  beforeAll(() => {
+    document.documentElement.style.setProperty("--viewport-safe-top", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-left", "0px");
+  });
+
+  afterEach(() => {
+    document.documentElement.style.setProperty("--viewport-safe-top", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-left", "0px");
+  });
+
+  afterAll(() => {
+    document.documentElement.style.removeProperty("--viewport-safe-top");
+    document.documentElement.style.removeProperty("--viewport-safe-right");
+    document.documentElement.style.removeProperty("--viewport-safe-bottom");
+    document.documentElement.style.removeProperty("--viewport-safe-left");
+  });
+
+  it("keeps an oversized player menu and its keyboard-selected close action inside the visual safe rectangle", async () => {
+    const user = userEvent.setup();
+    const root = document.documentElement;
+    const safeInsets = {
+      top: 11,
+      right: 13,
+      bottom: 17,
+      left: 19,
+    } as const;
+    const onClosePlayer = vi.fn();
+    const options: ActionDescriptor[] = [
+      ...Array.from({ length: 60 }, (_, index): ActionDescriptor => ({
+        kind: "command",
+        id: `player-action-${index}`,
+        label: `Player action ${index + 1}`,
+        onSelect: vi.fn(),
+      })),
+      {
+        kind: "command",
+        id: "close-player",
+        label: "Close player",
+        onSelect: onClosePlayer,
+      },
+    ];
+
+    for (const [edge, value] of Object.entries(safeInsets)) {
+      root.style.setProperty(`--viewport-safe-${edge}`, `${value}px`);
+    }
+
+    try {
+      render(
+        <ActionMenu
+          align="end"
+          label="More player controls"
+          options={options}
+          placement="above"
+          renderTrigger={(triggerProps) => (
+            <button
+              {...triggerProps}
+              style={{ bottom: 0, position: "fixed", right: 0 }}
+            >
+              More player controls
+            </button>
+          )}
+        />,
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: "More player controls" }),
+      );
+
+      const viewport = window.visualViewport;
+      if (viewport === null) {
+        throw new Error("This browser proof requires VisualViewport support.");
+      }
+      const safeRectangle = new DOMRect(
+        viewport.offsetLeft + safeInsets.left,
+        viewport.offsetTop + safeInsets.top,
+        viewport.width - safeInsets.left - safeInsets.right,
+        viewport.height - safeInsets.top - safeInsets.bottom,
+      );
+      const menu = screen.getByRole("menu");
+
+      await waitFor(() => {
+        expectInside(menu.getBoundingClientRect(), safeRectangle);
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("menuitem", { name: "Player action 1" }),
+        ).toHaveFocus();
+      });
+      await user.keyboard("{End}");
+      const closePlayer = screen.getByRole("menuitem", {
+        name: "Close player",
+      });
+
+      await waitFor(() => {
+        const menuRectangle = menu.getBoundingClientRect();
+        const closeRectangle = closePlayer.getBoundingClientRect();
+        expect(closePlayer).toHaveFocus();
+        expectInside(closeRectangle, menuRectangle);
+        expectInside(closeRectangle, safeRectangle);
+      });
+
+      await user.click(closePlayer);
+
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("menuitem", { name: "Close player" }),
+        ).not.toBeInTheDocument();
+      });
+      expect(onClosePlayer).toHaveBeenCalledTimes(1);
+    } finally {
+      for (const edge of Object.keys(safeInsets)) {
+        root.style.setProperty(`--viewport-safe-${edge}`, "0px");
+      }
+    }
+  });
+
   it("stays open when the page scrolls", async () => {
     const user = userEvent.setup();
 

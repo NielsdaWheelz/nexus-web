@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { useAnchoredPosition } from "./useAnchoredPosition";
+import { readViewportSafeBounds } from "./viewportSafeArea";
 
 const FLOAT_W = 100;
 const FLOAT_H = 40;
@@ -27,6 +28,27 @@ function floating() {
 }
 
 describe("useAnchoredPosition", () => {
+  beforeAll(() => {
+    document.documentElement.style.setProperty("--viewport-safe-top", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-left", "0px");
+  });
+
+  afterEach(() => {
+    document.documentElement.style.setProperty("--viewport-safe-top", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-bottom", "0px");
+    document.documentElement.style.setProperty("--viewport-safe-left", "0px");
+  });
+
+  afterAll(() => {
+    document.documentElement.style.removeProperty("--viewport-safe-top");
+    document.documentElement.style.removeProperty("--viewport-safe-right");
+    document.documentElement.style.removeProperty("--viewport-safe-bottom");
+    document.documentElement.style.removeProperty("--viewport-safe-left");
+  });
+
   it("places below the anchor with start alignment", async () => {
     render(
       <Host
@@ -77,6 +99,120 @@ describe("useAnchoredPosition", () => {
     await waitFor(() =>
       expect(floating().style.left).toBe(`${window.innerWidth - 8 - FLOAT_W}px`),
     );
+  });
+
+  /* eslint-disable testing-library/no-node-access -- The hidden probe has no accessible query. */
+  it("reads resolved inset geometry and rejects invalid values without leaking its probe", () => {
+    const root = document.documentElement;
+    const bodyChildCount = document.body.childElementCount;
+    const expectTopRejected = () => {
+      expect(() =>
+        readViewportSafeBounds({ viewportPadding: 8 }),
+      ).toThrow(/top/);
+      expect(document.body.childElementCount).toBe(bodyChildCount);
+    };
+
+    root.style.removeProperty("--viewport-safe-top");
+    expectTopRejected();
+
+    for (const token of [
+      "not-a-length",
+      "var(--missing-safe-top)",
+      "env(unknown-safe-top)",
+      "-1px",
+      "50%",
+    ]) {
+      root.style.setProperty("--viewport-safe-top", token);
+      expectTopRejected();
+    }
+
+    root.style.setProperty("--viewport-safe-top", "0px");
+    root.style.setProperty("--viewport-safe-right", "12.5px");
+    root.style.setProperty("--viewport-safe-bottom", "0.25px");
+    root.style.setProperty("--viewport-safe-left", "17.75px");
+    const viewport = window.visualViewport;
+    const viewportLeft = viewport?.offsetLeft ?? 0;
+    const viewportTop = viewport?.offsetTop ?? 0;
+    const viewportWidth = viewport?.width ?? window.innerWidth;
+    const viewportHeight = viewport?.height ?? window.innerHeight;
+    const bounds = readViewportSafeBounds({ viewportPadding: 8 });
+    expect(bounds.left).toBeCloseTo(viewportLeft + 8 + 17.75);
+    expect(bounds.top).toBe(viewportTop + 8);
+    expect(bounds.right).toBeCloseTo(
+      viewportLeft + viewportWidth - 8 - 12.5,
+    );
+    expect(bounds.bottom).toBeCloseTo(
+      viewportTop + viewportHeight - 8 - 0.25,
+    );
+    expect(document.body.childElementCount).toBe(bodyChildCount);
+
+    for (const edge of ["top", "right", "bottom", "left"] as const) {
+      root.style.setProperty(
+        `--viewport-safe-${edge}`,
+        `env(safe-area-inset-${edge})`,
+      );
+    }
+    expect(() =>
+      readViewportSafeBounds({ viewportPadding: 8 }),
+    ).not.toThrow();
+    expect(document.body.childElementCount).toBe(bodyChildCount);
+  });
+  /* eslint-enable testing-library/no-node-access */
+
+  it("preserves zero-inset clamps and reclamps inside all four safe edges", async () => {
+    const { rerender } = render(
+      <Host
+        anchor={new DOMRect(-20, -20, 10, 10)}
+        opts={{ enabled: true, placement: "above", align: "start" }}
+      />,
+    );
+    await waitFor(() => {
+      expect(floating().style.top).toBe("8px");
+      expect(floating().style.left).toBe("8px");
+    });
+
+    rerender(
+      <Host
+        anchor={new DOMRect(window.innerWidth, window.innerHeight, 10, 10)}
+        opts={{ enabled: true, placement: "below", align: "end" }}
+      />,
+    );
+    await waitFor(() => {
+      expect(floating().style.top).toBe(
+        `${window.innerHeight - 8 - FLOAT_H}px`,
+      );
+      expect(floating().style.left).toBe(
+        `${window.innerWidth - 8 - FLOAT_W}px`,
+      );
+    });
+
+    document.documentElement.style.setProperty("--viewport-safe-top", "11px");
+    document.documentElement.style.setProperty("--viewport-safe-right", "13px");
+    document.documentElement.style.setProperty(
+      "--viewport-safe-bottom",
+      "17px",
+    );
+    document.documentElement.style.setProperty("--viewport-safe-left", "19px");
+    window.dispatchEvent(new Event("resize"));
+    await waitFor(() => {
+      expect(floating().style.top).toBe(
+        `${window.innerHeight - 8 - 17 - FLOAT_H}px`,
+      );
+      expect(floating().style.left).toBe(
+        `${window.innerWidth - 8 - 13 - FLOAT_W}px`,
+      );
+    });
+
+    rerender(
+      <Host
+        anchor={new DOMRect(-20, -20, 10, 10)}
+        opts={{ enabled: true, placement: "above", align: "start" }}
+      />,
+    );
+    await waitFor(() => {
+      expect(floating().style.top).toBe("19px");
+      expect(floating().style.left).toBe("27px");
+    });
   });
 
   it("places to the right of the anchor with start alignment", async () => {
