@@ -293,7 +293,7 @@
     {
       "id": "nexus-openables-cache-bound-bypass",
       "patch": "testdata/faults/nexus-openables-cache-bound-bypass.patch",
-      "sha256": "8e16f54a61a572a5d42690dc0d383810f6d1658b580b9f198f45601ed4bc19c5",
+      "sha256": "91a29296e97af4da8201f6cc1c1f01e32b50cc586bc80f3e920d15d1754f622a",
       "proofs": [
         "vitest:apps/web/src/components/nexus/Nexus.browser.test.tsx"
       ],
@@ -311,7 +311,7 @@
     {
       "id": "nexus-dispatch-async-wrapper-bypass",
       "patch": "testdata/faults/nexus-dispatch-async-wrapper-bypass.patch",
-      "sha256": "7a384235311065377abc78b96e4c0483a1cda82e913ffd4b9a437e50c561ca19",
+      "sha256": "475fdba66a7037335569e5acf087c420f576cbbc017f9b186cb7b38bb7e8e86e",
       "proofs": [
         "vitest:apps/web/src/lib/nexus/dispatch.unit.test.ts"
       ],
@@ -347,7 +347,7 @@
     {
       "id": "pdf-committed-highlight-projection-bypass",
       "patch": "testdata/faults/pdf-committed-highlight-projection-bypass.patch",
-      "sha256": "6b2f9469076ad361088bdb136785207ee8d97c90a3177aab3ce11e2905174a48",
+      "sha256": "0de5b52c8c817c1ed8bbf24289a445f12d0eac5d06d8407d8c591d3e3713616f",
       "proofs": [
         "vitest:apps/web/src/components/PdfReader.browser.test.tsx"
       ],
