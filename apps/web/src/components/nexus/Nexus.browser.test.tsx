@@ -35,14 +35,19 @@ const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
 
 interface RecordedRequest {
   readonly pathname: string;
+  readonly search: string;
   readonly method: string;
   readonly body: Record<string, unknown> | null;
   readonly keepalive: boolean;
+  readonly signal: AbortSignal | null;
   readonly activeWorkspaceLocation: string | null;
 }
 
 let requests: RecordedRequest[] = [];
 let activeWorkspaceLocation: string | null = null;
+let respondToOpenables: (init: RequestInit | undefined) => Promise<Response>;
+let respondToSearch: (init: RequestInit | undefined) => Promise<Response>;
+let respondToSelection: (init: RequestInit | undefined) => Promise<Response>;
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -55,7 +60,10 @@ function installBff() {
     "fetch",
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : null;
-      const url = new URL(request?.url ?? String(input), window.location.origin);
+      const url = new URL(
+        request?.url ?? String(input),
+        window.location.origin,
+      );
       const method = init?.method ?? request?.method ?? "GET";
       const body =
         typeof init?.body === "string"
@@ -63,9 +71,11 @@ function installBff() {
           : null;
       requests.push({
         pathname: url.pathname,
+        search: url.search,
         method,
         body,
         keepalive: init?.keepalive ?? request?.keepalive ?? false,
+        signal: init?.signal ?? request?.signal ?? null,
         activeWorkspaceLocation,
       });
 
@@ -77,23 +87,17 @@ function installBff() {
           data: { recent: [], frecency_by_href: {} },
         });
       }
-      if (
-        url.pathname === "/api/me/nexus-selections" &&
-        method === "POST"
-      ) {
-        return jsonResponse({ data: null });
+      if (url.pathname === "/api/me/nexus-selections" && method === "POST") {
+        return respondToSelection(init);
       }
       if (url.pathname === "/api/me/workspace-session" && method === "PUT") {
         return jsonResponse({ data: null });
       }
       if (url.pathname === "/api/resource-items/openables/search") {
-        return jsonResponse({ data: { items: [] } });
+        return respondToOpenables(init);
       }
       if (url.pathname === "/api/search") {
-        return jsonResponse({
-          results: [],
-          page: { has_more: false, next_cursor: null },
-        });
+        return respondToSearch(init);
       }
       if (url.pathname === "/api/libraries/writable-destinations") {
         return jsonResponse({
@@ -180,6 +184,14 @@ function openablesRequests(query?: string) {
   );
 }
 
+function queryHistoryRequests() {
+  return requests.filter(
+    (request) =>
+      request.pathname === "/api/me/nexus-history" &&
+      new URLSearchParams(request.search).has("query"),
+  );
+}
+
 async function passAnimationFrames(count: number): Promise<void> {
   await new Promise<void>((resolve) => {
     let remaining = count;
@@ -199,6 +211,13 @@ describe("Nexus product composition", () => {
   beforeEach(() => {
     requests = [];
     activeWorkspaceLocation = null;
+    respondToOpenables = async () => jsonResponse({ data: { items: [] } });
+    respondToSearch = async () =>
+      jsonResponse({
+        results: [],
+        page: { has_more: false, next_cursor: null },
+      });
+    respondToSelection = async () => jsonResponse({ data: null });
     localStorage.clear();
     window.history.replaceState({}, "", "/libraries");
     installBff();
@@ -245,9 +264,7 @@ describe("Nexus product composition", () => {
     await waitFor(() => expect(search).toHaveFocus());
     const places = within(dialog).getByRole("region", { name: "Places" });
     const placeButtons = within(places).getAllByRole("button");
-    expect(
-      placeButtons,
-    ).toEqual([
+    expect(placeButtons).toEqual([
       within(places).getByRole("button", { name: /^Lectern Place$/ }),
       within(places).getByRole("button", { name: /^Libraries Place$/ }),
       within(places).getByRole("button", { name: /^Browse Place$/ }),
@@ -300,6 +317,101 @@ describe("Nexus product composition", () => {
     ).toHaveLength(1);
   });
 
+  it("replays one mutation after foreground work preempts selection persistence", async () => {
+    let attempt = 0;
+    respondToSelection = async (init) => {
+      attempt += 1;
+      if (attempt > 1) return jsonResponse({ data: null });
+      const signal = init?.signal;
+      if (!(signal instanceof AbortSignal)) {
+        throw new Error("Selection persistence requires an abort signal");
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    };
+    await page.viewport(390, 800);
+    renderNexus("mobile");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Open Nexus, 1 tab" }),
+    );
+    let dialog = await screen.findByRole("dialog", { name: "Nexus" });
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /^Notes Place$/ }),
+    );
+    await waitFor(() => expect(selectionRequests()).toHaveLength(1));
+    const first = selectionRequests()[0];
+    const mutationId = first?.body?.client_mutation_id;
+    expect(mutationId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(first?.signal).toBeInstanceOf(AbortSignal);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Nexus, 1 tab" }),
+    );
+    dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    await waitFor(() => expect(first?.signal?.aborted).toBe(true));
+    expect(
+      selectionRequests(),
+      "Foreground Nexus work duplicated an interrupted selection mutation",
+    ).toHaveLength(1);
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(selectionRequests()).toHaveLength(2));
+    expect(selectionRequests()[1]?.body?.client_mutation_id).toBe(mutationId);
+  });
+
+  it("starts query-aware history only after the foreground provider chain settles", async () => {
+    let resolveOpenables!: (response: Response) => void;
+    let resolveSearch!: (response: Response) => void;
+    const openablesStarted = new Promise<void>((resolve) => {
+      respondToOpenables = async () => {
+        resolve();
+        return new Promise<Response>((resolveResponse) => {
+          resolveOpenables = resolveResponse;
+        });
+      };
+    });
+    const searchStarted = new Promise<void>((resolve) => {
+      respondToSearch = async () => {
+        resolve();
+        return new Promise<Response>((resolveResponse) => {
+          resolveSearch = resolveResponse;
+        });
+      };
+    });
+    await page.viewport(1_280, 900);
+    renderNexus("desktop");
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    const input = within(dialog).getByRole("combobox", {
+      name: "Find anything…",
+    });
+
+    fireEvent.change(input, { target: { value: "alpha" } });
+    await openablesStarted;
+    expect(queryHistoryRequests()).toHaveLength(0);
+
+    resolveOpenables(jsonResponse({ data: { items: [] } }));
+    await searchStarted;
+    expect(queryHistoryRequests()).toHaveLength(0);
+
+    resolveSearch(
+      jsonResponse({
+        results: [],
+        page: { has_more: false, next_cursor: null },
+      }),
+    );
+    await waitFor(() => expect(queryHistoryRequests()).toHaveLength(1));
+    expect(
+      new URLSearchParams(queryHistoryRequests()[0]?.search).get("query"),
+    ).toBe("alpha");
+  });
+
   it("bounds Openables to the 32 most-recent session queries and releases them on dismissal", async () => {
     await page.viewport(1_280, 900);
     renderNexus("desktop");
@@ -309,10 +421,7 @@ describe("Nexus product composition", () => {
     const input = within(dialog).getByRole("combobox", {
       name: "Find anything…",
     });
-    const distinctQueries = [
-      ..."abcdefghijklmnopqrstuvwxyz",
-      ..."0123456",
-    ];
+    const distinctQueries = [..."abcdefghijklmnopqrstuvwxyz", ..."0123456"];
 
     for (const query of distinctQueries) {
       fireEvent.change(input, { target: { value: query } });

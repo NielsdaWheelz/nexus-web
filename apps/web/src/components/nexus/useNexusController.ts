@@ -29,7 +29,10 @@ import {
   subscribeDailyDraft,
   type DailyDraft,
 } from "@/lib/notes/dailyDraftStore";
-import { useOpenDailyPage, resolveDailyLocalDate } from "@/lib/notes/openDailyPage";
+import {
+  useOpenDailyPage,
+  resolveDailyLocalDate,
+} from "@/lib/notes/openDailyPage";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { getNexusCommand, NEXUS_COMMAND_IDS } from "@/lib/nexus/commands";
 import {
@@ -71,6 +74,7 @@ import type {
   RetainedActivationSource,
 } from "@/lib/nexus/model";
 import { nexusEntryKeyValue } from "@/lib/nexus/model";
+import { useNexusSelectionJournal } from "@/lib/nexus/useNexusSelectionJournal";
 import {
   commitNexusRevision,
   composeNexusProjection,
@@ -91,10 +95,7 @@ import { usePaneWarm } from "@/lib/panes/paneWarm";
 import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
 import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import {
-  usePlayerCommands,
-  usePlayerSession,
-} from "@/lib/player/globalPlayer";
+import { usePlayerCommands, usePlayerSession } from "@/lib/player/globalPlayer";
 import {
   ResourceOpenablesContractDefect,
   searchOpenableResources,
@@ -138,29 +139,6 @@ import {
   type AddContentSessionController,
 } from "./useAddContentSession";
 
-function scheduleAfterDestinationPaint(task: () => void): void {
-  let firstFrame: number | null = null;
-  let secondFrame: number | null = null;
-  let settled = false;
-  const run = () => {
-    if (settled) return;
-    settled = true;
-    if (firstFrame !== null) window.cancelAnimationFrame(firstFrame);
-    if (secondFrame !== null) window.cancelAnimationFrame(secondFrame);
-    window.removeEventListener("pagehide", run);
-    task();
-  };
-
-  // Internal pane navigation owns the initiating event and its first paint.
-  // History is an observational side effect, so keep it off that critical path;
-  // pagehide remains an exact-once escape hatch when the browser suppresses rAF.
-  window.addEventListener("pagehide", run, { once: true });
-  firstFrame = window.requestAnimationFrame(() => {
-    firstFrame = null;
-    secondFrame = window.requestAnimationFrame(run);
-  });
-}
-
 interface NexusHistoryResponse {
   readonly data: {
     readonly recent: NexusRecentTarget[];
@@ -169,7 +147,9 @@ interface NexusHistoryResponse {
 }
 
 export interface NexusManagedPane extends NexusPane {
-  readonly activationRouteId: ReturnType<typeof resolveWorkspaceActivationRouteId>;
+  readonly activationRouteId: ReturnType<
+    typeof resolveWorkspaceActivationRouteId
+  >;
 }
 
 export interface NexusManagedClosedPane {
@@ -279,7 +259,11 @@ type PendingDismissal = {
 };
 
 function isRetryableWorkflowFailure(error: unknown): boolean {
-  return isApiError(error) || error instanceof TypeError || error instanceof DOMException;
+  return (
+    isApiError(error) ||
+    error instanceof TypeError ||
+    error instanceof DOMException
+  );
 }
 
 function actionTarget(action: NexusAction): NexusTarget | null {
@@ -336,24 +320,52 @@ export function useNexusController(): NexusController {
   });
   const [typedActionActiveKey, setTypedActionActiveKey] =
     useState<NexusEntryKey | null>(null);
-  const [blankActiveKey, setBlankActiveKey] = useState<NexusEntryKey | null>(null);
+  const [blankActiveKey, setBlankActiveKey] = useState<NexusEntryKey | null>(
+    null,
+  );
   const [actionsRequest, setActionsRequest] =
     useState<DesktopNexusActionsRequest | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [openablesRetry, setOpenablesRetry] = useState(0);
   const [searchRetry, setSearchRetry] = useState(0);
+  const [historyEnabled, setHistoryEnabled] = useState(false);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [showBusy, setShowBusy] = useState(false);
   const [pendingDismissal, setPendingDismissal] =
     useState<PendingDismissal | null>(null);
   const [todayDraft, setTodayDraft] = useState<DailyDraft | null>(() => {
     if (typeof window === "undefined") return null;
-    const localDate = resolveDailyLocalDate({ kind: "Today" }, calendarTimeZone);
+    const localDate = resolveDailyLocalDate(
+      { kind: "Today" },
+      calendarTimeZone,
+    );
     return readDailyDraft(accountId, localDate);
   });
   const userMovedRef = useRef(false);
   const suppressReturnFocusRef = useRef(false);
   const requestIdRef = useRef(0);
-  const openablesCacheRef = useRef(new Map<string, ResourceOpenableSearchResponse>());
+  const openablesCacheRef = useRef(
+    new Map<string, ResourceOpenableSearchResponse>(),
+  );
+  const handleHistoryWriteError = useCallback(
+    (error: unknown) => {
+      if (handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      feedback.show(
+        toFeedback(error, { fallback: "Nexus history was not saved" }),
+      );
+    },
+    [feedback],
+  );
+  const markHistoryCommitted = useCallback(
+    () => setHistoryRevision((value) => value + 1),
+    [],
+  );
+  const recordSelection = useNexusSelectionJournal({
+    foregroundActive: open,
+    onError: handleHistoryWriteError,
+    onQuiescentCommit: markHistoryCommitted,
+  });
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const todayLocalDate = resolveDailyLocalDate(
@@ -368,6 +380,7 @@ export function useNexusController(): NexusController {
   useEffect(() => {
     if (open) {
       suppressReturnFocusRef.current = false;
+      setHistoryEnabled(true);
       return;
     }
     // Results are useful only within one visible Nexus session. Release them
@@ -377,27 +390,13 @@ export function useNexusController(): NexusController {
     openablesCacheRef.current = new Map();
   }, [open]);
 
-  const historyPath = useMemo<ApiPath | null>(() => {
-    if (!open) return null;
-    return parsed.text
-      ? (`/api/me/nexus-history?${new URLSearchParams({ query: parsed.text })}` as ApiPath)
-      : "/api/me/nexus-history";
-  }, [open, parsed.text]);
-  const historyResource = useResource<NexusHistoryResponse>({
-    cacheKey: historyPath,
-    path: (path) => path as ApiPath,
+  const baseHistoryResource = useResource<NexusHistoryResponse>({
+    cacheKey: historyEnabled
+      ? `${accountId}:nexus-history:${historyRevision}`
+      : null,
+    load: (signal) =>
+      apiFetch<NexusHistoryResponse>("/api/me/nexus-history", { signal }),
   });
-  const history = useMemo(() => {
-    if (historyResource.status !== "ready") {
-      return { recent: EMPTY_RECENT, frecencyByHref: EMPTY_FRECENCY };
-    }
-    return {
-      recent: historyResource.data.data.recent.filter(
-        (entry) => !isAndroidShellRestrictedHref(entry.target_href, androidShell),
-      ),
-      frecencyByHref: historyResource.data.data.frecency_by_href,
-    };
-  }, [androidShell, historyResource]);
 
   const panes = useMemo<NexusManagedPane[]>(
     () =>
@@ -418,7 +417,8 @@ export function useNexusController(): NexusController {
     () =>
       recentlyClosedPanes.map((snapshot) => ({
         id: snapshot.pane.id,
-        label: resolveWorkspacePaneLabel(snapshot.pane, runtimeLabelByPaneId).label,
+        label: resolveWorkspacePaneLabel(snapshot.pane, runtimeLabelByPaneId)
+          .label,
       })),
     [recentlyClosedPanes, runtimeLabelByPaneId],
   );
@@ -476,8 +476,9 @@ export function useNexusController(): NexusController {
   // Preserve the established latency policy: cheap Openables reaches a
   // terminal state before expensive owned full-text retrieval starts.
   const openablesTerminal =
-    openablesFetch.dataIdentity === ownedCandidateIdentity ||
-    openablesFetch.errorIdentity === ownedCandidateIdentity;
+    openablesIdentity !== null &&
+    (openablesFetch.dataIdentity === openablesIdentity ||
+      openablesFetch.errorIdentity === openablesIdentity);
   const ownedIdentity =
     ownedCandidateIdentity !== null && openablesTerminal
       ? ownedCandidateIdentity
@@ -492,6 +493,51 @@ export function useNexusController(): NexusController {
       }),
     { debounceMs: SEARCH_DEBOUNCE_MS, identity: ownedIdentity },
   );
+  const ownedTerminal =
+    ownedIdentity !== null &&
+    (ownedFetch.dataIdentity === ownedIdentity ||
+      ownedFetch.errorIdentity === ownedIdentity);
+  const typedHistoryIdentity =
+    findEnabled &&
+    (parsed.text.length === 1 ? openablesTerminal : ownedTerminal)
+      ? query
+      : null;
+  const typedHistoryPath =
+    typedHistoryIdentity === null
+      ? null
+      : (`/api/me/nexus-history?${new URLSearchParams({ query: parsed.text })}` as ApiPath);
+  const typedHistoryResource = useResource<NexusHistoryResponse>({
+    cacheKey:
+      typedHistoryPath === null
+        ? null
+        : `${accountId}:${historyRevision}:${typedHistoryPath}`,
+    load: (signal) => {
+      if (typedHistoryPath === null) {
+        throw new Error("Typed Nexus history requires a current query path");
+      }
+      return apiFetch<NexusHistoryResponse>(typedHistoryPath, { signal });
+    },
+  });
+  const history = useMemo(() => {
+    const baseData =
+      baseHistoryResource.status === "ready"
+        ? baseHistoryResource.data.data
+        : null;
+    const typedData =
+      typedHistoryResource.status === "ready"
+        ? typedHistoryResource.data.data
+        : null;
+    return {
+      recent: (baseData?.recent ?? EMPTY_RECENT).filter(
+        (entry) =>
+          !isAndroidShellRestrictedHref(entry.target_href, androidShell),
+      ),
+      frecencyByHref:
+        (parsed.text ? typedData?.frecency_by_href : null) ??
+        baseData?.frecency_by_href ??
+        EMPTY_FRECENCY,
+    };
+  }, [androidShell, baseHistoryResource, parsed.text, typedHistoryResource]);
   const openablesData =
     openablesFetch.dataIdentity === openablesIdentity
       ? openablesFetch.data
@@ -508,7 +554,8 @@ export function useNexusController(): NexusController {
     openablesError instanceof ResourceOpenablesContractDefect ||
     isSameSystemApiDefect(openablesError)
       ? openablesError
-      : ownedError instanceof SearchContractDefect || isSameSystemApiDefect(ownedError)
+      : ownedError instanceof SearchContractDefect ||
+          isSameSystemApiDefect(ownedError)
         ? ownedError
         : null;
   if (contractDefect) throw contractDefect;
@@ -816,7 +863,10 @@ export function useNexusController(): NexusController {
         })
         .catch((error: unknown) => {
           if (handleUnauthenticatedApiError(error)) return;
-          if (isSameSystemApiDefect(error) || !isRetryableWorkflowFailure(error)) {
+          if (
+            isSameSystemApiDefect(error) ||
+            !isRetryableWorkflowFailure(error)
+          ) {
             throw error;
           }
           setPage({
@@ -826,7 +876,9 @@ export function useNexusController(): NexusController {
             activation: input.activation,
             submit: {
               kind: "Retryable",
-              message: toFeedback(error, { fallback: "Couldn’t create page. Retry" }).title,
+              message: toFeedback(error, {
+                fallback: "Couldn’t create page. Retry",
+              }).title,
             },
           });
         });
@@ -895,24 +947,9 @@ export function useNexusController(): NexusController {
         label_snapshot: entry.label,
         source: entry.historySource,
       };
-      scheduleAfterDestinationPaint(() => {
-        void apiFetch("/api/me/nexus-selections", {
-          method: "POST",
-          keepalive: true,
-          body: JSON.stringify({
-            client_mutation_id: crypto.randomUUID(),
-            ...selection,
-          }),
-        }).catch((error: unknown) => {
-          if (handleUnauthenticatedApiError(error)) return;
-          if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-          feedback.show(
-            toFeedback(error, { fallback: "Nexus history was not saved" }),
-          );
-        });
-      });
+      recordSelection(selection);
     },
-    [androidShell, feedback, panes, parsed.text],
+    [androidShell, panes, parsed.text, recordSelection],
   );
   const dispatch = useCallback(
     (
@@ -931,7 +968,10 @@ export function useNexusController(): NexusController {
           handleWorkflowRequest(outcome, rootReturnPoint);
         } else {
           applyNavigationOutcome(outcome, activation, retained);
-          if (outcome.kind === "Stayed" && target.kind === "ResumeCurrentPlayback") {
+          if (
+            outcome.kind === "Stayed" &&
+            target.kind === "ResumeCurrentPlayback"
+          ) {
             setOpen(false);
           }
         }
@@ -1002,9 +1042,7 @@ export function useNexusController(): NexusController {
       }
       const entry = projection.groups
         .flatMap((group) => group.entries)
-        .find((candidate) =>
-          nexusEntryKeyValue(candidate.key) === keyValue,
-        );
+        .find((candidate) => nexusEntryKeyValue(candidate.key) === keyValue);
       const target = entry ? actionTarget(entry.primaryAction) : null;
       if (target?.kind === "InternalHref") warmPane(target.href);
       if (
@@ -1046,7 +1084,11 @@ export function useNexusController(): NexusController {
     if (page.kind !== "CreateLibrary" || page.submit.kind === "Running") return;
     const name = page.nameDraft.trim();
     if (!name) return;
-    const frozen = { ...page, nameDraft: name, submit: { kind: "Running" } as const };
+    const frozen = {
+      ...page,
+      nameDraft: name,
+      submit: { kind: "Running" } as const,
+    };
     setPage(frozen);
     void createLibrary({ libraryId: frozen.libraryId, name })
       .then((library) => {
@@ -1061,21 +1103,29 @@ export function useNexusController(): NexusController {
       })
       .catch((error: unknown) => {
         if (handleUnauthenticatedApiError(error)) return;
-        if (isSameSystemApiDefect(error) || !isRetryableWorkflowFailure(error)) {
+        if (
+          isSameSystemApiDefect(error) ||
+          !isRetryableWorkflowFailure(error)
+        ) {
           throw error;
         }
         setPage({
           ...frozen,
           submit: {
             kind: "Retryable",
-            message: toFeedback(error, { fallback: "Couldn’t create library. Retry" }).title,
+            message: toFeedback(error, {
+              fallback: "Couldn’t create library. Retry",
+            }).title,
           },
         });
       });
   }, [dispatchWorkspaceTarget, invalidateOpenables, page, rootReturnPoint]);
   const setLibraryNameDraft = useCallback((name: string) => {
     setPage((current) => {
-      if (current.kind !== "CreateLibrary" || current.submit.kind === "Running") {
+      if (
+        current.kind !== "CreateLibrary" ||
+        current.submit.kind === "Running"
+      ) {
         return current;
       }
       return {
@@ -1145,18 +1195,15 @@ export function useNexusController(): NexusController {
           completion: retained.completion,
           returnTo: retained.returnTo,
         });
-        if (outcome.kind === "NavigationAccepted" || outcome.kind === "DailyPageAccepted") {
+        if (
+          outcome.kind === "NavigationAccepted" ||
+          outcome.kind === "DailyPageAccepted"
+        ) {
           restoreReturnPoint(retained.returnTo);
         }
       })
       .catch(fail);
-  }, [
-    applyNavigationOutcome,
-    dispatchCtx,
-    fail,
-    page,
-    restoreReturnPoint,
-  ]);
+  }, [applyNavigationOutcome, dispatchCtx, fail, page, restoreReturnPoint]);
   const cancelRetainedActivation = useCallback(() => {
     const retained =
       page.kind === "ActivationBlocked"
@@ -1178,7 +1225,10 @@ export function useNexusController(): NexusController {
     },
     [activatePane, panes, restorePane, state.activePrimaryPaneId],
   );
-  const closeManagedPane = useCallback((paneId: string) => closePane(paneId), [closePane]);
+  const closeManagedPane = useCallback(
+    (paneId: string) => closePane(paneId),
+    [closePane],
+  );
   const restoreManagedPane = useCallback(
     (paneId: string) => {
       const restored = restoreClosedPane(paneId);
@@ -1212,7 +1262,8 @@ export function useNexusController(): NexusController {
           setOpen(false);
           return;
         case "Navigate": {
-          const activation = intent.activation ?? PROGRAMMATIC_NEXUS_TARGET_ACTIVATION;
+          const activation =
+            intent.activation ?? PROGRAMMATIC_NEXUS_TARGET_ACTIVATION;
           const target = materialize(intent.target);
           void settleNexusDispatch(() =>
             dispatchNexusTarget(target, dispatchCtx, activation),
@@ -1231,7 +1282,10 @@ export function useNexusController(): NexusController {
                   returnTo: rootReturnPoint,
                 },
               );
-              if (outcome.kind === "NavigationAccepted" || outcome.kind === "DailyPageAccepted") {
+              if (
+                outcome.kind === "NavigationAccepted" ||
+                outcome.kind === "DailyPageAccepted"
+              ) {
                 discardAddSession();
               }
             })
@@ -1269,7 +1323,10 @@ export function useNexusController(): NexusController {
           if (detail.kind === "QuickAction") {
             const command = getNexusCommand(detail.actionId);
             const target = materialize(command.target({ argument: "" }));
-            void dispatch(target, PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION).catch(fail);
+            void dispatch(
+              target,
+              PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
+            ).catch(fail);
           }
           return;
         }
@@ -1305,7 +1362,12 @@ export function useNexusController(): NexusController {
       }
       return "accepted";
     },
-    [addSession.dirty, addSession.state.mutation.kind, page.kind, pendingDismissal],
+    [
+      addSession.dirty,
+      addSession.state.mutation.kind,
+      page.kind,
+      pendingDismissal,
+    ],
   );
   const requestExit = useCallback(
     (intent: ExitIntent) => {
@@ -1328,7 +1390,10 @@ export function useNexusController(): NexusController {
     }
     requestExit({ kind: "Root" });
   }, [addSession.state.branch, page, requestExit, restoreReturnPoint]);
-  const close = useCallback(() => requestExit({ kind: "Close" }), [requestExit]);
+  const close = useCallback(
+    () => requestExit({ kind: "Close" }),
+    [requestExit],
+  );
   const escape = useCallback(() => {
     if (page.kind === "Root" && query.trim()) {
       setQuery("");
@@ -1355,7 +1420,10 @@ export function useNexusController(): NexusController {
     }
     return guardExit({ kind: "Close" });
   }, [back, guardExit, page.kind, query, setQuery]);
-  const dismissAccepted = useCallback(() => performExit({ kind: "Close" }), [performExit]);
+  const dismissAccepted = useCallback(
+    () => performExit({ kind: "Close" }),
+    [performExit],
+  );
   const openTarget = useCallback(
     (target: NexusTarget) =>
       requestExit({
@@ -1437,7 +1505,9 @@ export function useNexusController(): NexusController {
         );
       }
       if (page.kind === "CreateLibrary") {
-        return container.querySelector<HTMLElement>("[data-switchboard-library-name]");
+        return container.querySelector<HTMLElement>(
+          "[data-switchboard-library-name]",
+        );
       }
       if (page.kind === "Add") {
         return resolveAddPanelInitialFocus(container, isMobile, {
@@ -1508,7 +1578,8 @@ export function useNexusController(): NexusController {
         return;
       }
       for (const [actionId, combo] of Object.entries(keybindings)) {
-        if (actionId === "Nexus.Open" || !matchesKeyEvent(combo, event)) continue;
+        if (actionId === "Nexus.Open" || !matchesKeyEvent(combo, event))
+          continue;
         const command = NEXUS_COMMAND_IDS.includes(actionId as NexusCommandId)
           ? getNexusCommand(actionId as NexusCommandId)
           : null;
@@ -1547,9 +1618,7 @@ export function useNexusController(): NexusController {
   );
   const browseChoiceActions = useMemo(
     () =>
-      page.kind === "ChooseBrowse"
-        ? nexusBrowseChoiceActions(page.query)
-        : [],
+      page.kind === "ChooseBrowse" ? nexusBrowseChoiceActions(page.query) : [],
     [page],
   );
   const desktop: DesktopNexusController = {
