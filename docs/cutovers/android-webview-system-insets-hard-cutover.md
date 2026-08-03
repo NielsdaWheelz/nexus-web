@@ -1,7 +1,7 @@
 # Android WebView System Insets — Hard Cutover
 
-**Status:** APPROVED — M144 boundary accepted; signed v0.2.12 selection Back
-correction and release blocked
+**Status:** COMPLETE — signed `android-v0.2.13` physically accepted and promoted
+stable byte-exact; TalkBack skipped/waived by user
 
 **Last verified:** 2026-08-02
 
@@ -376,12 +376,39 @@ remains.
 - Fresh signed `android-v0.2.11`, three-button portrait, is red: native
   navigation starts at physical y=2196; `Open recording` is bounded
   `[84,2229][552,2340]` and `Open source` `[624,2265][909,2325]`. The owner is
-  MobileNowPlaying's true `.body` scrollport, not its full-bleed canvas. No fresh
-  signed APK has yet accepted this correction.
+  MobileNowPlaying's true `.body` scrollport, not its full-bleed canvas. This
+  authorized the body-scrollport correction.
 - Fresh signed `android-v0.2.12` is red with the native selection toolbar and
   Nexus selection actions active: the first Android Back leaves the current
   Nexus activity/task instead of dismissing selection. `SelectionPopover` is
-  the transient interaction owner; no fresh signed APK has accepted the fix.
+  the transient interaction owner; this authorized its transient Back fix.
+- Signed `android-v0.2.13` physically passed. Its annotated tag resolves merge
+  `67853b1d84d5d58c21be45e89661c24766d4040e`; APK SHA-256 is
+  `2c63adf01d905942418f9a2185f606d5b5d7193f16be825fb014d0b7688c2d7e`,
+  signer certificate SHA-256 is
+  `40e566dc0cde3b63ea8bf8f0779802938c0ba19d5c32d4810f28fdc546fd8b17`,
+  and version is code `16`, name `android-v0.2.13`. Installed and pulled APKs
+  were byte-exact to that artifact.
+- Gesture and three-button portrait/landscape passed with Player absent/present:
+  EPUB/Web text mid-scroll and terminal, Now Playing terminal actions, sheet,
+  Nexus task, IME exact restore, terminal focus/selection/activation, rotation,
+  full-bleed paint, and no phantom gap. The normal-motion pair and reduced-motion
+  pin passed.
+- With native and Nexus selection actions active, one Back removed both while
+  task/activity, URL, pane, scroll, and terminal geometry remained exact.
+- Raw UI XML boxes for clipped long HTML are not a paint oracle; screenshots
+  plus true-scrollport clipping establish visible glyph geometry. Evidence is
+  retained under `/tmp/v0213-*` without making those files a release contract.
+- TalkBack was not run and was explicitly waived by the user; no pass is claimed.
+- Workflow run `30783254573` passed `publish-stable` with `build-draft` skipped;
+  release ID `363967590` is published. The stable latest URL serves exact APK
+  SHA-256 `2c63adf01d905942418f9a2185f606d5b5d7193f16be825fb014d0b7688c2d7e`
+  with untouched asset timestamps, witness, tag, signer, and version. Promotion
+  performed no rebuild, signing, upload, or clobber. Its workflow-owner fix,
+  PR #149, merged as `ac52ee37804c88f324a8c18655bd5d70efc1de89`
+  without altering the tagged artifact.
+- An unrelated podcast-show PaneShell data-loading red remains with its existing
+  owner outside this cutover.
 
 ## Non-goals
 
