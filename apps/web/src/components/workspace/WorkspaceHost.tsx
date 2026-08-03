@@ -66,10 +66,8 @@ import {
 } from "@/lib/panes/paneSecondaryModel";
 import {
   arePaneFixedChromePublicationsEqual,
-  arePaneSecondaryPublicationsEqual,
   getPublishedTransientSecondarySurface,
   normalizePaneFixedChromePublication,
-  normalizePaneSecondaryPublication,
   secondaryPublicationIncludesSurface,
   secondaryPublicationIncludesTransientSurface,
   type PaneFixedChromePublication,
@@ -100,6 +98,10 @@ import type {
 import Button from "@/components/ui/Button";
 import { usePaneCanvas } from "./usePaneCanvas";
 import PaneRouteBoundary from "./PaneRouteBoundary";
+import {
+  getPaneSecondaryPublication,
+  usePaneSecondaryPublicationRegistry,
+} from "./usePaneSecondaryPublicationRegistry";
 import styles from "./WorkspaceHost.module.css";
 
 // ---------------------------------------------------------------------------
@@ -145,11 +147,6 @@ interface PendingResponsivePaneSearchDelivery {
 interface RuntimePaneLayoutRecord {
   routeKey: string;
   layout: PaneRuntimeLayout;
-}
-
-interface PaneSecondaryPublicationRecord {
-  routeKey: string;
-  publication: PaneSecondaryPublication;
 }
 
 interface PaneFixedChromePublicationRecord {
@@ -548,33 +545,6 @@ function upsertOrDeletePaneLayoutRecord(
   return next;
 }
 
-function upsertOrDeletePaneSecondaryPublicationRecord(
-  current: Map<string, PaneSecondaryPublicationRecord>,
-  input: {
-    paneId: string;
-    routeKey: string;
-    publication: PaneSecondaryPublication | null;
-  },
-): Map<string, PaneSecondaryPublicationRecord> {
-  const existing = current.get(input.paneId);
-  if (!input.publication) {
-    if (!existing || existing.routeKey !== input.routeKey) return current;
-    const next = new Map(current);
-    next.delete(input.paneId);
-    return next;
-  }
-  const publication = input.publication;
-  if (
-    existing?.routeKey === input.routeKey &&
-    arePaneSecondaryPublicationsEqual(existing.publication, publication)
-  ) {
-    return current;
-  }
-  const next = new Map(current);
-  next.set(input.paneId, { routeKey: input.routeKey, publication });
-  return next;
-}
-
 function upsertOrDeletePaneFixedChromePublicationRecord(
   current: Map<string, PaneFixedChromePublicationRecord>,
   input: {
@@ -611,15 +581,6 @@ function getRuntimePaneLayoutRecord(
   return record?.routeKey === routeKey ? record : null;
 }
 
-function getPaneSecondaryPublication(
-  records: Map<string, PaneSecondaryPublicationRecord>,
-  paneId: string,
-  routeKey: string,
-): PaneSecondaryPublication | null {
-  const record = records.get(paneId);
-  return record?.routeKey === routeKey ? record.publication : null;
-}
-
 function getPaneFixedChromePublication(
   records: Map<string, PaneFixedChromePublicationRecord>,
   paneId: string,
@@ -634,21 +595,6 @@ function pruneRuntimePaneLayoutRecords(
   currentRouteKeyByPaneId: Map<string, string>,
 ): Map<string, RuntimePaneLayoutRecord> {
   let next: Map<string, RuntimePaneLayoutRecord> | null = null;
-  for (const [paneId, record] of current) {
-    if (currentRouteKeyByPaneId.get(paneId) === record.routeKey) {
-      continue;
-    }
-    next ??= new Map(current);
-    next.delete(paneId);
-  }
-  return next ?? current;
-}
-
-function prunePaneSecondaryPublicationRecords(
-  current: Map<string, PaneSecondaryPublicationRecord>,
-  currentRouteKeyByPaneId: Map<string, string>,
-): Map<string, PaneSecondaryPublicationRecord> {
-  let next: Map<string, PaneSecondaryPublicationRecord> | null = null;
   for (const [paneId, record] of current) {
     if (currentRouteKeyByPaneId.get(paneId) === record.routeKey) {
       continue;
@@ -846,8 +792,12 @@ function WorkspaceHost() {
   const [runtimeLayoutByPaneId, setRuntimeLayoutByPaneId] = useState<
     Map<string, RuntimePaneLayoutRecord>
   >(() => new Map());
-  const [secondaryPublicationByPaneId, setSecondaryPublicationByPaneId] =
-    useState<Map<string, PaneSecondaryPublicationRecord>>(() => new Map());
+  const {
+    records: secondaryPublicationByPaneId,
+    publish: publishSecondaryPublicationRecord,
+    prune: pruneSecondaryPublicationRecords,
+    current: currentSecondaryPublication,
+  } = usePaneSecondaryPublicationRegistry();
   const [
     transientSecondaryActivationByPaneId,
     setTransientSecondaryActivationByPaneId,
@@ -913,8 +863,6 @@ function WorkspaceHost() {
   );
   const currentRouteKeyByPaneIdRef = useRef(currentRouteKeyByPaneId);
   currentRouteKeyByPaneIdRef.current = currentRouteKeyByPaneId;
-  const secondaryPublicationByPaneIdRef = useRef(secondaryPublicationByPaneId);
-  secondaryPublicationByPaneIdRef.current = secondaryPublicationByPaneId;
   const transientSecondaryActivationByPaneIdRef = useRef(
     transientSecondaryActivationByPaneId,
   );
@@ -1021,24 +969,13 @@ function WorkspaceHost() {
       ) {
         return;
       }
-      const normalizedInput = {
-        ...input,
-        publication: input.publication
-          ? normalizePaneSecondaryPublication(input.publication)
-          : null,
-      };
       // The primary action and its secondary publication commit through
       // different owners (PaneShell and WorkspaceHost). Accept the publication
       // in the command guard synchronously so a newly visible Companion action
       // cannot lose its first valid click before the host render catches up.
-      const next = upsertOrDeletePaneSecondaryPublicationRecord(
-        secondaryPublicationByPaneIdRef.current,
-        normalizedInput,
-      );
-      secondaryPublicationByPaneIdRef.current = next;
-      setSecondaryPublicationByPaneId(next);
+      publishSecondaryPublicationRecord(input);
     },
-    [],
+    [publishSecondaryPublicationRecord],
   );
 
   const publishPaneFixedChrome = useCallback(
@@ -1072,9 +1009,7 @@ function WorkspaceHost() {
     setRuntimeLayoutByPaneId((current) =>
       pruneRuntimePaneLayoutRecords(current, currentRouteKeyByPaneId),
     );
-    setSecondaryPublicationByPaneId((current) =>
-      prunePaneSecondaryPublicationRecords(current, currentRouteKeyByPaneId),
-    );
+    pruneSecondaryPublicationRecords(currentRouteKeyByPaneId);
     setTransientSecondaryActivationByPaneId((current) => {
       let next: Map<string, PaneTransientSecondaryActivationRecord> | null =
         null;
@@ -1136,6 +1071,7 @@ function WorkspaceHost() {
     });
   }, [
     currentRouteKeyByPaneId,
+    pruneSecondaryPublicationRecords,
     resourceLocatorsByKey,
     secondaryPublicationByPaneId,
   ]);
@@ -1400,14 +1336,10 @@ function WorkspaceHost() {
       if (!routeKey) {
         return false;
       }
-      const publication = getPaneSecondaryPublication(
-        secondaryPublicationByPaneIdRef.current,
-        paneId,
-        routeKey,
-      );
+      const publication = currentSecondaryPublication(paneId, routeKey);
       return secondaryPublicationIncludesSurface(publication, surfaceId);
     },
-    [],
+    [currentSecondaryPublication],
   );
 
   const canUsePublishedTransientSecondarySurface = useCallback(
@@ -1420,15 +1352,11 @@ function WorkspaceHost() {
         return false;
       }
       return secondaryPublicationIncludesTransientSurface(
-        getPaneSecondaryPublication(
-          secondaryPublicationByPaneIdRef.current,
-          paneId,
-          routeKey,
-        ),
+        currentSecondaryPublication(paneId, routeKey),
         surfaceId,
       );
     },
-    [],
+    [currentSecondaryPublication],
   );
 
   const handleRequestTransientSecondarySurface = useCallback(

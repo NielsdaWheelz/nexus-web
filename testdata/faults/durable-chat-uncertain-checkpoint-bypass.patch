@@ -1,0 +1,9 @@
+diff --git a/python/nexus/services/chat_run_steps.py b/python/nexus/services/chat_run_steps.py
+--- a/python/nexus/services/chat_run_steps.py
++++ b/python/nexus/services/chat_run_steps.py
+@@ -419,5 +419,4 @@ class ChatStepRuntime:
+     def mark_uncertain(self, path: str) -> StepReplayState:
+         current = self._required_state(path, Prepared)
+         state = current.model_copy(update={"dispatch_phase": Uncertain})
+-        self._checkpoint(path, state)
+         return state

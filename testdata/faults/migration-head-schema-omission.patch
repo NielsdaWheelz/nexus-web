@@ -1,0 +1,11 @@
+diff --git a/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py b/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py
+--- a/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py
++++ b/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py
+@@ -58,6 +58,7 @@ def upgrade() -> None:
+     )
+     if remaining != 0:
+         raise RuntimeError("0207 failed to canonicalize every legacy Podcast publication instant")
++    bind.execute(sa.text("ALTER TABLE resource_edges RENAME TO resource_edges_faulted"))
+ 
+ 
+ def downgrade() -> None:

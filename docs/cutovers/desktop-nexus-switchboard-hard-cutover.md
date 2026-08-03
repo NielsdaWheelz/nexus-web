@@ -196,6 +196,8 @@ Rules:
   row and every surviving row above it.
 - If the active row disappears, select the surviving row at the same index, or
   the preceding row when no such successor exists.
+- Physical pointer movement may change the active row or cell. Result or layout
+  reflow beneath a stationary pointer must not change virtual selection.
 - Enter snapshots the active key from the committed view before dispatch.
 - `useNexusController.setActiveEntry` is the sole prefetch owner. Hover and
   Arrow Up/Down call it. It warms only known internal pane targets; workflows,

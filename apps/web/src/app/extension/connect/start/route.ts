@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
+import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { internalAuthHeaders } from "@/lib/auth/internal-auth-headers";
 import {
@@ -16,6 +17,7 @@ import {
 
 export async function GET(req: Request) {
   const requestUrl = new URL(req.url);
+  const redirectOrigin = resolveCallbackRedirectOrigin(req);
   const redirectUri = requestUrl.searchParams.get("redirect_uri");
   if (!redirectUri) {
     return NextResponse.json(
@@ -55,7 +57,7 @@ export async function GET(req: Request) {
   if (session.state === "refreshable") {
     return NextResponse.redirect(
       buildAuthRefreshUrl(
-        requestUrl.origin,
+        redirectOrigin,
         parseAuthReturnTarget(`${requestUrl.pathname}${requestUrl.search}`)
       )
     );
@@ -63,7 +65,7 @@ export async function GET(req: Request) {
   if (session.state === "ended" || session.state === "anonymous") {
     return NextResponse.redirect(
       buildLoginUrl(
-        requestUrl.origin,
+        redirectOrigin,
         parseAuthReturnTarget(`${requestUrl.pathname}${requestUrl.search}`)
       )
     );

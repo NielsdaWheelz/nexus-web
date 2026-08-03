@@ -28,6 +28,7 @@ from provider_runtime import (
     ContinuationDelta,
     Failed,
     Incomplete,
+    PossiblyBillable,
     Presence,
     Present,
     PromptMessage,
@@ -41,6 +42,7 @@ from provider_runtime import (
     ToolCallDelta,
     ToolCallDone,
     ToolCallStart,
+    TransientExhausted,
     UsageEvent,
     failure_code,
     failure_origin,
@@ -161,6 +163,7 @@ from nexus.services.chat_run_steps import (
     ToolModelOutput,
     ToolStepRequest,
     ToolStepResult,
+    UncertainChatStep,
     assistant_message_from_turn,
     assistant_turn_result,
     decode_generation,
@@ -1132,6 +1135,7 @@ async def _dispatch_generation_step(
         settings=settings,
         cancel=cast(CancelSignal, cancel_signal),
         before_dispatch=mark_dispatch_uncertain,
+        single_dispatch=True,
     )
     terminal_outcome: object | None = None
     try:
@@ -1285,6 +1289,10 @@ async def _dispatch_generation_step(
             last_provider_event_seq=_owned_optional(last_provider_event_seq),
         )
     if isinstance(terminal_outcome, Failed):
+        if isinstance(terminal_outcome.meta.billability, PossiblyBillable) or isinstance(
+            terminal_outcome.failure, TransientExhausted
+        ):
+            raise UncertainChatStep(f"chat generation {path!r} has an ambiguous provider outcome")
         return ExpectedFailure(
             assistant_content=full_content,
             error_code=failure_code(terminal_outcome.failure),

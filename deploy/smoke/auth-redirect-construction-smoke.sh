@@ -158,11 +158,14 @@ case "$MODE" in
       --api-url "$API_URL" \
       --supabase-url "$SUPABASE_URL"
     (
-      cd "${ROOT_DIR}/e2e"
+      cd "${ROOT_DIR}/apps/web"
       NEXUS_SMOKE_APP_URL="$APP_URL" \
+        NEXUS_SMOKE_SUPABASE_URL="$SUPABASE_URL" \
         E2E_MAILBOX_URL="$MAILBOX_URL" \
         NEXUS_SMOKE_EMAIL_DOMAIN="$EMAIL_DOMAIN" \
-        bunx playwright test --config playwright.deployed.config.ts
+        bunx playwright test \
+          --config e2e/playwright.config.ts \
+          --project deployment-smoke
     )
     echo "PASS staging redirect-construction smoke passed"
     ;;

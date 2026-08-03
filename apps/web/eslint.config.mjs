@@ -1,6 +1,7 @@
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import { FlatCompat } from "@eslint/eslintrc";
+import playwright from "eslint-plugin-playwright";
 import testingLibrary from "eslint-plugin-testing-library";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -36,6 +37,134 @@ const CANVAS_CSS_VARIABLE_BAN = {
   message:
     "Canvas ctx.font/fillStyle/strokeStyle cannot resolve CSS custom properties; a var(--…) string is silently ignored. Resolve the token via getComputedStyle, or assign a literal value.",
 };
+
+const OWNED_MODULE_MOCK_BANS = [
+  {
+    selector:
+      "CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock)$/] > Literal:first-child[value=/^(?:@\\/|\\.\\.?\\/)/]",
+    message:
+      "Do not mock Nexus modules. Exercise the owned implementation and stub only an external boundary.",
+  },
+  {
+    // A backtick path is a one-character escape from the Literal ban above, and
+    // vi.doMock honors any static string at runtime — so a no-substitution
+    // template literal must be rejected identically.
+    selector:
+      "CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock)$/] > TemplateLiteral:first-child[expressions.length=0][quasis.0.value.cooked=/^(?:@\\/|\\.\\.?\\/)/]",
+    message:
+      "Do not mock Nexus modules. Exercise the owned implementation and stub only an external boundary.",
+  },
+  {
+    selector:
+      "CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name='spyOn']",
+    message:
+      "Do not spy on owned behavior. Assert the product result at its real boundary.",
+  },
+];
+
+const FAKE_TIMER_BAN = {
+  selector:
+    "CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(useFakeTimers|useRealTimers|setSystemTime|advanceTimersByTime|advanceTimersByTimeAsync|advanceTimersToNextFrame|advanceTimersToNextTimer|advanceTimersToNextTimerAsync|clearAllTimers|runAllTimers|runAllTimersAsync|runOnlyPendingTimers|runOnlyPendingTimersAsync)$/]",
+  message:
+    "Do not use fake timers. Drive the owned state transition or inject the external clock boundary.",
+};
+
+const SLEEP_BANS = [
+  {
+    selector: "CallExpression[callee.name='setTimeout']",
+    message: "Do not sleep in tests. Await an observable state transition.",
+  },
+  {
+    selector:
+      "CallExpression[callee.object.name=/^(globalThis|window)$/][callee.property.name='setTimeout']",
+    message: "Do not sleep in tests. Await an observable state transition.",
+  },
+];
+
+const DISABLED_TEST_BAN = {
+  selector: "MemberExpression[property.name=/^(skip|skipIf|runIf|only|todo)$/]",
+  message:
+    "Tests must run exactly as collected; conditional collection, skip, only, and todo are forbidden.",
+};
+
+const VACUOUS_TEST_BANS = [
+  {
+    selector:
+      "CallExpression[callee.name=/^(test|it)$/] > ArrowFunctionExpression[body.type='BlockStatement'][body.body.length=0]",
+    message: "A test callback must execute an observable proof.",
+  },
+  {
+    selector: "CallExpression[callee.name='expect'] > Literal:first-child",
+    message: "Do not assert a literal. Assert behavior observed from the system under test.",
+  },
+];
+
+const PLAYWRIGHT_ROUTE_BANS = [
+  {
+    selector:
+      "CallExpression[callee.type='MemberExpression'][callee.property.name=/^(route|routeFromHAR)$/]",
+    message:
+      "Journey files cannot intercept routes. Use the harness allowlist or a real external-boundary fixture.",
+  },
+  {
+    selector:
+      "CallExpression[callee.type='MemberExpression'][callee.property.name=/^(fulfill|fallback)$/]",
+    message:
+      "Journey files cannot fulfill intercepted routes. Use a real external-boundary fixture.",
+  },
+];
+
+const PLAYWRIGHT_RAW_REQUEST_BANS = [
+  {
+    selector:
+      "ImportDeclaration[source.value=/^(?:@playwright\\/test|playwright\\/test)$/] > ImportSpecifier[imported.name=/^(?:request|APIRequestContext)$/]",
+    message:
+      "Raw Playwright API requests belong only to e2e/request.ts. Import the harness-owned request facade.",
+  },
+  {
+    selector:
+      "MemberExpression[property.name='request']:not([object.name='route'])",
+    message:
+      "Do not use page.request or context.request. Use the origin-validating e2e/request.ts facade.",
+  },
+  {
+    selector: "ObjectPattern > Property[key.name='request']",
+    message:
+      "Do not use Playwright's raw request fixture. Use the origin-validating e2e/request.ts facade.",
+  },
+];
+
+const PLAYWRIGHT_RETRY_AND_WORKER_BANS = [
+  {
+    selector:
+      "Property[key.name='retries']:not([value.type='Literal'][value.value=0])",
+    message: "Playwright retries must be the literal value 0.",
+  },
+  {
+    selector:
+      "Property[key.name='workers']:not([value.type='Literal'][value.value=1])",
+    message: "Playwright workers must be the literal value 1.",
+  },
+];
+
+const VITEST_RETRY_AND_WORKER_BANS = [
+  {
+    selector: "Property[key.name='retry']:not([value.type='Literal'][value.value=0])",
+    message: "Vitest retries must be the literal value 0.",
+  },
+  {
+    selector:
+      "Property[key.name='maxWorkers']:not([value.type='Literal'][value.value=1])",
+    message: "Vitest maxWorkers must be the literal value 1.",
+  },
+];
+
+const UNIT_AND_BROWSER_TESTS = [
+  "src/**/*.unit.test.{ts,tsx}",
+  "src/**/*.browser.test.{ts,tsx}",
+];
+
+const PLAYWRIGHT_TESTS = ["e2e/**/*.{ts,tsx,mjs}"];
 
 const READER_SCROLL_MUTATION_BANS = [
   {
@@ -187,6 +316,85 @@ const eslintConfig = [
     rules: {
       ...testingLibrary.configs["flat/react"].rules,
       "testing-library/no-node-access": "error",
+    },
+  },
+  {
+    files: UNIT_AND_BROWSER_TESTS,
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        PRODUCT_POLLING_BAN,
+        CANVAS_CSS_VARIABLE_BAN,
+        ...OWNED_MODULE_MOCK_BANS,
+        ...VACUOUS_TEST_BANS,
+        FAKE_TIMER_BAN,
+        ...SLEEP_BANS,
+        DISABLED_TEST_BAN,
+      ],
+    },
+  },
+  {
+    files: ["vitest.browser-setup.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...OWNED_MODULE_MOCK_BANS],
+    },
+  },
+  {
+    files: ["vitest.config.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...VITEST_RETRY_AND_WORKER_BANS],
+    },
+  },
+  {
+    ...playwright.configs["flat/recommended"],
+    files: PLAYWRIGHT_TESTS,
+    rules: {
+      ...playwright.configs["flat/recommended"].rules,
+      "playwright/no-focused-test": "error",
+      "playwright/no-raw-locators": "error",
+      "playwright/no-skipped-test": "error",
+      "playwright/no-slowed-test": "error",
+      "playwright/no-wait-for-timeout": "error",
+      "playwright/prefer-web-first-assertions": "error",
+      "no-restricted-syntax": [
+        "error",
+        ...PLAYWRIGHT_RETRY_AND_WORKER_BANS,
+        ...OWNED_MODULE_MOCK_BANS,
+        ...VACUOUS_TEST_BANS,
+        FAKE_TIMER_BAN,
+        ...SLEEP_BANS,
+        DISABLED_TEST_BAN,
+        ...PLAYWRIGHT_RAW_REQUEST_BANS,
+      ],
+    },
+  },
+  {
+    files: ["e2e/{journeys,extension}/**/*.{ts,tsx,mjs}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...PLAYWRIGHT_RETRY_AND_WORKER_BANS,
+        ...OWNED_MODULE_MOCK_BANS,
+        ...VACUOUS_TEST_BANS,
+        FAKE_TIMER_BAN,
+        ...SLEEP_BANS,
+        DISABLED_TEST_BAN,
+        ...PLAYWRIGHT_RAW_REQUEST_BANS,
+        ...PLAYWRIGHT_ROUTE_BANS,
+      ],
+    },
+  },
+  {
+    files: ["e2e/request.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...PLAYWRIGHT_RETRY_AND_WORKER_BANS,
+        ...OWNED_MODULE_MOCK_BANS,
+        FAKE_TIMER_BAN,
+        ...SLEEP_BANS,
+        DISABLED_TEST_BAN,
+      ],
     },
   },
 ];

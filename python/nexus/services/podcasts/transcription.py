@@ -114,7 +114,6 @@ class TranscriptionRunResult:
     job_status: str | None = None
     error_code: str | None = None
     segment_count: int | None = None
-    provider_fixture: dict[str, Any] | None = None
 
 
 def _semantic_index_requires_repair(
@@ -1276,7 +1275,6 @@ def run_podcast_transcription_now(
         return TranscriptionRunResult(
             status="completed",
             segment_count=len(transcript_segments),
-            provider_fixture=transcription_result.provider_fixture,
         )
 
     if transcription_status == "completed":

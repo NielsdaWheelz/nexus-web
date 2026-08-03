@@ -1,0 +1,19 @@
+diff --git a/apps/web/src/lib/api/proxy.ts b/apps/web/src/lib/api/proxy.ts
+--- a/apps/web/src/lib/api/proxy.ts
++++ b/apps/web/src/lib/api/proxy.ts
+@@ -469,6 +469,6 @@ export async function proxyToFastAPIWithDeps(
+       response.status === 304
+         ? null
+-        : response.body;
++        : await response.arrayBuffer();
+     const proxied = new NextResponse(responseBody, {
+       status: response.status,
+       statusText: response.statusText,
+@@ -825,6 +825,6 @@ export async function proxyExtensionToFastAPI(
+       response.status === 304
+         ? null
+-        : response.body;
++        : await response.arrayBuffer();
+     return new Response(responseBody, {
+       status: response.status,
+       statusText: response.statusText,

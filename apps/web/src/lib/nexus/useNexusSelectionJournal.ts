@@ -70,17 +70,14 @@ export function useNexusSelectionJournal({
     }
   }, []);
 
-  const send = useCallback(
-    (entry: QueuedSelection, signal?: AbortSignal) => {
-      return apiFetch("/api/me/nexus-selections", {
-        method: "POST",
-        keepalive: true,
-        body: JSON.stringify(entry.request),
-        signal,
-      });
-    },
-    [],
-  );
+  const send = useCallback((entry: QueuedSelection, signal?: AbortSignal) => {
+    return apiFetch("/api/me/nexus-selections", {
+      method: "POST",
+      keepalive: true,
+      body: JSON.stringify(entry.request),
+      signal,
+    });
+  }, []);
 
   const escalateDrainDefect = useCallback((error: unknown) => {
     window.setTimeout(() => {

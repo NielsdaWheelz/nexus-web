@@ -51,40 +51,31 @@ Open `http://localhost:3000`.
 
 ## Daily Commands
 
-Use `make help` for the canonical list.
-
-Core:
+Use `make help` for product build/run operations. `./scripts/test` is the sole
+test and verification API.
 
 ```bash
-make check
-make audit
-make test-unit
-make test
-make test-e2e-env
-make test-e2e
-make test-real-media
-make test-live-providers
-make verify
-make verify-full
+./scripts/test changed
+./scripts/test confidence
+./scripts/test pr
+./scripts/test full
+./scripts/test doctor
 ```
 
-Focused targets:
+Scheduled/operator workflows additionally own `nightly` and `release`.
+`./scripts/test clean` deletes exact ledger-owned run resources, stops the
+recorded workspace-local Supabase/Compose projects, removes their test-only
+volumes, and deletes `.nexus-test/`. It preserves every unrecorded resource.
+Use `./scripts/test list --json` for the machine-readable capability registry.
+
+Product operations remain Make targets:
 
 ```bash
-make type-back
-make check-workflows
-make test-back-unit
-make test-back-integration
-make test-front-unit
-make test-front-browser
-make test-migrations
-make test-supabase
-make test-e2e-env
-make verify-android
-# Requires Android release signing inputs.
-# make verify-android-release
-make test-e2e-ui
-make seed-real-media-e2e
+make setup
+make dev
+make build
+make build-android
+make smoke
 ```
 
 ## Environment
@@ -92,29 +83,14 @@ make seed-real-media-e2e
 - `.env.example` is the source of truth for environment variables and defaults.
 - `make setup` generates local `.env` and `apps/web/.env.local`.
 - `make dev` writes the live Supabase Auth public URL and anon key to `.dev-ports`.
-- `make test-e2e-env` is the fast, no-service-start Supabase E2E env resolver
-  preflight. E2E-family Make targets run it before starting Docker, Supabase,
-  browsers, migrations, or Playwright.
-- `make test-e2e` owns local Supabase startup, admin bootstrap, and E2E user
-  seeding. Direct Playwright commands from `e2e/` require an already-running
-  local Supabase stack; pass `SUPABASE_AUTH_ADMIN_KEY` only as command-scoped
-  shell env, never through app or deploy env files.
-- Test wrappers choose and hold free Postgres, MinIO, API, web, and local
-  Supabase Auth ports for each run. `TEST_POSTGRES_PORT`, `TEST_MINIO_PORT`,
-  `TEST_API_PORT`, `TEST_WEB_PORT`, and `TEST_SUPABASE_*_PORT` force exact
-  ports and fail if they cannot bind.
+- The test controller owns one persistent workspace-local
+  PostgreSQL/MinIO/Supabase-test stack and records it under `.nexus-test/`.
+  Each run gets its own database, bucket, users, and app processes. It rejects
+  caller-supplied or production-shaped resource configuration before contact.
+- Direct runner commands are debugging tools only. Repository confidence and
+  cleanup claims use `./scripts/test`.
 - Android builds require `NEXUS_GOOGLE_WEB_CLIENT_ID`; `.env.example` owns the
   contract, and local/CI environment owns the value.
-
-Real-media gates are strict. `make test-real-media` runs deterministic backend
-and Playwright acceptance coverage, requires Supabase Auth plus local
-Postgres/MinIO, uses checked provider fixtures including deterministic fixture
-embeddings, and seeds the browser corpus through the product paths.
-`make test-live-providers` owns the strict backend live-provider gate plus the
-shared `provider_runtime` live matrix for OpenAI, Anthropic, Gemini,
-OpenRouter, Cloudflare, embeddings, and transcription. The default Playwright
-project covers deterministic seeded feature flows; the real-media project
-covers deterministic real-media acceptance flows.
 
 Local application data is stored in the standalone Docker Compose Postgres
 container on `localhost:54320`. Local uploads use MinIO through the same
@@ -133,13 +109,11 @@ link to the stable latest-release assets:
 - `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk`
 - `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk.sha256`
 
-Create an `android-v*` tag and let the Android APK Release workflow build one
-draft APK. Install that exact draft asset on a physical device and verify App
-Links and login. Promote only by manually dispatching the workflow with the
-same tag and the device-verified APK SHA-256; promotion verifies and publishes
-the existing draft asset without rebuilding, signing, uploading, or replacing
-assets. The stable asset serves `/android`; versioned assets such as
-`nexus-android-v0.1.0.apk` remain available for tag `android-v0.1.0`.
+Create an existing `android-v*` tag, run the Protected release verification workflow for
+that tag, install the APK from the draft release on a physical device, verify
+App Links and login, then rerun the workflow with `publish_stable=true`. The
+workflow uploads stable assets for `/android` plus versioned assets such as
+`nexus-android-v0.1.0.apk` for tag `android-v0.1.0`.
 
 ## Repository Map
 

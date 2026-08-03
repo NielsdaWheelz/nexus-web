@@ -2,10 +2,8 @@
 
 ``run_llm_task`` owns the mechanics every LLM task body used to hand-copy: one
 DB session, one fresh event loop, one ``httpx.AsyncClient`` (per-kind timeout
-and pool limits), one ``ExecutionRuntime`` construction — the production
-runtime (delegating to ``provider_runtime.ProviderRuntime``) or the real-media
-fixture runtime, keyed solely on ``settings.real_media_provider_fixtures`` (no
-enable flags: platform keys are the only source of provider availability;
+and pool limits), one production ``ExecutionRuntime`` construction delegating
+to ``provider_runtime.ProviderRuntime`` (platform keys are the only source of provider availability;
 ``services/llm_credentials.py`` is the read side) — the worker exception
 boundary, and teardown. The handler owns everything domain-specific: payload
 semantics, the ``llm_execution.execute_generation``/``execute_generation_
@@ -24,11 +22,10 @@ import httpx
 from provider_runtime import ProviderRuntime
 from sqlalchemy.orm import Session
 
-from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services.llm_execution import ExecutionRuntime, ProductionExecutionRuntime
-from nexus.services.real_media_fixture_llm import RealMediaFixtureExecutionRuntime
+from nexus.services.provider_http import provider_request_event_hooks
 
 logger = get_logger(__name__)
 
@@ -55,7 +52,6 @@ def run_llm_task[R](
     failure and returns the task result); without one the exception propagates
     to the queue's retry policy.
     """
-    settings = get_settings()
     db = get_session_factory()()
 
     async def _call() -> R:
@@ -65,14 +61,9 @@ def run_llm_task[R](
                 max_connections=spec.http_limits[0],
                 max_keepalive_connections=spec.http_limits[1],
             ),
+            event_hooks=provider_request_event_hooks(),
         ) as client:
-            runtime: ExecutionRuntime
-            if settings.real_media_provider_fixtures:
-                # Fixture runs must never reach real providers, whatever the
-                # kind — llm_execution is the sole caller of either runtime.
-                runtime = RealMediaFixtureExecutionRuntime()
-            else:
-                runtime = ProductionExecutionRuntime(ProviderRuntime(client))
+            runtime: ExecutionRuntime = ProductionExecutionRuntime(ProviderRuntime(client))
             return await handler(db, runtime, client)
 
     loop = asyncio.new_event_loop()

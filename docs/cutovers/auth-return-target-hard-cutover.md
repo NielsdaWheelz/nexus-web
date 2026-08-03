@@ -114,7 +114,7 @@ Repo rules:
 - `docs/rules/layers.md`: middleware classifies sessions and gates pages; DAL is
   the verified-session boundary; BFF routes and API clients do not own business
   policy.
-- `docs/local-rules/testing_standards.md`: auth/session behavior needs real-stack E2E
+- `docs/local-rules/testing-standards.md`: auth/session behavior needs real-stack E2E
   coverage where framework routing matters.
 
 ## Pre-cutover behavior map

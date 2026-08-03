@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 from typing import Any
 
-from nexus.config import get_settings, real_media_provider_fixtures_requested
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.services.net.safe_fetch import safe_get
@@ -18,12 +16,6 @@ logger = get_logger(__name__)
 
 _TRANSCRIPT_TIMEOUT_SECONDS = 15.0
 _MAX_TRANSCRIPT_BYTES = 5 * 1024 * 1024
-
-# Real-media crew-4 transcript fixture size. The same fixture file
-# (nasa-hwhap-crew4-transcript.txt) is also size-checked in
-# nexus/services/podcasts/deepgram_adapter.py; keep these two in sync if the
-# fixture content changes.
-_CREW4_FIXTURE_BYTES = 753
 
 _SOURCE_TYPE_PRIORITY = {
     "vtt": 0,
@@ -69,14 +61,6 @@ def fetch_rss_transcript(
         episode_language=episode_language,
         feed_language=feed_language,
     )
-    if real_media_provider_fixtures_requested():
-        settings = get_settings()
-        if settings.real_media_provider_fixtures:
-            return _fetch_real_media_fixture_transcript(
-                ordered_refs,
-                fixture_dir=settings.real_media_fixture_dir,
-                episode_duration_ms=episode_duration_ms,
-            )
     if not ordered_refs:
         return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
 
@@ -135,63 +119,6 @@ def fetch_rss_transcript(
         }
 
     return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
-
-
-def _fetch_real_media_fixture_transcript(
-    ordered_refs: list[dict[str, Any]],
-    *,
-    fixture_dir: str | None,
-    episode_duration_ms: int | None,
-) -> dict[str, Any]:
-    expected_url = (
-        "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/"
-        "the-crew-4-astronauts/transcript.txt"
-    )
-    if not any(ref["url"] == expected_url and ref["source_type"] == "text" for ref in ordered_refs):
-        return _failure(
-            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-            "No real-media RSS transcript fixture for requested refs",
-        )
-    if fixture_dir is None:
-        return _failure(
-            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-            "REAL_MEDIA_FIXTURE_DIR is required for RSS transcript fixtures",
-        )
-
-    path = Path(fixture_dir) / "nasa-hwhap-crew4-transcript.txt"
-    try:
-        content = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        return _failure(
-            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-            f"RSS transcript fixture unavailable: {exc}",
-        )
-
-    payload = content.encode("utf-8")
-    if len(payload) != _CREW4_FIXTURE_BYTES:
-        return _failure(
-            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-            "RSS transcript fixture size mismatch",
-        )
-
-    segments = parse_plain_text_transcript(content, episode_duration_ms=episode_duration_ms)
-    if not segments:
-        return _failure(
-            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-            "RSS transcript fixture had no segments",
-        )
-    return {
-        "status": "completed",
-        "segments": segments,
-        "error_code": None,
-        "error_message": None,
-        "source_type": "text",
-        "provider_fixture": {
-            "path": str(path),
-            "byte_length": len(payload),
-            "source_url": expected_url,
-        },
-    }
 
 
 def _order_transcript_refs(

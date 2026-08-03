@@ -77,6 +77,7 @@ from nexus.responses import (
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.llm_profiles import validate_profiles
+from nexus.services.provider_http import provider_request_event_hooks
 
 logger = get_logger(__name__)
 
@@ -182,6 +183,7 @@ async def lifespan(app: FastAPI):
     app.state.httpx_client = httpx.AsyncClient(
         timeout=httpx.Timeout(60.0, connect=10.0),
         limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        event_hooks=provider_request_event_hooks(settings),
     )
 
     app.state.web_search_provider = (

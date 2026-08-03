@@ -77,7 +77,7 @@ the owner and replaces it with a resource-subject contract.
   business behavior.
 - `docs/rules/correctness.md` requires typed boundary parsing and illegal states
   made unrepresentable.
-- `docs/local-rules/testing_standards.md` requires behavior tests at public owner
+- `docs/local-rules/testing-standards.md` requires behavior tests at public owner
   boundaries, not implementation-shape tests.
 
 ## SME Thesis

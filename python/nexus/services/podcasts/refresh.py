@@ -5,17 +5,18 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, cast
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.db.errors import TransactionRestart
-from nexus.db.retries import retry_serializable
+from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import enqueue_unique_job, promote_unclaimed_job
@@ -124,8 +125,8 @@ def aggregate_refresh_item_statuses(
 ) -> RefreshAggregation:
     counts = {status: 0 for status in _TERMINAL_ITEM_STATUSES | _ACTIVE_ITEM_STATUSES}
     new_episode_count = 0
-    for status, new_count in items:
-        counts[status] += 1
+    for item_status, new_count in items:
+        counts[item_status] += 1
         new_episode_count += int(new_count)
 
     requested = len(items)
@@ -229,7 +230,7 @@ def _lock_subscription(
     db: Session,
     *,
     subscription_id: UUID,
-) -> Mapping[str, Any] | None:
+) -> RowMapping | None:
     return (
         db.execute(
             text(
@@ -250,12 +251,12 @@ def _lock_subscription(
 
 
 def _require_subscription_identity(
-    row: Mapping[str, Any] | None,
+    row: RowMapping | None,
     *,
     subscription_id: UUID,
     user_id: UUID,
     podcast_id: UUID,
-) -> Mapping[str, Any]:
+) -> RowMapping:
     if (
         row is None
         or UUID(str(row["id"])) != subscription_id
@@ -627,7 +628,7 @@ def create_manual_refresh_run(
                 requested_count=snapshot.requested_count,
             )
 
-    return retry_serializable(db, "create_podcast_refresh_run", attempt)
+    return retry_read_committed(db, "create_podcast_refresh_run", attempt)
 
 
 def admit_due_refresh_runs(db: Session, *, limit: int) -> DueAdmissionResult:
@@ -653,7 +654,7 @@ def admit_due_refresh_runs(db: Session, *, limit: int) -> DueAdmissionResult:
                 .mappings()
                 .all()
             )
-            grouped: dict[UUID, list[Mapping[str, Any]]] = defaultdict(list)
+            grouped: dict[UUID, list[RowMapping]] = defaultdict(list)
             for row in rows:
                 grouped[UUID(str(row["user_id"]))].append(row)
 

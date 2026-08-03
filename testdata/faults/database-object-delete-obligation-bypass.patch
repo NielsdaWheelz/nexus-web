@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/media_deletion.py b/python/nexus/services/media_deletion.py
+--- a/python/nexus/services/media_deletion.py
++++ b/python/nexus/services/media_deletion.py
+@@ -472,7 +472,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
+     ).fetchone()
+     if media is None or media[0] not in _DOCUMENT_KINDS:
+         return None
+-    if _total_reference_count(db, media_id) != 0:
++    if _total_reference_count(db, media_id) == 0:
+         return None
+ 
+     storage_paths = enumerate_media_storage_paths(db, media_id)

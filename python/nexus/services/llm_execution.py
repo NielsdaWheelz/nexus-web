@@ -3,8 +3,7 @@
 ``execute_generation`` / ``execute_generation_stream`` are the only nexus
 callers of the ``ExecutionRuntime`` seam (production
 :class:`ProductionExecutionRuntime` delegating to
-``provider_runtime.ProviderRuntime``, or a real-media fixture — see
-``nexus.tasks.llm_task``) and of ``nexus.services.llm_ledger``. Every owner
+``provider_runtime.ProviderRuntime``) and of ``nexus.services.llm_ledger``. Every owner
 (chat, oracle, synapse, media summary/enrichment, artifact revisions, dawn
 write) builds one ``GenerationRequest`` per provider call and calls one of
 these two functions; neither ever appears twice in one call.
@@ -54,7 +53,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 from uuid import UUID
 
@@ -168,14 +167,10 @@ class CallOutcome:
 
 
 # =============================================================================
-# Fixture seam (Option B — ``docs/cutovers/llm-provider-runtime-hard-cutover.md``
-# "Fixture seam"): a small structural runtime llm_execution dispatches
-# through. Production delegates to ``provider_runtime.ProviderRuntime``
-# (ignoring ``intent`` — the finalized plan is authoritative); a real-media
-# fixture impl (``nexus.services.real_media_fixture_llm``) scripts outcomes
-# from the typed ``intent`` instead. ``nexus.tasks.llm_task`` constructs one
-# or the other, keyed on ``settings.real_media_provider_fixtures`` — no
-# enable flags. llm_execution is the sole caller of either.
+# The structural runtime seam keeps generation orchestration independent of
+# the provider implementation. Production composition always delegates to
+# ``provider_runtime.ProviderRuntime``; deterministic provider behavior belongs
+# at the external protocol boundary in the test harness.
 # =============================================================================
 
 
@@ -237,6 +232,7 @@ async def execute_generation(
     runtime: ExecutionRuntime,
     settings: Settings,
     before_dispatch: Callable[[], None] | None = None,
+    single_dispatch: bool = False,
 ) -> CallOutcome:
     _check_entitlement(session_factory, user_id=req.owner.user_id)
 
@@ -261,6 +257,8 @@ async def execute_generation(
             latency_ms=None,
         )
         return CallOutcome(generation_id, rejected_outcome, facts.support_id)
+    if single_dispatch:
+        plan = _single_dispatch_plan(plan)
 
     rate_limiter = get_rate_limiter()
     _reserve(
@@ -340,6 +338,7 @@ async def execute_generation_stream(
     settings: Settings,
     cancel: CancelSignal,
     before_dispatch: Callable[[], None] | None = None,
+    single_dispatch: bool = False,
 ) -> AsyncIterator[RuntimeStreamEvent]:
     _check_entitlement(session_factory, user_id=req.owner.user_id)
 
@@ -365,6 +364,8 @@ async def execute_generation_stream(
         )
         yield RuntimeStreamEvent(seq=1, event=TerminalEvent(outcome=synthetic))
         return
+    if single_dispatch:
+        plan = _single_dispatch_plan(plan)
 
     rate_limiter = get_rate_limiter()
     _reserve(
@@ -415,6 +416,11 @@ async def execute_generation_stream(
                     usage=facts.usage,
                 )
             yield event
+    except GeneratorExit:
+        # Async-generator closure is the normal consumer-interruption path.
+        # Leave ``defect`` empty so the durable terminal facts use the exact
+        # provider-stream interruption contract below.
+        raise
     except BaseException as exc:
         defect = exc
         raise
@@ -464,6 +470,14 @@ def _plan(
             detail=exc.message,
         )
         raise
+
+
+def _single_dispatch_plan(plan: FinalizedProviderCall) -> FinalizedProviderCall:
+    """Keep an ambiguity-sensitive owner to one provider transport attempt."""
+    return replace(
+        plan,
+        retry_policy=replace(plan.retry_policy, max_attempts=1),
+    )
 
 
 def _reserve(

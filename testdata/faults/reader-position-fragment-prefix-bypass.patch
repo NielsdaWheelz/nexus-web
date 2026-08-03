@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/reader/readerDocumentPosition.ts b/apps/web/src/lib/reader/readerDocumentPosition.ts
+--- a/apps/web/src/lib/reader/readerDocumentPosition.ts
++++ b/apps/web/src/lib/reader/readerDocumentPosition.ts
+@@ -49,7 +49,7 @@ function projectTextPoint(
+     if (fragment.fragmentId === point.fragmentId) {
+       pointFragmentLength = fragment.length;
+     } else if (pointFragmentLength === null) {
+-      prefixLength += fragment.length;
++      prefixLength = 0;
+     }
+   }
+   const totalLength = documentProjection.fragments.reduce(

@@ -1,0 +1,26 @@
+diff --git a/apps/web/src/lib/workspace/store.tsx b/apps/web/src/lib/workspace/store.tsx
+index 07bd8568..e57242e6 100644
+--- a/apps/web/src/lib/workspace/store.tsx
++++ b/apps/web/src/lib/workspace/store.tsx
+@@ -153,13 +153,16 @@ function workspaceReducer(
+   switch (action.type) {
+     case "activate_pane": {
+       const panes = getWorkspacePrimaryPanes(state);
+-      if (
+-        state.activePrimaryPaneId === action.paneId ||
+-        !panes.some((p) => p.id === action.paneId && p.visibility === "visible")
+-      ) {
++      if (!panes.some((p) => p.id === action.paneId && p.visibility === "visible")) {
+         return state;
+       }
+-      return { ...state, activePrimaryPaneId: action.paneId };
++      return {
++        ...state,
++        activePrimaryPaneId:
++          state.activePrimaryPaneId === action.paneId
++            ? `${action.paneId}-reactivated`
++            : action.paneId,
++      };
+     }
+ 
+     case "create_pane": {

@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts b/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts
+--- a/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts
++++ b/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts
+@@ -59,7 +59,6 @@ export function usePendingDocumentMapPulse({
+     if (pending.target.highlightId) {
++      pendingRef.current = null;
+       return scrollHighlight(pending.target.highlightId, () => {
+-        if (pendingRef.current !== pending) return;
+-        pendingRef.current = null;
+         dispatchPulse(pending.target);
+       });
+     }

@@ -236,22 +236,9 @@ resolved through the `highlight:<id>` resource and graph citation path.
 
 Keep these tests aligned with this module contract:
 
-- `python/tests/test_highlights.py`
-- `python/tests/test_highlight_schemas.py`
-- `python/tests/test_pdf_highlights_integration.py`
-- `python/tests/test_pdf_highlight_geometry.py`
-- `python/tests/test_reader_selection.py`
-- `python/tests/test_resource_graph_resolve.py`
-- `python/tests/test_read_resource_tool.py`
-- `python/tests/test_passage_anchors.py`
-- `python/tests/test_user_relations.py`
-- `apps/web/src/lib/highlights/*.test.ts`
-- `apps/web/src/lib/conversations/chatRunBody.test.ts`
-- `apps/web/src/components/highlights/*.test.tsx`
-- `apps/web/src/components/reader/document-map/EvidencePaneSurface.test.tsx`
-- `apps/web/src/components/reader/MarginRail.test.tsx`
-- `apps/web/src/__tests__/components/SelectionPopover.test.tsx`
-- `apps/web/src/components/chat/QuotedPassageCard.test.tsx`
-- `e2e/tests/quote-attach-references.spec.ts`
-- `e2e/tests/pdf-reader.spec.ts`
-- `e2e/tests/universal-linking.spec.ts`
+- `python/tests/service/test_citation_provenance.py`
+- `python/tests/service/test_auth_privacy.py`
+- `apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts`
+- `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts`
+- `testdata/proofs.json` owns the source-to-proof mapping for broader highlight
+  changes.

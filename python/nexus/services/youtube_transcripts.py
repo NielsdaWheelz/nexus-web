@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from requests import Session
 from youtube_transcript_api.proxies import ProxyConfig, RequestsProxyConfigDict
 
-from nexus.config import get_settings, real_media_provider_fixtures_requested
+from nexus.config import get_settings
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
 
@@ -81,11 +80,6 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
     video_id = str(provider_video_id or "").strip()
     if not video_id:
         return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
-
-    if real_media_provider_fixtures_requested():
-        settings = get_settings()
-        if settings.real_media_provider_fixtures:
-            return _fetch_real_media_fixture(video_id, settings.real_media_fixture_dir)
 
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
@@ -164,53 +158,6 @@ def _proxy_config_from_settings(settings: Any) -> _TranscriptProxyConfig | None:
         proxy_url,
         retries_when_blocked=int(settings.youtube_transcript_proxy_retries_when_blocked),
     )
-
-
-def _fetch_real_media_fixture(video_id: str, fixture_dir: str | None) -> dict[str, Any]:
-    if video_id != "drrP_Iss0gA":
-        return _failure(
-            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-            f"No real-media YouTube transcript fixture for {video_id}",
-        )
-    if fixture_dir is None:
-        return _failure(
-            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-            "REAL_MEDIA_FIXTURE_DIR is required for transcript fixtures",
-        )
-
-    path = Path(fixture_dir) / "nasa-picturing-earth-behind-scenes-captions.srt"
-    try:
-        payload = path.read_bytes()
-    except OSError as exc:
-        return _failure(
-            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-            f"YouTube transcript fixture unavailable: {exc}",
-        )
-
-    if len(payload) != 9_805:
-        return _failure(
-            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-            "YouTube transcript fixture size mismatch",
-        )
-
-    from nexus.services.rss_transcript_fetch import parse_srt_transcript
-
-    content = payload.decode("utf-8", errors="ignore").replace("\xa0", " ")
-    segments = parse_srt_transcript(content)
-    if not segments:
-        return _failure(
-            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-            "YouTube transcript fixture had no segments",
-        )
-    return {
-        "status": "completed",
-        "segments": segments,
-        "provider_fixture": {
-            "path": str(path),
-            "byte_length": len(payload),
-            "provider_video_id": video_id,
-        },
-    }
 
 
 def _failure(error_code: str, error_message: str) -> dict[str, Any]:

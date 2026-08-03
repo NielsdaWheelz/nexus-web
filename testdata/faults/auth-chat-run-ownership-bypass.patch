@@ -1,0 +1,7 @@
+diff --git a/python/nexus/services/chat_runs.py b/python/nexus/services/chat_runs.py
+--- a/python/nexus/services/chat_runs.py
++++ b/python/nexus/services/chat_runs.py
+@@ -670,2 +670,3 @@ def get_chat_run(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
++    viewer_id = cast(ChatRun, db.get(ChatRun, run_id)).owner_user_id
+     run = get_run_for_owner(db, viewer_id, run_id)
+     return build_chat_run_response(db, viewer_id, run)

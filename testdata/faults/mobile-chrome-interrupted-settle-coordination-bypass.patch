@@ -1,0 +1,10 @@
+diff --git a/apps/web/src/lib/workspace/mobileChrome.tsx b/apps/web/src/lib/workspace/mobileChrome.tsx
+--- a/apps/web/src/lib/workspace/mobileChrome.tsx
++++ b/apps/web/src/lib/workspace/mobileChrome.tsx
+@@ -200,5 +200,5 @@ function transitionDeadlineMs(surface: HTMLElement): number {
+ function cancelCollapseTransitions(surfaces: readonly HTMLElement[]): void {
+-  for (const surface of surfaces) {
++  for (const surface of surfaces.slice(0, 0)) {
+     for (const animation of surface.getAnimations()) {
+       if (
+         (animation as Partial<CSSTransition>).transitionProperty ===

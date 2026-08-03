@@ -47,7 +47,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const hv = requestUrl.searchParams.get("hv");
     const errorCode = requestUrl.searchParams.get("error");
     const target = parseAuthReturnTarget(requestUrl.searchParams.get("next"));
-    const redirectOrigin = resolveCallbackRedirectOrigin(request, requestUrl);
+    const redirectOrigin = resolveCallbackRedirectOrigin(request);
 
     if (errorCode) {
       return noStore(

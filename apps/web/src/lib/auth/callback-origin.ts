@@ -99,11 +99,10 @@ function resolveAllowlistedRedirectOrigin(
 }
 
 export function resolveCallbackRedirectOrigin(
-  request: Request,
-  requestUrl: URL
+  request: Request
 ): string {
   return resolveAllowlistedRedirectOrigin(
-    requestUrl.origin,
+    getHostOrigin(request.headers),
     getForwardedOrigin(request.headers)
   );
 }

@@ -622,9 +622,10 @@ rather than proposed and reconciled after the fact.
 `dossier_build`, `media_unit_build`, `enrich_metadata`) run their bodies inside
 one shared worker envelope,
 `tasks/llm_task.py:run_llm_task` — the sole owner of the event loop, `httpx`
-client, and `ExecutionRuntime` construction (production or the real-media
-fixture, keyed only on `settings.real_media_provider_fixtures`, plus the
-worker-exception boundary). Every provider call inside a job goes through
+client, production `ExecutionRuntime` construction, and worker-exception
+boundary. Deterministic tests exercise a loopback provider protocol server
+through the same configured HTTP boundary; product code has no fixture mode.
+Every provider call inside a job goes through
 `services/llm_execution.py:execute_generation`/`execute_generation_stream` —
 the sole caller of the ledger — leaving one `llm_calls` row on every terminal
 path (success, defect, or entitlement/budget denial), with the failure
@@ -1591,7 +1592,8 @@ they open over Resume and never become panes.
 - **Measurement loop.** `nexus:web-vitals` → `WebVitalsReporter` subscriber →
   `sendBeacon` → BFF `/api/telemetry/web-vitals` → FastAPI `/telemetry/web-vitals` →
   structlog `rum.web_vital` (request-id-correlated). A CI **First Load JS budget**
-  (`make check-bundle`, ≤ 115 kB gz vs ~104 kB measured) runs in `build-front`. Kept
+  (typed `bundle` capability, ≤ 115 kB gz vs ~104 kB measured) runs in the
+  strict-CSP standalone build. Kept
   constraints: nonce-CSP + **streaming only** — no PPR, no `next/dynamic`, no
   server-emitted `modulepreload` (chunk URLs are unknown server-side); `React.lazy` +
   runtime `preloadPane` (warming all restored visible panes) stays the splitting
@@ -1652,18 +1654,18 @@ pipeline.
 
 ## 11. Build, run, deploy, env, migrations
 
-The `Makefile` is the single entrypoint; `make help` is canonical. Targets group as:
+The `Makefile` owns product setup, development, build, migration, smoke, and
+deployment helpers; `make help` is canonical for those operations. Testing has
+one separate typed entrypoint, `./scripts/test`.
 
 - **Setup / dev loop**: `make setup`, `make dev` (Docker Compose Postgres + MinIO +
   Supabase-local Auth), then `make api`, `make web`,
   `make worker-interactive`, and `make worker-background` in separate
   terminals. Ports are written to `.dev-ports`.
-- **Quality gates**: `make check` (ruff + pyright + eslint/tsc + workflow lint),
-  `make audit`, `make format`.
-- **Tests**: see §12.
+- **Formatting**: `make format`, `make format-back`, `make fix-front`.
+- **Tests and verification**: see §12; no Make aliases.
 - **Build**: `make build` (Next.js), `make build-android[-release]`.
-- **Composite**: `make verify` (check + build + test), `make verify-full` (+
-  real-media + live-providers + e2e), `make smoke`.
+- **Smoke**: `make smoke`, `make smoke-auth-redirects`.
 
 **Deploy** (`deployment.md`, `deploy/`): the frontend deploys to **Vercel on push
 to `main`** (Git integration). The backend deploys via `deploy/hetzner/deploy.sh`:
@@ -1681,8 +1683,9 @@ provider state with `deploy/supabase/verify-auth-redirects.sh`, not trusted as a
 manual dashboard checklist.
 
 **Migrations** are hand-written Alembic files (`migrations/alembic/versions/`,
-linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. Test: a dedicated
-`nexus_test_migrations` DB. Prod: run on every deploy before services start.
+linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. Test: the
+controller creates a disposable `nexus_migration_<run-id>` database when that
+capability is selected. Prod: run on every deploy before services start.
 
 **Environment**: `.env.example` is the source of truth for every variable
 ([`rules/codebase.md`](rules/codebase.md)); `make setup` generates local
@@ -1691,53 +1694,37 @@ Auth (issuer/JWKS/audiences), internal secret, encryption key, LLM providers +
 flags + rate limits, Brave Browse/chat search, streaming (token signing key + base URL +
 CORS), podcasts, browse providers, worker schedules, Stripe. Worker lanes are
 Compose-owned rather than stored in the merged production env.
-E2E local Supabase is owned by `scripts/with_supabase_services.sh` plus
-`e2e/supabase-env.cjs`: the wrapper starts a per-run Auth stack with a temporary
-Supabase workdir and dynamically allocated ports, the resolver reads
-public/admin values from that workdir, and `SUPABASE_AUTH_ADMIN_KEY` remains
-trusted bootstrap-only for Playwright user/session seeding. Next.js, FastAPI,
-worker, and migration runtimes scrub Supabase admin, database, service-role, and
-test-harness selector env before startup. `make test-e2e-env` is the fast
-no-service-start resolver contract preflight that E2E-family Make targets run
-before service startup.
+The test controller owns a persistent workspace-local PostgreSQL/MinIO and
+Supabase Auth stack, per-run database/bucket state, and per-scenario users. It
+passes the Supabase admin key only to controller-owned user lifecycle code;
+Next.js, FastAPI, worker, and migration processes receive only their explicit
+test allowlists.
 
-**CI** (`.github/workflows/ci.yml`): static checks, audit, backend unit, backend
-DB integration + migrations, frontend unit + browser, build, Android, E2E env
-preflight, sharded E2E, real-media, and (secrets-gated) live-providers.
+**CI**: `.github/workflows/ci.yml` invokes only `./scripts/test pr` and retains
+the same-run summary even on failure. Protected manual/scheduled workflows own
+`nightly` and `release`; paid providers and signed release proof never run in
+ordinary PR CI.
 
 ---
 
 ## 12. Testing strategy
 
-The doctrine is in [`local-rules/testing_standards.md`](local-rules/testing_standards.md):
-**test behavior not implementation**, a testing trophy weighted to **E2E** (real
-stack, real DB/MinIO/Supabase-local), with backend integration as a separate tier.
-**Mock only external boundaries** — never `nexus.services.*`, DB sessions, the BFF
-proxy, internal components, or `next/navigation`; no MSW. ORM-backed factories, not
-raw SQL. Every backend test is marked (`unit`/`integration`/`slow`/`supabase`).
+[`local-rules/testing-standards.md`](local-rules/testing-standards.md) is the
+authoritative contract. `./scripts/test` owns selection, static policy, local
+runtime, runners, cleanup, memory/cost bounds, and versioned evidence.
 
-Tiers:
+The portfolio is outcome-heavy: comprehensive preventive/static proof; a small
+semantic kernel; a dominant middle of real-PostgreSQL service and real-Chromium
+component proof; ten thin product journeys; and separately scheduled
+provider/device/release proof. Owned Nexus behavior is not mocked. Only an
+external boundary may use a small fake or protocol fixture.
 
-| Tier                | Scope                                                                                                                                                  | Real vs mocked                                                   | Command                      |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ---------------------------- |
-| Static              | ruff/pyright/eslint/tsc/actionlint                                                                                                                     | —                                                                | `make check`                 |
-| Backend unit        | pure logic                                                                                                                                             | no I/O, no mocks                                                 | `make test-back-unit`        |
-| Frontend unit       | pure TS                                                                                                                                                | Node env                                                         | `make test-front-unit`       |
-| Component           | React in real Chromium                                                                                                                                 | only `next/image` shim                                           | `make test-front-browser`    |
-| Backend integration | FastAPI + real Postgres                                                                                                                                | external boundaries mockable                                     | `make test-back-integration` |
-| Migrations          | Alembic up/down                                                                                                                                        | dedicated DB                                                     | `make test-migrations`       |
-| E2E env preflight   | Supabase env resolver contract                                                                                                                         | no services                                                      | `make test-e2e-env`          |
-| E2E (default)       | user journeys, prod-built web, no-reload API                                                                                                           | full real stack, fixture providers                               | `make test-e2e`              |
-| Real-media          | ingest/search/chat acceptance                                                                                                                          | real code, deterministic fixture LLM + `fixture_hash` embeddings | `make test-real-media`       |
-| Live-providers      | real OpenAI/Anthropic/Gemini/Moonshot/OpenRouter (pinned `provider_runtime` matrix), OpenAI embeddings/transcription, Podcast Index/Deepgram/YouTube/X | live external                                                    | `make test-live-providers`   |
-
-The **real-media vs live-providers** split is the determinism boundary:
-real-media runs real product code but swaps the _external provider edge_ for
-deterministic fixtures (`services/real_media_fixture_llm.py`); an AST scan
-(`tests/real_media/test_no_internal_mocks.py`) mechanically forbids internal mocks
-in that tier. Backend harness: `python/tests/conftest.py` (two DB-isolation models),
-`factories.py`, `support/`. E2E harness: `e2e/playwright.config.ts` (`workers: 1`,
-sharded in CI, `storageState` login reuse, app-API seeding).
+The persistent local services are reused, but every workflow receives a
+template-cloned database, MinIO bucket, run ledger, and scenario-local users.
+All ordinary proof is external-network denied. Playwright has one config under
+`apps/web/e2e/`, one worker, zero retries, strict CSP, fresh contexts, and no
+shared seed/auth state. Priority risks and the canonical cross-language corpus
+are machine-owned by `testdata/proofs.json` and `testdata/manifest.json`.
 
 ---
 
@@ -1818,7 +1805,7 @@ The things most likely to bite you, distilled:
 | Android shell                                                     | `apps/android/app/src/main/`                                                                                                                                                                           |
 | Browser extension                                                 | `apps/extension/`                                                                                                                                                                                      |
 | Build / run / deploy                                              | `Makefile`, `deployment.md`, `deploy/`                                                                                                                                                                 |
-| Tests                                                             | `docs/local-rules/testing_standards.md`, `python/tests/`, `e2e/`, `apps/web/vitest.config.ts`                                                                                                          |
+| Tests                                                             | `docs/local-rules/testing-standards.md`, `python/nexus_test_control/`, `python/tests/`, `apps/web/e2e/`, `apps/web/vitest.config.ts`, `testdata/`                                                        |
 
 ---
 

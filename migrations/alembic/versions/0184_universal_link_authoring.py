@@ -57,9 +57,8 @@ This file is self-contained: the quote normalization, anchor-key encoding,
 normalized matching, context-window, and note-text projection helpers are
 FROZEN LOCAL COPIES, behaviorally identical to
 ``nexus/services/passage_anchors.py`` / ``nexus/services/text_quote.py`` /
-``nexus/services/note_bodies.py`` at this revision (pinned by the gold-vector
-parity test in ``python/tests/test_migrations.py``). Never import runtime
-services here; future drift in the runtime must not change history.
+``nexus/services/note_bodies.py`` as captured at this revision. Never import
+runtime services here; future drift in the runtime must not change history.
 """
 
 from __future__ import annotations
@@ -200,8 +199,8 @@ def _fk_delete_rule(bind, table: str, name: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Frozen identity helpers (parity-pinned against services/passage_anchors.py
-# and services/text_quote.py by the gold-vector test in test_migrations.py)
+# Frozen identity helpers captured from services/passage_anchors.py and
+# services/text_quote.py at this migration revision.
 # ---------------------------------------------------------------------------
 
 

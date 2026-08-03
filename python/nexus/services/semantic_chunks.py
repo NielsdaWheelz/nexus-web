@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import math
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -12,12 +11,11 @@ from typing import Any
 import httpx
 from provider_runtime import EmbeddingCall, Present, ProviderRuntime
 
-from nexus.config import Environment, get_settings
+from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.llm_credentials import embedding_credential
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
 logger = get_logger(__name__)
 
 
@@ -236,10 +234,6 @@ def media_best_peer_rows_sql(eligible_media_relation: str) -> str:
 def current_transcript_embedding_model() -> str:
     settings = get_settings()
     dimensions = transcript_embedding_dimensions()
-    if settings.real_media_provider_fixtures:
-        return f"fixture_hash_v1_{dimensions}"
-    if settings.nexus_env == Environment.TEST:
-        return f"test_hash_v2_{dimensions}"
     normalized_model = re.sub(
         r"[^a-z0-9]+",
         "_",
@@ -249,10 +243,7 @@ def current_transcript_embedding_model() -> str:
 
 
 def transcript_embedding_provider_for_model(model_name: str) -> str:
-    if model_name.startswith("fixture_hash_v1_"):
-        return "fixture"
-    if model_name.startswith("test_hash_v2_"):
-        return "test"
+    del model_name
     return "openai"
 
 
@@ -277,27 +268,6 @@ def _normalize_and_validate_vector(vector: Any, *, dimensions: int) -> list[floa
     if len(normalized) != dimensions:
         raise ValueError(f"Expected embedding dimension {dimensions}, got {len(normalized)}")
     return normalized
-
-
-def build_deterministic_hash_embedding(text: str, *, dimensions: int) -> list[float]:
-    """Build the deterministic fixture/test embedding shared by local semantic stores."""
-    tokens = _TOKEN_RE.findall(str(text or "").lower())
-    if not tokens:
-        return [0.0] * dimensions
-
-    vector = [0.0] * dimensions
-    for token in tokens:
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        # Deterministic signed hashed bag-of-words projection.
-        bucket = int.from_bytes(digest[:4], "big") % dimensions
-        sign = -1.0 if (digest[4] % 2) else 1.0
-        weight = ((int.from_bytes(digest[5:7], "big") % 1000) + 1) / 1000.0
-        vector[bucket] += sign * weight
-
-    norm = math.sqrt(sum(component * component for component in vector))
-    if norm <= 0.0:
-        return [0.0] * dimensions
-    return [component / norm for component in vector]
 
 
 def _validate_embedding_vectors(
@@ -330,7 +300,9 @@ async def _embed_with_openai_async(texts: list[str], *, dimensions: int) -> list
     credential = embedding_credential(settings, "openai")
 
     vectors: list[list[float]] = []
-    async with httpx.AsyncClient() as client:
+    from nexus.services.provider_http import provider_request_event_hooks
+
+    async with httpx.AsyncClient(event_hooks=provider_request_event_hooks(settings)) as client:
         runtime = ProviderRuntime(client)
         for start in range(0, len(texts), 64):
             batch = texts[start : start + 64]
@@ -372,11 +344,6 @@ def build_text_embeddings(texts: list[str]) -> tuple[str, list[list[float]]]:
     if not normalized_texts:
         return model_name, []
 
-    if transcript_embedding_provider_for_model(model_name) in {"fixture", "test"}:
-        return model_name, [
-            build_deterministic_hash_embedding(text, dimensions=dimensions)
-            for text in normalized_texts
-        ]
     return model_name, _embed_with_openai(normalized_texts, dimensions=dimensions)
 
 

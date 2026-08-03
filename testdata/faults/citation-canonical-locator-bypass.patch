@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/resource_graph/citations.py b/python/nexus/services/resource_graph/citations.py
+--- a/python/nexus/services/resource_graph/citations.py
++++ b/python/nexus/services/resource_graph/citations.py
+@@ -262,7 +262,7 @@ def citation_reader_target_for_edge(
+         f"citation edge {edge.id} lost its ordinal/snapshot pair"
+     )
+     target = ResourceRef(scheme=cast("ResourceScheme", edge.target_scheme), id=edge.target_id)
+-    media_id, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=target)
++    media_id, locator = None, None
+     resolved = resolve_ref(db, viewer_id=viewer_id, ref=target)
+     if resolved.missing:
+         target_status = "missing"

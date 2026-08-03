@@ -1,0 +1,10 @@
+diff --git a/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py b/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py
+--- a/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py
++++ b/migrations/alembic/versions/0207_canonicalize_podcast_publication_instants.py
+@@ -18,5 +18,5 @@ depends_on: str | Sequence[str] | None = None
+ _LEGACY_PODCAST_INSTANT_PATTERN = (
+-    r"^[0-9]{4}-[0-9]{2}-[0-9]{2} "
++    r"^never-[0-9]{4}-[0-9]{2}-[0-9]{2} "
+     r"[0-9]{2}:[0-9]{2}:[0-9]{2}"
+     r"([.][0-9]{1,6})?([+-][0-9]{2}:[0-9]{2})?$"
+ )

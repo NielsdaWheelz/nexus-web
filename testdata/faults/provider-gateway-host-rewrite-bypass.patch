@@ -1,0 +1,10 @@
+diff --git a/python/nexus/services/provider_http.py b/python/nexus/services/provider_http.py
+--- a/python/nexus/services/provider_http.py
++++ b/python/nexus/services/provider_http.py
+@@ -31,6 +31,5 @@ def provider_request_event_hooks(
+         if raw_url == _OPENAI_API_BASE_URL or raw_url.startswith(f"{_OPENAI_API_BASE_URL}/"):
+             rewritten = httpx.URL(f"{configured}{raw_url[len(_OPENAI_API_BASE_URL) :]}")
+             request.url = rewritten
+-            request.headers["host"] = rewritten.netloc.decode("ascii")
+ 
+     return {"request": [rewrite_openai_request]}

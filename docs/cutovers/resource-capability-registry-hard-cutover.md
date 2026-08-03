@@ -87,7 +87,7 @@ not re-authored at the call site.
   behavior.
 - `docs/rules/correctness.md` requires typed boundary parsing and illegal states
   made unrepresentable.
-- `docs/local-rules/testing_standards.md` requires behavior tests at owner boundaries,
+- `docs/local-rules/testing-standards.md` requires behavior tests at owner boundaries,
   not implementation-shape tests.
 
 ## SME Thesis

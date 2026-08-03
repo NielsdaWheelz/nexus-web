@@ -56,7 +56,7 @@ Rules this cutover implements:
 - `docs/rules/keys-and-identities.md`: canonical handles need validated types and
   parsers; `parseX` may normalize once at ingress, while `assumeX` defects if an
   already-owned value is not canonical.
-- `docs/rules/testing.md` and `docs/local-rules/testing_standards.md`: validate
+- `docs/rules/testing.md` and `docs/local-rules/testing-standards.md`: validate
   schema/parser behavior with focused unit tests; validate DB/API behavior through
   public service/API surfaces, not internal mocks.
 

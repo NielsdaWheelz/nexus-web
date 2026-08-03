@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/components/chat/ChatComposer.tsx b/apps/web/src/components/chat/ChatComposer.tsx
+--- a/apps/web/src/components/chat/ChatComposer.tsx
++++ b/apps/web/src/components/chat/ChatComposer.tsx
+@@ -392,6 +392,6 @@ export default function ChatComposer({
+       return;
+     }
+-    if (isMobileViewport) {
++    if (false && isMobileViewport) {
+       if (e.metaKey || e.ctrlKey || e.altKey) {
+         e.preventDefault();
+         const { selectionStart, selectionEnd } = e.currentTarget;

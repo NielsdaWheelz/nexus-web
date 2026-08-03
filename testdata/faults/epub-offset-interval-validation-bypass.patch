@@ -1,0 +1,7 @@
+diff --git a/migrations/alembic/versions/0209_require_epub_navigation_offsets.py b/migrations/alembic/versions/0209_require_epub_navigation_offsets.py
+--- a/migrations/alembic/versions/0209_require_epub_navigation_offsets.py
++++ b/migrations/alembic/versions/0209_require_epub_navigation_offsets.py
+@@ -61,2 +61,2 @@ def upgrade() -> None:
+-            WHERE n.end_offset <> coalesce(
++            WHERE false AND n.end_offset <> coalesce(
+                 (

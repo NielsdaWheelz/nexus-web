@@ -1,7 +1,7 @@
 /**
  * Single source of truth for the deployment environment (NEXUS_ENV) and every value that
- * depends on it: the CSP connect origins, the internal-API (BFF) config, and the E2E CSP
- * bypass. Resolved + validated once per process, then frozen — the frontend mirror of the
+ * depends on it: the CSP connect origins and the internal-API (BFF) config. Resolved and
+ * validated once per process, then frozen — the frontend mirror of the
  * backend's python/nexus/config.py (Environment enum + validate-once `get_settings()`).
  *
  * SERVER / DEPLOY ONLY. This module owns NEXUS_INTERNAL_SECRET; import it from middleware,
@@ -17,7 +17,7 @@
  *   - Build/run mode (NODE_ENV):   isDevBuild / isProdBuild — `next start` forces production
  */
 export { isDevBuild, isProdBuild } from "./build-mode";
-import { parseWebOrigin } from "./security/origin";
+import { parseWebOrigin, parseWebOriginList } from "./security/origin";
 
 type NexusEnv = "local" | "test" | "staging" | "prod";
 
@@ -43,13 +43,13 @@ interface ResolvedEnv {
   readonly appPublicOrigin: string;
   /** FastAPI/SSE origin + presigned R2 origin. Origin-only, deduped, validated. */
   readonly connectOrigins: readonly string[];
+  /** Explicit browser media origins beyond the default same-origin/HTTPS policy. */
+  readonly mediaOrigins: readonly string[];
   readonly serverActionAllowedOrigins: readonly string[];
   readonly internalApi: {
     readonly fastApiBaseUrl: string;
     readonly internalSecret: string;
   };
-  /** !isDeployed() && E2E_DISABLE_CSP === "1". staging & prod can never disable CSP. */
-  readonly disableCspForE2E: boolean;
 }
 
 let resolved: ResolvedEnv | null = null;
@@ -66,6 +66,7 @@ export function getEnv(): ResolvedEnv {
   const deployed = env === "staging" || env === "prod";
 
   const connectOrigins = resolveConnectOrigins(deployed);
+  const mediaOrigins = resolveMediaOrigins(deployed);
   validateAuthRedirectOrigins(deployed);
   const serverActionAllowedOrigins = resolveServerActionAllowedOrigins(deployed);
 
@@ -81,11 +82,27 @@ export function getEnv(): ResolvedEnv {
     nexusEnv: env,
     appPublicOrigin,
     connectOrigins,
+    mediaOrigins,
     serverActionAllowedOrigins,
     internalApi: Object.freeze({ fastApiBaseUrl, internalSecret }),
-    disableCspForE2E: !deployed && process.env.E2E_DISABLE_CSP === "1",
   });
   return resolved;
+}
+
+function resolveMediaOrigins(deployed: boolean): readonly string[] {
+  const { origins, invalidValues } = parseWebOriginList(
+    process.env.CSP_MEDIA_ORIGINS,
+  );
+  if (invalidValues.length > 0) {
+    throw new Error(`Invalid CSP_MEDIA_ORIGINS: ${invalidValues.join(", ")}`);
+  }
+  const insecure = origins.find((origin) => origin.protocol !== "https:");
+  if (deployed && insecure) {
+    throw new Error(
+      `CSP_MEDIA_ORIGINS must use HTTPS in staging/prod: ${insecure.origin}`,
+    );
+  }
+  return origins.map((origin) => origin.origin);
 }
 
 function resolveAppPublicOrigin(deployed: boolean): string {
@@ -105,11 +122,6 @@ function resolveAppPublicOrigin(deployed: boolean): string {
     throw new Error(`APP_PUBLIC_URL must use HTTPS in staging/prod: ${rawValue}`);
   }
   return origin.origin;
-}
-
-/** Clears the memo so `vi.stubEnv()` takes effect (mirrors clear_settings_cache). Test-only. */
-export function __resetEnvForTests(): void {
-  resolved = null;
 }
 
 /**

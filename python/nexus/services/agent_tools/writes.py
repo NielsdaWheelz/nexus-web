@@ -657,6 +657,7 @@ def _mint_edge(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerRe
 
 def _queue_add(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerResult:
     media_ref = _parse_ref(_require_str(args, "media_uri"), allowed=("media",))
+    assert_ref_visible(db, viewer_id=viewer_id, ref=media_ref)
     # Trusted ensure: append the row at Last if absent, never move an existing row
     # (idempotent re-add). The item echoed for undo is the resulting Lectern row,
     # whether newly ensured or already present.

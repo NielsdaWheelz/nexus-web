@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/reader_locations.py b/python/nexus/services/reader_locations.py
+--- a/python/nexus/services/reader_locations.py
++++ b/python/nexus/services/reader_locations.py
+@@ -58,7 +58,7 @@ def locator_fraction(
+     if fragment_range is None or total_fragment_chars <= 0:
+         return None
+     fragment_start, fragment_length = fragment_range
+-    start = locator.get("start_offset")
++    start = locator.get("end_offset")
+     if not isinstance(start, int):
+         return None
+     return (fragment_start + min(max(start, 0), fragment_length)) / total_fragment_chars

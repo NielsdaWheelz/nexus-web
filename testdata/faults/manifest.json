@@ -1,0 +1,429 @@
+{
+  "version": 1,
+  "faults": [
+    {
+      "id": "test-environment-production-bypass",
+      "patch": "testdata/faults/test-environment-production-bypass.patch",
+      "sha256": "2eae36ccb38c6382a5b3158ff2995954e55de29eb41bedebe51a0f12ee7ac1d1",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_services.py::test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs",
+        "pytest:python/tests/kernel/nexus_test_control/test_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "test-port-ephemeral-range-bypass",
+      "patch": "testdata/faults/test-port-ephemeral-range-bypass.patch",
+      "sha256": "5ee174f02336aaf746a8b5328930b30947787304a638c79aacca974b038f3c49",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_port_allocation.py::test_port_candidates_exclude_the_host_ephemeral_client_range"
+      ],
+      "expected_failure": "ephemeral client range leaked into allocated test ports"
+    },
+    {
+      "id": "test-control-output-bounds-bypass",
+      "patch": "testdata/faults/test-control-output-bounds-bypass.patch",
+      "sha256": "e32af9f60e815bd923346b82fd874e369b8db27644cdc5d4f793cfd6a0a0356b",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_process.py::test_captured_child_output_is_drained_without_retaining_unbounded_logs"
+      ],
+      "expected_failure": "captured stdout exceeded the 65536-byte diagnostic tail"
+    },
+    {
+      "id": "auth-conversation-visibility-bypass",
+      "patch": "testdata/faults/auth-conversation-visibility-bypass.patch",
+      "sha256": "f91050004ba8c4c48c829a60c11518ff384ef993a869094f88ed5ba990a213d9",
+      "proofs": [
+        "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "auth-bootstrap-cache-cross-user",
+      "patch": "testdata/faults/auth-bootstrap-cache-cross-user.patch",
+      "sha256": "a6346a0cb00fed516fb7fee89c6c769311bf45e318ec540b080b5d15598fe0fd",
+      "proofs": [
+        "pytest:python/tests/service/test_auth_bootstrap_cache.py::test_auth_bootstrap_cache_reuses_only_the_matching_users_durable_library"
+      ],
+      "expected_failure": "second authenticated identity reused the first user's bootstrap cache entry"
+    },
+    {
+      "id": "auth-chat-run-ownership-bypass",
+      "patch": "testdata/faults/auth-chat-run-ownership-bypass.patch",
+      "sha256": "eba2ac65bd74ee7a9e901892be62ead4e03bf7c524830f5755b007b2a7bf3c5e",
+      "proofs": [
+        "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "destructive-shared-media-teardown",
+      "patch": "testdata/faults/destructive-shared-media-teardown.patch",
+      "sha256": "d37da542f809c4dbd6c9d18e6e0ce3fb80db583c9c5559cb381ebd2513102173",
+      "proofs": [
+        "pytest:python/tests/service/test_destructive_side_effects.py::test_viewer_removal_preserves_shared_media_database_and_object"
+      ],
+      "expected_failure": "shared media removal unexpectedly selected a destructive branch"
+    },
+    {
+      "id": "migration-head-schema-omission",
+      "patch": "testdata/faults/migration-head-schema-omission.patch",
+      "sha256": "7c2a8b14d2fb8ba149b511825150519fe4e28dd27a1663ed28b37a3d004acbb5",
+      "proofs": [
+        "pytest:python/tests/migrations/test_supported_upgrade.py::test_empty_owned_database_upgrades_to_the_single_head"
+      ],
+      "expected_failure": "head schema is missing product-spine tables"
+    },
+    {
+      "id": "migration-podcast-canonicalization-bypass",
+      "patch": "testdata/faults/migration-podcast-canonicalization-bypass.patch",
+      "sha256": "cb52b844ccb699f7ee8105d04373c75ce68380e93e9739595b28a57b34a0abb8",
+      "proofs": [
+        "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head"
+      ],
+      "expected_failure": "0207 must canonicalize legacy Podcast instants"
+    },
+    {
+      "id": "migration-note-body-index-restart-bypass",
+      "patch": "testdata/faults/migration-note-body-index-restart-bypass.patch",
+      "sha256": "b6c917502cd2092faf3d5bf87d6572de1b88a29ac819e29e200deacdb2e62aeb",
+      "proofs": [
+        "pytest:python/tests/migrations/test_note_body_substring_search_index_migration.py::test_0210_restarts_an_invalid_exact_index_and_plans_substring_search_at_head"
+      ],
+      "expected_failure": "0210 installed the wrong note-body index contract"
+    },
+    {
+      "id": "costly-effects-stream-interruption-misclassification",
+      "patch": "testdata/faults/costly-effects-stream-interruption-misclassification.patch",
+      "sha256": "0490b6ab84b2492ff5eaa18d6ffd48ee7555acf9b2a9cee94db458363d647d40",
+      "proofs": [
+        "pytest:python/tests/service/test_costly_effects.py::test_generation_dispatches_once_and_settles_success_or_interruption_exactly_once"
+      ],
+      "expected_failure": "consumer cancellation was not durably terminalized"
+    },
+    {
+      "id": "reading-progress-cas-bypass",
+      "patch": "testdata/faults/reading-progress-cas-bypass.patch",
+      "sha256": "f9b7b3bbe84e30bb10fec6f5aa229a1e359606874ac6d7cf2e64257706539a21",
+      "proofs": [
+        "pytest:python/tests/service/test_reading_progress.py::test_reader_cursor_cas_rejects_stale_progress_without_partial_side_effects"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "reader-position-fragment-prefix-bypass",
+      "patch": "testdata/faults/reader-position-fragment-prefix-bypass.patch",
+      "sha256": "c6bb454eda56feb9518f732644aec2181e455d65f9c621adbce42279390aaaee",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/readerDocumentPosition.unit.test.ts"
+      ],
+      "expected_failure": "canonical reader position must count each preceding fragment exactly once"
+    },
+    {
+      "id": "citation-canonical-locator-bypass",
+      "patch": "testdata/faults/citation-canonical-locator-bypass.patch",
+      "sha256": "ec54e76c045dc02579e820d0846cccbf59048bc0b6f4c856462abe1dffc0bf68",
+      "proofs": [
+        "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence"
+      ],
+      "expected_failure": "citation did not publish a canonical evidence locator"
+    },
+    {
+      "id": "reader-position-end-locus-bypass",
+      "patch": "testdata/faults/reader-position-end-locus-bypass.patch",
+      "sha256": "6bfaf98df60d77e179033fdc3a401c1623dfe8de5cc20cf91fad7c3af3859fc3",
+      "proofs": [
+        "pytest:python/tests/service/test_reader_document_positions.py::test_epub_navigation_and_document_map_share_exact_canonical_positions"
+      ],
+      "expected_failure": "Document Map used non-canonical section positions"
+    },
+    {
+      "id": "durable-job-fence-bypass",
+      "patch": "testdata/faults/durable-job-fence-bypass.patch",
+      "sha256": "a71537f871f47b09f2e16b6726e74adf19421da696c8be0e4d251a92d7c73231",
+      "proofs": [
+        "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker"
+      ],
+      "expected_failure": "expired claimant mutated the recovered terminal job"
+    },
+    {
+      "id": "durable-chat-uncertain-checkpoint-bypass",
+      "patch": "testdata/faults/durable-chat-uncertain-checkpoint-bypass.patch",
+      "sha256": "a8af3f77bb335513e5fc373234f142a28119d3b67679f88bf6ecbe311f58209b",
+      "proofs": [
+        "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job"
+      ],
+      "expected_failure": "the provider boundary did not observe the pre-dispatch Uncertain checkpoint"
+    },
+    {
+      "id": "web-search-provider-identity-bypass",
+      "patch": "testdata/faults/web-search-provider-identity-bypass.patch",
+      "sha256": "34daeb879b4c303f4969b25a93dc4b1eee498b2374dfb09003a9bbb4bdb19cdd",
+      "proofs": [
+        "pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
+      ],
+      "expected_failure": "provider result ref replaced the Nexus snapshot identity"
+    },
+    {
+      "id": "conversation-chat-job-revocation-bypass",
+      "patch": "testdata/faults/conversation-chat-job-revocation-bypass.patch",
+      "sha256": "c0b7ae8b086a5a6ce850e2bc20da3002b509ea290f2c9f4dc545321519cada12",
+      "proofs": [
+        "pytest:python/tests/service/test_conversation_deletion.py::test_conversation_delete_removes_its_dead_chat_journal_only"
+      ],
+      "expected_failure": "conversation deletion retained its private chat journal"
+    },
+    {
+      "id": "database-object-delete-obligation-bypass",
+      "patch": "testdata/faults/database-object-delete-obligation-bypass.patch",
+      "sha256": "7a90a1ebee72eaaf05c00fa3c59c8b935f13f6649414e60f4e403e808f1cb492",
+      "proofs": [
+        "pytest:python/tests/service/test_database_object_convergence.py::test_owned_object_write_and_document_delete_converge_across_postgres_and_minio"
+      ],
+      "expected_failure": "database deletion did not publish its exact object cleanup obligation"
+    },
+    {
+      "id": "llm-write-tool-authorization-bypass",
+      "patch": "testdata/faults/llm-write-tool-authorization-bypass.patch",
+      "sha256": "5d8fbe7a6cb18abe5ec85f7c889fe8f0945ed7b53e3558447fd1b34795d94129",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo"
+      ],
+      "expected_failure": "one or more mutating tool classes did not fail closed"
+    },
+    {
+      "id": "llm-tool-safety-prompt-bypass",
+      "patch": "testdata/faults/llm-tool-safety-prompt-bypass.patch",
+      "sha256": "1122868373841a528ce08f55b5891dfd380b22dbb4d6f5c901c3d353b9e28468",
+      "proofs": [
+        "pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call"
+      ],
+      "expected_failure": "production prompt lost a reviewed tool-safety instruction"
+    },
+    {
+      "id": "provider-gateway-host-rewrite-bypass",
+      "patch": "testdata/faults/provider-gateway-host-rewrite-bypass.patch",
+      "sha256": "5717a99398eed954ef8a1314b19f58e17b7733005a67d57662d58ad9ea304ad8",
+      "proofs": [
+        "pytest:python/tests/kernel/test_provider_http.py::test_provider_gateway_rewrites_only_the_owned_openai_origin"
+      ],
+      "expected_failure": "provider gateway retained the upstream Host header"
+    },
+    {
+      "id": "hosted-semantic-evidence-bypass",
+      "patch": "testdata/faults/hosted-semantic-evidence-bypass.patch",
+      "sha256": "1f2c986d88d1805b4a4439d98723f8521dcbd872f45a42d475fde03c2ac5e8b2",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_hosted_canary_parser_rejects_green_cost_evidence_without_safe_semantics"
+      ],
+      "expected_failure": "paid canary cost evidence cannot turn an unsafe semantic result green"
+    },
+    {
+      "id": "provider-runtime-developer-head-bypass",
+      "patch": "testdata/faults/provider-runtime-developer-head-bypass.patch",
+      "sha256": "b3f04c55b83f17f34f7a5561be446093f358a337d0bb598b3aed40bc2662e123",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source"
+      ],
+      "expected_failure": "provider-runtime materialization followed developer HEAD instead of the lock pin"
+    },
+    {
+      "id": "dossier-citation-disposition-bypass",
+      "patch": "testdata/faults/dossier-citation-disposition-bypass.patch",
+      "sha256": "7576e4aa3338bf72c508cf5ddd010c411c3cc34b1ca539685d2ce954671d95e0",
+      "proofs": [
+        "vitest:apps/web/src/components/dossier/DossierDocumentFrame.browser.test.tsx"
+      ],
+      "expected_failure": "citation disposition protocol lost deliberate Fork"
+    },
+    {
+      "id": "companion-publication-commit-race",
+      "patch": "testdata/faults/companion-publication-commit-race.patch",
+      "sha256": "7cde02f2ffe3dd920ecf64909ac05591dde6be59fe04f11b21344bf80e433187",
+      "proofs": [
+        "vitest:apps/web/src/components/workspace/usePaneSecondaryPublicationRegistry.browser.test.tsx"
+      ],
+      "expected_failure": "first Companion action was rejected before the publication render committed"
+    },
+    {
+      "id": "mobile-highlight-action-lock-bypass",
+      "patch": "testdata/faults/mobile-highlight-action-lock-bypass.patch",
+      "sha256": "70633e0ed23bab9ead9b1675215ab4e6e8915055fb10fe012632ab451ca78880",
+      "proofs": [
+        "playwright:apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts"
+      ],
+      "expected_failure": "A live highlight action must pin mobile reader chrome until dismissal"
+    },
+    {
+      "id": "composer-mobile-enter-send-bypass",
+      "patch": "testdata/faults/composer-mobile-enter-send-bypass.patch",
+      "sha256": "f661ce9afbacc37aad33a6ffa67458ac17a174751075c387ccde69cbf13b3de9",
+      "proofs": [
+        "vitest:apps/web/src/components/chat/ChatComposer.browser.test.tsx"
+      ],
+      "expected_failure": "mobile or IME Enter dispatched a chat run"
+    },
+    {
+      "id": "android-device-method-scope-bypass",
+      "patch": "testdata/faults/android-device-method-scope-bypass.patch",
+      "sha256": "7b46a2b441d4dcc18513e536f85c192e4d259a205d4cf79bb2d98357ebe8b240",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_exact_android_device_proof_uses_one_instrumentation_method"
+      ],
+      "expected_failure": "Android device executor lost exact method scoping"
+    },
+    {
+      "id": "native-system-safe-area-bypass",
+      "patch": "testdata/faults/native-system-safe-area-bypass.patch",
+      "sha256": "dbc0edbf5118c6ea2a5a1559d79be91375bb1704aa91c2cc5057e31d04be65d7",
+      "proofs": [
+        "vitest:apps/web/src/lib/mobileViewport/mobileSafeArea.browser.test.tsx"
+      ],
+      "expected_failure": "expected +0 to be 37"
+    },
+    {
+      "id": "active-pane-reactivation-identity-corruption",
+      "patch": "testdata/faults/active-pane-reactivation-identity-corruption.patch",
+      "sha256": "e86cef935f92ecde978a77876cef95aa4a96dc68067b1b2040619c2b1b5e0563",
+      "proofs": [
+        "vitest:apps/web/src/lib/workspace/store.browser.test.tsx"
+      ],
+      "expected_failure": "Reactivating the active pane changed its durable identity"
+    },
+    {
+      "id": "nexus-openables-cache-bound-bypass",
+      "patch": "testdata/faults/nexus-openables-cache-bound-bypass.patch",
+      "sha256": "91a29296e97af4da8201f6cc1c1f01e32b50cc586bc80f3e920d15d1754f622a",
+      "proofs": [
+        "vitest:apps/web/src/components/nexus/Nexus.browser.test.tsx"
+      ],
+      "expected_failure": "The 33rd distinct Openables query did not evict the least-recently-used query"
+    },
+    {
+      "id": "mobile-task-retention-bypass",
+      "patch": "testdata/faults/mobile-task-retention-bypass.patch",
+      "sha256": "d992b27679c3bfdea405d11d35a354eb13c0820c17693fccb209debd86ebd9fe",
+      "proofs": [
+        "vitest:apps/web/src/components/ui/MobileFullScreenTask.browser.test.tsx"
+      ],
+      "expected_failure": "dismissal unmounted the retained mobile task subtree"
+    },
+    {
+      "id": "nexus-dispatch-async-wrapper-bypass",
+      "patch": "testdata/faults/nexus-dispatch-async-wrapper-bypass.patch",
+      "sha256": "475fdba66a7037335569e5acf087c420f576cbbc017f9b186cb7b38bb7e8e86e",
+      "proofs": [
+        "vitest:apps/web/src/lib/nexus/dispatch.unit.test.ts"
+      ],
+      "expected_failure": "followed exact-pane dispatch returned an asynchronous wrapper"
+    },
+    {
+      "id": "proxy-response-buffering-bypass",
+      "patch": "testdata/faults/proxy-response-buffering-bypass.patch",
+      "sha256": "fe2e66023b89ee5e0f9d4f9a904472009cd29946ad29523fbc2dd6f33355bca9",
+      "proofs": [
+        "vitest:apps/web/src/lib/api/proxy.unit.test.ts"
+      ],
+      "expected_failure": "authenticated proxy consumed the upstream body before returning"
+    },
+    {
+      "id": "openables-union-dedup-bypass",
+      "patch": "testdata/faults/openables-union-dedup-bypass.patch",
+      "sha256": "61eb8ef990f22f8d2bb6feaecb9c4170c1e271734166c26efa0220814b1d1686",
+      "proofs": [
+        "pytest:python/tests/service/test_openable_resources.py"
+      ],
+      "expected_failure": "Openables candidate statement lost its two-source UNION ALL shape"
+    },
+    {
+      "id": "document-map-pulse-early-release",
+      "patch": "testdata/faults/document-map-pulse-early-release.patch",
+      "sha256": "82528e07945fac0efaf1046d365f634481b250c8161e0057e982c1c5501cf395",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/usePendingDocumentMapPulse.browser.test.tsx"
+      ],
+      "expected_failure": "Interrupted render did not retain the pending Document Map highlight"
+    },
+    {
+      "id": "pdf-committed-highlight-projection-bypass",
+      "patch": "testdata/faults/pdf-committed-highlight-projection-bypass.patch",
+      "sha256": "0de5b52c8c817c1ed8bbf24289a445f12d0eac5d06d8407d8c591d3e3713616f",
+      "proofs": [
+        "vitest:apps/web/src/components/PdfReader.browser.test.tsx"
+      ],
+      "expected_failure": "Committed PDF highlight disappeared before BFF reconciliation completed."
+    },
+    {
+      "id": "epub-structural-anchor-preservation-bypass",
+      "patch": "testdata/faults/epub-structural-anchor-preservation-bypass.patch",
+      "sha256": "8648d13fc976360e288023344616f34819494977f82e96bbe71fc1d6c0746c35",
+      "proofs": [
+        "pytest:python/tests/service/test_epub_structural_anchors.py::test_epub_ingest_repairs_structural_anchors_without_reordering_intervals"
+      ],
+      "expected_failure": "structural-anchor EPUB did not produce an extraction plan"
+    },
+    {
+      "id": "epub-offset-interval-validation-bypass",
+      "patch": "testdata/faults/epub-offset-interval-validation-bypass.patch",
+      "sha256": "f606fca0a65bfa9207245018d785307e59eb3a5dcfc2e58ad26ef05923f6bea2",
+      "proofs": [
+        "pytest:python/tests/migrations/test_epub_navigation_offsets_migration.py::test_0208_backfills_exact_offsets_and_0209_rejects_unrepaired_projection"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "epub-cutover-failed-attempt-admission",
+      "patch": "testdata/faults/epub-cutover-failed-attempt-admission.patch",
+      "sha256": "102739e42a4d72b65b9e47c6ce8824b12a7781cf91a1c305b1ea12bf1ef759cc",
+      "proofs": [
+        "pytest:python/tests/kernel/test_epub_navigation_offsets_cutover.py::test_cutover_state_model_admits_only_resumable_media_and_owned_dead_work"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "reader-restore-write-suppression-bypass",
+      "patch": "testdata/faults/reader-restore-write-suppression-bypass.patch",
+      "sha256": "191c33c5558b60a45389d3ebccb10c55474c45f00769aebf18768aa5be933537",
+      "proofs": [
+        "playwright:apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts"
+      ],
+      "expected_failure": "echoed a reader-state write within"
+    },
+    {
+      "id": "conversation-fork-delete-confirmation-bypass",
+      "patch": "testdata/faults/conversation-fork-delete-confirmation-bypass.patch",
+      "sha256": "b86f9e74f78bb0275bafe1bd9322966b8fc2a5d0f5165f8ba5c6c4c65d98981a",
+      "proofs": [
+        "vitest:apps/web/src/components/chat/ConversationForksPanel.browser.test.tsx"
+      ],
+      "expected_failure": "Failed deletion left a stale destructive confirmation armed."
+    },
+    {
+      "id": "desktop-nexus-stationary-pointer-bypass",
+      "patch": "testdata/faults/desktop-nexus-stationary-pointer-bypass.patch",
+      "sha256": "dc39b8091a61dd3341a573c2443ac4f42906538399476c50584cb18d5d978de5",
+      "proofs": [
+        "vitest:apps/web/src/components/nexus/desktop/DesktopNexusSelection.browser.test.tsx"
+      ],
+      "expected_failure": "Stationary-pointer reflow moved selection away from"
+    },
+    {
+      "id": "mobile-chrome-interrupted-settle-coordination-bypass",
+      "patch": "testdata/faults/mobile-chrome-interrupted-settle-coordination-bypass.patch",
+      "sha256": "1a5e1d8da9b5a81367fbda945491acf17898dd5b0d9b63db70369e12325e7c79",
+      "proofs": [
+        "vitest:apps/web/src/components/workspace/PaneShell.mobileChrome.browser.test.tsx"
+      ],
+      "expected_failure": "Interrupted reader motion retained stale collapse transitions or exposed non-atomic interactive chrome:"
+    },
+    {
+      "id": "public-share-subject-identity-bypass",
+      "patch": "testdata/faults/public-share-subject-identity-bypass.patch",
+      "sha256": "67253ee1af71705cf81039577a8c3ae9ead48ae7b3fca3c51fb0c1fc36073e42",
+      "proofs": [
+        "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject"
+      ],
+      "expected_failure": "first Bearer [REDACTED] failed bootstrap"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+diff --git a/python/nexus/services/epub_ingest.py b/python/nexus/services/epub_ingest.py
+--- a/python/nexus/services/epub_ingest.py
++++ b/python/nexus/services/epub_ingest.py
+@@ -1646,5 +1646,1 @@ def _sanitize_epub_element(element: HtmlElement) -> None:
+-        if _element_id(element) is not None:
+-            element.tag = "span"
+-            _sanitize_epub_attributes(element, "span")
+-            return
+         unwrap_element(element)

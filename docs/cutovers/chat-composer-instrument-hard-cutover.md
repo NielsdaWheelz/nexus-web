@@ -242,12 +242,10 @@ compatibility branch survives.
 | `apps/web/src/components/chat/useChatProfiles.ts` | remove obsolete `SEND` terminology from owner comments |
 | `apps/web/src/components/ui/Textarea.tsx` | derived capped overflow behavior |
 | `apps/web/src/components/ui/Textarea.module.css` | below-cap/above-cap overflow support |
-| `apps/web/src/__tests__/components/ChatComposer.test.tsx` | observable composer contract |
-| `apps/web/src/__tests__/components/ui/Textarea.test.tsx` | grow/cap/shrink overflow contract |
-| `apps/web/src/__tests__/components/Conversation.test.tsx` | hard-cut composer names at the real consumer |
-| `e2e/tests/conversations.spec.ts` | real composer send/select/narrow-viewport journey |
-| `e2e/tests/{chat-composer,chat-streaming,quote-attach-references,reader-quote-to-chat}.spec.ts` | hard-cut composer locators only |
-| `e2e/tests/real-media/context-chat-citations.spec.ts` | hard-cut composer locator only |
+| `apps/web/src/components/chat/ChatComposer.browser.test.tsx` | real-Chromium keyboard, selection, action, and containment contract |
+| `apps/web/src/components/ui/Textarea.browser.test.tsx` | real-layout grow/cap/scroll/shrink contract |
+| `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts` | one real-stack send, worker, reload, and citation journey |
+| `testdata/faults/composer-mobile-enter-send-bypass.patch` | demonstrated-red product fault for the browser oracle |
 | `docs/modules/chat.md` | final behavior and ownership |
 | this document | implementation status and final evidence |
 
@@ -302,24 +300,13 @@ real-stack, device, CI, deploy, or production acceptance.
 
 ## 14. Evidence snapshot
 
-Passed on 2026-07-31:
-
-- focused Chromium component proof: `ChatComposer` + `Textarea`, 36/36,
-  including catalog loading/error, conditional Effort, reduced-motion loading,
-  and the rendered focus-within ring;
-- real consumer proof: `Conversation`, 19/19;
-- targeted ESLint, CSS-token validation, diff hygiene, and zero legacy residue;
-- rendered 320px human review in Study and Press;
-- demonstrated red before fixes: the initial composer contract was 22/27,
-  and textarea cap/overflow and border-box assertions failed;
-- current production-stack non-default Model/Effort send → completion → reload:
-  setup + Chromium journey, 2/2 in 2.2 minutes;
-- current production-stack 320px containment/scroll/touch-target journey: setup
-  + Mobile Chrome journey, 2/2 in 2.2 minutes.
-
-Both final real-stack runs used the unchanged public `make test-e2e` target and
-oracles with `CIRCLE_NODE_TOTAL=2 NODE_OPTIONS=--max-old-space-size=1536` to
-bound Next 15.5.22 worker concurrency and heap on this memory-constrained host.
+The former broad-suite counts and removed `e2e/` route are historical only and
+do not establish this cutover. Current evidence is the version-2 summary from
+`./scripts/test prove` for the composer fault, the Chromium component capability,
+and `grounded-chat-citation` through the consolidated journey capability. The
+journey must select a non-default Model/Effort pair, admit one run, finish through
+the production worker, reload the same answer/citation, and open the exact reader
+evidence. `not_run` remains distinct from pass.
 
 Open acceptance gates:
 
@@ -334,7 +321,7 @@ Close the remaining gates without substitutions:
    matrix, send with the keyboard open, dismiss it without a residual gap,
    rotate while focused, and verify transcript scrolling and Back behavior.
 2. On a real Android phone with System WebView M144+, run
-   `make test-android`, then execute §5.2 with gesture and three-button navigation
+   `./scripts/test nightly`, then execute §5.2 with gesture and three-button navigation
    in portrait and landscape, including IME open/close, focused rotation,
    reduced motion, and a TalkBack-name smoke check. Instrumentation alone does
    not establish the physical composer/IME result.

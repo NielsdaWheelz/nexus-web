@@ -8,12 +8,13 @@ import { getEnv } from "./src/lib/env";
 const env = getEnv();
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   // Client-safe build constant derived from the already validated canonical
   // public origin. Share links must never inherit a preview or Host origin.
   env: {
     NEXT_PUBLIC_APP_PUBLIC_ORIGIN: env.appPublicOrigin,
   },
-  // `make check` owns lint. `next build` enforces build-time TypeScript validation.
+  // The typed static capability owns lint. `next build` enforces TypeScript validation.
   eslint: {
     ignoreDuringBuilds: true,
   },
@@ -50,9 +51,5 @@ const nextConfig: NextConfig = {
     ];
   },
 };
-
-if (process.env.E2E_DISABLE_NEXT_DEV_INDICATOR === "1") {
-  nextConfig.devIndicators = false;
-}
 
 export default nextConfig;

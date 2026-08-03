@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "artifacts": [
+    {
+      "path": "testdata/consumption/canonical_word_policy.json",
+      "sha256": "f4fafd95b12bcc1e135e2975bf95011d04dbea2a39485b6b2fc29c4aa7322113",
+      "source": "repo-authored: canonical consumption word-policy cases",
+      "license": "Repository-owned test data; retained as the cross-language word-policy oracle",
+      "purpose": [
+        "Cross-language canonical word counts and position boundaries"
+      ]
+    },
+    {
+      "path": "testdata/pane-find/canonical-text.json",
+      "sha256": "05fb15a70a8ea323e0cabb44818c31465ecb9c43bd1b4740899b291c7511d11a",
+      "source": "repo-authored: canonical pane-find cases",
+      "license": "Repository-owned test data; retained as the cross-language text-find oracle",
+      "purpose": [
+        "Cross-language canonical text-find matching and offsets"
+      ]
+    },
+    {
+      "path": "testdata/epub/canonical-reader-positions.epub.b64",
+      "sha256": "cf99d7971a82bd32576c224a095421e85a1cffccde18607e281eb392cd454dfb",
+      "source": "repo-authored: deterministic three-section EPUB encoded as base64",
+      "license": "Repository-owned test data; retained as the shared minimal EPUB behavior corpus",
+      "purpose": [
+        "Durable EPUB ingest, library publication, reader-open, progress, resume, and reset journeys",
+        "Canonical EPUB navigation-anchor and document-position service proof"
+      ]
+    },
+    {
+      "path": "python/tests/fixtures/epub/moby-dick-epub3.epub",
+      "sha256": "1215d453321c51b130e41354355ad159e48154c1e1431bc1c41d6f138f8b1556",
+      "source": "https://www.gutenberg.org/ebooks/2701",
+      "license": "Project Gutenberg public-domain ebook; retained as the canonical real EPUB input",
+      "purpose": [
+        "Real EPUB extraction and navigation format-variance service proof"
+      ]
+    },
+    {
+      "path": "python/tests/fixtures/real_media/frz-1784-01-03-scanned.pdf",
+      "sha256": "14b6a1729b9047a3738f23b818eac6faee80ff5a2d82731c208775a3b33a0c75",
+      "source": "https://zenodo.org/records/16506766",
+      "license": "CC0 1.0 Universal; retained as the canonical scanned-PDF boundary input",
+      "purpose": [
+        "Scanned PDF ingest reaches ocr_required without content chunks or embeddings"
+      ]
+    },
+    {
+      "path": "python/tests/fixtures/real_media/nasa-water-on-moon-capture.html",
+      "sha256": "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a",
+      "source": "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/",
+      "license": "NASA public web content with no copyright asserted unless noted; retained as the canonical captured-web input",
+      "purpose": [
+        "Captured web ingest and grounded citation proof",
+        "Real Chromium selection, highlight provenance, and canonical web-position proof"
+      ]
+    },
+    {
+      "path": "python/tests/fixtures/real_media/nasa-hwhap-crew4-transcript.txt",
+      "sha256": "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953",
+      "source": "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/the-crew-4-astronauts/transcript.txt",
+      "license": "NASA public web content with no copyright asserted unless noted; retained as the canonical podcast transcript input",
+      "purpose": [
+        "Podcast transcript ingest and grounded citation proof"
+      ]
+    },
+    {
+      "path": "python/tests/fixtures/real_media/nasa-hwhap-feed-v1.xml",
+      "sha256": "c59f38a211d707d8c2c218c3ce425f5d7c843ad0949309b14760263991e91043",
+      "source": "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed/",
+      "license": "NASA public web content with no copyright asserted unless noted; retained as the immutable initial podcast-feed snapshot",
+      "purpose": [
+        "Podcast refresh before-state"
+      ]
+    },
+    {
+      "path": "python/tests/fixtures/real_media/nasa-hwhap-feed-v2.xml",
+      "sha256": "cccfc5c9b58b52c88e995a93453b5e7171aea10a9fdcfad79d0746c0e946cdf7",
+      "source": "repo-authored deterministic variant of https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed/",
+      "license": "NASA public web content with no copyright asserted unless noted plus a repository-owned synthetic delta; retained as the immutable refreshed-feed snapshot",
+      "purpose": [
+        "Podcast refresh after-state with one added fixture episode"
+      ]
+    },
+    {
+      "path": "python/tests/fixtures/real_media/nasa-hwhap-podcast-index-search.json",
+      "sha256": "e305e72eac4aa73d6c002d703627316c64dd8140ee7627abaad29851e2771b29",
+      "source": "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/",
+      "license": "NASA public web content with no copyright asserted unless noted; retained as a pinned provider-response fixture",
+      "purpose": [
+        "Deterministic podcast discovery response"
+      ]
+    },
+    {
+      "path": "python/tests/fixtures/real_media/nasa-hwhap-podcast-index-byfeedurl.json",
+      "sha256": "bd819ebd4fee93d475854727cba8c4a8e5415c1bf6a3c5c281dd5ed284538058",
+      "source": "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed/",
+      "license": "NASA public web content with no copyright asserted unless noted; retained as a pinned provider-response fixture",
+      "purpose": [
+        "Deterministic podcast lookup-by-feed response"
+      ]
+    },
+    {
+      "path": "python/tests/fixtures/real_media/nasa-hwhap-podcast-index-episodes.json",
+      "sha256": "3ef17f4c96f1c40dc3044092a25d7eb9ecef361d19e647caab558c1a2e0b926b",
+      "source": "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/the-crew-4-astronauts/",
+      "license": "NASA public web content with no copyright asserted unless noted; retained as a pinned provider-response fixture",
+      "purpose": [
+        "Deterministic podcast episode-list response"
+      ]
+    }
+  ]
+}

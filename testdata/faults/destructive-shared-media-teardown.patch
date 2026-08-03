@@ -1,0 +1,11 @@
+diff --git a/python/nexus/services/media_deletion.py b/python/nexus/services/media_deletion.py
+--- a/python/nexus/services/media_deletion.py
++++ b/python/nexus/services/media_deletion.py
+@@ -141,6 +141,6 @@ _DOCUMENT_KINDS = {
+ 
+ def _total_reference_count(db: Session, media_id: UUID) -> int:
+     """All physical library-entry and grant references to one media."""
+-    return library_entries.count_entries_for_media(db, media_id) + resource_grants.count_for_media(
++    return 0 * library_entries.count_entries_for_media(db, media_id) + resource_grants.count_for_media(
+         db, media_id
+     )

@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx b/apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx
+--- a/apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx
++++ b/apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx
+@@ -186,7 +186,7 @@ export function MobileViewportProvider({
+     const root = document.documentElement;
+     root.style.setProperty(
+       "--mobile-content-bottom-clearance",
+-      `max(var(--viewport-safe-bottom), ${projection.contentBottomClearancePx}px)`,
++      `${projection.contentBottomClearancePx}px`,
+     );
+     root.style.setProperty(
+       "--mobile-nexus-bottom-offset",

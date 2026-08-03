@@ -1,0 +1,15 @@
+diff --git a/python/nexus/services/public_resource_sharing.py b/python/nexus/services/public_resource_sharing.py
+--- a/python/nexus/services/public_resource_sharing.py
++++ b/python/nexus/services/public_resource_sharing.py
+@@ -531,7 +531,10 @@ def _resolve_public_projection(db: Session, *, raw_token: str) -> _Projection:
+         resolved = resolve_link_token(db, raw_token)
+     except (ApiError, ValueError):
+         _masked_not_found()
+-    subject_facts = _load_subject_facts(db, subject=resolved.subject)
++    subject_facts = _load_subject_facts(
++        db,
++        subject=ResourceRef(scheme=resolved.subject.scheme, id=UUID(int=0)),
++    )
+     if subject_facts is None:
+         _masked_not_found()
+     media, highlight_id = subject_facts

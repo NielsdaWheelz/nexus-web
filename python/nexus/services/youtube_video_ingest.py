@@ -110,17 +110,6 @@ def run_youtube_video_ingest(
 
 def fetch_youtube_metadata(provider_video_id: str) -> dict[str, str] | None:
     settings = get_settings()
-    if settings.real_media_provider_fixtures:
-        if provider_video_id == "drrP_Iss0gA":
-            return {
-                "title": "Picturing Earth: Behind the Scenes",
-                "description": "NASA Earth Observatory video transcript fixture.",
-                "author": "NASA Earth Observatory",
-                "published_date": "2020-04-22T00:00:00Z",
-                "language": "en",
-            }
-        return None
-
     if not settings.youtube_data_api_key:
         return None
 

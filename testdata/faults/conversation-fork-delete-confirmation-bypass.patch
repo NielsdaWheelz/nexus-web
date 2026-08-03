@@ -1,0 +1,6 @@
+diff --git a/apps/web/src/components/chat/useForkPanel.ts b/apps/web/src/components/chat/useForkPanel.ts
+--- a/apps/web/src/components/chat/useForkPanel.ts
++++ b/apps/web/src/components/chat/useForkPanel.ts
+@@ -170,2 +170,1 @@ export function useForkPanel(input: {
+-        setPendingDeleteId(null);
+         setError("Fork delete failed.");

@@ -780,7 +780,7 @@ route-count guard, and the hand-authored contracts in
 `lib/api/sse/events.ts`.
 
 After implementation, update `docs/architecture.md`, `docs/modules/llms.md`,
-`chat.md`, `jobs.md`, and `docs/local-rules/testing_standards.md`; delete
+`chat.md`, `jobs.md`, and `docs/local-rules/testing-standards.md`; delete
 `docs/modules/byok.md`. The testing standard must remove BYOK readiness and the
 Cloudflare generation matrix and name the new certification tiers.
 `docs/architecture.md` must remove §7.5 BYOK and §8.3 Models claims and remain

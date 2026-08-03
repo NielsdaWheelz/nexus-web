@@ -99,6 +99,8 @@ export interface CspBuildOptions {
   isHttpsRequest: boolean;
   /** External browser-connect origins (FastAPI/SSE + presigned storage). */
   connectOrigins: readonly string[];
+  /** Explicit browser media origins not covered by the production HTTPS policy. */
+  mediaOrigins?: readonly string[];
   /** Dev-only HMR websocket origins; included only when `isDev`. */
   devWebSocketOrigins?: readonly string[];
 }
@@ -114,6 +116,7 @@ export function buildContentSecurityPolicy(opts: CspBuildOptions): string {
     isDev,
     isHttpsRequest,
     connectOrigins,
+    mediaOrigins = [],
     devWebSocketOrigins = [],
   } = opts;
 
@@ -130,6 +133,7 @@ export function buildContentSecurityPolicy(opts: CspBuildOptions): string {
   }
 
   values["connect-src"].push(...connectOrigins);
+  values["media-src"].push(...mediaOrigins);
   if (isDev) {
     values["connect-src"].push(...devWebSocketOrigins);
   }

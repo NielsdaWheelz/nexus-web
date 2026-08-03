@@ -178,6 +178,10 @@ citations remain active. The publication warning is a quiet amber
 `AssistantDetails` owns run, usage, cost, tool/retrieval, context-reference, and
 integrity diagnostics. The deleted colophon has no compatibility replacement.
 
+Fork deletion is pessimistic. A failed DELETE keeps the fork row, presents the
+failure, and disarms the confirmation so a stale destructive action cannot be
+submitted again without a new explicit request.
+
 Ordinary prose and links wrap inside the pane. Only bounded code and table
 containers may scroll horizontally.
 
@@ -531,16 +535,15 @@ the live Highlight.
 
 Keep these tests aligned with this module contract:
 
-- `apps/web/src/lib/conversations/assistantSelection.test.ts`
-- `apps/web/src/lib/conversations/chatDraftKey.test.ts`
-- `apps/web/src/lib/conversations/chatRunBody.test.ts`
-- `apps/web/src/components/chat/AssistantMessage.test.tsx`
-- `apps/web/src/components/chat/MessageRow.test.tsx`
-- `apps/web/src/components/chat/useChatRunTail.test.tsx`
-- `apps/web/src/components/ui/FloatingActionSurface.test.tsx`
-- `apps/web/src/__tests__/components/ChatComposer.test.tsx`
-- `apps/web/src/__tests__/components/Conversation.test.tsx`
-- `python/tests/test_chat_runs.py`
-- `python/tests/test_reader_selection.py`
-- `e2e/tests/conversations.spec.ts`
-- `e2e/tests/quote-attach-references.spec.ts`
+- `python/tests/service/test_citation_provenance.py`
+- `python/tests/service/test_web_search_identity.py`
+- `python/tests/service/test_durable_chat_reconciliation.py`
+- `python/tests/service/test_durable_job_replay.py`
+- `python/tests/service/test_auth_privacy.py`
+- `python/tests/service/test_chat_execution_privacy.py`
+- `python/tests/service/test_llm_tool_safety.py`
+- `python/tests/evals/test_tool_safety_eval.py`
+- `apps/web/src/components/chat/ChatComposer.browser.test.tsx`
+- `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts`
+- `testdata/proofs.json` owns the source-to-proof mapping for broader chat
+  changes.

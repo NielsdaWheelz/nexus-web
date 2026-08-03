@@ -219,7 +219,6 @@ def _collapse_blank_lines(text: str, sources: array) -> tuple[str, array]:
             collapsed_sources.append(sources[index])
             index += 1
             continue
-
         collapsed_source = min(sources[index:end])
         chunks.append("\n\n")
         collapsed_sources.extend((collapsed_source, collapsed_source))

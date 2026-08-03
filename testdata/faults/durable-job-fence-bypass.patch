@@ -1,0 +1,13 @@
+diff --git a/python/nexus/jobs/queue.py b/python/nexus/jobs/queue.py
+--- a/python/nexus/jobs/queue.py
++++ b/python/nexus/jobs/queue.py
+@@ -1231,9 +1231,6 @@ def complete_job(
+                     finished_at = now(),
+                     updated_at = now()
+                 WHERE id = :job_id
+-                  AND status = 'running'
+-                  AND claimed_by = :worker_id
+-                  AND lease_expires_at > now()
+                 RETURNING id
+                 """
+         ),

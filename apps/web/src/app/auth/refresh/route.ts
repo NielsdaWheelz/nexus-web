@@ -8,6 +8,7 @@ import {
   buildLoginUrl,
   parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
+import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
 import { refreshSession } from "@/lib/auth/refresh";
 import { applyRotatedCookies } from "@/lib/auth/rotated-cookies";
 import {
@@ -43,19 +44,20 @@ function markSessionEnded(response: NextResponse): void {
 export async function GET(request: Request): Promise<NextResponse> {
   const requestUrl = new URL(request.url);
   const target = parseAuthReturnTarget(requestUrl.searchParams.get("next"));
+  const redirectOrigin = resolveCallbackRedirectOrigin(request);
 
   const result = await refreshSession();
 
   if (result.status === "refreshed") {
     const response = NextResponse.redirect(
-      buildAuthReturnTargetUrl(requestUrl.origin, target),
+      buildAuthReturnTargetUrl(redirectOrigin, target),
       { status: TEMPORARY_REDIRECT }
     );
     applyRotatedCookies(response, result.cookiesToSet);
     return noStore(response);
   }
 
-  const loginUrl = buildLoginUrl(requestUrl.origin, target, {
+  const loginUrl = buildLoginUrl(redirectOrigin, target, {
     errorDescription: SESSION_ENDED_MESSAGE,
   });
   const response = NextResponse.redirect(loginUrl, {

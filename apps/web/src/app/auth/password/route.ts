@@ -3,6 +3,7 @@ import {
   PASSWORD_SIGN_IN_FAILURE_MESSAGE,
   PASSWORD_SIGN_UP_FAILURE_MESSAGE,
 } from "@/lib/auth/messages";
+import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
 import { noStore } from "@/lib/auth/no-store";
 import {
   DEFAULT_AUTH_RETURN_TARGET,
@@ -30,12 +31,12 @@ function forbidden(): NextResponse {
   return noStore(new NextResponse("Forbidden", { status: 403 }));
 }
 
-function isSameOriginFormPost(request: Request, requestUrl: URL): boolean {
-  return request.headers.get("origin") === requestUrl.origin;
+function isSameOriginFormPost(request: Request, redirectOrigin: string): boolean {
+  return request.headers.get("origin") === redirectOrigin;
 }
 
 function redirectToLogin(
-  requestUrl: URL,
+  redirectOrigin: string,
   {
     mode,
     target,
@@ -46,7 +47,7 @@ function redirectToLogin(
     error: string;
   },
 ): NextResponse {
-  const loginUrl = buildLoginUrl(requestUrl.origin, target, {
+  const loginUrl = buildLoginUrl(redirectOrigin, target, {
     mode: mode === "create" ? "create" : undefined,
     errorDescription: error,
   });
@@ -54,8 +55,8 @@ function redirectToLogin(
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const requestUrl = new URL(request.url);
-  if (!isSameOriginFormPost(request, requestUrl)) {
+  const redirectOrigin = resolveCallbackRedirectOrigin(request);
+  if (!isSameOriginFormPost(request, redirectOrigin)) {
     return forbidden();
   }
 
@@ -73,7 +74,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       password,
     });
     if (!result.ok) {
-      return redirectToLogin(requestUrl, {
+      return redirectToLogin(redirectOrigin, {
         mode,
         target,
         error: result.error || PASSWORD_SIGN_IN_FAILURE_MESSAGE,
@@ -82,7 +83,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     await auth.settlePendingCookieWrites();
     const response = NextResponse.redirect(
-      buildAuthReturnTargetUrl(requestUrl.origin, target),
+      buildAuthReturnTargetUrl(redirectOrigin, target),
       { status: SEE_OTHER },
     );
     return auth.applyCookies(noStore(response));
@@ -94,7 +95,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     displayName,
   });
   if (!result.ok) {
-    return redirectToLogin(requestUrl, {
+    return redirectToLogin(redirectOrigin, {
       mode,
       target,
       error: result.error || PASSWORD_SIGN_UP_FAILURE_MESSAGE,
@@ -103,7 +104,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   await auth.settlePendingCookieWrites();
   const response = NextResponse.redirect(
-    buildAuthReturnTargetUrl(requestUrl.origin, DEFAULT_AUTH_RETURN_TARGET),
+    buildAuthReturnTargetUrl(redirectOrigin, DEFAULT_AUTH_RETURN_TARGET),
     { status: SEE_OTHER },
   );
   return auth.applyCookies(noStore(response));

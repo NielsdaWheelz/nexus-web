@@ -1,0 +1,30 @@
+diff --git a/apps/web/src/components/PdfReader.tsx b/apps/web/src/components/PdfReader.tsx
+--- a/apps/web/src/components/PdfReader.tsx
++++ b/apps/web/src/components/PdfReader.tsx
+@@ -2603,26 +2603,6 @@ export default function PdfReader({
+           createdHighlight = response.data;
+         }
+ 
+-        if (
+-          createdHighlight?.anchor.type === "pdf_page_geometry" &&
+-          createdHighlight.anchor.media_id === mediaId
+-        ) {
+-          setPendingCommittedHighlights((current) => {
+-            const pending: PendingCommittedHighlight = {
+-              highlight: createdHighlight,
+-              externalRefreshTokenAtCommit: highlightRefreshToken,
+-            };
+-            const existingIndex = current.findIndex(
+-              (candidate) => candidate.highlight.id === createdHighlight.id,
+-            );
+-            if (existingIndex < 0) {
+-              return [...current, pending];
+-            }
+-            return current.map((candidate, index) =>
+-              index === existingIndex ? pending : candidate,
+-            );
+-          });
+-        }
+         setLocalHighlightRefreshToken((value) => value + 1);
+         onHighlightsMutated?.();
+         clearSelection();

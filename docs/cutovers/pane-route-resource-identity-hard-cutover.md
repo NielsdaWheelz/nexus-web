@@ -69,7 +69,7 @@ resource identity.
 - `docs/rules/layers.md` keeps BFF and API routes thin; services own behavior.
 - `docs/rules/correctness.md` requires typed boundary parsing and illegal states
   made unrepresentable.
-- `docs/local-rules/testing_standards.md` requires behavior tests at public
+- `docs/local-rules/testing-standards.md` requires behavior tests at public
   owner boundaries.
 
 ## SME Thesis

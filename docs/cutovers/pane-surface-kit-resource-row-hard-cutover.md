@@ -123,7 +123,7 @@ The cutover follows the current repository rules:
   existing capability over inventing another surface.
 - `docs/rules/simplicity.md`: fewer code paths, no speculative options or
   flags until a real call site needs them.
-- `docs/local-rules/testing_standards.md`: UI behavior gets component/browser
+- `docs/local-rules/testing-standards.md`: UI behavior gets component/browser
   coverage where interaction and accessibility matter; integration and E2E
   tests exercise real flows without mock API servers.
 

@@ -34,6 +34,11 @@ val versionNameProperty = providers.gradleProperty("nexusAndroidVersionName").or
     ?: System.getenv("NEXUS_ANDROID_VERSION_NAME")?.trim()
 val nexusGoogleWebClientId = (providers.gradleProperty("nexusGoogleWebClientId").orNull
     ?: System.getenv("NEXUS_GOOGLE_WEB_CLIENT_ID"))?.trim()
+val instrumentationBuildType = providers
+    .gradleProperty("nexusAndroidInstrumentationBuildType")
+    .orNull
+    ?.trim()
+    ?: "debug"
 val releaseBaseUrl = releaseBaseUrlProperty ?: "https://release-host-required.invalid"
 val releaseOwnedHost = releaseOwnedHostProperty ?: "release-host-required.invalid"
 val debugUri = URI(debugBaseUrl)
@@ -57,6 +62,9 @@ require(
 }
 require(!nexusGoogleWebClientId.isNullOrBlank()) {
     "Set NEXUS_GOOGLE_WEB_CLIENT_ID or a local nexusGoogleWebClientId Gradle property; required by the native Google sign-in flow."
+}
+require(instrumentationBuildType == "debug" || instrumentationBuildType == "release") {
+    "nexusAndroidInstrumentationBuildType must be debug or release."
 }
 if (requestedReleaseBuild) {
     require(!releaseBaseUrlProperty.isNullOrBlank()) {
@@ -121,6 +129,7 @@ if (requestedReleaseBuild) {
 android {
     namespace = "app.nexus.android"
     compileSdk = 36
+    testBuildType = instrumentationBuildType
 
     defaultConfig {
         applicationId = "app.nexus.android"

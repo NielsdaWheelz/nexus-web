@@ -385,7 +385,14 @@ Create:
 - `python/nexus/services/durable_step_journal.py`
 - `python/nexus/services/chat_run_steps.py`
 - `python/nexus/services/chat_run_execution.py`
-- focused shared-kernel and chat recovery tests
+- `python/tests/kernel/test_durable_step_journal.py`
+- `python/tests/service/test_durable_chat_reconciliation.py`
+- `python/tests/service/test_durable_job_replay.py`
+- `python/tests/service/test_chat_execution_privacy.py`
+- `python/tests/service/test_citation_provenance.py`
+- `python/tests/service/test_web_search_identity.py`
+- `apps/web/src/components/chat/ChatComposer.browser.test.tsx`
+- `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts`
 
 Modify:
 
@@ -401,8 +408,8 @@ Modify:
 - `python/nexus/schemas/conversation.py`, batched trust-trail projection;
 - `apps/web/src/lib/conversations/types.ts`,
   `apps/web/src/components/chat/useChatRunTail.ts`, the shared strict SSE
-  advisory decoder, `AssistantMessage.tsx`, `ChatFailureCard.tsx`, and focused
-  tests;
+  advisory decoder, `AssistantMessage.tsx`, `ChatFailureCard.tsx`, and the
+  browser proofs above;
 - `docs/architecture.md`, `docs/modules/{chat,jobs}.md`, and superseded cutovers.
 
 Delete:

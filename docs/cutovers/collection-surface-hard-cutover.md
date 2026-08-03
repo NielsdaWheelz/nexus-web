@@ -173,7 +173,7 @@ These boundaries stay intact.
   `CollectionItemKind`, status maps, and view-mode switch are exhaustively matched.
 - `docs/rules/frontend.md` — navigable state in the URL; one explicit empty-state representation;
   map domain/API errors to UI near the boundary (`*ErrorMessage`); fail loud on invariant breaks.
-- `docs/local-rules/testing_standards.md` — real providers + fetch-boundary mock; role/label
+- `docs/local-rules/testing-standards.md` — real providers + fetch-boundary mock; role/label
   queries; `.test.ts` node / `.test.tsx` chromium browser.
 
 ## Current Duplication Inventory

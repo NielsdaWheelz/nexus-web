@@ -326,6 +326,7 @@ import {
   type ReaderPulseTarget,
 } from "@/lib/reader/pulseEvent";
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
+import { usePendingDocumentMapPulse } from "@/lib/reader/usePendingDocumentMapPulse";
 import {
   fetchResolvedHighlightReaderTarget,
   type ResolvedHighlightReaderTarget,
@@ -1774,13 +1775,6 @@ export default function MediaPaneBody() {
       publishSemanticViewport(null);
     }
   }, [publishSemanticViewport]);
-  // A Document Map marker activation that had to navigate to a non-active
-  // fragment/section before its highlight could be pulsed.
-  const pendingDocumentMapPulseRef = useRef<{
-    fragmentId: string;
-    target: ReaderPulseTarget;
-    apparatusStableKey?: string;
-  } | null>(null);
   const pendingDocumentEmbedPulseRef = useRef<{
     fragmentId: string;
     occurrenceKey: string;
@@ -1984,9 +1978,15 @@ export default function MediaPaneBody() {
       };
     },
   });
+  const documentMapNavigationReady =
+    media?.kind === "epub"
+      ? epubNavigationResource.status === "ready"
+      : media?.kind === "web_article"
+        ? webNavigationResource.status === "ready"
+        : true;
   const readerDocumentMapResource = useResource<ReaderDocumentMap>({
     cacheKey:
-      media && documentMapAvailable
+      media && documentMapAvailable && documentMapNavigationReady
         ? `${id}:reader-document-map:${documentMapVersion}`
         : null,
     load: (signal) => getReaderDocumentMap(id, { signal }),
@@ -3285,7 +3285,7 @@ export default function MediaPaneBody() {
         // movement, so seed that captured boundary without echoing a cursor
         // write. This also fences remote handoff adoption from writing the
         // position it just accepted back to the server.
-        mediaFindPreviewLease.armNextCaptureSuppression();
+        mediaFindPreviewLease.armCaptureSuppressionUntilGenuineInput();
         scrollRestoreAppliedRef.current = true;
         lastSavedTextAnchorOffsetRef.current = resumeOffset;
         releaseChrome();
@@ -5568,7 +5568,7 @@ export default function MediaPaneBody() {
   );
   const handleGenuineReaderInput = useCallback((): boolean => {
     documentMapPositioningRef.current = false;
-    mediaFindPreviewLease.consumeNextCaptureSuppression(true);
+    mediaFindPreviewLease.consumeCaptureSuppression(true);
     epubAdoptionCaptureSuppressionRef.current = false;
     const adoptsEpubFind = awaitingEpubFindAdoptionRef.current;
     if (adoptsEpubFind) {
@@ -5609,7 +5609,7 @@ export default function MediaPaneBody() {
       if (publishedViewport?.intent !== "Reader") {
         return;
       }
-      if (mediaFindPreviewLease.consumeNextCaptureSuppression(false)) {
+      if (mediaFindPreviewLease.consumeCaptureSuppression(false)) {
         return;
       }
       reportReaderMovement(publishedViewport.primaryLocator);
@@ -6113,7 +6113,7 @@ export default function MediaPaneBody() {
       return;
     }
     if (
-      mediaFindPreviewLease.consumeNextCaptureSuppression(
+      mediaFindPreviewLease.consumeCaptureSuppression(
         publication.trustedIntent,
       )
     ) {
@@ -7461,40 +7461,14 @@ export default function MediaPaneBody() {
     };
   }, [activeContent?.fragmentId, renderedHtml, scrollDocumentEmbedIntoView]);
 
-  // Complete a target activation after its fragment/section has rendered.
-  useEffect(() => {
-    const pending = pendingDocumentMapPulseRef.current;
-    if (
-      !pending ||
-      epubSectionLoading ||
-      activeContent?.fragmentId !== pending.fragmentId
-    ) {
-      return;
-    }
-    if (pending.apparatusStableKey) {
-      pendingDocumentMapPulseRef.current = null;
-      focusReaderApparatusInContent(pending.apparatusStableKey, true);
-    } else if (pending.target.highlightId) {
-      return scrollRenderedHighlightIntoView(pending.target.highlightId, () => {
-        if (pendingDocumentMapPulseRef.current !== pending) return;
-        pendingDocumentMapPulseRef.current = null;
-        dispatchReaderPulse(pending.target);
-      });
-    }
-    pendingDocumentMapPulseRef.current = null;
-    const rafId = window.requestAnimationFrame(() => {
-      dispatchReaderPulse(pending.target);
-    });
-    return () => {
-      window.cancelAnimationFrame(rafId);
-    };
-  }, [
-    activeContent,
-    epubSectionLoading,
-    focusReaderApparatusInContent,
-    renderedHtml,
-    scrollRenderedHighlightIntoView,
-  ]);
+  const queueDocumentMapPulse = usePendingDocumentMapPulse({
+    activeFragmentId: activeContent?.fragmentId ?? null,
+    loading: epubSectionLoading,
+    renderedContentKey: renderedHtml,
+    focusApparatus: focusReaderApparatusInContent,
+    scrollHighlight: scrollRenderedHighlightIntoView,
+    dispatchPulse: dispatchReaderPulse,
+  });
 
   const activateEvidenceResolution = useCallback(
     (
@@ -7581,11 +7555,11 @@ export default function MediaPaneBody() {
         );
         if (!section) return false;
         beginDocumentMapPositioning();
-        pendingDocumentMapPulseRef.current = {
+        queueDocumentMapPulse({
           fragmentId,
           target,
           apparatusStableKey,
-        };
+        });
         positionAtEpubDocumentMapSection(section.section_id, section.anchor_id);
         completeActivation();
         return true;
@@ -7596,11 +7570,11 @@ export default function MediaPaneBody() {
         );
         if (!fragment) return false;
         beginDocumentMapPositioning();
-        pendingDocumentMapPulseRef.current = {
+        queueDocumentMapPulse({
           fragmentId,
           target,
           apparatusStableKey,
-        };
+        });
         handleTranscriptSegmentSelect(fragment);
         completeActivation();
         return true;
@@ -7608,11 +7582,11 @@ export default function MediaPaneBody() {
       if (!fragments.some((fragment) => fragment.id === fragmentId))
         return false;
       beginDocumentMapPositioning();
-      pendingDocumentMapPulseRef.current = {
+      queueDocumentMapPulse({
         fragmentId,
         target,
         apparatusStableKey,
-      };
+      });
       replaceReaderLocation({ fragmentId });
       setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
       completeActivation();
@@ -7631,6 +7605,7 @@ export default function MediaPaneBody() {
       handleTranscriptSegmentSelect,
       id,
       isTranscriptMedia,
+      queueDocumentMapPulse,
       positionAtEpubDocumentMapSection,
       replaceReaderLocation,
       resume,

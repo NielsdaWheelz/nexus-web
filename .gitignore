@@ -48,6 +48,7 @@ htmlcov/
 coverage/
 test-results/
 .vitest-attachments/
+/.nexus-test/
 
 # Linting
 .ruff_cache/
@@ -112,12 +113,6 @@ secrets/
 
 # Agency
 .agency/state/
-
-# Playwright E2E auth state
-e2e/.auth/
-e2e/.seed/
-e2e/test-results/
-e2e/playwright-report/
 
 # Lock files that shouldn't be edited manually
 # (uv.lock and bun.lock SHOULD be committed)

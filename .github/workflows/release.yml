@@ -1,0 +1,164 @@
+name: Protected release verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing android-v* git tag to verify and publish as a draft.
+        required: true
+        type: string
+      publish_stable:
+        description: Publish the verified draft as the latest stable release.
+        required: false
+        default: false
+        type: boolean
+      version_code:
+        description: Monotonically increasing positive Android version code.
+        required: true
+        type: number
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment: android-release
+    env:
+      ANDROID_RELEASE_TAG: ${{ inputs.tag }}
+      ANDROID_PUBLISH_STABLE: ${{ inputs.publish_stable }}
+      NEXUS_ANDROID_RELEASE_BASE_URL: ${{ vars.NEXUS_ANDROID_RELEASE_BASE_URL }}
+      NEXUS_ANDROID_RELEASE_OWNED_HOST: ${{ vars.NEXUS_ANDROID_RELEASE_OWNED_HOST }}
+      NEXUS_ANDROID_RELEASE_CERT_SHA256: ${{ secrets.NEXUS_ANDROID_RELEASE_CERT_SHA256 }}
+      NEXUS_ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.NEXUS_ANDROID_RELEASE_KEY_ALIAS }}
+      NEXUS_ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.NEXUS_ANDROID_RELEASE_KEY_PASSWORD }}
+      NEXUS_ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.NEXUS_ANDROID_RELEASE_STORE_PASSWORD }}
+      NEXUS_GOOGLE_WEB_CLIENT_ID: ${{ vars.NEXUS_GOOGLE_WEB_CLIENT_ID }}
+      NEXUS_ANDROID_VERSION_CODE: ${{ inputs.version_code }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+      NEXUS_PROVIDER_CERTIFICATION: "1"
+      NEXUS_FABLE_RETENTION_ACCEPTED_AT: ${{ secrets.NEXUS_FABLE_RETENTION_ACCEPTED_AT }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release tag
+        run: |
+          set -euo pipefail
+          if [[ ! "$ANDROID_RELEASE_TAG" == android-v* ]]; then
+            echo "Android releases must use an android-v* git tag."
+            exit 1
+          fi
+          tag_commit="$(git rev-parse "$ANDROID_RELEASE_TAG^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          if [ "$tag_commit" != "$head_commit" ]; then
+            echo "Checked-out commit does not match $ANDROID_RELEASE_TAG."
+            exit 1
+          fi
+          version_name="${ANDROID_RELEASE_TAG#android-v}"
+          test -n "$version_name"
+          echo "NEXUS_ANDROID_VERSION_NAME=$version_name" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/setup-test
+        with:
+          android: "true"
+          provider-runtime: "true"
+
+      - name: Decode release keystore
+        env:
+          NEXUS_ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.NEXUS_ANDROID_RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$NEXUS_ANDROID_RELEASE_KEYSTORE_BASE64"
+          printf '%s' "$NEXUS_ANDROID_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/nexus-release.jks"
+          chmod 600 "$RUNNER_TEMP/nexus-release.jks"
+          echo "NEXUS_ANDROID_RELEASE_STORE_FILE=$RUNNER_TEMP/nexus-release.jks" >> "$GITHUB_ENV"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Certify providers, signed APK, and native auth handoff
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: ./scripts/test release
+
+      - name: Create or update verified draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          upload_args=()
+          if gh release view "$ANDROID_RELEASE_TAG" >/dev/null 2>&1; then
+            if [ "$(gh release view "$ANDROID_RELEASE_TAG" --json isDraft --jq .isDraft)" = "true" ]; then
+              upload_args+=(--clobber)
+            else
+              echo "Refusing to replace an already-published release."
+              exit 1
+            fi
+          else
+            gh release create "$ANDROID_RELEASE_TAG" \
+              --verify-tag \
+              --draft \
+              --title "$ANDROID_RELEASE_TAG" \
+              --notes "Signed Nexus Android APK. Provider certification, signature verification, offline emulator installation, local App Link routing, and native auth handoff passed before this draft was created."
+          fi
+          release_dirs=(test-results/runs/*/release)
+          if [ "${#release_dirs[@]}" -ne 1 ] || [ ! -d "${release_dirs[0]}" ]; then
+            echo "Expected exactly one control-plane-owned release directory."
+            exit 1
+          fi
+          release_dir="${release_dirs[0]}"
+          android_version="${ANDROID_RELEASE_TAG#android-v}"
+          gh release upload "$ANDROID_RELEASE_TAG" \
+            "$release_dir/nexus-android.apk" \
+            "$release_dir/nexus-android.apk.sha256" \
+            "$release_dir/nexus-android-$android_version.apk" \
+            "$release_dir/nexus-android-$android_version.apk.sha256" \
+            "$release_dir/release-manifest.json" \
+            "${upload_args[@]}"
+
+      - name: Publish stable release
+        if: inputs.publish_stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh release view "$ANDROID_RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]; then
+            echo "Only draft Android releases can be published by this workflow."
+            exit 1
+          fi
+          release_id="$(gh release view "$ANDROID_RELEASE_TAG" --json databaseId --jq .databaseId)"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false \
+            -F prerelease=false \
+            -f make_latest=true
+
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nexus-test-release-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 30

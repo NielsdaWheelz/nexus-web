@@ -46,6 +46,7 @@ Primary variables for this app:
 
 - `FASTAPI_BASE_URL` (required outside local/test)
 - `R2_S3_API_ORIGIN` (required outside local/test for CSP connect-src)
+- `CSP_MEDIA_ORIGINS` (optional comma-separated media origins; HTTPS-only when deployed)
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `AUTH_ALLOWED_REDIRECT_ORIGINS`
@@ -81,27 +82,18 @@ Repository-wide rule owners:
 
 ## Testing
 
-Use `make help` for the canonical list. From repo root:
+From the repository root:
 
 ```bash
-make test-front-unit
-make test-front-browser
-make test-e2e
+./scripts/test changed apps/web/src/path/to/owner.tsx
+./scripts/test confidence
+./scripts/test pr
 ```
 
-From `apps/web/`:
-
-```bash
-bun run test:unit
-bun run test:browser
-bun run typecheck
-bun run lint
-```
-
-CI shards Playwright E2E runs; local `make test-e2e` stays single-command.
-Run E2E from the repo root so the shared harness owns local Supabase startup and
-auth bootstrap. The web app runtime must receive only public Supabase URL/anon
-env; never set `SUPABASE_AUTH_ADMIN_KEY` for Next.js.
+Direct Vitest or Playwright commands are exact debugging tools only. The typed
+controller owns the verdict, local stack, strict-CSP standalone build,
+scenario-local Supabase users, one Playwright worker, zero retries, loopback
+network allowlist, and evidence. Never pass the Supabase admin key to Next.js.
 
 ## Highlight Libraries
 

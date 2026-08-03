@@ -1,0 +1,12 @@
+diff --git a/python/nexus_test_control/process.py b/python/nexus_test_control/process.py
+--- a/python/nexus_test_control/process.py
++++ b/python/nexus_test_control/process.py
+@@ -18,7 +18,7 @@ class CommandInterrupted(RuntimeError):
+ 
+ _ACTIVE_LOCK = threading.Lock()
+ _ACTIVE_PROCESS: subprocess.Popen[str] | None = None
+-_CAPTURED_OUTPUT_TAIL_BYTES = 64 * 1024
++_CAPTURED_OUTPUT_TAIL_BYTES = 512 * 1024
+ _UNBLOCK_AND_EXEC = (
+     "import os, signal, sys; "
+     "signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM}); "

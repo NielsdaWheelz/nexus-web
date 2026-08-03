@@ -36,7 +36,7 @@ a concrete reason to override.
 - A **stub** supplies a narrow predetermined response.
 - A **mock** verifies interactions such as calls, arguments, count, or order.
 - **Priority-risk proof** protects data integrity, privacy/auth, money,
-  destructive effects, recovery, provenance, or durable-work correctness.
+  destructive effects, provenance, or durable-work correctness.
 - **Real-stack** means the applicable production implementation runs with real
   Nexus processes and real local infrastructure. It does not imply hosted
   providers, deployment, a physical device, or production.
@@ -50,16 +50,17 @@ assertion count, or the appearance of exhaustiveness.
 For each material failure mode, use the smallest deterministic proof whose
 boundary and oracle can genuinely observe it. Add broader proof only where a
 narrower proof cannot preserve the database, browser, process, provider,
-deployment, recovery, or production behavior at risk.
+deployment, or production behavior at risk.
 
 Nexus is outcome-heavy, not E2E-heavy:
 
 1. comprehensive static and preventive proof;
-2. a small kernel of pure, property, and state-machine proof;
+2. a small kernel of pure and property proof;
 3. a dominant middle of service and browser-component proof using real Nexus
    code, real PostgreSQL, and real Chromium semantics;
 4. very few complete journeys;
-5. scheduled provider, device, recovery, fuzz, and semantic evaluation;
+5. scheduled provider, device, property/random-order audit, and semantic
+   evaluation;
 6. explicit deployment and production verification.
 
 “Dominant middle” describes confidence and maintenance investment, not a
@@ -75,7 +76,8 @@ Prefer eliminating failure modes architecturally:
 - transactional ownership and durable checkpoints;
 - narrow provider boundaries;
 - reconciliation and observable invariants;
-- backup, restore, and rollback.
+- fail-closed local-resource ownership and cleanup;
+- deploy rollback owned by the deployment system.
 
 Test what remains uncertain.
 
@@ -118,6 +120,10 @@ revision, a temporary local fault that is removed before commit, a deterministic
 fault injector, or a targeted mutant. Do not commit deliberate production
 defects merely to preserve the demonstration.
 
+PR sensitivity MUST NOT dispatch paid hosted providers or require a physical
+device. The local executor/parser proof is sensitivity-gated in PR; the hosted
+or device boundary runs only in its named protected capability.
+
 The final work report for a defect or replacement MUST state how sensitivity was
 demonstrated. “Test passes” is insufficient.
 
@@ -145,7 +151,7 @@ changed or which demonstrated-sensitive proof supersedes it.
 Nexus is a one-user product. Brief UI downtime is less consequential than
 irreversible harm. Protect these first:
 
-- data loss, corruption, and unverified recovery;
+- data loss and corruption;
 - privacy, authorization, token, share, credential, or secret leakage;
 - destructive cleanup and irreversible side effects;
 - migration failure and schema/data incompatibility;
@@ -179,8 +185,8 @@ Interpretation:
 - **3–5, medium:** service/component proof;
 - **0–2, low:** static or pure proof.
 
-Auth, secrets, money, destructive mutation, anonymous sharing, migration,
-recovery, and signed releases are critical regardless of arithmetic.
+Auth, secrets, money, destructive mutation, anonymous sharing, migration, and
+signed releases are critical regardless of arithmetic.
 
 ## 5. Choose the proof boundary
 
@@ -237,10 +243,11 @@ cross-column invariants remain in application code plus executable defects. Do
 not introduce `CHECK`, exclusion, trigger, or other database business-invariant
 machinery contrary to `docs/rules/database.md`.
 
-Use real production PostgreSQL and required extensions for transactions,
-isolation, locks, constraints, raw SQL, pgvector, migrations, query plans,
-`LISTEN/NOTIFY`, and commit-time behavior. SQLite, mocked SQLAlchemy sessions,
-and emulated dialect behavior are not substitutes.
+Use a dedicated local PostgreSQL server matching production's version and
+required extensions for transactions, isolation, locks, constraints, raw SQL,
+pgvector, migrations, query plans, `LISTEN/NOTIFY`, and commit-time behavior.
+SQLite, mocked SQLAlchemy sessions, and emulated dialect behavior are not
+substitutes. The production server itself is forbidden by §11.
 
 Test-data factories SHOULD construct ORM-backed application records or call the
 owning service. Raw SQL is reserved for migration/schema proof, harness
@@ -270,6 +277,16 @@ Do not mock:
 Controlled clocks, randomness, UUIDs, network faults, provider responses, and
 process failures are allowed when they make consequential behavior reproducible.
 
+Deterministic provider/content behavior that must cross a process boundary MUST
+run in a test-owned process behind the same configured HTTP client, gateway, or
+proxy boundary used by production. Bind that process to an exact controller-owned
+loopback port and serve protocol-valid success, stream, malformed, and failure
+responses. Product code MUST NOT contain test-selected branches, fixture
+environment flags, canned provider responses, or alternate fixture runtimes.
+Static fixtures and test-only DNS may choose what the local server returns; they
+never authorize a non-loopback connection. Hosted proof is the only exception
+and uses its separately authorized capability.
+
 ### Browser components, the BFF, and SSE
 
 A Vitest browser-component proof MAY stub the Nexus BFF at the `fetch`/HTTP
@@ -294,10 +311,10 @@ fixtures covering frames, disconnect, replay, malformed events, and terminal
 state. Do not mock the consuming hook. At least one journey must prove the real
 browser → BFF/direct-SSE → FastAPI → worker path where the product uses it.
 
-`apps/web/src/__tests__/helpers/fetch.ts` is the current shared fetch-boundary
-helper. It is not blanket approval of every existing helper or test. New
-clean-sheet browser helpers MUST converge on a small owned testkit rather than
-copying legacy local mocks.
+No repository-wide fetch helper is a promised contract. Keep a minimal,
+schema-valid fetch-boundary fixture beside its sole proof; once another proof
+shares the same protocol contract, extract one small owned testkit helper.
+Never copy a deleted legacy helper or generalize unrelated endpoint shapes.
 
 ### Isolation and fixture shape
 
@@ -332,242 +349,213 @@ copying legacy local mocks.
 
 ### Flakes
 
-- A pass on retry is flaky, not green.
-- Retry at most once to classify and collect richer artifacts.
-- Never use silent retry, indefinite skip, or timeout inflation.
+- Automatic retries are forbidden in every blocking workflow. A diagnostic
+  rerun is a separate, explicitly requested run and never changes the first
+  verdict. Use `./scripts/test diagnose --of <16-hex-run-id>` only for a failed
+  v3 workflow summary at the same clean committed `HEAD` and exact recorded
+  invocation inputs; the controller allows one formal replay, links separate
+  evidence, keeps top-level `status: fail`, and exits nonzero. CI and Agency
+  gates MUST NOT invoke it.
+- Never use silent retry, indefinite skip, quarantine-to-green, or timeout
+  inflation.
 - Fix, replace, or delete a flake according to its unique risk signal.
 - Temporary quarantine requires a reason, expiry, and replacement proof for any
   priority risk. Solo ownership is implicit.
 
 ## 7. Portfolio and budgets
 
-Static proof is comprehensive. The majority of authored behavioral confidence
-and maintenance belongs to real service and Chromium component proof. The
-kernel remains small and semantically dense. Complete journeys remain capped at
-approximately 10–15. Native-shell proof remains approximately 5 focused
-scenarios unless the supported native surface expands.
+Static proof is comprehensive. The behavioral center of gravity is real
+PostgreSQL service proof and real-Chromium component proof. The kernel is small
+and semantically dense. The browser portfolio has ten named journeys; adding
+one requires deleting or justifying overlap. Test count and line coverage are
+not targets.
 
-There is no kernel/service test-count quota. Scenario count is not a quality
-metric.
+A red or `not_run` result is decisive. The controller records later
+capabilities as blocked and launches no further heavy work.
 
-| Workflow | Target |
-|---|---:|
-| Focused changed proof | under 10 seconds |
-| Local confidence | under 60–90 seconds |
-| Pre-push | under 3–5 minutes |
-| First actionable CI failure | under 2 minutes |
-| Deterministic CI result, p95 | under 10–12 minutes |
-| Nightly/promotion/recovery | under 30–60 minutes, except an explicitly budgeted restore |
+| Workflow | Warm target | Cold behavior |
+|---|---:|---|
+| exact proof / `changed` | under 10 seconds when no heavy boundary is selected | dependency or first template/build cost is recorded, not hidden |
+| `confidence` | 60–90 seconds | selected service/component setup may exceed the warm target |
+| `pr` | 3–5 minutes locally | CI duration is measured before a p95 ratchet is adopted |
+| `full` | measured; no fixed acceptance number | one current-revision build and one sequential heavy process |
+| `nightly` / `release` | scheduled and cost-capped | hosted/device work remains fail-closed |
 
-Worker counts come from measured memory, not CPU count. On the standard
-development machine:
+The controller records peak RSS for its process tree and the working set of
+containers owned by the exact test compose project. CPU count never chooses
+workers. Run one Next build, Chromium suite, or Gradle operation at a time; do
+not overlap unrelated heavy lanes. Build a strict-CSP Next artifact at most
+once per distinct executable source/environment fingerprint and reuse it.
+Ordinary workflows therefore build the current revision once. Sensitivity MAY
+build one additional artifact for each distinct faulted or base revision whose
+production browser proof must execute that code; reusing the green artifact
+there would make the red oracle vacuous. Never rebuild the same fingerprint in
+one workflow.
 
-- use no more than two Python workers;
-- run at most one Next production build, browser suite, or Gradle operation at a
-  time;
-- do not overlap unrelated heavy verification;
-- report peak memory for heavy lanes when changing their orchestration.
+Before launching Node/browser/build/Gradle or other heavy proof, the controller
+acquires the single-heavy-operation lock and waits at most 30 seconds for
+kernel-reported `MemAvailable` to reach 2,048 MiB. This bounded admission wait
+only resamples host state; it never launches or reruns proof and is not an
+automatic retry. Unknown memory is immediately `not_run`; expiry below the
+floor is `not_run` before launch and reports the latest observed value. This is
+a conservative host-safety admission floor, not a proof-size or performance
+target. Change it only from recorded memory evidence on the 8 GiB reference
+host.
 
-Build the production artifact once per verification workflow and reuse it.
-Start local infrastructure once per workflow or development session. Install
-browser/system dependencies once per reusable environment.
+## 8. Repository capability contract
 
-## 8. Repository contract today
+`./scripts/test` is the sole public test and verification API. `scripts/test`
+is a thin locked launcher; `scripts/agency_verify.sh` is a thin `confidence`
+adapter. The Makefile deliberately has no test/check/verify aliases.
 
-Runner configuration is authoritative where a filename convention has an
-explicit exception. Public Make targets are supported workflow entry points;
-underscored targets are implementation details.
+| Command | Required meaning |
+|---|---|
+| `./scripts/test changed [--base REF] [PATH_OR_NODE ...]` | changed static paths plus selected affected proof |
+| `./scripts/test confidence` | complete policy/static/kernel plus affected service/component proof |
+| `./scripts/test pr` | deterministic blocking PR portfolio plus same-run sensitivity |
+| `./scripts/test full` | complete deterministic local portfolio |
+| `./scripts/test nightly` | `full` plus randomized/property audit, one hosted canary, and Android device proof |
+| `./scripts/test release` | `full` plus bounded provider certification, signed Android release proof, and exact staged artifacts |
+| `./scripts/test doctor` | local tool, dependency, browser, SDK, service, port, and template readiness; protected-workflow inputs only when that lane is explicitly enabled |
+| `./scripts/test prove --proof PROOF --against base:REF\|fault:FAULT_ID` | exact demonstrated-red then green sensitivity evidence |
+| `./scripts/test diagnose --of RUN_ID` | one separately recorded replay of the exact failed workflow; never a new verdict |
+| `./scripts/test clean` | delete exact ledger-owned runs, the recorded local workspace stack/volumes, and its runtime state |
+| `./scripts/test list --json` | machine-readable registry from the same typed execution source |
 
-### Static, build, security, and performance
+The typed registry is the single execution and workflow-composition source.
+The command table above, CI routes, and deferred-owner map are explicit,
+policy-checked projections that MUST change with it; they are not generated
+from the registry.
 
-| Proof | Command | Evidence |
-|---|---|---|
-| Python lint/format | `make check-back` | Ruff over Python |
-| Python types | `make type-back` | Current Pyright boundary |
-| Web lint/types/tokens | `make check-front` | ESLint, TypeScript, CSS-token policy |
-| GitHub workflow lint/security | `make check-workflows` | actionlint and zizmor |
-| Standard static aggregate | `make check` | Backend, types, frontend, workflows |
-| Android lint | `make check-android` | Android debug lint |
-| Production web build | `make build` | Next production compilation |
-| First Load JS budget | `make check-bundle` | Production build plus authenticated bundle budget |
-| Dependency audit | `make audit` | Python, web, E2E, and ingest dependency audits |
-| Android build | `make build-android` | Debug and instrumentation APKs |
-| Signed Android build proof | `make verify-android-release` | Release lint/build plus expected signer verification |
+<!-- nexus-test-routing-sha256: 1d56430548745366039562788c98ccc4bc277477917c465a4e275fa260b6aeea -->
 
-`check-bundle` is the current automated frontend performance-regression gate.
-Do not create a generic load/soak suite for a one-user system without a measured
-latency, memory, ingest, query, or worker risk and an explicit budget.
+When changed-file routing names a capability later than the invoked workflow,
+the controller MUST retain it in evidence with its exact `deferred_to` owner and
+MUST NOT dispatch it early or reject the current gate. Deferral MUST NOT clear
+declared priority-risk or fault sensitivity: only paid hosted-provider and
+physical-device boundaries are excluded. The owning `full`, `nightly`, or
+`release` workflow remains fail-closed.
 
-### Automated behavior
+### Proof owners
 
-| Proof | Location/classification | Command |
-|---|---|---|
-| Python kernel | `python/tests/test_*.py`, `unit` | `make test-back-unit` |
-| Python PostgreSQL/API | `python/tests/test_*.py`, `integration` | `make test-back-integration` |
-| Python + frontend kernel aggregate | existing unit projects | `make test-unit` |
-| Frontend pure | `src/**/*.test.ts` except configured browser path | `make test-front-unit` |
-| Frontend Chromium component | `src/**/*.test.tsx` and `src/lib/highlights/**/*.test.ts` | `make test-front-browser` |
-| Alembic migrations | current migration module | `make test-migrations` |
-| Local Supabase Auth | `supabase` marker | `make test-supabase` |
-| E2E environment resolver | Node contract test | `make test-e2e-env` |
-| Deterministic real media | `real_media` marker/project | `make test-real-media` |
-| Default Chromium journeys | `e2e/tests/*.spec.ts`, excluding configured projects | `make test-e2e` |
-| Strict CSP journeys | `e2e/tests/*.csp.spec.ts` | `make test-csp` |
-| Android instrumentation | `apps/android/app/src/androidTest` | `make test-android` |
-| Non-E2E aggregate | unit, DB/API, migrations, browser components | `make test` |
+| Boundary | Owner |
+|---|---|
+| Python kernel/control plane | `python/tests/kernel/` |
+| Shared local-real testkit | `python/tests/testkit/` and `python/tests/conftest.py` |
+| Real PostgreSQL/API/service | `python/tests/service/` |
+| Migration graph and convergence | `python/tests/migrations/` |
+| Deterministic LLM semantics | `python/tests/evals/` |
+| Property/random-order audit | `python/tests/audit/` |
+| Paid hosted proof | `python/tests/hosted/nightly/` and `python/tests/hosted/release/` |
+| Web pure kernel | `apps/web/src/**/*.unit.test.{ts,tsx}` |
+| Chromium component | `apps/web/src/**/*.browser.test.{ts,tsx}` |
+| Journeys, deployment smoke, extension | `apps/web/e2e/` under the sole Playwright config |
+| Android host/device | `apps/android/app/src/test/` and `apps/android/app/src/androidTest/` |
+| Corpus / risk registry | `testdata/manifest.json` / `testdata/proofs.json` |
 
-The `network` pytest marker has no dedicated public target. Some deterministic
-real-media cases carry both `network` and `real_media` and are selected through
-`make test-real-media` with local provider fixtures. Do not infer that
-`make test-live-providers` selects `network`, and do not add a new
-network-only case without first creating an explicit owner lane.
-
-### Provider and release reality
-
-| Proof | Command | Evidence |
-|---|---|---|
-| Pinned shared provider runtime | `make test-provider-runtime` | Pin match, lint, types, deterministic runtime suite |
-| Hosted provider canaries | `make test-live-providers` | `live_provider` cases; may soft-skip without credentials |
-| Paid LLM promotion certification | `make certify-llm-providers` | Unfiltered provider matrix; fails closed without required credentials/assertion |
-| Current standard verification | `make verify` | `check`, web build, and `make test` |
-| Current broad verification | `make verify-full` | `verify`, real media, live providers, default E2E |
-| Production auth smoke | `make smoke` | Deployed production auth smoke only |
-| Production auth redirects | `make smoke-auth-redirects` | Read-only deployed redirect/allowlist proof |
-
-`make verify-full` does not prove:
-
-- that soft-skipped hosted-provider checks ran;
-- strict CSP;
-- provider-runtime certification;
-- Android device or signed-release behavior;
-- backup restoration;
-- deployment or production health beyond separately run smoke targets.
-
-Report each proof separately.
+Pytest markers do not route work. Typed capabilities and final-owner filename
+conventions do. Ordinary Python proof is socket-denied, including spawned
+Python workers through `sitecustomize`; only `tests/hosted/` with the
+controller's explicit socket flag may contact external providers. Browser
+component globals guard `fetch`, `EventSource`, and `WebSocket`; Playwright
+allows only controller-recorded loopback origins. No test may supply product or
+production resource endpoints.
 
 ### Focused changed-proof commands
 
-Focused commands are sanctioned. They are the required inner loop; broad Make
-targets are not the first debugging tool.
-
-Python kernel:
-
-```sh
-cd python
-NEXUS_ENV=test uv run pytest -v --tb=short \
-  -m "unit and not integration" \
-  tests/path/to/test_module.py::test_behavior
-```
-
-Python PostgreSQL/API, using the persistent development services:
-
-```sh
-make dev
-set -a
-. ./.dev-ports
-set +a
-make migrate-test
-cd python
-NEXUS_ENV=test uv run pytest -v --tb=short \
-  -m "integration and not unit and not supabase and not network and not slow" \
-  tests/path/to/test_module.py::test_behavior
-```
-
-Frontend pure:
-
-```sh
-cd apps/web
-bunx vitest run --project unit src/path/to/file.test.ts
-```
-
-Frontend Chromium component:
-
-```sh
-cd apps/web
-bunx vitest run --project browser src/path/to/file.test.tsx
-```
-
-One Playwright file or title:
-
-```sh
-make test-e2e \
-  PLAYWRIGHT_ARGS="tests/path.spec.ts --project=chromium --grep 'behavior'"
-```
-
-Strict CSP:
-
-```sh
-make test-csp \
-  PLAYWRIGHT_ARGS="tests/path.csp.spec.ts"
-```
-
-Interactive Playwright:
-
-```sh
-make test-e2e-ui
-```
-
-After focused proof, run the smallest owning public lane before claiming that
-lane. Do not invoke underscored Make targets directly.
+Use `./scripts/test changed <repository-relative path or exact
+runner-qualified node>` for the supported inner loop. Direct pytest, Vitest,
+Playwright, or Gradle invocation is allowed for exact debugging (`--lf`, watch,
+`--headed`, `--debug`) only; checked-in configuration and network policy still
+apply. A direct invocation is not a workflow verdict.
 
 ## 9. Current fixture and corpus contract
 
+### Local runtime and ownership
+
+The controller owns one persistent, health-checked, workspace-local
+PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json`.
+Initial allocation MUST exclude the host kernel's ephemeral client-port range;
+when the kernel range interface is absent, the controller excludes ports
+`32768–65535`; an unreadable or malformed present interface fails closed.
+It provisions that stack and disposable writable resources lazily, only when a
+selected proof crosses the database, object-storage, auth, or owned app-process
+boundary. Static, kernel, Chromium-component, and Android-host-only workflows
+MUST NOT start the service stack or run migrations. Every workflow receives a
+run ID for ownership and evidence; a real-stack workflow additionally receives:
+
+- a fingerprinted, migrated, non-connectable PostgreSQL template built from
+  `template0`, then a clone named `nexus_run_<run-id>`;
+- an empty `nexus_migration_<run-id>` database only when migration proof is
+  selected;
+- a MinIO bucket named `nexus-run-<run-id>`;
+- scenario-local Supabase users named from the run and scenario IDs;
+- processes, profiles, and other resources recorded in the mutable run recovery
+  ledger before creation.
+
+Before contacting a service, the controller MUST reject a non-test
+`NEXUS_ENV`, caller-supplied resource configuration, public/non-loopback
+endpoints, a repository mismatch, or a resource name outside the exact test
+grammar. Cleanup walks the mutable recovery ledger in reverse dependency order
+and deletes only resources both recorded there and still matching that grammar.
+It removes an entry only after that exact resource is deleted and preserves
+every failed or outstanding entry. Immutable run-context/resource-plan evidence
+retains the complete audit record. Interrupted-run proof uses synthetic test
+data and demonstrates that foreign or unrecorded resources survive.
+
 ### Python database and application fixtures
 
-- `engine`: one SQLAlchemy engine shared for the pytest session.
-- `verify_schema_exists`: fails fast when migrations have not prepared the test
-  database.
-- `db_session`: savepoint isolation and rollback; default for service work.
-- `authenticated_client`: authenticated HTTP paired with `db_session`.
-- `bootstrapped_user`: user/default library inside the rollback session.
-- `direct_db`: committed multi-connection behavior with explicitly registered
-  cleanup; use only for races, recovery, pooling, and commit-visible behavior.
-- `auth_client`: no savepoint isolation; pair with `direct_db` cleanup.
-- `client`: app with auth middleware intentionally absent; use only for public
-  or intentionally unauthenticated behavior.
-- `test_verifier`: controlled Supabase-token-verification seam, not permission
-  to bypass application authorization.
-- `reset_settings_cache`: clears process-global settings state after each test.
+- `engine`: session-scoped engine for the controller-owned run clone.
+- `db_session`: savepoint isolation inside that clone; default for service
+  work.
+- `test_user`: unique user/default library inside the rollback transaction.
+- `authenticated_client`: the real FastAPI app and authorization stack paired
+  with `db_session`; only external token verification is a controlled fake.
 
-Do not add a global fixture when a small local builder or existing fixture is
-enough. Do not use `direct_db` for convenience. Register cleanup in reverse
-dependency order for committed rows.
+Use ORM-backed factories or owner APIs so fixture shape follows production
+models. Use a small local builder for unreachable states, and independently
+verify it. Multi-connection visibility, worker claims, committed checkpoints,
+pooling, and concurrency require an explicit process/service proof against the
+disposable run database; do not add a convenience bypass fixture.
 
-Rollback proof does not cover deferred constraints, after-commit work,
-multi-connection visibility, worker claims, or connection-pool behavior. Those
-require `direct_db` or the future disposable-database lane.
+### Browser state and helpers
 
-### Frontend helpers
+Chromium component proof uses the owner-local testkit and may stub only the
+browser's external fetch/SSE boundary as defined in §6. It receives no run
+database, bucket, Supabase user, or migrated template; needing one promotes the
+proof to service or journey ownership. Every Playwright journey creates its own
+local Supabase user and writable state, uses strict CSP, and runs in a fresh
+context. `storageState`, setup projects, shared seed users, and shared mutable
+JSON are forbidden. The sole Playwright configuration uses one worker and zero
+retries.
 
-Current shared helpers live under `apps/web/src/__tests__/helpers/`, including
-fetch-boundary, render-environment, authenticated-pane, audio, overflow, and
-pane-return support.
+Each journey declares its product-source owner globs in `testdata/proofs.json`.
+Changing a declared source selects that exact journey. Lazy pane registry/body
+ownership MUST use this route because static-import related-test discovery
+cannot see dynamically registered panes.
 
-These helpers are candidates for the clean testkit, not automatic precedents:
-
-- retain helpers that expose product-shaped inputs and results;
-- remove helpers that reproduce owner logic, hide assertions, or primarily
-  manufacture mocks;
-- add new shared helpers only when at least two clean-sheet proofs need the same
-  stable plumbing;
-- keep scenario-specific setup next to its proof.
+Add a shared helper only when at least two proofs need the same stable plumbing.
+Helpers expose product-shaped inputs/results and MUST NOT reproduce owner logic,
+hide assertions, or contain the scenario's oracle.
 
 ### Canonical corpus
 
-Representative reader, HTML, EPUB, PDF, transcript, and real-media artifacts
-live under `python/tests/fixtures/`. Reuse them across Python and browser proof
-instead of creating divergent copies.
+`testdata/manifest.json` is the machine owner for reusable cross-language
+artifacts, including existing pane-find and consumption corpora and the selected
+reader/real-media fixtures under `python/tests/fixtures/`. Reuse them across
+Python and browser proof instead of creating divergent copies.
 
 New captured or binary fixtures require:
 
 - clear provenance and permission to retain;
 - no secrets, tokens, or personal production data;
 - the smallest useful artifact;
-- a manifest or README entry naming the behavior represented;
-- a stable checksum where identity matters;
+- an exact manifest entry naming provenance and represented behavior;
+- a stable checksum;
 - deliberate semantic review before replacing a golden artifact.
 
-Fixture-manifest validation is a required paved-road enforcement item.
+The policy capability validates every declared path, checksum, provenance
+field, and undeclared corpus-file violation.
 
 ## 10. Specialized proof
 
@@ -597,13 +585,15 @@ replace database/process proof.
 
 ### Migrations and deployment
 
-Migration proof uses production PostgreSQL and extensions and covers:
+Migration proof uses dedicated local PostgreSQL matching production's version
+and extensions and covers:
 
 - empty baseline → head;
 - each explicitly supported production snapshot → head;
 - the new migration’s semantic and data-loss behavior;
 - raw-SQL-owned tables, constraints, indexes, and triggers;
-- backup and restore before irreversible work.
+- PostgreSQL/object consistency against synthetic local state where the
+  migration crosses that boundary.
 
 Do not preserve every historical migration permutation. Once all live databases
 cross an agreed cutoff, create a new baseline and delete superseded migration
@@ -616,7 +606,8 @@ Test cross-version compatibility only when an owning product decision requires
 zero downtime.
 
 Downgrades are unsupported unless an owning architecture document explicitly
-requires them. Prove forward recovery and application-artifact rollback instead.
+requires them. Prove forward migration and application-artifact rollback
+instead.
 
 ### External providers
 
@@ -673,7 +664,8 @@ only stable, reviewed baselines.
 
 ### Performance
 
-`make check-bundle` owns the current First Load JS budget.
+The typed `bundle` capability owns the strict-CSP standalone build and its
+current First Load JS budget.
 
 Add a performance proof only with:
 
@@ -700,42 +692,55 @@ behavior.
 Extension proof covers MV3 runtime, permissions, bearer scope, content capture,
 and handoff boundaries. Reuse the canonical content corpus.
 
-## 11. Recovery and production proof
+## 11. Local test-runtime safety
 
-For Nexus’s data-loss-intolerant profile, recovery is a first-class test lane,
-not a noun in a release checklist.
+This testing system may create and destroy only dedicated local test resources.
+It MUST NOT contact, inspect, verify, mutate, restore, or clean up production
+PostgreSQL, object storage, Supabase, or user data.
 
-### Recovery objectives
+Before any resource contact or creation, the controller MUST:
 
-Until an owning operations decision sets stricter values:
+- force `NEXUS_ENV=test` and reject any other product environment;
+- reject caller-supplied database, storage, Supabase, or service resource
+  configuration;
+- pin Docker and Supabase CLI work to a verified local Unix-domain Docker
+  socket; remote Docker hosts and contexts are forbidden;
+- accept only controller-derived loopback endpoints and exact test-only names;
+- persist the repository identity, run ID, resource kind, planned identity, and
+  ownership state before creation.
 
-- PostgreSQL recovery-point objective: no more than 15 minutes of committed data
-  loss;
-- recovery-time objective: service restored within 2 hours;
-- object-store recovery must preserve every durable object still referenced by
-  PostgreSQL or prove deterministic reconstruction.
+Cleanup MUST read the run ledgers and validated workspace runtime record,
+revalidate repository and resource-name ownership, delete exact run resources,
+then stop and remove only the recorded local Supabase/Compose projects and
+test-only volumes. It MUST preserve every foreign, unrecorded, public, or
+ambiguously named resource. Synthetic interruption proof must cover crashes
+between plan/create/record and idempotent repeated cleanup.
 
-### Required recovery evidence
+Immutable run-context/resource-plan evidence is the complete audit record, not
+the cleanup oracle. The mutable recovery ledger is the cleanup authority.
 
-- Continuously monitor backup/PITR freshness.
-- At least monthly, restore the latest recoverable production backup into an
-  isolated environment.
-- Run an additional restore before an irreversible migration, destructive
-  storage change, or backup-system cutover.
-- Verify recorded migration head, critical table identities/counts, ownership
-  and reachability invariants, representative referenced objects, application
-  reads, and durable-job consistency.
-- Record backup identity/time, requested recovery point, restored schema head,
-  application SHA, duration, invariant results, object checks, and verdict.
-- A backup file existing or a backup command returning zero is not restore
-  evidence.
+Process identity uses the persisted run and random owner tokens, process-group
+leader PID, and kernel start token. The planned command remains audit evidence,
+not a live identity oracle: runtimes such as Next may legitimately rewrite
+`argv`. Readiness MUST verify that a socket in the exact owned process group
+owns the expected loopback listener; a healthy stale or foreign listener is a
+failure, never readiness evidence.
 
-The target public lane is `make test-restore` or the future
-`nexus-test release`. Neither exists today; recovery proof MUST be reported as
-unavailable until an actual restore is run. Do not claim `make verify-full`
-includes recovery.
+Independent teardown owners are all attempted even when one fails. After each
+exact successful deletion, cleanup removes only that recovery-ledger entry. Any
+failure returns nonzero and preserves every failed or outstanding entry and its
+exact recovery path; run ownership is released only when the ledger is empty.
 
-### Deployment and production
+A local synthetic restore scenario is allowed only when it proves a concrete
+migration or PostgreSQL/object-consistency risk. It is not product disaster
+recovery evidence.
+
+Production backup, PITR, AWS recovery infrastructure, Cloudflare R2 recovery,
+retention, RPO, RTO, and restore drills belong to a separate future operations
+project. They are not a test workflow, release prerequisite, or acceptance
+criterion in this repository contract.
+
+### Deployment and production smoke
 
 Use:
 
@@ -745,65 +750,44 @@ Use:
 - event-level data/job invariants;
 - build-SHA-tagged logs, traces, and errors;
 - known-good application rollback;
-- forward database recovery.
+- explicit migration-forward handling where required.
 
 Percentage canaries have little statistical value for one user. Use a dedicated
 synthetic identity/tenant or read-only probes. Production writes must be
 isolated, reversible, and explicitly authorized.
 
 Sparse traffic makes aggregate error-rate dashboards insufficient. Monitor
-critical events, stuck durable work, invariant violations, backup freshness, and
-user-visible paths.
+critical events, stuck durable work, invariant violations, and user-visible
+paths. Production smoke MUST remain read-only or use a dedicated reversible
+synthetic identity and MUST NOT imply disaster-recovery proof.
 
-## 12. Mechanical enforcement and current exceptions
+## 12. Mechanical enforcement
 
-Normative rules apply now even where mechanical enforcement is pending. The
-table states what the repository actually enforces and what the paved road must
-add; it does not imply unavailable machinery exists.
+The paved road enforces the mechanically decidable part of this contract:
 
-### Enforcement map
+| Contract | Enforcement owner |
+|---|---|
+| Sole command/routing/workflow/docs ownership | typed capability registry plus policy route-contract checks |
+| Final-owner path and filename taxonomy | registry selection and policy AST/path checks |
+| No owned-code mocks, sleeps, skips, or focused commits | Python AST policy plus test-scoped ESLint/Playwright policy |
+| Ordinary Python network denial | in-process socket guard plus inherited `sitecustomize` worker guard |
+| Browser network denial | component global guards and controller-recorded loopback Playwright allowlist |
+| Local-resource isolation | pre-contact environment/endpoint/name validators and exact ownership ledger |
+| No test-only product seams | product-source policy scan plus test-owned loopback protocol processes |
+| Deterministic execution | zero automatic retries, one Playwright worker, fixed audit seeds, one heavy-process lock |
+| Fixture provenance | `testdata/manifest.json` path, provenance, and SHA-256 validation |
+| Priority-risk and journey routing | `testdata/proofs.json` schema, source owners, minimum risk IDs, exact journey selection, and sensitivity records |
+| Falsifiability | `prove` red/green evidence plus PR policy for changed priority-risk and declared-fault proof |
+| Evidence integrity | versioned run summary schema, `pass|fail|not_run`, fail-on-`not_run`, bounded artifacts |
+| Corpus/policy self-protection | policy capability runs in every blocking workflow and has adversarial kernel proof |
 
-| Rule | Today | Required enforcement |
-|---|---|---|
-| Registered pytest markers | `--strict-markers` | Keep |
-| Python warnings | selected warnings fail | Expand only from evidence |
-| No internal mocks | AST guard limited to real-media/live-provider surfaces | Test-glob static guard for owned Python and TypeScript targets |
-| No external network in ordinary proof | marker selection and convention | Default-deny sockets/requests with explicit local-host and hosted-lane allowlists |
-| No sleeps in proof | Review only | Test-scoped Python/ESLint restriction with narrow harness allowlist |
-| E2E best practices | Playwright runner only | ESLint plus `eslint-plugin-playwright` or equivalent over `e2e/` |
-| Flaky retry remains visible | Playwright classifies retry | At most one retry plus CI failure/report on flaky |
-| Resource cap | None for Python unit target | Explicit maximum two local workers and one heavy process |
-| Documented command/marker accuracy | Review only | Check documented public targets/marker selection against Make/config |
-| Broken normative references | Review only | Link/path check for local rule owners |
-| Fixture provenance | README/manifests on selected corpora | Manifest/checksum validation for canonical binary/captured fixtures |
-| Falsifiability | Review evidence | Required demonstrated-red/sensitivity field in agent/PR workflow |
-| Quarantine expiry | Convention | Small checked exception file; no custom service |
+Warnings configured as errors and broken normative links remain policy-owned.
+`testdata/policy-exceptions.json` is the only mechanical exception surface; an
+entry requires exact scope, rationale, expiry, and replacement disposition.
 
-Do not mechanize semantic judgment merely to make the table green. Smallest
-boundary, oracle independence, unique risk, and assertion quality remain review
-responsibilities.
-
-### Temporary legacy constraints
-
-| Area | Available today | Required target |
-|---|---|---|
-| Python concurrency | unit target uses `pytest -n auto` | measured cap; maximum two locally |
-| Services | fresh stacks per top-level workflow | persistent health-checked local stack |
-| Database | shared migrated DB plus rollback/manual cleanup | immutable migrated template cloned per run |
-| Browser state | shared authenticated seed user; one worker | scenario-local identities and writable state |
-| Browser retries | two in CI | zero; at most one visibly flaky diagnostic retry |
-| Next/browser setup | repeated builds and browser installs | one artifact and cached install |
-| Selection | broad fixed targets | focused/affected loop plus scheduled full audit |
-| Network | markers and convention | default-deny enforcement |
-| Recovery | no public restore lane | scheduled and pre-destructive actual restore |
-
-Until replaced:
-
-- use the public commands in this document;
-- do not copy or deepen their legacy internals;
-- do not add shared mutable state, retries, unbounded parallelism, redundant
-  stack startup, application builds, or browser installation;
-- report unavailable higher-level proof honestly.
+Do not mechanize semantic judgment merely to satisfy this table. Smallest
+boundary, oracle independence, unique risk, assertion quality, and whether a
+visual or accessibility contract was truly observed remain review decisions.
 
 ## 13. Adding or changing proof
 
@@ -879,8 +863,8 @@ The replacement order is:
 6. compare remaining legacy proof without weakening priority-risk gates;
 7. delete mock-heavy, duplicate, source-grep, snapshot, historical migration,
    framework, and low-value flaky proof aggressively;
-8. make affected proof the default and schedule full/provider/device/recovery
-   work at its proper cadence.
+8. make affected proof the default and schedule full/provider/device work at
+   its proper cadence.
 
 Deleting 85–95% of legacy test count or source is plausible, not a quota.
 Replacement is complete when current risks have stronger, sensitive, faster,
@@ -890,16 +874,17 @@ and more diagnosable proof.
 
 Build these in order:
 
-1. one repository-owned `changed`, `pr`, `full`, `nightly`, `release`, and
-   `doctor` interface;
-2. explicit memory caps, no `-n auto`, no overlapping heavy local gates;
+1. one repository-owned `changed`, `confidence`, `pr`, `full`, `nightly`,
+   `release`, and `doctor` interface;
+2. an explicit memory-admission floor, measured ratchets, no `-n auto`, and no
+   overlapping heavy local gates;
 3. one persistent Postgres/MinIO/Supabase stack;
 4. one migrated seed database cloned per run;
 5. one immutable canonical corpus plus per-run writable state;
 6. default-deny network, owned-mock/sleep lint, E2E lint, and visible flakes;
-7. one production build reused by browser projects;
+7. one production build per executable fingerprint, reused by browser projects;
 8. demonstrated-sensitive replacement proof and aggressive legacy deletion;
-9. actual restore and safe post-deploy proof.
+9. bounded release proof and safe post-deploy smoke.
 
 Do not add Bazel, remote execution, per-test containers, Pact, ML selection, a
 custom quarantine service, a large browser/device matrix, repository-wide
@@ -907,8 +892,10 @@ mutation testing, full distributed-system simulation, generic load/soak
 infrastructure, broad pixel regression, or a commercial LLM-evaluation platform
 without a measured problem that simpler tooling cannot solve.
 
-Targeted property testing, fuzzing, changed-code mutation, deterministic job
-simulation, and hosted conformance are allowed when a named risk justifies them.
+The current audit owns targeted property proof and fixed-seed randomized order.
+Targeted state-machine proof, fuzzing, changed-code mutation, deterministic job
+simulation, and hosted conformance are allowed only when a named risk earns
+their cost.
 
 ## 16. Evidence, metrics, and maintenance
 
@@ -923,6 +910,23 @@ Failure artifacts include, as applicable:
 - last observed job/storage state;
 - sensitivity method and result.
 
+Formal diagnostic evidence names `command: diagnose`, the original failed run
+and summary, and a nested `diagnostic_result`. Its top-level status remains
+`fail` regardless of the replay result. The v3 run summary records UI mode and
+a secret-safe fingerprint of outcome-affecting execution inputs; replay rejects
+any mismatch. Its exclusive attempt record moves durably from `started` to
+`terminal` only after the linked summary exists. Direct runner debugging
+remains unlinked, non-gate evidence.
+
+The v3 hard cut rejects older summary shapes. One sampler spans sensitivity
+and ordinary capabilities; each red/green attempt records duration, owned
+memory, and bounded retained artifacts. One compact run-context artifact owns
+redacted fixed commands and observed runtime/template/build/browser identities.
+
+The controller does not stream raw live child output. It captures bounded
+output, waits for the child to exit, classifies the first decisive failure, then
+reports that classified failure immediately.
+
 Never capture secrets, auth tokens, provider credentials, or personal production
 content.
 
@@ -930,10 +934,7 @@ Track only metrics that change decisions:
 
 - p50/p95 first actionable failure and decisive result;
 - peak memory and compute time for heavy lanes;
-- first-attempt versus retry pass rate;
 - escaped failures grouped by missing boundary/oracle;
-- selector misses during scheduled full runs;
-- restore freshness, success, RPO, and RTO;
 - proof consuming maintenance without unique signal.
 
 Do not use raw test count, line coverage, assertion count, or green retries as
@@ -958,7 +959,7 @@ This policy follows the durable common ground in:
 - property/state-machine testing for invariant-rich behavior;
 - independent-oracle and demonstrated-sensitivity requirements for
   agent-authored proof;
-- production recovery, monitoring, and rollback.
+- production monitoring and rollback.
 
 External methodology is evidence, not authority. Nexus architecture, supported
 behavior, consequences, feedback budgets, and recoverability determine the

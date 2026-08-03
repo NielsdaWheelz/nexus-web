@@ -1,0 +1,20 @@
+diff --git a/python/nexus/services/agent_tools/web_search.py b/python/nexus/services/agent_tools/web_search.py
+--- a/python/nexus/services/agent_tools/web_search.py
++++ b/python/nexus/services/agent_tools/web_search.py
+@@ -600,8 +600,15 @@ def persist_web_search_run(
+     return PersistedWebSearchResult(
+         tool_call_id=tool_call_id,
+         citations=persisted_citations_tuple,
+         selected_citations=selected_citations,
+         next_citation_ordinal=numbering.next_ordinal,
+         model_output=model_output,
+-        result_event=result_event,
++        result_event=result_event.model_copy(
++            update={
++                "results": [
++                    result.model_copy(update={"id": UUID(str(result.result_ref))})
++                    for result in result_event.results
++                ]
++            }
++        ),
+     )

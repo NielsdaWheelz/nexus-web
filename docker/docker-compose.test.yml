@@ -1,13 +1,15 @@
 # Docker Compose for isolated test services.
 services:
   postgres:
-    image: pgvector/pgvector:pg15
+    image: pgvector/pgvector@sha256:bd12d6788a617f4147d5a2ae0b56d07921398adabfe5a033bd3f50c245df55a1
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -23,3 +25,9 @@ services:
       MINIO_API_CORS_ALLOW_ORIGIN: "${MINIO_API_CORS_ALLOW_ORIGIN:-http://localhost:3000,http://127.0.0.1:3000}"
     ports:
       - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+    volumes:
+      - minio-test-data:/data
+
+volumes:
+  postgres-test-data:
+  minio-test-data:

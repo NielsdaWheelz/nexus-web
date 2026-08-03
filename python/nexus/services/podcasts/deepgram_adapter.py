@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -17,12 +16,6 @@ from nexus.services.url_normalize import validate_requested_url
 logger = get_logger(__name__)
 
 _DEEPGRAM_LISTEN_PATH = "/v1/listen"
-
-# Real-media crew-4 transcript fixture size. The same fixture file
-# (nasa-hwhap-crew4-transcript.txt) is also size-checked in
-# nexus/services/rss_transcript_fetch.py; keep these two in sync if the
-# fixture content changes.
-_CREW4_FIXTURE_BYTES = 753
 
 TerminalTranscriptionErrorCode = Literal[
     "E_TRANSCRIPT_UNAVAILABLE",
@@ -40,7 +33,6 @@ class TranscriptionResult:
     error_code: TerminalTranscriptionErrorCode | None = None
     error_message: str | None = None
     diagnostic_error_code: Literal["E_DIARIZATION_FAILED"] | None = None
-    provider_fixture: dict[str, Any] | None = None
 
 
 class DeepgramClient:
@@ -53,15 +45,11 @@ class DeepgramClient:
         base_url: str,
         model: str,
         timeout_seconds: float,
-        use_fixtures: bool,
-        fixture_dir: str | None,
     ):
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
         self.timeout_seconds = timeout_seconds
-        self.use_fixtures = use_fixtures
-        self.fixture_dir = fixture_dir
 
     def transcribe(self, audio_url: str | None) -> TranscriptionResult:
         normalized_audio_url = str(audio_url or "").strip()
@@ -78,9 +66,6 @@ class DeepgramClient:
                 ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
                 "Transcript unavailable",
             )
-
-        if self.use_fixtures:
-            return self._transcribe_real_media_fixture(normalized_audio_url)
 
         if not self.api_key:
             raise RuntimeError("Transcription provider credentials are not configured")
@@ -171,44 +156,6 @@ class DeepgramClient:
 
         return TranscriptionResult(status="completed", segments=segments)
 
-    def _transcribe_real_media_fixture(self, audio_url: str) -> TranscriptionResult:
-        expected_url = "https://www.nasa.gov/wp-content/uploads/2023/07/ep239_crew-4.mp3"
-        if audio_url != expected_url:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-                f"No real-media podcast transcript fixture for {audio_url}",
-            )
-        if self.fixture_dir is None:
-            raise RuntimeError("REAL_MEDIA_FIXTURE_DIR is required for podcast transcript fixtures")
-
-        path = Path(self.fixture_dir) / "nasa-hwhap-crew4-transcript.txt"
-        try:
-            content = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise RuntimeError("Podcast transcript fixture is unavailable") from exc
-
-        payload = content.encode("utf-8")
-        if len(payload) != _CREW4_FIXTURE_BYTES:
-            raise RuntimeError("Podcast transcript fixture size mismatch")
-
-        from nexus.services.rss_transcript_fetch import parse_plain_text_transcript
-
-        segments = parse_plain_text_transcript(content, episode_duration_ms=753_000)
-        if not segments:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-                "Podcast transcript fixture had no segments",
-            )
-        return TranscriptionResult(
-            status="completed",
-            segments=segments,
-            provider_fixture={
-                "path": str(path),
-                "byte_length": len(payload),
-                "audio_url": audio_url,
-            },
-        )
-
     def _transcribe_with_deepgram(self, audio_url: str, *, diarize: bool) -> TranscriptionResult:
         request_url = f"{self.base_url.rstrip('/')}{_DEEPGRAM_LISTEN_PATH}"
         diarize_str = "true" if diarize else "false"
@@ -249,8 +196,6 @@ def get_deepgram_client() -> DeepgramClient:
         base_url=s.deepgram_base_url,
         model=s.deepgram_model,
         timeout_seconds=s.podcast_transcription_timeout_seconds,
-        use_fixtures=s.real_media_provider_fixtures,
-        fixture_dir=s.real_media_fixture_dir,
     )
 
 
