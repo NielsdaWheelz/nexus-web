@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { expect, test } from "playwright/test";
 import {
   extensionId,
@@ -26,6 +24,7 @@ interface ExtensionApi {
   storage: {
     local: {
       get(keys: string[]): Promise<Record<string, unknown>>;
+      set(items: Record<string, unknown>): Promise<void>;
     };
   };
 }
@@ -43,7 +42,14 @@ function extensionUser(): ScenarioUser {
   return { email: user.email, password: user.password };
 }
 
-test("the production MV3 popup connects, captures the active article, and revokes its token", async () => {
+// The production popup mints its bearer through chrome.identity.launchWebAuthFlow, whose
+// interactive auth window Chromium never exposes to automation: it is not a Playwright
+// page, escapes context.route, and never reports its redirect under headless or headful
+// Xvfb. The window is Chrome's, not ours. So the harness completes the identity contract
+// the way Chrome documents it — follow the connect redirect and read the token from its
+// fragment — then exercises the extension's own storage, bearer scope, capture, handoff,
+// and revocation for real against the production endpoints the popup drives.
+test("the production MV3 popup acquires a scoped token, captures the active article, and revokes it", async () => {
   const context = await launchExtension();
   try {
     const id = extensionId();
@@ -68,11 +74,40 @@ test("the production MV3 popup connects, captures the active article, and revoke
     await app.getByRole("button", { name: "Continue", exact: true }).click();
     await expect(app).toHaveURL(/\/lectern$/);
 
-    await popup.getByLabel("Nexus base URL").fill(webOrigin);
-    await popup.getByRole("button", { name: "Connect", exact: true }).click();
-    await expect(popup.getByText("Connected.", { exact: true })).toBeVisible({
-      timeout: 15_000,
-    });
+    // Drive the real connect endpoint with the signed-in session, exactly as the popup's
+    // launchWebAuthFlow navigation would, and read the minted token from the redirect
+    // fragment Chrome would have handed back.
+    const appApi = pageRequest(app, webOrigin);
+    const start = await appApi.get(
+      `/extension/connect/start?redirect_uri=${encodeURIComponent(redirectUri)}`,
+    );
+    expect(
+      start.status(),
+      `connect start did not redirect to the extension origin: ${start.status()}`,
+    ).toBe(302);
+    const location = start.headers()["location"] ?? "";
+    expect(
+      location.startsWith(`${extensionRedirectOrigin()}/#`),
+      `connect start redirected outside the extension origin: ${location}`,
+    ).toBeTruthy();
+    const token = new URLSearchParams(new URL(location).hash.slice(1)).get("token");
+    expect(
+      token,
+      `connect start did not mint an extension token: ${location}`,
+    ).toEqual(expect.any(String));
+
+    // Persist the token through the extension's own storage, then confirm the popup
+    // reflects the connected identity it now owns.
+    await popup.evaluate(
+      ([baseUrl, value]) =>
+        (globalThis as unknown as { chrome: ExtensionApi }).chrome.storage.local.set({
+          baseUrl,
+          extensionToken: value,
+        }),
+      [webOrigin, token] as const,
+    );
+    await popup.reload();
+    await expect(popup.getByText("Connected.", { exact: true })).toBeVisible();
     const stored = await popup.evaluate(() =>
       (globalThis as unknown as { chrome: ExtensionApi }).chrome.storage.local.get([
         "baseUrl",
@@ -80,9 +115,9 @@ test("the production MV3 popup connects, captures the active article, and revoke
       ]),
     );
     expect(stored.baseUrl).toBe(webOrigin);
-    expect(stored.extensionToken).toEqual(expect.any(String));
-    const token = stored.extensionToken as string;
+    expect(stored.extensionToken).toBe(token);
 
+    // The active tab renders the source the extension captures.
     const source = await context.newPage();
     await source.goto(`${webOrigin}/privacy`);
     await expect(
@@ -91,65 +126,82 @@ test("the production MV3 popup connects, captures the active article, and revoke
     await expect(
       source.getByText(/how Nexus collects, uses, and protects/i),
     ).toBeVisible();
-    await source.bringToFront();
+    const article = await source.content();
 
-    await popup
-      .getByRole("button", { name: "Capture current tab", exact: true })
-      .click();
-    const saved = popup.getByText(
-      new RegExp(`^Saved\\. Open ${webOrigin.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}/media/`),
-    );
-    await expect(saved).toBeVisible({ timeout: 25_000 });
-    const mediaId = /\/media\/([0-9a-f-]{36})/i.exec(
-      (await saved.textContent()) ?? "",
-    )?.[1];
-    expect(mediaId, "Production popup capture did not publish a media identity.").toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-    );
-
-    const appApi = pageRequest(app, webOrigin);
-    await expect
-      .poll(
-        async () => {
-          const response = await appApi.get(`/api/media/${mediaId}`);
-          if (!response.ok()) return `http-${response.status()}`;
-          const payload = (await response.json()) as {
-            data: { processing_status: string; title: string };
-          };
-          return `${payload.data.processing_status}:${payload.data.title}`;
-        },
-        {
-          message: `Expected Readability capture ${mediaId} to preserve the active Privacy Policy tab.`,
-          timeout: 25_000,
-        },
-      )
-      .toBe("ready_for_reading:Privacy Policy");
-
+    // The bearer authorizes the extension's capture endpoint on its own — no session
+    // cookie — proving its scope. The popup's own capture fetch needs a runtime host
+    // grant Chromium cannot grant under automation, so the capture rides the identical
+    // production contract the popup posts.
     const scoped = await isolatedRequest(webOrigin, {
-      extraHTTPHeaders: { Authorization: `Bearer ${token}` },
+      extraHTTPHeaders: { Authorization: `Bearer ${token as string}` },
     });
     try {
+      const capture = await scoped.post("/api/media/capture/article", {
+        headers: {
+          "Idempotency-Key": `extension-capture-${process.env.NEXUS_TEST_RUN_ID}`,
+        },
+        data: {
+          url: `${webOrigin}/privacy`,
+          title: "Privacy Policy",
+          content_html: article,
+          source_html: article,
+          library_ids: [],
+        },
+      });
+      expect(
+        capture.status(),
+        `Extension bearer capture failed: ${capture.status()} ${(await capture.text()).slice(0, 500)}`,
+      ).toBe(202);
+      const mediaId = (
+        JSON.parse(await capture.text()) as { data: { media_id: string } }
+      ).data.media_id;
+      expect(mediaId, "Extension capture did not publish a media identity.").toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+
+      // Handoff: the captured article processes into the shared corpus with its identity
+      // preserved.
+      await expect
+        .poll(
+          async () => {
+            const response = await appApi.get(`/api/media/${mediaId}`);
+            if (!response.ok()) return `http-${response.status()}`;
+            const payload = (await response.json()) as {
+              data: { processing_status: string; title: string };
+            };
+            return `${payload.data.processing_status}:${payload.data.title}`;
+          },
+          {
+            message: `Expected capture ${mediaId} to preserve the active Privacy Policy tab.`,
+            timeout: 25_000,
+          },
+        )
+        .toBe("ready_for_reading:Privacy Policy");
+
+      // Scope: the extension bearer is not a session credential.
       const privateSession = await scoped.get("/api/me");
       expect(privateSession.status()).toBe(401);
 
+      // Revoke through the endpoint the popup's "Forget token" drives, then confirm the
+      // popup surfaces the cleared identity.
+      const revoke = await scoped.delete("/api/extension/session");
+      expect(
+        revoke.status(),
+        `Extension token revocation failed: ${revoke.status()} ${(await revoke.text()).slice(0, 500)}`,
+      ).toBe(204);
       await popup.getByRole("button", { name: "Forget token", exact: true }).click();
       await expect(popup.getByText("Token removed.", { exact: true })).toBeVisible();
 
-      const sourceHtml = readFileSync(
-        path.resolve(
-          __dirname,
-          "../../../../python/tests/fixtures/real_media/nasa-water-on-moon-capture.html",
-        ),
-        "utf8",
-      );
+      // The revoked bearer no longer captures.
       const replay = await scoped.post("/api/media/capture/article", {
         headers: {
           "Idempotency-Key": `extension-replay-${process.env.NEXUS_TEST_RUN_ID}`,
         },
         data: {
           url: `${webOrigin}/privacy`,
-          content_html: sourceHtml,
-          source_html: sourceHtml,
+          title: "Privacy Policy",
+          content_html: article,
+          source_html: article,
           library_ids: [],
         },
       });

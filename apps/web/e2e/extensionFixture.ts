@@ -27,24 +27,11 @@ function localOrExtension(url: string): boolean {
   if (["about:", "blob:", "chrome:", "chrome-extension:", "data:"].includes(parsed.protocol)) {
     return true;
   }
-  return (
-    runtime.browserOrigins.has(parsed.origin) ||
-    parsed.origin === extensionRedirectOrigin()
-  );
+  return runtime.browserOrigins.has(parsed.origin);
 }
 
 async function guardRoute(route: Route): Promise<void> {
-  const url = route.request().url();
-  if (new URL(url).origin === extensionRedirectOrigin()) {
-    // chrome.identity.launchWebAuthFlow captures the OAuth token from the
-    // completed navigation to its virtual chromiumapp.org redirect origin. In
-    // headless Chromium that navigation otherwise fails to resolve and the
-    // handshake stalls, so fulfill it with an empty page; the token rides the
-    // URL fragment, never the response body.
-    await route.fulfill({ status: 200, contentType: "text/html", body: "" });
-    return;
-  }
-  if (localOrExtension(url)) {
+  if (localOrExtension(route.request().url())) {
     await route.continue();
     return;
   }
