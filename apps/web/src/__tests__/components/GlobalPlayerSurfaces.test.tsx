@@ -7,7 +7,16 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import { page } from "vitest/browser";
 import { absent, present } from "@/lib/api/presence";
 import { assumeDiscoveryTargetHandle } from "@/lib/browse/contract";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
@@ -125,6 +134,24 @@ function PaneChromeFocusProbe() {
   );
 }
 
+function setViewportSafeArea({
+  top,
+  right,
+  bottom,
+  left,
+}: {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}) {
+  const root = document.documentElement;
+  root.style.setProperty("--viewport-safe-top", `${top}px`);
+  root.style.setProperty("--viewport-safe-right", `${right}px`);
+  root.style.setProperty("--viewport-safe-bottom", `${bottom}px`);
+  root.style.setProperty("--viewport-safe-left", `${left}px`);
+}
+
 function Harness() {
   const [route, setRoute] = useState("A");
   return (
@@ -170,6 +197,7 @@ async function loadSubscribed() {
 
 describe("GlobalPlayerSurfaces", () => {
   let historyState: unknown = null;
+  let browserViewportChanged = false;
   let playerFetchMock: ReturnType<
     typeof installLecternPlayerFetchMock
   >["fetchMock"];
@@ -177,6 +205,7 @@ describe("GlobalPlayerSurfaces", () => {
   beforeEach(() => {
     sessionStorage.removeItem(SESSION_STORAGE_KEY);
     setViewportWidth(1280);
+    setViewportSafeArea({ top: 0, right: 0, bottom: 0, left: 0 });
     playerFetchMock = installLecternPlayerFetchMock().fetchMock;
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
@@ -193,8 +222,21 @@ describe("GlobalPlayerSurfaces", () => {
     vi.spyOn(history, "state", "get").mockImplementation(() => historyState);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     document.body.style.overflow = "";
+    setViewportSafeArea({ top: 0, right: 0, bottom: 0, left: 0 });
+    if (browserViewportChanged) {
+      await page.viewport(1_280, 720);
+      browserViewportChanged = false;
+    }
+  });
+
+  afterAll(() => {
+    const root = document.documentElement;
+    root.style.removeProperty("--viewport-safe-top");
+    root.style.removeProperty("--viewport-safe-right");
+    root.style.removeProperty("--viewport-safe-bottom");
+    root.style.removeProperty("--viewport-safe-left");
   });
 
   it("keeps the desktop Listening Shelf present when paused and across pane navigation", async () => {
@@ -303,6 +345,64 @@ describe("GlobalPlayerSurfaces", () => {
         screen.getByRole("button", { name: "Active pane options" }),
       ).toHaveFocus(),
     );
+  });
+
+  it("keeps the Now Playing scrollport inside native safe edges while its frame stays full bleed", async () => {
+    await page.viewport(390, 480);
+    browserViewportChanged = true;
+    setViewportWidth(390);
+    setViewportSafeArea({ top: 24, right: 11, bottom: 32, left: 17 });
+    render(<Harness />);
+    await loadCanonical();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Open Now Playing: The shape of attention",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Now Playing",
+    });
+    const frame = within(dialog).getByRole("region", {
+      name: "Media player",
+    });
+    const terminalControl = within(frame).getByRole("button", {
+      name: "Close player",
+    });
+    let scrollOwner: HTMLElement | null = terminalControl;
+    /* eslint-disable testing-library/no-node-access -- identify the terminal control's behavioral scroll owner without coupling to component structure. */
+    while (scrollOwner && scrollOwner !== frame) {
+      const overflowY = getComputedStyle(scrollOwner).overflowY;
+      if (overflowY === "auto" || overflowY === "scroll") break;
+      scrollOwner = scrollOwner.parentElement;
+    }
+    /* eslint-enable testing-library/no-node-access */
+    if (!scrollOwner || scrollOwner === frame) {
+      throw new Error("Close player must belong to a content scrollport");
+    }
+    const scrollport = scrollOwner;
+
+    const dialogRect = dialog.getBoundingClientRect();
+    const frameRect = frame.getBoundingClientRect();
+    const scrollportRect = scrollport.getBoundingClientRect();
+    expect(frameRect.toJSON()).toEqual(dialogRect.toJSON());
+    expect(scrollportRect.left - dialogRect.left).toBeCloseTo(17, 0);
+    expect(dialogRect.right - scrollportRect.right).toBeCloseTo(11, 0);
+    expect(dialogRect.bottom - scrollportRect.bottom).toBeCloseTo(32, 0);
+    expect(scrollportRect.top).toBeGreaterThanOrEqual(dialogRect.top + 24);
+    expect(scrollport.scrollHeight).toBeGreaterThan(scrollport.clientHeight);
+
+    const maxScrollTop = scrollport.scrollHeight - scrollport.clientHeight;
+    scrollport.scrollTop = maxScrollTop;
+    expect(scrollport.scrollTop).toBeCloseTo(maxScrollTop, 0);
+    const terminalControlRect = terminalControl.getBoundingClientRect();
+    expect(terminalControlRect.top).toBeGreaterThanOrEqual(scrollportRect.top);
+    expect(terminalControlRect.bottom).toBeLessThanOrEqual(scrollportRect.bottom);
+
+    setViewportSafeArea({ top: 0, right: 0, bottom: 0, left: 0 });
+    const zeroInsetRect = scrollport.getBoundingClientRect();
+    expect(zeroInsetRect.left - dialogRect.left).toBeCloseTo(0, 0);
+    expect(dialogRect.right - zeroInsetRect.right).toBeCloseTo(0, 0);
+    expect(dialogRect.bottom - zeroInsetRect.bottom).toBeCloseTo(0, 0);
   });
 
   it("omits canonical actions from Preview instead of disabling them", async () => {

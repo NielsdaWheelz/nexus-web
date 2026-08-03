@@ -1,6 +1,6 @@
 # Android WebView System Insets — Hard Cutover
 
-**Status:** APPROVED — M144 boundary accepted; signed v0.2.10 reader paint
+**Status:** APPROVED — M144 boundary accepted; signed v0.2.11 Now Playing
 correction and release blocked
 
 **Last verified:** 2026-08-02
@@ -69,7 +69,8 @@ infer bar heights, navigation mode, OEM, Android, or WebView version.
 | TextDocumentReader (EPUB / Web text) | Background may bleed; text paint, selection geometry, and terminal content stop above the composed safe block-end. |
 | PDF / chat / pane scroll roots | Existing behavior is unchanged; no scope expands without its own signed-product red. |
 | MiniPlayer / Nexus | Player includes its own safe bottom; Nexus remains above Player plus its existing gap. |
-| Tasks / Now Playing / sheets | Background fills the frame; header, body, and actions honor applicable safe edges. |
+| Tasks / sheets | Background fills the frame; header, body, and actions honor applicable safe edges. |
+| MobileNowPlaying | Themed outer frame stays full bleed; its true body scrollport honors safe left/right/bottom while the header remains the safe-top owner. |
 | IME open/close | Existing visual-viewport path keeps focus visible and restores exact pre-IME clearance without double counting. |
 | Rotation / resize | Current insets replace old insets; no ghost gap, overlap, focus loss, or reader-position jump. |
 
@@ -147,7 +148,8 @@ distinct inputs.
 | Chat, PDF, pane scroll roots | Existing composed-clearance behavior remains unchanged. |
 | MiniPlayer | Put safe-bottom space inside the registered Player surface. |
 | Nexus | Use composed Nexus offset and existing gap; preserve retreat/inertness behavior. |
-| Full-screen tasks / Now Playing | Use the four root safe tokens at the frame-owned edge. |
+| Full-screen tasks | Use the four root safe tokens at the frame-owned edge. |
+| MobileNowPlaying | Keep the themed outer frame/background full bleed. Inset the true `.body` scrollport by the existing root safe left/right/bottom tokens; the header continues to own safe top. Zero tokens preserve exact geometry; terminal controls remain reachable at max scroll. |
 | MobileSheet | Compose root safe bottom with the existing keyboard token; preserve shrink behavior. |
 | Floating surfaces | Resolve all four root tokens against `visualViewport`; constrain before measuring, clamp into that safe rectangle, and make oversized actions scrollable. Reposition on viewport resize/scroll and intrinsic size changes. Preserve zero-inset geometry; add no store or platform branch. |
 
@@ -206,6 +208,8 @@ is added.
 | Publish `D`; no API/owner change | `apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx`; `apps/web/src/lib/mobileViewport/MobileViewportProvider.test.tsx` |
 | Correct the demonstrated reader red | `apps/web/src/app/(authenticated)/media/[id]/TextDocumentReader.tsx`; `page.module.css` |
 | Prove the scoped contract | `apps/web/src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx`; `apps/web/src/lib/mobileViewport/mobileContentClearance.test.tsx`; `e2e/tests/mobile-reader-chrome.spec.ts` |
+| Correct Now Playing body geometry | `apps/web/src/components/player/MobileNowPlaying.module.css` |
+| Prove full-bleed/safe-body behavior | `apps/web/src/__tests__/components/GlobalPlayerSurfaces.test.tsx` |
 | Record final contract and release evidence | this file; `docs/modules/workspace.md`; `README.md` only where current distribution prose changes |
 
 No planned backend, database, API, reader-state, playback-runtime, Nexus-state,
@@ -249,6 +253,9 @@ owner. Revise this document before crossing another boundary.
   activatable.
 - Focused TextDocumentReader proof asserts the formulas above in zero,
   safe-only, and Player states without changing trusted scroll or focus.
+- Focused MobileNowPlaying proof keeps the frame full bleed, confines its true
+  body scrollport to safe left/right/bottom, preserves zero-inset geometry, and
+  exposes terminal controls at max scroll.
 - `make check-android`, focused frontend checks, `make check-workflows`, and the
   signed release proof pass. Each proof is reported separately.
 
@@ -352,13 +359,19 @@ remains.
 - Fresh signed `android-v0.2.10`, three-button portrait, is red: native
   navigation starts at physical y=2196, while a nonempty EPUB text node is
   bounded `[48,1653][1005,2340]`, painting 144 physical px beneath native UI.
-  Mid-scroll is no exemption. M144 remains accepted; the scoped reader
-  correction, fresh signed product matrix, and release promotion are blocked.
+  Mid-scroll is no exemption. M144 remained accepted; this authorized the
+  scoped reader correction.
+- Fresh signed `android-v0.2.11`, three-button portrait, is red: native
+  navigation starts at physical y=2196; `Open recording` is bounded
+  `[84,2229][552,2340]` and `Open source` `[624,2265][909,2325]`. The owner is
+  MobileNowPlaying's true `.body` scrollport, not its full-bleed canvas. No fresh
+  signed APK has yet accepted this correction.
 
 ## Non-goals
 
-- No reader/listener/TTS UX, reader chrome, Nexus, Player, sheet, keyboard,
-  motion, predictive Back, or edge-gesture redesign.
+- No reader/listener/TTS UX, reader chrome, Nexus, Player UX, sheet, keyboard,
+  motion, predictive Back, or edge-gesture redesign. The only Player scope is
+  MobileNowPlaying body-scrollport geometry; do not generalize it.
 - No PDF, transcript, chat, pane, native, second store, or public
   `MobileViewportCapability` change; one derived composer CSS output is the
   only provider implementation change.
