@@ -79,8 +79,10 @@ def test_provider_runtime_is_materialized_from_the_pin_without_retargeting_sourc
         tool_dir / "uv",
         "#!/bin/sh\n"
         "set -eu\n"
-        "test \"$*\" = 'sync --all-extras --locked --offline'\n"
-        "mkdir -p .venv\n",
+        'test "$*" = \'sync --all-extras --locked --offline '
+        "--no-editable --reinstall-package provider-runtime'\n"
+        "mkdir -p .venv/bin\n"
+        'echo "#!$(pwd)/.venv/bin/python" > .venv/bin/pyright\n',
     )
     (tool_dir / "uv").chmod(0o755)
     environment = {"PATH": f"{tool_dir}{os.pathsep}{os.environ['PATH']}"}
@@ -89,6 +91,9 @@ def test_provider_runtime_is_materialized_from_the_pin_without_retargeting_sourc
     assert checkout == repo_root / ".nexus-test/provider-runtime" / revision
     assert (checkout / "contract.txt").read_text(encoding="utf-8") == "pinned\n"
     assert (checkout / ".nexus-provider-runtime-revision").read_text().strip() == revision
+    relocated_launcher = (checkout / ".venv/bin/pyright").read_text(encoding="utf-8")
+    assert relocated_launcher == f"#!{checkout}/.venv/bin/python\n"
+    assert ".building-" not in relocated_launcher
     assert _run_git(source, "rev-parse", "HEAD").stdout.strip() == revision
 
     _write(source / "contract.txt", "uncommitted developer change\n")

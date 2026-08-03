@@ -2784,7 +2784,21 @@ def _ensure_provider_runtime_checkout(
         with tarfile.open(archive, mode="r:") as bundle:
             bundle.extractall(build, filter="data")
         synced = run_command(
-            ("uv", "sync", "--all-extras", "--locked", "--offline"),
+            # --no-editable copies the project into the venv instead of linking a
+            # .pth to the build-dir source, so the promoted checkout stays valid
+            # after the build directory is renamed away. --reinstall-package busts
+            # any cached editable build of the project so the non-editable copy is
+            # actually materialized rather than a stale editable link reused.
+            (
+                "uv",
+                "sync",
+                "--all-extras",
+                "--locked",
+                "--offline",
+                "--no-editable",
+                "--reinstall-package",
+                "provider-runtime",
+            ),
             cwd=build,
             env=child_environment,
             capture_output=True,
@@ -2793,6 +2807,19 @@ def _ensure_provider_runtime_checkout(
         if synced.returncode != 0 or not (build / ".venv").is_dir():
             raise RuntimeContractError("pinned provider-runtime environment is unavailable offline")
         (build / ".nexus-provider-runtime-revision").write_text(revision + "\n", encoding="utf-8")
+        # uv writes each console-script launcher in .venv/bin with the absolute
+        # build path of the interpreter; promotion renames the directory, so
+        # rewrite those launchers to the promoted checkout before it is used.
+        bin_dir = build / ".venv/bin"
+        for script in bin_dir.iterdir() if bin_dir.is_dir() else ():
+            if script.is_symlink() or not script.is_file():
+                continue
+            try:
+                text = script.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if str(build) in text:
+                script.write_text(text.replace(str(build), str(checkout)), encoding="utf-8")
         build.rename(checkout)
     except (OSError, tarfile.TarError) as error:
         raise RuntimeContractError("provider-runtime materialization failed") from error
