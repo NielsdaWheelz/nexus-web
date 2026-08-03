@@ -86,6 +86,52 @@ const cases = [
     `,
     expected: "Do not assert a literal",
   },
+  {
+    filename: "src/template-mock.unit.test.tsx",
+    source: `
+      import { expect, test, vi } from "vitest";
+      vi.mock(\`@/lib/owned\`, () => ({}));
+      test("template mock", () => expect(true).toBe(true));
+    `,
+    expected: "Do not mock Nexus modules",
+  },
+  {
+    filename: "src/spy-on.unit.test.tsx",
+    source: `
+      import { expect, test, vi } from "vitest";
+      vi.spyOn(globalThis, "fetch");
+      test("spy", () => expect(true).toBe(true));
+    `,
+    expected: "Do not spy on owned behavior",
+  },
+  {
+    filename: "src/fake-timers.unit.test.tsx",
+    source: `
+      import { expect, test, vi } from "vitest";
+      vi.useFakeTimers();
+      test("timers", () => expect(true).toBe(true));
+    `,
+    expected: "Do not use fake timers",
+  },
+  {
+    filename: "src/disabled-test.unit.test.tsx",
+    source: `
+      import { expect, test } from "vitest";
+      test.skip("skipped", () => expect(true).toBe(true));
+    `,
+    expected: "Tests must run exactly as collected",
+  },
+  {
+    filename: "e2e/journeys/route-intercept.journey.spec.ts",
+    source: `
+      import { expect, test } from "@playwright/test";
+      test("route", async ({ page }) => {
+        await page.route("**/*", (route) => route.fulfill({ status: 200 }));
+        expect(true).toBe(true);
+      });
+    `,
+    expected: "Journey files cannot intercept routes",
+  },
 ];
 
 for (const fixture of cases) {

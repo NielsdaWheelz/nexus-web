@@ -2159,6 +2159,7 @@ def _classified_exact_result(result: CapabilityResult, proof_id: str) -> Capabil
         marker in folded
         for marker in (
             "error collecting",
+            "error while loading conftest",
             "no test files found",
             "no tests found",
             "not found in rootdir",
@@ -2175,10 +2176,14 @@ def _classified_exact_result(result: CapabilityResult, proof_id: str) -> Capabil
         )
     ):
         kind = "setup_or_execution_failure"
+    elif _is_timeout_failure(folded):
+        # A timeout is an execution failure, never a behavioral assertion, even
+        # when pytest renders it as "E   Failed: Timeout >Ns" (which would
+        # otherwise match the did-not-raise assertion form below).
+        kind = "setup_or_execution_failure"
     elif (
         "falsifying example:" in folded
         or "assertionerror:" in folded
-        or re.search(r"\btests\s+\d+\s+failed\b", folded) is not None
         or ("failed " in folded and "::" in folded and " - assertionerror" in folded)
         or "error: expect(" in folded
         or re.search(r"\bexpect\(received\)\.to[a-z]+\(", folded) is not None
@@ -2186,11 +2191,51 @@ def _classified_exact_result(result: CapabilityResult, proof_id: str) -> Capabil
         or re.search(r"\ne\s+(?:assert|assertionerror|failed:)", folded) is not None
     ):
         kind = "behavioral_assertion_failure"
+    elif _is_thrown_runtime_error(folded):
+        # A thrown runtime error with no assertion marker (a TypeError, a
+        # ReferenceError, an unhandled rejection) is an execution failure: the
+        # proof crashed before — or instead of — exercising its behavioral
+        # oracle, so it is not a valid sensitivity red.
+        kind = "setup_or_execution_failure"
+    elif re.search(r"\btests\s+\d+\s+failed\b", folded) is not None:
+        # Vitest retained only its summary line; the assertion detail scrolled
+        # out of the bounded capture. With no runtime-error or timeout signature,
+        # a failed test node is a behavioral failure — accept it rather than
+        # reject a real red on truncation.
+        kind = "behavioral_assertion_failure"
     else:
         kind = "setup_or_execution_failure"
     return CapabilityResult(
         result.evidence,
         f"proof_result={kind}|proof_id={proof_id}|{result.detail}",
+    )
+
+
+def _is_timeout_failure(folded: str) -> bool:
+    """A casefolded child failure that is a timeout, not a behavioral assertion."""
+    return (
+        "timed out in " in folded  # vitest: "Test timed out in 5000ms"
+        or "hook timed out" in folded  # vitest hook timeout
+        or re.search(r"failed:\s*timeout\b", folded) is not None  # pytest-timeout
+        or re.search(r"timeout of \d+\s*ms exceeded", folded) is not None  # playwright
+    )
+
+
+def _is_thrown_runtime_error(folded: str) -> bool:
+    """A casefolded child failure that is a thrown runtime error, not an assertion."""
+    return any(
+        marker in folded
+        for marker in (
+            "typeerror:",
+            "referenceerror:",
+            "rangeerror:",
+            "syntaxerror:",
+            "is not a function",
+            "is not defined",
+            "cannot read propert",
+            "unhandled rejection",
+            "unhandled error",
+        )
     )
 
 
@@ -2278,7 +2323,7 @@ def _run_owned_commands(
     child_environment: Mapping[str, str],
     required_tools: tuple[str, ...],
     *,
-    context: CapabilityContext | None = None,
+    context: CapabilityContext | None,
 ) -> CapabilityResult:
     if child_environment.get("NEXUS_ENV") != "test":
         raise ValueError("owned test command requires NEXUS_ENV=test")
@@ -2871,6 +2916,7 @@ def _run_provider_runtime(
         ),
         environment,
         ("uv",),
+        context=context,
     )
     if local.evidence.status is not RunStatus.PASS or exact:
         return local
@@ -4167,9 +4213,9 @@ def _run_fixed_commands(
     environment: Mapping[str, str],
     required_tools: tuple[str, ...],
     *,
+    context: CapabilityContext | None,
     elapsed_ms: int = 0,
     pythonpath: Path | None = None,
-    context: CapabilityContext | None = None,
 ) -> CapabilityResult:
     child_environment = _child_environment(environment)
     if pythonpath is not None:

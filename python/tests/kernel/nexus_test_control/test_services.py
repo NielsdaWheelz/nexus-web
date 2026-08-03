@@ -280,6 +280,7 @@ def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs()
     for environment in (
         {"NEXUS_ENV": "prod"},
         {"DATABASE_URL": "postgresql://production.example/app"},
+        {"SUPABASE_DB_URL": "postgresql://production.example/postgres"},
         {"R2_ENDPOINT_URL": "https://production.example"},
         {"SUPABASE_JWKS_URL": "https://production.example/jwks"},
         {"AWS_ENDPOINT_URL_S3": "https://production.example"},

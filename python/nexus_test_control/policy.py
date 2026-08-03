@@ -563,7 +563,9 @@ def _governed_executable_surfaces(repo_root: Path) -> dict[str, str]:
                 or path.stat().st_mode & 0o111
             )
         )
-    candidates.add(repo_root / "deploy/smoke/auth-redirect-construction-smoke.sh")
+    smoke = repo_root / "deploy/smoke"
+    if smoke.is_dir():
+        candidates.update(path for path in smoke.rglob("*.sh") if path.is_file())
     return {
         path.relative_to(repo_root).as_posix(): path.read_text(encoding="utf-8")
         for path in sorted(candidates)

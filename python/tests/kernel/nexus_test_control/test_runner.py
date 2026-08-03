@@ -1745,6 +1745,36 @@ def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behav
         ),
         proof,
     )
+    thrown_runtime_error = runner._classified_exact_result(
+        CapabilityResult(
+            evidence,
+            "TypeError: usePaneController is not a function\n"
+            "Test Files  1 failed (1)\nTests  1 failed (1)",
+        ),
+        proof,
+    )
+    vitest_timeout = runner._classified_exact_result(
+        CapabilityResult(
+            evidence,
+            "Test timed out in 5000ms.\nTests  1 failed (1)",
+        ),
+        proof,
+    )
+    pytest_timeout = runner._classified_exact_result(
+        CapabilityResult(
+            evidence,
+            "FAILED tests/service/test_owned.py::test_exact\nE   Failed: Timeout >5.0s",
+        ),
+        proof,
+    )
+    conftest_load = runner._classified_exact_result(
+        CapabilityResult(
+            evidence,
+            "ImportError while loading conftest 'tests/service/conftest.py'.\n"
+            "E   AssertionError: module-level invariant",
+        ),
+        proof,
+    )
 
     assert collection.detail.startswith("proof_result=collection_failure|")
     assert setup.detail.startswith("proof_result=setup_or_execution_failure|")
@@ -1755,6 +1785,15 @@ def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behav
     assert playwright_received_assertion.detail.startswith(
         "proof_result=behavioral_assertion_failure|"
     )
+    # A thrown runtime error and a timeout are execution failures, never a valid
+    # behavioral red — even when vitest still prints its "Tests N failed" summary
+    # or pytest renders the timeout as "E   Failed: Timeout".
+    assert thrown_runtime_error.detail.startswith("proof_result=setup_or_execution_failure|")
+    assert vitest_timeout.detail.startswith("proof_result=setup_or_execution_failure|")
+    assert pytest_timeout.detail.startswith("proof_result=setup_or_execution_failure|")
+    # An assertion raised while importing a conftest is a collection-phase failure,
+    # never a valid behavioral red, even though it prints "E   AssertionError".
+    assert conftest_load.detail.startswith("proof_result=collection_failure|")
     assert f"proof_id={proof}|" in assertion.detail
 
 

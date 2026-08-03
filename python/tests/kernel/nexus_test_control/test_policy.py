@@ -251,6 +251,17 @@ def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
     assert "repository-route-contract" in _rules(repository_violations(tmp_path))
 
 
+def test_repository_guard_scans_every_deploy_smoke_script(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    _write(tmp_path, "deploy/smoke/auth-smoke.sh", "pytest tests/deploy\n")
+
+    assert any(
+        violation.rule == "repository-test-route-owner"
+        and violation.path == "deploy/smoke/auth-smoke.sh"
+        for violation in repository_violations(tmp_path)
+    )
+
+
 def test_repository_guard_rejects_stale_typed_routing_projection(tmp_path: Path) -> None:
     _minimal_repository(tmp_path)
     standards = tmp_path / "docs/local-rules/testing-standards.md"

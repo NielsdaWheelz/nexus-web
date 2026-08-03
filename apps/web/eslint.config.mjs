@@ -46,6 +46,15 @@ const OWNED_MODULE_MOCK_BANS = [
       "Do not mock Nexus modules. Exercise the owned implementation and stub only an external boundary.",
   },
   {
+    // A backtick path is a one-character escape from the Literal ban above, and
+    // vi.doMock honors any static string at runtime — so a no-substitution
+    // template literal must be rejected identically.
+    selector:
+      "CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock)$/] > TemplateLiteral:first-child[expressions.length=0][quasis.0.value.cooked=/^(?:@\\/|\\.\\.?\\/)/]",
+    message:
+      "Do not mock Nexus modules. Exercise the owned implementation and stub only an external boundary.",
+  },
+  {
     selector:
       "CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name='spyOn']",
     message:
