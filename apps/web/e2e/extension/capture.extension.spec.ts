@@ -127,6 +127,11 @@ test("the production MV3 popup acquires a scoped token, captures the active arti
       source.getByText(/how Nexus collects, uses, and protects/i),
     ).toBeVisible();
     const article = await source.content();
+    // The run-owned web origin is a loopback address, which the capture endpoint
+    // rejects as an unroutable source. Browser captures carry their content inline
+    // and never refetch the source URL, so the provenance rides an equivalent public
+    // stand-in while the captured HTML remains the live Privacy Policy page.
+    const captureSourceUrl = "https://example.com/privacy";
 
     // The bearer authorizes the extension's capture endpoint on its own — no session
     // cookie — proving its scope. The popup's own capture fetch needs a runtime host
@@ -141,7 +146,7 @@ test("the production MV3 popup acquires a scoped token, captures the active arti
           "Idempotency-Key": `extension-capture-${process.env.NEXUS_TEST_RUN_ID}`,
         },
         data: {
-          url: `${webOrigin}/privacy`,
+          url: captureSourceUrl,
           title: "Privacy Policy",
           content_html: article,
           source_html: article,
@@ -199,7 +204,7 @@ test("the production MV3 popup acquires a scoped token, captures the active arti
           "Idempotency-Key": `extension-replay-${process.env.NEXUS_TEST_RUN_ID}`,
         },
         data: {
-          url: `${webOrigin}/privacy`,
+          url: captureSourceUrl,
           title: "Privacy Policy",
           content_html: article,
           source_html: article,
