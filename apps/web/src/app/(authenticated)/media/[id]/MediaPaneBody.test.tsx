@@ -14,7 +14,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PaneRuntimeProvider,
@@ -44,7 +44,7 @@ import {
   useMobileChrome,
   useMobileChromeSurface,
 } from "@/lib/workspace/mobileChrome";
-import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   PaneReturnMementoProvider,
@@ -138,7 +138,6 @@ const testState = vi.hoisted(() => ({
   includeToc: false,
   includeSecondEpubSection: false,
   secondEpubCanonicalText: "",
-  isMobileViewport: false,
   fragmentHtml: "<p>Readable text.</p>",
   fragmentCanonicalText: "",
   renderHtmlInMock: false,
@@ -201,10 +200,6 @@ vi.mock("@/lib/dossiers/generationAdapter", async () => {
     learnDossierFromHighlight: learnMocks.learnDossierFromHighlight,
   };
 });
-
-vi.mock("@/lib/ui/useIsMobileViewport", () => ({
-  useIsMobileViewport: () => testState.isMobileViewport,
-}));
 
 vi.mock("@/components/workspace/PanePrimaryChrome", () => ({
   usePanePrimaryChrome: paneChromeMocks.usePanePrimaryChrome,
@@ -661,6 +656,22 @@ function readerStatePutBody(call: unknown[] | undefined) {
         total_progression: number;
       };
     };
+  };
+}
+
+function mobileReaderPositionBandRange(): { start: number; end: number } {
+  const ribbonBounds = screen
+    .getByTestId("mobile-reader-position-ribbon")
+    .getBoundingClientRect();
+  const bandBounds = screen
+    .getByTestId("mobile-reader-position-band")
+    .getBoundingClientRect();
+  if (ribbonBounds.width <= 0) {
+    throw new Error("Expected a visible mobile reader position ribbon.");
+  }
+  return {
+    start: (bandBounds.left - ribbonBounds.left) / ribbonBounds.width,
+    end: (bandBounds.right - ribbonBounds.left) / ribbonBounds.width,
   };
 }
 
@@ -1363,8 +1374,8 @@ function renderMediaPane(
     const href =
       nextOptions.href ?? "/media/00000000-0000-4000-8000-000000000001";
     const identity = resolvePaneRouteIdentity(href);
-    return (
-      <MobileViewportProvider>
+    return withRenderEnvironment(
+      <>
         <MobileChromeProvider>
           <FeedbackProvider>
             <LecternProvider>
@@ -1416,7 +1427,7 @@ function renderMediaPane(
           </FeedbackProvider>
           <MobileChromeBehaviorProbe />
         </MobileChromeProvider>
-      </MobileViewportProvider>
+      </>,
     );
   };
 
@@ -1449,12 +1460,12 @@ describe("MediaPaneBody runtime contract", () => {
 });
 
 describe("MediaPaneBody pane sizing", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await page.viewport(1280, 720);
     testState.apiFetch.mockReset();
     testState.includeToc = false;
     testState.includeSecondEpubSection = false;
     testState.secondEpubCanonicalText = "";
-    testState.isMobileViewport = false;
     testState.fragmentHtml = "<p>Readable text.</p>";
     testState.fragmentCanonicalText = "";
     testState.renderHtmlInMock = false;
@@ -2114,7 +2125,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaKind = "web_article";
     testState.fragmentCanonicalText = "Readable text.";
     testState.renderHtmlInMock = true;
-    testState.isMobileViewport = true;
+    await page.viewport(390, 844);
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
       new DOMRect(120, 170, 90, 40),
     );
@@ -2164,7 +2175,7 @@ describe("MediaPaneBody pane sizing", () => {
 
   it("repositions a retained HTML Range on nested scroll and viewport reflow", async () => {
     testState.mediaKind = "web_article";
-    testState.isMobileViewport = true;
+    await page.viewport(390, 844);
     testState.fragmentCanonicalText = "Readable text.";
     testState.renderHtmlInMock = true;
     let liveRect = new DOMRect(120, 220, 90, 20);
@@ -2770,7 +2781,7 @@ describe("MediaPaneBody pane sizing", () => {
     );
   });
 
-  it("publishes intrinsic PDF primary layout and fixed chrome", async () => {
+  it("publishes intrinsic PDF primary layout and desktop rail without a mobile ribbon", async () => {
     testState.mediaKind = "pdf";
     const { onSetPaneLayout, onSetFixedChrome, routeKey } = renderMediaPane();
 
@@ -2798,6 +2809,11 @@ describe("MediaPaneBody pane sizing", () => {
         }),
       );
     });
+    await renderLatestFixedChrome(onSetFixedChrome);
+    expect(screen.getByTestId("document-map-overview-rail")).toBeVisible();
+    expect(
+      screen.queryByTestId("mobile-reader-position-ribbon"),
+    ).not.toBeInTheDocument();
     expect(latestPrimaryChrome()?.search).toBeUndefined();
   });
 
@@ -3151,13 +3167,128 @@ describe("MediaPaneBody pane sizing", () => {
   });
 
   it.each(["epub", "web_article"] as const)(
-    "renders readable %s text content",
+    "omits the mobile position ribbon for readable %s without an exact range",
     async (kind) => {
       testState.mediaKind = kind;
-      testState.isMobileViewport = true;
+      await page.viewport(390, 844);
       renderMediaPane();
 
       expect(await screen.findByTestId("html-renderer")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("mobile-reader-position-ribbon"),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(["web_article", "epub", "pdf"] as const)(
+    "mounts one mobile position ribbon for readable %s",
+    async (kind) => {
+      testState.mediaKind = kind;
+      await page.viewport(390, 844);
+      testState.fragmentCanonicalText = "Readable text.";
+      testState.renderHtmlInMock = true;
+      if (kind === "web_article") {
+        testState.documentMapFailure = {
+          status: 500,
+          code: "E_TEST_DOCUMENT_MAP",
+        };
+      }
+      renderMediaPane();
+
+      expect(
+        await screen.findAllByTestId("mobile-reader-position-ribbon"),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("flows the mounted exact passive PDF viewport without state writes", async () => {
+    testState.mediaKind = "pdf";
+    await page.viewport(390, 844);
+    vi.useFakeTimers();
+    try {
+      renderMediaPane();
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+
+      const readerLayout = screen.getByTestId("mobile-reader-interaction-root");
+      readerLayout.style.width = "800px";
+      readerLayout.style.setProperty("--viewport-safe-left", "0px");
+      readerLayout.style.setProperty("--viewport-safe-right", "0px");
+      const expectBandRange = (start: number, end: number) => {
+        const range = mobileReaderPositionBandRange();
+        expect(range.start).toBeCloseTo(start, 3);
+        expect(range.end).toBeCloseTo(end, 3);
+      };
+      const expectNoStateWrites = () => {
+        expect(readerStatePutCalls()).toHaveLength(0);
+        expect(apiCallsForPath("/api/consumption/activity")).toHaveLength(0);
+        expect(apiCallsForPath("/api/consumption/commands")).toHaveLength(0);
+      };
+
+      expectBandRange(0.125, 0.375);
+      act(() => vi.advanceTimersByTime(500));
+      expectNoStateWrites();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes the mobile position ribbon for a stale PDF viewport source", async () => {
+    testState.mediaKind = "pdf";
+    await page.viewport(390, 844);
+    const { rerender } = renderMediaPane();
+
+    expect(
+      await screen.findByTestId("mobile-reader-position-ribbon"),
+    ).toBeInTheDocument();
+    const publishStaleViewport = testState.pdfPublishSemanticViewport;
+    if (!publishStaleViewport) {
+      throw new Error("Expected the mounted PDF viewport publisher.");
+    }
+
+    rerender({ pathMediaId: SOURCE_CHANGE_MEDIA_ID });
+    expect(
+      await screen.findByTestId("mobile-reader-position-ribbon"),
+    ).toBeInTheDocument();
+
+    act(() => publishStaleViewport());
+
+    expect(
+      screen.queryByTestId("mobile-reader-position-ribbon"),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each(["transcript", "not-readable", "loading/error"] as const)(
+    "does not mount a mobile position ribbon while %s",
+    async (excludedState) => {
+      await page.viewport(390, 844);
+      if (excludedState === "transcript") {
+        testState.mediaKind = "video";
+      } else if (excludedState === "not-readable") {
+        testState.mediaKind = "epub";
+        testState.canRead = false;
+        testState.processingStatus = "extracting";
+      } else {
+        testState.initialMediaFailureStatus = 503;
+      }
+      renderMediaPane();
+
+      if (excludedState === "loading/error") {
+        expect(screen.getByTestId("pane-loading-ink")).toBeVisible();
+        expect(
+          screen.queryByTestId("mobile-reader-position-ribbon"),
+        ).not.toBeInTheDocument();
+      }
+      await waitFor(() => {
+        expect(latestPrimaryChrome()?.header).toMatchObject({
+          kind: "resource",
+          resource: {
+            status: excludedState === "loading/error" ? "failed" : "ready",
+          },
+        });
+      });
+      expect(
+        screen.queryByTestId("mobile-reader-position-ribbon"),
+      ).not.toBeInTheDocument();
     },
   );
 
@@ -3165,7 +3296,7 @@ describe("MediaPaneBody pane sizing", () => {
     "drives the real chrome provider from the actual %s reader viewport",
     async (kind) => {
       testState.mediaKind = kind;
-      testState.isMobileViewport = true;
+      await page.viewport(390, 844);
       renderMediaPane();
 
       const viewport = await screen.findByTestId("document-viewport");
@@ -3178,7 +3309,7 @@ describe("MediaPaneBody pane sizing", () => {
 
   it("holds visible chrome for the full PDF action-menu lifecycle", async () => {
     testState.mediaKind = "pdf";
-    testState.isMobileViewport = true;
+    await page.viewport(390, 844);
     renderMediaPane();
     await renderLatestInstrument("PDF controls");
     const probe = screen.getByTestId("mobile-chrome-behavior-probe");
@@ -3200,7 +3331,7 @@ describe("MediaPaneBody pane sizing", () => {
 
   it("rebaselines transcript chrome from semantic media identity changes", async () => {
     testState.mediaKind = "video";
-    testState.isMobileViewport = true;
+    await page.viewport(390, 844);
     const { rerender } = renderMediaPane();
     const initialViewport = await screen.findByTestId("document-viewport");
     await expectReaderScrollTracksChrome(initialViewport);
@@ -3223,7 +3354,7 @@ describe("MediaPaneBody pane sizing", () => {
 
   it("rebaselines EPUB chrome when the rendered reading section changes", async () => {
     testState.mediaKind = "epub";
-    testState.isMobileViewport = true;
+    await page.viewport(390, 844);
     testState.includeSecondEpubSection = true;
     testState.fragmentCanonicalText = "Readable text.";
     testState.secondEpubCanonicalText = "Cross-section evidence.";
@@ -3603,7 +3734,7 @@ describe("MediaPaneBody pane sizing", () => {
 
   it("publishes Citations for target-only margin notes without hover previews", async () => {
     testState.mediaKind = "web_article";
-    testState.isMobileViewport = true;
+    await page.viewport(390, 844);
     testState.renderHtmlInMock = true;
     testState.fragmentHtml =
       '<p>Claim<span data-reader-apparatus-item-id="margin-1">Standalone margin note body.</span></p>';
@@ -3788,7 +3919,7 @@ describe("MediaPaneBody pane sizing", () => {
   });
 
   it("dispatches a PDF reader pulse when a native-link reference row is activated", async () => {
-    testState.isMobileViewport = true;
+    await page.viewport(390, 844);
     testState.mediaKind = "pdf";
     testState.documentMapPassageGroups = [
       sourceReferencePassage({
@@ -3901,7 +4032,7 @@ describe("MediaPaneBody pane sizing", () => {
   });
 
   it("keeps the mobile Evidence sheet open when a passage cannot activate", async () => {
-    testState.isMobileViewport = true;
+    await page.viewport(390, 844);
     testState.mediaKind = "web_article";
     testState.documentMapPassageGroups = [
       sourceReferencePassage({
@@ -3931,7 +4062,7 @@ describe("MediaPaneBody pane sizing", () => {
   });
 
   it("does not route around a failed same-pane source-target activation", async () => {
-    testState.isMobileViewport = true;
+    await page.viewport(390, 844);
     testState.mediaKind = "web_article";
     testState.documentMapPassageGroups = [
       sourceReferencePassage({
@@ -4326,7 +4457,7 @@ describe("MediaPaneBody pane sizing", () => {
   it("closes the mobile secondary sheet after Contents selection", async () => {
     testState.mediaKind = "web_article";
     testState.includeToc = true;
-    testState.isMobileViewport = true;
+    await page.viewport(390, 844);
     const { onCloseSecondaryPane, onSetPaneSecondary } = renderMediaPane({
       secondaryPane: readerContentsSecondaryPane(),
     });

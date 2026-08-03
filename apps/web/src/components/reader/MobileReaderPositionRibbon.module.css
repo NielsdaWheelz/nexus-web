@@ -1,0 +1,27 @@
+.ribbon {
+  position: absolute;
+  inset-inline: 0;
+  bottom: var(--mobile-content-bottom-clearance);
+  z-index: 2;
+  height: 2px;
+  background: var(--edge-subtle);
+  pointer-events: none;
+}
+
+.band {
+  position: absolute;
+  inset-block: 0;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+@media (forced-colors: active) {
+  .ribbon {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+
+  .band {
+    background: Highlight;
+  }
+}

@@ -29,6 +29,7 @@ import EvidencePaneSurface, {
 } from "@/components/reader/document-map/EvidencePaneSurface";
 import { activateResource } from "@/lib/resources/activation";
 import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMapOverviewRail";
+import MobileReaderPositionRibbon from "@/components/reader/MobileReaderPositionRibbon";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
@@ -2489,7 +2490,7 @@ export default function MediaPaneBody() {
     semanticViewportPublication,
   ]);
 
-  const documentMapVisibleRange = useMemo(
+  const readerDocumentVisibleRange = useMemo(
     () =>
       semanticViewport && documentProjection
         ? projectReaderDocumentRange(
@@ -5549,7 +5550,12 @@ export default function MediaPaneBody() {
     !isMobileViewport &&
     documentMapAvailable &&
     documentMapMarkers.length > 0 &&
-    documentMapVisibleRange !== null;
+    readerDocumentVisibleRange !== null;
+  const showMobileReaderPositionRibbon =
+    isMobileViewport &&
+    readerCapability.state === "Readable" &&
+    !isTranscriptMedia &&
+    readerDocumentVisibleRange !== null;
   const desktopDocumentMapRailWidthPx = showDesktopDocumentMapRail
     ? DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX
     : 0;
@@ -8110,7 +8116,7 @@ export default function MediaPaneBody() {
             body: (
               <ReaderDocumentMapOverviewRail
                 markers={documentMapMarkers}
-                visibleRange={documentMapVisibleRange!}
+                visibleRange={readerDocumentVisibleRange!}
                 onActivateMarker={activateDocumentMapMarker}
               />
             ),
@@ -8120,7 +8126,7 @@ export default function MediaPaneBody() {
       activateDocumentMapMarker,
       desktopDocumentMapRailWidthPx,
       documentMapMarkers,
-      documentMapVisibleRange,
+      readerDocumentVisibleRange,
       showDesktopDocumentMapRail,
     ],
   );
@@ -8665,6 +8671,11 @@ export default function MediaPaneBody() {
               onContentBlur={handleContentBlur}
             />
           )}
+          {showMobileReaderPositionRibbon ? (
+            <MobileReaderPositionRibbon
+              visibleRange={readerDocumentVisibleRange}
+            />
+          ) : null}
           {readerProgressOverlay}
           {isPdf && canRead && nextReadableItem ? (
             <LecternNextPrompt

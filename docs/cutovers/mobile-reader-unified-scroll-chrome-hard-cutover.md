@@ -728,8 +728,9 @@ fi
   VoiceOver reverse/top recovery and focus, dynamic browser chrome, IME,
   rotation, and safe area. Do not repeat the four-format matrix on iOS.
 - Existing Android instrumentation continues proving the permanent black
-  status-bar protection, light icons, inset sizing, pre-edge-to-edge fallback,
-  and edge-to-edge WebView. The durable contract lives in
+  status-bar protection, light icons, safe outward CSS-inset quantization,
+  stale-value clearing, and full-window edge-to-edge WebView. The durable
+  contract lives in
   `docs/modules/workspace.md` before the predecessor is deleted.
 - Typecheck, scoped lint, CSS-token lint, E2E TypeScript, residue search,
   `git diff --check`, and the relevant CI jobs pass.

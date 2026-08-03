@@ -1123,13 +1123,6 @@ export default function PdfReader({
     settleReaderPositioning();
   }, [mobileChromeEnabled, settleReaderPositioning]);
 
-  useEffect(() => {
-    if (error === null) {
-      return;
-    }
-    settleReaderPositioning();
-  }, [error, settleReaderPositioning]);
-
   useEffect(() => () => settleReaderPositioning(), [settleReaderPositioning]);
 
   const ensurePdfJs = useCallback(async () => {
@@ -1274,11 +1267,19 @@ export default function PdfReader({
       publishPendingSemanticViewport,
     );
   }, [publishPendingSemanticViewport]);
-  const invalidateSemanticViewportLayout = useCallback(() => {
+  const invalidateSemanticViewport = useCallback(() => {
     semanticLayoutGenerationRef.current += 1;
     latestSemanticViewportRef.current = null;
     onSemanticViewportChangeRef.current?.(null);
   }, []);
+
+  useEffect(() => {
+    if (error === null) {
+      return;
+    }
+    settleReaderPositioning();
+    invalidateSemanticViewport();
+  }, [error, invalidateSemanticViewport, settleReaderPositioning]);
 
   const applyStartPageProgression = useCallback(() => {
     const targetProgression = pendingStartPageProgressionRef.current;
@@ -1323,13 +1324,13 @@ export default function PdfReader({
       return;
     }
     const observer = new ResizeObserver(() => {
-      invalidateSemanticViewportLayout();
+      invalidateSemanticViewport();
       scheduleSemanticViewportCapture();
     });
     observer.observe(viewport);
     observer.observe(content);
     return () => observer.disconnect();
-  }, [invalidateSemanticViewportLayout, scheduleSemanticViewportCapture]);
+  }, [invalidateSemanticViewport, scheduleSemanticViewportCapture]);
 
   const getTextLayerRootForPage = useCallback(
     (targetPage: number): HTMLElement | null => {
@@ -2097,7 +2098,7 @@ export default function PdfReader({
             );
           }
           scheduleIntrinsicWidthPublish();
-          invalidateSemanticViewportLayout();
+          invalidateSemanticViewport();
           scheduleSemanticViewportCapture();
         });
         const findRuntime = pendingPdfFindRuntimeRef.current;
@@ -2121,7 +2122,7 @@ export default function PdfReader({
           : pageNumberRef.current;
 
         markPageSurface(renderedPage, event.source);
-        invalidateSemanticViewportLayout();
+        invalidateSemanticViewport();
         rememberPageScale(renderedPage, event.source);
         const renderedZoom = readViewerZoom(pdfViewer) ?? zoomRef.current;
         if (!event.error) {
@@ -2235,7 +2236,7 @@ export default function PdfReader({
       clearSelection,
       evaluatePageGeometryReliability,
       ensurePdfJsViewer,
-      invalidateSemanticViewportLayout,
+      invalidateSemanticViewport,
       isTextLayerUsableForPage,
       markPageSurface,
       mediaId,
@@ -2274,7 +2275,7 @@ export default function PdfReader({
           typeof value === "string" && value.length > 0,
       );
       semanticSourceKeyRef.current = `${mediaId}:pdf:${fingerprint ?? runId}`;
-      invalidateSemanticViewportLayout();
+      invalidateSemanticViewport();
 
       const boundedPage = clamp(targetPage, 1, doc.numPages);
       pageNumberRef.current = boundedPage;
@@ -2308,7 +2309,7 @@ export default function PdfReader({
     },
     [
       initializeViewerIfNeeded,
-      invalidateSemanticViewportLayout,
+      invalidateSemanticViewport,
       mediaId,
       removeOverlayLayers,
     ],
@@ -2969,7 +2970,7 @@ export default function PdfReader({
       setPageScale(zoom);
       setPageRenderEpoch((value) => value + 1);
       window.requestAnimationFrame(() => {
-        invalidateSemanticViewportLayout();
+        invalidateSemanticViewport();
         setTextGeometryReliable(
           evaluatePageGeometryReliability(pageNumberRef.current),
         );
@@ -2979,7 +2980,7 @@ export default function PdfReader({
     });
   }, [
     evaluatePageGeometryReliability,
-    invalidateSemanticViewportLayout,
+    invalidateSemanticViewport,
     readerScrollPositioner,
     reportReaderError,
     scheduleIntrinsicWidthPublish,

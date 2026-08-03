@@ -142,7 +142,8 @@
   font-size: var(--text-sm);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 768px),
+  (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
   .pdfViewport {
     height: min(78vh, 980px); /* fallback */
     height: min(78dvh, 980px); /* dynamic viewport for mobile address bar */

@@ -29,7 +29,8 @@ contract.
 - one shared, directly visible Companion action in the same resource-header
   position on desktop and mobile
 - on mobile, the Resource Inspector sheet is the single secondary detail path;
-  the Document Map overview rail remains desktop-only
+  the interactive Document Map overview rail remains desktop-only, while
+  readable Web, EPUB, and PDF render one passive position ribbon
 - resume that survives reflow where possible
 
 ## architecture
@@ -139,8 +140,11 @@ generic secondary-pane disclosure contract.
 - Evidence uses `EvidencePaneSurface`. The shipped surface merges highlights,
   source-authored apparatus, and resource-graph connections; its wide-reader
   companion is `MarginRail`.
-- Mobile has no rail. The same Contents/Evidence bodies render in the Resource
-  Inspector's workspace mobile sheet.
+- Mobile has no interactive Document Map overview rail. The same
+  Contents/Evidence bodies render in the Resource Inspector's workspace mobile
+  sheet; readable Web, EPUB, and PDF render the passive reader-relative
+  position ribbon defined by the
+  [mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md).
 - `useResourceInspector` supplies the only visible generic control through the
   shared Companion action; no reader-specific toolbar, Options, transcript, or
   overview-rail opener exists.
@@ -283,12 +287,17 @@ viewport width. Mobile workspace mode also suppresses fixed primary chrome,
 desktop-attached secondary columns, and pane resize handles; the Resource
 Inspector reaches mobile through the workspace secondary sheet.
 
-### overview rail positioning
+### document position presentation
 
 The aggregate publishes markers from exact owner start locators. The active
 reader publishes one `ReaderSemanticViewport`; `readerDocumentPosition.ts`
 projects its visible start/end to `0..1` without DOM, React, persistence, or
 activation policy. Marker owners already publish normalized exact positions.
+The projected range feeds the interactive desktop overview rail and the passive
+mobile Web/EPUB/PDF ribbon. The ribbon consumes the workspace-composed bottom
+clearance for reader-relative placement only; it is not workspace fixed chrome.
+The [mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md)
+owns its presentation contract and proof.
 
 - text is `(fragment_id, canonical codepoint offset)` over ordered unique
   fragments; every fragment contributes its length once
@@ -647,8 +656,8 @@ pure black/white to reduce halation under long sessions.
 The active format publishes a snapshot only when both visible endpoints are
 exact for the current source/layout generation. `Reader` snapshots feed cursor
 and activity owners after genuine input. `Restore`, `Preview`, and `Return`
-snapshots may update the Document Map rail but retain their existing no-write,
-no-activity fences.
+snapshots may update the desktop Document Map rail or mobile Web/EPUB/PDF
+position ribbon but retain their existing no-write, no-activity fences.
 
 ### consumption activity
 
@@ -659,7 +668,8 @@ Consumption Activity's bounded historical facts.
   `activityRecorder`. Reading accrues only while the media pane is active, the
   document is visible and focused, and recent genuine reader input keeps the
   reader eligible.
-- The adapter projects the same semantic viewport that drives the rail; it
+- The adapter projects the same semantic viewport that drives document-position
+  presentation; it
   never remeasures a scrollbar, writes spans itself, sends a raw device id, or
   derives completion from dwell.
   Canonical Consumption state remains the completion owner.

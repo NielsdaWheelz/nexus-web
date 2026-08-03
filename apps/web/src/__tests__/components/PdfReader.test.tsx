@@ -40,6 +40,7 @@ const pdfRuntimeState = vi.hoisted(() => ({
   highlightListResponse: null as Promise<{ data: unknown }> | null,
   createdHighlightId: "created-highlight-1",
   highlightCreateResponse: null as Promise<{ data: unknown }> | null,
+  documentLoadError: null as Error | null,
 }));
 
 type PdfReaderProps = ComponentProps<typeof PdfReaderImplementation>;
@@ -527,6 +528,11 @@ vi.mock("@/components/pdfReaderRuntime", () => {
             }),
           }),
           destroy: vi.fn(),
+        }).then((document) => {
+          if (pdfRuntimeState.documentLoadError) {
+            throw pdfRuntimeState.documentLoadError;
+          }
+          return document;
         }),
         destroy: vi.fn(),
       }),
@@ -558,6 +564,7 @@ describe("PdfReader selection chat destinations", () => {
     pdfRuntimeState.highlightListResponse = null;
     pdfRuntimeState.createdHighlightId = "created-highlight-1";
     pdfRuntimeState.highlightCreateResponse = null;
+    pdfRuntimeState.documentLoadError = null;
     vi.mocked(apiFetch).mockClear();
   });
 
@@ -927,6 +934,71 @@ describe("PdfReader selection chat destinations", () => {
     await waitFor(() =>
       expect(onSemanticViewportChange).toHaveBeenLastCalledWith(null),
     );
+  });
+
+  it("withdraws a published semantic viewport when the PDF runtime enters its error surface", async () => {
+    pdfRuntimeState.numPages = 2;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class ResizeObserverMock {
+        observe() {}
+        disconnect() {}
+        unobserve() {}
+      },
+    );
+    const onSemanticViewportChange = vi.fn();
+    let controls: PdfReaderControlActions | null = null;
+
+    render(
+      <PdfReader
+        mediaId="media-1"
+        onControlsReady={(nextControls) => {
+          controls = nextControls;
+        }}
+        onSemanticViewportChange={onSemanticViewportChange}
+      />,
+    );
+
+    const viewport = await screen.findByRole("region", {
+      name: "PDF document",
+    });
+    await screen.findByTestId("pdf-page-surface-1");
+    viewport.getBoundingClientRect = () => new DOMRect(0, 0, 600, 400);
+    fireEvent.scroll(viewport);
+    await waitFor(() =>
+      expect(onSemanticViewportChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({ intent: "Reader" }),
+      ),
+    );
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    onSemanticViewportChange.mockClear();
+
+    const documentLoadError = new Error("Invalid PDF structure");
+    documentLoadError.name = "InvalidPDFException";
+    pdfRuntimeState.documentLoadError = documentLoadError;
+    const now = vi
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2100-01-01T00:00:00.000Z"));
+    act(() => (controls as PdfReaderControlActions | null)?.goToNextPage());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This PDF file is invalid.",
+    );
+    now.mockRestore();
+    await waitFor(() =>
+      expect(onSemanticViewportChange).toHaveBeenCalledWith(null),
+    );
+    expect(onSemanticViewportChange).toHaveBeenLastCalledWith(null);
+    expect(
+      onSemanticViewportChange.mock.calls.every(
+        ([semanticViewport]) => semanticViewport === null,
+      ),
+    ).toBe(true);
   });
 
   it("refreshes expired source access without publishing a false source exit", async () => {
