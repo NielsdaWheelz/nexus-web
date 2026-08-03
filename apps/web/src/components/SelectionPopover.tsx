@@ -21,6 +21,11 @@ import styles from "./SelectionPopover.module.css";
 import { useShareController } from "@/lib/sharing/controller";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
 import { resourceShareTarget } from "@/lib/sharing/targets";
+import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
+import {
+  useContainingModalLayer,
+  useIsModalLayerTopmost,
+} from "@/lib/ui/useModalLayer";
 
 interface SelectionPopoverBaseProps<H extends { id: string }> {
   selectionRect: DOMRect;
@@ -63,10 +68,20 @@ export default function SelectionPopover<H extends { id: string }>({
   isCreating = false,
 }: SelectionPopoverProps<H>) {
   const { openShare } = useShareController();
+  const modalToken = useContainingModalLayer();
+  const modalIsTopmost = useIsModalLayerTopmost(modalToken);
   const actionLockRef = useRef(false);
   const [pendingActionId, setPendingActionId] =
     useState<SelectionPendingActionId | null>(null);
   const actionBusy = isCreating || pendingActionId !== null;
+  useHistoryDismiss(
+    true,
+    () => {
+      window.getSelection()?.removeAllRanges();
+      onDismiss();
+    },
+    { isTopmost: modalIsTopmost },
+  );
   const chatDestinations =
     onQuoteToNewChat && onQuoteToExistingChat
       ? {
