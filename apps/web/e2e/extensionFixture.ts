@@ -70,7 +70,14 @@ export async function launchExtension(): Promise<BrowserContext> {
       `--load-extension=${extensionDirectory}`,
     ],
   });
-  await context.route("**/*", guardRoute);
+  // Leave the extension OAuth redirect origin to chrome.identity's own
+  // navigation capture: intercepting it here (even to continue) races
+  // launchWebAuthFlow's redirect detection and stalls the handshake. Every
+  // other origin is still guarded so non-allowlisted requests abort.
+  await context.route(
+    (url) => url.origin !== extensionRedirectOrigin(),
+    guardRoute,
+  );
   return context;
 }
 
