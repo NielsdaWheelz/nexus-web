@@ -118,9 +118,7 @@ test("confirming conversation deletion removes the exact resource and leaves no 
     `Deleted conversation ${conversationId} reopened as an editable chat.`,
   ).toHaveCount(0);
   await expect(
-    page
-      .getByRole("alert")
-      .filter({ hasText: /failed to load conversation/i }),
+    page.getByRole("alert").filter({ hasText: /this pane couldn.t load/i }),
     `Deleted conversation ${conversationId} did not render the masked load failure.`,
   ).toBeVisible();
 });
