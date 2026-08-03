@@ -1,6 +1,6 @@
 # Android WebView System Insets — Hard Cutover
 
-**Status:** APPROVED — M144 boundary accepted; signed v0.2.11 Now Playing
+**Status:** APPROVED — M144 boundary accepted; signed v0.2.12 selection Back
 correction and release blocked
 
 **Last verified:** 2026-08-02
@@ -71,6 +71,7 @@ infer bar heights, navigation mode, OEM, Android, or WebView version.
 | MiniPlayer / Nexus | Player includes its own safe bottom; Nexus remains above Player plus its existing gap. |
 | Tasks / sheets | Background fills the frame; header, body, and actions honor applicable safe edges. |
 | MobileNowPlaying | Themed outer frame stays full bleed; its true body scrollport honors safe left/right/bottom while the header remains the safe-top owner. |
+| Reader selection Back | With the native selection toolbar and Nexus selection actions active, one Android/browser Back dismisses both and remains in the same Nexus activity/task. |
 | IME open/close | Existing visual-viewport path keeps focus visible and restores exact pre-IME clearance without double counting. |
 | Rotation / resize | Current insets replace old insets; no ghost gap, overlap, focus loss, or reader-position jump. |
 
@@ -150,6 +151,7 @@ distinct inputs.
 | Nexus | Use composed Nexus offset and existing gap; preserve retreat/inertness behavior. |
 | Full-screen tasks | Use the four root safe tokens at the frame-owned edge. |
 | MobileNowPlaying | Keep the themed outer frame/background full bleed. Inset the true `.body` scrollport by the existing root safe left/right/bottom tokens; the header continues to own safe top. Zero tokens preserve exact geometry; terminal controls remain reachable at max scroll. |
+| SelectionPopover | While reader selection actions are active, own the first transient Back. Back retires the live DOM selection and retained snapshot; outside-click and Escape retain existing behavior. |
 | MobileSheet | Compose root safe bottom with the existing keyboard token; preserve shrink behavior. |
 | Floating surfaces | Resolve all four root tokens against `visualViewport`; constrain before measuring, clamp into that safe rectangle, and make oversized actions scrollable. Reposition on viewport resize/scroll and intrinsic size changes. Preserve zero-inset geometry; add no store or platform branch. |
 
@@ -210,12 +212,16 @@ is added.
 | Prove the scoped contract | `apps/web/src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx`; `apps/web/src/lib/mobileViewport/mobileContentClearance.test.tsx`; `e2e/tests/mobile-reader-chrome.spec.ts` |
 | Correct Now Playing body geometry | `apps/web/src/components/player/MobileNowPlaying.module.css` |
 | Prove full-bleed/safe-body behavior | `apps/web/src/__tests__/components/GlobalPlayerSurfaces.test.tsx` |
+| Correct selection Back ownership | `apps/web/src/components/SelectionPopover.tsx` |
+| Prove one-Back selection dismissal | `apps/web/src/__tests__/components/SelectionPopover.test.tsx` |
 | Record final contract and release evidence | this file; `docs/modules/workspace.md`; `README.md` only where current distribution prose changes |
 
 No planned backend, database, API, reader-state, playback-runtime, Nexus-state,
 motion, overlay-lifecycle, SDK, target/min SDK, or dependency change exists.
 No PDF, transcript, chat, pane, native, raw-token, or provider-capability scope
 is authorized by the reader red.
+The selection red authorizes no native, API, history-primitive, or other-popover
+change.
 
 ## Hard-cut plan
 
@@ -256,6 +262,9 @@ owner. Revise this document before crossing another boundary.
 - Focused MobileNowPlaying proof keeps the frame full bleed, confines its true
   body scrollport to safe left/right/bottom, preserves zero-inset geometry, and
   exposes terminal controls at max scroll.
+- Focused Chromium proof starts with a live reader range and visible selection
+  actions, dispatches one Back/popstate, and asserts both are dismissed without
+  URL, workspace, scroll, terminal geometry, outside-click, or Escape change.
 - `make check-android`, focused frontend checks, `make check-workflows`, and the
   signed release proof pass. Each proof is reported separately.
 
@@ -279,6 +288,9 @@ Now Playing, one Nexus task, one sheet, and one root text-entry flow.
   scroll with Player absent/present: every nonempty reader text bound and
   selection handle ends above native UI; background stays full bleed and Player
   state adds no phantom gap.
+- With native and Nexus selection actions visible, one Android Back removes the
+  selection and both surfaces. Record before/after task/activity and reader
+  geometry; task, activity, URL, pane, scroll, and terminal clearance are exact.
 
 ### Release proof
 
@@ -366,12 +378,17 @@ remains.
   `[84,2229][552,2340]` and `Open source` `[624,2265][909,2325]`. The owner is
   MobileNowPlaying's true `.body` scrollport, not its full-bleed canvas. No fresh
   signed APK has yet accepted this correction.
+- Fresh signed `android-v0.2.12` is red with the native selection toolbar and
+  Nexus selection actions active: the first Android Back leaves the current
+  Nexus activity/task instead of dismissing selection. `SelectionPopover` is
+  the transient interaction owner; no fresh signed APK has accepted the fix.
 
 ## Non-goals
 
 - No reader/listener/TTS UX, reader chrome, Nexus, Player UX, sheet, keyboard,
-  motion, predictive Back, or edge-gesture redesign. The only Player scope is
-  MobileNowPlaying body-scrollport geometry; do not generalize it.
+  motion, predictive-Back animation/progress/navigation, or edge-gesture
+  redesign. Selection owns one existing transient Back only. The sole Player
+  scope remains MobileNowPlaying body-scrollport geometry; do not generalize.
 - No PDF, transcript, chat, pane, native, second store, or public
   `MobileViewportCapability` change; one derived composer CSS output is the
   only provider implementation change.

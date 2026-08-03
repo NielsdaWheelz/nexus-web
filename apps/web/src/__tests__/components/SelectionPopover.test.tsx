@@ -8,7 +8,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import type { ReactNode, RefObject } from "react";
+import { useState, type ReactNode, type RefObject } from "react";
 import { userEvent } from "vitest/browser";
 import "@/app/globals.css";
 import SelectionPopover from "@/components/SelectionPopover";
@@ -854,6 +854,94 @@ describe("SelectionPopover", () => {
     await waitFor(() => {
       expect(onDismiss).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("dismisses one selection on browser Back without traversing history again", async () => {
+    let historyState: unknown = null;
+    vi.spyOn(history, "pushState").mockImplementation((state) => {
+      historyState = state;
+    });
+    vi.spyOn(history, "replaceState").mockImplementation((state) => {
+      historyState = state;
+    });
+    vi.spyOn(history, "back").mockImplementation(() => {
+      historyState = null;
+    });
+    vi.spyOn(history, "state", "get").mockImplementation(() => historyState);
+    const onSelectionDismissed = vi.fn();
+    render(
+      <section
+        role="region"
+        aria-label="Reader pane"
+        style={{ width: 280, height: 96, overflowY: "auto" }}
+      >
+        <p>Live reader selection</p>
+        <div aria-hidden="true" style={{ height: 180 }} />
+        <button type="button">Terminal reader target</button>
+      </section>,
+    );
+    const readerPane = screen.getByRole("region", { name: "Reader pane" });
+    const selectedPassage = screen.getByText("Live reader selection");
+    const terminalTarget = screen.getByRole("button", {
+      name: "Terminal reader target",
+    });
+    expect(readerPane.scrollHeight).toBeGreaterThan(readerPane.clientHeight);
+    readerPane.scrollTop = readerPane.scrollHeight - readerPane.clientHeight;
+    const range = document.createRange();
+    range.selectNodeContents(selectedPassage);
+    const liveSelection = window.getSelection();
+    if (!liveSelection) throw new Error("Browser selection API is unavailable");
+    liveSelection.addRange(range);
+    expect(liveSelection.rangeCount).toBe(1);
+    const hrefBefore = window.location.href;
+    const scrollTopBefore = readerPane.scrollTop;
+    const terminalRectBefore = terminalTarget.getBoundingClientRect().toJSON();
+
+    function SelectionHarness() {
+      const [active, setActive] = useState(true);
+      if (!active) return null;
+      return (
+        <SelectionPopover
+          selectionRect={new DOMRect(120, 120, 80, 24)}
+          containerRef={createContainerRef()}
+          onCreateHighlight={vi.fn()}
+          onDismiss={() => {
+            onSelectionDismissed(window.getSelection()?.rangeCount);
+            setActive(false);
+          }}
+        />
+      );
+    }
+
+    renderSelectionPopover(<SelectionHarness />);
+    expect(history.state).toMatchObject({ __nexusOverlayHistory: true });
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+
+    historyState = null;
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("toolbar", { name: "Selection actions" }),
+      ).toBeNull();
+    });
+    await act(async () => Promise.resolve());
+
+    expect(onSelectionDismissed).toHaveBeenCalledWith(0);
+    expect(liveSelection.rangeCount).toBe(0);
+    expect(screen.getByRole("region", { name: "Reader pane" })).toBe(
+      readerPane,
+    );
+    expect(screen.getByText("Live reader selection")).toBe(selectedPassage);
+    expect(
+      screen.getByRole("button", { name: "Terminal reader target" }),
+    ).toBe(terminalTarget);
+    expect(window.location.href).toBe(hrefBefore);
+    expect(readerPane.scrollTop).toBe(scrollTopBefore);
+    expect(terminalTarget.getBoundingClientRect().toJSON()).toEqual(
+      terminalRectBefore,
+    );
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+    expect(history.back).not.toHaveBeenCalled();
   });
 
   it("closes the colour disclosure before dismissing the palette", async () => {
