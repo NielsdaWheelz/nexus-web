@@ -21,7 +21,7 @@
 }
 
 .persistentRail {
-  top: max(var(--space-3), env(safe-area-inset-top));
+  top: max(var(--space-3), var(--viewport-safe-top));
   left: 50%;
   width: min(680px, calc(100vw - 2rem));
   max-height: min(48vh, 560px);
@@ -30,8 +30,8 @@
 }
 
 .hudViewport {
-  right: max(var(--space-4), env(safe-area-inset-right));
-  bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  right: max(var(--space-4), var(--viewport-safe-right));
+  bottom: max(var(--space-4), var(--viewport-safe-bottom));
   width: min(420px, calc(100vw - 2rem));
 }
 
@@ -222,7 +222,7 @@
 
   .hudViewport {
     right: var(--space-3);
-    bottom: max(var(--space-3), env(safe-area-inset-bottom));
+    bottom: max(var(--space-3), var(--viewport-safe-bottom));
     left: var(--space-3);
     width: auto;
   }

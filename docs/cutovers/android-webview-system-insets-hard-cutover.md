@@ -1,6 +1,7 @@
 # Android WebView System Insets — Hard Cutover
 
-**Status:** IMPLEMENTED — M144 boundary accepted; signed product and release blocked
+**Status:** APPROVED — M144 boundary accepted; signed v0.2.10 reader paint
+correction and release blocked
 
 **Last verified:** 2026-08-02
 
@@ -21,6 +22,9 @@ No product question blocks implementation.
   Release workflow and signing identity.
 - Edge-to-edge paint is intentional. Only interactive/content geometry stays
   inside the safe rectangle.
+- Android permits full-window scroll-under. Nexus deliberately allows only the
+  reader background, not text or selection geometry, beneath system UI. The
+  v0.2.10 red is product geometry, not a native-boundary failure.
 - The current source architecture is the intended final architecture. Scope is
   proof, immutable release, and demonstrated defects only.
 
@@ -62,7 +66,8 @@ infer bar heights, navigation mode, OEM, Android, or WebView version.
 | Three-button navigation | Android owns its contrast scrim; the full navigation inset remains clear. |
 | Top bar / cutout | Black native protection and light icons remain; web interaction starts inside the safe top. |
 | Landscape / side cutout | Left/right safe edges are honored without portrait-specific branching. |
-| Reader / PDF / panes | Terminal content clears the largest active bottom obstruction and can be selected/activated. |
+| TextDocumentReader (EPUB / Web text) | Background may bleed; text paint, selection geometry, and terminal content stop above the composed safe block-end. |
+| PDF / chat / pane scroll roots | Existing behavior is unchanged; no scope expands without its own signed-product red. |
 | MiniPlayer / Nexus | Player includes its own safe bottom; Nexus remains above Player plus its existing gap. |
 | Tasks / Now Playing / sheets | Background fills the frame; header, body, and actions honor applicable safe edges. |
 | IME open/close | Existing visual-viewport path keeps focus visible and restores exact pre-IME clearance without double counting. |
@@ -138,7 +143,8 @@ distinct inputs.
 
 | Owner | Input and rule |
 | --- | --- |
-| Reader, chat, PDF, pane scroll roots | Use composed content clearance for terminal padding and scroll padding at the real scroll owner. |
+| TextDocumentReader true scroll owner | Use the exact residual paint and terminal formulas below. |
+| Chat, PDF, pane scroll roots | Existing composed-clearance behavior remains unchanged. |
 | MiniPlayer | Put safe-bottom space inside the registered Player surface. |
 | Nexus | Use composed Nexus offset and existing gap; preserve retreat/inertness behavior. |
 | Full-screen tasks / Now Playing | Use the four root safe tokens at the frame-owned edge. |
@@ -147,6 +153,23 @@ distinct inputs.
 
 Background paint may cross a safe edge. Text, controls, focus targets,
 selection handles, and terminal scroll content may not.
+
+For the current in-flow layout, in CSS pixels, let `S` be platform safe bottom,
+`P` be Player clearance already supplied by layout (`A=P`), `C` be composed
+content clearance, `N=max(S,P)` be the existing Nexus offset, and `V` be the
+physical viewport block-end. The sole composer publishes one additional
+internal CSS output; its public interface stays unchanged:
+
+```text
+D = --mobile-reader-paint-bottom-inset = max(0, S-P)
+T = terminal padding-bottom = scroll-padding-bottom = max(0, C-N)
+paint block-end = V-P-D = V-max(S,P)
+terminal block-end at max scroll = V-max(S,P)-T = V-C
+```
+
+Absent Player, `A=P=0`, so exactly `D=S` and `T=max(0,C-S)`. At
+`S=P=C=0`, both are zero. With Player only, `C=N`, so `T=0`: in-flow Player
+layout plus `D` supplies `max(S,P)` once, with no phantom safe-area gap.
 
 ## Release capability contract
 
@@ -180,10 +203,15 @@ is added.
 | Focused safe-side proof | `apps/web/src/components/workspace/PaneShell.mobileChrome.browser.test.tsx`; `e2e/tests/mobile-reader-chrome.spec.ts` |
 | Anchored safe-rectangle owner | `apps/web/src/lib/ui/useAnchoredPosition.ts`; `apps/web/src/lib/ui/viewportSafeArea.ts`; `apps/web/src/components/ui/FloatingActionSurface.tsx`; `apps/web/src/components/ui/ActionMenu.module.css` |
 | Focused anchored proof | `apps/web/src/lib/ui/useAnchoredPosition.test.tsx`; existing `apps/web/src/components/ui/FloatingActionSurface.test.tsx`; `apps/web/src/__tests__/components/ActionMenu.test.tsx` |
+| Publish `D`; no API/owner change | `apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx`; `apps/web/src/lib/mobileViewport/MobileViewportProvider.test.tsx` |
+| Correct the demonstrated reader red | `apps/web/src/app/(authenticated)/media/[id]/TextDocumentReader.tsx`; `page.module.css` |
+| Prove the scoped contract | `apps/web/src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx`; `apps/web/src/lib/mobileViewport/mobileContentClearance.test.tsx`; `e2e/tests/mobile-reader-chrome.spec.ts` |
 | Record final contract and release evidence | this file; `docs/modules/workspace.md`; `README.md` only where current distribution prose changes |
 
 No planned backend, database, API, reader-state, playback-runtime, Nexus-state,
 motion, overlay-lifecycle, SDK, target/min SDK, or dependency change exists.
+No PDF, transcript, chat, pane, native, raw-token, or provider-capability scope
+is authorized by the reader red.
 
 ## Hard-cut plan
 
@@ -219,6 +247,8 @@ owner. Revise this document before crossing another boundary.
 - Focused anchored tests preserve zero-inset placement, prove all four safe
   edges, and keep an oversized ActionMenu contained, keyboard-reachable, and
   activatable.
+- Focused TextDocumentReader proof asserts the formulas above in zero,
+  safe-only, and Player states without changing trusted scroll or focus.
 - `make check-android`, focused frontend checks, `make check-workflows`, and the
   signed release proof pass. Each proof is reported separately.
 
@@ -238,6 +268,10 @@ Now Playing, one Nexus task, one sheet, and one root text-entry flow.
   a TalkBack smoke do not regress.
 - Record OS/device, navigation mode, orientation, WebView version, tag SHA,
   signer, APK version, APK SHA-256, and one screenshot per navigation mode.
+- For EPUB and Web text, record screenshot plus UI XML at mid-scroll and terminal
+  scroll with Player absent/present: every nonempty reader text bound and
+  selection handle ends above native UI; background stays full bleed and Player
+  state adds no phantom gap.
 
 ### Release proof
 
@@ -259,8 +293,8 @@ rg -n 'setDecorFitsSystemWindows|statusBarColor|nexusViewport|native.*inset|inse
 # no superseded inset path
 ```
 
-No compatibility branch, inset payload/schema, feature-local safe formula,
-navigation-mode conditional, magic bar height, rebuild-on-promote path,
+No compatibility branch, inset payload/schema, raw safe-area read, second
+composer, navigation-mode conditional, magic bar height, rebuild-on-promote path,
 `--clobber`, stale owner prose, dead proof, or client-facing commit manifest
 remains.
 
@@ -315,14 +349,19 @@ remains.
 - Repo-wide web TypeScript was stopped on the unrelated baseline
   `src/__tests__/components/PaneShell.test.tsx:556` (`HTMLElement.labels`); it
   is not scoped proof or a new feature red.
-- This accepts only the M144 native-to-CSS boundary. The correction is not yet
-  accepted on a deployed current SHA or fresh signed draft; product matrix and
-  release promotion remain blocked.
+- Fresh signed `android-v0.2.10`, three-button portrait, is red: native
+  navigation starts at physical y=2196, while a nonempty EPUB text node is
+  bounded `[48,1653][1005,2340]`, painting 144 physical px beneath native UI.
+  Mid-scroll is no exemption. M144 remains accepted; the scoped reader
+  correction, fresh signed product matrix, and release promotion are blocked.
 
 ## Non-goals
 
 - No reader/listener/TTS UX, reader chrome, Nexus, Player, sheet, keyboard,
   motion, predictive Back, or edge-gesture redesign.
+- No PDF, transcript, chat, pane, native, second store, or public
+  `MobileViewportCapability` change; one derived composer CSS output is the
+  only provider implementation change.
 - No immersive mode, hidden bars, custom navigation bar, foldable hinge,
   viewport-segment, side-keyboard, or browser-chin optimization.
 - No WebView-before-M144 fallback, warning, updater, telemetry, feature flag,

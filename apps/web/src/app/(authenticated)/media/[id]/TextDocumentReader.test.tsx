@@ -1,7 +1,7 @@
 import { createRef, type CSSProperties, type MouseEvent } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import TextDocumentReader from "./TextDocumentReader";
@@ -41,7 +41,7 @@ function renderReader(
     contentRef: createRef<HTMLDivElement>(),
     textViewportRef: createRef<HTMLDivElement>(),
     textEndRef: createRef<HTMLElement>(),
-    readerSurfaceClassName: styles.readerContentRoot,
+    readerThemeClassName: styles.readerThemeLight,
     readerSurfaceStyle: {
       "--reader-column-width-ch": "36ch",
       "--reader-font-family": "Arial, sans-serif",
@@ -84,6 +84,97 @@ function renderReader(
 }
 
 describe("TextDocumentReader", () => {
+  afterEach(() => {
+    document.documentElement.style.removeProperty(
+      "--mobile-reader-paint-bottom-inset",
+    );
+    document.documentElement.style.removeProperty(
+      "--mobile-content-bottom-clearance",
+    );
+    document.documentElement.style.removeProperty(
+      "--mobile-nexus-bottom-offset",
+    );
+  });
+
+  it("keeps text paint above the mobile inset while its themed frame remains full bleed", () => {
+    document.documentElement.style.setProperty(
+      "--mobile-reader-paint-bottom-inset",
+      "24px",
+    );
+    document.documentElement.style.setProperty(
+      "--mobile-content-bottom-clearance",
+      "96px",
+    );
+    document.documentElement.style.setProperty(
+      "--mobile-nexus-bottom-offset",
+      "64px",
+    );
+    renderReader({
+      readerThemeClassName: styles.readerThemeDark,
+      contentState: {
+        status: "ready",
+        renderedHtml: `<p>${"Reader text ".repeat(500)}</p>`,
+      },
+    });
+
+    const viewport = screen.getByTestId("document-viewport");
+    // eslint-disable-next-line testing-library/no-node-access -- the public viewport's direct parent is its owning paint frame.
+    const frame = viewport.parentElement;
+    if (!(frame instanceof HTMLElement)) {
+      throw new Error("Text document viewport must have an owning paint frame");
+    }
+    frame.style.width = "320px";
+    frame.style.height = "240px";
+
+    const frameStyle = getComputedStyle(frame);
+    const viewportRect = viewport.getBoundingClientRect();
+    const frameRect = frame.getBoundingClientRect();
+    expect(frameStyle.backgroundColor).toBe("rgb(21, 20, 15)");
+    expect(frameRect.bottom - viewportRect.bottom).toBeCloseTo(24, 0);
+    expect(getComputedStyle(viewport).paddingBottom).toBe("32px");
+    expect(getComputedStyle(viewport).scrollPaddingBottom).toBe("32px");
+    viewport.scrollTop = 40;
+    expect(viewport.scrollTop).toBe(40);
+
+    document.documentElement.style.setProperty(
+      "--mobile-reader-paint-bottom-inset",
+      "0px",
+    );
+    document.documentElement.style.setProperty(
+      "--mobile-content-bottom-clearance",
+      "80px",
+    );
+    document.documentElement.style.setProperty(
+      "--mobile-nexus-bottom-offset",
+      "80px",
+    );
+    expect(
+      frame.getBoundingClientRect().bottom -
+        viewport.getBoundingClientRect().bottom,
+    ).toBeCloseTo(0, 0);
+    expect(getComputedStyle(viewport).paddingBottom).toBe("0px");
+    expect(getComputedStyle(viewport).scrollPaddingBottom).toBe("0px");
+    expect(viewport.scrollTop).toBe(40);
+
+    document.documentElement.style.setProperty(
+      "--mobile-content-bottom-clearance",
+      "0px",
+    );
+    document.documentElement.style.setProperty(
+      "--mobile-nexus-bottom-offset",
+      "0px",
+    );
+    expect(
+      frame.getBoundingClientRect().bottom -
+        viewport.getBoundingClientRect().bottom,
+    ).toBeCloseTo(0, 0);
+    expect(getComputedStyle(viewport).paddingBottom).toBe("0px");
+    expect(getComputedStyle(viewport).scrollPaddingBottom).toBe("0px");
+    expect(viewport.scrollTop).toBe(40);
+    viewport.focus();
+    expect(viewport).toHaveFocus();
+  });
+
   it("renders reader banners and its in-flow endcap inside the accessible reading area", () => {
     renderReader({
       beforeContent: <div>Reader readiness</div>,

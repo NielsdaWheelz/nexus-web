@@ -5527,11 +5527,12 @@ export default function MediaPaneBody() {
     seekTo(resolvedHighlightTarget.timeRange.value.startMs);
   }, [requestedHighlightId, resolvedHighlightTarget, seekTo]);
   const readerSurfaceStyle = buildReaderSurfaceStyle(readerProfile);
-  const readerSurfaceClassName = `${styles.readerContentRoot} ${
+  const readerThemeClassName =
     readerProfile.theme === "dark"
       ? styles.readerThemeDark
-      : styles.readerThemeLight
-  }`;
+      : styles.readerThemeLight;
+  const readerSurfaceClassName =
+    `${styles.readerContentRoot} ${readerThemeClassName}`;
   const activeReaderSecondarySurface =
     secondaryPane?.groupId === "resource-inspector" &&
     secondaryPane.visibility === "visible"
@@ -8609,7 +8610,7 @@ export default function MediaPaneBody() {
               beforeContent={readerBanners}
               readerRootRef={readerRootRef}
               contentRef={contentRef}
-              readerSurfaceClassName={readerSurfaceClassName}
+              readerThemeClassName={readerThemeClassName}
               readerSurfaceStyle={readerSurfaceStyle}
               focusMode={focusModeForRoot}
               hyphenation={hyphenationForRoot}
@@ -8653,7 +8654,7 @@ export default function MediaPaneBody() {
               beforeContent={readerBanners}
               readerRootRef={readerRootRef}
               contentRef={contentRef}
-              readerSurfaceClassName={readerSurfaceClassName}
+              readerThemeClassName={readerThemeClassName}
               readerSurfaceStyle={readerSurfaceStyle}
               focusMode={focusModeForRoot}
               hyphenation={hyphenationForRoot}

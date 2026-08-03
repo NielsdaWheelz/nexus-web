@@ -70,6 +70,9 @@ describe("MobileViewportProvider", () => {
     document.documentElement.style.removeProperty(
       "--mobile-overlay-keyboard-inset",
     );
+    document.documentElement.style.removeProperty(
+      "--mobile-reader-paint-bottom-inset",
+    );
     document.documentElement.style.removeProperty("--viewport-safe-bottom");
     for (const probe of rootLengthProbes.values()) {
       probe.remove();
@@ -88,6 +91,7 @@ describe("MobileViewportProvider", () => {
 
     expect(readRootLength("--mobile-content-bottom-clearance")).toBe(37);
     expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(37);
+    expect(readRootLength("--mobile-reader-paint-bottom-inset")).toBe(37);
 
     unmount();
     expect(
@@ -100,8 +104,14 @@ describe("MobileViewportProvider", () => {
         "--mobile-nexus-bottom-offset",
       ),
     ).toBe("");
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-reader-paint-bottom-inset",
+      ),
+    ).toBe("");
     expect(readRootLength("--mobile-content-bottom-clearance")).toBe(37);
     expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(37);
+    expect(readRootLength("--mobile-reader-paint-bottom-inset")).toBe(37);
   });
 
   it("composes measured Player clearance with a larger canonical safe bottom", async () => {
@@ -115,16 +125,23 @@ describe("MobileViewportProvider", () => {
     await waitFor(() => {
       expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(80);
       expect(readRootLength("--mobile-content-bottom-clearance")).toBe(80);
+      expect(readRootLength("--mobile-reader-paint-bottom-inset")).toBe(0);
     });
 
     document.documentElement.style.setProperty("--viewport-safe-bottom", "93px");
     expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(93);
     expect(readRootLength("--mobile-content-bottom-clearance")).toBe(93);
+    expect(readRootLength("--mobile-reader-paint-bottom-inset")).toBe(13);
 
     unmount();
     expect(
       document.documentElement.style.getPropertyValue(
         "--mobile-content-bottom-clearance",
+      ),
+    ).toBe("");
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-reader-paint-bottom-inset",
       ),
     ).toBe("");
   });
