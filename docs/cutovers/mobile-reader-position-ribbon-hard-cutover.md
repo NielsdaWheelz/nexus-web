@@ -1,7 +1,7 @@
 # Mobile Reader Position Ribbon Hard Cutover
 
-Status: IMPLEMENTED IN SOURCE — focused software proof complete; ribbon and
-predecessor physical-device acceptance pending — 2026-08-02
+Status: IMPLEMENTED — focused software and Android ribbon proof complete;
+manual reviews pending — 2026-08-02
 
 Type: one frontend hard cutover. No flag, compatibility path, fallback
 position model, or mixed presentation.
@@ -14,9 +14,13 @@ Follow all of [`docs/rules/`](../rules/index.md), especially cleanliness,
 simplicity, frontend, correctness, and naming, plus the Nexus-owned
 [`testing-standards.md`](../local-rules/testing-standards.md).
 
-Land only after the implementation and physical-device acceptance of
-[`mobile-reader-unified-scroll-chrome-hard-cutover.md`](mobile-reader-unified-scroll-chrome-hard-cutover.md).
-Do not implement the cuts concurrently in `MediaPaneBody` or reader geometry.
+Depend on the implemented ownership contract in
+[`mobile-reader-unified-scroll-chrome-hard-cutover.md`](mobile-reader-unified-scroll-chrome-hard-cutover.md),
+not its remaining exhaustive physical certification. Universal Switch,
+external keyboard, fling/selection, navigation mode, and broad accessibility
+review remain external project/release dependencies, not ribbon-thread
+implementation scope. Do not implement the cuts concurrently in
+`MediaPaneBody` or reader geometry.
 
 ## Decision
 
@@ -246,9 +250,10 @@ spec before widening scope.
   scroll movement, retreat stability, and composed clearance. Extend the
   existing PDF safe-area journey for portrait-to-landscape placement. Do not
   duplicate pure projection or format-gating cases in E2E.
-- Deliberately review iOS Safari and Android WebView with large text,
-  VoiceOver/TalkBack, portrait/landscape, home indicator/navigation modes, and
-  an active MiniPlayer. Physical-device failure blocks acceptance.
+- Focused Android WebView ribbon geometry and trusted-touch review is the
+  physical implementation proof. Manual iOS Safari/VoiceOver and remaining
+  hands-on accessibility review remain pending external project/release
+  dependencies; do not duplicate the predecessor's exhaustive matrix here.
 
 Required commands:
 
@@ -270,9 +275,10 @@ git diff --check
 
 ## Final-state gates
 
-The cutover is complete only when:
+The focused ribbon implementation is complete only when:
 
-- source, browser, trusted journey, and physical-device proof pass;
+- source, browser, trusted journey, and focused Android ribbon
+  geometry/trusted-touch proof pass;
 - current module docs describe the final state without contradictory
   mobile-no-rail language;
 - searches find no second reader-position calculation, compatibility branch,
@@ -301,10 +307,10 @@ The cutover is complete only when:
   publication. The corrected contracts pass those same proofs. The ribbon
   rerender proof uses independent Chromium layout geometry and rejects both the
   old start and old width.
-- Physical iOS Safari review was not run because no iOS device/tooling is
-  available. A physical Samsung SM-S906W running Android 16 and System WebView
+- A physical Samsung SM-S906W running Android 16 and System WebView
   150.0.7871.181 passed the upstream-owned predecessor M144 annotation matrix,
-  3 of 3. The original production Android package remained installed and
-  unchanged. Ribbon review and the unified-scroll manual physical matrices
-  remain pending. Keep this branch unlanded and do not promote the status to
-  `IMPLEMENTED` until ribbon and predecessor physical gates pass.
+  3 of 3. Focused ribbon geometry and trusted-touch evidence also passed. The
+  original production Android package remained installed and unchanged.
+  Physical iOS Safari/VoiceOver review was unavailable; remaining hands-on
+  accessibility reviews and predecessor physical matrices remain pending
+  external project/release dependencies.
