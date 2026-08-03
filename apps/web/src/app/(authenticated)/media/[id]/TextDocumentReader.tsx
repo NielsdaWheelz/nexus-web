@@ -52,7 +52,7 @@ export default function TextDocumentReader({
   contentRef,
   textViewportRef,
   textEndRef,
-  readerSurfaceClassName,
+  readerThemeClassName,
   readerSurfaceStyle,
   focusMode,
   hyphenation,
@@ -77,7 +77,7 @@ export default function TextDocumentReader({
   contentRef: RefObject<HTMLDivElement | null>;
   textViewportRef: RefObject<HTMLDivElement | null>;
   textEndRef: RefObject<HTMLElement | null>;
-  readerSurfaceClassName: string;
+  readerThemeClassName: string;
   readerSurfaceStyle: CSSProperties;
   focusMode: string;
   hyphenation: string;
@@ -241,10 +241,12 @@ export default function TextDocumentReader({
   }
 
   return (
-    <div className={styles.readerFrame}>
+    <div
+      className={`${styles.readerFrame} ${styles.textDocumentReaderFrame} ${readerThemeClassName}`}
+    >
       <div
         ref={viewportRef}
-        className={styles.documentViewport}
+        className={`${styles.documentViewport} ${styles.textDocumentViewport}`}
         data-testid="document-viewport"
         data-pane-content="true"
         tabIndex={0}
@@ -265,7 +267,7 @@ export default function TextDocumentReader({
         {beforeContent}
         <div
           ref={readerRootRef}
-          className={readerSurfaceClassName}
+          className={styles.readerContentRoot}
           style={readerSurfaceStyle}
           data-focus-mode={focusMode}
           data-hyphenation={hyphenation}
