@@ -155,7 +155,7 @@ jobs:
             exit 1
           fi
 
-          release_json="$(gh release view "$ANDROID_RELEASE_TAG" --json databaseId,isDraft,tagName)"
+          release_json="$(gh release view "$ANDROID_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId,isDraft,tagName)"
           if [ "$(jq -r .tagName <<< "$release_json")" != "$ANDROID_RELEASE_TAG" ]; then
             echo "Draft release tag does not match $ANDROID_RELEASE_TAG."
             exit 1
@@ -169,6 +169,7 @@ jobs:
           asset_dir="$RUNNER_TEMP/android-release-assets"
           mkdir "$asset_dir"
           gh release download "$ANDROID_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             --dir "$asset_dir" \
             --pattern nexus-android.apk \
             --pattern nexus-android.apk.sha256 \
