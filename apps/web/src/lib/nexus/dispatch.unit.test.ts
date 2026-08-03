@@ -41,9 +41,9 @@ function dispatchContext(
   return {
     androidShell: false,
     feedback: {
-      show: () => unexpected("feedback.show"),
-      dismissByDedupeKey: () => unexpected("feedback.dismissByDedupeKey"),
-      suppressDedupeKey: () => unexpected("feedback.suppressDedupeKey"),
+      publish: () => unexpected("feedback.publish"),
+      resolve: () => unexpected("feedback.resolve"),
+      suppress: () => unexpected("feedback.suppress"),
     },
     activePaneId: "pane-a",
     activateWorkspaceTarget: () =>
@@ -101,11 +101,6 @@ describe("Nexus dispatch timing contract", () => {
         events.push(`placement:${mediaIds.join(",")}`);
         return placement.promise;
       },
-      feedback: {
-        show: (feedback) => events.push(`feedback:${feedback.title}`),
-        dismissByDedupeKey: () => unexpected("feedback.dismissByDedupeKey"),
-        suppressDedupeKey: () => unexpected("feedback.suppressDedupeKey"),
-      },
     });
 
     const settled = settleNexusDispatch(() =>
@@ -123,9 +118,6 @@ describe("Nexus dispatch timing contract", () => {
     });
 
     await expect(settled).resolves.toEqual({ kind: "Stayed" });
-    expect(events).toEqual([
-      `placement:${MEDIA_ID}`,
-      "feedback:Added to Lectern",
-    ]);
+    expect(events).toEqual([`placement:${MEDIA_ID}`]);
   });
 });

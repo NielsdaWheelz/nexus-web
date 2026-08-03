@@ -248,6 +248,19 @@ function installMatchMedia() {
 
 installMatchMedia();
 
+function installViewportSafeAreaInsets() {
+  // globals.css sources --viewport-safe-* from env(safe-area-inset-*), which the
+  // browser test document does not define; the product's strict inset validation
+  // (viewportSafeArea.ts) then rejects the unresolved value. Provide the zero
+  // desktop baseline so anchored surfaces render as they do without device insets.
+  for (const edge of ["top", "right", "bottom", "left"]) {
+    document.documentElement.style.setProperty(`--viewport-safe-${edge}`, "0px");
+  }
+}
+
+installViewportSafeAreaInsets();
+beforeEach(installViewportSafeAreaInsets);
+
 afterEach(async () => {
   vi.useRealTimers();
   const { cleanup } = await import("@testing-library/react");
