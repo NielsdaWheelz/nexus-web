@@ -74,8 +74,8 @@ import {
   unsubscribeFromPodcast,
 } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import type { PodcastSubscriptionSettingsResponse } from "@/lib/podcasts/subscriptionSettings";
-import PodcastSubscriptionSettingsModal from "@/app/(authenticated)/podcasts/PodcastSubscriptionSettingsModal";
 import { usePodcastSubscriptionSettingsModal } from "@/app/(authenticated)/podcasts/usePodcastSubscriptionSettingsModal";
+import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import Toggle from "@/components/ui/Toggle";
@@ -89,7 +89,6 @@ import type {
   CollectionRowView,
 } from "@/lib/collections/types";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
-import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import LibraryMembersSurface from "@/components/libraries/LibraryMembersSurface";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
@@ -614,9 +613,11 @@ export default function LibraryPaneBody() {
     },
     [installEntryCollectionRevision, setEntries],
   );
-  const podcastSettingsModal = usePodcastSubscriptionSettingsModal({
-    onSaved: handlePodcastSettingsSaved,
-  });
+  const resourceOverlays = useResourceOverlaysController();
+  // The settings overlay is owned app-level (ResourceActionOverlays); this hook
+  // is kept only for its install subscription, which keeps the pane's list rows
+  // current after an app-level settings save.
+  usePodcastSubscriptionSettingsModal({ onSaved: handlePodcastSettingsSaved });
   const [authorsEditorMounted, setAuthorsEditorMounted] = useState(false);
   const [authorsEditorOpen, setAuthorsEditorOpen] = useState(false);
   const [authorsEditorMediaId, setAuthorsEditorMediaId] = useState<
@@ -992,7 +993,6 @@ export default function LibraryPaneBody() {
               };
   const viewIsCommitted = entriesState?.kind === "Ready";
 
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const deletingLibraryRef = useRef(false);
   const [deletingLibrary, setDeletingLibrary] = useState(false);
 
@@ -2168,31 +2168,6 @@ export default function LibraryPaneBody() {
     }
   };
 
-  const handleRename = useCallback(
-    async (name: string) => {
-      if (!currentLibrary) return;
-      await apiFetch(`/api/libraries/${currentLibrary.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ name }),
-      });
-      setLibrary({ ...currentLibrary, name });
-      clearAllVisitData();
-    },
-    [clearAllVisitData, currentLibrary, setLibrary],
-  );
-
-  const handleDeleteFromSettings = useCallback(async () => {
-    if (!currentLibrary) return;
-    await apiFetch(`/api/libraries/${currentLibrary.id}`, {
-      method: "DELETE",
-    });
-    publishLibraryPlacementChange("Unknown");
-    committedSnapshotRef.current = null;
-    clearAllVisitData();
-    setSettingsOpen(false);
-    router.push("/libraries");
-  }, [clearAllVisitData, currentLibrary, router]);
-
   // Continuation recovery replaces the exact committed view's first page while
   // preserving its rendered rows until the replacement commits.
   const handleRefreshList = useCallback(() => {
@@ -2333,7 +2308,8 @@ export default function LibraryPaneBody() {
         settings: currentLibrary.canRename
           ? {
               kind: "Available",
-              execute: () => setSettingsOpen(true),
+              execute: () =>
+                resourceOverlays.openLibrarySettings(currentLibrary.id),
             }
           : { kind: "Unavailable" },
         deleteLibrary: currentLibrary.canDelete
@@ -2996,14 +2972,7 @@ export default function LibraryPaneBody() {
               ? {
                   kind: "Available",
                   execute: () =>
-                    podcastSettingsModal.open({
-                      podcast_id: item.podcast.id,
-                      default_playback_speed:
-                        subscription.defaultPlaybackSpeed,
-                      pause_shortening_mode:
-                        subscription.pauseShorteningMode,
-                      auto_queue: subscription.autoQueue,
-                    }),
+                    resourceOverlays.openPodcastSettings(item.podcast.id),
                 }
               : { kind: "Unavailable" },
           checkForNewEpisodes:
@@ -3340,15 +3309,6 @@ export default function LibraryPaneBody() {
   ) : (
     emptyStateNotice
   );
-  const podcastSettingsEntry = entries.find(
-    (entry) =>
-      entry.kind === "podcast" &&
-      entry.podcast.id === podcastSettingsModal.podcastId,
-  );
-  const podcastSettingsTitle =
-    podcastSettingsEntry?.kind === "podcast"
-      ? podcastSettingsEntry.podcast.title
-      : null;
 
   return (
     <>
@@ -3410,24 +3370,6 @@ export default function LibraryPaneBody() {
         ) : null}
       </PaneSurface>
 
-      {settingsOpen && currentLibrary ? (
-        <LibrarySettingsDialog
-          open
-          onClose={() => setSettingsOpen(false)}
-          library={{
-            id: currentLibrary.id,
-            name: currentLibrary.name,
-            canRename: currentLibrary.canRename,
-            canDelete: currentLibrary.canDelete,
-          }}
-          onRename={handleRename}
-          onDelete={handleDeleteFromSettings}
-        />
-      ) : null}
-      <PodcastSubscriptionSettingsModal
-        podcastTitle={podcastSettingsTitle}
-        settingsModal={podcastSettingsModal}
-      />
       {authorsEditorMounted && authorsEditorMedia ? (
         <Suspense fallback={null}>
           <MediaAuthorsEditor

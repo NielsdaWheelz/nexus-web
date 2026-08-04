@@ -14,8 +14,6 @@ import {
   useLayoutEffect,
   useRef,
   useMemo,
-  lazy,
-  Suspense,
 } from "react";
 import { executeResourceChat } from "@/lib/resources/resourceActionExecution";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
@@ -311,14 +309,14 @@ import {
   upsertHighlightSorted,
   type HighlightLinkedNoteBlock,
 } from "@/lib/highlights/api";
-import type { ContributorCredit, MediaAuthors } from "@/lib/contributors/types";
+import type { ContributorCredit } from "@/lib/contributors/types";
 import ResourceCreditsOverlay from "@/components/contributors/ResourceCreditsOverlay";
 import ResourceThumb from "@/components/ui/ResourceThumb";
 import {
   buildMediaResourceHeader,
   classifyCanonicalMediaRefetchFailure,
-  mapMediaAuthorCredits,
 } from "./mediaFormatting";
+import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import { resolveEpubInternalLinkTarget } from "./epubHelpers";
 import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import {
@@ -360,13 +358,6 @@ export function resolveActiveWebFragment<T extends { id: string }>({
   }
   return cursorState === "Empty" ? (fragments[0] ?? null) : null;
 }
-
-// Author administration is lazy: resource identity does not pay for the editor
-// until the user invokes its capability-gated Options command.
-const MediaAuthorsEditor = lazy(
-  () =>
-    import(/* @vite-ignore */ "@/components/contributors/MediaAuthorsEditor"),
-);
 
 // =============================================================================
 // Constants
@@ -1114,15 +1105,12 @@ export default function MediaPaneBody() {
   const [initialHeaderFailure, setInitialHeaderFailure] = useState<
     "unavailable" | "failed" | null
   >(null);
-  const [authorsEditorOpen, setAuthorsEditorOpen] = useState(false);
-  const [authorsEditorMounted, setAuthorsEditorMounted] = useState(false);
-  const [authorsEditorTrigger, setAuthorsEditorTrigger] =
-    useState<HTMLButtonElement | null>(null);
-  const openAuthorsEditor = useCallback(({ triggerEl }: ActionSelectDetail) => {
-    setAuthorsEditorTrigger(triggerEl);
-    setAuthorsEditorMounted(true);
-    setAuthorsEditorOpen(true);
-  }, []);
+  // The edit-authors overlay is owned app-level (ResourceActionOverlays); the
+  // pane's Options command opens it by media id through the shared controller.
+  const resourceOverlays = useResourceOverlaysController();
+  const openAuthorsEditor = useCallback(() => {
+    resourceOverlays.openAuthorsEditor(id);
+  }, [resourceOverlays, id]);
   const [creditsOverlayOpen, setCreditsOverlayOpen] = useState(false);
   const [creditsOverlayMounted, setCreditsOverlayMounted] = useState(false);
   const [creditsOverlayTrigger, setCreditsOverlayTrigger] =
@@ -1135,30 +1123,6 @@ export default function MediaPaneBody() {
     },
     [],
   );
-  const handleAuthorsSaved = useCallback((result: MediaAuthors) => {
-    setMedia((prev) => {
-      if (!prev) return prev;
-      const authorCredits: ContributorCredit[] = result.authors.map(
-        (author, index) => ({
-          contributor_handle: author.contributorHandle,
-          contributor_display_name: author.displayName,
-          credited_name: author.creditedName,
-          role: "author",
-          href: author.href,
-          ordinal: index,
-        }),
-      );
-      const otherCredits = prev.contributors.filter(
-        (credit) => credit.role !== "author",
-      );
-      return {
-        ...prev,
-        contributors: [...authorCredits, ...otherCredits],
-        author_mode: result.authorMode,
-      };
-    });
-    setAuthorsEditorOpen(false);
-  }, []);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const handleResetProgress = useCallback(async () => {
     if (!media) return;
@@ -8766,21 +8730,6 @@ export default function MediaPaneBody() {
           returnFocusFallback={returnFocusFallback}
           onClose={() => setCreditsOverlayOpen(false)}
         />
-      ) : null}
-
-      {authorsEditorMounted ? (
-        <Suspense fallback={null}>
-          <MediaAuthorsEditor
-            mediaId={media.id}
-            open={authorsEditorOpen}
-            onClose={() => setAuthorsEditorOpen(false)}
-            authors={mapMediaAuthorCredits(media.contributors)}
-            authorMode={media.author_mode}
-            returnFocusTo={() => authorsEditorTrigger}
-            returnFocusFallback={returnFocusFallback}
-            onSaved={handleAuthorsSaved}
-          />
-        </Suspense>
       ) : null}
 
       {/* Mount contract: always rendered, driven by `session`. */}

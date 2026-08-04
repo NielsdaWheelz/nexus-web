@@ -204,6 +204,47 @@ function decodePodcastSubscriptionSettingsResponse(
   };
 }
 
+export interface PodcastSubscriptionSettingsSource {
+  readonly podcast_id: string;
+  readonly default_playback_speed: Presence<number>;
+  readonly pause_shortening_mode: Presence<PauseShorteningMode>;
+  readonly auto_queue: boolean;
+}
+
+/**
+ * Read just the editable subscription-settings fields for one podcast. The app
+ * resource-action runtime opens the settings overlay with only a podcast id, so
+ * the overlay self-loads its current values here (mirroring how the share
+ * overlay self-loads its snapshot) rather than receiving them from a caller.
+ */
+export async function fetchPodcastSubscriptionSettingsSource(
+  podcastId: string,
+  signal?: AbortSignal,
+): Promise<PodcastSubscriptionSettingsSource> {
+  const raw = await apiFetch<unknown>(
+    `/api/podcasts/subscriptions/${podcastId}`,
+    { signal },
+  );
+  if (typeof raw !== "object" || raw === null || !("data" in raw)) {
+    throw new TypeError("PodcastSubscriptionSettingsSource envelope is invalid");
+  }
+  const data = (raw as { data: unknown }).data;
+  if (typeof data !== "object" || data === null) {
+    throw new TypeError("PodcastSubscriptionSettingsSource.data is invalid");
+  }
+  const record = data as Record<string, unknown>;
+  return {
+    podcast_id: expectString(record.podcast_id, "podcast_id"),
+    default_playback_speed: decodePresence(record.default_playback_speed, (value) =>
+      parsePlaybackRate(value, "default_playback_speed.value"),
+    ),
+    pause_shortening_mode: decodePresence(record.pause_shortening_mode, (value) =>
+      parsePauseShorteningMode(value, "pause_shortening_mode.value"),
+    ),
+    auto_queue: expectBoolean(record.auto_queue, "auto_queue"),
+  };
+}
+
 export async function savePodcastSubscriptionSettings(
   podcastId: string,
   patch: PodcastSubscriptionSettingsPatch,

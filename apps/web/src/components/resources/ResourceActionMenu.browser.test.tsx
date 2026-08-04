@@ -11,6 +11,10 @@ import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
+import {
+  ResourceActionOverlays,
+  ResourceOverlaysProvider,
+} from "@/lib/resources/resourceOverlaysController";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
@@ -31,6 +35,11 @@ const MEDIA_REF = `media:${MEDIA_ID}`;
 const MEDIA_HREF = `/media/${MEDIA_ID}`;
 const RETRY_PATH = `/api/media/${MEDIA_ID}/retry`;
 const RESOLVE_PATH = "/api/resource-items/action-snapshots/resolve";
+
+const LIBRARY_ID = "22222222-2222-4222-8222-222222222222";
+const LIBRARY_REF = `library:${LIBRARY_ID}`;
+const LIBRARY_HREF = `/libraries/${LIBRARY_ID}`;
+const LIBRARY_GET_PATH = `/api/libraries/${LIBRARY_ID}`;
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
@@ -91,6 +100,58 @@ const EXPECTED_MENU_ORDER = [
   "Remove media",
 ];
 
+// A library target whose snapshot exposes the LibrarySettings operation. Clicking
+// it must dispatch through the runtime to the app-level overlay controller and
+// open the (self-loading) Library settings dialog — the proof that the formerly
+// throwing EditAuthors/LibrarySettings/PodcastSettings/Subscribe/RefreshPodcast
+// dispatch is now exhaustive and non-fatal.
+const libraryTarget = routeResourceActionSubject({
+  scheme: "library",
+  id: LIBRARY_ID,
+  href: LIBRARY_HREF,
+});
+
+const LIBRARY_SNAPSHOT = {
+  ref: LIBRARY_REF,
+  activation: {
+    resourceRef: LIBRARY_REF,
+    kind: "route",
+    href: LIBRARY_HREF,
+    unresolvedReason: null,
+  },
+  missing: false,
+  factsRevision: "library-rev-1",
+  capabilities: [
+    { kind: "Open", availability: { kind: "Available" } },
+    { kind: "LibrarySettings", availability: { kind: "Available" } },
+  ],
+} as const;
+
+const SNAPSHOTS_BY_REF: Record<string, unknown> = {
+  [MEDIA_REF]: MEDIA_SNAPSHOT,
+  [LIBRARY_REF]: LIBRARY_SNAPSHOT,
+};
+
+// getMemberLibrary self-load fixture (strict LibraryOut envelope).
+const LIBRARY_OUT = {
+  data: {
+    id: LIBRARY_ID,
+    name: "Field Notes",
+    color: null,
+    ownerUserHandle: "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+    isDefault: false,
+    role: "admin",
+    systemKey: null,
+    canRename: true,
+    canDelete: true,
+    canEditEntries: true,
+    canManageMembers: true,
+    canTransferOwnership: true,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  },
+};
+
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -115,10 +176,29 @@ function installBff(): Bff {
       const path = url.pathname;
 
       if (path === RESOLVE_PATH && method === "POST") {
-        resolveCalls.push(
-          typeof init?.body === "string" ? JSON.parse(init.body) : null,
+        const body =
+          typeof init?.body === "string" ? JSON.parse(init.body) : null;
+        resolveCalls.push(body);
+        const refs: string[] = Array.isArray(body?.refs) ? body.refs : [];
+        const snapshots = refs.map(
+          (ref) =>
+            SNAPSHOTS_BY_REF[ref] ?? {
+              ref,
+              activation: {
+                resourceRef: ref,
+                kind: "route",
+                href: "/",
+                unresolvedReason: null,
+              },
+              missing: true,
+              factsRevision: "missing",
+              capabilities: [],
+            },
         );
-        return jsonResponse({ data: { snapshots: [MEDIA_SNAPSHOT] } });
+        return jsonResponse({ data: { snapshots } });
+      }
+      if (path === LIBRARY_GET_PATH && method === "GET") {
+        return jsonResponse(LIBRARY_OUT);
       }
       if (path === RETRY_PATH && method === "POST") {
         retryCalls.push(Date.now());
@@ -163,9 +243,12 @@ function renderResourceMenu(
                           accountId={ACCOUNT_ID}
                           transport={null}
                         >
-                          <ResourceActionRuntimeProvider>
-                            {menu}
-                          </ResourceActionRuntimeProvider>
+                          <ResourceOverlaysProvider>
+                            <ResourceActionRuntimeProvider>
+                              {menu}
+                              <ResourceActionOverlays />
+                            </ResourceActionRuntimeProvider>
+                          </ResourceOverlaysProvider>
                         </OfflineMediaProvider>
                       </ShareControllerProvider>
                     </LibraryPlacementControllerProvider>
@@ -289,5 +372,38 @@ describe("ResourceActionMenu component contract", () => {
     await userEvent.click(trigger);
     const menu = screen.getByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "Open" })).toBeTruthy();
+  });
+
+  it("dispatches the LibrarySettings operation to the app-level overlay controller and opens the settings dialog", async () => {
+    const bff = installBff();
+    renderResourceMenu(<ResourceActionMenu target={libraryTarget} />);
+
+    const menu = await openMenu();
+    const settings = within(menu).getByRole("menuitem", { name: "Settings" });
+    const resolvesBeforeOpen = bff.resolveCalls.length;
+
+    // Before this change the runtime dispatched LibrarySettings by THROWING a
+    // "not yet wired" defect, crashing the workspace the instant the action was
+    // invoked. Clicking it must now dispatch through the runtime to the shared
+    // ResourceOverlays controller without crashing.
+    await userEvent.click(settings);
+
+    // The single app-level overlay self-loads the library (one GET) and reveals
+    // the Library settings dialog — proving the intent dispatched, not threw.
+    expect(
+      await screen.findByText("Library settings"),
+      "invoking Settings did not open the app-level Library settings overlay",
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Library name"),
+      "the opened overlay was not the Library settings dialog",
+    ).toBeTruthy();
+
+    // Opening a settings overlay is NOT a mutation: it must not mark the action
+    // busy or fire a snapshot re-resolve. The resolve count is unchanged by open.
+    expect(
+      bff.resolveCalls.length,
+      "opening the settings overlay wrongly re-resolved snapshots as if a mutation completed",
+    ).toBe(resolvesBeforeOpen);
   });
 });

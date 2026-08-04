@@ -37,6 +37,10 @@ import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
+import {
+  ResourceActionOverlays,
+  ResourceOverlaysProvider,
+} from "@/lib/resources/resourceOverlaysController";
 import styles from "./layout.module.css";
 import {
   AuthenticatedAccountProvider,
@@ -138,28 +142,35 @@ function AuthenticatedWorkspace({
                   <ShareControllerProvider>
                     <OfflineMediaProvider accountId={accountId}>
                       {/* The resource-action runtime reads Lectern, offline
-                          media, share, library-placement, workspace, and
-                          feedback from these ancestors and owns the shared
-                          snapshot cache / busy state / dispatch for every
-                          resource dropdown in the workspace subtree below. */}
-                      <ResourceActionRuntimeProvider>
-                        <GlobalPlayerProvider accountId={accountId}>
-                          <Nexus />
-                          <div
-                            className={styles.layout}
-                            data-hydrated={hydrated || undefined}
-                          >
-                            <AppNav />
-                            <main className={styles.main}>
-                              <WalknoteSessionProvider>
-                                <WorkspaceHost />
-                                <LecternMutationNotice />
-                                <GlobalPlayerSurfaces />
-                              </WalknoteSessionProvider>
-                            </main>
-                          </div>
-                        </GlobalPlayerProvider>
-                      </ResourceActionRuntimeProvider>
+                          media, share, library-placement, resource overlays,
+                          workspace, and feedback from these ancestors and owns
+                          the shared snapshot cache / busy state / dispatch for
+                          every resource dropdown in the workspace subtree
+                          below. ResourceOverlaysProvider is an ancestor so the
+                          runtime can call its openers; ResourceActionOverlays
+                          renders the single overlay copy deep inside the player
+                          runtime and a synthetic pane-visit scope. */}
+                      <ResourceOverlaysProvider>
+                        <ResourceActionRuntimeProvider>
+                          <GlobalPlayerProvider accountId={accountId}>
+                            <Nexus />
+                            <ResourceActionOverlays />
+                            <div
+                              className={styles.layout}
+                              data-hydrated={hydrated || undefined}
+                            >
+                              <AppNav />
+                              <main className={styles.main}>
+                                <WalknoteSessionProvider>
+                                  <WorkspaceHost />
+                                  <LecternMutationNotice />
+                                  <GlobalPlayerSurfaces />
+                                </WalknoteSessionProvider>
+                              </main>
+                            </div>
+                          </GlobalPlayerProvider>
+                        </ResourceActionRuntimeProvider>
+                      </ResourceOverlaysProvider>
                     </OfflineMediaProvider>
                   </ShareControllerProvider>
                 </LibraryPlacementControllerProvider>

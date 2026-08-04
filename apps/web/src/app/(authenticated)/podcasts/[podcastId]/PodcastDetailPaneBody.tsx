@@ -65,7 +65,6 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastOverview from "@/components/podcasts/PodcastOverview";
 import AcquisitionControl from "@/components/browse/AcquisitionControl";
 import PodcastEpisodeList from "./PodcastEpisodeList";
-import PodcastSubscriptionSettingsModal from "../PodcastSubscriptionSettingsModal";
 import PaneSection from "@/components/ui/PaneSection";
 import SectionOpener from "@/components/ui/SectionOpener";
 import {
@@ -93,6 +92,7 @@ import {
 import { usePodcastSubscriptionActions } from "../usePodcastSubscriptionActions";
 import { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";
 import { usePodcastSubscriptionSettingsModal } from "../usePodcastSubscriptionSettingsModal";
+import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import {
   EPISODE_WIDE_COMMAND_LABELS,
   deriveEpisodeState,
@@ -491,6 +491,10 @@ export default function PodcastDetailPaneBody() {
   const unsubscribeBusy = podcastId
     ? actions.unsubscribingPodcastIds.ids.has(podcastId)
     : false;
+  const resourceOverlays = useResourceOverlaysController();
+  // The settings overlay is owned app-level (ResourceActionOverlays); this hook
+  // is retained only for its install subscription, which keeps the pane's local
+  // subscription projection current after an app-level settings save.
   const settingsModal = usePodcastSubscriptionSettingsModal({
     onSaved: (response) => {
       if (response.podcast_id !== podcastId) return;
@@ -1090,11 +1094,11 @@ export default function PodcastDetailPaneBody() {
   ]);
 
   const openSettingsModal = useCallback(() => {
-    if (!detail?.subscription) {
+    if (!podcastId || !detail?.subscription) {
       return;
     }
-    settingsModal.open(detail.subscription);
-  }, [detail, settingsModal]);
+    resourceOverlays.openPodcastSettings(podcastId);
+  }, [detail, podcastId, resourceOverlays]);
 
   const retryBackfill = useCallback(async () => {
     if (
@@ -1962,14 +1966,6 @@ export default function PodcastDetailPaneBody() {
         <PaneSection>{episodePaneContent}</PaneSection>
       </div>
 
-      <PodcastSubscriptionSettingsModal
-        podcastTitle={
-          settingsModal.podcastId !== null && detail && activeSubscription
-            ? detail.podcast.title
-            : null
-        }
-        settingsModal={settingsModal}
-      />
       {authorsEditorMounted && authorsEditorEpisode ? (
         <Suspense fallback={null}>
           <MediaAuthorsEditor

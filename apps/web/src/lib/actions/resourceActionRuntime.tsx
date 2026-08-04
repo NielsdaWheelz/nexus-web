@@ -75,6 +75,9 @@ import { confirmAndDeleteMedia } from "@/lib/media/mediaLibraries";
 import { deleteMemberLibrary } from "@/lib/libraries/client";
 import { deleteConversation } from "@/lib/conversations/indexApi";
 import { unsubscribeFromPodcast } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
+import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
+import { subscribeResourceActionSnapshotInvalidation } from "@/lib/actions/resourceActionSnapshotInvalidation";
 import type {
   CanonicalResourceRef,
   ShareOpenOptions,
@@ -207,6 +210,10 @@ interface RuntimePorts {
   readonly openLibraryPlacement: ReturnType<
     typeof useLibraryPlacementController
   >["openLibraryPlacement"];
+  readonly openAuthorsEditor: (mediaId: string) => void;
+  readonly openLibrarySettings: (libraryId: string) => void;
+  readonly openPodcastSettings: (podcastId: string) => void;
+  readonly openSubscribe: (podcastId: string) => void;
   readonly lectern: LecternCapability;
   readonly offlineCapability: OfflineMediaCapability;
   readonly feedback: FeedbackContextValue;
@@ -382,19 +389,29 @@ async function runResourceActionEffect(
       await requireOfflineController(ports).remove(requireRefId(target));
       return;
     case "EditAuthors":
+      // Opening a self-loading overlay is not itself a mutation; the overlay
+      // owns its own PUT + snapshot invalidation. Mirrors Share/LibraryPlacement.
+      ports.openAuthorsEditor(requireRefId(target));
+      return;
     case "LibrarySettings":
+      ports.openLibrarySettings(requireRefId(target));
+      return;
     case "PodcastSettings":
+      ports.openPodcastSettings(requireRefId(target));
+      return;
     case "Subscribe":
-    case "RefreshPodcast":
-      // justify-defect: these open a pane-local editor / acquisition / refresh
-      // flow whose controller and richer inputs (author list, library
-      // selection, replacement confirmation, refresh scope + progress) are not
-      // yet hoisted to app-runtime scope; the coordinated surface migration
-      // wires them. Reaching here before that is a wiring defect, not a
-      // user-recoverable error, so it must surface rather than silently no-op.
-      throw new Error(
-        `Resource action intent '${intent.kind}' is not yet wired at the app runtime`,
+      ports.openSubscribe(requireRefId(target));
+      return;
+    case "RefreshPodcast": {
+      // A direct fire-to-completion mutation (no overlay): the shared invoke
+      // holds busy while the refresh runs and reconciles snapshots after.
+      const abort = new AbortController();
+      await runPodcastRefresh(
+        { kind: "Podcast", podcastId: requireRefId(target) },
+        { signal: abort.signal, onProgress: () => {} },
       );
+      return;
+    }
     default: {
       const exhaustive: never = intent;
       // justify-defect: the intent union is closed; a new variant must add a
@@ -416,6 +433,21 @@ function isDangerousIntent(intent: ResourceActionIntent): boolean {
     intent.kind === "DeleteLibrary" ||
     intent.kind === "DeleteConversation" ||
     intent.kind === "Unsubscribe"
+  );
+}
+
+/**
+ * Intents that merely OPEN a self-loading overlay. Opening is not a mutation:
+ * the overlay owns its own mutation + snapshot invalidation, so the runtime must
+ * not mark the action busy or reconcile on open (that would show a spurious
+ * spinner and fire a wasted full re-resolve, even when the overlay is cancelled).
+ */
+function isOpenOnlyIntent(intent: ResourceActionIntent): boolean {
+  return (
+    intent.kind === "EditAuthors" ||
+    intent.kind === "LibrarySettings" ||
+    intent.kind === "PodcastSettings" ||
+    intent.kind === "Subscribe"
   );
 }
 
@@ -604,6 +636,12 @@ export function ResourceActionRuntimeProvider({
   const workspace = useWorkspaceStore();
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
+  const {
+    openAuthorsEditor,
+    openLibrarySettings,
+    openPodcastSettings,
+    openSubscribe,
+  } = useResourceOverlaysController();
   const lectern = useLectern();
   const offlineCapability = useOfflineMediaCapability();
   const feedback = useFeedback();
@@ -613,6 +651,10 @@ export function ResourceActionRuntimeProvider({
     activePaneId: workspace.state.activePrimaryPaneId,
     openShare,
     openLibraryPlacement,
+    openAuthorsEditor,
+    openLibrarySettings,
+    openPodcastSettings,
+    openSubscribe,
     lectern,
     offlineCapability,
     feedback,
@@ -622,17 +664,36 @@ export function ResourceActionRuntimeProvider({
     portsRef.current = ports;
   });
 
+  // An app-level overlay that commits a state-changing mutation (subscribing to
+  // a podcast flips its PodcastSubscription state) publishes an invalidation;
+  // re-resolve every cached snapshot so each representation agrees (AC7/AC8).
+  useEffect(
+    () =>
+      subscribeResourceActionSnapshotInvalidation(() => {
+        void cache.reresolveAll();
+      }),
+    [cache],
+  );
+
   const invoke = useCallback(
     (input: InvokeInput) => {
       void (async () => {
         const currentPorts = portsRef.current;
+        // Open-only intents just open a self-loading overlay: no busy, no danger
+        // confirm, no reconcile. The overlay owns its own mutation + invalidation.
+        const openOnly = isOpenOnlyIntent(input.intent);
         const actionId = RESOURCE_ACTION_CATALOG[input.catalogKey].id;
         const key = busyKeyOf(input.ref, actionId);
-        if (busyStore.has(key)) return;
-        if (isDangerousIntent(input.intent) && !confirmDangerousIntent(input.intent)) {
-          return;
+        if (!openOnly) {
+          if (busyStore.has(key)) return;
+          if (
+            isDangerousIntent(input.intent) &&
+            !confirmDangerousIntent(input.intent)
+          ) {
+            return;
+          }
+          busyStore.add(key);
         }
-        busyStore.add(key);
         try {
           await runResourceActionEffect(input.intent, input.target, currentPorts);
           // Reconcile: a mutation can change a related resource's facts (Unsubscribe
@@ -641,7 +702,7 @@ export function ResourceActionRuntimeProvider({
           // in one batch and AWAIT it before busy clears, so every simultaneously
           // mounted representation agrees (AC7) and no stale snapshot outlives the
           // mutation it authorized (AC8).
-          await cache.reresolveAll();
+          if (!openOnly) await cache.reresolveAll();
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
           if (isApiError(error) && !isSameSystemApiDefect(error)) {
@@ -656,7 +717,7 @@ export function ResourceActionRuntimeProvider({
           setDefect({ error });
           return;
         } finally {
-          busyStore.delete(key);
+          if (!openOnly) busyStore.delete(key);
         }
       })();
     },
