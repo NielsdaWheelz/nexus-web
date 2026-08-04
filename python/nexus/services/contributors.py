@@ -30,8 +30,9 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from functools import partial
-from typing import Literal, cast
+from typing import Literal, assert_never, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
@@ -65,7 +66,13 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.schemas.collection_page import CollectionCursor, CollectionPage, CollectionRevision
+from nexus.schemas.collection_page import (
+    CollectionCursor,
+    CollectionPage,
+    CollectionRevision,
+    ParsedCollectionQuery,
+    parse_collection_query,
+)
 from nexus.schemas.contributors import (
     ContributorDetailOut,
     ContributorRenameRequest,
@@ -121,6 +128,16 @@ from nexus.services._contributor_identity import (
 )
 from nexus.services.capabilities import can_edit_media_authors, can_rename_contributor
 from nexus.services.chat_context_refs import contributor_is_referenced_in_persisted_context
+from nexus.services.collection_keyset import (
+    Direction,
+    SortKey,
+    after_values,
+    expected_kinds,
+    keyset_clause,
+    keyset_params,
+    order_by_sql,
+    plan_json,
+)
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_revisions,
@@ -151,7 +168,6 @@ from nexus.services.resource_mutation_replay import (
     record_replay,
 )
 from nexus.services.signed_keyset_cursor import (
-    KeysetValue,
     KeysetValueKind,
     decode_signed_keyset_cursor,
     encode_signed_keyset_cursor,
@@ -161,8 +177,6 @@ from nexus.services.signed_keyset_cursor import (
 # (D-15): caps a 75k-row first sync at ~375 transactions without sharing any
 # transaction across the source/author boundary.
 _BATCH_CHUNK_SIZE = 200
-
-_WORKS_ORDER_SQL = "w.date_key DESC NULLS LAST, w.title ASC, w.href ASC"
 
 
 # ---------------------------------------------------------------------------
@@ -280,16 +294,96 @@ def get_contributor_detail(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class WorksPublishedNewest:
+    """Canonical: newest publication first, undated works last."""
+
+
+@dataclass(frozen=True, slots=True)
+class WorksPublishedOldest:
+    """Oldest publication first; undated works stay last."""
+
+
+@dataclass(frozen=True, slots=True)
+class WorksTitle:
+    direction: Direction
+
+
+type ContributorWorksView = WorksPublishedNewest | WorksPublishedOldest | WorksTitle
+
+_WORKS_VIEW_KEYS = frozenset({"sort", "direction"})
+# Versioned family: a cursor minted under the single unordered works view
+# carries no plan and can address no chosen order, so none is decodable here.
+_WORKS_CURSOR_FAMILY = f"{CollectionFamily.AuthorWorks.value}:v2"
+
+
+def parse_contributor_works_query(
+    items: Sequence[tuple[str, str]],
+) -> tuple[ContributorWorksView, ParsedCollectionQuery]:
+    """Strict works-view query parse. ``items`` is the request's ``multi_items()``
+    so duplicate keys are visible. Both keys absent is the canonical
+    newest-first view; anything else must name one advertised non-default view
+    exactly. ``published+desc`` is rejected rather than normalized so the
+    canonical view keeps exactly one URL."""
+    query = parse_collection_query(items, domain_keys=_WORKS_VIEW_KEYS)
+    sort = query.parameters.get("sort")
+    direction = query.parameters.get("direction")
+    if sort is None and direction is None:
+        return WorksPublishedNewest(), query
+    if sort == "published" and direction == "asc":
+        return WorksPublishedOldest(), query
+    if sort == "title" and (direction == "asc" or direction == "desc"):
+        return WorksTitle(direction), query
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported author works view")
+
+
+def _works_plan(view: ContributorWorksView) -> list[SortKey]:
+    """The total, stable sort-key plan that drives ORDER BY, the keyset, and the
+    cursor `after`. ``date_missing`` is ALWAYS ASC so undated works sort last in
+    both publication directions (0=dated, 1=undated); ``href`` is the distinct
+    relation's unique target key, which makes every plan total."""
+    match view:
+        case WorksPublishedNewest():
+            return [
+                SortKey("date_missing", "asc", KeysetValueKind.Int),
+                SortKey("date_key", "desc", KeysetValueKind.TextOrNull),
+                SortKey("title", "asc", KeysetValueKind.Text),
+                SortKey("href", "asc", KeysetValueKind.Text),
+            ]
+        case WorksPublishedOldest():
+            return [
+                SortKey("date_missing", "asc", KeysetValueKind.Int),
+                SortKey("date_key", "asc", KeysetValueKind.TextOrNull),
+                SortKey("title", "asc", KeysetValueKind.Text),
+                SortKey("href", "asc", KeysetValueKind.Text),
+            ]
+        case WorksTitle(direction):
+            return [
+                SortKey("title_key", direction, KeysetValueKind.Text),
+                SortKey("title", direction, KeysetValueKind.Text),
+                SortKey("date_missing", "asc", KeysetValueKind.Int),
+                SortKey("date_key", "desc", KeysetValueKind.TextOrNull),
+                SortKey("href", "asc", KeysetValueKind.Text),
+            ]
+        case _:
+            assert_never(view)
+
+
 def list_contributor_works(
     db: Session,
     *,
     viewer_id: UUID,
     contributor_handle: ContributorHandle,
+    view: ContributorWorksView,
     cursor: CollectionCursor | None = None,
     collection_revision: CollectionRevision | None = None,
     limit: int = 100,
 ) -> CollectionPage[ContributorWorkItemOut]:
-    """Distinct visible works with nested role facts (spec §4, D-25 ordering)."""
+    """Distinct visible works with nested role facts (spec §4), in the requested
+    total order. The ``facts`` wrapper projects the derived sort columns once so
+    ORDER BY, the keyset, and the cursor read identical expressions; the
+    returned cursor is bound to this exact viewer, author, plan, and revision.
+    """
     contributor = _load_visible_contributor_by_handle(db, str(contributor_handle), viewer_id)
     current_revision = (
         read_collection_revision(db, viewer_id=viewer_id, family=CollectionFamily.AuthorWorks)
@@ -301,8 +395,12 @@ def list_contributor_works(
             expected=collection_revision,
         )
     )
+    plan = _works_plan(view)
     cursor_query = {
         "contributorHandle": str(contributor_handle),
+        "family": _WORKS_CURSOR_FAMILY,
+        "plan": plan_json(plan),
+        "revision": current_revision,
         "viewerId": str(viewer_id),
     }
 
@@ -313,103 +411,87 @@ def list_contributor_works(
     }
     keyset_sql = ""
     if cursor is not None:
-        after_missing, after_date, after_title, after_href = decode_signed_keyset_cursor(
-            cursor,
-            family=CollectionFamily.AuthorWorks.value,
-            query=cursor_query,
-            expected_kinds=(
-                KeysetValueKind.Int,
-                KeysetValueKind.TextOrNull,
-                KeysetValueKind.Text,
-                KeysetValueKind.Text,
-            ),
-        )
+        keyset_sql = keyset_clause(plan, alias="facts")
         params.update(
-            {
-                "after_missing": after_missing,
-                "after_date": after_date,
-                "after_title": after_title,
-                "after_href": after_href,
-            }
+            keyset_params(
+                plan,
+                decode_signed_keyset_cursor(
+                    cursor,
+                    family=_WORKS_CURSOR_FAMILY,
+                    query=cursor_query,
+                    expected_kinds=expected_kinds(plan),
+                ),
+            )
         )
-        keyset_sql = """AND (
-            (w.date_key IS NULL)::int > :after_missing
-            OR (
-                (w.date_key IS NULL)::int = :after_missing
-                AND w.date_key < :after_date
-            )
-            OR (
-                (w.date_key IS NULL)::int = :after_missing
-                AND w.date_key IS NOT DISTINCT FROM :after_date
-                AND w.title > :after_title
-            )
-            OR (
-                (w.date_key IS NULL)::int = :after_missing
-                AND w.date_key IS NOT DISTINCT FROM :after_date
-                AND w.title = :after_title
-                AND w.href > :after_href
-            )
-        )"""
+    order_by = order_by_sql(plan, alias="facts")
 
-    rows = db.execute(
-        text(
-            f"""
-            WITH works AS ({distinct_visible_works_sql()})
-            SELECT
-                w.title,
-                w.href,
-                w.content_kind,
-                w.date_key,
-                w.role_facts,
-                w.media_id,
-                w.podcast_id,
-                w.project_gutenberg_catalog_ebook_id
-            FROM works w
-            WHERE w.contributor_id = :contributor_id
-            {keyset_sql}
-            ORDER BY {_WORKS_ORDER_SQL}
-            LIMIT :limit_plus_one
-            """
-        ),
-        params,
-    ).all()
+    rows = (
+        db.execute(
+            text(
+                f"""
+                WITH works AS ({distinct_visible_works_sql()}),
+                facts AS (
+                    SELECT
+                        w.*,
+                        (w.date_key IS NULL)::int AS date_missing,
+                        lower(btrim(w.title)) AS title_key
+                    FROM works w
+                    WHERE w.contributor_id = :contributor_id
+                )
+                SELECT
+                    facts.title,
+                    facts.href,
+                    facts.content_kind,
+                    facts.date_key,
+                    facts.date_missing,
+                    facts.title_key,
+                    facts.role_facts,
+                    facts.media_id,
+                    facts.podcast_id,
+                    facts.project_gutenberg_catalog_ebook_id
+                FROM facts
+                WHERE 1 = 1
+                  {keyset_sql}
+                ORDER BY {order_by}
+                LIMIT :limit_plus_one
+                """
+            ),
+            params,
+        )
+        .mappings()
+        .all()
+    )
 
     page = rows[:limit]
     next_cursor: CollectionCursor | None = None
     if len(rows) > limit and page:
-        last = page[-1]
         next_cursor = encode_signed_keyset_cursor(
-            family=CollectionFamily.AuthorWorks.value,
+            family=_WORKS_CURSOR_FAMILY,
             query=cursor_query,
-            after=(
-                KeysetValue(KeysetValueKind.Int, int(last.date_key is None)),
-                KeysetValue(KeysetValueKind.TextOrNull, last.date_key),
-                KeysetValue(KeysetValueKind.Text, last.title),
-                KeysetValue(KeysetValueKind.Text, last.href),
-            ),
+            after=after_values(plan, page[-1]),
         )
 
     works = [
         ContributorWorkItemOut(
-            title=row.title,
-            href=row.href,
-            contentKind=row.content_kind,
-            date=row.date_key,
+            title=row["title"],
+            href=row["href"],
+            contentKind=row["content_kind"],
+            date=row["date_key"],
             roleFacts=[
                 ContributorRoleFactOut(
                     creditedName=fact["credited_name"],
                     role=cast(ContributorRole, fact["role"]),
                     rawRole=fact["raw_role"],
                 )
-                for fact in row.role_facts
+                for fact in row["role_facts"]
             ],
             actionTarget=_contributor_work_action_target(
                 db,
                 viewer_id=viewer_id,
-                media_id=row.media_id,
-                podcast_id=row.podcast_id,
-                gutenberg_ebook_id=row.project_gutenberg_catalog_ebook_id,
-                href=row.href,
+                media_id=row["media_id"],
+                podcast_id=row["podcast_id"],
+                gutenberg_ebook_id=row["project_gutenberg_catalog_ebook_id"],
+                href=row["href"],
             ),
         )
         for row in page
@@ -1115,7 +1197,7 @@ def _work_stats(
                     w.href,
                     row_number() OVER (
                         PARTITION BY w.contributor_id
-                        ORDER BY {_WORKS_ORDER_SQL}
+                        ORDER BY w.date_key DESC NULLS LAST, w.title ASC, w.href ASC
                     ) AS rn
                 FROM works w
                 WHERE w.contributor_id = ANY(:contributor_ids)

@@ -23,6 +23,7 @@ import {
 } from "@/lib/actions/resourceActions";
 import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import type { LecternItemId } from "@/lib/lectern/contract";
+import type { EpisodeStateFilter } from "@/lib/podcasts/episodeView";
 import { useOfflineMediaItem } from "@/lib/offlineMedia/OfflineMediaProvider";
 import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import { useStringIdSet } from "@/lib/useStringIdSet";
@@ -35,7 +36,6 @@ import {
   episodePlayerDescriptor,
   canRequestTranscriptForEpisode,
   shouldPollTranscriptProvisioningForEpisode,
-  type EpisodeStateFilter,
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
 import type { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";

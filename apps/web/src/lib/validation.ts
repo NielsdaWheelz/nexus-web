@@ -65,6 +65,38 @@ export function expectString(raw: unknown, name: string): string {
   return raw;
 }
 
+const ISO_INSTANT_RE =
+  /^(\d{4}-\d{2}-\d{2})T(\d{2}):\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function isRoundTrippingCalendarDay(day: string): boolean {
+  const parsed = new Date(`${day}T00:00:00Z`);
+  return (
+    !day.startsWith("0000-") &&
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === day
+  );
+}
+
+/**
+ * The one strict aware-instant decoder for every wire contract. The pattern
+ * rejects a naive or date-only timestamp; `Date.parse` rejects an out-of-range
+ * month, minute, or second but silently rolls a day past the end of its month
+ * and accepts hour 24, so the day is round-tripped and the hour bounded here.
+ */
+export function expectIsoInstant(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  const match = ISO_INSTANT_RE.exec(value);
+  if (
+    match === null ||
+    !isRoundTrippingCalendarDay(match[1]) ||
+    Number(match[2]) > 23 ||
+    Number.isNaN(Date.parse(value))
+  ) {
+    throw new TypeError(`${name} must be an ISO 8601 aware instant`);
+  }
+  return value;
+}
+
 export function expectNullableString(
   raw: unknown,
   name: string,

@@ -16,6 +16,10 @@ import {
   type LibraryOut,
 } from "@/lib/libraries/contract";
 import {
+  CANONICAL_LIBRARIES_INDEX_VIEW,
+  type LibrariesIndexView,
+} from "@/lib/libraries/libraryIndexView";
+import {
   expectExactRecord,
   expectString,
   isRecord,
@@ -76,6 +80,7 @@ export async function listMemberLibraries({
   let collectionRevision: CollectionRevision | undefined;
   do {
     const response = await fetchLibrariesPage({
+      view: CANONICAL_LIBRARIES_INDEX_VIEW,
       cursor,
       collectionRevision,
       limit,
@@ -92,20 +97,24 @@ export async function listMemberLibraries({
 }
 
 export async function fetchLibrariesPage({
+  view,
   cursor,
   collectionRevision,
   limit = 100,
   signal,
 }: {
+  // Required: every page of the index names the exact view it belongs to.
+  view: LibrariesIndexView;
   cursor?: CollectionCursor;
   collectionRevision?: CollectionRevision;
   limit?: number;
   signal?: AbortSignal;
-} = {}): Promise<CollectionPage<MemberLibrary>> {
+}): Promise<CollectionPage<MemberLibrary>> {
   return decodeLibrariesPage(
     await apiFetch<unknown>(
       librariesResource.clientPath({
         refreshVersion: 0,
+        view,
         cursor,
         collectionRevision,
         limit,

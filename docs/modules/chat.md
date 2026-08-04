@@ -498,6 +498,18 @@ the strict complete-collection page and drain automatically in
 `has_context_ref` retains the resource-graph page contract. These three modes
 must not share cursor or response decoding.
 
+The index additionally accepts the pane's domain view as `sort=updated|title`
+plus `direction=asc|desc`. `Updated — newest` is canonical and omits both keys;
+the only valid non-default pairs are `updated+asc` and `title+asc|desc`. A
+partial pair, an unknown value, a duplicate key, or the explicit default pair is
+`400 E_INVALID_REQUEST`, and the view keys are not accepted in the `q` or
+`has_context_ref` modes. The title order sorts on the presented title
+`coalesce(nullif(btrim(title), ''), 'Untitled chat')` so the server order and
+the rendered text agree, then on `updated_at DESC, id DESC` in both directions.
+Cursors are the `ConversationIndex:v2:{scope}` family bound to viewer, scope,
+order plan, and collection revision; the retired unversioned family is not
+decodable.
+
 ## Citation Candidates And Final Edges
 
 Chat keeps model-facing evidence candidates separate from reader-facing

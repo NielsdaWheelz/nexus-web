@@ -40,6 +40,7 @@ import {
   parsePauseShorteningMode,
   type PauseShorteningMode,
 } from "@/lib/player/pauseShortening";
+import { expectIsoInstant } from "@/lib/validation";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 // --- Branded identities ------------------------------------------------------
@@ -147,6 +148,8 @@ export interface LecternItem {
   title: string;
   subtitle: Presence<string>;
   href: AppHref;
+  /** ISO 8601 aware instant this row joined the Lectern (the Added sort key). */
+  addedAt: string;
   consumption: ConsumptionInfo;
   activation: Activation;
   actionTarget: ResourceActionSubject;
@@ -607,7 +610,17 @@ export function decodeLecternItem(raw: unknown): LecternItem {
   const rec = asRecord(raw, "LecternItemOut");
   exactKeys(
     rec,
-    ["itemId", "mediaId", "kind", "title", "subtitle", "href", "consumption", "activation"],
+    [
+      "itemId",
+      "mediaId",
+      "kind",
+      "title",
+      "subtitle",
+      "href",
+      "addedAt",
+      "consumption",
+      "activation",
+    ],
     "LecternItemOut",
   );
   const mediaId = decodeMediaId(rec.mediaId);
@@ -619,6 +632,7 @@ export function decodeLecternItem(raw: unknown): LecternItem {
     title: asString(rec.title, "LecternItemOut.title"),
     subtitle: decodePresence(rec.subtitle, (v) => asString(v, "LecternItemOut.subtitle")),
     href,
+    addedAt: expectIsoInstant(rec.addedAt, "LecternItemOut.addedAt"),
     consumption: decodeConsumption(rec.consumption),
     activation: decodeActivation(rec.activation),
     actionTarget: routeResourceActionSubject({

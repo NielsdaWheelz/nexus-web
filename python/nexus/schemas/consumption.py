@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
@@ -133,6 +133,9 @@ class LecternItemOut(BaseModel):
     title: str
     subtitle: Presence[str]
     href: str
+    # When this row joined the Lectern. Ordering views sort by it, so it is a
+    # required stored fact and never a derived or defaulted value.
+    added_at: AwareDatetime
     consumption: ConsumptionOut
     activation: LecternActivation
 

@@ -101,7 +101,7 @@ def nexus_app(db_session: Session, test_user: UserRecord) -> FastAPI:
     """Build the real FastAPI stack with only external token verification controlled."""
     from nexus.app import add_request_id_middleware, create_app
     from nexus.auth.middleware import AuthMiddleware
-    from nexus.db.session import get_db
+    from nexus.db.session import get_db, get_repeatable_read_db
     from nexus.services.bootstrap import ensure_user_and_default_library
 
     verifier = StaticTokenVerifier(test_user.id, test_user.email)
@@ -124,6 +124,16 @@ def nexus_app(db_session: Session, test_user: UserRecord) -> FastAPI:
         yield db_session
 
     app.dependency_overrides[get_db] = session
+    # Fixture rows live in one uncommitted outer transaction, so a request cannot
+    # open its own read-only snapshot connection and still see them. Snapshot
+    # routes read through the same session; route, service, and SQL stay real.
+    # What this deliberately does NOT prove: the per-request REPEATABLE READ,
+    # READ ONLY transaction itself. Every snapshot route runs one SELECT, which
+    # is atomic at any isolation level, so nothing observable is lost today. A
+    # route that grows a second statement, or one whose read-only guarantee
+    # becomes load-bearing, needs a process-level proof against the run database
+    # rather than a wider fixture.
+    app.dependency_overrides[get_repeatable_read_db] = session
     return app
 
 

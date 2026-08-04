@@ -88,6 +88,27 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
     episode,
     `Podcast ${podcastId} did not reconcile its fixture episode after refresh ${refreshHandle}.`,
   ).toBeVisible({ timeout: 25_000 });
+
+  // The episode pane's domain view is pane-URL state. Only a real reload proves
+  // that the URL survives the workspace bootstrap and re-requests the same view
+  // through the BFF; a mounted component test supplies the href itself.
+  await page.getByRole("button", { name: "Filter", exact: true }).click();
+  const episodeSort = page.getByRole("combobox", { name: "Sort by", exact: true });
+  await episodeSort.selectOption({ label: "Oldest" });
+  await expect(page).toHaveURL(new RegExp(`/podcasts/${podcastId}\\?sort=oldest$`, "i"));
+  await gotoWithStrictCsp(page, `/podcasts/${podcastId}?sort=oldest`);
+  await expect(
+    page.getByText("Invalid episodes view"),
+    `Reloading podcast ${podcastId} at sort=oldest rejected its own URL.`,
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: /^Filter(?:,|$)/ }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Sort by", exact: true }),
+    `Podcast ${podcastId} did not restore its non-default episode view across a reload.`,
+  ).toHaveValue("oldest");
+
+  await gotoWithStrictCsp(page, `/podcasts/${podcastId}`);
+  await expect(episode).toBeVisible({ timeout: 25_000 });
   await episode.click();
   await expect(page).toHaveURL(/\/media\/[0-9a-f-]{36}$/i);
   const mediaId = new URL(page.url()).pathname.split("/").at(-1);

@@ -5,7 +5,9 @@ Read visibility: shared read allowed via canonical visibility predicate
 Write boundary: owner-only for all mutation operations.
 
 Error masking: E_CONVERSATION_NOT_FOUND / E_MESSAGE_NOT_FOUND consistently (prevent probing).
-Pagination: cursor-based, ordered by updated_at DESC, id DESC.
+Pagination: cursor-based. The primary index pages one of its advertised
+`ConversationIndexView` orders; the retained manual modes stay on
+updated_at DESC, id DESC.
 
 Conversation access helpers:
 - get_conversation_for_visible_read_or_404: read path (visibility predicate)
@@ -18,7 +20,8 @@ Routes are transport-only and call exactly one service function.
 import base64
 import json
 from collections.abc import Callable, Sequence
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import Any, assert_never, cast
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text
@@ -44,6 +47,8 @@ from nexus.schemas.collection_page import (
     CollectionPage,
     CollectionRevision,
     CollectionRevisionOut,
+    ParsedCollectionQuery,
+    parse_collection_query,
 )
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
@@ -64,6 +69,16 @@ from nexus.services.chat_failure import (
 from nexus.services.chat_reader_selection import (
     decode_reader_selection_snapshot,
     reader_selection_out,
+)
+from nexus.services.collection_keyset import (
+    Direction,
+    SortKey,
+    after_values,
+    expected_kinds,
+    keyset_clause,
+    keyset_params,
+    order_by_sql,
+    plan_json,
 )
 from nexus.services.collection_revisions import (
     CollectionFamily,
@@ -457,6 +472,79 @@ def get_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> Con
 VALID_SCOPES = {"mine", "all", "shared"}
 
 
+@dataclass(frozen=True, slots=True)
+class ChatsUpdatedNewest:
+    """Canonical: the most recently updated chat first."""
+
+
+@dataclass(frozen=True, slots=True)
+class ChatsUpdatedOldest:
+    """The least recently updated chat first."""
+
+
+@dataclass(frozen=True, slots=True)
+class ChatsTitle:
+    direction: Direction
+
+
+type ConversationIndexView = ChatsUpdatedNewest | ChatsUpdatedOldest | ChatsTitle
+
+_INDEX_QUERY_KEYS = frozenset({"scope", "sort", "direction"})
+# Versioned family: a cursor minted under the single unordered index carried no
+# plan and no revision, so none is decodable against a chosen order.
+_INDEX_CURSOR_FAMILY = f"{CollectionFamily.ConversationIndex.value}:v2"
+# The presented chat title, matching `conversations/presentation.ts`. Ordering on
+# the raw column would sort by a string the reader never sees.
+_PRESENTED_TITLE_SQL = "coalesce(nullif(btrim(c.title), ''), 'Untitled chat')"
+
+
+def parse_conversation_index_query(
+    items: Sequence[tuple[str, str]],
+) -> tuple[ConversationIndexView, ParsedCollectionQuery]:
+    """Strict chat-index view parse. ``items`` is the request's ``multi_items()``
+    so duplicate keys are visible. Both keys absent is the canonical
+    newest-first view; anything else must name one advertised non-default view
+    exactly. ``updated+desc`` is rejected rather than normalized so the canonical
+    view keeps exactly one URL."""
+    query = parse_collection_query(items, domain_keys=_INDEX_QUERY_KEYS)
+    sort = query.parameters.get("sort")
+    direction = query.parameters.get("direction")
+    if sort is None and direction is None:
+        return ChatsUpdatedNewest(), query
+    if sort == "updated" and direction == "asc":
+        return ChatsUpdatedOldest(), query
+    if sort == "title" and (direction == "asc" or direction == "desc"):
+        return ChatsTitle(direction), query
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported chat index view")
+
+
+def _index_plan(view: ConversationIndexView) -> list[SortKey]:
+    """The total, stable sort-key plan that drives ORDER BY, the keyset, and the
+    cursor `after`. The conversation id is unique, so every plan is total; the
+    title orders keep ``updated_at DESC, id DESC`` in both directions so equally
+    titled chats always read newest-first."""
+    match view:
+        case ChatsUpdatedNewest():
+            return [
+                SortKey("updated_at", "desc", KeysetValueKind.DateTime),
+                SortKey("id", "desc", KeysetValueKind.Uuid),
+            ]
+        case ChatsUpdatedOldest():
+            return [
+                SortKey("updated_at", "asc", KeysetValueKind.DateTime),
+                SortKey("id", "asc", KeysetValueKind.Uuid),
+            ]
+        case ChatsTitle(direction):
+            return [
+                SortKey("title_key", direction, KeysetValueKind.Text),
+                SortKey("presented_title", direction, KeysetValueKind.Text),
+                SortKey("updated_at", "desc", KeysetValueKind.DateTime),
+                SortKey("id", "desc", KeysetValueKind.Uuid),
+            ]
+        case _:
+            assert_never(view)
+
+
 def _build_visibility_cte(viewer_id: UUID) -> str:
     """Return a SQL CTE that selects conversation IDs visible to viewer.
 
@@ -493,8 +581,13 @@ def list_conversation_index(
     cursor: CollectionCursor | None,
     collection_revision: CollectionRevision | None,
     scope: str | None,
+    view: ConversationIndexView,
 ) -> CollectionPage[ConversationListItemOut]:
-    """One revision-consistent page of the finite primary conversation index."""
+    """One revision-consistent page of the finite primary conversation index, in
+    the requested total order. The ``facts`` wrapper projects the derived sort
+    columns once so ORDER BY, the keyset, and the cursor read identical
+    expressions; the returned cursor is bound to this exact viewer, scope, plan,
+    and revision."""
     effective_scope = scope if scope is not None else "mine"
     if effective_scope not in VALID_SCOPES:
         raise InvalidRequestError(
@@ -516,8 +609,12 @@ def list_conversation_index(
             expected=collection_revision,
         )
     )
-    cursor_family = f"{CollectionFamily.ConversationIndex.value}:{effective_scope}"
+    plan = _index_plan(view)
+    cursor_family = f"{_INDEX_CURSOR_FAMILY}:{effective_scope}"
     cursor_query = {
+        "family": cursor_family,
+        "plan": plan_json(plan),
+        "revision": current_revision,
         "scope": effective_scope,
         "viewerId": str(viewer_id),
     }
@@ -525,29 +622,20 @@ def list_conversation_index(
         "viewer_id": viewer_id,
         "limit_plus_one": limit + 1,
     }
-    keyset_clause = ""
+    keyset_sql = ""
     if cursor is not None:
-        after_updated_at, after_id = decode_signed_keyset_cursor(
-            cursor,
-            family=cursor_family,
-            query=cursor_query,
-            expected_kinds=(
-                KeysetValueKind.DateTime,
-                KeysetValueKind.Uuid,
-            ),
-        )
+        keyset_sql = keyset_clause(plan, alias="facts")
         params.update(
-            {
-                "after_updated_at": after_updated_at,
-                "after_id": after_id,
-            }
+            keyset_params(
+                plan,
+                decode_signed_keyset_cursor(
+                    cursor,
+                    family=cursor_family,
+                    query=cursor_query,
+                    expected_kinds=expected_kinds(plan),
+                ),
+            )
         )
-        keyset_clause = """
-          AND (
-            c.updated_at < :after_updated_at
-            OR (c.updated_at = :after_updated_at AND c.id < :after_id)
-          )
-        """
 
     if effective_scope == "mine":
         relation = """
@@ -563,49 +651,65 @@ def list_conversation_index(
               {scope_filter}
         """
 
-    cte = "" if effective_scope == "mine" else f"WITH {_build_visibility_cte(viewer_id)}"
-    rows = db.execute(
-        text(
-            f"""
-            {cte}
-            SELECT
-                c.id,
-                c.title,
-                c.updated_at,
-                (
-                    SELECT COUNT(*)
-                    FROM messages m
-                    WHERE m.conversation_id = c.id
-                ) AS message_count
-            {relation}
-            {keyset_clause}
-            ORDER BY c.updated_at DESC, c.id DESC
-            LIMIT :limit_plus_one
-            """
-        ),
-        params,
-    ).all()
+    visibility_cte = "" if effective_scope == "mine" else f"{_build_visibility_cte(viewer_id)},"
+    rows = (
+        db.execute(
+            text(
+                f"""
+                WITH {visibility_cte}
+                chats AS (
+                    SELECT
+                        c.id,
+                        c.title,
+                        c.updated_at,
+                        {_PRESENTED_TITLE_SQL} AS presented_title,
+                        (
+                            SELECT COUNT(*)
+                            FROM messages m
+                            WHERE m.conversation_id = c.id
+                        ) AS message_count
+                    {relation}
+                ),
+                facts AS (
+                    SELECT chats.*, lower(chats.presented_title) AS title_key
+                    FROM chats
+                )
+                SELECT
+                    facts.id,
+                    facts.title,
+                    facts.updated_at,
+                    facts.message_count,
+                    facts.presented_title,
+                    facts.title_key
+                FROM facts
+                WHERE 1 = 1
+                  {keyset_sql}
+                ORDER BY {order_by_sql(plan, alias="facts")}
+                LIMIT :limit_plus_one
+                """
+            ),
+            params,
+        )
+        .mappings()
+        .all()
+    )
 
     page_rows = rows[:limit]
     next_cursor: CollectionCursor | None = None
     if len(rows) > limit and page_rows:
-        last = page_rows[-1]
         next_cursor = encode_signed_keyset_cursor(
             family=cursor_family,
             query=cursor_query,
-            after=(
-                KeysetValue(KeysetValueKind.DateTime, last.updated_at),
-                KeysetValue(KeysetValueKind.Uuid, last.id),
-            ),
+            after=after_values(plan, page_rows[-1]),
         )
 
     return CollectionPage[ConversationListItemOut](
         items=[
             ConversationListItemOut(
-                id=row.id,
-                title=row.title,
-                message_count=row.message_count,
-                updated_at=row.updated_at,
+                id=row["id"],
+                title=row["title"],
+                message_count=row["message_count"],
+                updated_at=row["updated_at"],
             )
             for row in page_rows
         ],
@@ -705,7 +809,7 @@ def _list_conversations_mine(
     """
     params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit + 1}
     cursor_clause = ""
-    cursor_query = {
+    cursor_query: dict[str, object] = {
         "viewerId": str(viewer_id),
         "q": normalized_q,
     }

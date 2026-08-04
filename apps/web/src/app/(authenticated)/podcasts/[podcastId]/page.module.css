@@ -39,12 +39,6 @@
   flex-wrap: wrap;
 }
 
-.subscriptionActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .episodeFilterPills {
   display: flex;
   flex-wrap: wrap;
@@ -54,115 +48,6 @@
 .episodeFilterPill[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
-}
-
-.episodeSortLabel {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: var(--text-xs);
-  color: var(--ink-faint);
-}
-
-.unsubscribedLabel {
-  margin: 0;
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-}
-
-.syncState {
-  margin: 0;
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-}
-
-.syncError {
-  margin: 8px 0 0;
-  color: var(--danger);
-  font-size: var(--text-sm);
-}
-
-.summaryCard {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.summaryHeader {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.summaryArtwork,
-.summaryArtworkFallback {
-  width: 88px;
-  height: 88px;
-  border-radius: var(--radius-2xl);
-  flex-shrink: 0;
-}
-
-.summaryArtwork {
-  object-fit: cover;
-  border: 1px solid var(--edge-subtle);
-}
-
-.summaryArtworkFallback {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--edge-subtle);
-  background: var(--surface-2);
-  color: var(--accent);
-  font-size: var(--text-lg);
-  font-weight: var(--weight-bold);
-}
-
-.summaryCopy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.summaryByline {
-  margin: 0;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
-.summaryDescription {
-  margin: 0;
-  color: var(--ink);
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
-  white-space: pre-wrap;
-}
-
-.summaryMeta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.summaryMetaBadge,
-.summaryMetaLink {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-full);
-  padding: 4px 10px;
-  font-size: var(--text-xs);
-  background: var(--surface-2);
-}
-
-.summaryMetaBadge {
-  color: var(--ink-faint);
-}
-
-.summaryMetaLink {
-  color: var(--ink);
-  text-decoration: none;
 }
 
 .episodeActions {
@@ -205,12 +90,6 @@
 .transcriptStatus {
   color: var(--ink-faint);
   font-size: var(--text-xs);
-}
-
-@media (max-width: 640px) {
-  .summaryHeader {
-    flex-direction: column;
-  }
 }
 
 .transcriptQuotaWarning {

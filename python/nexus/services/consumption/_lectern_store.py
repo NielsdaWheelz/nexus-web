@@ -10,6 +10,7 @@ inside the caller's already-open, viewer-locked command transaction.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, get_args
 from uuid import UUID
 
@@ -60,6 +61,7 @@ class LecternRow:
     item_id: UUID
     media_id: UUID
     position: int
+    added_at: datetime
     visible: bool
     kind: str
     title: str
@@ -118,6 +120,7 @@ def load_rows(db: Session, *, viewer_id: UUID) -> list[LecternRow]:
                 q.id AS item_id,
                 q.media_id,
                 q.position,
+                q.added_at,
                 (vm.media_id IS NOT NULL AND ti.media_id IS NULL) AS visible,
                 m.kind,
                 m.title,
@@ -146,6 +149,7 @@ def load_rows(db: Session, *, viewer_id: UUID) -> list[LecternRow]:
             item_id=UUID(str(row["item_id"])),
             media_id=UUID(str(row["media_id"])),
             position=int(row["position"]),
+            added_at=row["added_at"],
             visible=bool(row["visible"]),
             kind=str(row["kind"]),
             title=str(row["title"]),

@@ -24,7 +24,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import ok, ok_page
-from nexus.schemas.collection_page import parse_collection_query, parse_manual_page_query
+from nexus.schemas.collection_page import parse_manual_page_query
 from nexus.services import conversations as conversations_service
 
 router = APIRouter(tags=["conversations"])
@@ -39,12 +39,14 @@ def list_conversations(
     """List conversations.
 
     An explicit ``q`` selects the retained owned destination picker. An explicit
-    ``has_context_ref`` selects the retained resource-graph mode. Every unmarked
-    request, with optional ``scope``, selects the finite primary index.
+    ``has_context_ref`` selects the retained resource-graph mode; neither owns
+    the ``sort``/``direction`` view keys. Every unmarked request, with optional
+    ``scope`` and view keys, selects the finite primary index.
 
     Errors:
-        E_INVALID_REQUEST (400): Invalid scope value, malformed has_context_ref
-            URI, or ``q`` combined with another filter / over its length bound.
+        E_INVALID_REQUEST (400): Invalid scope value, a view state outside the
+            advertised inventory, malformed has_context_ref URI, or ``q``
+            combined with another filter / over its length bound.
         E_INVALID_CURSOR (400): Cursor is malformed or unparseable.
     """
     raw_keys = {key for key, _value in request.query_params.multi_items()}
@@ -67,9 +69,8 @@ def list_conversations(
         )
         return ok_page(conversations, page)
 
-    query = parse_collection_query(
-        request.query_params.multi_items(),
-        domain_keys=frozenset({"scope"}),
+    view, query = conversations_service.parse_conversation_index_query(
+        request.query_params.multi_items()
     )
     page = conversations_service.list_conversation_index(
         db,
@@ -78,6 +79,7 @@ def list_conversations(
         cursor=query.cursor,
         collection_revision=query.collection_revision,
         scope=query.parameters.get("scope"),
+        view=view,
     )
     return ok(page, by_alias=True)
 

@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -33,10 +33,17 @@ class DawnWriteOut(BaseModel):
 
 @router.get("/pages")
 def list_pages(
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    pages = notes_service.list_pages(db, viewer.user_id)
+    """List every Page the viewer owns, in the requested view.
+
+    Errors:
+        E_INVALID_REQUEST (400): A view state outside the advertised inventory.
+    """
+    view = notes_service.parse_notes_index_query(request.query_params.multi_items())
+    pages = notes_service.list_pages(db, viewer.user_id, view=view)
     return success_response(
         {"pages": [page.model_dump(mode="json", by_alias=True) for page in pages]}
     )

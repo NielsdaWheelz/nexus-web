@@ -1449,6 +1449,65 @@ Add calls `/podcast-episodes/from-discovery`, and Subscribe calls
 with the canonical owned pane only after success. Browse and Preview deliberately
 publish no Pane Search/Find capability.
 
+### 8.11 Collection refinement
+
+Every primary collection pane is an instance of one refinement grammar —
+`Filter text -> domain controls -> Clear filters` — rendered in the Pane Search
+row. The shell owns the grammar; each domain owns a closed view type, its URL
+codec, its option inventory and labels, its request identity, its server query,
+its total order, its cursor, and its local match fields. This is a capability
+expansion, not a query engine: there is no row-metadata schema, runtime
+registry, generic controller, Boolean AST, or client sorting of pageable rows.
+
+| Surface | Local match fields | Canonical view | `Sort by` options | Execution |
+| --- | --- | --- | --- | --- |
+| Lectern | title; presented subtitle | Custom order | Custom order; Added — newest/oldest; Title — A–Z/Z–A | client over the complete snapshot |
+| Author works | work title | Published — newest | Published — newest/oldest; Title — A–Z/Z–A | owner SQL before keyset |
+| Chats | chat title | Updated — newest | Updated — newest/oldest; Title — A–Z/Z–A | owner SQL before keyset |
+| Libraries | presented Library name | Created — oldest | Created — oldest/newest; Name — A–Z/Z–A | owner SQL before keyset |
+| Notes index | Page title | Updated — newest | Updated — newest/oldest; Title — A–Z/Z–A | owner SQL over the complete result |
+| Library entries | row title; contributor names | Recently added / Custom order | Title/Creator/Published/Added | owner SQL before keyset |
+| Podcast subscriptions | title; contributor names | Recent Episode | Recent Episode; Most Unplayed; Title — A–Z | owner SQL |
+| Podcast episodes | title; contributor names | Newest | Newest; Oldest; Shortest; Longest | owner SQL |
+| Page/Note direct items | direct item text | Authored order | none | local inspection Filter |
+
+Exempt by design: Browse, Search and Preview are retrieval surfaces with
+body-owned query, facets, ranking and provider continuation; Page/Note direct
+items preserve authored order; and chat messages, TOCs, chapters, transcripts,
+sources, citations, trust trails, fork trees, navigation, menus, settings
+choices, destination pickers, and ranked Slate/Related lists retain semantic
+owner order. Connections, Downloads, Library members/invites, choosers,
+overlays, Preview episodes and Stats tables are secondary lists and out of
+scope.
+
+The chain is:
+
+```text
+pane URL
+  -> strict domain frontend codec (Invalid makes zero request)
+  -> requested view + owner-built API query/cache identity
+  -> BFF exact forwarding
+  -> strict route parse + backend domain view
+  -> authorized base relation
+  -> domain filter -> order plan -> keyset -> limit+1
+  -> committed exact-view exhaustive drain
+  -> domain presenter + explicit local match fields
+  -> visit-local Filter query -> CollectionView
+```
+
+The URL is requested state. Each pane controller commits
+`{view, rows, collectionRevision, nextCursor, exhaustion}` atomically, retains
+the previously committed rows until the exact first page of the new view
+arrives, and disables continuation while requested and committed disagree.
+`python/nexus/services/collection_keyset.py` is the single owner of the
+plan → `ORDER BY` → keyset predicate → cursor-value mechanics, so those four can
+never disagree; each collection owner keeps its own plan construction because
+the sort vocabulary is domain language. Signed cursors bind viewer,
+scope/resource identity, cursor-family version, the exact order plan, and the
+collection revision, so a cursor is undecodable outside the binding that minted
+it. The Author works, Conversation index, and Libraries index families are at
+`:v2`; no compatibility decoder for the retired families exists.
+
 ---
 
 ## 9. Frontend architecture

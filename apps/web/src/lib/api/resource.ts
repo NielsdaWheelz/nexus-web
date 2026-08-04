@@ -1,8 +1,24 @@
 import type { ApiPath } from "@/lib/api/client";
 import {
+  authorWorksViewQuery,
+  type AuthorWorksView,
+} from "@/lib/contributors/workView";
+import {
+  conversationIndexViewQuery,
+  type ConversationIndexView,
+} from "@/lib/conversations/indexView";
+import {
+  librariesIndexViewQuery,
+  type LibrariesIndexView,
+} from "@/lib/libraries/libraryIndexView";
+import {
   buildLibraryEntriesQuery,
   type LibraryEntryView,
 } from "@/lib/libraries/libraryView";
+import {
+  notesIndexViewQuery,
+  type NotesIndexView,
+} from "@/lib/notes/pageIndexView";
 
 export interface ResourceDescriptor<TParams> {
   cacheKey: (params: TParams) => string;
@@ -16,33 +32,49 @@ export interface RefreshableResourceParams {
   refreshVersion: number;
 }
 
-export interface LibraryListResourceParams extends RefreshableResourceParams {
+// The pagination keys every revisioned collection endpoint accepts.
+interface CollectionPageParams {
   cursor?: string;
   collectionRevision?: number;
   limit?: number;
+}
+
+export interface LibraryListResourceParams
+  extends RefreshableResourceParams,
+    CollectionPageParams {
+  // The current Libraries index view. Canonical emits no sort/direction keys.
+  view?: LibrariesIndexView;
 }
 
 interface IdResourceParams {
   id: string;
 }
 
-export interface LibraryEntriesResourceParams extends IdResourceParams {
+export interface LibraryEntriesResourceParams
+  extends IdResourceParams,
+    CollectionPageParams {
   // The current library view (order + completion). A canonical/all view emits no
   // sort/direction/completion keys; a factual view emits exactly its three keys.
   view?: LibraryEntryView;
-  cursor?: string;
-  collectionRevision?: number;
-  limit?: number;
 }
 
 interface ContributorResourceParams {
   handle: string;
 }
 
-export interface ContributorWorksResourceParams extends ContributorResourceParams {
-  cursor?: string;
-  collectionRevision?: number;
-  limit?: number;
+export interface ContributorWorksResourceParams
+  extends ContributorResourceParams,
+    CollectionPageParams {
+  // The current Author works view. Canonical emits no sort/direction keys.
+  view?: AuthorWorksView;
+}
+
+// The chats index carries no caller-chosen page size: the server seed, the
+// client mount, and every continuation must request the same one.
+export interface ConversationIndexResourceParams
+  extends Omit<CollectionPageParams, "limit"> {
+  // The current Chats index view. Canonical emits no sort/direction keys.
+  view?: ConversationIndexView;
 }
 
 export interface ReadingSlateResourceParams {
@@ -53,6 +85,12 @@ export interface LibrarySlateResourceParams extends ReadingSlateResourceParams {
   id: string;
 }
 
+// The Notes index is exhaustive: it carries the view alone, with no page keys.
+export interface NotePagesResourceParams {
+  // The current Notes index view. Canonical emits no sort/direction keys.
+  view?: NotesIndexView;
+}
+
 interface NoteBlockResourceParams {
   blockId: string;
 }
@@ -61,49 +99,62 @@ function encoded(value: string): string {
   return encodeURIComponent(value);
 }
 
-function contributorWorksSuffix(
+/**
+ * The one collection-page query builder: an owner module's already-built view
+ * query (`"" | "?…"`) plus the shared pagination keys. Each surface's view
+ * vocabulary stays in its owner module; this file only calls the builder.
+ */
+function collectionPageQuery(params: CollectionPageParams, view = ""): string {
+  const query = new URLSearchParams(view.replace(/^\?/, ""));
+  if (params.cursor) query.set("cursor", params.cursor);
+  if (params.collectionRevision !== undefined) {
+    query.set("collection_revision", String(params.collectionRevision));
+  }
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  const suffix = query.toString();
+  return suffix ? `?${suffix}` : "";
+}
+
+function libraryListPageQuery(params: LibraryListResourceParams): string {
+  return collectionPageQuery(
+    params,
+    params.view ? librariesIndexViewQuery(params.view) : "",
+  );
+}
+
+function libraryEntriesPageQuery(params: LibraryEntriesResourceParams): string {
+  return collectionPageQuery(
+    params,
+    params.view ? buildLibraryEntriesQuery(params.view) : "",
+  );
+}
+
+function contributorWorksPageQuery(
   params: ContributorWorksResourceParams,
 ): string {
-  const query = new URLSearchParams();
-  if (params.cursor) query.set("cursor", params.cursor);
-  if (params.collectionRevision !== undefined) {
-    query.set("collection_revision", String(params.collectionRevision));
-  }
-  if (params.limit !== undefined) query.set("limit", String(params.limit));
-  const suffix = query.toString();
-  return suffix ? `?${suffix}` : "";
-}
-
-function libraryListSuffix(params: LibraryListResourceParams): string {
-  const query = new URLSearchParams();
-  if (params.cursor) query.set("cursor", params.cursor);
-  if (params.collectionRevision !== undefined) {
-    query.set("collection_revision", String(params.collectionRevision));
-  }
-  if (params.limit !== undefined) query.set("limit", String(params.limit));
-  const suffix = query.toString();
-  return suffix ? `?${suffix}` : "";
-}
-
-function libraryEntriesSuffix(params: LibraryEntriesResourceParams): string {
-  const query = new URLSearchParams(
-    params.view ? buildLibraryEntriesQuery(params.view).replace(/^\?/, "") : "",
+  return collectionPageQuery(
+    params,
+    params.view ? authorWorksViewQuery(params.view) : "",
   );
-  if (params.cursor) query.set("cursor", params.cursor);
-  if (params.collectionRevision !== undefined) {
-    query.set("collection_revision", String(params.collectionRevision));
-  }
-  if (params.limit !== undefined) query.set("limit", String(params.limit));
-  const suffix = query.toString();
-  return suffix ? `?${suffix}` : "";
+}
+
+const CONVERSATION_INDEX_LIMIT = 100;
+
+function conversationIndexPageQuery(
+  params: ConversationIndexResourceParams,
+): string {
+  return collectionPageQuery(
+    { ...params, limit: CONVERSATION_INDEX_LIMIT },
+    params.view ? conversationIndexViewQuery(params.view) : "",
+  );
 }
 
 export const librariesResource: ResourceDescriptor<LibraryListResourceParams> =
   {
     cacheKey: (params) =>
-      `libraries:${params.refreshVersion}${libraryListSuffix(params)}`,
-    serverPath: (params) => `/libraries${libraryListSuffix(params)}`,
-    clientPath: (params) => `/api/libraries${libraryListSuffix(params)}`,
+      `libraries:${params.refreshVersion}${libraryListPageQuery(params)}`,
+    serverPath: (params) => `/libraries${libraryListPageQuery(params)}`,
+    clientPath: (params) => `/api/libraries${libraryListPageQuery(params)}`,
   };
 
 export const libraryResource: ResourceDescriptor<IdResourceParams> = {
@@ -115,11 +166,11 @@ export const libraryResource: ResourceDescriptor<IdResourceParams> = {
 export const libraryEntriesResource: ResourceDescriptor<LibraryEntriesResourceParams> =
   {
     cacheKey: (params) =>
-      `library:${params.id}:entries${libraryEntriesSuffix(params)}`,
+      `library:${params.id}:entries${libraryEntriesPageQuery(params)}`,
     serverPath: (params) =>
-      `/libraries/${encoded(params.id)}/entries${libraryEntriesSuffix(params)}`,
+      `/libraries/${encoded(params.id)}/entries${libraryEntriesPageQuery(params)}`,
     clientPath: (params) =>
-      `/api/libraries/${encoded(params.id)}/entries${libraryEntriesSuffix(params)}`,
+      `/api/libraries/${encoded(params.id)}/entries${libraryEntriesPageQuery(params)}`,
   };
 
 export const mediaResource: ResourceDescriptor<IdResourceParams> = {
@@ -143,11 +194,13 @@ export const contributorResource: ResourceDescriptor<ContributorResourceParams> 
 
 export const contributorWorksResource: ResourceDescriptor<ContributorWorksResourceParams> =
   {
-    cacheKey: ({ handle }) => `author:${handle}:works`,
+    // View-scoped but cursor/limit-free: every page of one works view shares an entry.
+    cacheKey: (params) =>
+      `author:${params.handle}:works${params.view ? authorWorksViewQuery(params.view) : ""}`,
     serverPath: (params) =>
-      `/contributors/${encoded(params.handle)}/works${contributorWorksSuffix(params)}`,
+      `/contributors/${encoded(params.handle)}/works${contributorWorksPageQuery(params)}`,
     clientPath: (params) =>
-      `/api/contributors/${encoded(params.handle)}/works${contributorWorksSuffix(params)}`,
+      `/api/contributors/${encoded(params.handle)}/works${contributorWorksPageQuery(params)}`,
   };
 
 // Works page size for an author pane's first paint — shared by the server seed, the
@@ -170,10 +223,14 @@ export const librarySlateResource: ResourceDescriptor<LibrarySlateResourceParams
     clientPath: ({ id }) => `/api/libraries/${encoded(id)}/slate`,
   };
 
-export const notePagesResource: ResourceDescriptor<NoResourceParams> = {
-  cacheKey: () => "notes:pages",
-  serverPath: () => "/notes/pages",
-  clientPath: () => "/api/notes/pages",
+function notePagesQuery(params: NotePagesResourceParams): string {
+  return params.view ? notesIndexViewQuery(params.view) : "";
+}
+
+export const notePagesResource: ResourceDescriptor<NotePagesResourceParams> = {
+  cacheKey: (params) => `notes:pages${notePagesQuery(params)}`,
+  serverPath: (params) => `/notes/pages${notePagesQuery(params)}`,
+  clientPath: (params) => `/api/notes/pages${notePagesQuery(params)}`,
 };
 
 export const noteBlockResource: ResourceDescriptor<NoteBlockResourceParams> = {
@@ -182,11 +239,15 @@ export const noteBlockResource: ResourceDescriptor<NoteBlockResourceParams> = {
   clientPath: ({ blockId }) => `/api/notes/blocks/${encoded(blockId)}`,
 };
 
-export const conversationsInitialResource: ResourceDescriptor<NoResourceParams> =
+export const conversationsInitialResource: ResourceDescriptor<ConversationIndexResourceParams> =
   {
-    cacheKey: () => "conversations:list:initial",
-    serverPath: () => "/conversations?limit=100",
-    clientPath: () => "/api/conversations?limit=100",
+    // View-scoped but cursor-free: every page of one chats view shares an entry.
+    cacheKey: (params) =>
+      `conversations:list${params.view ? conversationIndexViewQuery(params.view) : ""}`,
+    serverPath: (params) =>
+      `/conversations${conversationIndexPageQuery(params)}`,
+    clientPath: (params) =>
+      `/api/conversations${conversationIndexPageQuery(params)}`,
   };
 
 export const settingsAccountResource: ResourceDescriptor<NoResourceParams> = {

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, cast
+from typing import Any, assert_never, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import asc, delete, desc, func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -37,6 +38,7 @@ from nexus.schemas.notes import (
     UpdatePageRequest,
 )
 from nexus.services import note_bodies, passage_anchors
+from nexus.services.collection_keyset import Direction
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.highlight_access import get_highlight_for_visible_read_or_404
 from nexus.services.note_indexing import enqueue_note_reindex
@@ -157,13 +159,74 @@ def recent_note_anchor_facts(
     )
 
 
-def list_pages(db: Session, viewer_id: UUID) -> list[NotePageSummaryOut]:
-    pages = db.scalars(
-        select(Page)
-        .where(Page.user_id == viewer_id)
-        .order_by(Page.updated_at.desc(), Page.title.asc(), Page.id.asc())
-    ).all()
-    return [NotePageSummaryOut.model_validate(page, from_attributes=True) for page in pages]
+@dataclass(frozen=True, slots=True)
+class PagesUpdatedNewest:
+    """Canonical: the most recently updated Page first."""
+
+
+@dataclass(frozen=True, slots=True)
+class PagesUpdatedOldest:
+    """The least recently updated Page first."""
+
+
+@dataclass(frozen=True, slots=True)
+class PagesTitle:
+    direction: Direction
+
+
+type NotesIndexView = PagesUpdatedNewest | PagesUpdatedOldest | PagesTitle
+
+_INDEX_QUERY_KEYS = frozenset({"sort", "direction"})
+
+
+def parse_notes_index_query(items: Sequence[tuple[str, str]]) -> NotesIndexView:
+    """Strict Pages-index view parse. ``items`` is the request's ``multi_items()``
+    so duplicate keys are visible. This index is exhaustive — it has no limit,
+    cursor, or collection-revision contract — so the two view keys are the only
+    keys it accepts at all. ``updated+desc`` is rejected rather than normalized
+    so the canonical view keeps exactly one URL."""
+    parameters: dict[str, str] = {}
+    for key, value in items:
+        if key not in _INDEX_QUERY_KEYS or key in parameters:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Unsupported notes index view"
+            )
+        parameters[key] = value
+    sort = parameters.get("sort")
+    direction = parameters.get("direction")
+    if sort is None and direction is None:
+        return PagesUpdatedNewest()
+    if sort == "updated" and direction == "asc":
+        return PagesUpdatedOldest()
+    if sort == "title" and (direction == "asc" or direction == "desc"):
+        return PagesTitle(direction)
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported notes index view")
+
+
+def list_pages(db: Session, viewer_id: UUID, *, view: NotesIndexView) -> list[NotePageSummaryOut]:
+    """Every Page the viewer owns, in the requested total order. The Page id is
+    unique, so every order is total; the title orders keep ``updated_at DESC``
+    in both directions so identically titled Pages always read newest-first."""
+    owned = select(Page).where(Page.user_id == viewer_id)
+    match view:
+        case PagesUpdatedNewest():
+            ordered = owned.order_by(Page.updated_at.desc(), Page.title.asc(), Page.id.asc())
+        case PagesUpdatedOldest():
+            ordered = owned.order_by(Page.updated_at.asc(), Page.title.asc(), Page.id.asc())
+        case PagesTitle(direction):
+            by = asc if direction == "asc" else desc
+            ordered = owned.order_by(
+                by(func.lower(func.btrim(Page.title))),
+                by(Page.title),
+                Page.updated_at.desc(),
+                Page.id.asc(),
+            )
+        case _:
+            assert_never(view)
+    return [
+        NotePageSummaryOut.model_validate(page, from_attributes=True)
+        for page in db.scalars(ordered).all()
+    ]
 
 
 def create_page(db: Session, viewer_id: UUID, request: CreatePageRequest) -> NotePageOut:
