@@ -3,7 +3,6 @@
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
-import { publishResourceRowActions } from "@/lib/collections/resourceActionPublication";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type {
   CollectionActivity,
@@ -73,7 +72,7 @@ export function presentPodcast(
   item: PodcastPresenterItem,
   ctx: PodcastPresenterContext,
 ): CollectionRowView {
-  const { connectionSummary, ...actionCtx } = ctx;
+  const { connectionSummary } = ctx;
   const href = `/podcasts/${item.id}`;
 
   return {
@@ -93,14 +92,10 @@ export function presentPodcast(
     localAvailability: absent(),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: absent(),
-    actionPublication: publishResourceRowActions({
-      target: routeResourceActionSubject({
-        scheme: "podcast",
-        id: item.id,
-        href,
-      }),
-      rich: podcastResourceOptions(actionCtx),
-      view: [],
+    resourceTarget: routeResourceActionSubject({
+      scheme: "podcast",
+      id: item.id,
+      href,
     }),
     selected: false,
   };

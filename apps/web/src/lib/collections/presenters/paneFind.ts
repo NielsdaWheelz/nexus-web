@@ -71,7 +71,7 @@ export function presentPaneFindResult({
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actionPublication: { kind: "FlatMenu", actions: [] },
+    resourceTarget: null,
     selected: active,
   };
 }

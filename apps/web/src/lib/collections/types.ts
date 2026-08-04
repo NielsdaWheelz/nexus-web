@@ -14,7 +14,8 @@ import type {
 } from "@/lib/resourceGraph/connections";
 import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
 import type { PodcastSyncStatus } from "@/lib/podcasts/types";
-import type { ActionPublication } from "@/lib/actions/resourceActions";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type {
   PositiveCount,
@@ -110,6 +111,17 @@ export interface CollectionRowView {
   readonly localAvailability: Presence<LocalAvailability>;
   readonly connections: Presence<ConnectionSummaryView>;
   readonly relatedMediaId: Presence<string>;
-  readonly actionPublication: ActionPublication;
+  /**
+   * The one canonical resource this row's dropdown acts on. CollectionRow
+   * renders `<ResourceActionMenu target={resourceTarget}/>` for the resource
+   * dropdown. `null` means an external / non-resource row: a plain link with no
+   * resource menu (a non-resource row may still carry `flatActions`).
+   */
+  readonly resourceTarget: ResourceActionSubject | null;
+  /**
+   * Non-resource flat menu actions for rows that are not resources (e.g. the
+   * settings surfaces). Only consulted when `resourceTarget` is `null`.
+   */
+  readonly flatActions?: readonly ActionDescriptor[];
   readonly selected: boolean;
 }

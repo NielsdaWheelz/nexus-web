@@ -1,7 +1,6 @@
 /** Pure semantic projection for one note page row. */
 
 import { absent } from "@/lib/api/presence";
-import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { NotePageSummary } from "@/lib/notes/normalize";
 
@@ -23,11 +22,7 @@ export function presentNote(item: NotePageSummary): CollectionRowView {
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actionPublication: {
-      kind: "ResourceMenu",
-      target: item.actionTarget,
-      groups: emptyResourceMenuGroups(),
-    },
+    resourceTarget: item.actionTarget,
     selected: false,
   };
 }

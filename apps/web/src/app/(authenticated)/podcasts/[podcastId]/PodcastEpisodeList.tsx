@@ -24,7 +24,10 @@ import {
 import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import type { LecternItemId } from "@/lib/lectern/contract";
 import { useOfflineMediaItem } from "@/lib/offlineMedia/OfflineMediaProvider";
-import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
+import type {
+  ActionDescriptor,
+  ActionSelectDetail,
+} from "@/lib/ui/actionDescriptor";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import EpisodeControls from "./EpisodeControls";
 import {
@@ -190,10 +193,6 @@ export default function PodcastEpisodeList({
   );
 
   const rowPresentations: EpisodePresentation[] = episodes.map((episode) => {
-    const panelId = `episode-panel-${episode.id}`;
-    const showNotesExpanded = expandedShowNotesMediaIds.ids.has(episode.id);
-    const transcriptPanelExpanded =
-      transcript.expandedTranscriptMediaIds.ids.has(episode.id);
     const lecternItemId = lecternItemsByMediaId.get(episode.id);
     const actionBusy = (actionId: ResourceActionId) =>
       busyEpisodeActionKeys.has(episodeActionBusyKey(episode.id, actionId));
@@ -329,105 +328,6 @@ export default function PodcastEpisodeList({
               ]
             : []),
         ]),
-        view: [
-          ...(episode.has_show_notes
-            ? [
-                {
-                  kind: "command" as const,
-                  id: "ViewAction.Episode.ShowNotes",
-                  label: showNotesExpanded ? "Hide notes" : "Show notes",
-                  state: showNotesExpanded
-                    ? {
-                        kind: "disclosure" as const,
-                        expanded: true as const,
-                        controls: panelId,
-                        menuLabels: {
-                          collapsed: "Show notes",
-                          expanded: "Hide notes",
-                        },
-                      }
-                    : {
-                        kind: "disclosure" as const,
-                        expanded: false as const,
-                        menuLabels: {
-                          collapsed: "Show notes",
-                          expanded: "Hide notes",
-                        },
-                      },
-                  onSelect: () => onToggleShowNotes(episode.id),
-                },
-              ]
-            : []),
-          ...(audioEpisodeIds.has(episode.id)
-            ? [
-                {
-                  kind: "command" as const,
-                  id: "ViewAction.Episode.PlayNext",
-                  label: "Play next",
-                  disabled:
-                    !lecternReady ||
-                    episode.id === playNextDisabledMediaId ||
-                    busyEpisodeActionKeys.has(
-                      episodeActionBusyKey(
-                        episode.id,
-                        EPISODE_PLAY_NEXT_ACTION_ID,
-                      ),
-                    ),
-                  disabledReason: !lecternReady
-                    ? "Lectern is still loading"
-                    : episode.id === playNextDisabledMediaId
-                      ? "This episode is already next"
-                      : busyEpisodeActionKeys.has(
-                            episodeActionBusyKey(
-                              episode.id,
-                              EPISODE_PLAY_NEXT_ACTION_ID,
-                            ),
-                          )
-                        ? "Placing episode next"
-                        : undefined,
-                  onSelect: () => {
-                    void onPlayNext(episode.id);
-                  },
-                },
-              ]
-            : []),
-          ...(transcriptionAllowed && canRequestTranscriptForEpisode(episode)
-            ? [
-                {
-                  kind: "command" as const,
-                  id: "ViewAction.Episode.Transcript",
-                  label: transcriptPanelExpanded
-                    ? "Hide transcript request"
-                    : "Request transcript...",
-                  state: transcriptPanelExpanded
-                    ? {
-                        kind: "disclosure" as const,
-                        expanded: true as const,
-                        controls: panelId,
-                        menuLabels: {
-                          collapsed: "Request transcript...",
-                          expanded: "Hide transcript request",
-                        },
-                      }
-                    : {
-                        kind: "disclosure" as const,
-                        expanded: false as const,
-                        menuLabels: {
-                          collapsed: "Request transcript...",
-                          expanded: "Hide transcript request",
-                        },
-                      },
-                  onSelect: () => {
-                    if (transcriptPanelExpanded) {
-                      transcript.expandedTranscriptMediaIds.remove(episode.id);
-                    } else {
-                      transcript.expandedTranscriptMediaIds.add(episode.id);
-                    }
-                  },
-                },
-              ]
-            : []),
-        ],
       },
     };
   });
@@ -440,6 +340,104 @@ export default function PodcastEpisodeList({
       ...presentation.context,
       offlineDownload: { kind: "Unavailable" },
     }),
+  );
+
+  // Episode view + playback-session controls live in a SEPARATE per-row menu, not
+  // the canonical resource dropdown (AC4): Show notes / Request transcript are
+  // view-disclosure controls; Play next is a playback-queue control.
+  const episodeViewControls = episodes.reduce<Record<string, ReactNode>>(
+    (controls, episode) => {
+      const panelId = `episode-panel-${episode.id}`;
+      const showNotesExpanded = expandedShowNotesMediaIds.ids.has(episode.id);
+      const transcriptPanelExpanded =
+        transcript.expandedTranscriptMediaIds.ids.has(episode.id);
+      const options: ActionDescriptor[] = [];
+      if (episode.has_show_notes) {
+        options.push({
+          kind: "command",
+          id: "ViewAction.Episode.ShowNotes",
+          label: showNotesExpanded ? "Hide notes" : "Show notes",
+          state: showNotesExpanded
+            ? {
+                kind: "disclosure",
+                expanded: true,
+                controls: panelId,
+                menuLabels: { collapsed: "Show notes", expanded: "Hide notes" },
+              }
+            : {
+                kind: "disclosure",
+                expanded: false,
+                menuLabels: { collapsed: "Show notes", expanded: "Hide notes" },
+              },
+          onSelect: () => onToggleShowNotes(episode.id),
+        });
+      }
+      if (audioEpisodeIds.has(episode.id)) {
+        const playNextBusy = busyEpisodeActionKeys.has(
+          episodeActionBusyKey(episode.id, EPISODE_PLAY_NEXT_ACTION_ID),
+        );
+        options.push({
+          kind: "command",
+          id: "ViewAction.Episode.PlayNext",
+          label: "Play next",
+          disabled:
+            !lecternReady ||
+            episode.id === playNextDisabledMediaId ||
+            playNextBusy,
+          disabledReason: !lecternReady
+            ? "Lectern is still loading"
+            : episode.id === playNextDisabledMediaId
+              ? "This episode is already next"
+              : playNextBusy
+                ? "Placing episode next"
+                : undefined,
+          onSelect: () => {
+            void onPlayNext(episode.id);
+          },
+        });
+      }
+      if (transcriptionAllowed && canRequestTranscriptForEpisode(episode)) {
+        options.push({
+          kind: "command",
+          id: "ViewAction.Episode.Transcript",
+          label: transcriptPanelExpanded
+            ? "Hide transcript request"
+            : "Request transcript...",
+          state: transcriptPanelExpanded
+            ? {
+                kind: "disclosure",
+                expanded: true,
+                controls: panelId,
+                menuLabels: {
+                  collapsed: "Request transcript...",
+                  expanded: "Hide transcript request",
+                },
+              }
+            : {
+                kind: "disclosure",
+                expanded: false,
+                menuLabels: {
+                  collapsed: "Request transcript...",
+                  expanded: "Hide transcript request",
+                },
+              },
+          onSelect: () => {
+            if (transcriptPanelExpanded) {
+              transcript.expandedTranscriptMediaIds.remove(episode.id);
+            } else {
+              transcript.expandedTranscriptMediaIds.add(episode.id);
+            }
+          },
+        });
+      }
+      if (options.length > 0) {
+        controls[episode.id] = (
+          <ActionMenu label={`Options for ${episode.title}`} options={options} />
+        );
+      }
+      return controls;
+    },
+    {},
   );
 
   const rowPanels = episodes.reduce<Record<string, ReactNode>>(
@@ -566,6 +564,7 @@ export default function PodcastEpisodeList({
         footer={<CollectionExhaustionNotice state={exhaustion} />}
         ariaLabel="Episodes"
         rowPanels={rowPanels}
+        rowControls={episodeViewControls}
         empty={
           !error && (localFilterActive || !loading) ? (
             <FeedbackNotice

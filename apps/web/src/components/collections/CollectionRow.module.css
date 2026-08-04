@@ -62,3 +62,49 @@
   align-items: center;
   color: var(--accent);
 }
+
+/* The row's separate action affordances (reorder handle, connections toggle, and
+   the canonical resource menu) laid out beside one another — never merged. */
+.rowControls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* The "Connections and related" disclosure toggle. Mirrors the ActionMenu
+   trigger geometry so it reads as a peer of the resource menu, not a menu item. */
+.relatedToggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  min-width: 32px;
+  min-height: 32px;
+}
+
+.relatedToggle:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.relatedToggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.relatedToggle[aria-expanded="true"] {
+  color: var(--accent);
+}
+
+@media (any-pointer: coarse) {
+  .relatedToggle {
+    min-width: var(--size-xl);
+    min-height: var(--size-xl);
+  }
+}

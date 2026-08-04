@@ -2,7 +2,6 @@
 
 import { absent, present } from "@/lib/api/presence";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
-import { publishResourceRowActions } from "@/lib/collections/resourceActionPublication";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { presentConversationListItem } from "@/lib/conversations/presentation";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -12,7 +11,9 @@ import type {
 
 export function presentConversation(
   item: ConversationListItem,
-  ctx: Parameters<typeof conversationResourceOptions>[0],
+  // The row no longer builds actions; the canonical resource menu resolves them
+  // from the conversation's server snapshot. Kept for caller-signature compat.
+  _ctx: Parameters<typeof conversationResourceOptions>[0],
   environment: Parameters<typeof presentConversationListItem>[1],
 ): CollectionRowView {
   const presentation = presentConversationListItem(item, environment);
@@ -34,14 +35,10 @@ export function presentConversation(
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actionPublication: publishResourceRowActions({
-      target: routeResourceActionSubject({
-        scheme: "conversation",
-        id: item.id,
-        href,
-      }),
-      rich: conversationResourceOptions(ctx),
-      view: [],
+    resourceTarget: routeResourceActionSubject({
+      scheme: "conversation",
+      id: item.id,
+      href,
     }),
     selected: false,
   };

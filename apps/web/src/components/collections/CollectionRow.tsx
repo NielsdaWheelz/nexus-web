@@ -10,51 +10,23 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Waypoints } from "lucide-react";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
-import {
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
-import { present } from "@/lib/api/presence";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import {
-  useFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import ActionMenu from "@/components/ui/ActionMenu";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import Pill from "@/components/ui/Pill";
 import ResourceRow from "@/components/ui/ResourceRow";
-import {
-  composeResourceMenu,
-  RESOURCE_ACTION_CATALOG,
-  resolveResourceCoreActions,
-  resolveUniversalResourceRelationshipActions,
-  type ActionPublication,
-  type ResourceActionId,
-} from "@/lib/actions/resourceActions";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import type {
   CollectionContext,
   CollectionRowView,
   ExceptionalStatus,
 } from "@/lib/collections/types";
 import type { LocalAvailability } from "@/lib/offlineMedia/contract";
-import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import {
-  executeResourceChat,
-  executeResourceLibraryPlacement,
-  executeResourceOpen,
-  executeResourceShare,
-} from "@/lib/resources/resourceActionExecution";
 import { useRelatedMedia } from "@/lib/resonance/useRelatedMedia";
-import { useLibraryPlacementController } from "@/lib/libraries/placementController";
-import { useShareController } from "@/lib/sharing/controller";
-import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useOptionalMobileChromeVisibleLocks } from "@/lib/workspace/mobileChrome";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import ConnectionRail from "./ConnectionRail";
 import {
   collectionActivityText,
@@ -64,43 +36,6 @@ import styles from "./CollectionRow.module.css";
 
 function assertNever(value: never, context: string): never {
   throw new Error(`${context}: ${JSON.stringify(value)}`);
-}
-
-function resourceChatErrorMessage(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title: "Couldn't start a chat",
-        message: "Check your connection and try again.",
-        requestId: error.requestId,
-      };
-    case "E_UPSTREAM_TIMEOUT":
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title: "Couldn't start a chat",
-        message: "Please wait a moment, then try again.",
-        requestId: error.requestId,
-      };
-    case "E_NOT_FOUND":
-      return {
-        tone: "Danger",
-        title: "This resource is no longer available",
-        message: "Refresh the collection to see the latest resources.",
-        requestId: error.requestId,
-      };
-    case "E_INVALID_REQUEST":
-      return {
-        tone: "Danger",
-        title: "A chat can't be started for this resource",
-        requestId: error.requestId,
-      };
-    default:
-      throw error;
-  }
 }
 
 function renderContext(context: CollectionContext): ReactNode {
@@ -336,158 +271,84 @@ function RowActionMenu({
   );
 }
 
-const EMPTY_BUSY_IDS: ReadonlySet<ResourceActionId> = new Set();
-
-function ResourceCollectionRowActionMenu({
-  publication,
-  rendererView,
-  label,
-  title,
+/**
+ * The list reorder handle. It is a SEPARATE control from the resource menu (AC4:
+ * reorder is not a resource action). It reuses RowActionMenu so the drag
+ * activator, Alt+Arrow keyboard reorder, and the Move up / Move down affordances
+ * for pointer/keyboard users all live together — never merged into the resource
+ * dropdown.
+ */
+function RowReorderControl({
   reorder,
   reorderHintId,
+  title,
 }: {
-  readonly publication: Extract<ActionPublication, { kind: "ResourceMenu" }>;
-  readonly rendererView: readonly ActionDescriptor[];
-  readonly label: string;
-  readonly title: string;
-  readonly reorder?: SortableActivatorProps;
+  readonly reorder: SortableActivatorProps;
   readonly reorderHintId: string;
+  readonly title: string;
 }) {
-  const paneRuntime = usePaneRuntime();
-  const { openLibraryPlacement } = useLibraryPlacementController();
-  const { openShare } = useShareController();
-  const feedback = useFeedback();
-  const busyIdsRef = useRef<ReadonlySet<ResourceActionId>>(EMPTY_BUSY_IDS);
-  const [busyIds, setBusyIds] =
-    useState<ReadonlySet<ResourceActionId>>(EMPTY_BUSY_IDS);
-  const [contractDefect, setContractDefect] = useState<{
-    error: unknown;
-  } | null>(null);
-
-  if (contractDefect !== null) throw contractDefect.error;
-
-  if (publication.groups.core.length > 0) {
-    // justify-defect: CollectionRow is the sole universal-core owner at this
-    // boundary; accepting published core would create a second policy path.
-    throw new Error("Collection resource publications must not publish core actions");
-  }
-
-  const openResource = (
-    target: Extract<typeof publication.target, { kind: "Resource" }>,
-  ) => {
-    const runtime = requirePaneRuntime(paneRuntime, "CollectionRow");
-    executeResourceOpen({
-      target,
-      resourceNavigation: {
-        labelHint: title,
-        activateTarget: runtime.activateTarget,
-        disposition: { kind: "Follow" },
-      },
-    });
-  };
-  const groups =
-    publication.target.kind === "External"
-      ? resolveResourceCoreActions({
-          target: publication.target,
-          projection: "Representation",
-        })
-      : resolveResourceCoreActions({
-          target: publication.target,
-          projection: "Representation",
-          busyIds,
-          executors: {
-            open: openResource,
-            share: (subject, detail) => {
-              const runtime = requirePaneRuntime(paneRuntime, "CollectionRow");
-              executeResourceShare({
-                subject,
-                openShare,
-                options: paneShareOpenOptions(detail.triggerEl, runtime.paneId),
-              });
-            },
-            chat: async function startChat(subject) {
-              const actionId = RESOURCE_ACTION_CATALOG.Chat.id;
-              if (busyIdsRef.current.has(actionId)) return;
-              const nextBusyIds = new Set(busyIdsRef.current).add(actionId);
-              busyIdsRef.current = nextBusyIds;
-              setBusyIds(nextBusyIds);
-              try {
-                const runtime = requirePaneRuntime(paneRuntime, "CollectionRow");
-                await executeResourceChat({
-                  ref: subject.ref,
-                  openConversation: (conversationId) =>
-                    void runtime.activateTarget({
-                      target: {
-                        href: `/conversations/${conversationId}`,
-                        labelHint: "Chat",
-                      },
-                      disposition: { kind: "Adopt" },
-                    }),
-                });
-              } catch (error) {
-                if (handleUnauthenticatedApiError(error)) return;
-                try {
-                  feedback.publish({
-                    kind: "Hud",
-                    content: resourceChatErrorMessage(error),
-                    actions: [
-                      {
-                        label: "Retry",
-                        onClick: () => void startChat(subject),
-                      },
-                    ],
-                  });
-                } catch (defect) {
-                  setContractDefect({ error: defect });
-                }
-              } finally {
-                const remainingBusyIds = new Set(busyIdsRef.current);
-                remainingBusyIds.delete(actionId);
-                busyIdsRef.current = remainingBusyIds;
-                setBusyIds(remainingBusyIds);
-              }
-            },
-          },
-        });
-
-  const universalRelationships =
-    publication.target.kind === "Resource"
-      ? resolveUniversalResourceRelationshipActions({
-          target: publication.target,
-          executors: {
-            libraryPlacement: (subject, detail) => {
-              const runtime = requirePaneRuntime(paneRuntime, "CollectionRow");
-              executeResourceLibraryPlacement({
-                subject,
-                openLibraryPlacement,
-                options: {
-                  anchor: () => detail.triggerEl,
-                  returnFocusFallback: present(() =>
-                    findPaneLandmarkFocusTarget(runtime.paneId),
-                  ),
-                },
-              });
-            },
-          },
-        }).relationships
-      : [];
-  const options = composeResourceMenu({
-    core: groups.core,
-    operations: publication.groups.operations,
-    relationships: [
-      ...universalRelationships,
-      ...publication.groups.relationships,
-    ],
-    view: [...publication.groups.view, ...rendererView],
-  });
-
+  const options: ActionDescriptor[] = [
+    {
+      kind: "command",
+      id: "ViewAction.Collection.MoveUp",
+      label: "Move up",
+      disabled: !reorder.canMoveUp,
+      disabledReason: !reorder.canMoveUp
+        ? "This item is already first"
+        : undefined,
+      onSelect: reorder.moveUp,
+    },
+    {
+      kind: "command",
+      id: "ViewAction.Collection.MoveDown",
+      label: "Move down",
+      disabled: !reorder.canMoveDown,
+      disabledReason: !reorder.canMoveDown
+        ? "This item is already last"
+        : undefined,
+      onSelect: reorder.moveDown,
+    },
+  ];
   return (
     <RowActionMenu
       options={options}
-      label={label}
+      label={`Reorder ${title}`}
       reorder={reorder}
       reorderHintId={reorderHintId}
     />
+  );
+}
+
+/**
+ * The "Connections and related" disclosure. It is a SEPARATE row control (a
+ * companion/inspector toggle), never a resource-menu item (AC4).
+ */
+function RowRelatedToggle({
+  expanded,
+  controls,
+  title,
+  onToggle,
+}: {
+  readonly expanded: boolean;
+  readonly controls: string;
+  readonly title: string;
+  readonly onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={styles.relatedToggle}
+      aria-expanded={expanded}
+      aria-controls={expanded ? controls : undefined}
+      aria-label={
+        expanded
+          ? `Hide connections and related for ${title}`
+          : `Show connections and related for ${title}`
+      }
+      onClick={onToggle}
+    >
+      <Waypoints size={16} aria-hidden="true" />
+    </button>
   );
 }
 
@@ -625,90 +486,53 @@ export default function CollectionRow({
       </span>
     ) : undefined;
 
-  const rendererView: ActionDescriptor[] = [];
-  if (reorder) {
-    rendererView.push(
-      {
-        kind: "command",
-        id: "ViewAction.Collection.MoveUp",
-        label: "Move up",
-        disabled: !reorder.canMoveUp,
-        disabledReason: !reorder.canMoveUp
-          ? "This item is already first"
-          : undefined,
-        onSelect: reorder.moveUp,
-      },
-      {
-        kind: "command",
-        id: "ViewAction.Collection.MoveDown",
-        label: "Move down",
-        disabled: !reorder.canMoveDown,
-        disabledReason: !reorder.canMoveDown
-          ? "This item is already last"
-          : undefined,
-        onSelect: reorder.moveDown,
-      },
-    );
-  }
-  if (hasPeerAffordance) {
-    rendererView.push(
-      {
-        kind: "command",
-        id: "ViewAction.Collection.Related",
-        label: "Connections and related",
-        state: showPeers
-          ? {
-              kind: "disclosure",
-              expanded: true,
-              controls: disclosureId,
-              menuLabels: {
-                collapsed: "Show connections and related",
-                expanded: "Hide connections and related",
-              },
-            }
-          : {
-              kind: "disclosure",
-              expanded: false,
-              menuLabels: {
-                collapsed: "Show connections and related",
-                expanded: "Hide connections and related",
-              },
-        },
-        onSelect: () => setShowPeers((visible) => !visible),
-      },
-    );
-  }
-
-  let actions: ReactNode;
+  // The three row controls are SEPARATE affordances (AC4): reorder and the
+  // connections disclosure never live inside the resource dropdown. The resource
+  // dropdown is the one canonical `ResourceActionMenu` keyed only by the row's
+  // resource target; non-resource rows fall back to a plain flat menu (settings)
+  // or no menu at all (external links).
   const menuLabel = `More actions for ${row.title.text}`;
-  if (!rowActionsAvailable) {
-    actions = undefined;
-  } else if (row.actionPublication.kind === "ResourceMenu") {
-    actions = (
-      <ResourceCollectionRowActionMenu
-        publication={row.actionPublication}
-        rendererView={rendererView}
-        label={menuLabel}
+  const reorderControl =
+    rowActionsAvailable && reorder ? (
+      <RowReorderControl
+        reorder={reorder}
+        reorderHintId={reorderHintId}
         title={row.title.text}
-        reorder={reorder}
-        reorderHintId={reorderHintId}
       />
-    );
-  } else {
-    if (rendererView.length > 0) {
-      // justify-defect: renderer-owned resource view actions require the
-      // enforcing resource composer; a FlatMenu target cannot represent them.
-      throw new Error("Flat collection menus cannot publish resource view actions");
+    ) : null;
+  const relatedControl =
+    rowActionsAvailable && hasPeerAffordance ? (
+      <RowRelatedToggle
+        expanded={showPeers}
+        controls={disclosureId}
+        title={row.title.text}
+        onToggle={() => setShowPeers((visible) => !visible)}
+      />
+    ) : null;
+  let resourceMenu: ReactNode = null;
+  if (rowActionsAvailable) {
+    if (row.resourceTarget) {
+      resourceMenu = (
+        <ResourceActionMenu target={row.resourceTarget} label={menuLabel} />
+      );
+    } else if (row.flatActions && row.flatActions.length > 0) {
+      resourceMenu = (
+        <RowActionMenu
+          options={row.flatActions}
+          label={menuLabel}
+          reorderHintId={reorderHintId}
+        />
+      );
     }
-    actions = (
-      <RowActionMenu
-        options={row.actionPublication.actions}
-        label={menuLabel}
-        reorder={reorder}
-        reorderHintId={reorderHintId}
-      />
-    );
   }
+  const actions =
+    reorderControl || relatedControl || resourceMenu ? (
+      <span className={styles.rowControls}>
+        {reorderControl}
+        {relatedControl}
+        {resourceMenu}
+      </span>
+    ) : undefined;
 
   const expanded =
     (showPeers && hasPeerAffordance) || panel ? (

@@ -6,7 +6,6 @@
  */
 
 import { absent, present } from "@/lib/api/presence";
-import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import type {
   CollectionRowView,
   ResourceRowPrimary,
@@ -80,11 +79,10 @@ export function presentContributorWork(work: ContributorWorkItem): CollectionRow
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actionPublication: {
-      kind: "ResourceMenu",
-      target: work.actionTarget,
-      groups: emptyResourceMenuGroups(),
-    },
+    // External works are a plain link with no resource menu; resource works get
+    // the canonical dropdown resolved from their server snapshot.
+    resourceTarget:
+      work.actionTarget.kind === "Resource" ? work.actionTarget : null,
     selected: false,
   };
 }

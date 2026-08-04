@@ -36,10 +36,10 @@ export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowVi
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actionPublication: {
-      kind: "FlatMenu",
-      actions: item.actions ?? [],
-    },
+    // Settings rows are not resources: they carry an explicit, non-resource flat
+    // menu (no snapshot, no canonical resource dropdown).
+    resourceTarget: null,
+    flatActions: item.actions,
     selected: false,
   };
 }

@@ -87,7 +87,7 @@ export function presentBrowseCandidate(
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actionPublication: { kind: "FlatMenu", actions: [] },
+    resourceTarget: null,
     selected: false,
   };
 }
@@ -115,7 +115,7 @@ export function presentPreviewEpisode(
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actionPublication: { kind: "FlatMenu", actions: [] },
+    resourceTarget: null,
     selected: false,
   };
 }

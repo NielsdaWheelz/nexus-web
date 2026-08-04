@@ -3,7 +3,6 @@
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { mediaResourceOptions } from "@/lib/actions/resourceActions";
 import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
-import { publishResourceRowActions } from "@/lib/collections/resourceActionPublication";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   readActivity,
@@ -85,11 +84,7 @@ export function presentMedia(
   item: MediaPresenterItem,
   ctx: MediaPresenterContext,
 ): CollectionRowView {
-  const { connectionSummary, readingTimeEstimate, ...actionCtx } = ctx;
-  const rich = mediaResourceOptions({
-    media: item,
-    ...actionCtx,
-  });
+  const { connectionSummary, readingTimeEstimate } = ctx;
   const href = `/media/${item.id}`;
 
   return {
@@ -114,14 +109,10 @@ export function presentMedia(
     localAvailability: absent(),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: present(item.id),
-    actionPublication: publishResourceRowActions({
-      target: routeResourceActionSubject({
-        scheme: "media",
-        id: item.id,
-        href,
-      }),
-      rich,
-      view: [],
+    resourceTarget: routeResourceActionSubject({
+      scheme: "media",
+      id: item.id,
+      href,
     }),
     selected: false,
   };

@@ -3,7 +3,6 @@
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { episodeResourceOptions } from "@/lib/actions/resourceActions";
 import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
-import { publishResourceRowActions } from "@/lib/collections/resourceActionPublication";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type {
   CollectionActivity,
@@ -18,7 +17,6 @@ import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionSummaryOut } from "@/lib/resourceGraph/connections";
 import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 export interface EpisodePresenterItem {
   id: string;
@@ -43,7 +41,6 @@ export type EpisodePresenterContext = Omit<
   "media"
 > & {
   connectionSummary?: ConnectionSummaryOut;
-  view: readonly ActionDescriptor[];
 };
 
 function episodeActivity(
@@ -97,11 +94,7 @@ export function presentEpisode(
   item: EpisodePresenterItem,
   ctx: EpisodePresenterContext,
 ): CollectionRowView {
-  const { connectionSummary, view, ...actionCtx } = ctx;
-  const rich = episodeResourceOptions({
-    media: item,
-    ...actionCtx,
-  });
+  const { connectionSummary, offlineDownload } = ctx;
   const href = `/media/${item.id}`;
 
   return {
@@ -120,19 +113,15 @@ export function presentEpisode(
     activity: episodeActivity(item),
     exceptionalStatus: exceptionalStatus(item.processing_status),
     localAvailability:
-      actionCtx.offlineDownload.kind === "Available"
-        ? actionCtx.offlineDownload.availability
+      offlineDownload.kind === "Available"
+        ? offlineDownload.availability
         : absent(),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: present(item.id),
-    actionPublication: publishResourceRowActions({
-      target: routeResourceActionSubject({
-        scheme: "media",
-        id: item.id,
-        href,
-      }),
-      rich,
-      view,
+    resourceTarget: routeResourceActionSubject({
+      scheme: "media",
+      id: item.id,
+      href,
     }),
     selected: false,
   };

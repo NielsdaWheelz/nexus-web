@@ -1,9 +1,10 @@
 "use client";
 
-import type { ComponentProps } from "react";
+import { useCallback, useRef, type ComponentProps } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { useOptionalMobileChromeVisibleLocks } from "@/lib/workspace/mobileChrome";
 
 type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
@@ -42,6 +43,23 @@ export default function ResourceActionMenu({
   renderTrigger,
 }: ResourceActionMenuProps) {
   const model = useResourceActionMenuModel(target);
+  // Keep the mobile bottom chrome pinned while the dropdown is open, so it does
+  // not collapse under the portaled menu — the behaviour every ActionMenu-backed
+  // dropdown gets, now owned once by the canonical resource menu.
+  const { acquire } = useOptionalMobileChromeVisibleLocks();
+  const releaseLockRef = useRef<(() => void) | null>(null);
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        releaseLockRef.current?.();
+        releaseLockRef.current = null;
+        return;
+      }
+      if (releaseLockRef.current) return;
+      releaseLockRef.current = acquire("action-menu");
+    },
+    [acquire],
+  );
   if (!model.ready) return null;
   return (
     <ActionMenu
@@ -50,6 +68,7 @@ export default function ResourceActionMenu({
       placement={placement}
       align={align}
       renderTrigger={renderTrigger}
+      onOpenChange={handleOpenChange}
     />
   );
 }

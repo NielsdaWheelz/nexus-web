@@ -1,10 +1,7 @@
 /** Pure semantic projection for one Lectern row. */
 
 import { absent, present, type Presence } from "@/lib/api/presence";
-import {
-  projectResourceActionToMenu,
-  type ExecutableResourceAction,
-} from "@/lib/actions/resourceActions";
+import type { ExecutableResourceAction } from "@/lib/actions/resourceActions";
 import type {
   CollectionActivity,
   CollectionRowView,
@@ -15,7 +12,6 @@ import type {
   LecternActivityFacts,
   LecternItem,
 } from "@/lib/lectern/contract";
-import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 
 function modalityFor(item: LecternItem): ConsumptionModality {
   if (item.activation.kind === "FooterAudio") return "Listen";
@@ -68,7 +64,11 @@ export function playbackVerb(consumption: ConsumptionInfo): "Play" | "Replay" | 
 
 export function presentLecternItem(
   item: LecternItem,
-  actions: {
+  // The playback verb is now the row's own PlaybackButton (rendered separately in
+  // LecternPaneBody); RemoveFromLectern and ResetProgress come from the canonical
+  // resource menu resolved from this media's server snapshot. Kept for
+  // caller-signature compatibility.
+  _actions: {
     readonly remove: (triggerEl: HTMLButtonElement | null) => void;
     readonly playback: ExecutableResourceAction;
     readonly progressReset: ExecutableResourceAction;
@@ -76,34 +76,6 @@ export function presentLecternItem(
   },
   activityFacts: LecternActivityFacts,
 ): CollectionRowView {
-  const playback = actions.playback;
-  const view =
-    playback.kind === "Available"
-      ? [
-          {
-            kind: "command" as const,
-            id: "ViewAction.Lectern.Playback",
-            label: playbackVerb(item.consumption),
-            onSelect: (detail: ActionSelectDetail) => {
-              void playback.execute(detail);
-            },
-          },
-        ]
-      : [];
-  const progressReset = actions.progressReset;
-  const operations =
-    progressReset.kind === "Available"
-      ? [
-          projectResourceActionToMenu({
-            kind: "command",
-            catalogKey: "ResetProgress",
-            busy: actions.progressResetBusy,
-            onSelect: (detail) => {
-              void progressReset.execute(detail);
-            },
-          }),
-        ]
-      : [];
   return {
     id: item.itemId,
     kind: item.kind === "podcast_episode" ? "podcast_episode" : "media",
@@ -120,22 +92,7 @@ export function presentLecternItem(
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actionPublication: {
-      kind: "ResourceMenu",
-      target: item.actionTarget,
-      groups: {
-        core: [],
-        operations,
-        relationships: [
-          projectResourceActionToMenu({
-            kind: "command",
-            catalogKey: "RemoveFromLectern",
-            onSelect: ({ triggerEl }) => actions.remove(triggerEl),
-          }),
-        ],
-        view,
-      },
-    },
+    resourceTarget: item.actionTarget,
     selected: false,
   };
 }
