@@ -28,14 +28,29 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import SectionOpener from "@/components/ui/SectionOpener";
+import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
+import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
 import {
   deleteConversation,
   fetchConversationIndex,
 } from "@/lib/conversations/indexApi";
+import {
+  CANONICAL_CONVERSATION_INDEX_VIEW,
+  CONVERSATION_SORT_OPTION_IDS,
+  conversationSortOptionLabel,
+  conversationSortOptionOf,
+  conversationViewForSortOption,
+  decodeConversationIndexView,
+  encodeConversationIndexView,
+  type ConversationIndexView,
+  type ConversationSortOptionId,
+  type DecodedConversationIndexView,
+} from "@/lib/conversations/indexView";
 import type { ConversationListItem } from "@/lib/conversations/types";
+import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import {
   definePaneVisitDataKey,
   requirePaneRuntime,
@@ -53,12 +68,16 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
 import { isAbortError } from "@/lib/errors";
 
-const CONVERSATIONS_VISIT_DATA = definePaneVisitDataKey<ConversationsPaneSeed>(
+/** The chats index committed as one exact view: rows, revision, and cursor. */
+interface CommittedChatsView extends ConversationsPaneSeed {
+  readonly view: ConversationIndexView;
+}
+
+const CONVERSATIONS_VISIT_DATA = definePaneVisitDataKey<CommittedChatsView>(
   "Conversations.Pagination",
 );
 const NO_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
 const ZERO_REVISION = 0 as CollectionRevision;
-const PAGE_SIZE = 100;
 
 function conversationsErrorMessage(
   error: ApiError,
@@ -114,6 +133,15 @@ function seedFromPage(
   };
 }
 
+// The one code that turns a first-page failure into the "Invalid chats view"
+// terminal state: the backend rejects a bad view/cursor with these codes.
+function isInvalidViewError(error: unknown): boolean {
+  return (
+    isApiError(error) &&
+    (error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_CURSOR")
+  );
+}
+
 export default function ConversationsPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "ConversationsPaneBody");
   const isPaneActive = usePaneIsActive();
@@ -129,74 +157,159 @@ export default function ConversationsPaneBody() {
         : (visibleIds[index + 1] ?? visibleIds[index - 1] ?? null);
   }, []);
   const renderEnvironment = useRenderEnvironment();
-  const committedSnapshotRef = useRef<ConversationsPaneSeed | null>(null);
+  // The pane URL owns the chats view through a strict, total codec; `view` is
+  // null only for an Invalid URL, a terminal, user-recoverable state.
+  const chatsViewCodec = useMemo(
+    () => ({
+      basePath: "/conversations",
+      decode: decodeConversationIndexView,
+      encode: (
+        decoded: DecodedConversationIndexView,
+        current: URLSearchParams,
+      ): URLSearchParams =>
+        encodeConversationIndexView(
+          decoded.kind === "Valid"
+            ? decoded.view
+            : CANONICAL_CONVERSATION_INDEX_VIEW,
+          current,
+        ),
+      replaceOptions: {
+        viewTransition: { kind: "collection-reflow" as const },
+      },
+    }),
+    [],
+  );
+  const { state: decodedView, setState: setDecodedView } =
+    usePaneUrlState(chatsViewCodec);
+  const view = decodedView.kind === "Valid" ? decodedView.view : null;
+  // Set when the backend rejects the requested view; cleared whenever another
+  // view is requested.
+  const [viewInvalid, setViewInvalid] = useState(false);
+  const invalidView = decodedView.kind === "Invalid" || viewInvalid;
+  const listRegionRef = useRef<HTMLDivElement | null>(null);
+  const committedSnapshotRef = useRef<CommittedChatsView | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(CONVERSATIONS_VISIT_DATA, captureCommitted);
-  const allowResourceAdoptionRef = useRef(restored === null);
+  const initialRestored = useRef(restored).current;
   const [firstPageVersion, setFirstPageVersion] = useState(0);
   const firstPageVersionRef = useRef(0);
   const pendingConversationsRevalidationRef =
     useRef<PendingConversationsRevalidation | null>(null);
   const completedConversationsRevalidationVersionRef =
     useRef<number | null>(null);
-  const [refreshingIndex, setRefreshingIndex] = useState(false);
   const [chainEpoch, setChainEpoch] = useState(0);
-  const [controller, setController] = useState<ConversationsPaneSeed | null>(
-    restored,
+  const [controller, setController] = useState<CommittedChatsView | null>(
+    initialRestored,
   );
+  if (
+    committedSnapshotRef.current === null &&
+    initialRestored !== null &&
+    controller === initialRestored
+  ) {
+    committedSnapshotRef.current = initialRestored;
+  }
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   const deletingConversationIds = useStringIdSet();
   const clearAllVisitData = useClearAllPaneVisitData();
-  const initial = useResource<ConversationsPaneSeed>({
-    cacheKey:
-      restored === null || firstPageVersion > 0
-        ? firstPageVersion === 0
-          ? conversationsInitialResource.cacheKey({})
-          : `${conversationsInitialResource.cacheKey({})}:collection:${firstPageVersion}`
-        : null,
-    load: async (signal) =>
-      seedFromPage(
-        await fetchConversationIndex({
-          limit: PAGE_SIZE,
-          signal,
-        }),
-      ),
+  const capturePaneScroll = usePaneScrollRetention(listRegionRef, controller);
+  // Set by a refresh so the already-committed view refetches once under a new
+  // request identity; cleared by the commit that answers it. A view change needs
+  // no flag — the requested and committed identities differ on their own.
+  const refreshPendingRef = useRef(false);
+  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
+  // Set before a view replacement the user initiated from the sort control, so
+  // the commit that answers it returns focus there.
+  const pendingCommitFocusRef = useRef(false);
+  const focusPendingSortControl = useCallback(() => {
+    if (!pendingCommitFocusRef.current) return;
+    pendingCommitFocusRef.current = false;
+    const element = sortSelectRef.current;
+    if (element === null) return;
+    requestAnimationFrame(() => element.focus());
+  }, []);
+  const setView = useCallback(
+    (next: ConversationIndexView) => {
+      capturePaneScroll();
+      committedSnapshotRef.current = null;
+      setDecodedView({ kind: "Valid", view: next });
+    },
+    [capturePaneScroll, setDecodedView],
+  );
+
+  const requestedViewKey =
+    view === null ? null : conversationsInitialResource.cacheKey({ view });
+  const committedViewKey =
+    controller === null
+      ? null
+      : conversationsInitialResource.cacheKey({ view: controller.view });
+  // The canonical first page is the route's server seed; every other exact view
+  // and every refresh owns its own request under its own identity.
+  const requestsFirstPage =
+    view !== null &&
+    !viewInvalid &&
+    (controller === null ||
+      requestedViewKey !== committedViewKey ||
+      refreshPendingRef.current);
+  const firstPageRequestKey =
+    requestsFirstPage && requestedViewKey !== null
+      ? firstPageVersion === 0
+        ? requestedViewKey
+        : `${requestedViewKey}:collection:${firstPageVersion}`
+      : null;
+  const firstPage = useResource<ConversationsPaneSeed>({
+    cacheKey: firstPageRequestKey,
+    load: async (signal) => {
+      if (view === null) {
+        // justify-defect: a non-null request key is built from this exact view.
+        throw new Error("Chats index request lost its view identity");
+      }
+      return seedFromPage(await fetchConversationIndex({ view, signal }));
+    },
   });
 
+  // Latest-wins atomic commit: the resource reports a result only for the
+  // current request identity, so a superseded view can never install its rows.
   useEffect(() => {
-    if (initial.status === "ready" && allowResourceAdoptionRef.current) {
-      allowResourceAdoptionRef.current = false;
-      committedSnapshotRef.current = initial.data;
-      setController(initial.data);
+    if (firstPage.status === "ready" && view !== null) {
+      refreshPendingRef.current = false;
+      const committed: CommittedChatsView = { ...firstPage.data, view };
+      committedSnapshotRef.current = committed;
+      setController(committed);
       setChainEpoch((epoch) => epoch + 1);
       setFeedback(null);
-      setRefreshingIndex(false);
+      focusPendingSortControl();
       const pending = pendingConversationsRevalidationRef.current;
       if (pending?.version === firstPageVersion) {
         completedConversationsRevalidationVersionRef.current = pending.version;
       }
       return;
     }
-    if (initial.status === "error" && allowResourceAdoptionRef.current) {
-      setRefreshingIndex(false);
-      try {
-        setFeedback(conversationsErrorMessage(initial.error, "Load"));
-      } catch (defect) {
-        setAsyncDefect({ error: defect });
+    if (firstPage.status === "error") {
+      if (isInvalidViewError(firstPage.error)) {
+        setViewInvalid(true);
+      } else {
+        try {
+          setFeedback(conversationsErrorMessage(firstPage.error, "Load"));
+        } catch (defect) {
+          setAsyncDefect({ error: defect });
+        }
       }
       const pending = pendingConversationsRevalidationRef.current;
       if (pending?.version === firstPageVersion) {
         pendingConversationsRevalidationRef.current = null;
         completedConversationsRevalidationVersionRef.current = null;
         pending.removeAbortListener();
-        pending.reject(initial.error);
+        pending.reject(firstPage.error);
       }
     }
-  }, [firstPageVersion, initial]);
+  }, [firstPage, firstPageVersion, focusPendingSortControl, view]);
+
+  // A newly requested view retires the previous view's rejection.
+  useEffect(() => setViewInvalid(false), [requestedViewKey]);
 
   useLayoutEffect(() => {
-    committedSnapshotRef.current = controller;
+    committedSnapshotRef.current = requestsFirstPage ? null : controller;
     const pending = pendingConversationsRevalidationRef.current;
     if (
       controller === null ||
@@ -209,9 +322,11 @@ export default function ConversationsPaneBody() {
     pendingConversationsRevalidationRef.current = null;
     pending.removeAbortListener();
     pending.resolve();
-  }, [controller]);
+  }, [controller, requestsFirstPage]);
 
-  usePaneReturnReady(controller !== null || initial.status === "error");
+  usePaneReturnReady(
+    controller !== null || firstPage.status === "error" || invalidView,
+  );
 
   const rejectPendingConversationsRevalidation = useCallback(
     (error: unknown) => {
@@ -228,14 +343,19 @@ export default function ConversationsPaneBody() {
     rejectPendingConversationsRevalidation(
       new DOMException("Conversations refresh was superseded.", "AbortError"),
     );
-    allowResourceAdoptionRef.current = true;
+    capturePaneScroll();
+    refreshPendingRef.current = true;
+    committedSnapshotRef.current = null;
     clearAllVisitData();
     setFeedback(null);
-    setRefreshingIndex(true);
     const version = firstPageVersionRef.current + 1;
     firstPageVersionRef.current = version;
     setFirstPageVersion(version);
-  }, [clearAllVisitData, rejectPendingConversationsRevalidation]);
+  }, [
+    capturePaneScroll,
+    clearAllVisitData,
+    rejectPendingConversationsRevalidation,
+  ]);
   const revalidateIndex = useCallback(
     (signal: AbortSignal): Promise<void> => {
       if (signal.aborted) {
@@ -256,8 +376,6 @@ export default function ConversationsPaneBody() {
           pendingConversationsRevalidationRef.current = null;
           completedConversationsRevalidationVersionRef.current = null;
           pending.removeAbortListener();
-          allowResourceAdoptionRef.current = false;
-          setRefreshingIndex(false);
           reject(
             signal.reason ??
               new DOMException(
@@ -311,7 +429,8 @@ export default function ConversationsPaneBody() {
         seen.add(conversation.id);
         conversations.push(conversation);
       }
-      const next: ConversationsPaneSeed = {
+      const next: CommittedChatsView = {
+        ...current,
         conversations,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
@@ -324,19 +443,26 @@ export default function ConversationsPaneBody() {
     [],
   );
 
+  // Continuation runs only while the committed view is the requested one, and
+  // every page of a chain carries that same view.
   const exhaustion = useExhaustivePagination<ConversationListItem>({
-    active: isPaneActive && controller !== null && !refreshingIndex,
-    chainKey: `mine:${chainEpoch}`,
+    active: isPaneActive && controller !== null && !requestsFirstPage,
+    chainKey: `${committedViewKey ?? ""}:${chainEpoch}`,
     cursor: controller?.nextCursor ?? NO_CURSOR,
     collectionRevision: controller?.collectionRevision ?? ZERO_REVISION,
     itemCount: controller?.conversations.length ?? 0,
-    loadPage: (cursor, collectionRevision, signal) =>
-      fetchConversationIndex({
+    loadPage: (cursor, collectionRevision, signal) => {
+      if (controller === null) {
+        // justify-defect: continuation runs only over a committed exact view.
+        throw new Error("Chats continuation lost its committed view");
+      }
+      return fetchConversationIndex({
+        view: controller.view,
         cursor,
         collectionRevision,
-        limit: PAGE_SIZE,
         signal,
-      }),
+      });
+    },
     commitPage,
     refresh: refreshIndex,
   });
@@ -420,7 +546,7 @@ export default function ConversationsPaneBody() {
   const status =
     controller !== null
       ? "ready"
-      : initial.status === "error"
+      : firstPage.status === "error"
         ? "error"
         : "loading";
   const finalCount =
@@ -449,13 +575,56 @@ export default function ConversationsPaneBody() {
     },
     [exhaustion.kind, rows],
   );
+  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
+  const clearDomainFilters = useCallback(() => {
+    dismissFilterRowsRef.current();
+    pendingCommitFocusRef.current = true;
+    setView(CANONICAL_CONVERSATION_INDEX_VIEW);
+  }, [setView]);
+  const domainFilterControls = useMemo(
+    () =>
+      invalidView || view === null ? undefined : (
+        <>
+          <SelectField
+            layout="Stacked"
+            label="Sort by"
+            ref={sortSelectRef}
+            value={conversationSortOptionOf(view)}
+            onChange={(event) => {
+              pendingCommitFocusRef.current = true;
+              setView(
+                conversationViewForSortOption(
+                  event.target.value as ConversationSortOptionId,
+                ),
+              );
+            }}
+          >
+            {CONVERSATION_SORT_OPTION_IDS.map((optionId) => (
+              <option key={optionId} value={optionId}>
+                {conversationSortOptionLabel(optionId)}
+              </option>
+            ))}
+          </SelectField>
+          {view.kind === "Canonical" ? null : (
+            <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
+              Clear filters
+            </Button>
+          )}
+        </>
+      ),
+    [clearDomainFilters, invalidView, setView, view],
+  );
   const { query: filterQuery, publication: search } = usePaneFilterRows({
     sourceKey: "Conversations:mine",
     inputLabel: "Filter chats",
     placeholder: "Filter chats",
     getRowStatus: getFilterStatus,
-    activeDomainControlCount: 0,
+    // Truthful while the controls are published; an invalid view publishes none.
+    activeDomainControlCount:
+      invalidView || view === null || view.kind === "Canonical" ? 0 : 1,
+    filters: domainFilterControls,
   });
+  dismissFilterRowsRef.current = search.onDismiss;
   const filteredRows = useMemo(
     () =>
       rows.filter((row) =>
@@ -523,78 +692,102 @@ export default function ConversationsPaneBody() {
     header: {
       kind: "section",
       folio:
-        finalCount === null
+        finalCount === null || invalidView
           ? { kind: "none" }
           : { kind: "count", value: finalCount, unit: "chat" },
       pending:
-        status === "loading" ||
-        refreshingIndex ||
-        exhaustion.kind !== "Complete",
+        !invalidView &&
+        (status === "loading" ||
+          requestsFirstPage ||
+          exhaustion.kind !== "Complete"),
     },
   });
 
   if (asyncDefect !== null) throw asyncDefect.error;
 
+  if (invalidView) {
+    return (
+      <FeedbackNotice
+        content={{ tone: "Danger", title: "Invalid chats view" }}
+        announcement="Assertive"
+        actions={[
+          {
+            label: "Reset view",
+            onClick: () => {
+              search.onDismiss();
+              setDecodedView({
+                kind: "Valid",
+                view: CANONICAL_CONVERSATION_INDEX_VIEW,
+              });
+            },
+          },
+        ]}
+      />
+    );
+  }
+
   return (
-    <CollectionView
-      returnScope="Conversations.Items"
-      rows={filteredRows}
-      status={status}
-      ariaLabel="Conversations"
-      rowChangePresentation={{
-        kind: "ImmediateOnKeyChange",
-        key: filterQuery.trim(),
-      }}
-      collectionBusy={exhaustion.kind === "Draining"}
-      opener={
-        <SectionOpener
-          heading="Chats"
-          actions={
-            <Button asChild size="lg">
-              <Link href="/conversations/new">New chat</Link>
-            </Button>
-          }
-        />
-      }
-      notice={
-        controller !== null && feedback ? (
-          <FeedbackNotice content={feedback} announcement="Assertive" />
-        ) : controller === null && status === "loading" && filterQuery.trim() ? (
-          <FeedbackNotice
-            content={{ tone: "Neutral", title: "No matching chat found so far." }}
-            announcement="None"
+    <div ref={listRegionRef}>
+      <CollectionView
+        returnScope="Conversations.Items"
+        rows={filteredRows}
+        status={status}
+        ariaLabel="Conversations"
+        rowChangePresentation={{
+          kind: "ImmediateOnKeyChange",
+          key: filterQuery.trim(),
+        }}
+        collectionBusy={exhaustion.kind === "Draining"}
+        opener={
+          <SectionOpener
+            heading="Chats"
+            actions={
+              <Button asChild size="lg">
+                <Link href="/conversations/new">New chat</Link>
+              </Button>
+            }
           />
-        ) : undefined
-      }
-      error={
-        controller === null && feedback ? (
-          <FeedbackNotice content={feedback} announcement="Assertive" />
-        ) : undefined
-      }
-      empty={
-        filterQuery.trim() ? (
-          <FeedbackNotice
-            content={{
-              tone: "Neutral",
-              title:
-                exhaustion.kind === "Complete"
-                  ? "No chats match this filter."
-                  : "No matching chat found so far.",
-            }}
-            announcement="None"
-          />
-        ) : (
-          <FeedbackNotice
-            content={{
-              tone: "Neutral",
-              title: "No chats yet.",
-              message: "Choose New chat to begin.",
-            }}
-            announcement="None"
-          />
-        )
-      }
-      footer={<CollectionExhaustionNotice state={exhaustion} />}
-    />
+        }
+        notice={
+          controller !== null && feedback ? (
+            <FeedbackNotice content={feedback} announcement="Assertive" />
+          ) : controller === null && status === "loading" && filterQuery.trim() ? (
+            <FeedbackNotice
+              content={{ tone: "Neutral", title: "No matching chat found so far." }}
+              announcement="None"
+            />
+          ) : undefined
+        }
+        error={
+          controller === null && feedback ? (
+            <FeedbackNotice content={feedback} announcement="Assertive" />
+          ) : undefined
+        }
+        empty={
+          filterQuery.trim() ? (
+            <FeedbackNotice
+              content={{
+                tone: "Neutral",
+                title:
+                  exhaustion.kind === "Complete"
+                    ? "No chats match this filter."
+                    : "No matching chat found so far.",
+              }}
+              announcement="None"
+            />
+          ) : (
+            <FeedbackNotice
+              content={{
+                tone: "Neutral",
+                title: "No chats yet.",
+                message: "Choose New chat to begin.",
+              }}
+              announcement="None"
+            />
+          )
+        }
+        footer={<CollectionExhaustionNotice state={exhaustion} />}
+      />
+    </div>
   );
 }

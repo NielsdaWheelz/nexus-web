@@ -21,7 +21,6 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import ok
-from nexus.schemas.collection_page import parse_collection_query
 from nexus.schemas.contributors import ContributorRenameRequest
 from nexus.services import contributors as contributors_service
 from nexus.services.contributor_taxonomy import (
@@ -85,11 +84,14 @@ def list_contributor_works(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    query = parse_collection_query(request.query_params.multi_items(), domain_keys=frozenset())
+    view, query = contributors_service.parse_contributor_works_query(
+        request.query_params.multi_items()
+    )
     page = contributors_service.list_contributor_works(
         db,
         viewer_id=viewer.user_id,
         contributor_handle=_parse_handle(contributor_handle),
+        view=view,
         cursor=query.cursor,
         collection_revision=query.collection_revision,
         limit=query.limit,

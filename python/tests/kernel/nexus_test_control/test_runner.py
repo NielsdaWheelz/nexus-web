@@ -2204,3 +2204,35 @@ def _commands(repo_root: Path) -> list[dict[str, object]]:
 def _write(path: Path, contents: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(contents, encoding="utf-8")
+
+
+def test_changed_stylesheet_reaches_the_css_token_owner_and_never_the_eslint_command(
+    tmp_path: Path,
+) -> None:
+    """A stylesheet has no ESLint configuration, so handing its path to the
+    `--max-warnings 0` lint command turns "File ignored" into a gate failure and
+    makes every `.module.css` change ungateable."""
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    (tmp_path / "python/.venv").mkdir()
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir(parents=True)
+    _write(tmp_path / "apps/web/src/components/ui/SelectField.module.css", ".field {}\n")
+    _write_executable(tmp_path / "bin/bun")
+    selection = Selection(
+        "apps/web/src/components/ui/SelectField.module.css",
+        Capability.STATIC_WEB,
+        SelectionReason.FRONTEND_RELATED,
+    )
+
+    evidence = run_workflow(
+        CapabilityContext(tmp_path, Workflow.CHANGED, (selection,)),
+        StringIO(),
+        _tool_environment(tmp_path),
+        run_id="0123456789abcdef",
+        _available_memory=lambda: 8192,
+    )
+
+    static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)
+    assert static_web.status is RunStatus.PASS, static_web.detail
+    invocations = [command["argv"] for command in _commands(tmp_path)]
+    assert invocations == [["run", "lint:css-tokens"]], invocations

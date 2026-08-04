@@ -88,6 +88,19 @@ If the live browser viewport leads React during a responsive host replacement,
 the arbiter carries one pane-and-route-fenced Search handoff; the incoming
 `PaneShell` acknowledges it only after its current publication is ready.
 
+A `FilterRows` producer publishes its domain View/Filter/Sort controls as
+`publication.filters`, ending with `Clear filters`, and reports
+`activeDomainControlCount` — the number of controls differing from that
+surface's canonical default, excluding the local query. `PaneShell` renders the
+collapsed marker and the accessible label **Filter, N control(s) active** from
+that count. The local query lives in `usePaneFilterRows`, keyed on a source key
+that must never embed the domain view: a view change replaces the pane URL on
+the same path, and the local text, the expanded row, and the focused native
+control all have to survive it. Every refinement-capable route therefore
+declares `queryNavigation: "in-place"` so its body is not remounted by the
+replacement, and `usePaneScrollRetention` restores the scrollport once the new
+view commits.
+
 `menu` is an `ActionPublication`. Resource panes publish an explicit canonical
 target and the four semantic groups `core | operations | relationships | view`;
 non-resource panes use `FlatMenu`. `PaneShell` resolves current-pane core policy

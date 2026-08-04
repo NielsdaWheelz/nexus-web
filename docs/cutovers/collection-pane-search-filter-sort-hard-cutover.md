@@ -4,6 +4,12 @@ Status: SOURCE CUTOVER VERIFIED — 2026-07-29; production cutover pending
 Type: hard cutover
 Date: 2026-07-29
 
+> **Collection refinement update (2026-08-03):**
+> [`collection-refinement-capability-hard-cutover.md`](collection-refinement-capability-hard-cutover.md)
+> supersedes the no-new-domain-sort boundary for Lectern, Author works, Chats,
+> Libraries, and the Notes index only. This document remains authoritative for
+> local text Filter behavior and shared composition.
+
 > **Library Type update (2026-08-02):**
 > [`library-entry-type-filter-and-filter-row-reflow-hard-cutover.md`](library-entry-type-filter-and-filter-row-reflow-hard-cutover.md)
 > supersedes the no-new-domain-filter boundary for the Library-entry `Type`

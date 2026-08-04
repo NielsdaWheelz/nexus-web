@@ -13,7 +13,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, assert_never
 from uuid import UUID
 
 from sqlalchemy import text
@@ -33,6 +33,8 @@ from nexus.schemas.collection_page import (
     CollectionCursor,
     CollectionPage,
     CollectionRevision,
+    ParsedCollectionQuery,
+    parse_collection_query,
 )
 from nexus.schemas.library import (
     CreateLibraryRequest,
@@ -45,6 +47,16 @@ from nexus.schemas.library import (
     LibraryRole,
 )
 from nexus.schemas.presence import absent, presence_from_nullable, present
+from nexus.services.collection_keyset import (
+    Direction,
+    SortKey,
+    after_values,
+    expected_kinds,
+    keyset_clause,
+    keyset_params,
+    order_by_sql,
+    plan_json,
+)
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_collection_families,
@@ -54,7 +66,6 @@ from nexus.services.collection_revisions import (
 )
 from nexus.services.sealed_handles import seal_user, unseal_user
 from nexus.services.signed_keyset_cursor import (
-    KeysetValue,
     KeysetValueKind,
     decode_signed_keyset_cursor,
     encode_signed_keyset_cursor,
@@ -607,15 +618,92 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDel
     )
 
 
+@dataclass(frozen=True, slots=True)
+class LibrariesCreatedOldest:
+    """Canonical: the earliest created Library first."""
+
+
+@dataclass(frozen=True, slots=True)
+class LibrariesCreatedNewest:
+    """The most recently created Library first."""
+
+
+@dataclass(frozen=True, slots=True)
+class LibrariesName:
+    direction: Direction
+
+
+type LibrariesIndexView = LibrariesCreatedOldest | LibrariesCreatedNewest | LibrariesName
+
+_INDEX_QUERY_KEYS = frozenset({"sort", "direction"})
+# Versioned family: a cursor minted under the single unordered index carried no
+# plan and no revision, so none is decodable against a chosen order.
+_INDEX_CURSOR_FAMILY = f"{CollectionFamily.LibrariesIndex.value}:v2"
+# The presented Library name, matching `libraries/presentation.ts`. Ordering on
+# the authored column would file the Default Library under a name no one sees.
+_PRESENTED_NAME_SQL = "CASE WHEN l.is_default THEN 'All' ELSE l.name END"
+
+
+def parse_libraries_index_query(
+    items: Sequence[tuple[str, str]],
+) -> tuple[LibrariesIndexView, ParsedCollectionQuery]:
+    """Strict Libraries-index view parse. ``items`` is the request's
+    ``multi_items()`` so duplicate keys are visible. Both keys absent is the
+    canonical oldest-first view; anything else must name one advertised
+    non-default view exactly. ``created+asc`` is rejected rather than normalized
+    so the canonical view keeps exactly one URL."""
+    query = parse_collection_query(items, domain_keys=_INDEX_QUERY_KEYS)
+    sort = query.parameters.get("sort")
+    direction = query.parameters.get("direction")
+    if sort is None and direction is None:
+        return LibrariesCreatedOldest(), query
+    if sort == "created" and direction == "desc":
+        return LibrariesCreatedNewest(), query
+    if sort == "name" and (direction == "asc" or direction == "desc"):
+        return LibrariesName(direction), query
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Libraries index view")
+
+
+def _index_plan(view: LibrariesIndexView) -> list[SortKey]:
+    """The total, stable sort-key plan that drives ORDER BY, the keyset, and the
+    cursor `after`. The Library id is unique, so every plan is total; the name
+    order keeps ``id ASC`` in both directions so identically named Libraries
+    always read in the same sequence."""
+    match view:
+        case LibrariesCreatedOldest():
+            return [
+                SortKey("created_at", "asc", KeysetValueKind.DateTime),
+                SortKey("id", "asc", KeysetValueKind.Uuid),
+            ]
+        case LibrariesCreatedNewest():
+            return [
+                SortKey("created_at", "desc", KeysetValueKind.DateTime),
+                SortKey("id", "desc", KeysetValueKind.Uuid),
+            ]
+        case LibrariesName(direction):
+            return [
+                SortKey("name_key", direction, KeysetValueKind.Text),
+                SortKey("presented_name", direction, KeysetValueKind.Text),
+                SortKey("id", "asc", KeysetValueKind.Uuid),
+            ]
+        case _:
+            assert_never(view)
+
+
 def list_libraries(
     db: Session,
     viewer_id: UUID,
     *,
+    view: LibrariesIndexView,
     cursor: CollectionCursor | None = None,
     collection_revision: CollectionRevision | None = None,
     limit: int = 100,
 ) -> CollectionPage[LibraryOut]:
-    """List one immutable-keyset page of the viewer's Libraries index."""
+    """List one immutable-keyset page of the viewer's Libraries index in the
+    requested total order. The ``facts`` wrapper projects the derived sort
+    columns once so ORDER BY, the keyset, and the cursor read identical
+    expressions; the returned cursor is bound to this exact viewer, plan, and
+    revision."""
     revision = (
         read_collection_revision(
             db,
@@ -630,39 +718,51 @@ def list_libraries(
             expected=collection_revision,
         )
     )
-    cursor_query = {"viewerId": str(viewer_id)}
-    cursor_clause = ""
+    plan = _index_plan(view)
+    cursor_query = {
+        "family": _INDEX_CURSOR_FAMILY,
+        "plan": plan_json(plan),
+        "revision": revision,
+        "viewerId": str(viewer_id),
+    }
+    keyset_sql = ""
     params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit + 1}
     if cursor is not None:
-        cursor_created_at, cursor_id = decode_signed_keyset_cursor(
-            cursor,
-            family=CollectionFamily.LibrariesIndex.value,
-            query=cursor_query,
-            expected_kinds=(
-                KeysetValueKind.DateTime,
-                KeysetValueKind.Uuid,
-            ),
+        keyset_sql = keyset_clause(plan, alias="facts")
+        params.update(
+            keyset_params(
+                plan,
+                decode_signed_keyset_cursor(
+                    cursor,
+                    family=_INDEX_CURSOR_FAMILY,
+                    query=cursor_query,
+                    expected_kinds=expected_kinds(plan),
+                ),
+            )
         )
-        if not isinstance(cursor_created_at, datetime) or not isinstance(cursor_id, UUID):
-            raise AssertionError("LibrariesIndex cursor decoded invalid key types")
-        cursor_clause = """
-          AND (
-            l.created_at > :cursor_created_at
-            OR (l.created_at = :cursor_created_at AND l.id > :cursor_id)
-          )
-        """
-        params.update({"cursor_created_at": cursor_created_at, "cursor_id": cursor_id})
 
     rows = (
         db.execute(
             text(f"""
-            SELECT l.id, l.name, l.color, l.owner_user_id, l.is_default,
-                   l.system_key, l.created_at, l.updated_at, m.role
-            FROM libraries l
-            JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+            WITH memberships_held AS (
+                SELECT l.id, l.name, l.color, l.owner_user_id, l.is_default,
+                       l.system_key, l.created_at, l.updated_at, m.role,
+                       {_PRESENTED_NAME_SQL} AS presented_name
+                FROM libraries l
+                JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+            ),
+            facts AS (
+                SELECT memberships_held.*,
+                       lower(btrim(memberships_held.presented_name)) AS name_key
+                FROM memberships_held
+            )
+            SELECT facts.id, facts.name, facts.color, facts.owner_user_id, facts.is_default,
+                   facts.system_key, facts.created_at, facts.updated_at, facts.role,
+                   facts.presented_name, facts.name_key
+            FROM facts
             WHERE 1 = 1
-              {cursor_clause}
-            ORDER BY l.created_at ASC, l.id ASC
+              {keyset_sql}
+            ORDER BY {order_by_sql(plan, alias="facts")}
             LIMIT :limit
         """),
             params,
@@ -673,15 +773,9 @@ def list_libraries(
     page_rows = rows[:limit]
     next_cursor = (
         encode_signed_keyset_cursor(
-            family=CollectionFamily.LibrariesIndex.value,
+            family=_INDEX_CURSOR_FAMILY,
             query=cursor_query,
-            after=(
-                KeysetValue(
-                    KeysetValueKind.DateTime,
-                    page_rows[-1]["created_at"],
-                ),
-                KeysetValue(KeysetValueKind.Uuid, page_rows[-1]["id"]),
-            ),
+            after=after_values(plan, page_rows[-1]),
         )
         if len(rows) > limit
         else None

@@ -5,7 +5,9 @@ import {
   type CollectionPage,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
+import { contributorWorksResource } from "@/lib/api/resource";
 import { decodeContributorDetail } from "@/lib/contributors/detail";
+import type { AuthorWorksView } from "@/lib/contributors/workView";
 import { parseContributorHandle } from "@/lib/contributors/handle";
 import { decodeContributorWorkItem } from "@/lib/contributors/workItem";
 import type {
@@ -116,28 +118,28 @@ export async function fetchContributorDetail(handle: string): Promise<Contributo
 }
 
 export interface ContributorWorksOptions {
-  cursor?: CollectionCursor;
-  collectionRevision?: CollectionRevision;
-  limit?: number;
-  signal?: AbortSignal;
+  /** The exact works view this page belongs to; every page of a chain shares it. */
+  readonly view: AuthorWorksView;
+  readonly cursor?: CollectionCursor;
+  readonly collectionRevision?: CollectionRevision;
+  readonly limit?: number;
+  readonly signal?: AbortSignal;
 }
 
 export async function fetchContributorWorks(
   handle: string,
-  options: ContributorWorksOptions = {},
+  { view, cursor, collectionRevision, limit, signal }: ContributorWorksOptions,
 ): Promise<CollectionPage<ContributorWorkItem>> {
-  const params = new URLSearchParams();
-  if (options.cursor) params.set("cursor", options.cursor);
-  if (options.collectionRevision !== undefined) {
-    params.set("collection_revision", String(options.collectionRevision));
-  }
-  if (options.limit !== undefined) params.set("limit", String(options.limit));
-  const suffix = params.toString();
-  const path = `/api/contributors/${encode(handle)}/works${suffix ? `?${suffix}` : ""}` as ApiPath;
-  const response = await apiFetch<unknown>(path, {
-    cache: "no-store",
-    signal: options.signal,
-  });
+  const response = await apiFetch<unknown>(
+    contributorWorksResource.clientPath({
+      handle,
+      view,
+      cursor,
+      collectionRevision,
+      limit,
+    }),
+    { cache: "no-store", signal },
+  );
   return decodeCollectionPage(response, decodeContributorWorkItem);
 }
 

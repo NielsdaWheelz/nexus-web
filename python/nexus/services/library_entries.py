@@ -62,6 +62,16 @@ from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
 from nexus.schemas.presence import Presence, absent, presence_from_nullable, present
 from nexus.services import library_governance as governance
 from nexus.services.billing_entitlements import get_effective_entitlements
+from nexus.services.collection_keyset import (
+    Direction,
+    SortKey,
+    after_values,
+    expected_kinds,
+    keyset_clause,
+    keyset_params,
+    order_by_sql,
+    plan_json,
+)
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_revisions,
@@ -83,7 +93,6 @@ from nexus.services.resource_mutation_replay import (
     record_replay,
 )
 from nexus.services.signed_keyset_cursor import (
-    KeysetValue,
     KeysetValueKind,
     decode_signed_keyset_cursor,
     encode_signed_keyset_cursor,
@@ -114,8 +123,6 @@ def _bump_entry_visibility_revisions(db: Session) -> None:
 # ---------------------------------------------------------------------------
 # Library view lenses — closed order/projection types and strict query parsing
 # ---------------------------------------------------------------------------
-
-type Direction = Literal["asc", "desc"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1932,70 +1939,46 @@ def remove_unsubscribed_podcast_placements(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class _SortKey:
-    """One key of a total keyset order: a facts-CTE column (== cursor `after`
-    key), its direction, and how the value round-trips through the cursor."""
-
-    column: str
-    direction: Direction
-    value: KeysetValueKind
-
-
-def _plan(order: LibraryEntryOrder, *, is_default: bool) -> list[_SortKey]:
+def _plan(order: LibraryEntryOrder, *, is_default: bool) -> list[SortKey]:
     """The total, stable sort-key plan that drives ORDER BY, the keyset, and the
     cursor `after`. Every plan ends in the heterogeneous target identity
     ``target_kind ASC, target_id DESC``; missing-rank keys are ALWAYS ASC so
     missing sorts last in both directions (0=present, 1=missing)."""
     identity = [
-        _SortKey("target_kind", "asc", KeysetValueKind.Text),
-        _SortKey("target_id", "desc", KeysetValueKind.Uuid),
+        SortKey("target_kind", "asc", KeysetValueKind.Text),
+        SortKey("target_id", "desc", KeysetValueKind.Uuid),
     ]
     match order:
         case Canonical():
             if is_default:
                 return [
-                    _SortKey("added_at", "desc", KeysetValueKind.DateTime),
+                    SortKey("added_at", "desc", KeysetValueKind.DateTime),
                     *identity,
                 ]
             return [
-                _SortKey("position", "asc", KeysetValueKind.Int),
+                SortKey("position", "asc", KeysetValueKind.Int),
                 *identity,
             ]
         case Title(direction):
-            return [_SortKey("title_key", direction, KeysetValueKind.Text), *identity]
+            return [SortKey("title_key", direction, KeysetValueKind.Text), *identity]
         case Creator(direction):
             return [
-                _SortKey("creator_missing", "asc", KeysetValueKind.Int),
-                _SortKey("creator_name", direction, KeysetValueKind.TextOrNull),
-                _SortKey("title_key", "asc", KeysetValueKind.Text),
+                SortKey("creator_missing", "asc", KeysetValueKind.Int),
+                SortKey("creator_name", direction, KeysetValueKind.TextOrNull),
+                SortKey("title_key", "asc", KeysetValueKind.Text),
                 *identity,
             ]
         case Published(direction):
             return [
-                _SortKey("published_missing", "asc", KeysetValueKind.Int),
-                _SortKey("published_date", direction, KeysetValueKind.TextOrNull),
-                _SortKey("title_key", "asc", KeysetValueKind.Text),
+                SortKey("published_missing", "asc", KeysetValueKind.Int),
+                SortKey("published_date", direction, KeysetValueKind.TextOrNull),
+                SortKey("title_key", "asc", KeysetValueKind.Text),
                 *identity,
             ]
         case Added(direction):
-            return [_SortKey("added_at", direction, KeysetValueKind.DateTime), *identity]
+            return [SortKey("added_at", direction, KeysetValueKind.DateTime), *identity]
         case _:
             assert_never(order)
-
-
-def _keyset_clause(plan: Sequence[_SortKey]) -> str:
-    """Generic strict keyset over the plan. Equality via ``IS NOT DISTINCT FROM``
-    is NULL-safe; strict ``<``/``>`` on a NULL bound yields NULL (false), which is
-    correct because the leading missing-rank key already partitions the
-    present/missing buckets before any nullable value key is compared."""
-    ors = []
-    for i, key in enumerate(plan):
-        conj = [f"facts.{p.column} IS NOT DISTINCT FROM :ks_{p.column}" for p in plan[:i]]
-        op = ">" if key.direction == "asc" else "<"
-        conj.append(f"facts.{key.column} {op} :ks_{key.column}")
-        ors.append("(" + " AND ".join(conj) + ")")
-    return "AND (" + " OR ".join(ors) + ")"
 
 
 def _order_json(order: LibraryEntryOrder) -> dict[str, str]:
@@ -2052,19 +2035,12 @@ def _cursor_query(
     viewer_id: UUID,
     library_id: UUID,
     view: LibraryEntryView,
-    plan: Sequence[_SortKey],
+    plan: Sequence[SortKey],
     is_default: bool,
 ) -> dict[str, object]:
     query: dict[str, object] = {
         "libraryId": str(library_id),
-        "plan": [
-            {
-                "column": key.column,
-                "direction": key.direction,
-                "valueKind": key.value.value,
-            }
-            for key in plan
-        ],
+        "plan": plan_json(plan),
         "view": _view_json(view),
         "viewerId": str(viewer_id),
     }
@@ -2078,7 +2054,7 @@ def _encode_view_cursor(
     viewer_id: UUID,
     library_id: UUID,
     view: LibraryEntryView,
-    plan: Sequence[_SortKey],
+    plan: Sequence[SortKey],
     is_default: bool,
     row: Any,
 ) -> str:
@@ -2091,7 +2067,7 @@ def _encode_view_cursor(
             plan=plan,
             is_default=is_default,
         ),
-        after=tuple(KeysetValue(key.value, row[key.column]) for key in plan),
+        after=after_values(plan, row),
     )
 
 
@@ -2101,7 +2077,7 @@ def _decode_view_cursor(
     viewer_id: UUID,
     library_id: UUID,
     view: LibraryEntryView,
-    plan: Sequence[_SortKey],
+    plan: Sequence[SortKey],
     is_default: bool,
 ) -> dict[str, object]:
     values = decode_signed_keyset_cursor(
@@ -2114,9 +2090,9 @@ def _decode_view_cursor(
             plan=plan,
             is_default=is_default,
         ),
-        expected_kinds=tuple(key.value for key in plan),
+        expected_kinds=expected_kinds(plan),
     )
-    return {f"ks_{key.column}": value for key, value in zip(plan, values, strict=True)}
+    return keyset_params(plan, values)
 
 
 def _finish_entry_page(
@@ -2366,8 +2342,8 @@ def _query_view_page(
                 entry_type_param = value.value
         case _:
             assert_never(view.entry_type)
-    keyset_clause = _keyset_clause(plan) if after is not None else ""
-    order_by = ", ".join(f"facts.{key.column} {key.direction.upper()}" for key in plan)
+    keyset_sql = keyset_clause(plan, alias="facts") if after is not None else ""
+    order_by = order_by_sql(plan, alias="facts")
 
     params: dict[str, object] = {
         "viewer_id": viewer_id,
@@ -2427,7 +2403,7 @@ def _query_view_page(
                 WHERE 1 = 1
                   {entry_type_clause}
                   {projection_clause}
-                  {keyset_clause}
+                  {keyset_sql}
                 ORDER BY {order_by}
                 LIMIT :limit
             """),

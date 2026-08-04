@@ -11,20 +11,6 @@
   white-space: nowrap;
 }
 
-.scopeField {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  line-height: var(--leading-snug);
-}
-
-.scopeField > div {
-  min-width: 9rem;
-}
-
 .status {
   max-width: 16rem;
   overflow: hidden;

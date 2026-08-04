@@ -11,9 +11,11 @@ import {
 } from "@/components/feedback/Feedback";
 import CollectionView from "@/components/collections/CollectionView";
 import SectionOpener from "@/components/ui/SectionOpener";
+import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { notePagesResource } from "@/lib/api/resource";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   requirePaneRuntime,
@@ -23,19 +25,42 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { createNotePage } from "@/lib/notes/api";
 import { useOpenDailyPage } from "@/lib/notes/openDailyPage";
+import {
+  CANONICAL_NOTES_INDEX_VIEW,
+  NOTES_SORT_OPTION_IDS,
+  decodeNotesIndexView,
+  encodeNotesIndexView,
+  notesSortOptionLabel,
+  notesSortOptionOf,
+  notesViewForSortOption,
+  type DecodedNotesIndexView,
+  type NotesIndexView,
+  type NotesSortOptionId,
+} from "@/lib/notes/pageIndexView";
 import { PROGRAMMATIC_NEXUS_TARGET_ACTIVATION } from "@/lib/nexus/dispatch";
-import type { NotePageSummary } from "@/lib/notes/normalize";
+import { normalizePageSummary, type NotePageSummary } from "@/lib/notes/normalize";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
-import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
-import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import { presentNote } from "@/lib/collections/presenters/note";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import styles from "./notes.module.css";
 
 const EMPTY_NOTE_PAGES: readonly NotePageSummary[] = [];
+
+/** The index committed as one exact view. The endpoint is exhaustive. */
+interface CommittedPagesView {
+  readonly view: NotesIndexView;
+  readonly pages: readonly NotePageSummary[];
+}
+
+// The one code that turns a request failure into the "Invalid pages view"
+// terminal state: the backend rejects a view it does not advertise with it.
+function isInvalidViewError(error: unknown): boolean {
+  return isApiError(error) && error.code === "E_INVALID_REQUEST";
+}
 
 export type NotesOperation = "Load" | "CreatePage" | "OpenToday";
 
@@ -119,7 +144,6 @@ export default function NotesPaneBody() {
     usePaneRuntime(),
     "NotesPaneBody",
   ).activateTarget;
-  const [localPages, setLocalPages] = useState<NotePageSummary[] | null>(null);
   const {
     value: title,
     setValue: setTitle,
@@ -136,29 +160,113 @@ export default function NotesPaneBody() {
     pageId: string;
     title: string;
   } | null>(null);
-  const pagesResource = useResource<NotePageSummary[], NoResourceParams>({
-    descriptor: notePagesResource,
-    params: {},
-    load: (params, signal) =>
-      paneResourceLoaders.notes!.load(
-        clientResourceFetcher(signal),
-        params,
-      ) as Promise<NotePageSummary[]>,
-  });
-  usePaneReturnReady(
-    pagesResource.status === "ready" || pagesResource.status === "error",
+
+  // The pane URL owns the index view through a strict, total codec; `view` is
+  // null only for an Invalid URL, a terminal, user-recoverable state.
+  const pagesViewCodec = useMemo(
+    () => ({
+      basePath: "/notes",
+      decode: decodeNotesIndexView,
+      encode: (
+        decoded: DecodedNotesIndexView,
+        current: URLSearchParams,
+      ): URLSearchParams =>
+        encodeNotesIndexView(
+          decoded.kind === "Valid" ? decoded.view : CANONICAL_NOTES_INDEX_VIEW,
+          current,
+        ),
+      replaceOptions: {
+        viewTransition: { kind: "collection-reflow" as const },
+      },
+    }),
+    [],
   );
-  const resourcePages =
-    pagesResource.status === "ready" ? pagesResource.data : null;
-  const pages = localPages ?? resourcePages ?? EMPTY_NOTE_PAGES;
-  const loading = pagesResource.status === "loading" && pages.length === 0;
+  const { state: decodedView, setState: setDecodedView } =
+    usePaneUrlState(pagesViewCodec);
+  const view = decodedView.kind === "Valid" ? decodedView.view : null;
+  // Set when the backend rejects the requested view; cleared whenever another
+  // view is requested.
+  const [viewInvalid, setViewInvalid] = useState(false);
+  const invalidView = decodedView.kind === "Invalid" || viewInvalid;
+  const [committed, setCommitted] = useState<CommittedPagesView | null>(null);
+  const listRegionRef = useRef<HTMLDivElement | null>(null);
+  const capturePaneScroll = usePaneScrollRetention(listRegionRef, committed);
+  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
+  // Set before a view replacement the user initiated from the sort control, so
+  // the commit that answers it returns focus there.
+  const pendingCommitFocusRef = useRef(false);
+  const focusPendingSortControl = useCallback(() => {
+    if (!pendingCommitFocusRef.current) return;
+    pendingCommitFocusRef.current = false;
+    const element = sortSelectRef.current;
+    if (element === null) return;
+    requestAnimationFrame(() => element.focus());
+  }, []);
+  // A view replacement only writes the URL: the committed rows stay rendered
+  // until the requested/committed mismatch it creates is answered.
+  const setView = useCallback(
+    (next: NotesIndexView) => {
+      capturePaneScroll();
+      setDecodedView({ kind: "Valid", view: next });
+    },
+    [capturePaneScroll, setDecodedView],
+  );
+
+  const requestedViewKey =
+    view === null ? null : notePagesResource.cacheKey({ view });
+  const committedViewKey =
+    committed === null
+      ? null
+      : notePagesResource.cacheKey({ view: committed.view });
+  // The canonical view is the route's server seed (whose resource key this one
+  // matches); every other exact view owns its own request. An invalid view
+  // requests nothing at all.
+  const requestsFirstPage =
+    view === null ||
+    committed === null ||
+    requestedViewKey !== committedViewKey;
+  const pagesResource = useResource<readonly NotePageSummary[]>({
+    cacheKey: requestsFirstPage && !invalidView ? requestedViewKey : null,
+    load: async (signal) => {
+      if (view === null) {
+        // justify-defect: a non-null request key is built from this exact view.
+        throw new Error("Notes index request lost its view identity");
+      }
+      const envelope = await apiFetch<{
+        data: { pages?: Record<string, unknown>[] };
+      }>(notePagesResource.clientPath({ view }), { signal });
+      return (envelope.data.pages ?? []).map(normalizePageSummary);
+    },
+  });
+  // Latest-wins atomic commit: the resource reports a result only under the
+  // current request identity, so a superseded view can never install its rows.
+  useEffect(() => {
+    if (pagesResource.status === "ready" && view !== null) {
+      setCommitted({ view, pages: pagesResource.data });
+      focusPendingSortControl();
+      return;
+    }
+    if (
+      pagesResource.status === "error" &&
+      isInvalidViewError(pagesResource.error)
+    ) {
+      setViewInvalid(true);
+    }
+  }, [focusPendingSortControl, pagesResource, view]);
+  // A newly requested view retires the previous view's rejection.
+  useEffect(() => setViewInvalid(false), [requestedViewKey]);
+  usePaneReturnReady(
+    committed !== null || pagesResource.status === "error" || invalidView,
+  );
+  const pages = committed?.pages ?? EMPTY_NOTE_PAGES;
+  const loading = committed === null && pagesResource.status !== "error";
   const getFilterStatus = useCallback(
     (query: string) => {
       const visibleCount = pages.filter((page) =>
         matchesPaneFilterQuery(query, [page.title]),
       ).length;
       const unit = { singular: "page", plural: "pages" };
-      return pagesResource.status === "ready"
+      return committed !== null
         ? {
             kind: "Complete" as const,
             visibleCount,
@@ -172,15 +280,57 @@ export default function NotesPaneBody() {
             unit,
           };
     },
-    [pages, pagesResource.status],
+    [committed, pages],
+  );
+  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
+  const clearDomainFilters = useCallback(() => {
+    dismissFilterRowsRef.current();
+    pendingCommitFocusRef.current = true;
+    setView(CANONICAL_NOTES_INDEX_VIEW);
+  }, [setView]);
+  const domainFilterControls = useMemo(
+    () =>
+      invalidView || view === null ? undefined : (
+        <>
+          <SelectField
+            layout="Stacked"
+            label="Sort by"
+            ref={sortSelectRef}
+            value={notesSortOptionOf(view)}
+            onChange={(event) => {
+              pendingCommitFocusRef.current = true;
+              setView(
+                notesViewForSortOption(
+                  event.target.value as NotesSortOptionId,
+                ),
+              );
+            }}
+          >
+            {NOTES_SORT_OPTION_IDS.map((optionId) => (
+              <option key={optionId} value={optionId}>
+                {notesSortOptionLabel(optionId)}
+              </option>
+            ))}
+          </SelectField>
+          {view.kind === "Canonical" ? null : (
+            <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
+              Clear filters
+            </Button>
+          )}
+        </>
+      ),
+    [clearDomainFilters, invalidView, setView, view],
   );
   const { query: filterQuery, publication: search } = usePaneFilterRows({
     sourceKey: "Notes.Pages",
     inputLabel: "Filter pages",
     placeholder: "Filter pages",
     getRowStatus: getFilterStatus,
-    activeDomainControlCount: 0,
+    activeDomainControlCount:
+      view === null || invalidView || view.kind === "Canonical" ? 0 : 1,
+    filters: domainFilterControls,
   });
+  dismissFilterRowsRef.current = search.onDismiss;
   const filteredPages = useMemo(
     () =>
       pages.filter((page) => matchesPaneFilterQuery(filterQuery, [page.title])),
@@ -192,19 +342,14 @@ export default function NotesPaneBody() {
     search,
     header: {
       kind: "section",
+      // The folio describes the exhaustive committed view, never the subset.
       folio:
-        pagesResource.status === "ready"
+        committed !== null && !invalidView
           ? { kind: "count", value: pages.length, unit: "page" }
           : { kind: "none" },
       pending: pagesResource.status === "loading",
     },
   });
-
-  useEffect(() => {
-    if (pagesResource.status === "ready") {
-      setLocalPages(pagesResource.data);
-    }
-  }, [pagesResource]);
 
   const captureFailure = useCallback(
     (error: unknown, operation: NotesOperation): FeedbackContent | null => {
@@ -244,7 +389,11 @@ export default function NotesPaneBody() {
       const page = await createNotePage(intent.replay);
       pageCreateReplayRef.current = null;
       setFailedCreateIntent(null);
-      setLocalPages((current) => [page, ...(current ?? resourcePages ?? [])]);
+      setCommitted((current) =>
+        current === null
+          ? current
+          : { ...current, pages: [page, ...current.pages] },
+      );
       setTitle("");
       setPendingNoteFocus({
         pageId: page.id,
@@ -271,7 +420,7 @@ export default function NotesPaneBody() {
         });
       }
     }
-  }, [activateTarget, captureFailure, resourcePages, setTitle]);
+  }, [activateTarget, captureFailure, setTitle]);
 
   const createPage = useCallback(() => {
     const trimmedTitle = title.trim();
@@ -293,8 +442,32 @@ export default function NotesPaneBody() {
 
   if (defectState !== null) throw defectState.error;
 
+  if (invalidView) {
+    return (
+      <FeedbackNotice
+        content={{ tone: "Danger", title: "Invalid pages view" }}
+        announcement="Assertive"
+        actions={[
+          {
+            label: "Reset view",
+            onClick: () => {
+              search.onDismiss();
+              setDecodedView({
+                kind: "Valid",
+                view: CANONICAL_NOTES_INDEX_VIEW,
+              });
+            },
+          },
+        ]}
+      />
+    );
+  }
+
+  // A rejected view is the terminal state above, not a load failure: the copy
+  // adapter models neither, so it is never asked about one.
   const loadFeedback =
-    pagesResource.status === "error"
+    pagesResource.status === "error" &&
+    !isInvalidViewError(pagesResource.error)
       ? {
           content: notesErrorMessage(pagesResource.error, "Load"),
           actions: [
@@ -315,6 +488,7 @@ export default function NotesPaneBody() {
       : null);
 
   return (
+    <div ref={listRegionRef}>
     <CollectionView
       returnScope="Notes.Pages"
       rows={filteredPages.map((page) => presentNote(page))}
@@ -333,7 +507,7 @@ export default function NotesPaneBody() {
             actions={visibleFeedback.actions}
           />
         ) : filterQuery.trim() &&
-          pagesResource.status !== "ready" &&
+          committed === null &&
           filteredPages.length === 0 ? (
           <FeedbackNotice
             content={{
@@ -350,7 +524,7 @@ export default function NotesPaneBody() {
             content={{
               tone: "Neutral",
               title:
-                pagesResource.status === "ready"
+                committed !== null
                   ? "No pages match this filter."
                   : "No matching page found so far.",
             }}
@@ -392,5 +566,6 @@ export default function NotesPaneBody() {
         </>
       }
     />
+    </div>
   );
 }

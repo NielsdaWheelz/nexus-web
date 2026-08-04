@@ -1347,9 +1347,18 @@ def _run_static_web(context: CapabilityContext, environment: Mapping[str, str]) 
         paths = _selected_files(context, "apps/web/", _WEB_STATIC_SUFFIXES)
         if not paths:
             return _pass(Capability.STATIC_WEB, "no selected web static input")
-        relative = tuple(f"./{path.removeprefix('apps/web/')}" for path in paths)
-        commands = ((("bun", "run", "eslint", "--max-warnings", "0", *relative), web_root),)
-        if any(path.endswith(".css") for path in paths):
+        # Stylesheets belong to the token owner; ESLint has no configuration for
+        # them, so passing one would fail the `--max-warnings 0` command on its
+        # own "File ignored" warning.
+        scripts = tuple(
+            f"./{path.removeprefix('apps/web/')}" for path in paths if not path.endswith(".css")
+        )
+        commands = (
+            ((("bun", "run", "eslint", "--max-warnings", "0", *scripts), web_root),)
+            if scripts
+            else ()
+        )
+        if len(scripts) != len(paths):
             commands = ((("bun", "run", "lint:css-tokens"), web_root), *commands)
     return _run_fixed_commands(
         Capability.STATIC_WEB,

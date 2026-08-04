@@ -761,7 +761,7 @@ export default function PaneShell({
       acceptedSearch.kind === "FilterRows" ? "Filter" : "Find";
     const collapsedSearchLabel =
       !searchExpanded && activeDomainControlCount > 0
-        ? `${searchLabel}, ${activeDomainControlCount} controls active`
+        ? `${searchLabel}, ${activeDomainControlCount} ${activeDomainControlCount === 1 ? "control" : "controls"} active`
         : searchLabel;
     const actions: PaneHeaderAction[] = [
       ...effectiveActions,

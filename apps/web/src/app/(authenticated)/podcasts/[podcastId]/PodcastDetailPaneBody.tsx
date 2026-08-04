@@ -23,6 +23,7 @@ import {
 import { presenceValueOr, type Presence } from "@/lib/api/presence";
 import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { useResource } from "@/lib/api/useResource";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import { retryMediaMetadata } from "@/lib/media/ingestionClient";
@@ -41,11 +42,22 @@ import {
   usePaneReturnReady,
   usePaneRuntime,
   requirePaneRuntime,
-  usePaneRouter,
-  usePaneSearchParams,
   usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import {
+  CANONICAL_PODCAST_EPISODE_VIEW,
+  EPISODE_SORTS,
+  EPISODE_STATE_FILTERS,
+  activeEpisodeControlCount,
+  decodePodcastEpisodeView,
+  encodePodcastEpisodeView,
+  episodeSortLabel,
+  episodeStateFilterLabel,
+  podcastEpisodeViewQuery,
+  type DecodedPodcastEpisodeView,
+  type EpisodeSort,
+} from "@/lib/podcasts/episodeView";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import {
   canonicalSessionOfGlobalState,
@@ -74,7 +86,7 @@ import {
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
-import Select from "@/components/ui/Select";
+import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
@@ -98,8 +110,6 @@ import {
   deriveEpisodeState,
   decodePodcastEpisodeMedia,
   episodeMatchesFilter,
-  type EpisodeSort,
-  type EpisodeStateFilter,
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
 import {
@@ -285,7 +295,7 @@ interface PodcastDetailSnapshot {
 
 interface PendingPodcastDetailRevalidation {
   readonly nonce: number;
-  readonly sourceKey: string;
+  readonly sourceKey: string | null;
   readonly resolve: () => void;
   readonly reject: (error: unknown) => void;
   readonly removeAbortListener: () => void;
@@ -326,14 +336,12 @@ function formatEpisodeUpdateStatus(
 
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
-  const paneRouter = usePaneRouter();
   const paneRuntime = requirePaneRuntime(
     usePaneRuntime(),
     "PodcastDetailPaneBody",
   );
   const isPaneActive = usePaneIsActive();
   const activateTarget = paneRuntime.activateTarget;
-  const paneSearchParams = usePaneSearchParams();
   const { account: billingAccount } = useBillingAccount();
   const { state: playerState } = usePlayerSession();
   const lectern = useLectern();
@@ -396,34 +404,34 @@ export default function PodcastDetailPaneBody() {
       return { ...current, podcastLibraries };
     });
   }, []);
-  const [episodeStateFilter, setEpisodeStateFilter] =
-    useState<EpisodeStateFilter>(() => {
-      const stateParam = paneSearchParams.get("state");
-      if (
-        stateParam === "unplayed" ||
-        stateParam === "in_progress" ||
-        stateParam === "played"
-      ) {
-        return stateParam;
-      }
-      return "all";
-    });
-  const [episodeSort, setEpisodeSort] = useState<EpisodeSort>(() => {
-    const sortParam = paneSearchParams.get("sort");
-    if (
-      sortParam === "oldest" ||
-      sortParam === "duration_asc" ||
-      sortParam === "duration_desc"
-    ) {
-      return sortParam;
-    }
-    return "newest";
-  });
-  const episodeQueryIdentity = [
-    podcastId,
-    episodeStateFilter,
-    episodeSort,
-  ].join("\u0000");
+  // The pane URL owns the episode view through a strict, total codec; `view` is
+  // null only when the URL is Invalid, which is a terminal, user-recoverable
+  // state that requests nothing.
+  const episodeViewCodec = useMemo(
+    () => ({
+      basePath: `/podcasts/${podcastId ?? ""}`,
+      decode: decodePodcastEpisodeView,
+      encode: (decoded: DecodedPodcastEpisodeView, current: URLSearchParams) =>
+        encodePodcastEpisodeView(
+          decoded.kind === "Valid"
+            ? decoded.view
+            : CANONICAL_PODCAST_EPISODE_VIEW,
+          current,
+        ),
+      replaceOptions: {
+        viewTransition: { kind: "collection-reflow" } as const,
+      },
+    }),
+    [podcastId],
+  );
+  const { state: decodedView, setState: setDecodedView } =
+    usePaneUrlState(episodeViewCodec);
+  const view = decodedView.kind === "Valid" ? decodedView.view : null;
+  // The request identity is the podcast plus the exact API query the view names.
+  const episodeQueryIdentity =
+    view === null
+      ? null
+      : [podcastId, podcastEpisodeViewQuery(view).toString()].join("\u0000");
   const busyEpisodeActionKeys = useStringIdSet();
   const episodeListRegionRef = useRef<HTMLDivElement | null>(null);
   const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
@@ -461,7 +469,6 @@ export default function PodcastDetailPaneBody() {
   const unconfirmedMetadataMediaIds = useStringIdSet();
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const expandedShowNotesMediaIds = useStringIdSet();
-  const episodeUrlSyncedRef = useRef(false);
   const [loading, setLoading] = useState(restored === null);
   const [suppressInitialLoad, setSuppressInitialLoad] = useState(
     restored !== null,
@@ -536,14 +543,8 @@ export default function PodcastDetailPaneBody() {
   const { clear: clearExpandedShowNotesMediaIds } = expandedShowNotesMediaIds;
   const closeSettingsModal = settingsModal.close;
   const podcastDetailCacheKey =
-    podcastId && !suppressInitialLoad
-      ? [
-          "podcast-detail",
-          podcastId,
-          episodeStateFilter,
-          episodeSort,
-          reloadNonce,
-        ].join(":")
+    episodeQueryIdentity !== null && !suppressInitialLoad
+      ? ["podcast-detail", episodeQueryIdentity, reloadNonce].join(":")
       : null;
   const rejectPendingPodcastDetailRevalidation = useCallback(
     (refreshError: unknown) => {
@@ -556,7 +557,10 @@ export default function PodcastDetailPaneBody() {
     },
     [],
   );
-  const reload = useCallback(() => {
+  // Abandons the committed chain so the next first page is adopted afresh. A
+  // view change needs only this: the view is already part of the request
+  // identity.
+  const resetEpisodeChain = useCallback(() => {
     rejectPendingPodcastDetailRevalidation(
       new DOMException("Podcast refresh was superseded.", "AbortError"),
     );
@@ -567,10 +571,15 @@ export default function PodcastDetailPaneBody() {
     committedSnapshotRef.current = null;
     clearAllVisitData();
     setSuppressInitialLoad(false);
+  }, [clearAllVisitData, rejectPendingPodcastDetailRevalidation]);
+  // A reload keeps the view, so only a fresh nonce makes the request identity
+  // differ from the one already loaded.
+  const reload = useCallback(() => {
+    resetEpisodeChain();
     const nonce = reloadNonceRef.current + 1;
     reloadNonceRef.current = nonce;
     setReloadNonce(nonce);
-  }, [clearAllVisitData, rejectPendingPodcastDetailRevalidation]);
+  }, [resetEpisodeChain]);
   const revalidatePodcastDetail = useCallback(
     (signal: AbortSignal): Promise<void> => {
       if (signal.aborted) {
@@ -631,12 +640,14 @@ export default function PodcastDetailPaneBody() {
       return;
     }
     previousEpisodeQueryIdentityRef.current = episodeQueryIdentity;
-    reload();
-  }, [episodeQueryIdentity, reload]);
+    resetEpisodeChain();
+  }, [episodeQueryIdentity, resetEpisodeChain]);
 
   const transcript = useEpisodeTranscriptController({
     podcastId: podcastId ?? "",
-    selection: { state: episodeStateFilter },
+    // No episode commits while the view is Invalid, so the batch transcript
+    // command this selection describes is unreachable there.
+    selection: { state: (view ?? CANONICAL_PODCAST_EPISODE_VIEW).state },
     episodes,
     setEpisodes,
     transcriptionAllowed,
@@ -648,14 +659,11 @@ export default function PodcastDetailPaneBody() {
 
   const fetchPodcastDetail = useCallback(
     async (signal?: AbortSignal): Promise<PodcastDetailLoadResult> => {
-      if (!podcastId) {
-        throw new Error("Podcast id is missing");
+      if (!podcastId || view === null) {
+        throw new Error("Podcast episodes require an addressable view");
       }
-      const episodeParams = new URLSearchParams({
-        limit: String(EPISODES_PAGE_SIZE),
-        state: episodeStateFilter,
-        sort: episodeSort,
-      });
+      const episodeParams = podcastEpisodeViewQuery(view);
+      episodeParams.set("limit", String(EPISODES_PAGE_SIZE));
 
       const fetchOptions = signal ? { signal } : undefined;
       const [detailResp, episodesResp] = await Promise.all([
@@ -682,11 +690,12 @@ export default function PodcastDetailPaneBody() {
         podcastLibraries,
       };
     },
-    [episodeSort, episodeStateFilter, podcastId],
+    [podcastId, view],
   );
 
   const applyPodcastDetailLoad = useCallback(
     (result: PodcastDetailLoadResult) => {
+      if (episodeQueryIdentity === null) return;
       reconciliationPendingRef.current = false;
       const snapshot: PodcastDetailSnapshot = {
         detail: result.detail,
@@ -721,7 +730,7 @@ export default function PodcastDetailPaneBody() {
   });
 
   useEffect(() => {
-    if (!podcastId) {
+    if (!podcastId || view === null) {
       setLoading(false);
       setError(null);
       return;
@@ -770,6 +779,7 @@ export default function PodcastDetailPaneBody() {
     podcastId,
     rejectPendingPodcastDetailRevalidation,
     reloadNonce,
+    view,
   ]);
 
   useLayoutEffect(() => {
@@ -794,22 +804,9 @@ export default function PodcastDetailPaneBody() {
     pending.resolve();
   }, [controller, episodeQueryIdentity]);
 
-  usePaneReturnReady((!loading && controller !== null) || error !== null);
-
-  useEffect(() => {
-    if (!podcastId) {
-      return;
-    }
-    const params = new URLSearchParams();
-    params.set("state", episodeStateFilter);
-    params.set("sort", episodeSort);
-    const nextHref = `/podcasts/${podcastId}?${params.toString()}`;
-    const transitionOptions = episodeUrlSyncedRef.current
-      ? { viewTransition: { kind: "collection-reflow" as const } }
-      : undefined;
-    episodeUrlSyncedRef.current = true;
-    paneRouter.replace(nextHref, transitionOptions);
-  }, [episodeSort, episodeStateFilter, paneRouter, podcastId]);
+  usePaneReturnReady(
+    (!loading && controller !== null) || error !== null || view === null,
+  );
 
   const loadEpisodePage = useCallback(
     async (
@@ -817,23 +814,20 @@ export default function PodcastDetailPaneBody() {
       revision: CollectionRevision,
       signal: AbortSignal,
     ) => {
-      if (!podcastId) {
-        throw new Error("Podcast id is missing");
+      if (!podcastId || view === null) {
+        throw new Error("Podcast episodes require an addressable view");
       }
-      const episodeParams = new URLSearchParams({
-        limit: String(EPISODES_PAGE_SIZE),
-        state: episodeStateFilter,
-        sort: episodeSort,
-        cursor,
-        collection_revision: String(revision),
-      });
+      const episodeParams = podcastEpisodeViewQuery(view);
+      episodeParams.set("limit", String(EPISODES_PAGE_SIZE));
+      episodeParams.set("cursor", cursor);
+      episodeParams.set("collection_revision", String(revision));
       const response = await apiFetch<unknown>(
         `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
         { signal },
       );
       return decodeCollectionPage(response, decodePodcastEpisodeMedia);
     },
-    [episodeSort, episodeStateFilter, podcastId],
+    [podcastId, view],
   );
   const commitEpisodePage = useCallback(
     (page: CollectionPage<PodcastEpisodeMedia>) => {
@@ -869,9 +863,7 @@ export default function PodcastDetailPaneBody() {
       controller !== null &&
       controller.queryIdentity === episodeQueryIdentity &&
       !reconciliationPendingRef.current,
-    chainKey: [podcastId, episodeStateFilter, episodeSort, chainEpoch].join(
-      ":",
-    ),
+    chainKey: [episodeQueryIdentity, chainEpoch].join(":"),
     cursor: controller?.nextCursor ?? { kind: "Absent" },
     collectionRevision:
       controller?.collectionRevision ?? (0 as CollectionRevision),
@@ -880,49 +872,74 @@ export default function PodcastDetailPaneBody() {
     commitPage: commitEpisodePage,
     refresh: reload,
   });
+  const activeDomainControlCount =
+    view === null ? 0 : activeEpisodeControlCount(view);
+  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
+  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
+  // Clear filters and Reset view both remove themselves by installing the
+  // canonical view; the commit that removes them returns focus to Sort by.
+  const pendingCommitFocusRef = useRef(false);
+  useEffect(() => {
+    if (!pendingCommitFocusRef.current) return;
+    pendingCommitFocusRef.current = false;
+    sortSelectRef.current?.focus();
+  }, [view]);
+  const resetToCanonicalView = useCallback(() => {
+    dismissFilterRowsRef.current();
+    pendingCommitFocusRef.current = true;
+    setDecodedView({ kind: "Valid", view: CANONICAL_PODCAST_EPISODE_VIEW });
+  }, [setDecodedView]);
   const episodeFilterNodes = useMemo(
-    () => (
-      <>
-        <div className={styles.episodeFilterPills}>
-          {(
-            [
-              ["all", "All"],
-              ["unplayed", "Unplayed"],
-              ["in_progress", "In Progress"],
-              ["played", "Played"],
-            ] as const
-          ).map(([value, label]) => (
-            <Button
-              key={value}
-              variant="pill"
-              size="sm"
-              className={styles.episodeFilterPill}
-              aria-pressed={episodeStateFilter === value}
-              onClick={() => setEpisodeStateFilter(value)}
-            >
-              {label}
-            </Button>
-          ))}
-        </div>
-        <label className={styles.episodeSortLabel}>
-          Episode sort
-          <Select
+    () =>
+      view === null ? undefined : (
+        <>
+          <div className={styles.episodeFilterPills}>
+            {EPISODE_STATE_FILTERS.map((state) => (
+              <Button
+                key={state}
+                variant="pill"
+                size="sm"
+                className={styles.episodeFilterPill}
+                aria-pressed={view.state === state}
+                onClick={() =>
+                  setDecodedView({ kind: "Valid", view: { ...view, state } })
+                }
+              >
+                {episodeStateFilterLabel(state)}
+              </Button>
+            ))}
+          </div>
+          <SelectField
+            layout="Stacked"
+            label="Sort by"
             size="sm"
-            aria-label="Episode sort"
-            value={episodeSort}
+            ref={sortSelectRef}
+            value={view.sort}
             onChange={(event) =>
-              setEpisodeSort(event.target.value as EpisodeSort)
+              setDecodedView({
+                kind: "Valid",
+                view: { ...view, sort: event.target.value as EpisodeSort },
+              })
             }
           >
-            <option value="newest">Newest</option>
-            <option value="oldest">Oldest</option>
-            <option value="duration_asc">Shortest</option>
-            <option value="duration_desc">Longest</option>
-          </Select>
-        </label>
-      </>
-    ),
-    [episodeSort, episodeStateFilter],
+            {EPISODE_SORTS.map((sort) => (
+              <option key={sort} value={sort}>
+                {episodeSortLabel(sort)}
+              </option>
+            ))}
+          </SelectField>
+          {activeDomainControlCount > 0 ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={resetToCanonicalView}
+            >
+              Clear filters
+            </Button>
+          ) : null}
+        </>
+      ),
+    [activeDomainControlCount, resetToCanonicalView, setDecodedView, view],
   );
   const getEpisodeRowStatus = useCallback(
     (query: string) => {
@@ -956,10 +973,10 @@ export default function PodcastDetailPaneBody() {
     inputLabel: "Filter podcast episodes",
     placeholder: "Filter episodes",
     getRowStatus: getEpisodeRowStatus,
-    activeDomainControlCount:
-      Number(episodeStateFilter !== "all") + Number(episodeSort !== "newest"),
+    activeDomainControlCount,
     filters: episodeFilterNodes,
   });
+  dismissFilterRowsRef.current = episodeFilterRows.publication.onDismiss;
   const visibleEpisodes = useMemo(
     () =>
       episodes.filter((episode) =>
@@ -1360,8 +1377,9 @@ export default function PodcastDetailPaneBody() {
 
   const handleMarkEpisodeCompletion = useCallback(
     async (episode: PodcastEpisodeMedia, isCompleted: boolean) => {
+      if (view === null) return;
       const mediaId = episode.id;
-      if (episodeStateFilter !== "all") {
+      if (view.state !== "all") {
         captureEpisodeFocusNeighbor(mediaId);
       }
       markingEpisodeIds.add(mediaId);
@@ -1379,7 +1397,7 @@ export default function PodcastDetailPaneBody() {
           if (
             !episodeMatchesFilter(
               deriveEpisodeState(optimisticEpisode),
-              episodeStateFilter,
+              view.state,
             )
           ) {
             return [];
@@ -1424,18 +1442,19 @@ export default function PodcastDetailPaneBody() {
       captureDetailError,
       clearAllVisitData,
       captureEpisodeFocusNeighbor,
-      episodeStateFilter,
       episodes,
       lectern,
       markingEpisodeIds,
       offerCompletionUndo,
       reload,
       setEpisodes,
+      view,
     ],
   );
 
   const handleResetEpisodeProgress = useCallback(
     async (mediaId: string) => {
+      if (view === null) return;
       const busyKey = beginEpisodeAction(
         mediaId,
         RESOURCE_ACTION_CATALOG.ResetProgress.id,
@@ -1450,10 +1469,7 @@ export default function PodcastDetailPaneBody() {
           resetProgress: lectern.resetProgress,
         });
         if (outcome.kind === "Cancelled") return;
-        if (
-          episodeStateFilter === "in_progress" ||
-          episodeStateFilter === "played"
-        ) {
+        if (view.state === "in_progress" || view.state === "played") {
           captureEpisodeFocusNeighbor(mediaId);
         }
         const progressState = outcome.result.progressState.value;
@@ -1481,7 +1497,7 @@ export default function PodcastDetailPaneBody() {
             };
             return episodeMatchesFilter(
               deriveEpisodeState(resetEpisode),
-              episodeStateFilter,
+              view.state,
             )
               ? [resetEpisode]
               : [];
@@ -1499,11 +1515,11 @@ export default function PodcastDetailPaneBody() {
       beginEpisodeAction,
       captureDetailError,
       captureEpisodeFocusNeighbor,
-      episodeStateFilter,
       finishEpisodeAction,
       lectern.resetProgress,
       reload,
       setEpisodes,
+      view,
     ],
   );
 
@@ -1547,15 +1563,14 @@ export default function PodcastDetailPaneBody() {
     if (
       episodes.length === 0 ||
       !podcastId ||
+      view === null ||
       episodeFilterRows.query.trim() ||
-      episodeStateFilter === "played"
+      view.state === "played"
     ) {
       return;
     }
     if (
-      !window.confirm(
-        `${EPISODE_WIDE_COMMAND_LABELS[episodeStateFilter].markPlayed}?`,
-      )
+      !window.confirm(`${EPISODE_WIDE_COMMAND_LABELS[view.state].markPlayed}?`)
     ) {
       return;
     }
@@ -1564,9 +1579,7 @@ export default function PodcastDetailPaneBody() {
     try {
       await apiFetch(`/api/podcasts/${podcastId}/episodes/mark-played`, {
         method: "POST",
-        body: JSON.stringify({
-          state: episodeStateFilter,
-        }),
+        body: JSON.stringify({ state: view.state }),
       });
       reload();
     } catch (markError) {
@@ -1578,10 +1591,10 @@ export default function PodcastDetailPaneBody() {
   }, [
     captureDetailError,
     episodeFilterRows.query,
-    episodeStateFilter,
     episodes,
     podcastId,
     reload,
+    view,
   ]);
 
   // Which episodes are already On Lectern, from the canonical Lectern snapshot
@@ -1782,7 +1795,7 @@ export default function PodcastDetailPaneBody() {
     header: {
       kind: "section",
       folio:
-        !loading && episodeExhaustion.kind === "Complete"
+        view !== null && !loading && episodeExhaustion.kind === "Complete"
           ? {
               kind: "count",
               value: episodeExhaustion.itemCount,
@@ -1799,42 +1812,49 @@ export default function PodcastDetailPaneBody() {
   const podcastLibraryCount = podcastLibraries.filter(
     (library) => library.isInLibrary,
   ).length;
-  const episodePaneContent = (
-    <div ref={episodeListRegionRef} style={{ display: "contents" }}>
-      <PodcastEpisodeList
-        episodes={visibleEpisodes}
-        filterQuery={episodeFilterRows.query}
-        loading={loading}
-        error={error}
-        episodeStateFilter={episodeStateFilter}
-        transcript={transcript}
-        transcriptionAllowed={transcriptionAllowed}
-        busyEpisodeActionKeys={busyEpisodeActionKeys}
-        markingEpisodeIds={markingEpisodeIds}
-        expandedShowNotesMediaIds={expandedShowNotesMediaIds}
-        unconfirmedMetadataMediaIds={unconfirmedMetadataMediaIds.ids}
-        lecternItemsByMediaId={lecternItemsByMediaId}
-        playNextDisabledMediaId={playNextDisabledMediaId}
-        lecternReady={lectern.resource.status === "ready"}
-        matchingEpisodeCount={episodes.length}
-        markAllAsPlayedBusy={markAllAsPlayedBusy}
-        collectionBusy={episodeExhaustion.kind === "Draining"}
-        exhaustion={episodeExhaustion}
-        onMarkAllAsPlayed={() => void handleMarkAllAsPlayed()}
-        onToggleShowNotes={toggleEpisodeShowNotesExpansion}
-        onPlayNext={handlePlayNext}
-        onAddToLectern={handleAddToLectern}
-        onRemoveFromLectern={handleRemoveFromLectern}
-        onRetry={handleRetryEpisodeProcessing}
-        onRefreshSource={handleRefreshEpisodeSource}
-        onRetryMetadata={handleRetryEpisodeMetadata}
-        onEditAuthors={openEpisodeAuthorsEditor}
-        onDelete={handleDeleteEpisode}
-        onTogglePlayed={handleMarkEpisodeCompletion}
-        onResetProgress={handleResetEpisodeProgress}
+  const episodePaneContent =
+    view === null ? (
+      <FeedbackNotice
+        content={{ tone: "Danger", title: "Invalid episodes view" }}
+        announcement="Assertive"
+        actions={[{ label: "Reset view", onClick: resetToCanonicalView }]}
       />
-    </div>
-  );
+    ) : (
+      <div ref={episodeListRegionRef} style={{ display: "contents" }}>
+        <PodcastEpisodeList
+          episodes={visibleEpisodes}
+          filterQuery={episodeFilterRows.query}
+          loading={loading}
+          error={error}
+          episodeStateFilter={view.state}
+          transcript={transcript}
+          transcriptionAllowed={transcriptionAllowed}
+          busyEpisodeActionKeys={busyEpisodeActionKeys}
+          markingEpisodeIds={markingEpisodeIds}
+          expandedShowNotesMediaIds={expandedShowNotesMediaIds}
+          unconfirmedMetadataMediaIds={unconfirmedMetadataMediaIds.ids}
+          lecternItemsByMediaId={lecternItemsByMediaId}
+          playNextDisabledMediaId={playNextDisabledMediaId}
+          lecternReady={lectern.resource.status === "ready"}
+          matchingEpisodeCount={episodes.length}
+          markAllAsPlayedBusy={markAllAsPlayedBusy}
+          collectionBusy={episodeExhaustion.kind === "Draining"}
+          exhaustion={episodeExhaustion}
+          onMarkAllAsPlayed={() => void handleMarkAllAsPlayed()}
+          onToggleShowNotes={toggleEpisodeShowNotesExpansion}
+          onPlayNext={handlePlayNext}
+          onAddToLectern={handleAddToLectern}
+          onRemoveFromLectern={handleRemoveFromLectern}
+          onRetry={handleRetryEpisodeProcessing}
+          onRefreshSource={handleRefreshEpisodeSource}
+          onRetryMetadata={handleRetryEpisodeMetadata}
+          onEditAuthors={openEpisodeAuthorsEditor}
+          onDelete={handleDeleteEpisode}
+          onTogglePlayed={handleMarkEpisodeCompletion}
+          onResetProgress={handleResetEpisodeProgress}
+        />
+      </div>
+    );
 
   if (!podcastId) {
     return (
