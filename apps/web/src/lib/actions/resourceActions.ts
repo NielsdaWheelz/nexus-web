@@ -1452,19 +1452,25 @@ export function resolveResourceActionPlan(
   };
 }
 
+/** A planned action placed in the final flat menu, with its group-boundary rule. */
+export interface ComposedResourceAction extends PlannedResourceAction {
+  /** True on the first action of each non-first visual group (separator above). */
+  readonly separatorBefore: boolean;
+}
+
 /**
- * The one flatten policy for a resolved plan: emit core → operations →
- * relationships, then move every danger action into one final terminal group
- * (preserving catalog order within it). Defects on a duplicate catalog id so no
- * command's identity is ambiguous. This is the composer the spec assigns the
- * danger-last contract to; the planner owns membership/grouping/verb/order.
+ * The one flatten policy for a resolved plan: emit the non-danger groups core →
+ * operations → relationships (each already in catalog order), then move every
+ * danger action into one final terminal group (catalog order within it), and
+ * mark a separator at each group boundary. Defects on a duplicate catalog id so
+ * no command's identity is ambiguous. This is the composer the spec assigns the
+ * danger-last + separators contract to; the planner owns membership/verb/order.
  */
 export function composeResourceActionPlan(
   plan: ResourceActionPlan,
-): readonly PlannedResourceAction[] {
-  const ordered = [...plan.core, ...plan.operations, ...plan.relationships];
+): readonly ComposedResourceAction[] {
   const seen = new Set<ResourceActionId>();
-  for (const action of ordered) {
+  for (const action of [...plan.core, ...plan.operations, ...plan.relationships]) {
     const id = RESOURCE_ACTION_CATALOG[action.catalogKey].id;
     if (seen.has(id)) {
       // justify-defect: duplicate ids make focus, execution, and busy identity
@@ -1473,11 +1479,28 @@ export function composeResourceActionPlan(
     }
     seen.add(id);
   }
-  const safe = ordered.filter(
-    (action) => !isDangerCatalogKey(action.catalogKey),
-  );
+  const notDanger = (action: PlannedResourceAction) =>
+    !isDangerCatalogKey(action.catalogKey);
   const danger = sortByCatalogOrder(
-    ordered.filter((action) => isDangerCatalogKey(action.catalogKey)),
+    [...plan.core, ...plan.operations, ...plan.relationships].filter(
+      (action) => isDangerCatalogKey(action.catalogKey),
+    ),
   );
-  return [...safe, ...danger];
+  const groups = [
+    plan.core.filter(notDanger),
+    plan.operations.filter(notDanger),
+    plan.relationships.filter(notDanger),
+    danger,
+  ].filter((group) => group.length > 0);
+
+  const result: ComposedResourceAction[] = [];
+  groups.forEach((group, groupIndex) => {
+    group.forEach((action, index) => {
+      result.push({
+        ...action,
+        separatorBefore: groupIndex > 0 && index === 0,
+      });
+    });
+  });
+  return result;
 }

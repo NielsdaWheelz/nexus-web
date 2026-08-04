@@ -36,6 +36,7 @@ import type { ReaderProfile } from "@/lib/reader/types";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
+import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
 import styles from "./layout.module.css";
 import {
   AuthenticatedAccountProvider,
@@ -136,22 +137,29 @@ function AuthenticatedWorkspace({
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
                     <OfflineMediaProvider accountId={accountId}>
-                      <GlobalPlayerProvider accountId={accountId}>
-                        <Nexus />
-                        <div
-                          className={styles.layout}
-                          data-hydrated={hydrated || undefined}
-                        >
-                          <AppNav />
-                          <main className={styles.main}>
-                            <WalknoteSessionProvider>
-                              <WorkspaceHost />
-                              <LecternMutationNotice />
-                              <GlobalPlayerSurfaces />
-                            </WalknoteSessionProvider>
-                          </main>
-                        </div>
-                      </GlobalPlayerProvider>
+                      {/* The resource-action runtime reads Lectern, offline
+                          media, share, library-placement, workspace, and
+                          feedback from these ancestors and owns the shared
+                          snapshot cache / busy state / dispatch for every
+                          resource dropdown in the workspace subtree below. */}
+                      <ResourceActionRuntimeProvider>
+                        <GlobalPlayerProvider accountId={accountId}>
+                          <Nexus />
+                          <div
+                            className={styles.layout}
+                            data-hydrated={hydrated || undefined}
+                          >
+                            <AppNav />
+                            <main className={styles.main}>
+                              <WalknoteSessionProvider>
+                                <WorkspaceHost />
+                                <LecternMutationNotice />
+                                <GlobalPlayerSurfaces />
+                              </WalknoteSessionProvider>
+                            </main>
+                          </div>
+                        </GlobalPlayerProvider>
+                      </ResourceActionRuntimeProvider>
                     </OfflineMediaProvider>
                   </ShareControllerProvider>
                 </LibraryPlacementControllerProvider>

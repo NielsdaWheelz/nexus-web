@@ -296,6 +296,12 @@ describe("composeResourceActionPlan — flatten with one final danger group", ()
     expect(composed.indexOf("RemoveMedia")).toBeGreaterThan(
       composed.indexOf("EditLibraryPlacement"),
     );
+
+    // A separator marks the start of each non-first visual group
+    // (operations, relationships, danger) — the composer owns separators.
+    expect(
+      composeResourceActionPlan(plan).map((a) => a.separatorBefore),
+    ).toEqual([false, true, true, false, true]);
   });
 
   it("collects danger from multiple groups into one terminal run in catalog order", () => {
