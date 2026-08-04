@@ -3,6 +3,13 @@ import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
+import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
+import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import {
+  ResourceActionOverlays,
+  ResourceOverlaysProvider,
+} from "@/lib/resources/resourceOverlaysController";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import PaneShell from "@/components/workspace/PaneShell";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
@@ -79,6 +86,16 @@ function stubNotePages(titleAscPage?: Promise<Response>) {
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), window.location.origin);
+      // The canonical resource-action runtime the pane rows and chrome render
+      // into mounts the Lectern owner (initial snapshot GET) and prefetches the
+      // per-ref action snapshots. Serve both off the recorded pages requests so
+      // the menu stays unavailable without perturbing the pages-view assertions.
+      if (url.pathname.startsWith("/api/lectern")) {
+        return Response.json({ data: { items: [] } });
+      }
+      if (url.pathname === "/api/resource-items/action-snapshots/resolve") {
+        return Response.json({ data: { snapshots: [] } });
+      }
       if (url.pathname !== "/api/notes/pages") {
         throw new Error(`Unexpected notes request: ${url.pathname}`);
       }
@@ -148,6 +165,10 @@ function NotesPane({
                 onGoBackPane={noop}
                 onGoForwardPane={noop}
               >
+                <LecternProvider>
+                <OfflineMediaProvider accountId={ACCOUNT_ID} transport={null}>
+                <ResourceOverlaysProvider>
+                <ResourceActionRuntimeProvider>
                 <div data-pane-id="pane" data-active="true">
                   <PaneShell
                     paneId="pane"
@@ -177,6 +198,11 @@ function NotesPane({
                     <NotesPaneBody />
                   </PaneShell>
                 </div>
+                <ResourceActionOverlays />
+                </ResourceActionRuntimeProvider>
+                </ResourceOverlaysProvider>
+                </OfflineMediaProvider>
+                </LecternProvider>
               </PaneRuntimeProvider>
             </WorkspaceStoreProvider>
             </PaneReturnMementoProvider>
