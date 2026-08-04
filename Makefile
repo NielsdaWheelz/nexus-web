@@ -3,7 +3,8 @@
 
 .PHONY: help setup dev down logs clean api web worker-interactive worker-background \
 	migrate migrate-down seed format format-back fix-front build build-android \
-	build-android-release build-icons smoke smoke-auth-redirects
+	build-android-release build-icons generate-resource-capabilities \
+	smoke smoke-auth-redirects
 
 -include .env
 -include .dev-ports
@@ -50,6 +51,7 @@ help:
 	@echo "  make build-android      - Build Android debug and instrumentation APKs"
 	@echo "  make build-android-release - Build signed Android release APK"
 	@echo "  make build-icons        - Regenerate icons from apps/web/public/brand/asterism.svg"
+	@echo "  make generate-resource-capabilities - Regenerate the browser resource-capability projection from the backend table"
 	@echo ""
 	@echo "Testing:"
 	@echo "  ./scripts/test --help   - List the sole test and verification API"
@@ -207,6 +209,9 @@ build-android-release:
 
 build-icons:
 	node scripts/build-icons.mjs
+
+generate-resource-capabilities:
+	cd python && uv run python scripts/generate_resource_capabilities.py
 
 smoke:
 	./deploy/smoke/auth-smoke.sh

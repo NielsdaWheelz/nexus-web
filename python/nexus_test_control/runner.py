@@ -63,6 +63,7 @@ from nexus_test_control.policy import (
     proof_contract_violations,
     python_ast_violations,
     repository_violations,
+    resource_capability_projection_violations,
 )
 from nexus_test_control.process import run_command
 from nexus_test_control.runtime import (
@@ -1163,6 +1164,7 @@ def _run_policy(context: CapabilityContext) -> CapabilityResult:
         violations.extend(proof_contract_violations(context.repo_root))
         violations.extend(fault_manifest_violations(context.repo_root))
         violations.extend(corpus_violations(context.repo_root))
+        violations.extend(resource_capability_projection_violations(context.repo_root))
         python_paths = _complete_python_policy_paths(context.repo_root)
     else:
         if selected_paths.intersection(
@@ -1183,6 +1185,13 @@ def _run_policy(context: CapabilityContext) -> CapabilityResult:
             violations.extend(fault_manifest_violations(context.repo_root))
         if "testdata/manifest.json" in selected_paths:
             violations.extend(corpus_violations(context.repo_root))
+        if selected_paths.intersection(
+            {
+                "python/nexus/services/resource_items/capabilities.py",
+                "apps/web/src/lib/resources/resourceCapabilities.ts",
+            }
+        ):
+            violations.extend(resource_capability_projection_violations(context.repo_root))
         python_paths = tuple(
             context.repo_root / path
             for path in sorted(selected_paths)

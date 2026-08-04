@@ -370,6 +370,18 @@ def _frontend_source(path: str) -> bool:
 
 
 def _promoted_targets(path: str) -> tuple[SelectionTarget, ...]:
+    if path in {
+        "python/nexus/services/resource_items/capabilities.py",
+        "apps/web/src/lib/resources/resourceCapabilities.ts",
+    }:
+        # The backend static capability table and its generated browser
+        # projection are freshness-checked by the POLICY drift guard; touching
+        # either side must select POLICY so the guard runs, alongside the
+        # conservative owner for the changed source.
+        return (
+            SelectionTarget(Capability.POLICY),
+            SelectionTarget(_conservative_capability(path)),
+        )
     if path.startswith("python/nexus_test_control/") or path in {
         "python/pyproject.toml",
         "python/uv.lock",

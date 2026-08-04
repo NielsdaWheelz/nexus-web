@@ -18,6 +18,7 @@ from nexus_test_control.policy import (
     proof_manifest_schema_violations,
     python_ast_violations,
     repository_violations,
+    resource_capability_projection_violations,
 )
 
 REPO_ROOT = Path(__file__).parents[4]
@@ -836,3 +837,37 @@ def test_fault_guard_rejects_each_violation(tmp_path: Path, mutation: str, rule:
         manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
     _dump(tmp_path, "testdata/faults/manifest.json", manifest)
     assert rule in _rules(fault_manifest_violations(tmp_path))
+
+
+_RESOURCE_CAPABILITY_GENERATOR = "python/scripts/generate_resource_capabilities.py"
+_RESOURCE_CAPABILITY_PROJECTION = "apps/web/src/lib/resources/resourceCapabilities.ts"
+
+
+def test_resource_capability_projection_is_in_sync() -> None:
+    assert not resource_capability_projection_violations(REPO_ROOT)
+
+
+def test_resource_capability_guard_detects_drift(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        _RESOURCE_CAPABILITY_GENERATOR,
+        (REPO_ROOT / _RESOURCE_CAPABILITY_GENERATOR).read_text(encoding="utf-8"),
+    )
+    committed = (REPO_ROOT / _RESOURCE_CAPABILITY_PROJECTION).read_text(encoding="utf-8")
+    drifted = committed.replace("adjacencyTarget: true,", "adjacencyTarget: false,", 1)
+    assert drifted != committed
+    _write(tmp_path, _RESOURCE_CAPABILITY_PROJECTION, drifted)
+    assert "resource-capability-drift" in _rules(
+        resource_capability_projection_violations(tmp_path)
+    )
+
+
+def test_resource_capability_guard_flags_missing_projection(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        _RESOURCE_CAPABILITY_GENERATOR,
+        (REPO_ROOT / _RESOURCE_CAPABILITY_GENERATOR).read_text(encoding="utf-8"),
+    )
+    assert "resource-capability-drift" in _rules(
+        resource_capability_projection_violations(tmp_path)
+    )

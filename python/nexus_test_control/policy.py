@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import importlib.util
 import json
 import re
 import tomllib
@@ -1290,6 +1291,82 @@ def corpus_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 PolicyViolation("corpus-unmanifested", relative, "fixture is absent from manifest")
             )
     return _sorted(violations)
+
+
+_RESOURCE_CAPABILITY_PROJECTION = "apps/web/src/lib/resources/resourceCapabilities.ts"
+_RESOURCE_CAPABILITY_GENERATOR = "python/scripts/generate_resource_capabilities.py"
+
+
+def _render_resource_capability_projection(generator_path: Path) -> str:
+    spec = importlib.util.spec_from_file_location(
+        "nexus_resource_capability_generator", generator_path
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot load resource-capability projection generator")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    rendered = module.render_projection()
+    if not isinstance(rendered, str):
+        raise TypeError("resource-capability projection generator did not return text")
+    return rendered
+
+
+def resource_capability_projection_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
+    """Fail when the committed browser projection drifts from the backend table.
+
+    ``apps/web/src/lib/resources/resourceCapabilities.ts`` is a generated artifact:
+    ``python/scripts/generate_resource_capabilities.py`` renders it from
+    ``RESOURCE_ITEM_CAPABILITIES`` (the backend static capability source of truth).
+    This check re-runs that same deterministic renderer and byte-compares its
+    output to the committed file, so editing either side without running
+    ``make generate-resource-capabilities`` fails the gate.
+    """
+    generator_path = repo_root / _RESOURCE_CAPABILITY_GENERATOR
+    projection_path = repo_root / _RESOURCE_CAPABILITY_PROJECTION
+    if not generator_path.is_file():
+        return (
+            PolicyViolation(
+                "resource-capability-drift",
+                _RESOURCE_CAPABILITY_GENERATOR,
+                "resource-capability projection generator is missing",
+            ),
+        )
+    if not projection_path.is_file():
+        return (
+            PolicyViolation(
+                "resource-capability-drift",
+                _RESOURCE_CAPABILITY_PROJECTION,
+                "committed resource-capability projection is missing",
+            ),
+        )
+    try:
+        expected = _render_resource_capability_projection(generator_path)
+    except Exception as error:  # any generator failure is a decisive drift signal
+        return (
+            PolicyViolation(
+                "resource-capability-drift",
+                _RESOURCE_CAPABILITY_GENERATOR,
+                f"resource-capability projection generator failed: {error}",
+            ),
+        )
+    try:
+        committed = projection_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        return (
+            PolicyViolation(
+                "resource-capability-drift", _RESOURCE_CAPABILITY_PROJECTION, str(error)
+            ),
+        )
+    if committed != expected:
+        return (
+            PolicyViolation(
+                "resource-capability-drift",
+                _RESOURCE_CAPABILITY_PROJECTION,
+                "committed projection differs from the backend static table; run "
+                "`make generate-resource-capabilities`",
+            ),
+        )
+    return ()
 
 
 def exception_violations(repo_root: Path, today: date) -> tuple[PolicyViolation, ...]:
