@@ -193,6 +193,63 @@ const READER_SCROLL_MUTATION_BANS = [
   },
 ];
 
+// docs/cutovers/canonical-resource-action-menu-hard-cutover.md (AC13 — strict
+// residue). Resource-action membership, presentation, execution, and state have
+// exactly one owner: the pure resolveResourceActionPlan over
+// RESOURCE_ACTION_CATALOG, rendered by ResourceActionMenu and executed by the
+// resourceActionRuntime. The projection, caller-published resource groups,
+// duplicate NexusAction adapters, and surface-local option builders were
+// deleted; naming any of them in product source is a residue.
+const RETIRED_RESOURCE_ACTION_SYMBOL_BAN = {
+  selector:
+    "Identifier[name=/^(?:composeResourceMenu|ResourceMenuGroups|emptyResourceMenuGroups|RichResourceActionGroups|ActionPublication|publishResourceRowActions|resolveResourceCoreActions|resolveResourceCoreCatalogKeys|resolveUniversalResourceRelationshipActions|ResourceActionProjection|buildResourceNexusActions|mediaResourceOptions|episodeResourceOptions|libraryResourceOptions|podcastResourceOptions|conversationResourceOptions)$/]",
+  message:
+    "Retired resource-action symbol. Membership, presentation, and execution have one owner: resolveResourceActionPlan over RESOURCE_ACTION_CATALOG, rendered by ResourceActionMenu and executed by the resourceActionRuntime. Do not reintroduce the projection, caller-published groups, NexusAction adapters, or surface-local option builders (docs/cutovers/canonical-resource-action-menu-hard-cutover.md).",
+};
+
+// queue-add and the player-local Player.Open* ids left the resource system. Ban
+// both the string literal and the no-substitution template literal (a backtick
+// is a one-character escape from the Literal ban), mirroring the double selector
+// in OWNED_MODULE_MOCK_BANS. The pattern is anchored so ids still in use are safe.
+const RETIRED_PLAYER_RESOURCE_ID_MESSAGE =
+  "Retired resource-action id. queue-add and the player-local Player.OpenTrack / Player.OpenSource ids left the resource system; the canonical Open action and Lectern relationship live in RESOURCE_ACTION_CATALOG and render through ResourceActionMenu (docs/cutovers/canonical-resource-action-menu-hard-cutover.md).";
+const RETIRED_PLAYER_RESOURCE_ID_BANS = [
+  {
+    selector:
+      "Literal[value=/^(?:queue-add|Player\\.OpenTrack|Player\\.OpenSource)$/]",
+    message: RETIRED_PLAYER_RESOURCE_ID_MESSAGE,
+  },
+  {
+    selector:
+      "TemplateLiteral[expressions.length=0][quasis.0.value.cooked=/^(?:queue-add|Player\\.OpenTrack|Player\\.OpenSource)$/]",
+    message: RETIRED_PLAYER_RESOURCE_ID_MESSAGE,
+  },
+];
+
+// Context-edge and connection commands are not resource actions; they publish
+// through the separate ContextEdgeMenu contract. Ban the literal and template
+// forms of the retired ids.
+const RETIRED_CONTEXT_EDGE_RESOURCE_ID_MESSAGE =
+  "Retired resource-action id. Context-edge and connection commands (RelationshipAction.Context.* / RelationshipAction.Connection.*) are not resource actions; they publish through the separate ContextEdgeMenu contract (docs/cutovers/canonical-resource-action-menu-hard-cutover.md).";
+const RETIRED_CONTEXT_EDGE_RESOURCE_ID_BANS = [
+  {
+    selector:
+      "Literal[value=/^(?:RelationshipAction\\.Context\\.Remove|RelationshipAction\\.Connection\\.Unlink|RelationshipAction\\.Connection\\.Dismiss)$/]",
+    message: RETIRED_CONTEXT_EDGE_RESOURCE_ID_MESSAGE,
+  },
+  {
+    selector:
+      "TemplateLiteral[expressions.length=0][quasis.0.value.cooked=/^(?:RelationshipAction\\.Context\\.Remove|RelationshipAction\\.Connection\\.Unlink|RelationshipAction\\.Connection\\.Dismiss)$/]",
+    message: RETIRED_CONTEXT_EDGE_RESOURCE_ID_MESSAGE,
+  },
+];
+
+const RETIRED_RESOURCE_ACTION_BANS = [
+  RETIRED_RESOURCE_ACTION_SYMBOL_BAN,
+  ...RETIRED_PLAYER_RESOURCE_ID_BANS,
+  ...RETIRED_CONTEXT_EDGE_RESOURCE_ID_BANS,
+];
+
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
@@ -210,8 +267,35 @@ const eslintConfig = [
     },
   },
   {
+    // docs/cutovers/canonical-resource-action-menu-hard-cutover.md (AC13). The
+    // retired resource-action symbols and ids are banned across product source.
+    // Tests are excluded because residue proofs legitimately name the deleted
+    // ids in negative assertions. no-restricted-syntax replaces (not merges),
+    // so this block restates the always-on product bans it augments. It precedes
+    // the useIntervalPoll and reader blocks so their later overrides still win
+    // (the reader block re-adds these residue bans).
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["**/*.test.{ts,tsx}", "**/__tests__/**"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        PRODUCT_POLLING_BAN,
+        CANVAS_CSS_VARIABLE_BAN,
+        ...RETIRED_RESOURCE_ACTION_BANS,
+      ],
+    },
+  },
+  {
+    // The sole setInterval owner is exempt ONLY from PRODUCT_POLLING_BAN; the
+    // residue + canvas bans still apply (no-restricted-syntax replaces).
     files: ["src/lib/useIntervalPoll.ts"],
-    rules: { "no-restricted-syntax": "off" },
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        CANVAS_CSS_VARIABLE_BAN,
+        ...RETIRED_RESOURCE_ACTION_BANS,
+      ],
+    },
   },
   {
     files: [
@@ -228,6 +312,7 @@ const eslintConfig = [
         PRODUCT_POLLING_BAN,
         CANVAS_CSS_VARIABLE_BAN,
         ...READER_SCROLL_MUTATION_BANS,
+        ...RETIRED_RESOURCE_ACTION_BANS,
       ],
     },
   },

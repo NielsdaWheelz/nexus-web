@@ -70,6 +70,17 @@ _RETIRED_TEST_PATHS = (
     "python/scripts/seed_e2e_data.py",
     "python/scripts/seed_oracle_plate_e2e.py",
 )
+# docs/cutovers/canonical-resource-action-menu-hard-cutover.md (AC13/AC14): the
+# resource-action projection, caller-published groups, duplicate NexusAction
+# adapter, and surface-local option/callback builders were deleted. Membership,
+# presentation, and execution now have one owner (ResourceActionMenu over the
+# shared plan + resourceActionRuntime). These modules must stay absent; their
+# reappearance is a hard-cut residue.
+_RETIRED_RESOURCE_ACTION_PATHS = (
+    "apps/web/src/lib/collections/resourceActionPublication.ts",
+    "apps/web/src/lib/nexus/actions.ts",
+    "apps/web/src/app/(authenticated)/podcasts/usePodcastSubscriptionActions.ts",
+)
 _PRODUCT_SOURCE_ROOTS: tuple[tuple[str, frozenset[str]], ...] = (
     ("python/nexus", frozenset({".py"})),
     ("apps/api", frozenset({".py"})),
@@ -865,6 +876,17 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     "repository-retired-test-path",
                     relative,
                     "hard-cut legacy test path must remain absent",
+                )
+            )
+    for relative in _RETIRED_RESOURCE_ACTION_PATHS:
+        if (repo_root / relative).exists():
+            violations.append(
+                PolicyViolation(
+                    "resource-action-retired-path",
+                    relative,
+                    "canonical-resource-action-menu cutover deleted this resource-action "
+                    "module; membership/publication/execution has one owner "
+                    "(ResourceActionMenu + resourceActionRuntime). It must remain absent.",
                 )
             )
     active_docs = [repo_root / relative for relative in _ACTIVE_TEST_DOC_FILES]

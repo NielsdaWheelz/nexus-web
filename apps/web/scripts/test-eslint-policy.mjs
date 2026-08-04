@@ -132,6 +132,132 @@ const cases = [
     `,
     expected: "Journey files cannot intercept routes",
   },
+  // AC13 residue: every retired resource-action symbol re-introduced anywhere in
+  // product source must fail lint (docs/cutovers/canonical-resource-action-menu-hard-cutover.md).
+  {
+    filename: "src/residue-composeResourceMenu.ts",
+    source: `export const composeResourceMenu = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-ResourceMenuGroups.ts",
+    source: `export const ResourceMenuGroups = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-emptyResourceMenuGroups.ts",
+    source: `export const emptyResourceMenuGroups = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-RichResourceActionGroups.ts",
+    source: `export const RichResourceActionGroups = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-ActionPublication.ts",
+    source: `export const ActionPublication = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-publishResourceRowActions.ts",
+    source: `export const publishResourceRowActions = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-resolveResourceCoreActions.ts",
+    source: `export const resolveResourceCoreActions = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-resolveResourceCoreCatalogKeys.ts",
+    source: `export const resolveResourceCoreCatalogKeys = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-resolveUniversalResourceRelationshipActions.ts",
+    source: `export const resolveUniversalResourceRelationshipActions = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-ResourceActionProjection.ts",
+    source: `export const ResourceActionProjection = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-buildResourceNexusActions.ts",
+    source: `export const buildResourceNexusActions = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-mediaResourceOptions.ts",
+    source: `export const mediaResourceOptions = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-episodeResourceOptions.ts",
+    source: `export const episodeResourceOptions = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-libraryResourceOptions.ts",
+    source: `export const libraryResourceOptions = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-podcastResourceOptions.ts",
+    source: `export const podcastResourceOptions = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  {
+    filename: "src/residue-conversationResourceOptions.ts",
+    source: `export const conversationResourceOptions = null;\n`,
+    expected: "Retired resource-action symbol",
+  },
+  // AC13 residue: retired player/queue string-literal ids and their template
+  // escape variant must fail lint.
+  {
+    filename: "src/residue-id-queue-add.ts",
+    source: `export const id = "queue-add";\n`,
+    expected: "queue-add and the player-local",
+  },
+  {
+    filename: "src/residue-id-player-open-track.ts",
+    source: `export const id = "Player.OpenTrack";\n`,
+    expected: "queue-add and the player-local",
+  },
+  {
+    filename: "src/residue-id-player-open-source.ts",
+    source: `export const id = "Player.OpenSource";\n`,
+    expected: "queue-add and the player-local",
+  },
+  {
+    filename: "src/residue-id-queue-add-template.ts",
+    source: "export const id = `queue-add`;\n",
+    expected: "queue-add and the player-local",
+  },
+  // AC13 residue: retired context-edge/connection ids belong to ContextEdgeMenu,
+  // not the resource menu — literal and template forms must fail lint.
+  {
+    filename: "src/residue-id-context-remove.ts",
+    source: `export const id = "RelationshipAction.Context.Remove";\n`,
+    expected: "publish through the separate ContextEdgeMenu contract",
+  },
+  {
+    filename: "src/residue-id-connection-unlink.ts",
+    source: `export const id = "RelationshipAction.Connection.Unlink";\n`,
+    expected: "publish through the separate ContextEdgeMenu contract",
+  },
+  {
+    filename: "src/residue-id-connection-dismiss.ts",
+    source: `export const id = "RelationshipAction.Connection.Dismiss";\n`,
+    expected: "publish through the separate ContextEdgeMenu contract",
+  },
+  {
+    filename: "src/residue-id-context-remove-template.ts",
+    source: "export const id = `RelationshipAction.Context.Remove`;\n",
+    expected: "publish through the separate ContextEdgeMenu contract",
+  },
 ];
 
 for (const fixture of cases) {

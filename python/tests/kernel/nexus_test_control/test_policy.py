@@ -211,6 +211,28 @@ def test_repository_guard_rejects_legacy_route_resurrection(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize(
+    "relative",
+    [
+        "apps/web/src/lib/collections/resourceActionPublication.ts",
+        "apps/web/src/lib/nexus/actions.ts",
+        "apps/web/src/app/(authenticated)/podcasts/usePodcastSubscriptionActions.ts",
+    ],
+)
+def test_repository_guard_rejects_resurrected_resource_action_module(
+    tmp_path: Path, relative: str
+) -> None:
+    _minimal_repository(tmp_path)
+    _write(tmp_path, relative, "export const revived = true;\n")
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "resource-action-retired-path" and violation.path == relative
+        for violation in violations
+    )
+
+
+@pytest.mark.parametrize(
     ("relative", "source"),
     [
         (
