@@ -279,9 +279,7 @@ def remove_item_if_present_in_txn(db: Session, *, viewer_id: UUID, item_id: UUID
     return item_id
 
 
-def item_ids_for_media(
-    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, UUID]:
+def item_ids_for_media(db: Session, *, viewer_id: UUID, media_ids: list[UUID]) -> dict[UUID, UUID]:
     """Batch (``media_id`` -> Lectern ``item_id``) for the viewer, in one set query.
 
     Media that are not on the viewer's Lectern are omitted from the result. When a
