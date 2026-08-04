@@ -11,7 +11,7 @@ from nexus.db.session import get_db
 from nexus.responses import ok
 from nexus.schemas.conversation import CHAT_RUN_STATUS_FILTER, ChatRunCreateRequest
 from nexus.schemas.presence import Present
-from nexus.services import chat_reruns
+from nexus.services import chat_run_candidates
 from nexus.services import chat_runs as chat_runs_service
 
 router = APIRouter(tags=["chat-runs"])
@@ -83,7 +83,23 @@ def rerun_assistant_response(
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
-    result = chat_reruns.rerun_assistant_response(
+    result = chat_run_candidates.rerun_assistant_response(
+        db=db,
+        viewer_id=viewer.user_id,
+        assistant_message_id=assistant_message_id,
+        idempotency_key=idempotency_key,
+    )
+    return ok(result)
+
+
+@router.post("/messages/{assistant_message_id}/regenerate", status_code=200)
+def regenerate_assistant_response(
+    assistant_message_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> dict:
+    result = chat_run_candidates.regenerate_assistant_response(
         db=db,
         viewer_id=viewer.user_id,
         assistant_message_id=assistant_message_id,

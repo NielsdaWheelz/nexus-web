@@ -3,8 +3,8 @@
 `docs/cutovers/llm-provider-runtime-hard-cutover.md` §10 ("Failure and
 rerun"): `ChatRunOut`, message hydration, terminal SSE, reconnect folding, and
 the trust trail all derive the same `ExpectedChatFailure` projection from
-`ChatRun`; none stores or synthesizes a second failure. `chat_reruns.py` is
-the only other reader of `rerun_eligibility` — it re-evaluates the same
+`ChatRun`; none stores or synthesizes a second failure. `chat_run_candidates.py`
+is the only other reader of `rerun_eligibility` — it re-evaluates the same
 policy in the rerun transaction against freshly queried facts; the UI's
 `can_rerun` flag on an earlier read is never authority for the rerun itself.
 
@@ -275,7 +275,7 @@ def profile_selection_active(run: ChatRun) -> bool:
     A run with no stored profile/selection snapshot has nothing to rerun
     against. A run that recorded no *resolved-target* snapshot (all three
     NULL) carries no drift evidence here; the rerun transaction closes that gap
-    against the ledger (`chat_reruns._ledger_target_drifted`)."""
+    against the ledger (`chat_run_candidates._ledger_target_drifted`)."""
     if run.profile_id is None or run.reasoning_option_id is None:
         return False
     active = lookup_profile(run.profile_id)
@@ -302,7 +302,7 @@ def rerun_eligibility(
     has_write_tool_attempt: bool,
 ) -> bool:
     """The one rerun-eligibility policy (§10). `chat_failure_projection` fills
-    every variant's `can_rerun` with it; `chat_reruns` re-evaluates it in the
+    every variant's `can_rerun` with it; `chat_run_candidates` re-evaluates it in the
     rerun transaction against freshly queried facts — never trusting an
     earlier read's `can_rerun` as authority.
 

@@ -25,6 +25,9 @@ interface MessageRowProps {
   /** One durable rerun from the failed assistant turn (replaces retry/resend). */
   onRerunAssistantResponse?: (assistantMessageId: string) => void;
   rerunningAssistantMessageIds?: Set<string>;
+  /** One durable regeneration from an eligible completed assistant answer. */
+  onRegenerateAssistantResponse?: (assistantMessageId: string) => void;
+  regeneratingAssistantMessageIds?: Set<string>;
   /** Assistant ids in the client-only ConnectionLostStatusUnknown state (§10). */
   connectionLostAssistantIds?: Set<string>;
   onReconnectAssistant?: (assistantMessageId: string) => void;
@@ -48,6 +51,8 @@ export const MessageRow = memo(function MessageRow({
   onReplyToAssistant,
   onRerunAssistantResponse,
   rerunningAssistantMessageIds,
+  onRegenerateAssistantResponse,
+  regeneratingAssistantMessageIds,
   connectionLostAssistantIds,
   onReconnectAssistant,
   onReaderSourceActivate,
@@ -91,6 +96,8 @@ export const MessageRow = memo(function MessageRow({
           onCitationActivate={activateTarget}
           onRerunAssistantResponse={onRerunAssistantResponse}
           rerunning={rerunningAssistantMessageIds?.has(message.id) === true}
+          onRegenerateAssistantResponse={onRegenerateAssistantResponse}
+          regenerating={regeneratingAssistantMessageIds?.has(message.id) === true}
           connectionLost={connectionLostAssistantIds?.has(message.id) === true}
           onReconnectAssistant={onReconnectAssistant}
           onStartWalk={onStartWalk}

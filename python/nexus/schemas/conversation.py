@@ -145,6 +145,7 @@ class MessageOut(BaseModel):
     branch_anchor: dict[str, Any] = Field(default_factory=dict)
     status: str  # "pending" | "complete" | "error" | "cancelled"
     can_rerun: bool = False
+    can_regenerate: bool = False
     # The immutable reader-quote snapshot projection; Present only on a quoted
     # user message, Absent everywhere else. Activation is recomputed from the
     # immutable locator and current source visibility (may be kind="none").
@@ -162,6 +163,8 @@ class MessageOut(BaseModel):
             raise ValueError("only assistant messages may carry trust_trail")
         if self.role != "user" and not isinstance(self.reader_selection, Absent):
             raise ValueError("only user messages may carry a reader_selection")
+        if self.can_regenerate and self.role != "assistant":
+            raise ValueError("only assistant messages may be regeneratable")
         return self
 
 

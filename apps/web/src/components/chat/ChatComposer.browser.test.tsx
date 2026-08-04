@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
+import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
+import type { PaneVisitId } from "@/lib/workspace/schema";
 import ChatComposerComponent from "./ChatComposer";
 
 const PROFILES = {
@@ -36,6 +38,20 @@ const PROFILES = {
   ],
 };
 
+interface ChatRunCall {
+  body: ChatRunCreateRequest;
+  key: string;
+}
+
+const pathKey = (targetId: string): ChatDraftKey => ({
+  kind: "Path",
+  targetId,
+});
+const newConversationKey = (visitId: string): ChatDraftKey => ({
+  kind: "NewConversation",
+  visitId: visitId as unknown as PaneVisitId,
+});
+
 function json(data: unknown): Response {
   return new Response(JSON.stringify(data), {
     status: 200,
@@ -48,14 +64,21 @@ function requestPath(input: RequestInfo | URL): string {
   return new URL(value, window.location.origin).pathname;
 }
 
-function installBff(chatBodies: ChatRunCreateRequest[]) {
+// The BFF is stubbed at the fetch boundary: profiles resolve, and every chat-run
+// POST records its exact request + idempotency key, then throws a synthetic
+// network loss to drive the reconciliation ("Retry send") path.
+function installBff(calls: ChatRunCall[]) {
   vi.stubGlobal(
     "fetch",
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = requestPath(input);
       if (path === "/api/llm-profiles") return json({ data: PROFILES });
       if (path === "/api/chat-runs" && init?.method === "POST") {
-        chatBodies.push(JSON.parse(String(init.body)) as ChatRunCreateRequest);
+        const headers = new Headers(init.headers);
+        calls.push({
+          body: JSON.parse(String(init.body)) as ChatRunCreateRequest,
+          key: headers.get("Idempotency-Key") ?? "",
+        });
         throw new TypeError("synthetic ambiguous browser boundary");
       }
       throw new Error(`Unexpected composer BFF request: ${path}`);
@@ -69,6 +92,7 @@ function Composer(
   return (
     <ChatComposerComponent
       conversationId="00000000-0000-4000-8000-000000000001"
+      draftKey={pathKey("00000000-0000-4000-8000-000000000001")}
       inheritedProfileSelection={null}
       sendCapability={{ kind: "Available" }}
       {...props}
@@ -91,8 +115,8 @@ describe("ChatComposer browser contract", () => {
   });
 
   it("sends one exact desktop selection while mobile and IME Enter remain text", async () => {
-    const chatBodies: ChatRunCreateRequest[] = [];
-    installBff(chatBodies);
+    const calls: ChatRunCall[] = [];
+    installBff(calls);
     const view = render(withRenderEnvironment(<Composer />));
     const model = await screen.findByRole("combobox", { name: "Model" });
     await userEvent.selectOptions(model, "fast");
@@ -105,10 +129,10 @@ describe("ChatComposer browser contract", () => {
     await userEvent.keyboard("First{Shift>}{Enter}{/Shift}Second{Enter}");
     await screen.findByRole("button", { name: "Retry send" });
     expect(
-      chatBodies,
+      calls,
       "desktop Enter did not dispatch exactly one chat run",
     ).toHaveLength(1);
-    expect(chatBodies[0]).toMatchObject({
+    expect(calls[0].body).toMatchObject({
       content: "First\nSecond",
       profile_id: "fast",
       reasoning_option_id: "low",
@@ -118,9 +142,10 @@ describe("ChatComposer browser contract", () => {
     sessionStorage.clear();
     await page.viewport(390, 800);
     render(
-      withRenderEnvironment(<Composer draftKey="mobile-enter-proof" />, {
-        initialViewport: "mobile",
-      }),
+      withRenderEnvironment(
+        <Composer draftKey={pathKey("mobile-enter-proof")} />,
+        { initialViewport: "mobile" },
+      ),
     );
     await screen.findByRole("combobox", { name: "Model" });
     const mobileInput = screen.getByRole<HTMLTextAreaElement>("textbox", {
@@ -136,17 +161,60 @@ describe("ChatComposer browser contract", () => {
     fireEvent.keyDown(mobileInput, { key: "Enter", isComposing: true });
     fireEvent.keyDown(mobileInput, { key: "Enter", keyCode: 229 });
 
-    expect(
-      chatBodies,
-      "mobile or IME Enter dispatched a chat run",
-    ).toHaveLength(1);
+    expect(calls, "mobile or IME Enter dispatched a chat run").toHaveLength(1);
     expect(mobileInput.value).toContain("Plain\nShift\nCtrl\nDone");
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   });
 
+  it("reloads an in-flight new-chat send as a locked Retry that replays the exact key and request", async () => {
+    const calls: ChatRunCall[] = [];
+    installBff(calls);
+    const draftKey = newConversationKey(
+      "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+    );
+
+    const view = render(
+      withRenderEnvironment(
+        <Composer conversationId={null} draftKey={draftKey} />,
+      ),
+    );
+    await screen.findByRole("combobox", { name: "Model" });
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", {
+      name: "Ask anything",
+    });
+    await userEvent.click(input);
+    await userEvent.keyboard("summarize this{Enter}");
+    await screen.findByRole("button", { name: "Retry send" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body.destination).toEqual({ kind: "New" });
+
+    // Simulate a full reload: unmount and remount a FRESH composer on the same
+    // pane-visit draft key. The persisted in-flight command restores as a locked
+    // Retry send with the draft text preserved (AC-4/AC-5).
+    view.unmount();
+    render(
+      withRenderEnvironment(
+        <Composer conversationId={null} draftKey={draftKey} />,
+      ),
+    );
+    const retry = await screen.findByRole("button", { name: "Retry send" });
+    const reloadedInput = screen.getByRole<HTMLTextAreaElement>("textbox", {
+      name: "Ask anything",
+    });
+    expect(reloadedInput.value).toBe("summarize this");
+    expect(reloadedInput).toBeDisabled();
+
+    await userEvent.click(retry);
+    await waitFor(() => expect(calls).toHaveLength(2));
+    // AC-4/AC-6: byte-for-byte the same request and the same idempotency key.
+    expect(calls[1].body).toEqual(calls[0].body);
+    expect(calls[1].key).toBe(calls[0].key);
+    expect(calls[1].key).not.toBe("");
+  });
+
   it("keeps one action socket and coarse mobile controls inside 320px", async () => {
-    const chatBodies: ChatRunCreateRequest[] = [];
-    installBff(chatBodies);
+    const calls: ChatRunCall[] = [];
+    installBff(calls);
     await cdp().send("Emulation.setEmulatedMedia", {
       features: [{ name: "any-pointer", value: "coarse" }],
     });
@@ -194,6 +262,6 @@ describe("ChatComposer browser contract", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Stop response" })).toBeVisible(),
     );
-    expect(chatBodies).toHaveLength(0);
+    expect(calls).toHaveLength(0);
   });
 });

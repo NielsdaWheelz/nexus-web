@@ -29,7 +29,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { RefObject } from "react";
+import type { MutableRefObject, RefObject } from "react";
 import {
   apiFetch,
   isApiError,
@@ -91,7 +91,7 @@ const MESSAGE_PAGE_SIZE = 30;
 
 function conversationOperationErrorMessage(
   error: ApiError,
-  operation: "RefreshForks" | "Load" | "Rerun" | "SwitchFork",
+  operation: "RefreshForks" | "Load" | "Rerun" | "Regenerate" | "SwitchFork",
 ): FeedbackContent {
   switch (error.code) {
     case "E_NOT_FOUND":
@@ -114,17 +114,20 @@ function conversationOperationErrorMessage(
     case "E_UPSTREAM":
     case "E_NETWORK":
     case "E_TREE_REFRESH_FAILED":
+    case "E_REGENERATION_NOT_ALLOWED":
       return {
         tone: "Danger",
         requestId: error.requestId,
         title:
           operation === "Rerun"
             ? "This response couldn’t be run again."
-            : operation === "SwitchFork"
-              ? "This fork couldn’t be opened."
-              : operation === "RefreshForks"
-                ? "Forks couldn’t be refreshed."
-                : "This chat couldn’t be loaded.",
+            : operation === "Regenerate"
+              ? "This response couldn’t be regenerated."
+              : operation === "SwitchFork"
+                ? "This fork couldn’t be opened."
+                : operation === "RefreshForks"
+                  ? "Forks couldn’t be refreshed."
+                  : "This chat couldn’t be loaded.",
       };
     default:
       throw error;
@@ -189,9 +192,13 @@ interface UseConversation {
   activeRunId: string | null;
   cancelActiveRun: () => Promise<void>;
 
-  // rerun (replaces the former retry + resend actions with one durable rerun)
+  // rerun (a new sibling candidate from an eligible failed/cancelled turn)
   rerunningAssistantMessageIds: StringIdSet;
   rerunAssistantResponse: (assistantMessageId: string) => Promise<void>;
+
+  // regenerate (a new sibling candidate from an eligible completed answer)
+  regeneratingAssistantMessageIds: StringIdSet;
+  regenerateAssistantResponse: (assistantMessageId: string) => Promise<void>;
 
   // client-only connection-lost recovery (ConnectionLostStatusUnknown, §10)
   connectionLostAssistantIds: Set<string>;
@@ -237,7 +244,7 @@ export function useConversation(
   const reportOperationError = useCallback(
     (
       operationError: ApiError,
-      operation: "RefreshForks" | "Load" | "Rerun" | "SwitchFork",
+      operation: "RefreshForks" | "Load" | "Rerun" | "Regenerate" | "SwitchFork",
     ) => {
       try {
         setError(conversationOperationErrorMessage(operationError, operation));
@@ -265,6 +272,13 @@ export function useConversation(
   const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null);
 
   const rerunningAssistantMessageIds = useStringIdSet();
+  const regeneratingAssistantMessageIds = useStringIdSet();
+  // One retained idempotency key per source assistant message, so an explicit
+  // retry after an ambiguous network loss replays the SAME command instead of
+  // minting a second candidate (spec §5.4). Cleared on success, a definite
+  // rejection, or a conversation change.
+  const rerunKeysRef = useRef<Map<string, string>>(new Map());
+  const regenerateKeysRef = useRef<Map<string, string>>(new Map());
 
   // Conversations created on first send are seeded optimistically; their
   // initial route adoption must not refetch history. Existing conversations
@@ -582,10 +596,14 @@ export function useConversation(
     setBranchDraft(null);
     selectedPathIdsRef.current = new Set();
     rerunningAssistantMessageIds.clear();
+    regeneratingAssistantMessageIds.clear();
+    rerunKeysRef.current.clear();
+    regenerateKeysRef.current.clear();
   }, [
     abortAll,
     conversationId,
     initialConversationId,
+    regeneratingAssistantMessageIds,
     rerunningAssistantMessageIds,
   ]);
 
@@ -747,22 +765,34 @@ export function useConversation(
   );
 
   // --------------------------------------------------------------------------
-  // Rerun (one durable rerun from the source prompt + its stored profile)
+  // Candidate actions (one new sibling candidate from a source assistant turn)
   // --------------------------------------------------------------------------
 
-  const rerunAssistantResponse = useCallback(
-    async (assistantMessageId: string) => {
-      if (rerunningAssistantMessageIds.has(assistantMessageId)) return;
-      rerunningAssistantMessageIds.add(assistantMessageId);
+  // Rerun and Regenerate are the same client contract over different endpoints:
+  // one durable sibling candidate from an owning source run. While a POST is
+  // unresolved the source is busy-locked; a network loss retains its key so an
+  // explicit retry replays the same command; a definite rejection consumes the
+  // key so the next invocation mints a fresh one.
+  const runCandidateAction = useCallback(
+    async (
+      assistantMessageId: string,
+      endpoint: ApiPath,
+      busy: StringIdSet,
+      keysRef: MutableRefObject<Map<string, string>>,
+      operation: "Rerun" | "Regenerate",
+    ) => {
+      if (busy.has(assistantMessageId)) return;
+      const idempotencyKey =
+        keysRef.current.get(assistantMessageId) ?? createRandomId();
+      keysRef.current.set(assistantMessageId, idempotencyKey);
+      busy.add(assistantMessageId);
       setError(null);
       try {
-        const response = await apiFetch<ChatRunResponse>(
-          `/api/messages/${assistantMessageId}/rerun`,
-          {
-            method: "POST",
-            headers: { "Idempotency-Key": createRandomId() },
-          },
-        );
+        const response = await apiFetch<ChatRunResponse>(endpoint, {
+          method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey },
+        });
+        keysRef.current.delete(assistantMessageId);
         onChatRunCreated(decodeChatRunData(response.data));
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
@@ -770,17 +800,41 @@ export function useConversation(
           reportAsyncDefect(err);
           return;
         }
-        reportOperationError(err, "Rerun");
+        // A network loss is ambiguous: retain the key so a re-invocation replays
+        // the same command. Every other rejection is definite and consumes it.
+        if (err.code !== "E_NETWORK") {
+          keysRef.current.delete(assistantMessageId);
+        }
+        reportOperationError(err, operation);
       } finally {
-        rerunningAssistantMessageIds.remove(assistantMessageId);
+        busy.remove(assistantMessageId);
       }
     },
-    [
-      onChatRunCreated,
-      reportAsyncDefect,
-      reportOperationError,
-      rerunningAssistantMessageIds,
-    ],
+    [onChatRunCreated, reportAsyncDefect, reportOperationError],
+  );
+
+  const rerunAssistantResponse = useCallback(
+    (assistantMessageId: string) =>
+      runCandidateAction(
+        assistantMessageId,
+        `/api/messages/${assistantMessageId}/rerun` as ApiPath,
+        rerunningAssistantMessageIds,
+        rerunKeysRef,
+        "Rerun",
+      ),
+    [rerunningAssistantMessageIds, runCandidateAction],
+  );
+
+  const regenerateAssistantResponse = useCallback(
+    (assistantMessageId: string) =>
+      runCandidateAction(
+        assistantMessageId,
+        `/api/messages/${assistantMessageId}/regenerate` as ApiPath,
+        regeneratingAssistantMessageIds,
+        regenerateKeysRef,
+        "Regenerate",
+      ),
+    [regeneratingAssistantMessageIds, runCandidateAction],
   );
 
   const connectionLostAssistantIds = useMemo(
@@ -1079,6 +1133,8 @@ export function useConversation(
     cancelActiveRun,
     rerunningAssistantMessageIds,
     rerunAssistantResponse,
+    regeneratingAssistantMessageIds,
+    regenerateAssistantResponse,
     connectionLostAssistantIds,
     reconnectAssistantResponse,
     branch,

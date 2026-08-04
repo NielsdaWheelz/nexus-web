@@ -87,6 +87,42 @@ def compute_rerun_payload_hash(
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
+def compute_regeneration_payload_hash(
+    *,
+    source_assistant_message_id: UUID,
+    source_run: ChatRun,
+    source_user_message: Message,
+) -> str:
+    """The regeneration counterpart of ``compute_rerun_payload_hash``: identical
+    immutable source facts, distinguished only by the ``operation`` tag so a
+    single owner + idempotency key never denotes both a rerun and a regeneration
+    (spec §8: "same key with another source/operation returns replay mismatch")."""
+    payload = {
+        "operation": "chat_response_regeneration",
+        "source_assistant_message_id": str(source_assistant_message_id),
+        "source_run_id": str(source_run.id),
+        "source_conversation_id": str(source_run.conversation_id),
+        "source_user_message_id": str(source_user_message.id),
+        "source_user_parent_message_id": (
+            str(source_user_message.parent_message_id)
+            if source_user_message.parent_message_id is not None
+            else None
+        ),
+        "source_user_branch_root_message_id": (
+            str(source_user_message.branch_root_message_id)
+            if source_user_message.branch_root_message_id is not None
+            else None
+        ),
+        "source_user_branch_anchor_kind": source_user_message.branch_anchor_kind,
+        "source_user_branch_anchor": source_user_message.branch_anchor or {},
+        "source_prompt_content": source_user_message.content,
+        "source_profile_id": source_run.profile_id,
+        "source_reasoning_option_id": source_run.reasoning_option_id,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
 def normalize_idempotency_key(idempotency_key: str | None) -> str:
     normalized_key = (idempotency_key or "").strip()
     if not normalized_key:

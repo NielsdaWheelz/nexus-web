@@ -42,7 +42,10 @@ import {
   conversationResourceOptions,
   type ResourceActionId,
 } from "@/lib/actions/resourceActions";
-import { chatDraftKeyFor } from "@/lib/conversations/chatDraftKey";
+import {
+  chatDraftKeyFor,
+  type ChatDraftKey,
+} from "@/lib/conversations/chatDraftKey";
 import {
   ApiError,
   apiFetch,
@@ -508,13 +511,19 @@ export default function Conversation() {
   const activeReplyParentMessageId = convo.replyParentMessageId;
 
   const branchDraft = branch?.branchDraft ?? null;
-  const composerDraftKey = branchDraft
-    ? chatDraftKeyFor({ kind: "branch", branchDraft })
-    : startedOnNewRouteRef.current && convo.messages.length === 0
-      ? "path:new"
+  // The structured draft key: a new-chat destination is keyed by the current
+  // pane visit (never route text), an existing conversation by its active
+  // leaf/reply parent, a branch reply by its anchor.
+  const composerDraftKey: ChatDraftKey = branchDraft
+    ? chatDraftKeyFor({ kind: "Branch", branchDraft })
+    : convo.conversationId === null
+      ? chatDraftKeyFor({
+          kind: "NewConversation",
+          visitId: paneRuntime.visitId,
+        })
       : chatDraftKeyFor({
-          kind: "path",
-          pathTargetId:
+          kind: "Path",
+          targetId:
             branch?.activeLeafMessageId ??
             activeReplyParentMessageId ??
             convo.conversationId,
@@ -977,6 +986,10 @@ export default function Conversation() {
             onRerunAssistantResponse={convo.rerunAssistantResponse}
             rerunningAssistantMessageIds={
               convo.rerunningAssistantMessageIds.ids
+            }
+            onRegenerateAssistantResponse={convo.regenerateAssistantResponse}
+            regeneratingAssistantMessageIds={
+              convo.regeneratingAssistantMessageIds.ids
             }
             connectionLostAssistantIds={convo.connectionLostAssistantIds}
             onReconnectAssistant={convo.reconnectAssistantResponse}
