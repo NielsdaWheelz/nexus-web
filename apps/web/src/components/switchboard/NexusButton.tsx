@@ -40,7 +40,7 @@ export default function NexusButton({
   useLayoutEffect(() => {
     const element = wrapperRef.current;
     if (switchboardOpen || !element) return;
-    return mobileViewport.registerFixedObstruction("Nexus", element);
+    return mobileViewport.registerBottomSurface("Nexus", element);
   }, [mobileViewport, switchboardOpen]);
   const label =
     paneCount === 1 ? "Open Nexus, 1 tab" : `Open Nexus, ${paneCount} tabs`;

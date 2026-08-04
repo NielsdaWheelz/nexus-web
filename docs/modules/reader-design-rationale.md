@@ -45,8 +45,8 @@ direction-aware policy from their actual scroll owner, and all moving surfaces
 share one continuous progress value.
 
 Stable layout matters more than reclaiming a few measured pixels. Chrome moves
-with transforms while its layout and Nexus obstruction wrapper remain fixed, so
-the reader's place, selection, last line, and player clearance do not jump.
+with transforms while its layout and Nexus bottom-surface wrapper remain fixed,
+so the reader's place, selection, last line, and player clearance do not jump.
 Partially retreated controls are not useful controls: the complete moving roots
 leave hit testing and accessibility navigation until fully visible again. A
 blank-canvas tap is convenient pointer recovery, but reverse/top/focus are the
@@ -111,7 +111,7 @@ together. A short reverse movement restores them in every reader; an unhandled
 blank-canvas tap is supplementary recovery in Web, EPUB, and PDF.
 This is continuous chrome policy, not content motion: one real reader
 scrollport feeds one reducer/provider, while the reader box, selection,
-progress, and fixed Nexus obstruction remain stable.
+progress, and fixed Nexus bottom surface remain stable.
 
 Focus, Find, selection, menus, and code-owned positioning explicitly pin chrome
 through their owned lifetime. Reduced motion remains visible. This keeps

@@ -11,31 +11,30 @@ import {
   useState,
 } from "react";
 import {
-  resolveMobileViewportProjection,
-  type MobileFixedObstructionId,
-  type MobileFixedObstructionRect,
+  resolveContentBottomClearancePx,
+  resolveContentSurfaceBottomClearancePx,
+  resolveNexusBottomOffsetPx,
+  type MobileBottomSurfaceId,
+  type MobileBottomSurfaceRect,
 } from "@/lib/mobileViewport/model";
+import { readMobileCssLength } from "@/lib/mobileViewport/readMobileCssLength";
 import { isTextEntryTarget } from "@/lib/ui/isTextEntryTarget";
 
-export type { MobileFixedObstructionId } from "@/lib/mobileViewport/model";
+export type { MobileBottomSurfaceId } from "@/lib/mobileViewport/model";
 
 export interface MobileViewportCapability {
-  registerFixedObstruction(
-    id: MobileFixedObstructionId,
+  registerBottomSurface(
+    id: MobileBottomSurfaceId,
     element: HTMLElement,
   ): () => void;
+  registerContentSurface(element: HTMLElement): () => void;
   reportMobileOverlayKeyboardInset(px: number): () => void;
   subscribeContentBottomClearance(listener: () => void): () => void;
 }
 
-interface FixedRegistration {
+interface BottomSurfaceRegistration {
   element: HTMLElement;
   observer: ResizeObserver;
-}
-
-interface FixedMeasurements {
-  viewportHeightPx: number;
-  rects: ReadonlyMap<MobileFixedObstructionId, MobileFixedObstructionRect>;
 }
 
 interface MobileOverlayKeyboardReport {
@@ -43,33 +42,24 @@ interface MobileOverlayKeyboardReport {
   insetPx: number;
 }
 
-const MobileViewportContext =
-  createContext<MobileViewportCapability | null>(null);
+const MobileViewportContext = createContext<MobileViewportCapability | null>(
+  null,
+);
 const RootTextEntryFocusContext = createContext<boolean | null>(null);
 
-function measurementsEqual(
-  left: FixedMeasurements,
-  right: FixedMeasurements,
-): boolean {
-  if (
-    left.viewportHeightPx !== right.viewportHeightPx ||
-    left.rects.size !== right.rects.size
-  ) {
-    return false;
-  }
-  for (const [id, rect] of left.rects) {
-    const other = right.rects.get(id);
-    if (
-      !other ||
-      rect.top !== other.top ||
-      rect.bottom !== other.bottom ||
-      rect.width !== other.width ||
-      rect.height !== other.height
-    ) {
-      return false;
-    }
-  }
-  return true;
+const CONTENT_BOTTOM_CLEARANCE = "--mobile-content-bottom-clearance";
+
+function measureBottomSurface(
+  registration: BottomSurfaceRegistration | undefined,
+): MobileBottomSurfaceRect | null {
+  if (!registration) return null;
+  const rect = registration.element.getBoundingClientRect();
+  return {
+    top: rect.top,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
+  };
 }
 
 export function MobileViewportProvider({
@@ -77,173 +67,190 @@ export function MobileViewportProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const registrationsRef = useRef(
-    new Map<MobileFixedObstructionId, FixedRegistration>(),
+  const bottomSurfacesRef = useRef(
+    new Map<MobileBottomSurfaceId, BottomSurfaceRegistration>(),
   );
-  const [fixedMeasurements, setFixedMeasurements] =
-    useState<FixedMeasurements>({
-      viewportHeightPx: 0,
-      rects: new Map(),
-    });
-  const [mobileOverlayKeyboardInsetPx, setMobileOverlayKeyboardInsetPx] =
-    useState(0);
+  const contentSurfacesRef = useRef(new Map<HTMLElement, ResizeObserver>());
+  const keyboardReportsRef = useRef<MobileOverlayKeyboardReport[]>([]);
+  const keyboardInsetPxRef = useRef(0);
+  const nextKeyboardReportIdRef = useRef(0);
+  const clearanceListenersRef = useRef(new Set<() => void>());
+  const frameRef = useRef<number | null>(null);
   const [rootTextEntryFocused, setRootTextEntryFocused] = useState(false);
-  const mobileOverlayKeyboardReportsRef = useRef<
-    MobileOverlayKeyboardReport[]
-  >([]);
-  const contentBottomClearanceListenersRef = useRef(new Set<() => void>());
-  const nextMobileOverlayKeyboardReportIdRef = useRef(0);
 
-  const measureFixedObstructions = useCallback(() => {
-    const rects = new Map<
-      MobileFixedObstructionId,
-      MobileFixedObstructionRect
-    >();
-    for (const [id, registration] of registrationsRef.current) {
-      const rect = registration.element.getBoundingClientRect();
-      rects.set(id, {
-        top: rect.top,
-        bottom: rect.bottom,
-        width: rect.width,
-        height: rect.height,
-      });
-    }
-    const next = {
-      viewportHeightPx: window.innerHeight,
-      rects,
-    };
-    setFixedMeasurements((current) =>
-      measurementsEqual(current, next) ? current : next,
+  // One ordered pass: the flow Player places Nexus, the placed Nexus sets the
+  // protected full-window band, and that band projects into every registered
+  // content surface. Reading each rectangle after the write it depends on lets
+  // the pass converge without a second frame.
+  const measure = useCallback(() => {
+    const root = document.documentElement;
+    const viewportHeightPx = window.innerHeight;
+    const safeBottomPx = readMobileCssLength("var(--viewport-safe-bottom)");
+    const overlayKeyboardInsetPx = keyboardInsetPxRef.current;
+
+    const nexusBottomOffsetPx = resolveNexusBottomOffsetPx({
+      viewportHeightPx,
+      safeBottomPx,
+      playerRect: measureBottomSurface(bottomSurfacesRef.current.get("Player")),
+    });
+    root.style.setProperty(
+      "--mobile-nexus-bottom-offset",
+      `${nexusBottomOffsetPx}px`,
     );
-  }, []);
 
-  const registerFixedObstruction = useCallback(
-    (id: MobileFixedObstructionId, element: HTMLElement) => {
-      if (registrationsRef.current.has(id)) {
-        // justify-defect: each closed obstruction identity has one active shell
-        // projection.
-        throw new Error(`Duplicate active mobile fixed obstruction: ${id}`);
-      }
-      const observer = new ResizeObserver(measureFixedObstructions);
-      registrationsRef.current.set(id, { element, observer });
-      observer.observe(element);
-      measureFixedObstructions();
-      return () => {
-        const registration = registrationsRef.current.get(id);
-        if (registration?.element !== element) {
-          return;
-        }
-        registration.observer.disconnect();
-        registrationsRef.current.delete(id);
-        measureFixedObstructions();
-      };
-    },
-    [measureFixedObstructions],
-  );
+    const contentBottomClearancePx = resolveContentBottomClearancePx({
+      viewportHeightPx,
+      safeBottomPx,
+      nexusRect: measureBottomSurface(bottomSurfacesRef.current.get("Nexus")),
+      overlayKeyboardInsetPx,
+    });
+    root.style.setProperty(
+      CONTENT_BOTTOM_CLEARANCE,
+      `${contentBottomClearancePx}px`,
+    );
+    root.style.setProperty(
+      "--mobile-overlay-keyboard-inset",
+      `${overlayKeyboardInsetPx}px`,
+    );
 
-  const reportMobileOverlayKeyboardInset = useCallback((px: number) => {
-    if (!Number.isFinite(px) || px < 0) {
-      // justify-defect: mobile modal lifecycle reports the owned keyboard
-      // geometry hook's nonnegative finite result.
-      throw new Error(
-        "Mobile overlay keyboard inset must be nonnegative and finite",
+    for (const element of contentSurfacesRef.current.keys()) {
+      element.style.setProperty(
+        CONTENT_BOTTOM_CLEARANCE,
+        `${resolveContentSurfaceBottomClearancePx({
+          viewportHeightPx,
+          contentBottomClearancePx,
+          surfaceBottomPx: element.getBoundingClientRect().bottom,
+        })}px`,
       );
     }
-    const report = {
-      id: nextMobileOverlayKeyboardReportIdRef.current++,
-      insetPx: Math.ceil(px),
-    };
-    mobileOverlayKeyboardReportsRef.current.push(report);
-    setMobileOverlayKeyboardInsetPx(report.insetPx);
-    return () => {
-      const reports = mobileOverlayKeyboardReportsRef.current;
-      const index = reports.findIndex((candidate) => candidate.id === report.id);
-      if (index === -1) {
-        return;
-      }
-      const ownedPublishedInset = index === reports.length - 1;
-      reports.splice(index, 1);
-      if (ownedPublishedInset) {
-        setMobileOverlayKeyboardInsetPx(
-          reports[reports.length - 1]?.insetPx ?? 0,
-        );
-      }
-    };
+
+    for (const listener of clearanceListenersRef.current) listener();
   }, []);
 
-  const subscribeContentBottomClearance = useCallback(
-    (listener: () => void) => {
-      contentBottomClearanceListenersRef.current.add(listener);
+  const scheduleMeasure = useCallback(() => {
+    if (frameRef.current !== null) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      measure();
+    });
+  }, [measure]);
+
+  const registerBottomSurface = useCallback(
+    (id: MobileBottomSurfaceId, element: HTMLElement) => {
+      const surfaces = bottomSurfacesRef.current;
+      if (surfaces.has(id)) {
+        // justify-defect: each bottom-surface identity has one active shell
+        // projection.
+        throw new Error(`Duplicate active mobile bottom surface: ${id}`);
+      }
+      const observer = new ResizeObserver(scheduleMeasure);
+      surfaces.set(id, { element, observer });
+      observer.observe(element, { box: "border-box" });
+      measure();
       return () => {
-        contentBottomClearanceListenersRef.current.delete(listener);
+        const registration = surfaces.get(id);
+        if (registration?.element !== element) return;
+        registration.observer.disconnect();
+        surfaces.delete(id);
+        measure();
       };
     },
-    [],
+    [measure, scheduleMeasure],
   );
+
+  const registerContentSurface = useCallback(
+    (element: HTMLElement) => {
+      const surfaces = contentSurfacesRef.current;
+      if (surfaces.has(element)) {
+        // justify-defect: each mobile content surface has one registration
+        // owned by its layout owner.
+        throw new Error("Duplicate active mobile content surface");
+      }
+      // Border-box: the terminal padding this pass writes into the surface must
+      // not read back as a resize and schedule a pass that changes nothing.
+      const observer = new ResizeObserver(scheduleMeasure);
+      surfaces.set(element, observer);
+      observer.observe(element, { box: "border-box" });
+      measure();
+      return () => {
+        if (!surfaces.delete(element)) return;
+        observer.disconnect();
+        element.style.removeProperty(CONTENT_BOTTOM_CLEARANCE);
+        measure();
+      };
+    },
+    [measure, scheduleMeasure],
+  );
+
+  const reportMobileOverlayKeyboardInset = useCallback(
+    (px: number) => {
+      if (!Number.isFinite(px) || px < 0) {
+        // justify-defect: mobile modal lifecycle reports the owned keyboard
+        // geometry hook's nonnegative finite result.
+        throw new Error(
+          "Mobile overlay keyboard inset must be nonnegative and finite",
+        );
+      }
+      const report = {
+        id: nextKeyboardReportIdRef.current++,
+        insetPx: Math.ceil(px),
+      };
+      const reports = keyboardReportsRef.current;
+      reports.push(report);
+      keyboardInsetPxRef.current = report.insetPx;
+      measure();
+      return () => {
+        const index = reports.findIndex(
+          (candidate) => candidate.id === report.id,
+        );
+        if (index === -1) return;
+        const ownedPublishedInset = index === reports.length - 1;
+        reports.splice(index, 1);
+        if (!ownedPublishedInset) return;
+        keyboardInsetPxRef.current = reports[reports.length - 1]?.insetPx ?? 0;
+        measure();
+      };
+    },
+    [measure],
+  );
+
+  const subscribeContentBottomClearance = useCallback((listener: () => void) => {
+    clearanceListenersRef.current.add(listener);
+    return () => {
+      clearanceListenersRef.current.delete(listener);
+    };
+  }, []);
 
   const capability = useMemo<MobileViewportCapability>(
     () => ({
-      registerFixedObstruction,
+      registerBottomSurface,
+      registerContentSurface,
       reportMobileOverlayKeyboardInset,
       subscribeContentBottomClearance,
     }),
     [
-      registerFixedObstruction,
+      registerBottomSurface,
+      registerContentSurface,
       reportMobileOverlayKeyboardInset,
       subscribeContentBottomClearance,
     ],
   );
-  // `fixedMeasurements` is identity-stable across renders (the setter returns the
-  // current object when measurements are equal), so memoizing keeps `projection`
-  // referentially stable until an input actually changes — the CSS-var
-  // useLayoutEffect below then only runs on real change, not every render.
-  const projection = useMemo(
-    () =>
-      resolveMobileViewportProjection({
-        viewportHeightPx: fixedMeasurements.viewportHeightPx,
-        fixedObstructions: fixedMeasurements.rects,
-        mobileOverlayKeyboardInsetPx,
-      }),
-    [fixedMeasurements, mobileOverlayKeyboardInsetPx],
-  );
 
   useLayoutEffect(() => {
-    const root = document.documentElement;
-    root.style.setProperty(
-      "--mobile-content-bottom-clearance",
-      `max(var(--viewport-safe-bottom), ${projection.contentBottomClearancePx}px)`,
-    );
-    root.style.setProperty(
-      "--mobile-nexus-bottom-offset",
-      `max(var(--viewport-safe-bottom), ${projection.playerBottomClearancePx}px)`,
-    );
-    root.style.setProperty(
-      "--mobile-reader-paint-bottom-inset",
-      `max(0px, calc(var(--viewport-safe-bottom) - ${projection.playerBottomClearancePx}px))`,
-    );
-    root.style.setProperty(
-      "--mobile-overlay-keyboard-inset",
-      `${projection.overlayKeyboardInsetPx}px`,
-    );
-    for (const listener of contentBottomClearanceListenersRef.current) {
-      listener();
-    }
-  }, [projection]);
-
-  useLayoutEffect(() => {
-    if (!registrationsRef.current.has("Nexus")) {
-      return;
-    }
-    const frame = requestAnimationFrame(measureFixedObstructions);
-    return () => cancelAnimationFrame(frame);
-  }, [measureFixedObstructions, projection.playerBottomClearancePx]);
+    measure();
+  }, [measure]);
 
   useEffect(() => {
-    window.addEventListener("resize", measureFixedObstructions);
+    const visualViewport = window.visualViewport;
+    window.addEventListener("resize", scheduleMeasure);
+    visualViewport?.addEventListener("resize", scheduleMeasure);
+    visualViewport?.addEventListener("scroll", scheduleMeasure);
     return () => {
-      window.removeEventListener("resize", measureFixedObstructions);
+      window.removeEventListener("resize", scheduleMeasure);
+      visualViewport?.removeEventListener("resize", scheduleMeasure);
+      visualViewport?.removeEventListener("scroll", scheduleMeasure);
     };
-  }, [measureFixedObstructions]);
+  }, [scheduleMeasure]);
 
   useEffect(() => {
     let mounted = true;
@@ -273,16 +280,22 @@ export function MobileViewportProvider({
 
   useEffect(
     () => () => {
-      for (const registration of registrationsRef.current.values()) {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      for (const registration of bottomSurfacesRef.current.values()) {
         registration.observer.disconnect();
       }
-      registrationsRef.current.clear();
-      mobileOverlayKeyboardReportsRef.current = [];
-      contentBottomClearanceListenersRef.current.clear();
+      bottomSurfacesRef.current.clear();
+      for (const [element, observer] of contentSurfacesRef.current) {
+        observer.disconnect();
+        element.style.removeProperty(CONTENT_BOTTOM_CLEARANCE);
+      }
+      contentSurfacesRef.current.clear();
+      keyboardReportsRef.current = [];
+      keyboardInsetPxRef.current = 0;
+      clearanceListenersRef.current.clear();
       const root = document.documentElement;
-      root.style.removeProperty("--mobile-content-bottom-clearance");
+      root.style.removeProperty(CONTENT_BOTTOM_CLEARANCE);
       root.style.removeProperty("--mobile-nexus-bottom-offset");
-      root.style.removeProperty("--mobile-reader-paint-bottom-inset");
       root.style.removeProperty("--mobile-overlay-keyboard-inset");
     },
     [],

@@ -275,11 +275,11 @@
     {
       "id": "native-system-safe-area-bypass",
       "patch": "testdata/faults/native-system-safe-area-bypass.patch",
-      "sha256": "dbc0edbf5118c6ea2a5a1559d79be91375bb1704aa91c2cc5057e31d04be65d7",
+      "sha256": "ff62eef1a0d3a9b5523a604a8147b472a40f88276f30bcae07e70e7c8659d1ef",
       "proofs": [
-        "vitest:apps/web/src/lib/mobileViewport/mobileSafeArea.browser.test.tsx"
+        "vitest:apps/web/src/lib/mobileViewport/MobileViewportProvider.browser.test.tsx"
       ],
-      "expected_failure": "expected +0 to be 37"
+      "expected_failure": "expected +0 to be 48"
     },
     {
       "id": "active-pane-reactivation-identity-corruption",

@@ -154,8 +154,9 @@ The provider reduces reader scroll to one normalized collapse progress. The app
 top bar, optional active contextual row, and inner Nexus control consume that
 progress in the same animation frame through compositor-only transforms. Top
 chrome retreats upward and Nexus retreats downward. The untransformed outer
-Nexus wrapper remains the fixed-obstruction measurement surface, so content
-clearance, content offset, and reader `scrollTop` remain fixed. Downward scroll
+Nexus wrapper remains the registered `"Nexus"` bottom-surface measurement
+surface, so content clearance, content offset, and reader `scrollTop` remain
+fixed. Downward scroll
 collapses, upward scroll reveals after the direction dead zone, and idle partial
 progress settles to the nearest endpoint.
 Phase, inertness, and accessibility state commit before collapse motion. A new
@@ -326,24 +327,53 @@ visible and active at the clamped former index, and reapply the per-pane and
 global history budgets. Remove the snapshot only after successful restore.
 Reload clears the stack.
 
-## Mobile Viewport And Fixed Obstructions
+## Mobile Viewport And Bottom Geometry
 
 `globals.css` is the sole raw platform-inset adapter. It maps WebView's four
-CSS safe-area values to `--viewport-safe-{top,right,bottom,left}`.
-`MobileViewportProvider` composes the bottom token with the measured fixed
-Nexus control, active MiniPlayer, root text-entry focus, and active
-mobile-overlay keyboard obstruction. One document focus observer recognizes
-only text-entry targets outside modal layers. While root text entry owns focus,
-the mounted MiniPlayer is hidden/inert and its `"Player"` obstruction is
-unregistered; playback continues through system controls. Fixed controls
-register measured rectangles; `useMobileModalLifecycle` reports active sheet
-or full-screen-task keyboard insets through scoped, ordered reports, so
-releasing the newest modal restores the preceding report. Inactive mounted
-overlays publish nothing. The provider publishes
-`--mobile-content-bottom-clearance` and `--mobile-nexus-bottom-offset`; every
-authenticated mobile primary scroll owner consumes the composed content
-clearance. Components do not read raw safe-area values or independently
-recalculate platform, Player, Nexus, focus, or keyboard geometry.
+CSS safe-area values to `--viewport-safe-{top,right,bottom,left}`, and
+`readMobileCssLength` is the single browser boundary that resolves one of those
+published tokens to CSS pixels when JavaScript needs a number.
+
+`MobileViewportProvider` owns two registration kinds. Id-keyed bottom surfaces
+register through `registerBottomSurface("Nexus" | "Player", element)`: the
+fixed Nexus wrapper and the normal-flow MiniPlayer. Each active mobile pane
+body registers through `registerContentSurface(element)`, so several content
+surfaces may be registered while several mobile panes are mounted. Duplicate
+active registration of either kind is a defect, and every cleanup is
+idempotent, disconnects its observer, removes the element-local variable, and
+recomputes immediately. `useMobileModalLifecycle` reports active sheet or
+full-screen-task keyboard insets through scoped, ordered reports, so releasing
+the newest modal restores the preceding report. Inactive mounted overlays
+publish nothing. One document focus observer recognizes only text-entry targets
+outside modal layers. While root text entry owns focus, the mounted MiniPlayer
+is hidden/inert and its `"Player"` bottom surface is unregistered; playback
+continues through system controls.
+
+Geometry resolves in one ordered measurement pass, because each rectangle can
+only be measured after the write it depends on. The pass resolves the Nexus
+bottom offset from the safe bottom and the Player rectangle and writes root
+`--mobile-nexus-bottom-offset`; then measures the placed Nexus wrapper and
+writes root `--mobile-content-bottom-clearance` — the maximum of safe bottom,
+the Nexus band, and the active overlay keyboard inset — alongside root
+`--mobile-overlay-keyboard-inset`; then projects that protected band into each
+registered content surface's local bottom coordinate and writes an
+element-local `--mobile-content-bottom-clearance` on that element.
+`ResizeObserver`, `window.resize`, and top-level `visualViewport`
+resize/scroll share one animation-frame-coalesced path.
+
+The MiniPlayer stays normal flow. It is a bottom surface that only places
+Nexus and is never added to content clearance: its flow layout already shortens
+every surface above it, and the Nexus rectangle resting on it carries the whole
+protected band, so the Player is counted exactly once.
+
+The fixed Nexus wrapper consumes root `--mobile-nexus-bottom-offset` plus its
+gap. Terminal scroll content consumes `--mobile-content-bottom-clearance` from
+its nearest owner: full-window consumers inherit the root value, while every
+scroll owner nested inside an active mobile pane body — reader document
+viewport, PDF viewer, chat surface, and standard pane bodies — inherits the
+element-local value published on `PaneShell`'s registered `.body`, with no
+per-consumer subtraction. Components do not read raw safe-area values or
+independently recalculate platform, Player, Nexus, focus, or keyboard geometry.
 
 The Android shell remains edge-to-edge. `MainActivity` enables the platform
 edge-to-edge policy before creation, keeps the WebView at full window bounds,
@@ -366,8 +396,13 @@ rendering.
 
 The passive mobile reader position ribbon does not participate in fixed primary
 chrome. It remains reader-relative, uses the reader-owned semantic range, and
-consumes `--mobile-content-bottom-clearance` only for placement. See the
-[mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md).
+paints at the reader surface bottom (`bottom: 0`). It consumes no bottom
+clearance and does not rise above Nexus, Player, or Android navigation; a
+higher-priority surface may cover it. See the
+[mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md)
+for its semantic range, and the
+[bottom geometry cutover](../cutovers/mobile-reader-bottom-geometry-hard-cutover.md)
+for its placement.
 
 The reader Document Map overview rail is fixed primary chrome and remains
 desktop-only. Its markers activate contextual targets; it contains no generic

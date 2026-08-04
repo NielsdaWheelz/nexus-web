@@ -240,13 +240,22 @@
         "apps/web/src/app/layout.tsx",
         "apps/web/src/app/globals.css",
         "apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx",
+        "apps/web/src/lib/mobileViewport/model.ts",
+        "apps/web/src/lib/mobileViewport/readMobileCssLength.ts",
+        "apps/web/src/components/workspace/PaneShell.tsx",
+        "apps/web/src/lib/ui/viewportSafeArea.ts",
         "apps/web/src/components/ui/FloatingActionSurface.tsx"
       ],
       "proofs": [
+        "vitest:apps/web/src/lib/mobileViewport/model.unit.test.ts",
         "vitest:apps/web/src/lib/mobileViewport/mobileSafeArea.browser.test.tsx",
+        "vitest:apps/web/src/lib/mobileViewport/MobileViewportProvider.browser.test.tsx",
+        "vitest:apps/web/src/components/workspace/PaneShell.mobileViewport.browser.test.tsx",
+        "vitest:apps/web/src/components/reader/MobileReaderPositionRibbon.browser.test.tsx",
         "gradle:apps/android/app/src/androidTest/java/app/nexus/android/SystemInsetsTest.kt::nativeInsetsRemainExactAcrossPublicationClearingAndRotation"
       ],
       "capabilities": [
+        "kernel-web",
         "component",
         "android-device"
       ]
@@ -448,6 +457,22 @@
         "apps/web/src/components/resources/ResourceActionMenu.tsx"
       ],
       "risks": []
+    },
+    {
+      "id": "mobile-reader-bottom-geometry",
+      "proof": "apps/web/e2e/journeys/mobile-reader-bottom-geometry.journey.spec.ts",
+      "source_globs": [
+        "apps/web/src/lib/mobileViewport/**/*",
+        "apps/web/src/components/workspace/PaneShell.tsx",
+        "apps/web/src/components/player/MobileMiniPlayer.tsx",
+        "apps/web/src/components/switchboard/NexusButton.tsx",
+        "apps/web/src/components/reader/MobileReaderPositionRibbon.tsx",
+        "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
+        "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+      ],
+      "risks": [
+        "native-system-insets"
+      ]
     }
   ]
 }

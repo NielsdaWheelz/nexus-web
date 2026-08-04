@@ -335,7 +335,7 @@ busy treatment, the status-channel rules, and the zoom clause stand.
 - `apps/web/src/components/ui/FloatingActionSurface.module.css`
 - `apps/web/src/components/ui/FloatingActionSurface.test.tsx`
 - `apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx`
-- `apps/web/src/lib/mobileViewport/MobileViewportProvider.test.tsx`
+- `apps/web/src/lib/mobileViewport/MobileViewportProvider.browser.test.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` — own the
   reflowable fresh-selection action lock and release transitions.
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx` — prove

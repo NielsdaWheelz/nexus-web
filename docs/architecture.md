@@ -1560,11 +1560,15 @@ they open over Resume and never become panes.
   `useSetPaneLabel`, `usePaneSecondary`) and route-keyed
   `usePanePrimaryChrome`; `usePaneRuntime().isActive` exposes the
   host's pane-activity capability, which reader progress uses for
-  adoption-versus-handoff arbitration. `MobileViewportProvider` composes safe
-  area, the measured outer Nexus wrapper and MiniPlayer, root text-entry focus,
-  and active mobile-overlay keyboard inset into one shared mobile content-clearance
-  value. Text entry keeps playback alive while hiding and unregistering the
-  MiniPlayer.
+  adoption-versus-handoff arbitration. `MobileViewportProvider` resolves mobile
+  bottom geometry in one ordered pass: the normal-flow MiniPlayer rectangle
+  places the fixed Nexus wrapper (`--mobile-nexus-bottom-offset`), the placed
+  Nexus wrapper plus safe area and active mobile-overlay keyboard inset form the
+  root content clearance (`--mobile-content-bottom-clearance`), and that
+  protected band projects into an element-local clearance on each registered
+  mobile pane content surface. The flow Player is never added to content
+  clearance, so it is counted exactly once. Text entry keeps playback alive
+  while hiding and unregistering the MiniPlayer.
   `MobileChromeProvider` projects reader collapse to AppBar, the active
   contextual row registered under the existing `PaneToolbar` motion role, and
   the inner NexusControl without moving that wrapper. Every

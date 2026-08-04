@@ -61,7 +61,7 @@ scroll baseline without resetting synchronized chrome presentation, except that
 a reader now at top or too short to scroll reveals fully.
 
 Chrome motion is transform-only and never changes reader padding, selection,
-resume state, scroll position, or the stable outer Nexus obstruction
+resume state, scroll position, or the stable outer Nexus bottom-surface
 measurement. Non-reader and window scroll are outside this contract. See
 [workspace.md](workspace.md#mobile-reader-chrome) for the workspace composition
 contract.
@@ -332,10 +332,16 @@ reader publishes one `ReaderSemanticViewport`; `readerDocumentPosition.ts`
 projects its visible start/end to `0..1` without DOM, React, persistence, or
 activation policy. Marker owners already publish normalized exact positions.
 The projected range feeds the interactive desktop overview rail and the passive
-mobile Web/EPUB/PDF ribbon. The ribbon consumes the workspace-composed bottom
-clearance for reader-relative placement only; it is not workspace fixed chrome.
-The [mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md)
-owns its presentation contract and proof.
+mobile Web/EPUB/PDF ribbon. The ribbon paints at the reader surface bottom
+(`bottom: 0`); it consumes no bottom clearance, never rises above Nexus,
+Player, or Android navigation, may be covered by a higher-priority surface, and
+is not workspace fixed chrome. Terminal reader content clears the protected
+band separately through the element-local
+`--mobile-content-bottom-clearance` its pane body publishes. The
+[mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md)
+owns its semantic range contract and proof; the
+[bottom geometry cutover](../cutovers/mobile-reader-bottom-geometry-hard-cutover.md)
+owns its placement.
 
 - text is `(fragment_id, canonical codepoint offset)` over ordered unique
   fragments; every fragment contributes its length once

@@ -23,8 +23,9 @@ Keep edge-to-edge. Repair its ownership boundary once.
 Android passes original `systemBars` and `displayCutout` insets to the
 full-window WebView. WebView M144+ publishes them through the four standard CSS
 `safe-area-inset-*` values. One root CSS adapter names those values. The
-existing `MobileViewportProvider` composes the bottom safe area with Nexus,
-Player, and modal-keyboard obstructions. Features consume only those outputs.
+existing `MobileViewportProvider` composes the bottom safe area with the
+registered Nexus and Player bottom surfaces and the modal-keyboard inset.
+Features consume only those outputs.
 
 ```text
 Android systemBars + displayCutout
@@ -81,7 +82,7 @@ owners and behavior.
 | Status bar / top cutout | Existing black native protection and light icons remain; web headers and controls start inside the safe top edge. |
 | Landscape / side cutout | Interactive content respects left and right safe edges; no portrait-only bottom assumption. |
 | Reader, no Player | Final content and reader commands remain reachable above system UI and Nexus. |
-| Reader with Player | Final content clears the larger active obstruction; Nexus sits above Player plus its existing gap. |
+| Reader with Player | Final content clears the Player exactly once, through the Player's own flow layout; Nexus sits above Player plus its existing gap. |
 | MiniPlayer | Its surface paints to the physical bottom; its interactive row remains inside the safe rectangle. |
 | Now Playing / Nexus task / sheet | The frame fills the viewport; header, body, and actions respect all applicable safe edges. |
 | Nexus retreats | Its existing transform and inertness remain correct; safe-area changes do not alter the motion policy. |
@@ -155,29 +156,35 @@ Rules:
 Keep the public capability unchanged:
 
 ```ts
-type MobileFixedObstructionId = "Nexus" | "Player";
+type MobileBottomSurfaceId = "Nexus" | "Player";
 
 interface MobileViewportCapability {
-  registerFixedObstruction(
-    id: MobileFixedObstructionId,
+  registerBottomSurface(
+    id: MobileBottomSurfaceId,
     element: HTMLElement,
   ): () => void;
+  registerContentSurface(element: HTMLElement): () => void;
   reportMobileOverlayKeyboardInset(px: number): () => void;
+  subscribeContentBottomClearance(listener: () => void): () => void;
 }
 ```
 
-Keep `model.ts`, obstruction measurement, duplicate-registration defects,
+Keep `model.ts`, bottom-surface measurement, duplicate-registration defects,
 ordered keyboard reports, and `window.innerHeight` projection unchanged.
 
 Only change the two composed publications:
 
 ```text
 --mobile-content-bottom-clearance
-  = max(--viewport-safe-bottom, Nexus rect, Player rect, active overlay keyboard)
+  = max(--viewport-safe-bottom, Nexus rect, active overlay keyboard)
 
 --mobile-nexus-bottom-offset
   = max(--viewport-safe-bottom, Player rect)
 ```
+
+The normal-flow Player is absent from content clearance: its flow layout
+already shortens every surface above it, and the Nexus rectangle resting on it
+carries the whole protected band.
 
 On provider teardown, removing inline publications reveals the root safe-area
 defaults. There is no transient zero state and no second platform-inset store.
@@ -186,12 +193,12 @@ defaults. There is no transient zero state and no second platform-inset store.
 
 | Consumer family | Input | Rule |
 | --- | --- | --- |
-| Reader/chat/PDF/collection scroll roots | `--mobile-content-bottom-clearance` | Apply terminal padding and scroll padding at the real scroll owner. |
-| MiniPlayer | `--viewport-safe-bottom` | Safe-area space belongs inside the player surface; the registered rect therefore includes it. |
+| Reader/chat/PDF/collection scroll roots | element-local `--mobile-content-bottom-clearance` | Apply terminal padding and scroll padding at the real scroll owner. Inside an active mobile pane the value is inherited from the pane body registered as a content surface, not from the root. |
+| MiniPlayer | `--viewport-safe-bottom` | Safe-area space belongs inside the player surface; the registered bottom-surface rect therefore includes it. |
 | Nexus wrapper | `--mobile-nexus-bottom-offset`, `--viewport-safe-right` | Preserve current 48 px wrapper, gap, measurement, and retreat distance. |
 | Full-screen tasks / Now Playing | four `--viewport-safe-*` tokens | One frame; page-owned header/body apply the appropriate edge. |
 | MobileSheet | `--viewport-safe-bottom` plus existing keyboard token | Safe area and IME remain distinct inputs; preserve shrink behavior. |
-| FloatingActionSurface | root tokens plus composed bottom clearance | Read token-computed pixels from its existing probe; do not read `env()` directly or add a store. |
+| FloatingActionSurface | root tokens plus composed bottom clearance | Read token-computed pixels through `lib/mobileViewport/readMobileCssLength.ts`, the one CSS-length boundary; do not read `env()` directly, add a second probe, or add a store. |
 
 Features never branch on Android, navigation mode, WebView version, OEM, or
 shell capability.

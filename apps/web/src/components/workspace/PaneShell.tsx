@@ -77,6 +77,7 @@ import {
   findPaneLandmarkFocusTarget,
   findPaneSearchFocusTarget,
 } from "@/lib/workspace/paneDom";
+import { useActiveMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
 import { NexusPanePerformanceContext } from "@/lib/nexus/performance";
 import { isAbortError } from "@/lib/errors";
 import styles from "./PaneShell.module.css";
@@ -279,6 +280,8 @@ export default function PaneShell({
   });
   const chromeRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const contentSurfaceActive = isMobile && isActive;
+  const mobileViewport = useActiveMobileViewport(contentSurfaceActive);
   const filterRowsContinuityKey = `${paneId}:${paneRuntime.visitId}:${paneRuntime.routeId}:${paneRuntime.pathname}`;
   usePaneReturnScrollport({
     paneId,
@@ -802,6 +805,14 @@ export default function PaneShell({
       }),
     [actionsWithSearch, paneId, secondaryRegionId],
   );
+
+  // The active mobile pane body is the content surface every reader, list, and
+  // chat scroll owner inside it inherits its terminal clearance from.
+  useLayoutEffect(() => {
+    const element = bodyRef.current;
+    if (!contentSurfaceActive || !mobileViewport || !element) return;
+    return mobileViewport.registerContentSurface(element);
+  }, [contentSurfaceActive, mobileViewport]);
 
   useLayoutEffect(() => {
     if (!isMobile || !chromeRef.current) {

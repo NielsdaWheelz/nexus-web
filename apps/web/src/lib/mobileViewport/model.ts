@@ -1,16 +1,10 @@
-export type MobileFixedObstructionId = "Nexus" | "Player";
+export type MobileBottomSurfaceId = "Nexus" | "Player";
 
-export interface MobileFixedObstructionRect {
-  top: number;
-  bottom: number;
-  width: number;
-  height: number;
-}
-
-export interface MobileViewportProjection {
-  contentBottomClearancePx: number;
-  playerBottomClearancePx: number;
-  overlayKeyboardInsetPx: number;
+export interface MobileBottomSurfaceRect {
+  readonly top: number;
+  readonly bottom: number;
+  readonly width: number;
+  readonly height: number;
 }
 
 function requireNonnegativeFinite(value: number, name: string): number {
@@ -21,19 +15,21 @@ function requireNonnegativeFinite(value: number, name: string): number {
   return value;
 }
 
-function obstructionBottomClearance(
+/** Height of the band a bottom surface covers, measured up from the window bottom. */
+function bottomSurfaceClearancePx(
   viewportHeightPx: number,
-  rect: MobileFixedObstructionRect,
+  rect: MobileBottomSurfaceRect | null,
 ): number {
+  if (!rect) return 0;
   if (
     !Number.isFinite(rect.top) ||
     !Number.isFinite(rect.bottom) ||
     !Number.isFinite(rect.width) ||
     !Number.isFinite(rect.height)
   ) {
-    // justify-defect: registered obstruction rectangles are browser-owned
+    // justify-defect: registered bottom-surface rectangles are browser-owned
     // DOMRect measurements.
-    throw new Error("Mobile fixed obstruction rectangle must be finite");
+    throw new Error("Mobile bottom surface rectangle must be finite");
   }
   if (
     rect.width <= 0 ||
@@ -43,46 +39,77 @@ function obstructionBottomClearance(
   ) {
     return 0;
   }
-  return Math.ceil(
-    Math.min(viewportHeightPx, Math.max(0, viewportHeightPx - rect.top)),
-  );
+  return Math.ceil(Math.min(viewportHeightPx, viewportHeightPx - rect.top));
 }
 
-export function resolveMobileViewportProjection(input: {
+/**
+ * Where the fixed Nexus control rests. The MiniPlayer is normal flow, so it
+ * places Nexus without ever becoming a content obstruction itself.
+ */
+export function resolveNexusBottomOffsetPx(input: {
   viewportHeightPx: number;
-  fixedObstructions: ReadonlyMap<
-    MobileFixedObstructionId,
-    MobileFixedObstructionRect
-  >;
-  mobileOverlayKeyboardInsetPx: number;
-}): MobileViewportProjection {
+  safeBottomPx: number;
+  playerRect: MobileBottomSurfaceRect | null;
+}): number {
   const viewportHeightPx = requireNonnegativeFinite(
     input.viewportHeightPx,
     "Mobile viewport height",
   );
-  const overlayKeyboardInsetPx = Math.ceil(
-    requireNonnegativeFinite(
-      input.mobileOverlayKeyboardInsetPx,
-      "Mobile overlay keyboard inset",
+  return Math.max(
+    Math.ceil(requireNonnegativeFinite(input.safeBottomPx, "Safe bottom")),
+    bottomSurfaceClearancePx(viewportHeightPx, input.playerRect),
+  );
+}
+
+/**
+ * The full-window band terminal content must clear. The flow Player is excluded:
+ * its normal-flow layout already shortens every content surface above it, and
+ * the Nexus rectangle resting on it carries the whole protected band.
+ */
+export function resolveContentBottomClearancePx(input: {
+  viewportHeightPx: number;
+  safeBottomPx: number;
+  nexusRect: MobileBottomSurfaceRect | null;
+  overlayKeyboardInsetPx: number;
+}): number {
+  const viewportHeightPx = requireNonnegativeFinite(
+    input.viewportHeightPx,
+    "Mobile viewport height",
+  );
+  return Math.max(
+    Math.ceil(requireNonnegativeFinite(input.safeBottomPx, "Safe bottom")),
+    bottomSurfaceClearancePx(viewportHeightPx, input.nexusRect),
+    Math.ceil(
+      requireNonnegativeFinite(
+        input.overlayKeyboardInsetPx,
+        "Mobile overlay keyboard inset",
+      ),
     ),
   );
-  let fixedBottomClearancePx = 0;
-  for (const rect of input.fixedObstructions.values()) {
-    fixedBottomClearancePx = Math.max(
-      fixedBottomClearancePx,
-      obstructionBottomClearance(viewportHeightPx, rect),
-    );
+}
+
+/**
+ * Project the protected full-window band into one registered surface's local
+ * bottom coordinate, so the space flow layout already spent is not spent twice.
+ */
+export function resolveContentSurfaceBottomClearancePx(input: {
+  viewportHeightPx: number;
+  contentBottomClearancePx: number;
+  surfaceBottomPx: number;
+}): number {
+  const viewportHeightPx = requireNonnegativeFinite(
+    input.viewportHeightPx,
+    "Mobile viewport height",
+  );
+  const contentBottomClearancePx = requireNonnegativeFinite(
+    input.contentBottomClearancePx,
+    "Mobile content bottom clearance",
+  );
+  if (!Number.isFinite(input.surfaceBottomPx)) {
+    // justify-defect: registered content-surface rectangles are browser-owned
+    // DOMRect measurements.
+    throw new Error("Mobile content surface bottom must be finite");
   }
-  const playerRect = input.fixedObstructions.get("Player");
-  const playerBottomClearancePx = playerRect
-    ? obstructionBottomClearance(viewportHeightPx, playerRect)
-    : 0;
-  return {
-    contentBottomClearancePx: Math.max(
-      fixedBottomClearancePx,
-      overlayKeyboardInsetPx,
-    ),
-    playerBottomClearancePx,
-    overlayKeyboardInsetPx,
-  };
+  const belowSurfacePx = Math.max(0, viewportHeightPx - input.surfaceBottomPx);
+  return Math.max(0, Math.ceil(contentBottomClearancePx - belowSurfacePx));
 }

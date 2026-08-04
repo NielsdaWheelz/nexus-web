@@ -507,7 +507,8 @@ Add:
 Modify:
 
 - `apps/web/src/lib/player/{playerSession,globalPlayer,mediaSession,usePlayerKeyboardShortcuts}.ts*`
-- `apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx` and its test
+- `apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx` and its
+  `MobileViewportProvider.browser.test.tsx` proof
 - `apps/web/src/components/walknotes/WalknoteReviewPanel.tsx` and its test
 - every current `useGlobalPlayer` consumer, mock, helper, and explanatory
   comment, including billing and Android-shell tests
@@ -675,7 +676,7 @@ bun run test:browser -- \
   src/lib/player/GlobalPlayer.runtime.test.tsx \
   src/lib/player/GlobalPlayer.activity.test.tsx \
   src/lib/player/usePlayerKeyboardShortcuts.test.tsx \
-  src/lib/mobileViewport/MobileViewportProvider.test.tsx \
+  src/lib/mobileViewport/MobileViewportProvider.browser.test.tsx \
   src/lib/walknotes/usePlayerCapture.test.tsx \
   src/components/walknotes/WalknoteReviewPanel.test.tsx
 bun run typecheck

@@ -28,16 +28,25 @@ Mobile readable Web, EPUB, and PDF surfaces have one quiet horizontal
 **position ribbon**. It projects the existing exact semantic viewport onto the
 whole document. It is orientation, not completion and not navigation.
 
-The ribbon is reader-owned and reader-relative. It sits at the upper boundary
-of the composed mobile bottom clearance. It is not workspace fixed chrome and
-never attaches to the physical viewport edge.
+The ribbon is reader-owned and reader-relative. It is not workspace fixed chrome
+and never attaches to the physical viewport edge.
+
+SUPERSEDED — the clause placing the ribbon at the upper boundary of the composed
+mobile bottom clearance is replaced by
+[`mobile-reader-bottom-geometry-hard-cutover.md`](mobile-reader-bottom-geometry-hard-cutover.md).
+The ribbon now paints at the reader surface bottom (`bottom: 0`), consumes no
+bottom clearance, and may be covered by a higher-priority surface. Every
+bottom-placement clause below carries the same supersession; this document
+remains authoritative for the semantic range, band model, and presentation
+tokens.
 
 ## Goals
 
 - Preserve place while reader chrome recedes.
 - Match the desktop overview rail's semantic viewport-band model.
-- Reuse the canonical source-coordinate projection and mobile obstruction
-  composition without creating another owner.
+- Reuse the canonical source-coordinate projection and the mobile bottom
+  geometry owner without creating another owner. SUPERSEDED: the ribbon reuses
+  the projection only; it takes no bottom-geometry input.
 - Add no persistence, network, format, or scroll-discovery capability.
 
 ## Target behavior
@@ -47,7 +56,7 @@ never attaches to the physical viewport edge.
 | Exact mobile Web/EPUB/PDF viewport | One full-document track and one band spanning semantic `start..end` |
 | Trusted scroll, restore, Preview, or Return | Band follows the published viewport; presentation writes no reader state |
 | Chrome retreats | Ribbon remains stable and subdued |
-| Nexus, MiniPlayer, safe area, or keyboard changes | Ribbon stays immediately above `--mobile-content-bottom-clearance` |
+| Nexus, MiniPlayer, safe area, or keyboard changes | SUPERSEDED: the ribbon stays at the reader surface bottom and does not move; those surfaces change terminal content clearance only |
 | Sheet, dialog, selection UI, or progress handoff overlaps it | Owning overlay paints above the ribbon |
 | Short document | Exact range may span the full track |
 | Missing or mismatched semantic range | Ribbon is absent; never zeroed or approximated |
@@ -101,8 +110,9 @@ format-owned viewport capture
        -> mobile reader position ribbon
 
 MobileViewportProvider
-  -> --mobile-content-bottom-clearance
-  -> ribbon placement only
+  -> SUPERSEDED: no input to ribbon placement
+  -> element-local --mobile-content-bottom-clearance
+  -> terminal reader content only
 
 PaneShell
   -> physical safe-left/right padding
@@ -116,8 +126,10 @@ PaneShell
 - The ribbon is a sibling of the format reader and
   `ReaderProgressHandoff`, after the format reader in DOM order.
 - The ribbon root spans the full reader column with `inset-inline: 0` and uses
-  `bottom: var(--mobile-content-bottom-clearance)`. It does not consume the
-  physical safe-left/right tokens again.
+  `bottom: 0` — SUPERSEDED from
+  `bottom: var(--mobile-content-bottom-clearance)` by
+  [`mobile-reader-bottom-geometry-hard-cutover.md`](mobile-reader-bottom-geometry-hard-cutover.md).
+  It does not consume the physical safe-left/right tokens again.
 - The band uses logical inline positioning. Use the projected values directly;
   do not mirror them in TypeScript.
 - Use a 2px track, a 2px rounded accent band, and a 2px minimum visible band.
@@ -165,13 +177,13 @@ Create:
 
 - `apps/web/src/components/reader/MobileReaderPositionRibbon.tsx`
 - `apps/web/src/components/reader/MobileReaderPositionRibbon.module.css`
-- `apps/web/src/components/reader/MobileReaderPositionRibbon.test.tsx`
+- `apps/web/src/components/reader/MobileReaderPositionRibbon.browser.test.tsx`
 
 Modify:
 
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx`
-- `e2e/tests/mobile-reader-chrome.spec.ts`
+- `apps/web/e2e/journeys/mobile-reader-bottom-geometry.journey.spec.ts`
 - `docs/modules/reader-implementation.md`
 - `docs/modules/workspace.md`
 - `docs/cutovers/reader-document-map-canonical-position-hard-cutover.md`
@@ -260,16 +272,16 @@ Required commands:
 ```bash
 cd apps/web && bunx eslint --max-warnings 0 \
   src/components/reader/MobileReaderPositionRibbon.tsx \
-  src/components/reader/MobileReaderPositionRibbon.test.tsx \
+  src/components/reader/MobileReaderPositionRibbon.browser.test.tsx \
   'src/app/(authenticated)/media/[id]/MediaPaneBody.tsx' \
   'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx'
 cd apps/web && node scripts/check-css-tokens.mjs
 cd apps/web && bunx vitest run --project browser \
-  src/components/reader/MobileReaderPositionRibbon.test.tsx \
+  src/components/reader/MobileReaderPositionRibbon.browser.test.tsx \
   'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' \
   -t 'MobileReaderPositionRibbon|mobile position ribbon|passive PDF viewport|desktop rail without'
 make test-e2e \
-  PLAYWRIGHT_ARGS='tests/mobile-reader-chrome.spec.ts --project=mobile-chrome --grep "PDF safe-area composition|active global player preserves"'
+  PLAYWRIGHT_ARGS='journeys/mobile-reader-bottom-geometry.journey.spec.ts --project=mobile-chrome'
 git diff --check
 ```
 

@@ -1,7 +1,7 @@
 .ribbon {
   position: absolute;
   inset-inline: 0;
-  bottom: var(--mobile-content-bottom-clearance);
+  bottom: 0;
   z-index: 2;
   height: 2px;
   background: var(--edge-subtle);

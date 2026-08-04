@@ -125,7 +125,6 @@
   --viewport-safe-left: env(safe-area-inset-left);
   --mobile-content-bottom-clearance: var(--viewport-safe-bottom);
   --mobile-nexus-bottom-offset: var(--viewport-safe-bottom);
-  --mobile-reader-paint-bottom-inset: var(--viewport-safe-bottom);
   --mobile-overlay-keyboard-inset: 0px;
   --resize-handle-width: 8px;
   --content-max-width: 700px;

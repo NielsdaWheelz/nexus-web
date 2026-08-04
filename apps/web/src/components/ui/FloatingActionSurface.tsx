@@ -12,6 +12,7 @@ import {
 import { createPortal } from "react-dom";
 import { clamp } from "@/lib/clamp";
 import { useActiveMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
+import { readMobileCssLength } from "@/lib/mobileViewport/readMobileCssLength";
 import { cx } from "@/lib/ui/cx";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -580,7 +581,9 @@ function viewportBounds(
   const safeBounds = isMobileViewport
     ? readViewportSafeBounds({
         viewportPadding,
-        bottomClearance: readMobileContentBottomClearance(),
+        bottomClearance: readMobileCssLength(
+          "var(--mobile-content-bottom-clearance)",
+        ),
       })
     : readViewportSafeBounds({ viewportPadding });
 
@@ -590,18 +593,6 @@ function viewportBounds(
     maxLeft: safeBounds.right,
     maxTop: safeBounds.bottom,
   };
-}
-
-function readMobileContentBottomClearance(): number {
-  const probe = document.createElement("div");
-  probe.style.position = "fixed";
-  probe.style.visibility = "hidden";
-  probe.style.pointerEvents = "none";
-  probe.style.height = "var(--mobile-content-bottom-clearance)";
-  document.body.appendChild(probe);
-  const clearance = readPx(window.getComputedStyle(probe).height);
-  probe.remove();
-  return clearance;
 }
 
 function readPx(rawValue: string | null | undefined): number {
