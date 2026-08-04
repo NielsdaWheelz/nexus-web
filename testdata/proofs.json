@@ -95,6 +95,15 @@
         "python/nexus/services/billing.py",
         "python/nexus/services/billing_entitlements.py",
         "python/nexus/services/chat_run_usage.py",
+        "python/nexus/services/chat_run_candidates.py",
+        "python/nexus/services/chat_run_idempotency.py",
+        "python/nexus/api/routes/chat_runs.py",
+        "apps/web/src/components/chat/useChatDraft.ts",
+        "apps/web/src/components/chat/ChatComposer.tsx",
+        "apps/web/src/components/chat/useConversation.ts",
+        "apps/web/src/components/chat/AssistantMessage.tsx",
+        "apps/web/src/lib/conversations/chatRunBody.ts",
+        "apps/web/src/lib/conversations/chatDraftKey.ts",
         "python/nexus/services/llm_credentials.py",
         "python/nexus/services/llm_execution.py",
         "python/nexus/services/llm_ledger.py",
@@ -104,11 +113,19 @@
       ],
       "proofs": [
         "pytest:python/tests/service/test_costly_effects.py::test_generation_dispatches_once_and_settles_success_or_interruption_exactly_once",
-        "pytest:python/tests/kernel/test_provider_http.py::test_provider_gateway_rewrites_only_the_owned_openai_origin"
+        "pytest:python/tests/service/test_chat_run_candidates.py",
+        "pytest:python/tests/kernel/test_provider_http.py::test_provider_gateway_rewrites_only_the_owned_openai_origin",
+        "vitest:apps/web/src/components/chat/useChatDraft.unit.test.ts",
+        "vitest:apps/web/src/lib/conversations/chatRunBody.unit.test.ts",
+        "vitest:apps/web/src/lib/conversations/chatDraftKey.unit.test.ts",
+        "vitest:apps/web/src/components/chat/ChatComposer.browser.test.tsx",
+        "vitest:apps/web/src/components/chat/AssistantMessage.browser.test.tsx"
       ],
       "capabilities": [
         "service",
-        "kernel-python"
+        "kernel-python",
+        "component",
+        "kernel-web"
       ]
     },
     {
@@ -329,6 +346,22 @@
       "risks": [
         "citation-provenance-identity",
         "llm-tool-safety"
+      ]
+    },
+    {
+      "id": "chat-regeneration",
+      "proof": "apps/web/e2e/journeys/chat-regeneration.journey.spec.ts",
+      "source_globs": [
+        "python/nexus/services/chat_run_candidates.py",
+        "python/nexus/api/routes/chat_runs.py",
+        "apps/web/src/app/api/messages/[messageId]/regenerate/route.ts",
+        "apps/web/src/components/chat/AssistantMessage.tsx",
+        "apps/web/src/components/chat/useConversation.ts",
+        "apps/web/src/components/chat/useChatDraft.ts",
+        "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+      ],
+      "risks": [
+        "costly-effects"
       ]
     },
     {

@@ -19,7 +19,7 @@ product profiles.
 
 Backend owners: `python/nexus/services/llm_profiles.py`,
 `llm_credentials.py`, `llm_execution.py`, `llm_ledger.py`, `chat_failure.py`,
-`chat_reruns.py`, `structured_synthesis.py`, `python/nexus/schemas/llm.py`,
+`chat_run_candidates.py`, `structured_synthesis.py`, `python/nexus/schemas/llm.py`,
 `python/nexus/api/routes/llm_profiles.py`, `python/nexus/tasks/llm_task.py`,
 and the external `provider_runtime` package pinned in `python/pyproject.toml`.
 The worker envelope's queue side lives in [jobs.md](jobs.md).
@@ -356,16 +356,21 @@ synthesizes a second failure.
   (the exact profile id + reasoning option still resolve, and any recorded
   resolved-target snapshot still matches) and no write-tool attempt was made.
 
-`services/chat_reruns.py:rerun_assistant_response` is the single owner of
-`POST /messages/{assistant_message_id}/rerun`. Under the normal idempotency
-key, it re-evaluates `rerun_eligibility` against freshly queried facts (an
-earlier read's `can_rerun` is never authority for the mutation), plus a
-defense-in-depth check comparing the source run's terminal `llm_calls`
-`(provider, model_name)` against what the *current* profile now resolves to
-(catching drift a run with no resolved-target snapshot could otherwise miss).
-On success it creates a new user/assistant message pair and a new `ChatRun`
-carrying forward the source run's `profile_id`/`reasoning_option_id`, and
-enqueues a fresh `chat_run` job. There is no separate retry/resend pair.
+`services/chat_run_candidates.py` owns both `rerun_assistant_response`
+(`POST /messages/{assistant_message_id}/rerun`, for an eligible failed or
+cancelled turn) and `regenerate_assistant_response`
+(`POST /messages/{assistant_message_id}/regenerate`, for an eligible completed
+answer) through one shared private sibling-candidate constructor. Under the
+normal idempotency key each re-evaluates its own eligibility against freshly
+queried facts (an earlier read's `can_rerun`/`can_regenerate` is never authority
+for the mutation); rerun additionally applies a defense-in-depth check comparing
+the source run's terminal `llm_calls` `(provider, model_name)` against what the
+*current* profile now resolves to (catching drift a run with no resolved-target
+snapshot could otherwise miss). On success each creates a new user/assistant
+message pair and a new `ChatRun` carrying forward the source run's
+`profile_id`/`reasoning_option_id`, selects the new assistant as the active
+leaf, and enqueues a fresh `chat_run` job. There is no separate retry/resend
+pair.
 
 ## API surface
 
@@ -378,8 +383,9 @@ enqueues a fresh `chat_run` job. There is no separate retry/resend pair.
   raw `model_id`/provider/`reasoning`/`key_mode`). Resolved
   provider/model_name/reasoning_effort are snapshotted onto `ChatRun` at
   execution as trust-trail facts, never selection controls.
-- **`POST /messages/{assistant_message_id}/rerun`** — the sole recovery
-  route; see above.
+- **`POST /messages/{assistant_message_id}/rerun`** recovers an eligible failed
+  or cancelled turn, and **`POST /messages/{assistant_message_id}/regenerate`**
+  produces a fresh alternative for an eligible completed answer; see above.
 
 ## Invariants
 
@@ -390,8 +396,8 @@ enqueues a fresh `chat_run` job. There is no separate retry/resend pair.
   owner contains a raw provider/model/route/reasoning literal.
 - **One ledger writer** (`llm_ledger`), **one worker envelope**
   (`run_llm_task`), **one platform-credential reader** (`llm_credentials`),
-  **one failure projection + one rerun route** (`chat_failure` /
-  `chat_reruns`).
+  **one failure projection + one sibling-candidate constructor** (`chat_failure`
+  / `chat_run_candidates`).
 - **Platform keys only.** No BYOK, no per-user key, no key-mode.
 
 These are enforced by the hard-cutover negative gates in

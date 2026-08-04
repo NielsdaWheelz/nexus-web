@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import { GitBranch, Search } from "lucide-react";
+import { GitBranch, RefreshCw, Search } from "lucide-react";
 import Button from "@/components/ui/Button";
 import { absent } from "@/lib/api/presence";
 import type {
@@ -38,6 +38,8 @@ export default function AssistantMessage({
   onCitationActivate,
   onRerunAssistantResponse,
   rerunning,
+  onRegenerateAssistantResponse,
+  regenerating,
   connectionLost,
   onReconnectAssistant,
   onStartWalk,
@@ -56,6 +58,8 @@ export default function AssistantMessage({
   ) => void;
   onRerunAssistantResponse?: (assistantMessageId: string) => void;
   rerunning?: boolean;
+  onRegenerateAssistantResponse?: (assistantMessageId: string) => void;
+  regenerating?: boolean;
   connectionLost?: boolean;
   onReconnectAssistant?: (assistantMessageId: string) => void;
   onStartWalk?: (citations: CitationOut[], text: string) => void;
@@ -74,6 +78,10 @@ export default function AssistantMessage({
     !!onStartWalk &&
     message.status === "complete" &&
     (message.citations?.length ?? 0) >= 2;
+  // Regeneration is a completed-answer action, distinct from failed-turn Run
+  // again. The projected capability gates the control; the mutation re-checks.
+  const canRegenerate =
+    message.can_regenerate && Boolean(onRegenerateAssistantResponse);
 
   // The one card-bearing failure read: the failure folds onto the run inside the
   // trust trail (null for a DEFECT → the generic card). A terminal message status
@@ -197,8 +205,20 @@ export default function AssistantMessage({
           onReconnect={() => onReconnectAssistant?.(message.id)}
         />
       ) : null}
-      {canBranchFromAssistant || canWalk ? (
+      {canRegenerate || canBranchFromAssistant || canWalk ? (
         <div className={styles.messageActions}>
+          {canRegenerate ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<RefreshCw size={14} aria-hidden="true" />}
+              loading={regenerating}
+              onClick={() => onRegenerateAssistantResponse?.(message.id)}
+              aria-label="Regenerate this answer"
+            >
+              Regenerate
+            </Button>
+          ) : null}
           {canBranchFromAssistant ? (
             <Button
               variant="ghost"

@@ -56,7 +56,11 @@ from nexus.schemas.conversation import (
     PageInfo,
 )
 from nexus.schemas.presence import Presence, absent, present
-from nexus.services.chat_failure import compute_has_write_tool_attempt, rerun_eligibility
+from nexus.services.chat_failure import (
+    compute_has_write_tool_attempt,
+    profile_selection_active,
+    rerun_eligibility,
+)
 from nexus.services.chat_reader_selection import (
     decode_reader_selection_snapshot,
     reader_selection_out,
@@ -237,6 +241,7 @@ def message_to_out(
     *,
     viewer_id: UUID,
     can_rerun: bool = False,
+    can_regenerate: bool = False,
     citations: list[CitationOut] | None = None,
     trust_trail: AssistantTrustTrailOut | None = None,
 ) -> MessageOut:
@@ -274,6 +279,7 @@ def message_to_out(
         branch_anchor=branch_anchor,
         status=message.status,
         can_rerun=can_rerun,
+        can_regenerate=can_regenerate,
         reader_selection=reader_selection,
         created_at=message.created_at,
         updated_at=message.updated_at,
@@ -326,6 +332,44 @@ def rerunnable_assistant_message_ids(
         ):
             rerunnable.add(message_id)
     return rerunnable
+
+
+def regeneratable_assistant_message_ids(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    assistant_message_ids: Sequence[UUID],
+) -> set[UUID]:
+    """The subset of ``assistant_message_ids`` that are currently regeneratable:
+    a completed assistant answer whose single owning `ChatRun` is complete, whose
+    profile/reasoning selection still resolves to its historical target, and that
+    attempted no assistant-write tool (spec §8). Exactly one complete run is
+    expected per assistant message — this never orders-by-latest. Non-assistant
+    ids simply match no owning run and are excluded.
+
+    This is the advisory read projection; the regenerate mutation re-evaluates
+    the same facts transactionally and is the sole authority (Law 9)."""
+    if not assistant_message_ids:
+        return set()
+
+    runs = (
+        db.execute(
+            select(ChatRun).where(
+                ChatRun.owner_user_id == viewer_id,
+                ChatRun.assistant_message_id.in_(assistant_message_ids),
+                ChatRun.status == "complete",
+            )
+        )
+        .scalars()
+        .all()
+    )
+    run_by_message_id: dict[UUID, ChatRun] = {run.assistant_message_id: run for run in runs}
+
+    regeneratable: set[UUID] = set()
+    for message_id, run in run_by_message_id.items():
+        if profile_selection_active(run) and not compute_has_write_tool_attempt(db, run):
+            regeneratable.add(message_id)
+    return regeneratable
 
 
 # =============================================================================
@@ -889,6 +933,11 @@ def list_messages(
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
     )
+    regeneratable_message_ids = regeneratable_assistant_message_ids(
+        db,
+        viewer_id=viewer_id,
+        assistant_message_ids=message_ids,
+    )
     # Project through the single message projector: load the ORM rows for this
     # already-paginated/ordered window (which carry the reader_selection_snapshot
     # the raw row tuple omits) and preserve the row order.
@@ -906,6 +955,7 @@ def list_messages(
                 message,
                 viewer_id=viewer_id,
                 can_rerun=message_id in rerunnable_message_ids,
+                can_regenerate=message_id in regeneratable_message_ids,
                 trust_trail=trust_trail,
                 citations=(
                     [trust_citation.citation for trust_citation in trust_trail.citations]

@@ -1,16 +1,62 @@
+import type { PaneVisitId } from "@/lib/workspace/schema";
 import type { BranchDraft } from "./types";
 
-export type ChatDraftKeyTarget =
-  | { kind: "path"; pathTargetId?: string | null }
-  | { kind: "branch"; branchDraft: BranchDraft };
+/**
+ * The structured chat-draft identity. A new-chat destination is keyed by its
+ * pane visit — never route text — so two independent new-chat visits get
+ * distinct drafts (the global provisional `path:new` model is hard-cut). An
+ * existing path or a branch reply keeps its own stable identity.
+ *
+ * `chatDraftKeyFor` is the sole key constructor; `serializeChatDraftKey` is the
+ * sole serializer, used only by the `useChatDraft` storage adapter.
+ */
+export type ChatDraftKey =
+  | { kind: "NewConversation"; visitId: PaneVisitId }
+  | { kind: "Path"; targetId: string }
+  | { kind: "BranchMessage"; parentMessageId: string }
+  | {
+      kind: "BranchSelection";
+      parentMessageId: string;
+      clientSelectionId: string;
+    };
 
-export function chatDraftKeyFor(target: ChatDraftKeyTarget): string {
-  if (target.kind === "path") {
-    return `path:${target.pathTargetId ?? "new"}`;
+export type ChatDraftKeyTarget =
+  | { kind: "NewConversation"; visitId: PaneVisitId }
+  | { kind: "Path"; targetId: string }
+  | { kind: "Branch"; branchDraft: BranchDraft };
+
+export function chatDraftKeyFor(target: ChatDraftKeyTarget): ChatDraftKey {
+  switch (target.kind) {
+    case "NewConversation":
+      return { kind: "NewConversation", visitId: target.visitId };
+    case "Path":
+      return { kind: "Path", targetId: target.targetId };
+    case "Branch": {
+      const { branchDraft } = target;
+      if (branchDraft.anchor.kind === "assistant_selection") {
+        return {
+          kind: "BranchSelection",
+          parentMessageId: branchDraft.parentMessageId,
+          clientSelectionId: branchDraft.anchor.client_selection_id,
+        };
+      }
+      return {
+        kind: "BranchMessage",
+        parentMessageId: branchDraft.parentMessageId,
+      };
+    }
   }
-  const draft = target.branchDraft;
-  if (draft.anchor.kind === "assistant_selection") {
-    return `branch:${draft.parentMessageId}:selection:${draft.anchor.client_selection_id}`;
+}
+
+export function serializeChatDraftKey(key: ChatDraftKey): string {
+  switch (key.kind) {
+    case "NewConversation":
+      return `new:${key.visitId}`;
+    case "Path":
+      return `path:${key.targetId}`;
+    case "BranchMessage":
+      return `branch:${key.parentMessageId}:message`;
+    case "BranchSelection":
+      return `branch:${key.parentMessageId}:selection:${key.clientSelectionId}`;
   }
-  return `branch:${draft.parentMessageId}:message`;
 }

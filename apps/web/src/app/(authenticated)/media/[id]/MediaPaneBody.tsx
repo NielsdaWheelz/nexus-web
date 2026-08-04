@@ -6312,7 +6312,11 @@ export default function MediaPaneBody() {
           ),
           labelHint: "Chat",
         },
-        disposition: { kind: "Adopt" },
+        // A "new chat" launch always starts an independent provisional
+        // destination (spec §5.1): Fork always creates a fresh pane, even when a
+        // provisional /conversations/new pane is already open. Existing-chat
+        // launch below stays Adopt so it reuses the chosen conversation's pane.
+        disposition: { kind: "Fork" },
       });
     },
     [activatePaneTarget, id, refreshMediaHighlights],

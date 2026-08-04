@@ -1779,6 +1779,7 @@ def _run_journeys(
             )
             if journey_id in {
                 "grounded-chat-citation",
+                "chat-regeneration",
                 "resource-share-boundary",
             }:
                 execution.ports.grant_scenario_ai_entitlement(

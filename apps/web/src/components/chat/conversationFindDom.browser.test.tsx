@@ -57,6 +57,7 @@ const message: ConversationMessage = {
   citations: [citationOut],
   status: "complete",
   can_rerun: false,
+  can_regenerate: false,
   created_at: "2026-07-29T12:00:00Z",
   updated_at: "2026-07-29T12:00:00Z",
 };

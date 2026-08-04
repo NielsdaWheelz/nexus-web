@@ -318,15 +318,31 @@ discriminated union (`code` as the tag) mirroring
 variants, their valid origins, and the `chat_failure_projection`/
 `rerun_eligibility` policy that produces them.
 
-`POST /messages/{assistant_message_id}/rerun` is the sole recovery route,
-proxied by the sole BFF route
-`app/api/messages/[messageId]/rerun/route.ts`. It creates one new durable run
-from the source prompt and its stored profile selection; a retired,
-uncertified, or changed profile, or any prior attempted write-tool call on the
-source run, makes `can_rerun=false`. It is idempotent under the normal
-`Idempotency-Key`: replaying the same key returns the existing replacement
-run. There is no separate retry/resend pair, no model picker on rerun, and no
-key mode.
+`POST /messages/{assistant_message_id}/rerun` recovers an eligible failed or
+cancelled turn; `POST /messages/{assistant_message_id}/regenerate` produces a
+fresh alternative for an eligible completed answer. Each has its sole BFF route
+(`app/api/messages/[messageId]/{rerun,regenerate}/route.ts`) and both are
+consolidated into one private sibling-candidate constructor
+(`services/chat_run_candidates.py`) with two explicit commands and separate
+eligibility guards: both clone the source user turn (content, parent, branch
+lineage, reader-selection snapshot, turn context) into a new user sibling with a
+pending assistant child and one queued durable run, then select the new
+assistant as the active leaf. A retired, uncertified, or changed profile, or any
+prior attempted write-tool call on the source run, makes rerun ineligible
+(`can_rerun=false`) and regeneration ineligible (`can_regenerate=false`, and the
+mutation raises `E_REGENERATION_NOT_ALLOWED`). The source assistant must map to
+exactly one owning `ChatRun`; missing or duplicate ownership is a defect, never a
+latest-run scan. Each command is idempotent under the normal `Idempotency-Key`:
+replaying the same key returns the existing generated run, while the same key
+with another source or operation is `E_IDEMPOTENCY_KEY_REPLAY_MISMATCH`. There is
+no separate retry/resend pair, no model picker, and no key mode.
+
+**Run again** (failed turn), **Regenerate** (completed answer), **Reconnect**
+(dropped stream), suspended (operator recovery), and **Fork** (branch) stay
+distinct. `AssistantMessage` renders **Regenerate this answer** only when
+`can_regenerate` is true; `useConversation` owns both mutations through one
+candidate action that retains an idempotency key per source across a network
+loss (an explicit retry replays it) and mints a fresh key otherwise.
 
 ## Connection lost, status unknown
 
@@ -359,15 +375,19 @@ resource-context chat carries its subject as a conversation context
 `ResourceEdge` created by its separately-owned workflow, not as a per-run
 request field.
 
-`chatDraftKeyFor` is the single draft-key serializer. It produces:
+`chatDraftKeyFor` is the single draft-key constructor. It returns one structured
+`ChatDraftKey`:
 
-- `path:new`
-- `path:<target-id>`
-- `branch:<parent-message-id>:message`
-- `branch:<parent-message-id>:selection:<client-selection-id>`
+- `{ kind: "NewConversation"; visitId }` — a new-chat destination, keyed by the
+  current `PaneVisitId` and never route text (the global `path:new` model is
+  hard-cut, so two new-chat pane visits get independent drafts)
+- `{ kind: "Path"; targetId }`
+- `{ kind: "BranchMessage"; parentMessageId }`
+- `{ kind: "BranchSelection"; parentMessageId; clientSelectionId }`
 
-Callers still decide the active path target. `Conversation` knows active leaf/new-route state;
-`useChatDraft` knows only its fallback parent/conversation target.
+Only the `useChatDraft` storage adapter serializes it (`serializeChatDraftKey`).
+`Conversation` owns the active leaf/new-route decision and passes
+`paneRuntime.visitId` for an empty `/conversations/new` visit.
 
 ## Assistant Answer Selection
 
@@ -459,13 +479,17 @@ body). Both modes use the same three-line preview and explicit in-place
 expansion. The semantic figure has zero outer margin and cannot exceed its
 containing pane. `ConversationDestinationOverlay` is the existing-chat picker
 (title search over `GET /conversations?q=`). `useChatDraft` persists text, an
-explicit `ChatProfileSelection`, and the active send attempt (idempotency key,
-payload identity, exact sent profile selection, revision) in `sessionStorage`;
-an unknown-status ambiguous failure locks reconciliation and replays the same
-key, profile pair, and quote revision even if the catalog changed, and success
-clears the record. The picker is hidden behind one locked retry status during
-that reconciliation, so current catalog choices cannot misrepresent or mutate
-the replay.
+explicit `ChatProfileSelection`, and the exact send operation — one idempotency
+key plus the immutable `ChatRunCreateRequest` assembled once before dispatch — in
+`sessionStorage`, keyed by the structured `ChatDraftKey`. The operation FSM is
+`Absent | Submitting | ReconcileRequired`: a persisted `Submitting` promotes to
+`ReconcileRequired` at ingress, so an unknown-status ambiguous outcome (network
+loss or reload) locks reconciliation and replays that exact command — the same
+key and byte-for-byte request — regardless of the current catalog, route, or
+quote. A definite rejection consumes the command (the next explicit send mints a
+new key), and success deletes the record. The picker is hidden behind one locked
+retry status during reconciliation, so current catalog choices cannot
+misrepresent or mutate the replay.
 
 The unmarked `GET /conversations` primary index and its `scope` variants return
 the strict complete-collection page and drain automatically in

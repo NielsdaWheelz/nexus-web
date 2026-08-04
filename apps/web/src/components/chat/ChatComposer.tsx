@@ -22,6 +22,7 @@ import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feed
 import { absent, type Presence } from "@/lib/api/presence";
 import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
+import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
 import {
   resolveChatProfileSelection,
   type InheritedChatProfileSelection,
@@ -40,7 +41,7 @@ import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
 import ChatProfilePicker from "@/components/chat/ChatProfilePicker";
 import { useChatProfiles } from "@/components/chat/useChatProfiles";
 import QuotedPassageCard from "@/components/chat/QuotedPassageCard";
-import { useChatDraft } from "@/components/chat/useChatDraft";
+import { useChatDraft, type ChatSendCommand } from "@/components/chat/useChatDraft";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import type {
@@ -70,8 +71,8 @@ interface ChatComposerProps {
   focusKey?: string;
   /** Draft text inserted by an explicit user action before the user sends. */
   initialContent?: string;
-  /** Stable draft key supplied by callers that already own path identity. */
-  draftKey?: string;
+  /** The structured draft-storage identity, owned by `Conversation`. */
+  draftKey: ChatDraftKey;
   /** Assistant answer anchor for branch-reply mode. */
   branchDraft?: BranchDraft | null;
   /** Active-path assistant message used for ordinary continuation replies. */
@@ -196,20 +197,14 @@ export default function ChatComposer({
     profile,
     setProfile,
     activeDraftKey,
-    attempt: currentAttempt,
+    operation,
     reconciling,
-    beginSendAttempt,
+    beginSubmit,
+    retrySubmit,
+    requireReconcile,
+    clearOperation,
     resolveSuccess,
-    resolveKnownFailure,
-    resolveAmbiguous,
-    reconfirmRevision,
-  } = useChatDraft({
-    draftKey,
-    branchDraft,
-    parentMessageId,
-    conversationId,
-    initialContent,
-  });
+  } = useChatDraft({ draftKey, initialContent });
   const {
     profiles,
     defaultProfileId,
@@ -272,10 +267,108 @@ export default function ChatComposer({
     pending !== null && pending.kind !== "ReaderHighlight";
 
   // --------------------------------------------------------------------------
-  // Send handler (owns the durable idempotent send attempt)
+  // Send operation (owns the one exact idempotent command)
   // --------------------------------------------------------------------------
 
-  const handleSend = useCallback(async () => {
+  // POST one exact command (a persisted `Submitting`) and reconcile the outcome.
+  // A fresh send and a "Retry send" share this: once the command exists the
+  // current route/UI is irrelevant, so replay is byte-for-byte the same request.
+  const postCommand = useCallback(
+    async (command: ChatSendCommand) => {
+      setSending(true);
+      setError(null);
+      onSendStarted?.();
+      try {
+        const runResponse = await apiFetch<ChatRunResponse>("/api/chat-runs", {
+          method: "POST",
+          body: JSON.stringify(command.request),
+          headers: { "Idempotency-Key": command.idempotencyKey },
+        });
+        // Delete the complete draft record before canonical route replacement.
+        resolveSuccess();
+        restoreFocusAfterSendRef.current = true;
+        onChatRunCreated?.(decodeChatRunData(runResponse.data));
+        onIntentConsumed?.();
+        onMessageSent?.();
+        onClearBranchDraft?.();
+      } catch (err) {
+        if (handleUnauthenticatedApiError(err)) {
+          // The auth boundary owns recovery; consume the command (editable draft).
+          clearOperation();
+          restoreFocusAfterSendRef.current = true;
+          return;
+        }
+        if (!isApiError(err) || isSameSystemApiDefect(err)) {
+          setAsyncDefect({ error: err });
+          return;
+        }
+        if (err.code === "E_NETWORK") {
+          // The request may have reached the service despite the missing
+          // response: lock the exact command for replay without mutation.
+          requireReconcile();
+          return;
+        }
+        // Every remaining outcome is a definite rejection: it consumes the
+        // command, so the next explicit send mints a new key. An unknown code —
+        // including E_IDEMPOTENCY_KEY_REPLAY_MISMATCH, an invariant defect — is
+        // reported as a defect, never recovery UI.
+        const known =
+          err.code === "E_READER_SELECTION_STALE" ||
+          err.code === "E_CONVERSATION_NO_LONGER_EMPTY" ||
+          err.code === "E_BAD_REQUEST" ||
+          err.code === "E_FORBIDDEN" ||
+          err.code === "E_NOT_FOUND";
+        if (!known) {
+          setAsyncDefect({ error: err });
+          return;
+        }
+        clearOperation();
+        restoreFocusAfterSendRef.current = true;
+        if (err.code === "E_READER_SELECTION_STALE") {
+          const fresh = decodeReaderSelectionPreview(
+            isRecord(err.details) ? err.details.preview : undefined,
+          );
+          if (fresh) {
+            onReaderSelectionStale?.(fresh);
+            setError({
+              tone: "Warning",
+              title: "The quoted passage changed — review it and send again.",
+              requestId: err.requestId,
+            });
+          } else {
+            setError(chatRunErrorMessage(err, "Start"));
+          }
+        } else if (err.code === "E_CONVERSATION_NO_LONGER_EMPTY") {
+          // Another tab created the first message: refresh so the next send
+          // replies to the active leaf — a new insertion mints a new key.
+          onConversationRefresh?.();
+          setError({
+            tone: "Warning",
+            title: "This chat already has messages — send again to continue it.",
+            requestId: err.requestId,
+          });
+        } else {
+          setError(chatRunErrorMessage(err, "Start"));
+        }
+      } finally {
+        setSending(false);
+      }
+    },
+    [
+      clearOperation,
+      onChatRunCreated,
+      onClearBranchDraft,
+      onConversationRefresh,
+      onIntentConsumed,
+      onMessageSent,
+      onReaderSelectionStale,
+      onSendStarted,
+      requireReconcile,
+      resolveSuccess,
+    ],
+  );
+
+  const handleSend = useCallback(() => {
     const trimmed = content.trim();
     if (
       !trimmed ||
@@ -286,167 +379,59 @@ export default function ChatComposer({
     ) {
       return;
     }
-
-    setSending(true);
-    setError(null);
-    onSendStarted?.();
-
-    // Only a hydrated ReaderHighlight rides the send; the key is identity,
-    // the revision a compare-on-send precondition (excluded from identity).
+    // Only a hydrated ReaderHighlight rides the send; its revision is a
+    // compare-on-send precondition carried inside the request itself.
     const readerSelection: ReaderSelectionInput | null = readerHighlight
       ? {
           key: readerSelectionKeyToWire(readerHighlight.key),
           revision: readerHighlight.revision,
         }
       : null;
-
-    // The answer-determining payload identity — NOT the revision. A branch reply
-    // reanchors on its parent; the reader-selection identity is its key alone.
-    const payloadIdentity = JSON.stringify({
+    // Assemble the one canonical request once, then mint a key and persist
+    // `Submitting` before dispatch.
+    const request = buildChatRunBody({
       conversationId,
-      parentMessageId: branchDraft?.parentMessageId ?? parentMessageId,
-      branchAnchor: branchDraft?.anchor ?? null,
       content: trimmed,
-      profile: effectiveProfileSelection,
-      readerSelectionKey: readerHighlight?.key ?? null,
+      profileId: effectiveProfileSelection.profileId,
+      reasoningOptionId: effectiveProfileSelection.reasoningOptionId,
+      branchDraft,
+      parentMessageId,
+      readerSelection,
     });
-
-    const attempt = beginSendAttempt(
-      payloadIdentity,
-      effectiveProfileSelection,
-      readerSelection?.revision ?? null,
-    );
-    let attemptedReaderSelection: ReaderSelectionInput | null = null;
-    if (readerSelection !== null) {
-      if (attempt.revision === null) {
-        // justify-defect: a send attempt with a reader selection always
-        // snapshots that selection's compare-on-send revision.
-        throw new Error(
-          "Reader-selection send attempt is missing its revision",
-        );
-      }
-      attemptedReaderSelection = {
-        ...readerSelection,
-        revision: attempt.revision,
-      };
-    }
-
+    let command: ChatSendCommand;
     try {
-      const body = buildChatRunBody({
-        conversationId,
-        content: trimmed,
-        profileId: attempt.profileSelection.profileId,
-        reasoningOptionId: attempt.profileSelection.reasoningOptionId,
-        branchDraft,
-        parentMessageId,
-        readerSelection: attemptedReaderSelection,
-      });
-
-      const runResponse = await apiFetch<ChatRunResponse>("/api/chat-runs", {
-        method: "POST",
-        body: JSON.stringify(body),
-        headers: { "Idempotency-Key": attempt.idempotencyKey },
-      });
-
-      resolveSuccess();
-      restoreFocusAfterSendRef.current = true;
-      onChatRunCreated?.(decodeChatRunData(runResponse.data));
-      onIntentConsumed?.();
-      onMessageSent?.();
-      onClearBranchDraft?.();
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) {
-        // The auth boundary owns recovery; leave a retryable (not locked) draft.
-        resolveKnownFailure();
-        restoreFocusAfterSendRef.current = true;
-        return;
-      }
-      if (isApiError(err)) {
-        if (isSameSystemApiDefect(err)) {
-          setAsyncDefect({ error: err });
-          return;
-        }
-        if (err.code === "E_NETWORK") {
-          // The request may have reached the service despite the missing response.
-          resolveAmbiguous();
-          setError(null);
-          return;
-        }
-        if (
-          err.code !== "E_READER_SELECTION_STALE" &&
-          err.code !== "E_CONVERSATION_NO_LONGER_EMPTY" &&
-          err.code !== "E_BAD_REQUEST" &&
-          err.code !== "E_FORBIDDEN" &&
-          err.code !== "E_NOT_FOUND"
-        ) {
-          setAsyncDefect({ error: err });
-          return;
-        }
-        if (err.code === "E_READER_SELECTION_STALE") {
-          const fresh = decodeReaderSelectionPreview(
-            isRecord(err.details) ? err.details.preview : undefined,
-          );
-          if (fresh) {
-            // The precondition failed: refresh the preview and reconfirm the
-            // revision on the SAME unconsumed key (revision is not identity).
-            onReaderSelectionStale?.(fresh);
-            reconfirmRevision(fresh.revision);
-            restoreFocusAfterSendRef.current = true;
-            setError({
-              tone: "Warning",
-              title: "The quoted passage changed — review it and send again.",
-              requestId: err.requestId,
-            });
-          } else {
-            resolveKnownFailure();
-            restoreFocusAfterSendRef.current = true;
-            setError(chatRunErrorMessage(err, "Start"));
-          }
-        } else if (err.code === "E_CONVERSATION_NO_LONGER_EMPTY") {
-          // Another tab created the first message: refresh so the next send
-          // replies to the active leaf — a new insertion mints a new key.
-          resolveKnownFailure();
-          restoreFocusAfterSendRef.current = true;
-          onConversationRefresh?.();
-          setError({
-            tone: "Warning",
-            title: "This chat already has messages — send again to continue it.",
-            requestId: err.requestId,
-          });
-        } else {
-          resolveKnownFailure();
-          restoreFocusAfterSendRef.current = true;
-          setError(chatRunErrorMessage(err, "Start"));
-        }
-      } else {
-        setAsyncDefect({ error: err });
-      }
-    } finally {
-      setSending(false);
+      command = beginSubmit(request);
+    } catch (persistError) {
+      // Persist failure prevents POST and reports a defect — no memory fallback.
+      setAsyncDefect({ error: persistError });
+      return;
     }
+    void postCommand(command);
   }, [
-    content,
-    sending,
-    sendCapability,
-    effectiveProfileSelection,
-    pendingBlocksSend,
-    readerHighlight,
-    conversationId,
+    beginSubmit,
     branchDraft,
+    content,
+    conversationId,
+    effectiveProfileSelection,
     parentMessageId,
-    beginSendAttempt,
-    resolveSuccess,
-    resolveKnownFailure,
-    resolveAmbiguous,
-    reconfirmRevision,
-    onChatRunCreated,
-    onIntentConsumed,
-    onMessageSent,
-    onClearBranchDraft,
-    onReaderSelectionStale,
-    onConversationRefresh,
-    onSendStarted,
+    pendingBlocksSend,
+    postCommand,
+    readerHighlight,
+    sendCapability,
+    sending,
   ]);
+
+  const handleRetry = useCallback(() => {
+    if (operation.kind !== "ReconcileRequired") return;
+    let command: ChatSendCommand;
+    try {
+      command = retrySubmit();
+    } catch (persistError) {
+      setAsyncDefect({ error: persistError });
+      return;
+    }
+    void postCommand(command);
+  }, [operation, postCommand, retrySubmit]);
 
   const handleCancelRun = useCallback(async () => {
     if (!activeRunId || !onCancelRun || cancelling) return;
@@ -587,7 +572,7 @@ export default function ChatComposer({
             <span className={styles.profileStatus} role="status">
               Loading profiles…
             </span>
-          ) : reconciling && currentAttempt ? (
+          ) : reconciling ? (
             <span className={styles.profileStatus}>
               Original chat profile locked for retry.
             </span>
@@ -614,7 +599,7 @@ export default function ChatComposer({
               size="md"
               className={styles.sendButton}
               iconOnly
-              onClick={handleSend}
+              onClick={handleRetry}
               loading={sending}
               aria-label={sending ? "Sending message" : "Retry send"}
             >
