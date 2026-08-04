@@ -1,51 +1,29 @@
 "use client";
 
-import {
-  useId,
-  useRef,
-  useState,
-  type FocusEvent,
-} from "react";
+import { useId, type FocusEvent } from "react";
 import {
   ChevronDown,
   ExternalLink,
   LocateFixed,
   MessageSquare,
 } from "lucide-react";
-import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { type FeedbackContent } from "@/components/feedback/Feedback";
 import HighlightActionBar from "@/components/highlights/HighlightActionBar";
 import type { HighlightActionTarget } from "@/components/highlights/highlightActions";
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
-import ActionMenu from "@/components/ui/ActionMenu";
+import ContextEdgeMenu from "@/components/resources/ContextEdgeMenu";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import MachineText from "@/components/ui/MachineText";
 import Pill from "@/components/ui/Pill";
-import {
-  composeResourceMenu,
-  projectResourceActionToMenu,
-  resolveResourceCoreActions,
-  RESOURCE_ACTION_CATALOG,
-  type ResourceActionId,
-} from "@/lib/actions/resourceActions";
 import {
   isApiError,
   isSameSystemApiDefect,
   type ApiError,
 } from "@/lib/api/client";
-import { absent } from "@/lib/api/presence";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
-import { requestWorkspaceTargetActivation } from "@/lib/workspace/workspaceTargetActivationIngress";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import {
-  executeResourceChat,
-  executeResourceOpen,
-  executeResourceShare,
-} from "@/lib/resources/resourceActionExecution";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import {
@@ -63,7 +41,6 @@ import type {
   ReaderEvidenceSourceTarget,
   ReaderEvidenceUserEdge,
 } from "@/lib/reader/documentMap";
-import { useShareController } from "@/lib/sharing/controller";
 import { anchoredRowForEvidenceItem } from "@/lib/reader/marginItems";
 import type { AnchoredReaderRow } from "../useAnchoredReaderProjection";
 import styles from "./EvidencePaneSurface.module.css";
@@ -285,12 +262,9 @@ export function EvidenceItemRow({
             />
           ) : null}
           {item.kind === "Link" || item.kind === "Synapse" ? (
-            <EvidenceResourceActionMenu
+            <EvidenceObjectActions
               target={item.object.actionTarget}
               label={item.object.label}
-              onOpen={(disposition) =>
-                onActivateObject(item.object, disposition)
-              }
               relationship={
                 item.kind === "Synapse"
                   ? {
@@ -506,12 +480,9 @@ function AssociationRow({
           <span>{association.object.label}</span>
           <ExternalLink size={12} aria-hidden="true" />
         </button>
-        <EvidenceResourceActionMenu
+        <EvidenceObjectActions
           target={association.object.actionTarget}
           label={association.object.label}
-          onOpen={(disposition) =>
-            onActivateObject(association.object, disposition)
-          }
           relationship={
             removableAssociation
               ? {
@@ -536,142 +507,41 @@ type EvidenceRelationshipAction =
   | { kind: "Unlink"; execute: () => Promise<void> }
   | { kind: "Dismiss"; execute: () => Promise<void> };
 
-function EvidenceResourceActionMenu({
+/**
+ * The canonical resource dropdown for an evidence object, paired with the
+ * separate context-edge control (AC4). The resource menu is the one canonical
+ * `ResourceActionMenu` (Open/Share/Chat/… via the runtime); unlink and dismiss
+ * are EDGE mutations that leave the resource menu for their own labelled
+ * control. `SourceTargetRow` passes `{ kind: "None" }`, so only the resource
+ * menu renders there.
+ */
+function EvidenceObjectActions({
   target,
   label,
-  onOpen,
   relationship,
 }: {
   target: ResourceActionSubject;
   label: string;
-  onOpen: (disposition: WorkspaceTargetDisposition) => void;
   relationship: EvidenceRelationshipAction;
 }) {
-  const { openShare } = useShareController();
-  const busyRef = useRef<Set<ResourceActionId>>(new Set());
-  const [busyIds, setBusyIds] = useState<ReadonlySet<ResourceActionId>>(
-    () => new Set(),
-  );
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
-
-  async function runAction({
-    id,
-    execute,
-    failure,
-  }: {
-    id: ResourceActionId;
-    execute: () => Promise<void>;
-    failure: string;
-  }) {
-    if (busyRef.current.has(id)) return;
-    busyRef.current.add(id);
-    setBusyIds(new Set(busyRef.current));
-    setFeedback(null);
-    try {
-      await execute();
-    } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error)) {
-        setAsyncDefect({ error });
-        return;
-      }
-      try {
-        setFeedback(evidenceActionErrorMessage(error, failure));
-      } catch (defect) {
-        setAsyncDefect({ error: defect });
-      }
-    } finally {
-      busyRef.current.delete(id);
-      setBusyIds(new Set(busyRef.current));
-    }
-  }
-
-  if (asyncDefect !== null) throw asyncDefect.error;
-
-  const core = resolveResourceCoreActions({
-    target,
-    projection: "Representation",
-    busyIds,
-    executors: {
-      open: (subject: ResourceActionSubject) =>
-        executeResourceOpen({
-          target: subject,
-          resourceNavigation: {
-            labelHint: label,
-            activateTarget: ({ disposition }) =>
-              onOpen(disposition),
-            disposition: { kind: "Follow" },
-          },
-        }),
-      share: (subject, { triggerEl }) =>
-        executeResourceShare({
-          subject,
-          openShare,
-          options: {
-            returnFocusTo: () => triggerEl,
-            returnFocusFallback: absent(),
-          },
-        }),
-      chat: (subject: ResourceActionSubject) =>
-        runAction({
-          id: RESOURCE_ACTION_CATALOG.Chat.id,
-          execute: () =>
-            executeResourceChat({
-              ref: subject.ref,
-              openConversation: (conversationId) => {
-                requestWorkspaceTargetActivation({
-                  target: {
-                    href: `/conversations/${conversationId}`,
-                    labelHint: "Chat",
-                  },
-                  disposition: { kind: "Adopt" },
-                  modality: "Programmatic",
-                });
-              },
-            }),
-          failure: "Chat could not be started.",
-        }),
-    },
-  });
-  const relationshipDescriptor =
-    relationship.kind === "None"
-      ? null
-      : projectResourceActionToMenu({
-          kind: "command",
-          catalogKey:
-            relationship.kind === "Unlink"
-              ? "UnlinkConnection"
-              : "DismissConnection",
-          busy: busyIds.has(
-            relationship.kind === "Unlink"
-              ? RESOURCE_ACTION_CATALOG.UnlinkConnection.id
-              : RESOURCE_ACTION_CATALOG.DismissConnection.id,
-          ),
-          onSelect: () => {
-            void runAction({
-              id:
-                relationship.kind === "Unlink"
-                  ? RESOURCE_ACTION_CATALOG.UnlinkConnection.id
-                  : RESOURCE_ACTION_CATALOG.DismissConnection.id,
-              execute: relationship.execute,
-              failure:
-                relationship.kind === "Unlink"
-                  ? "Connection could not be unlinked."
-                  : "Connection could not be dismissed.",
-            });
-          },
-        });
-  const options = composeResourceMenu({
-    ...core,
-    relationships: relationshipDescriptor ? [relationshipDescriptor] : [],
-  });
-  if (options.length === 0) return null;
   return (
     <>
-      <ActionMenu options={options} label={`Actions for ${label}`} />
-      {feedback ? (
-        <FeedbackNotice content={feedback} announcement="Assertive" />
+      <ResourceActionMenu target={target} label={`Actions for ${label}`} />
+      {relationship.kind !== "None" ? (
+        <ContextEdgeMenu
+          action={relationship.kind === "Unlink" ? "Unlink" : "Dismiss"}
+          label={`Edit connection ${label}`}
+          execute={relationship.execute}
+          presentFailure={(error) => {
+            if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+            return evidenceActionErrorMessage(
+              error,
+              relationship.kind === "Unlink"
+                ? "Connection could not be unlinked."
+                : "Connection could not be dismissed.",
+            );
+          }}
+        />
       ) : null}
     </>
   );
@@ -741,10 +611,9 @@ function SourceTargetRow({
           <ExternalLink size={12} aria-hidden="true" />
         )}
       </button>
-      <EvidenceResourceActionMenu
+      <EvidenceObjectActions
         target={target.actionTarget}
         label={label}
-        onOpen={(disposition) => onActivate(target, disposition)}
         relationship={{ kind: "None" }}
       />
       {target.body.kind === "Present" ? (

@@ -223,27 +223,6 @@ export const RESOURCE_ACTION_CATALOG = {
     icon: ListMinus,
     restoreFocusOnClose: false,
   },
-  RemoveFromContext: {
-    id: "RelationshipAction.Context.Remove",
-    label: "Remove from conversation context",
-    busyLabel: "Removing...",
-    icon: ListMinus,
-    restoreFocusOnClose: false,
-  },
-  UnlinkConnection: {
-    id: "RelationshipAction.Connection.Unlink",
-    label: "Unlink connection",
-    busyLabel: "Unlinking...",
-    icon: ListMinus,
-    restoreFocusOnClose: false,
-  },
-  DismissConnection: {
-    id: "RelationshipAction.Connection.Dismiss",
-    label: "Dismiss connection",
-    busyLabel: "Dismissing...",
-    icon: ListMinus,
-    restoreFocusOnClose: false,
-  },
   Subscribe: {
     id: "RelationshipAction.Podcast.Subscribe",
     label: "Subscribe",

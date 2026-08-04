@@ -18,26 +18,19 @@ import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import ContextEdgeMenu from "@/components/resources/ContextEdgeMenu";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import ResourceTargetListbox, {
   resourceTargetKey,
   resourceTargetOptionId,
 } from "@/components/resources/ResourceTargetListbox";
-import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
 import Pill from "@/components/ui/Pill";
 import Select from "@/components/ui/Select";
-import { absent } from "@/lib/api/presence";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
-import {
-  composeResourceMenu,
-  projectResourceActionToMenu,
-  resolveResourceCoreActions,
-  RESOURCE_ACTION_CATALOG,
-  type ResourceActionId,
-} from "@/lib/actions/resourceActions";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import {
@@ -69,11 +62,6 @@ import {
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import {
-  executeResourceChat,
-  executeResourceOpen,
-  executeResourceShare,
-} from "@/lib/resources/resourceActionExecution";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type {
   WorkspaceTarget,
@@ -88,7 +76,6 @@ import {
   fetchSynapseScanStatus,
   requestSynapseScan,
 } from "@/lib/synapse";
-import { useShareController } from "@/lib/sharing/controller";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import styles from "./ConnectionsSurface.module.css";
 import type {
@@ -516,7 +503,6 @@ export default function ConnectionsSurface({
               onOpen={(disposition) =>
                 openConnection(connection, disposition)
               }
-              activateTarget={activateTarget}
               onChanged={reloadConnections}
             />
           ))}
@@ -529,146 +515,48 @@ export default function ConnectionsSurface({
 function ConnectionRow({
   connection,
   onOpen,
-  activateTarget,
   onChanged,
 }: {
   connection: Connection;
   onOpen: (disposition: WorkspaceTargetDisposition) => void;
-  activateTarget: (input: {
-    target: WorkspaceTarget;
-    disposition: WorkspaceTargetDisposition;
-  }) => void;
   onChanged: () => void;
 }) {
   const Icon = resourceIconForUri(connection.ref);
-  const { openShare } = useShareController();
-  const busyRef = useRef<Set<ResourceActionId>>(new Set());
-  const [busyIds, setBusyIds] = useState<ReadonlySet<ResourceActionId>>(
-    () => new Set(),
-  );
-  const [feedback, setFeedback] = useState<{
-    readonly content: FeedbackContent;
-    readonly retry: () => void;
-  } | null>(null);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
 
-  async function runAction({
-    id,
-    execute,
-    operation,
-  }: {
-    id: ResourceActionId;
-    execute: () => Promise<void>;
-    operation: "Chat" | "Unlink" | "Dismiss";
-  }) {
-    if (busyRef.current.has(id)) return;
-    busyRef.current.add(id);
-    setBusyIds(new Set(busyRef.current));
-    setFeedback(null);
-    try {
-      await execute();
-    } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
-      try {
-        setFeedback({
-          content: connectionErrorMessage(error, operation),
-          retry: () => void runAction({ id, execute, operation }),
-        });
-      } catch (caughtDefect) {
-        setDefect({ error: caughtDefect });
+  // The one edge command this connection exposes: a user-authored edge unlinks
+  // (deleteLink for a context Link, deleteStance for a stance), a synapse
+  // proposal dismisses. Both are edge mutations owned by the separate
+  // context-edge control (AC4), never the canonical resource dropdown.
+  const edge:
+    | {
+        readonly action: "Unlink" | "Dismiss";
+        readonly operation: "Unlink" | "Dismiss";
+        readonly execute: () => Promise<void>;
       }
-    } finally {
-      busyRef.current.delete(id);
-      setBusyIds(new Set(busyRef.current));
-    }
-  }
-
-  const core = resolveResourceCoreActions({
-    target: connection.actionTarget,
-    projection: "Representation",
-    busyIds,
-    executors: {
-      open: (subject: ResourceActionSubject) =>
-        executeResourceOpen({
-          target: subject,
-          resourceNavigation: {
-            labelHint: connection.label,
-            activateTarget,
-            disposition: { kind: "Follow" },
-          },
-        }),
-      share: (subject, { triggerEl }) =>
-        executeResourceShare({
-          subject,
-          openShare,
-          options: {
-            returnFocusTo: () => triggerEl,
-            returnFocusFallback: absent(),
-          },
-        }),
-      chat: (subject: ResourceActionSubject) =>
-        runAction({
-          id: RESOURCE_ACTION_CATALOG.Chat.id,
-          execute: () =>
-            executeResourceChat({
-              ref: subject.ref,
-              openConversation: (conversationId) =>
-                activateTarget({
-                  target: {
-                    href: `/conversations/${conversationId}`,
-                    labelHint: "Chat",
-                  },
-                  disposition: { kind: "Adopt" },
-                }),
-            }),
-          operation: "Chat",
-        }),
-    },
-  });
-  const relationship =
+    | null =
     connection.origin === "user"
-      ? projectResourceActionToMenu({
-          kind: "command",
-          catalogKey: "UnlinkConnection",
-          busy: busyIds.has(RESOURCE_ACTION_CATALOG.UnlinkConnection.id),
-          onSelect: () => {
-            void runAction({
-              id: RESOURCE_ACTION_CATALOG.UnlinkConnection.id,
-              execute: async () => {
-                if (connection.kind === "context") {
-                  await deleteLink(connection.edgeId);
-                } else {
-                  await deleteStance(connection.edgeId);
-                }
-                onChanged();
-              },
-              operation: "Unlink",
-            });
+      ? {
+          action: "Unlink",
+          operation: "Unlink",
+          execute: async () => {
+            if (connection.kind === "context") {
+              await deleteLink(connection.edgeId);
+            } else {
+              await deleteStance(connection.edgeId);
+            }
+            onChanged();
           },
-        })
+        }
       : connection.origin === "synapse"
-        ? projectResourceActionToMenu({
-            kind: "command",
-            catalogKey: "DismissConnection",
-            busy: busyIds.has(RESOURCE_ACTION_CATALOG.DismissConnection.id),
-            onSelect: () => {
-              void runAction({
-                id: RESOURCE_ACTION_CATALOG.DismissConnection.id,
-                execute: async () => {
-                  await dismissSynapseEdge(connection.edgeId);
-                  onChanged();
-                },
-                operation: "Dismiss",
-              });
+        ? {
+            action: "Dismiss",
+            operation: "Dismiss",
+            execute: async () => {
+              await dismissSynapseEdge(connection.edgeId);
+              onChanged();
             },
-          })
+          }
         : null;
-  const options = composeResourceMenu({
-    ...core,
-    relationships: relationship ? [relationship] : [],
-  });
-
-  if (defect !== null) throw defect.error;
 
   return (
     <div
@@ -710,17 +598,22 @@ function ConnectionRow({
           ) : null}
         </span>
       </button>
-      {options.length > 0 ? (
-        <ActionMenu
-          options={options}
-          label={`Actions for ${connection.label}`}
-        />
-      ) : null}
-      {feedback ? (
-        <FeedbackNotice
-          content={feedback.content}
-          announcement="Assertive"
-          actions={[{ label: "Retry", onClick: feedback.retry }]}
+      {/* Canonical resource dropdown — Open/Share/Chat/… via the runtime. */}
+      <ResourceActionMenu
+        target={connection.actionTarget}
+        label={`Actions for ${connection.label}`}
+      />
+      {/* Separate context-edge control (AC4): unlink/dismiss are edge mutations,
+          not resource actions, so they publish on their own labelled trigger. */}
+      {edge ? (
+        <ContextEdgeMenu
+          action={edge.action}
+          label={`Edit connection ${connection.label}`}
+          retryable
+          execute={edge.execute}
+          presentFailure={(error) =>
+            connectionErrorMessage(error, edge.operation)
+          }
         />
       ) : null}
     </div>
