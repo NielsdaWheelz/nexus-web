@@ -1,0 +1,93 @@
+/* The support line is optional, so the block is held at its two-line height and
+   the title is pinned to the top of it. Otherwise a count or credit arriving
+   after load would re-centre the block and shift the title down the bar. */
+.identity {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 2px;
+  min-width: 0;
+  min-block-size: calc(
+    (var(--text-base) + var(--text-xs)) * var(--leading-tight) + 2px
+  );
+}
+
+.title,
+.support {
+  margin: 0;
+  min-width: 0;
+  white-space: nowrap;
+  text-align: start;
+  line-height: var(--leading-tight);
+}
+
+.title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
+/* The support line carries interactive credits, so it must not clip them out of
+   view — a focused link inside an ellipsized block is a focus target the reader
+   cannot see. Every item shrinks and ellipsizes on its own instead. */
+.support {
+  display: flex;
+  align-items: baseline;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-regular);
+}
+
+.supportText,
+.creditGroup,
+.credit,
+.creditLink,
+.creditFact {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.creditGroup,
+.credit {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+/* Separators, role prefixes, and the hidden-credit count are the row's fixed
+   punctuation: they never absorb the shrink that belongs to the names, and
+   `pre` keeps their spacing, which flex-item layout would otherwise collapse. */
+.fixed {
+  flex: none;
+  white-space: pre;
+}
+
+.creditLink {
+  border-radius: var(--radius-xs);
+  color: inherit;
+  cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-decoration-thickness: var(--stroke-hairline);
+  text-underline-offset: 2px;
+}
+
+.creditLink:hover,
+.creditLink:focus-visible {
+  text-decoration-color: currentColor;
+  text-decoration-thickness: 2px;
+}
+
+.creditLink:focus-visible {
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.moreCredits {
+  margin-inline-start: var(--space-1);
+}

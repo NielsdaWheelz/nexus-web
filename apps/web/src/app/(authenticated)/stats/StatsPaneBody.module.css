@@ -12,12 +12,6 @@
   border-bottom: 1px solid var(--edge-subtle);
   padding-bottom: 1rem;
 }
-.header h1,
-.yearHero h1 {
-  margin: 0.15rem 0;
-  font-size: clamp(1.7rem, 4vw, 2.7rem);
-  letter-spacing: -0.04em;
-}
 .eyebrow,
 .timeZone,
 .sectionHead p,
@@ -383,8 +377,10 @@
   margin: 0;
   color: var(--brand-fg-on-dark);
 }
-.yearHero h1 {
+.yearHero h2 {
+  margin: 0.15rem 0;
   font-size: clamp(3.5rem, 13vw, 8rem);
+  letter-spacing: -0.04em;
 }
 .yearHero strong {
   display: block;

@@ -68,7 +68,7 @@ export interface MobilePaneChrome {
   routeKey: string;
   identityId: string;
   header: PaneHeaderModel;
-  activateIdentityAnchor: (
+  activateChromeAnchor: (
     event: TargetLinkMouseEvent,
     anchor: HTMLAnchorElement,
   ) => void;

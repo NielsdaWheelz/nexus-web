@@ -463,6 +463,10 @@ scrollport commit:
 5. when that focus anchor/control is missing, focus
    `[data-pane-return-heading]`, then `[data-pane-chrome-focus]`; for
    `focusReturn.kind === "None"`, do not move focus.
+   _Superseded by
+   [`canonical-pane-title-ownership-hard-cutover.md`](canonical-pane-title-ownership-hard-cutover.md):
+   `[data-pane-return-heading]` no longer exists and the missing-anchor fallback
+   is the pane landmark._
 
 Semantic position is written immediately in the layout effect, then reapplied
 once after one painted frame before focus and completion. This bounded

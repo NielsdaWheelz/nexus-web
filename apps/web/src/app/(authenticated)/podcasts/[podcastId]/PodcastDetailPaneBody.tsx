@@ -79,7 +79,6 @@ import AcquisitionControl from "@/components/browse/AcquisitionControl";
 import PodcastEpisodeList from "./PodcastEpisodeList";
 import PodcastSubscriptionSettingsModal from "../PodcastSubscriptionSettingsModal";
 import PaneSection from "@/components/ui/PaneSection";
-import SectionOpener from "@/components/ui/SectionOpener";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -1793,16 +1792,17 @@ export default function PodcastDetailPaneBody() {
           }
         : undefined,
     header: {
-      kind: "section",
-      folio:
-        view !== null && !loading && episodeExhaustion.kind === "Complete"
-          ? {
-              kind: "count",
-              value: episodeExhaustion.itemCount,
-              unit: "episode",
-            }
-          : { kind: "none" },
-      pending: loading || episodeExhaustion.kind !== "Complete",
+      kind: "Section",
+      meta:
+        view === null
+          ? { kind: "None" }
+          : loading || episodeExhaustion.kind !== "Complete"
+            ? { kind: "Pending" }
+            : {
+                kind: "Count",
+                value: episodeExhaustion.itemCount,
+                unit: "episode",
+              },
     },
     search: episodeFilterRows.publication,
   });
@@ -1870,11 +1870,6 @@ export default function PodcastDetailPaneBody() {
   return (
     <>
       <div className={styles.primaryScroll}>
-        <SectionOpener
-          heading={detail?.podcast.title ?? "Podcast"}
-          scale="title"
-          pending={loading}
-        />
         <div className={styles.headerActions}>
           <Link href="/podcasts" className={styles.navLink}>
             Podcasts

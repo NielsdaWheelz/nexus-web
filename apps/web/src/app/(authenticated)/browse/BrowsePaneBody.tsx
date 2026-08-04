@@ -16,7 +16,6 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import {
   browseKindLabel,
@@ -260,11 +259,7 @@ export default function BrowsePaneBody() {
   ]);
 
   usePanePrimaryChrome({
-    header: {
-      kind: "section",
-      folio: { kind: "none" },
-      pending: false,
-    },
+    header: { kind: "Section", meta: { kind: "None" } },
   });
 
   const query = decoded.kind === "Valid" ? decoded.query : null;
@@ -379,15 +374,10 @@ export default function BrowsePaneBody() {
 
   return (
     <PaneSurface
-      opener={
-        <SectionOpener
-          heading="Browse"
-          standfirst={
-            query
-              ? "Discover beyond Nexus. Preview first; add only when it belongs."
-              : undefined
-          }
-        />
+      brief={
+        query
+          ? "Discover beyond Nexus. Preview first; add only when it belongs."
+          : undefined
       }
       toolbar={toolbar}
       state={

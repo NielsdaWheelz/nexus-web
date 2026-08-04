@@ -1577,11 +1577,13 @@ they open over Resume and never become panes.
   (`Connections | Dossier`). One visible Companion action opens the same group
   on desktop and mobile; open state, active tab, width, and viewed Dossier
   revision are workspace-local.
-  Every supported route declares a typed section/resource header contract.
-  `PaneShell` combines that contract with one primary-chrome publication and
+  Every supported route declares a typed `Section`/`Resource` header contract.
+  `PaneShell` combines that contract, the pane runtime label, and one
+  primary-chrome publication into the pane's single route-level `<h1>`, and
   projects it into one 60px desktop or mobile identity track (mobile safe area
-  additional). Resource identity is title plus structured credits;
-  actions/options are typed descriptors shared by desktop `ActionBar` and
+  additional). The label is the only title value: a publication carries typed
+  section metadata or resource status plus structured credits, never a title.
+  Actions/options are typed descriptors shared by desktop `ActionBar` and
   mobile Options. PDF and EPUB may additionally publish one labelled control
   instrument; `PaneShell` owns its 40px desktop or 48px mobile frame, and
   expanded Search replaces it in the same contextual track. A pane-scoped

@@ -29,7 +29,6 @@ import Input from "@/components/ui/Input";
 import SelectField from "@/components/ui/SelectField";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
-import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { presentLibrary } from "@/lib/collections/presenters/library";
 import {
@@ -849,15 +848,14 @@ export default function LibrariesPaneBody() {
       execute: executeRefresh,
     },
     header: {
-      kind: "section",
-      // The folio describes the exhaustive committed view, never the subset.
-      folio:
+      kind: "Section",
+      // The metadata describes the exhaustive committed view, never the subset.
+      meta:
         collectionComplete && !invalidView
-          ? { kind: "count", value: libraries.length, unit: "library" }
-          : { kind: "none" },
-      pending:
-        !invalidView &&
-        (status === "loading" || requestsFirstPage || !collectionComplete),
+          ? { kind: "Count", value: libraries.length, unit: "library" }
+          : invalidView
+            ? { kind: "None" }
+            : { kind: "Pending" },
     },
   });
 
@@ -1016,9 +1014,7 @@ export default function LibrariesPaneBody() {
           key: filterQuery.trim(),
         }}
         collectionBusy={requestsFirstPage || exhaustion.kind === "Draining"}
-        opener={
-          <SectionOpener heading="Libraries" actions={createLibraryAction} />
-        }
+        toolbar={createLibraryAction}
         notice={
           feedback ? (
             <FeedbackNotice content={feedback} announcement="Assertive" />

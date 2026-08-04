@@ -10,6 +10,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { PenLine } from "lucide-react";
 import Button from "@/components/ui/Button";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
@@ -87,8 +88,12 @@ import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import SelectField from "@/components/ui/SelectField";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
+import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { isAbortError } from "@/lib/errors";
 import styles from "./page.module.css";
+
+const RENAME_AUTHOR_ICON = <PenLine size={16} aria-hidden="true" />;
 
 type AuthorConnectionsResource =
   | { kind: "Ready"; ref: { scheme: "contributor"; id: string } }
@@ -293,6 +298,11 @@ export default function AuthorPaneBody() {
     },
     [capturePaneScroll, setDecodedView],
   );
+  const renameTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const openRename = useCallback(({ triggerEl }: ActionSelectDetail) => {
+    renameTriggerRef.current = triggerEl;
+    setRenameOpen(true);
+  }, []);
 
   // The route seed composes the detail with the canonical first works page. Its
   // works are adopted only for the canonical view; every other view takes just
@@ -715,22 +725,38 @@ export default function AuthorPaneBody() {
       execute: executeRefresh,
     },
     actions: companionAction ? [companionAction] : [],
+    // Renaming the author belongs beside the identity it renames, which now
+    // lives in chrome — not stranded above the works list.
     menu: data
       ? {
           kind: "ResourceMenu",
           target: data.detail.actionTarget,
-          groups: emptyResourceMenuGroups(),
+          groups: {
+            ...emptyResourceMenuGroups(),
+            operations: data.detail.canRename
+              ? [
+                  {
+                    kind: "command",
+                    id: "Author.Rename",
+                    label: "Edit name…",
+                    icon: RENAME_AUTHOR_ICON,
+                    // The dialog owns focus return to this exact trigger, so the
+                    // menu must not claim it back as it closes.
+                    restoreFocusOnClose: false,
+                    onSelect: openRename,
+                  },
+                ]
+              : [],
+          },
         }
       : undefined,
     header: {
-      kind: "section",
-      folio:
-        exhaustion.kind === "Complete" && !invalidView
-          ? { kind: "count", value: workCount, unit: "work" }
-          : { kind: "none" },
-      pending:
-        !invalidView &&
-        (loading || requestsFirstPage || exhaustion.kind !== "Complete"),
+      kind: "Section",
+      meta: invalidView
+        ? { kind: "None" }
+        : loading || requestsFirstPage || exhaustion.kind !== "Complete"
+          ? { kind: "Pending" }
+          : { kind: "Count", value: workCount, unit: "work" },
     },
   });
 
@@ -796,22 +822,6 @@ export default function AuthorPaneBody() {
     >
       {data ? (
         <div className={styles.detail}>
-          <header className={styles.header}>
-            <h1 className={styles.heading} dir="auto">
-              {data.detail.displayName}
-            </h1>
-            {data.detail.canRename ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                className={styles.editName}
-                onClick={() => setRenameOpen(true)}
-              >
-                Edit name
-              </Button>
-            ) : null}
-          </header>
-
           {otherNames.length > 0 ? (
             <section className={styles.otherNames}>
               <h2 className={styles.sectionHeading}>Other names</h2>
@@ -876,6 +886,10 @@ export default function AuthorPaneBody() {
               currentName={data.detail.displayName}
               onClose={() => setRenameOpen(false)}
               onRenamed={handleRenamed}
+              returnFocusTo={() => renameTriggerRef.current}
+              returnFocusFallback={() =>
+                findPaneLandmarkFocusTarget(runtime.paneId)
+              }
             />
           ) : null}
         </div>
@@ -889,11 +903,15 @@ function RenameAuthorDialog({
   currentName,
   onClose,
   onRenamed,
+  returnFocusTo,
+  returnFocusFallback,
 }: {
   handle: string;
   currentName: string;
   onClose: () => void;
   onRenamed: (detail: ContributorDetail) => void;
+  returnFocusTo: () => HTMLElement | null;
+  returnFocusFallback: () => HTMLElement | null;
 }) {
   const [value, setValue] = useState(currentName);
   const [saving, setSaving] = useState(false);
@@ -952,7 +970,13 @@ function RenameAuthorDialog({
   if (defect) throw defect.error;
 
   return (
-    <Dialog open title="Edit name" onClose={onClose}>
+    <Dialog
+      open
+      title="Edit name"
+      onClose={onClose}
+      returnFocusTo={returnFocusTo}
+      returnFocusFallback={returnFocusFallback}
+    >
       <form className={styles.renameForm} onSubmit={submit}>
         <p className={styles.renameHelper}>
           Used across Nexus. Each work keeps the name it was credited under.

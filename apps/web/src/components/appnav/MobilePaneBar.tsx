@@ -93,19 +93,23 @@ export default function MobilePaneBar() {
     },
     [acquire],
   );
-  const handleIdentityClickCapture = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
+  // Every anchor the active pane publishes into this bar — identity credits and
+  // header actions alike — must reach the workspace router. Portalled menu
+  // content still bubbles here through the React tree, and the desktop chrome
+  // gets the same treatment from `PaneRouteBoundary`.
+  const handleChromeClickCapture = useCallback(
+    (event: ReactMouseEvent<HTMLElement>) => {
       if (!(event.target instanceof Element)) return;
       const anchor = event.target.closest("a[href]");
       if (anchor instanceof HTMLAnchorElement) {
-        paneChrome?.activateIdentityAnchor(event, anchor);
+        paneChrome?.activateChromeAnchor(event, anchor);
       }
     },
     [paneChrome],
   );
-  const handleIdentityIntentCapture = useCallback(
+  const handleChromeIntentCapture = useCallback(
     (
-      event: ReactMouseEvent<HTMLDivElement> | ReactFocusEvent<HTMLDivElement>,
+      event: ReactMouseEvent<HTMLElement> | ReactFocusEvent<HTMLElement>,
     ) => {
       if (!(event.target instanceof Element)) return;
       const anchor = event.target.closest("a[href]");
@@ -121,11 +125,13 @@ export default function MobilePaneBar() {
       ref={topBarRef}
       className={styles.topBar}
       data-mobile-chrome-phase={motionPhase.kind}
-      data-header-kind={paneChrome?.header.kind}
       data-pane-chrome-for={paneChrome?.paneId}
       aria-hidden={!interactive || undefined}
       inert={!interactive || undefined}
       style={{ pointerEvents: interactive ? undefined : "none" }}
+      onClickCapture={handleChromeClickCapture}
+      onMouseOverCapture={handleChromeIntentCapture}
+      onFocusCapture={handleChromeIntentCapture}
     >
       <div
         className={styles.topBarControls}
@@ -145,12 +151,7 @@ export default function MobilePaneBar() {
         ) : null}
       </div>
 
-      <div
-        className={styles.topBarTitle}
-        onClickCapture={handleIdentityClickCapture}
-        onMouseOverCapture={handleIdentityIntentCapture}
-        onFocusCapture={handleIdentityIntentCapture}
-      >
+      <div className={styles.topBarTitle}>
         {paneChrome ? (
           <PaneHeaderIdentity
             id={paneChrome.identityId}

@@ -54,7 +54,7 @@ export default function AssistantDetails({
       </summary>
       <div className={styles.trustInspectorPanel}>
         <section>
-          <h4>Activity</h4>
+          <h2>Activity</h2>
           <p>
             {trustTrail.tool_calls.length} tools · {retrieved} retrieved ·{" "}
             {selected} selected · {included} included ·{" "}
@@ -63,7 +63,7 @@ export default function AssistantDetails({
         </section>
         {trustTrail.run ? (
           <section>
-            <h4>Run</h4>
+            <h2>Run</h2>
             <dl className={styles.trustMeta}>
               <div>
                 <dt>Model</dt>
@@ -163,7 +163,7 @@ export default function AssistantDetails({
 
         {trustTrail.prompt ? (
           <section>
-            <h4>Prompt</h4>
+            <h2>Prompt</h2>
             <dl className={styles.trustMeta}>
               <div>
                 <dt>Budget</dt>
@@ -197,7 +197,7 @@ export default function AssistantDetails({
 
         {trustTrail.tool_calls.length > 0 ? (
           <section>
-            <h4>Tools</h4>
+            <h2>Tools</h2>
             <ol className={styles.trustToolList}>
               {trustTrail.tool_calls.map((tool) => (
                 <ToolRow key={tool.id ?? tool.tool_call_index} tool={tool} />
@@ -208,7 +208,7 @@ export default function AssistantDetails({
 
         {trustTrail.citations.length > 0 ? (
           <section>
-            <h4>Citations</h4>
+            <h2>Citations</h2>
             <ol className={styles.trustNestedList}>
               {trustTrail.citations.map((item) => {
                 const citation = toReaderCitationData(item.citation);
@@ -255,7 +255,7 @@ export default function AssistantDetails({
 
         {trustTrail.context_refs_added.length > 0 ? (
           <section>
-            <h4>Context refs</h4>
+            <h2>Context refs</h2>
             <ol className={styles.trustNestedList}>
               {trustTrail.context_refs_added.map((contextRef) => (
                 <li key={`${contextRef.chat_run_event_seq}:${contextRef.id}`}>
@@ -279,7 +279,7 @@ export default function AssistantDetails({
 
         {warnings > 0 ? (
           <section>
-            <h4>Notices</h4>
+            <h2>Notices</h2>
             <ol className={styles.trustNestedList}>
               {trustTrail.integrity_notices.map((notice) => (
                 <li key={notice.code}>

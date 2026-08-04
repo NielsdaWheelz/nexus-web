@@ -24,12 +24,18 @@ export type RoutePattern = readonly string[];
 
 export type PaneRouteHeaderContract =
   | {
-      readonly kind: "section";
+      readonly kind: "Section";
       readonly destinationId: DestinationId;
-      readonly defaultFolio: "none" | "pane-label";
+      /**
+       * Whether the destination label appears beside the pane title. Index
+       * routes whose title already *is* the destination declare `None`; the
+       * routes below a destination declare `Destination` so a chat, page, or
+       * library reads with the section it belongs to.
+       */
+      readonly context: "None" | "Destination";
     }
   | {
-      readonly kind: "resource";
+      readonly kind: "Resource";
       readonly pendingLabel: string;
     };
 
@@ -75,11 +81,11 @@ type PaneRouteModelDefinitionBase = PaneRouteModelDefinitionCommon &
   PaneRouteReturnContract &
   (
     | {
-        header: Extract<PaneRouteHeaderContract, { kind: "section" }>;
+        header: Extract<PaneRouteHeaderContract, { kind: "Section" }>;
         sectionDestinationId?: never;
       }
     | {
-        header: Extract<PaneRouteHeaderContract, { kind: "resource" }>;
+        header: Extract<PaneRouteHeaderContract, { kind: "Resource" }>;
         sectionDestinationId: DestinationId;
       }
   );
@@ -104,9 +110,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "lectern",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "lectern",
-      defaultFolio: "none",
+      context: "None",
     },
     pattern: ["lectern"],
     defaultLabel: "Lectern",
@@ -119,9 +125,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "libraries",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "libraries",
-      defaultFolio: "none",
+      context: "None",
     },
     pattern: ["libraries"],
     defaultLabel: "Libraries",
@@ -134,9 +140,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "library",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "libraries",
-      defaultFolio: "none",
+      context: "Destination",
     },
     pattern: ["libraries", ":id"],
     defaultLabel: "Library",
@@ -150,9 +156,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "browse",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "browse",
-      defaultFolio: "none",
+      context: "None",
     },
     pattern: ["browse"],
     defaultLabel: "Browse",
@@ -165,7 +171,7 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "browsePreview",
     sectionDestinationId: "browse",
-    header: { kind: "resource", pendingLabel: "Loading preview…" },
+    header: { kind: "Resource", pendingLabel: "Loading preview…" },
     pattern: ["browse", "preview"],
     defaultLabel: "Preview",
     labelMode: "dynamic",
@@ -176,7 +182,7 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "media",
     sectionDestinationId: "libraries",
-    header: { kind: "resource", pendingLabel: "Loading media…" },
+    header: { kind: "Resource", pendingLabel: "Loading media…" },
     pattern: ["media", ":id"],
     defaultLabel: "Media",
     labelMode: "dynamic",
@@ -188,7 +194,7 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "artifact",
     sectionDestinationId: "libraries",
-    header: { kind: "resource", pendingLabel: "Loading dossier…" },
+    header: { kind: "Resource", pendingLabel: "Loading dossier…" },
     pattern: ["artifacts", ":artifactRef"],
     defaultLabel: "Dossier",
     labelMode: "dynamic",
@@ -201,9 +207,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "conversations",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "chats",
-      defaultFolio: "none",
+      context: "None",
     },
     pattern: ["conversations"],
     defaultLabel: "Chats",
@@ -216,9 +222,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "conversationNew",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "chats",
-      defaultFolio: "none",
+      context: "Destination",
     },
     pattern: ["conversations", "new"],
     defaultLabel: "New chat",
@@ -232,9 +238,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "conversation",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "chats",
-      defaultFolio: "none",
+      context: "Destination",
     },
     pattern: ["conversations", ":id"],
     defaultLabel: "Chat",
@@ -247,9 +253,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "podcasts",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "podcasts",
-      defaultFolio: "none",
+      context: "None",
     },
     pattern: ["podcasts"],
     defaultLabel: "Podcasts",
@@ -262,9 +268,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "podcastDetail",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "podcasts",
-      defaultFolio: "pane-label",
+      context: "Destination",
     },
     pattern: ["podcasts", ":podcastId"],
     defaultLabel: "Podcast",
@@ -278,9 +284,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "search",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "search",
-      defaultFolio: "none",
+      context: "None",
     },
     pattern: ["search"],
     defaultLabel: "Search",
@@ -292,9 +298,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "author",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "authors",
-      defaultFolio: "none",
+      context: "Destination",
     },
     pattern: ["authors", ":handle"],
     defaultLabel: "Author",
@@ -308,9 +314,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "notes",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "notes",
-      defaultFolio: "none",
+      context: "None",
     },
     pattern: ["notes"],
     defaultLabel: "Notes",
@@ -323,9 +329,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "page",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "notes",
-      defaultFolio: "pane-label",
+      context: "Destination",
     },
     pattern: ["pages", ":pageId"],
     defaultLabel: "Page",
@@ -338,9 +344,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "dailyDate",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "notes",
-      defaultFolio: "pane-label",
+      context: "Destination",
     },
     pattern: ["daily", ":localDate"],
     defaultLabel: "Daily Page",
@@ -353,9 +359,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "note",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "notes",
-      defaultFolio: "pane-label",
+      context: "Destination",
     },
     pattern: ["notes", ":blockId"],
     defaultLabel: "Note",
@@ -368,9 +374,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "stats",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "stats",
-      defaultFolio: "none",
+      context: "None",
     },
     pattern: ["stats"],
     defaultLabel: "Stats",
@@ -383,9 +389,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "settings",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "settings",
-      defaultFolio: "none",
+      context: "None",
     },
     pattern: ["settings"],
     defaultLabel: "Settings",
@@ -397,9 +403,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "settingsAccount",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "settings",
-      defaultFolio: "none",
+      context: "Destination",
     },
     pattern: ["settings", "account"],
     defaultLabel: "Account",
@@ -411,9 +417,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "settingsBilling",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "settings",
-      defaultFolio: "none",
+      context: "Destination",
     },
     pattern: ["settings", "billing"],
     defaultLabel: "Billing",
@@ -425,9 +431,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "settingsReader",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "settings",
-      defaultFolio: "none",
+      context: "Destination",
     },
     pattern: ["settings", "reader"],
     defaultLabel: "Reader settings",
@@ -439,9 +445,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "settingsAppearance",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "settings",
-      defaultFolio: "none",
+      context: "Destination",
     },
     pattern: ["settings", "appearance"],
     defaultLabel: "Appearance",
@@ -453,9 +459,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "settingsLocalVault",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "settings",
-      defaultFolio: "none",
+      context: "Destination",
     },
     pattern: ["settings", "local-vault"],
     defaultLabel: "Local vault",
@@ -467,9 +473,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "settingsIdentities",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "settings",
-      defaultFolio: "none",
+      context: "Destination",
     },
     pattern: ["settings", "identities"],
     defaultLabel: "Linked identities",
@@ -481,9 +487,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "settingsKeybindings",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "settings",
-      defaultFolio: "none",
+      context: "Destination",
     },
     pattern: ["settings", "keybindings"],
     defaultLabel: "Keyboard shortcuts",
@@ -495,9 +501,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "atlas",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "atlas",
-      defaultFolio: "pane-label",
+      context: "None",
     },
     pattern: ["atlas"],
     defaultLabel: "The Atlas",
@@ -509,9 +515,9 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "oracle",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "oracle",
-      defaultFolio: "pane-label",
+      context: "None",
     },
     pattern: ["oracle"],
     defaultLabel: "Oracle",
@@ -523,13 +529,14 @@ export const PANE_ROUTE_MODELS = [
   route({
     id: "oracleReading",
     header: {
-      kind: "section",
+      kind: "Section",
       destinationId: "oracle",
-      defaultFolio: "pane-label",
+      context: "Destination",
     },
     pattern: ["oracle", ":readingId"],
     defaultLabel: "Reading",
-    labelMode: "static",
+    // The reading body publishes the exact question as the pane label.
+    labelMode: "dynamic",
     returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
@@ -567,7 +574,7 @@ export type ResolvedPaneRouteModel = ResolvedPaneRouteModelCommon &
 function sectionDestinationIdForDefinition(
   definition: PaneRouteModelDefinition,
 ): DestinationId {
-  if (definition.header.kind === "section") {
+  if (definition.header.kind === "Section") {
     return definition.header.destinationId;
   }
   if (!definition.sectionDestinationId) {

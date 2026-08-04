@@ -153,9 +153,9 @@ function NotesPane({
                     paneId="pane"
                     routeKey={routeKey}
                     routeHeader={{
-                      kind: "section",
+                      kind: "Section",
                       destinationId: "notes",
-                      defaultFolio: "none",
+                      context: "None",
                     }}
                     label="Notes"
                     returnMementoEnabled
@@ -362,7 +362,7 @@ describe("Notes index domain view", () => {
     expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   });
 
-  it("keeps the header folio counting the whole committed view while the local filter narrows the rows", async () => {
+  it("keeps the published header count describing the whole committed view while the local filter narrows the rows", async () => {
     stubNotePages();
 
     render(<NotesPane initialHref="/notes" replaced={[]} />);

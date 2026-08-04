@@ -53,7 +53,6 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
         ref={ref}
         className={headerClassName}
         data-surface-header="true"
-        data-header-kind={header.kind}
       >
         <div className={styles.navigationControls}>
           <button

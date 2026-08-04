@@ -34,14 +34,14 @@ function CompleteCredits({
         {creditGroups.map((group, groupIndex) => (
           <div
             key={
-              group.kind === "authors"
-                ? "authors"
+              group.kind === "Authors"
+                ? "Authors"
                 : `${group.label}-${groupIndex}`
             }
             className={styles.group}
           >
             <div className={styles.role}>
-              {group.kind === "authors" ? "Authors" : group.label}
+              {group.kind === "Authors" ? "Authors" : group.label}
             </div>
             <div className={styles.names}>
               {group.credits.map((credit, creditIndex) => (

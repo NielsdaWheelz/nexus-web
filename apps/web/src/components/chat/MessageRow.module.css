@@ -274,14 +274,14 @@
   gap: var(--space-1);
 }
 
-.trustInspectorPanel h4,
+.trustInspectorPanel h2,
 .trustInspectorPanel p,
 .trustInspectorPanel ol,
 .trustInspectorPanel dl {
   margin: 0;
 }
 
-.trustInspectorPanel h4 {
+.trustInspectorPanel h2 {
   color: var(--ink);
   font-size: var(--text-xs);
 }

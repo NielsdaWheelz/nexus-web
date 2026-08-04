@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SectionOpener from "@/components/ui/SectionOpener";
 import { setAppearanceAction } from "@/lib/theme/setAppearanceAction";
 import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
@@ -32,7 +31,7 @@ export default function SettingsAppearancePaneBody() {
   if (selection === null) return null;
 
   return (
-    <PaneSurface opener={<SectionOpener heading="Appearance" />}>
+    <PaneSurface>
       <PaneSection title="Theme">
         <fieldset className={styles.fieldset}>
           <legend className={styles.legend}>Choose how Nexus looks.</legend>

@@ -352,13 +352,10 @@ function focusAfterRestore(
     anchor?.matches("[data-row-focusable]") === true
       ? anchor
       : anchor?.querySelector<HTMLElement>("[data-row-focusable]");
-  const heading = registration.contentRoot.querySelector<HTMLElement>(
-    "[data-pane-return-heading]",
+  const paneLandmark = registration.scrollport.closest<HTMLElement>(
+    "[data-pane-shell]",
   );
-  const chrome = registration.scrollport
-    .closest("[data-pane-shell]")
-    ?.querySelector<HTMLElement>("[data-pane-chrome-focus]");
-  (anchorControl ?? heading ?? chrome)?.focus({ preventScroll: true });
+  (anchorControl ?? paneLandmark)?.focus({ preventScroll: true });
 }
 
 function assertJsonSafe(value: unknown, stack = new Set<object>()): void {

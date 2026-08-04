@@ -167,9 +167,9 @@ function LibrariesPane({
                     paneId="pane"
                     routeKey={routeKey}
                     routeHeader={{
-                      kind: "section",
+                      kind: "Section",
                       destinationId: "libraries",
-                      defaultFolio: "none",
+                      context: "None",
                     }}
                     label="Libraries"
                     returnMementoEnabled
@@ -379,7 +379,7 @@ describe("Libraries index domain view", () => {
     expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   });
 
-  it("keeps the header folio counting the whole committed view while the local filter narrows the rows", async () => {
+  it("keeps the published header count describing the whole committed view while the local filter narrows the rows", async () => {
     stubLibrariesIndex();
 
     render(<LibrariesPane initialHref="/libraries" replaced={[]} />);

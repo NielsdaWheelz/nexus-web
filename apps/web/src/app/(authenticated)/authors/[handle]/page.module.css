@@ -4,29 +4,6 @@
   gap: var(--space-6);
 }
 
-/* Heading row: the canonical name plus the quiet capability-gated rename action. */
-.header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-3);
-}
-
-.heading {
-  margin: 0;
-  min-width: 0;
-  font-family: var(--font-serif);
-  font-size: var(--text-2xl);
-  font-weight: var(--weight-semibold);
-  line-height: 1.1;
-  color: var(--ink);
-  overflow-wrap: anywhere;
-}
-
-.editName {
-  flex-shrink: 0;
-}
-
 /* Other names — inline text run, no pills, no external-ID rows. */
 .otherNames {
   display: flex;

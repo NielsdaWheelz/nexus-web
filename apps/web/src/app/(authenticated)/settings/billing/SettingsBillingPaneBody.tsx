@@ -14,7 +14,6 @@ import {
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SectionOpener from "@/components/ui/SectionOpener";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { planLabel } from "@/lib/billing/planLabel";
@@ -278,7 +277,7 @@ export default function SettingsBillingPaneBody() {
   if (defect) throw defect.error;
 
   return (
-    <PaneSurface opener={<SectionOpener heading="Billing" />}>
+    <PaneSurface>
       <PaneSection>
         <div className={styles.content}>
         {loading && (
@@ -351,7 +350,7 @@ export default function SettingsBillingPaneBody() {
 
             <div className={styles.usageGrid}>
               <section className={styles.usageCard}>
-                <h3 className={styles.usageTitle}>AI tokens</h3>
+                <h2 className={styles.usageTitle}>AI tokens</h2>
                 <p className={styles.usageValue}>
                   {formatUsage(account.ai_token_usage.used, "tokens", display)}
                 </p>
@@ -364,7 +363,7 @@ export default function SettingsBillingPaneBody() {
               </section>
 
               <section className={styles.usageCard}>
-                <h3 className={styles.usageTitle}>Transcription</h3>
+                <h2 className={styles.usageTitle}>Transcription</h2>
                 <p className={styles.usageValue}>
                   {formatUsage(account.transcription_usage.used, "minutes", display)}
                 </p>
