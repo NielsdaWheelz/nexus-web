@@ -24,7 +24,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_conversation
+from nexus.auth.permissions import can_read_conversation, visible_conversation_ids_cte_sql
 from nexus.db.models import (
     ChatRun,
     Conversation,
@@ -800,6 +800,78 @@ def _build_conversation_page(
         )
 
     return conversations, PageInfo(next_cursor=next_cursor)
+
+
+def owned_conversation_ids(
+    db: Session, *, viewer_id: UUID, conversation_ids: list[UUID]
+) -> set[UUID]:
+    """The subset of the supplied conversation ids the viewer owns, in one set query.
+
+    Ownership is the delete authority :func:`delete_conversation` enforces (write is
+    owner-only). The action-snapshot aggregator uses this set-based read to gate the
+    ``DeleteConversation`` capability without a per-ref ownership check."""
+    ordered = list(dict.fromkeys(conversation_ids))
+    if not ordered:
+        return set()
+    rows = db.execute(
+        select(Conversation.id).where(
+            Conversation.owner_user_id == viewer_id,
+            Conversation.id.in_(ordered),
+        )
+    ).all()
+    return {row[0] for row in rows}
+
+
+def visible_conversation_ids(
+    db: Session, *, viewer_id: UUID, conversation_ids: list[UUID]
+) -> set[UUID]:
+    """The subset of the supplied conversation ids the viewer can read, in one set query.
+
+    The set-based twin of :func:`nexus.auth.permissions.can_read_conversation`: it
+    reuses the shared :func:`visible_conversation_ids_cte_sql` visibility rule
+    (owner OR public OR library-shared with dual membership), so the batched read
+    and the per-ref predicate cannot drift. The action-snapshot aggregator uses this
+    instead of looping ``can_read_conversation`` per ref (AC9)."""
+    ordered = list(dict.fromkeys(conversation_ids))
+    if not ordered:
+        return set()
+    rows = db.execute(
+        text(
+            f"""
+            SELECT v.conversation_id
+            FROM ({visible_conversation_ids_cte_sql()}) v
+            WHERE v.conversation_id = ANY(:conversation_ids)
+            """
+        ),
+        {"viewer_id": viewer_id, "conversation_ids": ordered},
+    ).all()
+    return {UUID(str(row[0])) for row in rows}
+
+
+def visible_message_ids(db: Session, *, viewer_id: UUID, message_ids: list[UUID]) -> set[UUID]:
+    """The subset of the supplied message ids the viewer can read, in one set query.
+
+    A message is readable when its parent conversation is visible (the shared
+    :func:`visible_conversation_ids_cte_sql` rule) and the message is not a pending
+    placeholder — matching the per-ref ``status != 'pending'`` + ``can_read_conversation``
+    gate the resolve loader applies. The action-snapshot aggregator uses this instead
+    of a per-ref conversation-readability check (AC9)."""
+    ordered = list(dict.fromkeys(message_ids))
+    if not ordered:
+        return set()
+    rows = db.execute(
+        text(
+            f"""
+            SELECT m.id
+            FROM messages m
+            WHERE m.id = ANY(:message_ids)
+              AND m.status != 'pending'
+              AND m.conversation_id IN ({visible_conversation_ids_cte_sql()})
+            """
+        ),
+        {"viewer_id": viewer_id, "message_ids": ordered},
+    ).all()
+    return {UUID(str(row[0])) for row in rows}
 
 
 def delete_conversation(

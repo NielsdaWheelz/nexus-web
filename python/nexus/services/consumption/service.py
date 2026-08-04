@@ -676,6 +676,17 @@ def get_lectern_item_for_media(
     return _lectern_store.find_item_for_media(db, viewer_id=viewer_id, media_id=media_id)
 
 
+def lectern_item_ids_for_media(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, UUID]:
+    """Batch (``media_id`` -> Lectern ``item_id``) for the viewer, set-based.
+
+    The one boundary the action-snapshot aggregator uses for ``LecternMembership``
+    presence + item id across a batch of media; media absent from the Lectern are
+    omitted. Never loop :func:`get_lectern_item_for_media` for this."""
+    return _lectern_store.item_ids_for_media(db, viewer_id=viewer_id, media_ids=media_ids)
+
+
 # ---------------------------------------------------------------------------
 # Episode-state SQL fragments (podcast list/detail/library adopters compose these
 # through the service boundary; the raw table reads stay inside _projection).

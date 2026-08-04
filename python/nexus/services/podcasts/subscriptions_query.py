@@ -73,6 +73,29 @@ def active_subscription_rows_sql() -> str:
     """
 
 
+def subscribed_podcast_ids(db: Session, *, viewer_id: UUID, podcast_ids: list[UUID]) -> set[UUID]:
+    """The subset of the supplied podcast ids the viewer actively subscribes to.
+
+    One set query composing the canonical :func:`active_subscription_rows_sql`
+    subscription-owner relation, filtered to the supplied ids. The action-snapshot
+    aggregator uses this to gate the podcast subscription/settings/refresh
+    capabilities without a per-ref subscription check (AC9)."""
+    ordered = list(dict.fromkeys(podcast_ids))
+    if not ordered:
+        return set()
+    rows = db.execute(
+        text(
+            f"""
+            SELECT s.podcast_id
+            FROM ({active_subscription_rows_sql()}) s
+            WHERE s.podcast_id = ANY(:podcast_ids)
+            """
+        ),
+        {"viewer_id": viewer_id, "podcast_ids": ordered},
+    ).all()
+    return {UUID(str(row[0])) for row in rows}
+
+
 def hydrate_compact_podcast_targets(
     db: Session, *, viewer_id: UUID, podcast_ids: list[UUID]
 ) -> dict[UUID, CompactPodcastTarget]:

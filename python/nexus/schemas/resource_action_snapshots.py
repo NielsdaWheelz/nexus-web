@@ -20,50 +20,30 @@ from typing import Annotated, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_mutation_replay import canonical_json_bytes
 
 _MAX_REFS = 100
 
 
 class ResourceActionSnapshotResolveRequest(BaseModel):
-    """A batch of 1..100 unique, parseable resource refs to resolve.
+    """A batch of 1..100 unique resource refs to resolve.
 
-    Uniqueness and per-ref parseability need a ``model_validator`` regardless, so
-    the count bounds live there too, giving one boundary that raises specific
-    ``E_INVALID_REQUEST`` messages (matching the ``_parse_ref`` boundary in
-    ``api/routes/resource_items.py``).
+    ``Field`` bounds the count (1..100) and a single ``model_validator`` adds the
+    uniqueness rule pydantic cannot express; both surface as ``E_INVALID_REQUEST``
+    via the app's request-validation remap. Ref grammar is parsed exactly once, at
+    the route boundary (``api/routes/resource_items.py`` ``_parse_ref``), so an
+    unparseable ref is rejected there — this model never re-parses.
     """
 
-    refs: list[str]
+    refs: list[str] = Field(min_length=1, max_length=_MAX_REFS)
 
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
-    def _validate_refs(self) -> ResourceActionSnapshotResolveRequest:
-        if not self.refs:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "refs must contain between 1 and 100 entries.",
-            )
-        if len(self.refs) > _MAX_REFS:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                f"refs must contain at most {_MAX_REFS} entries.",
-            )
+    def _validate_unique(self) -> ResourceActionSnapshotResolveRequest:
         if len(set(self.refs)) != len(self.refs):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "refs must be unique.",
-            )
-        for raw in self.refs:
-            if isinstance(parse_resource_ref(raw), ResourceRefParseFailure):
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    f"Invalid resource ref: {raw!r}. Expected '<scheme>:<uuid>'.",
-                )
+            raise ValueError("refs must be unique.")
         return self
 
 

@@ -12,6 +12,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from nexus.auth.permissions import (
     can_read_highlight,
     can_read_media,
+    highlight_readability_filter,
     highlight_visibility_filter,
     visible_media_ids_cte_sql,
 )
@@ -57,6 +58,26 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
 
 logger = get_logger(__name__)
+
+
+def visible_highlight_ids(db: Session, *, viewer_id: UUID, highlight_ids: list[UUID]) -> set[UUID]:
+    """The subset of the supplied highlight ids the viewer can read, in one set query.
+
+    The set-based twin of :func:`nexus.auth.permissions.can_read_highlight`: it applies
+    the same complete :func:`highlight_readability_filter` (valid typed anchor + readable
+    parent media + author/library-intersection/grant visibility) to the whole batch, so
+    the batched read and the per-ref predicate cannot drift. The action-snapshot
+    aggregator uses this instead of looping ``can_read_highlight`` per ref (AC9)."""
+    ordered = list(dict.fromkeys(highlight_ids))
+    if not ordered:
+        return set()
+    rows = db.execute(
+        select(Highlight.id).where(
+            Highlight.id.in_(ordered),
+            highlight_readability_filter(viewer_id),
+        )
+    ).all()
+    return {row[0] for row in rows}
 
 
 @dataclass(frozen=True, slots=True)

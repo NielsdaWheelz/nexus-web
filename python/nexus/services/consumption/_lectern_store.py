@@ -279,6 +279,34 @@ def remove_item_if_present_in_txn(db: Session, *, viewer_id: UUID, item_id: UUID
     return item_id
 
 
+def item_ids_for_media(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, UUID]:
+    """Batch (``media_id`` -> Lectern ``item_id``) for the viewer, in one set query.
+
+    Media that are not on the viewer's Lectern are omitted from the result. When a
+    media carries more than one Lectern row the lowest-position row wins, matching
+    the single-media :func:`find_item_for_media`. This is the set-based read the
+    action-snapshot aggregator uses so ``LecternMembership.lecternItemId`` never
+    costs one query per ref.
+    """
+    ordered = list(dict.fromkeys(media_ids))
+    if not ordered:
+        return {}
+    rows = db.execute(
+        text(
+            """
+            SELECT DISTINCT ON (q.media_id) q.media_id, q.id
+            FROM consumption_queue_items q
+            WHERE q.user_id = :viewer_id AND q.media_id = ANY(:media_ids)
+            ORDER BY q.media_id ASC, q.position ASC
+            """
+        ),
+        {"viewer_id": viewer_id, "media_ids": ordered},
+    ).all()
+    return {UUID(str(row[0])): UUID(str(row[1])) for row in rows}
+
+
 def find_item_for_media(db: Session, *, viewer_id: UUID, media_id: UUID) -> tuple[UUID, str] | None:
     """The viewer's Lectern ``(item_id, media title)`` for a media (visible or
     hidden), or ``None`` when the media is not on the viewer's Lectern. Used by the

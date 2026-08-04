@@ -840,6 +840,61 @@ def list_writable_library_destinations(
     return [_library_destination_out_from_row(row) for row in page_rows], next_cursor
 
 
+@dataclass(frozen=True, slots=True)
+class LibraryManagementFacts:
+    """The viewer's manage/delete authority over one library."""
+
+    can_manage_settings: bool
+    can_delete: bool
+
+
+def library_management_facts(
+    db: Session, *, viewer_id: UUID, library_ids: list[UUID]
+) -> dict[UUID, LibraryManagementFacts]:
+    """Batch the viewer's settings/delete authority for each supplied library.
+
+    One set query, keyed by library id; libraries the viewer is not a member of
+    are omitted. Managing settings requires an admin role on a mutable (non-system,
+    non-default) library; deletion additionally requires ownership. Authority is
+    derived through :func:`_library_capabilities` — the same rule the mutation
+    routes enforce — so the snapshot capability and the enforced rule cannot
+    diverge. This is the set-based read the action-snapshot aggregator uses instead
+    of looping :func:`get_library` per ref.
+    """
+    ordered = list(dict.fromkeys(library_ids))
+    if not ordered:
+        return {}
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT l.id, l.owner_user_id, l.is_default, l.system_key, m.role
+                FROM libraries l
+                JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+                WHERE l.id = ANY(:library_ids)
+                """
+            ),
+            {"viewer_id": viewer_id, "library_ids": ordered},
+        )
+        .mappings()
+        .all()
+    )
+    facts: dict[UUID, LibraryManagementFacts] = {}
+    for row in rows:
+        capabilities = _library_capabilities(
+            role=row["role"],
+            is_default=row["is_default"],
+            system_key=row["system_key"],
+            viewer_user_id=viewer_id,
+            owner_user_id=row["owner_user_id"],
+        )
+        facts[UUID(str(row["id"]))] = LibraryManagementFacts(
+            can_manage_settings=capabilities["can_rename"],
+            can_delete=capabilities["can_delete"],
+        )
+    return facts
+
+
 def get_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOut:
     """Get a single library the viewer is a member of; mask a non-member as 404."""
     row = (

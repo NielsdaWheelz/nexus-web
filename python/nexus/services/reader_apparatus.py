@@ -15,7 +15,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusCapabilities,
@@ -36,6 +36,37 @@ SUPPORTED_MEDIA_KINDS = frozenset({"web_article", "epub", "pdf"})
 _LEGACY_NAMED_NOTE_RE = re.compile(r"^f(?P<number>[1-9]\d*)n$")
 _PROJECT_GUTENBERG_LINKNOTE_REF_RE = re.compile(r"^linknoteref-(?P<number>[1-9]\d*)$")
 _PROJECT_GUTENBERG_LINKNOTE_TARGET_RE = re.compile(r"^linknote-(?P<number>[1-9]\d*)$")
+
+
+def visible_reader_apparatus_item_ids(
+    db: Session, *, viewer_id: UUID, item_ids: list[UUID]
+) -> set[UUID]:
+    """The subset of the supplied apparatus item ids the viewer can read, in one set query.
+
+    Mirrors the resolve loader's per-ref gate: the item's state must be ``ready`` or
+    ``partial``, it must carry a present, non-missing locator, and its parent media must
+    be readable (the shared :func:`visible_media_ids_cte_sql` rule = ``can_read_media``).
+    The action-snapshot aggregator uses this instead of looping ``can_read_media`` per
+    ref (AC9)."""
+    ordered = list(dict.fromkeys(item_ids))
+    if not ordered:
+        return set()
+    rows = db.execute(
+        text(
+            f"""
+            SELECT rai.id
+            FROM reader_apparatus_items rai
+            JOIN reader_apparatus_states ras ON ras.id = rai.state_id
+            WHERE rai.id = ANY(:item_ids)
+              AND ras.status IN ('ready', 'partial')
+              AND rai.locator IS NOT NULL
+              AND rai.locator_status != 'missing'
+              AND rai.media_id IN ({visible_media_ids_cte_sql()})
+            """
+        ),
+        {"viewer_id": viewer_id, "item_ids": ordered},
+    ).all()
+    return {UUID(str(row[0])) for row in rows}
 
 
 def source_fingerprint(*parts: object) -> str:

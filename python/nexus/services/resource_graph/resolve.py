@@ -362,6 +362,93 @@ def covering_evidence_span_for_highlight(
     return ResourceRef(scheme="evidence_span", id=span_id)
 
 
+# ---------- batched visibility reads (action-snapshot aggregator) -------------
+#
+# Set-based twins of the per-ref visibility checks the loaders below apply, one
+# bounded ``= ANY(:ids)`` query each. The action-snapshot aggregator sources
+# visibility for these media-owned/polymorphic schemes from these reads instead
+# of the per-ref ``can_read_media`` loop inside ``resolve_refs`` (AC9). Each read
+# reuses the same ``visible_media_ids_cte_sql`` rule the matching ``_load_*``
+# loader uses, so the batched and per-ref forms cannot drift.
+
+
+def visible_fragment_ids(db: Session, *, viewer_id: UUID, fragment_ids: list[UUID]) -> set[UUID]:
+    """The subset of the supplied fragment ids whose parent media the viewer can read."""
+    ordered = list(dict.fromkeys(fragment_ids))
+    if not ordered:
+        return set()
+    rows = db.execute(
+        text(
+            f"""
+            SELECT f.id
+            FROM fragments f
+            WHERE f.id = ANY(:fragment_ids)
+              AND f.media_id IN ({visible_media_ids_cte_sql()})
+            """
+        ),
+        {"viewer_id": viewer_id, "fragment_ids": ordered},
+    ).all()
+    return {UUID(str(row[0])) for row in rows}
+
+
+def visible_evidence_span_ids(
+    db: Session, *, viewer_id: UUID, evidence_span_ids: list[UUID]
+) -> set[UUID]:
+    """The subset of the supplied evidence-span ids the viewer can read.
+
+    Media-owned spans are visible when their parent media is readable; note-owned
+    spans when the viewer owns the note block — mirroring the resolve loader."""
+    ordered = list(dict.fromkeys(evidence_span_ids))
+    if not ordered:
+        return set()
+    rows = db.execute(
+        text(
+            f"""
+            SELECT es.id
+            FROM evidence_spans es
+            LEFT JOIN note_blocks nb
+              ON nb.id = es.owner_id AND es.owner_kind = 'note_block'
+            WHERE es.id = ANY(:evidence_span_ids)
+              AND (
+                (es.owner_kind = 'media' AND es.owner_id IN ({visible_media_ids_cte_sql()}))
+                OR (es.owner_kind = 'note_block' AND nb.user_id = :viewer_id)
+              )
+            """
+        ),
+        {"viewer_id": viewer_id, "evidence_span_ids": ordered},
+    ).all()
+    return {UUID(str(row[0])) for row in rows}
+
+
+def visible_content_chunk_ids(
+    db: Session, *, viewer_id: UUID, content_chunk_ids: list[UUID]
+) -> set[UUID]:
+    """The subset of the supplied content-chunk ids the viewer can read.
+
+    Media-owned chunks are visible when their parent media is readable; note-owned
+    chunks when the viewer owns the note block — mirroring the resolve loader."""
+    ordered = list(dict.fromkeys(content_chunk_ids))
+    if not ordered:
+        return set()
+    rows = db.execute(
+        text(
+            f"""
+            SELECT cc.id
+            FROM content_chunks cc
+            LEFT JOIN note_blocks nb
+              ON nb.id = cc.owner_id AND cc.owner_kind = 'note_block'
+            WHERE cc.id = ANY(:content_chunk_ids)
+              AND (
+                (cc.owner_kind = 'media' AND cc.owner_id IN ({visible_media_ids_cte_sql()}))
+                OR (cc.owner_kind = 'note_block' AND nb.user_id = :viewer_id)
+              )
+            """
+        ),
+        {"viewer_id": viewer_id, "content_chunk_ids": ordered},
+    ).all()
+    return {UUID(str(row[0])) for row in rows}
+
+
 # ---------- per-scheme loading ------------------------------------------------
 
 

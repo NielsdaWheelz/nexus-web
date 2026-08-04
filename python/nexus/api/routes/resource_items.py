@@ -10,6 +10,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, success_response
+from nexus.schemas.resource_action_snapshots import ResourceActionSnapshotResolveRequest
 from nexus.schemas.resource_items import (
     ResourceBodyMutationRequest,
     ResourceLocatorResolveRequest,
@@ -21,8 +22,8 @@ from nexus.schemas.resource_openables import ResourceOpenableSearchRequest
 from nexus.schemas.resource_targets import ResourceTargetSearchRequest
 from nexus.services.resource_graph import refs as refs_service
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items import action_snapshots, mutations, openables, surfaces, targets
 from nexus.services.resource_items import locators as locator_service
-from nexus.services.resource_items import mutations, openables, surfaces, targets
 
 router = APIRouter(prefix="/resource-items", tags=["resource-items"])
 
@@ -52,6 +53,27 @@ def resolve_resource_items(
                 for ref in refs
             ]
         }
+    )
+
+
+@router.post("/action-snapshots/resolve")
+def resolve_action_snapshots(
+    request: ResourceActionSnapshotResolveRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Resolve one action-facts snapshot per ref (order preserved; missing kept).
+
+    Request validation (1..100, unique, parseable) lives in the request model and
+    raises ``E_INVALID_REQUEST``. Reads are set-based; see ``action_snapshots``.
+    """
+    return ok(
+        action_snapshots.resolve_action_snapshots(
+            db,
+            viewer_id=viewer.user_id,
+            refs=[_parse_ref(raw) for raw in request.refs],
+        ),
+        by_alias=True,
     )
 
 

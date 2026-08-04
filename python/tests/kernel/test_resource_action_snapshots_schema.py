@@ -17,12 +17,11 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.resource_action_snapshots import (
     ResourceActionSnapshotOut,
     ResourceActionSnapshotResolveRequest,
-    ResourceActionSnapshotResolveResponse,
     compute_facts_revision,
 )
 from nexus.schemas.resource_items import ResourceActivationOut
@@ -50,11 +49,13 @@ def _snapshot(ref: str, capabilities: list[dict]) -> ResourceActionSnapshotOut:
 
 
 # --------------------------------------------------------------------------
-# Request validator: 1..100 unique parseable refs, else E_INVALID_REQUEST (400)
+# Request validator: 1..100 unique refs (count via Field, uniqueness via
+# validator; both surface as E_INVALID_REQUEST through the app's 422->400 remap).
+# Ref grammar is parsed once at the route boundary, not in this model.
 # --------------------------------------------------------------------------
 
 
-def test_request_accepts_valid_batch_of_unique_parseable_refs() -> None:
+def test_request_accepts_valid_batch_of_unique_refs() -> None:
     refs = [_media_ref() for _ in range(3)]
     request = ResourceActionSnapshotResolveRequest(refs=refs)
     assert request.refs == refs
@@ -65,40 +66,21 @@ def test_request_accepts_maximum_batch_of_one_hundred() -> None:
     assert ResourceActionSnapshotResolveRequest(refs=refs).refs == refs
 
 
-def test_request_rejects_empty_refs_as_invalid_request() -> None:
-    with pytest.raises(InvalidRequestError) as caught:
+def test_request_rejects_empty_refs() -> None:
+    with pytest.raises(ValidationError):
         ResourceActionSnapshotResolveRequest(refs=[])
-    assert caught.value.code is ApiErrorCode.E_INVALID_REQUEST
-    assert caught.value.status_code == 400
 
 
-def test_request_rejects_more_than_one_hundred_refs_as_invalid_request() -> None:
+def test_request_rejects_more_than_one_hundred_refs() -> None:
     refs = [_media_ref() for _ in range(101)]
-    with pytest.raises(InvalidRequestError) as caught:
+    with pytest.raises(ValidationError):
         ResourceActionSnapshotResolveRequest(refs=refs)
-    assert caught.value.code is ApiErrorCode.E_INVALID_REQUEST
 
 
-def test_request_rejects_duplicate_refs_as_invalid_request() -> None:
+def test_request_rejects_duplicate_refs() -> None:
     ref = _media_ref()
-    with pytest.raises(InvalidRequestError) as caught:
+    with pytest.raises(ValidationError):
         ResourceActionSnapshotResolveRequest(refs=[ref, ref])
-    assert caught.value.code is ApiErrorCode.E_INVALID_REQUEST
-
-
-@pytest.mark.parametrize(
-    "bad_ref",
-    [
-        "not-a-ref",  # no scheme separator
-        "bogus:00000000-0000-0000-0000-000000000000",  # unsupported scheme
-        "media:not-a-uuid",  # unparseable id
-    ],
-    ids=["no-separator", "unsupported-scheme", "bad-uuid"],
-)
-def test_request_rejects_unparseable_ref_as_invalid_request(bad_ref: str) -> None:
-    with pytest.raises(InvalidRequestError) as caught:
-        ResourceActionSnapshotResolveRequest(refs=[_media_ref(), bad_ref])
-    assert caught.value.code is ApiErrorCode.E_INVALID_REQUEST
 
 
 # --------------------------------------------------------------------------
