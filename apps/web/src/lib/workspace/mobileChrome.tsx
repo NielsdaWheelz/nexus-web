@@ -14,11 +14,10 @@ import {
   type RefObject,
 } from "react";
 import { flushSync } from "react-dom";
-import type {
-  ActionDescriptor,
-  PaneHeaderAction,
-} from "@/lib/ui/actionDescriptor";
+import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
+import type { PaneViewMenuPublication } from "@/lib/panes/panePublications";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
 import { isInteractiveTarget } from "@/lib/ui/interactiveTarget";
@@ -73,8 +72,14 @@ export interface MobilePaneChrome {
     anchor: HTMLAnchorElement,
   ) => void;
   navigation: SurfaceHeaderNavigation;
+  /** Promoted, non-resource pane actions (Companion, Search). */
   actions: readonly PaneHeaderAction[];
-  options: readonly ActionDescriptor[];
+  /** Dedicated non-resource pane controls (refresh, route share) as buttons. */
+  controls?: ReactNode;
+  /** The pane's own non-resource view menu (reader settings, date navigation). */
+  viewMenu?: PaneViewMenuPublication;
+  /** The pane's resource identity → the canonical resource dropdown. */
+  resourceTarget?: ResourceActionSubject;
 }
 
 interface StableController {

@@ -11,7 +11,6 @@ import {
   useNotePulseHighlight,
   type NotePulseTarget,
 } from "@/lib/reader/pulseEvent";
-import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -135,16 +134,12 @@ export default function NotePaneBody() {
   usePanePrimaryChrome({
     search,
     actions: companionAction ? [companionAction] : [],
-    menu: ready
-      ? {
-          kind: "ResourceMenu",
-          target: routeResourceActionSubject({
-            scheme: "note_block",
-            id: blockId,
-            href: `/notes/${blockId}`,
-          }),
-          groups: emptyResourceMenuGroups(),
-        }
+    resourceTarget: ready
+      ? routeResourceActionSubject({
+          scheme: "note_block",
+          id: blockId,
+          href: `/notes/${blockId}`,
+        })
       : undefined,
   });
   return (

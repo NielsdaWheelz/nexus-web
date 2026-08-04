@@ -38,11 +38,6 @@ import {
 } from "@/lib/conversations/readerTarget";
 import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import {
-  RESOURCE_ACTION_CATALOG,
-  conversationResourceOptions,
-  type ResourceActionId,
-} from "@/lib/actions/resourceActions";
-import {
   chatDraftKeyFor,
   type ChatDraftKey,
 } from "@/lib/conversations/chatDraftKey";
@@ -53,7 +48,6 @@ import {
   isSameSystemApiDefect,
   type ApiPath,
 } from "@/lib/api/client";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { useResource } from "@/lib/api/useResource";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
@@ -344,9 +338,6 @@ export default function Conversation() {
   } = usePendingReaderSelection(readerIntent);
   const [readerAnnouncement, setReaderAnnouncement] = useState("");
 
-  const [deleting, setDeleting] = useState(false);
-  const deleteInFlightRef = useRef(false);
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   const [branchFocusKey, setBranchFocusKey] = useState("");
 
   // The context-ref secondary surface is keyed off the engine's resolved id, but the engine
@@ -556,36 +547,9 @@ export default function Conversation() {
     [convo.scrollRef],
   );
 
-  // --------------------------------------------------------------------------
-  // Delete conversation
-  // --------------------------------------------------------------------------
-
-  const [deleteError, setDeleteError] = useState<FeedbackContent | null>(null);
-  const handleDeleteConversation = useCallback(async () => {
-    const id = convo.conversationId;
-    if (!id || deleteInFlightRef.current) return;
-    if (!confirm("Delete this conversation? This cannot be undone.")) return;
-    deleteInFlightRef.current = true;
-    setDeleting(true);
-    try {
-      await apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
-      router.push("/conversations");
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      if (!isApiError(err) || isSameSystemApiDefect(err)) {
-        setAsyncDefect({ error: err });
-        return;
-      }
-      try {
-        setDeleteError(conversationErrorMessage(err, "Delete"));
-      } catch (defect) {
-        setAsyncDefect({ error: defect });
-      }
-    } finally {
-      deleteInFlightRef.current = false;
-      setDeleting(false);
-    }
-  }, [convo.conversationId, router]);
+  // Deleting the conversation is a canonical resource action now: the pane
+  // publishes its resourceTarget and the runtime dispatches DeleteConversation
+  // (confirm + delete client + snapshot reconcile). No local delete flow.
 
   // --------------------------------------------------------------------------
   // Reader-source activation + open cited resource
@@ -713,25 +677,6 @@ export default function Conversation() {
   // Pane chrome: action menu + Resource Inspector surfaces
   // --------------------------------------------------------------------------
 
-  const paneOptions = useMemo(
-    () =>
-      convo.conversationId
-        ? conversationResourceOptions({
-            deleteConversation: {
-              kind: "Available",
-              execute: async () => {
-                await handleDeleteConversation();
-              },
-            },
-            busyIds: deleting
-              ? new Set<ResourceActionId>([
-                  RESOURCE_ACTION_CATALOG.DeleteConversation.id,
-                ])
-              : new Set<ResourceActionId>(),
-          })
-        : null,
-    [convo.conversationId, deleting, handleDeleteConversation],
-  );
   const contextBody = useMemo(
     () => (
       <div className={styles.chatSecondaryBody}>
@@ -872,32 +817,21 @@ export default function Conversation() {
         ? findPublication
         : undefined,
     actions: inspector.companionAction ? [inspector.companionAction] : [],
-    menu:
+    resourceTarget:
       convo.conversationId &&
-      paneOptions &&
       !convo.loading &&
       !(conversationId !== null && convo.messages.length === 0 && convo.error)
-        ? {
-            kind: "ResourceMenu",
-            target: routeResourceActionSubject({
-              scheme: "conversation",
-              id: convo.conversationId,
-              href: `/conversations/${convo.conversationId}`,
-            }),
-            groups: {
-              core: [],
-              ...paneOptions,
-              view: [],
-            },
-          }
+        ? routeResourceActionSubject({
+            scheme: "conversation",
+            id: convo.conversationId,
+            href: `/conversations/${convo.conversationId}`,
+          })
         : undefined,
   });
 
   // --------------------------------------------------------------------------
   // Render
   // --------------------------------------------------------------------------
-
-  if (asyncDefect !== null) throw asyncDefect.error;
 
   const routeTargetFailed =
     routeTargetKey !== null && failedRouteTarget === routeTargetKey;
@@ -921,7 +855,7 @@ export default function Conversation() {
       </Button>
     </FeedbackNotice>
   ) : null;
-  const error = routeTargetFailed ? deleteError : (convo.error ?? deleteError);
+  const error = routeTargetFailed ? null : (convo.error ?? null);
 
   // Existing-route error gating: a not-found/error state without history cannot
   // safely render a continuation composer. Loading stays on the normal chat

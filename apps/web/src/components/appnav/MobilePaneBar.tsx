@@ -11,6 +11,7 @@ import {
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import type {
   ActionDescriptor,
   PaneHeaderAction,
@@ -55,6 +56,10 @@ export default function MobilePaneBar() {
     [],
   );
 
+  // The mobile "Pane options" menu carries ONLY non-resource pane furniture:
+  // forward navigation + promoted actions (Companion, Search). The resource
+  // dropdown is rendered separately as the canonical ResourceActionMenu — nav
+  // and actions are never folded into it (AC4).
   const menuOptions = useMemo<readonly ActionDescriptor[]>(() => {
     const forward: ActionDescriptor[] = navigation?.canGoForward
       ? [
@@ -67,12 +72,10 @@ export default function MobilePaneBar() {
           },
         ]
       : [];
-    return [
-      ...forward,
-      ...(paneChrome?.actions ?? []),
-      ...(paneChrome?.options ?? []),
-    ];
-  }, [navigation, paneChrome?.actions, paneChrome?.options]);
+    return [...forward, ...(paneChrome?.actions ?? [])];
+  }, [navigation, paneChrome?.actions]);
+  const viewMenu = paneChrome?.viewMenu;
+  const resourceTarget = paneChrome?.resourceTarget;
   const activeFilterAction = activeCollapsedFilterAction(
     paneChrome?.actions ?? [],
   );
@@ -164,6 +167,18 @@ export default function MobilePaneBar() {
         className={styles.topBarControls}
         data-testid="top-bar-controls"
       >
+        {paneChrome?.controls}
+        {viewMenu ? (
+          <ActionMenu
+            options={viewMenu.actions}
+            label={viewMenu.label}
+            className={styles.topBarOptions}
+            onOpenChange={handleActionMenuOpenChange}
+            renderTrigger={(props) => (
+              <button {...props}>{viewMenu.icon}</button>
+            )}
+          />
+        ) : null}
         {paneChrome ? (
           <ActionMenu
             options={menuOptions}
@@ -188,6 +203,9 @@ export default function MobilePaneBar() {
                 : undefined
             }
           />
+        ) : null}
+        {resourceTarget ? (
+          <ResourceActionMenu target={resourceTarget} label="Actions" />
         ) : null}
       </div>
     </header>

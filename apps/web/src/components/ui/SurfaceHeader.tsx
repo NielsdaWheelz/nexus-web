@@ -1,12 +1,12 @@
 "use client";
 
-import { forwardRef } from "react";
+import { forwardRef, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import type {
-  ActionDescriptor,
-  PaneHeaderAction,
-} from "@/lib/ui/actionDescriptor";
+import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
+import type { PaneViewMenuPublication } from "@/lib/panes/panePublications";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import ActionBar from "./ActionBar";
 import ActionMenu from "./ActionMenu";
 import PaneHeaderIdentity from "./PaneHeaderIdentity";
@@ -23,15 +23,23 @@ interface SurfaceHeaderProps {
   header: PaneHeaderModel;
   identityId: string;
   actions?: readonly PaneHeaderAction[];
-  options?: readonly ActionDescriptor[];
+  /** Dedicated non-resource pane controls (refresh, route share) rendered as buttons. */
+  controls?: ReactNode;
+  /** The pane's own non-resource view menu (reader settings, date navigation). */
+  viewMenu?: PaneViewMenuPublication;
+  /** The pane's resource identity → the canonical resource dropdown. */
+  resourceTarget?: ResourceActionSubject;
   navigation: SurfaceHeaderNavigation;
   className?: string;
 }
 
 /**
- * The pane-runtime chrome bar: back/forward navigation and the options menu are
- * pane-runtime furniture and stay here; identity is delegated to the typed
- * {@link PaneHeaderIdentity} projection.
+ * The pane-runtime chrome bar: back/forward navigation, dedicated pane controls,
+ * the pane's own view menu, and the canonical resource dropdown are pane-runtime
+ * furniture and stay here; identity is delegated to the typed
+ * {@link PaneHeaderIdentity} projection. The resource dropdown is the one
+ * {@link ResourceActionMenu} keyed by the pane's `resourceTarget` — the same
+ * menu every surface renders — so Open stays in the open pane's own menu (AC6).
  */
 const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
   function SurfaceHeader(
@@ -39,13 +47,14 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
       header,
       identityId,
       actions,
-      options = [],
+      controls,
+      viewMenu,
+      resourceTarget,
       navigation,
       className,
     }: SurfaceHeaderProps,
     ref,
   ) {
-    const hasOptions = options.length > 0;
     const headerClassName = [styles.header, className].filter(Boolean).join(" ");
 
     return (
@@ -95,14 +104,27 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
             <ActionBar options={actions} label="Pane actions" className={styles.actions} />
           ) : null}
 
-          {hasOptions && (
+          {controls}
+
+          {viewMenu ? (
             <ActionMenu
-              options={options}
-              label="Options"
+              options={viewMenu.actions}
+              label={viewMenu.label}
               className={styles.optionsContainer}
-              triggerAttributes={{ "data-pane-options-trigger": "true" }}
+              renderTrigger={(props) => (
+                <button {...props}>{viewMenu.icon}</button>
+              )}
             />
-          )}
+          ) : null}
+
+          {resourceTarget ? (
+            <ResourceActionMenu
+              target={resourceTarget}
+              label="Options"
+              placement="below"
+              align="end"
+            />
+          ) : null}
         </div>
       </header>
     );

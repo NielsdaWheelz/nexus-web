@@ -2,8 +2,8 @@
 
 import { X } from "lucide-react";
 import { useId } from "react";
-import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import MobileSheet from "@/components/ui/MobileSheet";
 import SecondarySurfaceTabs from "@/components/workspace/SecondarySurfaceTabs";
 import SecondarySurfacePanels from "@/components/workspace/SecondarySurfacePanels";
@@ -21,7 +21,7 @@ import {
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./MobileSecondaryPaneHost.module.css";
@@ -48,7 +48,7 @@ interface MobileSecondaryPaneHostProps {
 
 interface MobileSecondaryPanePresentationProps
   extends MobileSecondaryPaneHostProps {
-  options: readonly ActionDescriptor[];
+  resourceTarget: ResourceActionSubject | undefined;
 }
 
 /**
@@ -70,7 +70,7 @@ function MobileSecondaryPanePresentation({
   onActiveSurfaceChange,
   onSelectDurableFromTransient,
   returnFocusTo,
-  options,
+  resourceTarget,
 }: MobileSecondaryPanePresentationProps) {
   const baseId = useId();
   const activeSurface =
@@ -164,10 +164,9 @@ function MobileSecondaryPanePresentation({
                 {activeSurfaceDefinition.title}
               </span>
             )}
-            <ActionMenu
-              options={options}
-              label="Pane options"
-            />
+            {resourceTarget ? (
+              <ResourceActionMenu target={resourceTarget} label="Actions" />
+            ) : null}
             <Button
               variant="ghost"
               size="sm"
@@ -199,7 +198,11 @@ export default function MobileSecondaryPaneHost(
   props: MobileSecondaryPaneHostProps,
 ) {
   const { paneChrome } = useMobileChrome();
-  const options =
-    paneChrome?.paneId === props.primaryPaneId ? paneChrome.options : [];
-  return <MobileSecondaryPanePresentation {...props} options={options} />;
+  const resourceTarget =
+    paneChrome?.paneId === props.primaryPaneId
+      ? paneChrome.resourceTarget
+      : undefined;
+  return (
+    <MobileSecondaryPanePresentation {...props} resourceTarget={resourceTarget} />
+  );
 }

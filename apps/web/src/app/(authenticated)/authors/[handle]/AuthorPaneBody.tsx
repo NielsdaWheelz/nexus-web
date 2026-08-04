@@ -67,7 +67,6 @@ import {
 } from "@/lib/panes/paneRuntime";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import { isAbortError } from "@/lib/errors";
 import styles from "./page.module.css";
 
@@ -508,13 +507,7 @@ export default function AuthorPaneBody() {
         }
       : undefined,
     actions: companionAction ? [companionAction] : [],
-    menu: data
-      ? {
-          kind: "ResourceMenu",
-          target: data.detail.actionTarget,
-          groups: emptyResourceMenuGroups(),
-        }
-      : undefined,
+    resourceTarget: data ? data.detail.actionTarget : undefined,
     header: {
       kind: "section",
       folio:

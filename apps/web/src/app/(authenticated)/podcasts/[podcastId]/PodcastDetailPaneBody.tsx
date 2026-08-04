@@ -28,11 +28,7 @@ import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import { retryMediaMetadata } from "@/lib/media/ingestionClient";
 import { confirmAndDeleteMedia } from "@/lib/media/mediaLibraries";
 import { mapMediaAuthorCredits } from "@/app/(authenticated)/media/[id]/mediaFormatting";
-import {
-  RESOURCE_ACTION_CATALOG,
-  podcastResourceOptions,
-  type ResourceActionId,
-} from "@/lib/actions/resourceActions";
+import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
@@ -89,10 +85,8 @@ import {
   listLibraryPlacements,
   type LibraryPlacementOption,
 } from "@/lib/libraries/libraryPlacement";
-import { usePodcastSubscriptionActions } from "../usePodcastSubscriptionActions";
 import { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";
 import { usePodcastSubscriptionSettingsModal } from "../usePodcastSubscriptionSettingsModal";
-import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import {
   EPISODE_WIDE_COMMAND_LABELS,
   deriveEpisodeState,
@@ -385,17 +379,6 @@ export default function PodcastDetailPaneBody() {
         return { ...current, episodes };
       });
     }, []);
-  const setPodcastLibraries: Dispatch<
-    SetStateAction<LibraryPlacementOption[]>
-  > = useCallback((update) => {
-    setController((current) => {
-      if (current === null) return current;
-      const previous = [...current.podcastLibraries];
-      const podcastLibraries =
-        typeof update === "function" ? update(previous) : update;
-      return { ...current, podcastLibraries };
-    });
-  }, []);
   const [episodeStateFilter, setEpisodeStateFilter] =
     useState<EpisodeStateFilter>(() => {
       const stateParam = paneSearchParams.get("state");
@@ -487,11 +470,6 @@ export default function PodcastDetailPaneBody() {
   const completedPodcastDetailRevalidationNonceRef =
     useRef<number | null>(null);
   const [backfillRetryBusy, setBackfillRetryBusy] = useState(false);
-  const actions = usePodcastSubscriptionActions(setError);
-  const unsubscribeBusy = podcastId
-    ? actions.unsubscribingPodcastIds.ids.has(podcastId)
-    : false;
-  const resourceOverlays = useResourceOverlaysController();
   // The settings overlay is owned app-level (ResourceActionOverlays); this hook
   // is retained only for its install subscription, which keeps the pane's local
   // subscription projection current after an app-level settings save.
@@ -1072,33 +1050,9 @@ export default function PodcastDetailPaneBody() {
     return () => cancelAnimationFrame(pendingFocusRafRef.current);
   }, [paneRuntime.paneId, visibleEpisodeSignature]);
 
-  const unsubscribePodcast = useCallback(async () => {
-    if (!podcastId || !detail?.subscription) {
-      return;
-    }
-    await actions.unsubscribe(podcastId, detail.podcast.title, (libraries) => {
-      const retainedLibraries = libraries.filter(
-        (library) => library.isInLibrary && !library.canRemove,
-      );
-      setDetail((prev) => (prev ? { ...prev, subscription: null } : prev));
-      setPodcastLibraries(retainedLibraries);
-      clearAllVisitData();
-    });
-  }, [
-    actions,
-    clearAllVisitData,
-    detail,
-    podcastId,
-    setDetail,
-    setPodcastLibraries,
-  ]);
-
-  const openSettingsModal = useCallback(() => {
-    if (!podcastId || !detail?.subscription) {
-      return;
-    }
-    resourceOverlays.openPodcastSettings(podcastId);
-  }, [detail, podcastId, resourceOverlays]);
+  // Unsubscribe and Settings are canonical resource actions now: the pane
+  // publishes its resourceTarget and the app runtime dispatches Unsubscribe
+  // (client + snapshot reconcile) and PodcastSettings (app-level overlay).
 
   const retryBackfill = useCallback(async () => {
     if (
@@ -1724,20 +1678,6 @@ export default function PodcastDetailPaneBody() {
     [podcastId, revalidatePodcastDetail],
   );
   const activeSubscription = detail?.subscription ?? null;
-  const paneBusyIds = new Set<ResourceActionId>();
-  if (unsubscribeBusy) {
-    paneBusyIds.add(RESOURCE_ACTION_CATALOG.UnsubscribePodcast.id);
-  }
-  const paneOptions = podcastResourceOptions({
-    settings: activeSubscription
-      ? { kind: "Available", execute: openSettingsModal }
-      : { kind: "Unavailable" },
-    checkForNewEpisodes: { kind: "Unavailable" },
-    subscription: activeSubscription
-      ? { kind: "Subscribed", execute: unsubscribePodcast }
-      : { kind: "Unavailable" },
-    busyIds: paneBusyIds,
-  });
 
   const connectionsComposerController = useConnectionsComposerController({
     scheme: "podcast",
@@ -1767,21 +1707,13 @@ export default function PodcastDetailPaneBody() {
             execute: executeRefresh,
           }
         : undefined,
-    menu:
+    resourceTarget:
       podcastId && detail
-        ? {
-            kind: "ResourceMenu",
-            target: routeResourceActionSubject({
-              scheme: "podcast",
-              id: podcastId,
-              href: `/podcasts/${podcastId}`,
-            }),
-            groups: {
-              core: [],
-              ...paneOptions,
-              view: [],
-            },
-          }
+        ? routeResourceActionSubject({
+            scheme: "podcast",
+            id: podcastId,
+            href: `/podcasts/${podcastId}`,
+          })
         : undefined,
     header: {
       kind: "section",

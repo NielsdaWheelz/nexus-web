@@ -32,10 +32,6 @@ import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
 import {
-  runProgressReset,
-  type ProgressResetOutcome,
-} from "@/lib/consumption/progressReset";
-import {
   decodePresentPlayerDescriptor,
   parseMediaId,
   type LecternSnapshot,
@@ -84,14 +80,6 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import {
-  RESOURCE_ACTION_CATALOG,
-  episodeResourceOptions,
-  mediaResourceOptions,
-  type ExecutableResourceAction,
-  type LecternMembershipAction,
-  type ResourceActionId,
-} from "@/lib/actions/resourceActions";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import {
@@ -316,9 +304,8 @@ import {
   buildMediaResourceHeader,
   classifyCanonicalMediaRefetchFailure,
 } from "./mediaFormatting";
-import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import { resolveEpubInternalLinkTarget } from "./epubHelpers";
-import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Settings } from "lucide-react";
 import {
   dispatchReaderPulse,
   type ReaderPulseTarget,
@@ -939,24 +926,6 @@ export default function MediaPaneBody() {
   // Latest snapshot for imperative completion handlers (pre-completion basis for Undo).
   const lecternSnapshotRef = useRef<LecternSnapshot>(lecternSnapshot);
   lecternSnapshotRef.current = lecternSnapshot;
-  const paneActionBusyRef = useRef(new Set<ResourceActionId>());
-  const [paneActionBusyIds, setPaneActionBusyIds] = useState<
-    ReadonlySet<ResourceActionId>
-  >(new Set());
-  const runPaneAction = useCallback(
-    async (actionId: ResourceActionId, execute: () => Promise<void>) => {
-      if (paneActionBusyRef.current.has(actionId)) return;
-      paneActionBusyRef.current.add(actionId);
-      setPaneActionBusyIds(new Set(paneActionBusyRef.current));
-      try {
-        await execute();
-      } finally {
-        paneActionBusyRef.current.delete(actionId);
-        setPaneActionBusyIds(new Set(paneActionBusyRef.current));
-      }
-    },
-    [],
-  );
 
   // Canonical projected Finished state, not a browser threshold, enables the
   // explicit next-item prompt.
@@ -979,86 +948,9 @@ export default function MediaPaneBody() {
     return null;
   }, [id, lecternSnapshot]);
 
-  const handleAddMediaToLectern = useCallback(async () => {
-    try {
-      await lectern.placeItems({
-        mediaIds: [parseMediaId(id)],
-        placement: { kind: "Last" },
-      });
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      publishMediaFailure(err, "Lectern", `lectern-add:${id}`);
-    }
-  }, [id, lectern, publishMediaFailure]);
-
-  // "Done" — mark this document finished, removing its exact Lectern row when
-  // present (else state-only), then offer a 10s Undo (spec §6).
-  const handleMarkFinished = useCallback(async () => {
-    const snapshot = lecternSnapshotRef.current;
-    const row = snapshot.items.find((item) => item.mediaId === id);
-    try {
-      if (row) {
-        const result = await lectern.finishLecternItem({
-          mediaId: parseMediaId(id),
-          itemId: row.itemId,
-          nextCapability: "Stop",
-        });
-        offerCompletionUndo({
-          mediaId: parseMediaId(id),
-          preCompletionSnapshot: snapshot,
-          completedItemId: row.itemId,
-          completionHandle: result.completionHandle,
-        });
-      } else {
-        const result = await lectern.ensureMediaFinished(parseMediaId(id));
-        offerCompletionUndo({
-          mediaId: parseMediaId(id),
-          preCompletionSnapshot: snapshot,
-          completedItemId: null,
-          completionHandle: result.completionHandle,
-        });
-      }
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      publishMediaFailure(err, "Consumption", `media-finished:${id}`);
-    }
-  }, [id, lectern, offerCompletionUndo, publishMediaFailure]);
-
-  const handleMarkUnread = useCallback(async () => {
-    try {
-      await lectern.setUnread(parseMediaId(id));
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      publishMediaFailure(err, "Consumption", `media-unread:${id}`);
-    }
-  }, [id, lectern, publishMediaFailure]);
-
-  const handleMarkEpisodePlayed = useCallback(async () => {
-    const snapshot = lecternSnapshotRef.current;
-    const row = snapshot.items.find((item) => item.mediaId === id);
-    try {
-      const mediaId = parseMediaId(id);
-      const result = await lectern.ensureMediaFinished(mediaId);
-      offerCompletionUndo({
-        mediaId,
-        preCompletionSnapshot: snapshot,
-        completedItemId: row?.itemId ?? null,
-        completionHandle: result.completionHandle,
-      });
-    } catch (error: unknown) {
-      if (handleUnauthenticatedApiError(error)) return;
-      publishMediaFailure(error, "Consumption", `episode-played:${id}`);
-    }
-  }, [id, lectern, offerCompletionUndo, publishMediaFailure]);
-
-  const handleMarkEpisodeUnplayed = useCallback(async () => {
-    try {
-      await lectern.setUnread(parseMediaId(id));
-    } catch (error: unknown) {
-      if (handleUnauthenticatedApiError(error)) return;
-      publishMediaFailure(error, "Consumption", `episode-unplayed:${id}`);
-    }
-  }, [id, lectern, publishMediaFailure]);
+  // Add-to-Lectern, Mark finished / unread, and Mark episode played / unplayed
+  // are canonical resource actions now: the pane publishes its resourceTarget and
+  // the app runtime dispatches them (Lectern / consumption clients + reconcile).
 
   // "Done & open next" — finish this row selecting a Readable successor, open the
   // returned next entry, and offer Undo. No successor → no navigation.
@@ -1105,12 +997,8 @@ export default function MediaPaneBody() {
   const [initialHeaderFailure, setInitialHeaderFailure] = useState<
     "unavailable" | "failed" | null
   >(null);
-  // The edit-authors overlay is owned app-level (ResourceActionOverlays); the
-  // pane's Options command opens it by media id through the shared controller.
-  const resourceOverlays = useResourceOverlaysController();
-  const openAuthorsEditor = useCallback(() => {
-    resourceOverlays.openAuthorsEditor(id);
-  }, [resourceOverlays, id]);
+  // Edit authors is a canonical resource action now: the runtime dispatches it to
+  // the app-level ResourceActionOverlays controller (opens the editor by media id).
   const [creditsOverlayOpen, setCreditsOverlayOpen] = useState(false);
   const [creditsOverlayMounted, setCreditsOverlayMounted] = useState(false);
   const [creditsOverlayTrigger, setCreditsOverlayTrigger] =
@@ -1124,40 +1012,8 @@ export default function MediaPaneBody() {
     [],
   );
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const handleResetProgress = useCallback(async () => {
-    if (!media) return;
-    let outcome: ProgressResetOutcome;
-    try {
-      outcome = await runProgressReset({
-        mediaId: parseMediaId(id),
-        isVideo: media.kind === "video",
-        confirmReset: (message) => window.confirm(message),
-        resetProgress: lectern.resetProgress,
-      });
-    } catch (resetError) {
-      if (handleUnauthenticatedApiError(resetError)) return;
-      publishMediaFailure(resetError, "Progress", `progress-reset:${id}`);
-      return;
-    }
-    if (outcome.kind === "Cancelled") return;
-
-    // The mutation is committed and its cursor/player state has already been
-    // installed by Lectern. This pane's raw media DTO is a separate projection,
-    // so reload it rather than guessing Read/Finished from a cursor snapshot.
-    try {
-      const canonical = await apiFetch<{ data: Media }>(
-        mediaResource.clientPath({ id }),
-      );
-      setMedia((current) => (current?.id === id ? canonical.data : current));
-    } catch (reconciliationError) {
-      if (handleUnauthenticatedApiError(reconciliationError)) return;
-      publishMediaFailure(
-        reconciliationError,
-        "CanonicalState",
-        `progress-reconcile:${id}`,
-      );
-    }
-  }, [id, lectern.resetProgress, media, publishMediaFailure]);
+  // Reset progress is a canonical resource action now: the runtime dispatches it
+  // (consumption ResetProgress command + snapshot reconcile).
   const metadataRetryBaselineRef = useRef<MetadataRetryBaseline | null>(null);
   const metadataRetryUnconfirmedRequestIdRef = useRef<string | null>(null);
   const [metadataRetryPollsRemaining, setMetadataRetryPollsRemaining] =
@@ -5778,14 +5634,8 @@ export default function MediaPaneBody() {
   );
 
   const {
-    deleteBusy: mediaRemovalBusy,
     retryBusy: retryProcessingBusy,
-    refreshBusy: refreshSourceBusy,
-    retryMetadataBusy,
-    handleDelete: handleRemoveMedia,
     handleRetry: handleRetryProcessing,
-    handleRefresh: handleRefreshSource,
-    handleRetryMetadata,
   } = useDocumentActions({
     media,
     onProcessingRestarted: handleProcessingRestarted,
@@ -6414,17 +6264,6 @@ export default function MediaPaneBody() {
 
   // Read-state verb driver: the exact ready Lectern row wins when present;
   // otherwise preserve the MediaOut read model instead of inventing Unread.
-  const mediaReadState: "unread" | "in_progress" | "finished" = (() => {
-    const row =
-      lecternResource.status === "ready"
-        ? lecternResource.data.items.find((item) => item.mediaId === id)
-        : undefined;
-    if (row?.consumption.state === "Finished") return "finished";
-    if (row?.consumption.state === "InProgress") return "in_progress";
-    if (row) return "unread";
-    return media?.read_state ?? "unread";
-  })();
-
   const mediaResourceHeader =
     useMemo<PaneResourceHeaderPublication | null>(() => {
       if (media) return buildMediaResourceHeader(media);
@@ -6437,150 +6276,14 @@ export default function MediaPaneBody() {
       return null;
     }, [initialHeaderFailure, media]);
 
-  const mediaHeaderGroups = useMemo(() => {
-    if (!media) {
-      return {
-        core: [],
-        operations: [],
-        relationships: [],
-        view: [],
-      };
-    }
-    const busyIds = new Set<ResourceActionId>(paneActionBusyIds);
-    if (retryProcessingBusy) {
-      busyIds.add(RESOURCE_ACTION_CATALOG.RetryProcessing.id);
-    }
-    if (refreshSourceBusy) {
-      busyIds.add(RESOURCE_ACTION_CATALOG.RefreshSource.id);
-    }
-    if (retryMetadataBusy) {
-      busyIds.add(RESOURCE_ACTION_CATALOG.RetryMetadata.id);
-    }
-    if (mediaRemovalBusy) {
-      busyIds.add(RESOURCE_ACTION_CATALOG.RemoveMedia.id);
-    }
-    const lecternItem = lecternSnapshot.items.find(
-      (item) => item.mediaId === id,
-    );
-    const retryProcessing: ExecutableResourceAction = media.capabilities
-      ?.can_retry
-      ? { kind: "Available", execute: handleRetryProcessing }
-      : { kind: "Unavailable" };
-    const refreshSource: ExecutableResourceAction = media.capabilities
-      ?.can_refresh_source
-      ? { kind: "Available", execute: handleRefreshSource }
-      : { kind: "Unavailable" };
-    const retryMetadata: ExecutableResourceAction =
-      media.capabilities?.can_retry_metadata && !metadataRetryUnconfirmed
-      ? { kind: "Available", execute: handleRetryMetadata }
-      : { kind: "Unavailable" };
-    const removeMedia: ExecutableResourceAction = media.capabilities?.can_delete
-      ? { kind: "Available", execute: handleRemoveMedia }
-      : { kind: "Unavailable" };
-    const editAuthors: ExecutableResourceAction = media.capabilities
-      ?.can_edit_authors
-      ? { kind: "Available", execute: openAuthorsEditor }
-      : { kind: "Unavailable" };
-    const progressReset: ExecutableResourceAction = media.progress_resettable
-      ? {
-          kind: "Available",
-          execute: () =>
-            runPaneAction(
-              RESOURCE_ACTION_CATALOG.ResetProgress.id,
-              handleResetProgress,
-            ),
-        }
-      : { kind: "Unavailable" };
-    const lecternMembership: LecternMembershipAction =
-      lectern.resource.status !== "ready"
-        ? { kind: "Unavailable" }
-        : lecternItem
-          ? {
-              kind: "Remove",
-              itemId: lecternItem.itemId,
-              execute: () =>
-                runPaneAction(
-                  RESOURCE_ACTION_CATALOG.RemoveFromLectern.id,
-                  async () => {
-                    try {
-                      await lectern.removeItem(lecternItem.itemId);
-                    } catch (error: unknown) {
-                      if (handleUnauthenticatedApiError(error)) return;
-                      publishMediaFailure(
-                        error,
-                        "Lectern",
-                        `lectern-remove:${lecternItem.itemId}`,
-                      );
-                    }
-                  },
-                ),
-            }
-          : {
-              kind: "Add",
-              execute: () =>
-                runPaneAction(
-                  RESOURCE_ACTION_CATALOG.AddToLectern.id,
-                  handleAddMediaToLectern,
-                ),
-            };
-    const commonActions = {
-      media,
-      retryProcessing,
-      refreshSource,
-      retryMetadata,
-      editAuthors,
-      removeMedia,
-      progressReset,
-      lecternMembership,
-      busyIds,
-    };
-    const resourceGroups =
-      media.kind === "podcast_episode"
-        ? episodeResourceOptions({
-            ...commonActions,
-            offlineDownload: { kind: "Unavailable" },
-            playedState:
-              media.episode_state === "played" ||
-              (media.episode_state === null &&
-                media.listening_state?.is_completed === true)
-                ? {
-                    kind: "MarkUnplayed",
-                    execute: () =>
-                      runPaneAction(
-                        RESOURCE_ACTION_CATALOG.MarkUnplayed.id,
-                        handleMarkEpisodeUnplayed,
-                      ),
-                  }
-                : {
-                    kind: "MarkPlayed",
-                    execute: () =>
-                      runPaneAction(
-                        RESOURCE_ACTION_CATALOG.MarkPlayed.id,
-                        handleMarkEpisodePlayed,
-                      ),
-                  },
-          })
-        : mediaResourceOptions({
-            ...commonActions,
-            readState:
-              mediaReadState === "finished"
-                ? {
-                    kind: "MarkUnread",
-                    execute: () =>
-                      runPaneAction(
-                        RESOURCE_ACTION_CATALOG.MarkUnread.id,
-                        handleMarkUnread,
-                      ),
-                  }
-                : {
-                    kind: "MarkFinished",
-                    execute: () =>
-                      runPaneAction(
-                        RESOURCE_ACTION_CATALOG.MarkFinished.id,
-                        handleMarkFinished,
-                      ),
-                  },
-          });
+  // Reader view controls (Credits, Reader settings, theme quick-switch, PDF
+  // source-colors status) are pane view actions, ejected from the resource menu
+  // into the pane's own dedicated "Reader settings" menu (AC4). The resource
+  // operations/relationships that this memo used to build are now derived by the
+  // app runtime from the media snapshot and rendered by the canonical
+  // ResourceActionMenu keyed by the pane's resourceTarget.
+  const readerViewActions = useMemo<ActionDescriptor[]>(() => {
+    if (!media) return [];
     const view: ActionDescriptor[] = [];
     if (mediaResourceHeader?.status === "ready") {
       view.push({
@@ -6640,44 +6343,16 @@ export default function MediaPaneBody() {
       });
     }
 
-    return {
-      core: [],
-      operations: resourceGroups.operations,
-      relationships: resourceGroups.relationships,
-      view,
-    };
+    return view;
   }, [
-    id,
-    lectern,
-    lecternSnapshot.items,
-    mediaRemovalBusy,
-    handleAddMediaToLectern,
-    handleRemoveMedia,
-    handleMarkFinished,
-    handleMarkEpisodePlayed,
-    handleMarkEpisodeUnplayed,
-    handleMarkUnread,
-    handleResetProgress,
-    handleRefreshSource,
-    handleRetryMetadata,
-    handleRetryProcessing,
     isPdf,
     isReflowableReader,
     media,
     mediaResourceHeader,
-    mediaReadState,
-    openAuthorsEditor,
     openCreditsOverlay,
     activateForkTarget,
     readerProfile.theme,
     readerPersistence.state,
-    refreshSourceBusy,
-    retryMetadataBusy,
-    metadataRetryUnconfirmed,
-    retryProcessingBusy,
-    paneActionBusyIds,
-    publishMediaFailure,
-    runPaneAction,
     canRead,
     setTheme,
   ]);
@@ -8003,24 +7678,28 @@ export default function MediaPaneBody() {
       ...(mediaInstrument ? { instrument: mediaInstrument } : {}),
       search: findPublication ?? undefined,
       actions: companionAction ? [companionAction] : [],
-      menu: media
-        ? {
-            kind: "ResourceMenu" as const,
-            target: routeResourceActionSubject({
-              scheme: "media",
-              id,
-              href: `/media/${id}`,
-            }),
-            groups: mediaHeaderGroups,
-          }
+      resourceTarget: media
+        ? routeResourceActionSubject({
+            scheme: "media",
+            id,
+            href: `/media/${id}`,
+          })
         : undefined,
+      viewMenu:
+        media && readerViewActions.length > 0
+          ? {
+              label: "Reader settings",
+              icon: <Settings size={16} aria-hidden="true" />,
+              actions: readerViewActions,
+            }
+          : undefined,
     }),
     [
       companionAction,
       findPublication,
       id,
       media,
-      mediaHeaderGroups,
+      readerViewActions,
       mediaResourceHeader,
       mediaInstrument,
     ],

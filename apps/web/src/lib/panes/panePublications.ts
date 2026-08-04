@@ -1,9 +1,5 @@
 import type { ReactNode } from "react";
-import type {
-  ActionPublication,
-  ResourceMenuGroups,
-} from "@/lib/actions/resourceActions";
-import type { StandingActionTarget } from "@/lib/resources/resourceActionTarget";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type {
   PaneHeaderAction,
   ActionControlState,
@@ -53,12 +49,31 @@ export interface PaneInstrumentPublication {
   readonly content: ReactNode;
 }
 
+/**
+ * An explicitly non-resource pane menu: the pane's own view/list controls
+ * (reader settings, page date navigation, …) ejected from the resource menu
+ * (AC4). Rendered as a dedicated {@link ActionMenu} beside — never merged into —
+ * the canonical {@link ResourceActionMenu}.
+ */
+export interface PaneViewMenuPublication {
+  readonly label: string;
+  readonly icon: ReactNode;
+  readonly actions: readonly ActionDescriptor[];
+}
+
 export interface PanePrimaryChromePublication {
   readonly header?: PaneHeaderPublication;
   readonly search?: PaneSearchPublication;
   readonly instrument?: PaneInstrumentPublication;
   readonly actions?: readonly PaneHeaderAction[];
-  readonly menu?: ActionPublication;
+  /**
+   * The pane's resource IDENTITY. PaneShell renders the one canonical
+   * `<ResourceActionMenu target={resourceTarget}/>` for the pane dropdown — the
+   * same menu every other surface renders, so Open is present in the open pane's
+   * own menu (AC6). The pane publishes identity, not menu groups.
+   */
+  readonly resourceTarget?: ResourceActionSubject;
+  readonly viewMenu?: PaneViewMenuPublication;
   readonly refresh?: PaneRefreshPublication;
 }
 
@@ -130,63 +145,27 @@ function areActionDescriptorsEqual(
   }
 }
 
-function areResourceActivationsEqual(
-  left: Extract<StandingActionTarget, { kind: "Resource" }>["activation"],
-  right: Extract<StandingActionTarget, { kind: "Resource" }>["activation"],
-): boolean {
-  return (
-    left.resourceRef === right.resourceRef &&
-    left.kind === right.kind &&
-    left.href === right.href &&
-    left.unresolvedReason === right.unresolvedReason
-  );
-}
-
-function areStandingActionTargetsEqual(
-  left: StandingActionTarget,
-  right: StandingActionTarget,
+function areResourceActionSubjectsEqual(
+  left: ResourceActionSubject | undefined,
+  right: ResourceActionSubject | undefined,
 ): boolean {
   if (left === right) return true;
-  if (left.kind !== right.kind) return false;
-  if (left.kind === "External") {
-    return right.kind === "External" && left.href === right.href;
-  }
-  return (
-    right.kind === "Resource" &&
-    left.ref === right.ref &&
-    left.missing === right.missing &&
-    areResourceActivationsEqual(left.activation, right.activation)
-  );
+  if (!left || !right) return false;
+  // The ref is the resource identity; the menu it drives is derived entirely
+  // from the shared snapshot cache, so equal refs publish an equal dropdown.
+  return left.ref === right.ref;
 }
 
-function areResourceMenuGroupsEqual(
-  left: ResourceMenuGroups,
-  right: ResourceMenuGroups,
-): boolean {
-  return (
-    areActionDescriptorListsEqual(left.core, right.core) &&
-    areActionDescriptorListsEqual(left.operations, right.operations) &&
-    areActionDescriptorListsEqual(left.relationships, right.relationships) &&
-    areActionDescriptorListsEqual(left.view, right.view)
-  );
-}
-
-function areActionPublicationsEqual(
-  left: ActionPublication | undefined,
-  right: ActionPublication | undefined,
+function arePaneViewMenusEqual(
+  left: PaneViewMenuPublication | undefined,
+  right: PaneViewMenuPublication | undefined,
 ): boolean {
   if (left === right) return true;
-  if (!left || !right || left.kind !== right.kind) return false;
-  if (left.kind === "FlatMenu") {
-    return (
-      right.kind === "FlatMenu" &&
-      areActionDescriptorListsEqual(left.actions, right.actions)
-    );
-  }
+  if (!left || !right) return false;
   return (
-    right.kind === "ResourceMenu" &&
-    areStandingActionTargetsEqual(left.target, right.target) &&
-    areResourceMenuGroupsEqual(left.groups, right.groups)
+    left.label === right.label &&
+    left.icon === right.icon &&
+    areActionDescriptorListsEqual(left.actions, right.actions)
   );
 }
 
@@ -299,7 +278,8 @@ export function arePanePrimaryChromePublicationsEqual(
     arePaneSearchPublicationsEqual(left.search, right.search) &&
     arePaneInstrumentPublicationsEqual(left.instrument, right.instrument) &&
     areActionDescriptorListsEqual(left.actions, right.actions) &&
-    areActionPublicationsEqual(left.menu, right.menu) &&
+    areResourceActionSubjectsEqual(left.resourceTarget, right.resourceTarget) &&
+    arePaneViewMenusEqual(left.viewMenu, right.viewMenu) &&
     arePaneRefreshPublicationsEqual(left.refresh, right.refresh)
   );
 }

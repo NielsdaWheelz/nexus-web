@@ -39,7 +39,6 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { OracleCreateResponse } from "../types";
 import BorderFrame from "../BorderFrame";
@@ -689,19 +688,15 @@ export default function OracleReadingPaneBody() {
   );
 
   usePanePrimaryChrome({
-    menu:
+    resourceTarget:
       (detailResource.status === "ready" &&
         detailResource.data.id === readingId) ||
       committedReadingId === readingId
-        ? {
-            kind: "ResourceMenu",
-            target: routeResourceActionSubject({
-              scheme: "oracle_reading",
-              id: readingId,
-              href: `/oracle/${readingId}`,
-            }),
-            groups: emptyResourceMenuGroups(),
-          }
+        ? routeResourceActionSubject({
+            scheme: "oracle_reading",
+            id: readingId,
+            href: `/oracle/${readingId}`,
+          })
         : undefined,
   });
 

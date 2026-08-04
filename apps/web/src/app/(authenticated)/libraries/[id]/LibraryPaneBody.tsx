@@ -12,6 +12,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
+import { Plus } from "lucide-react";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import {
   ApiError,
@@ -44,7 +45,6 @@ import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import {
   RESOURCE_ACTION_CATALOG,
-  libraryResourceOptions,
   type ResourceActionId,
 } from "@/lib/actions/resourceActions";
 import { useLectern } from "@/lib/lectern/LecternProvider";
@@ -144,7 +144,6 @@ import { libraryPresentation } from "@/lib/libraries/presentation";
 import {
   libraryPlacementSnapshot,
   libraryPlacementAffectedSince,
-  publishLibraryPlacementChange,
   useLibraryPlacementRevision,
 } from "@/lib/libraries/placementRevision";
 import {
@@ -992,9 +991,6 @@ export default function LibraryPaneBody() {
                 error: failedFirstPage.error,
               };
   const viewIsCommitted = entriesState?.kind === "Ready";
-
-  const deletingLibraryRef = useRef(false);
-  const [deletingLibrary, setDeletingLibrary] = useState(false);
 
   // The owner-level generation for continuation. Advancing it aborts any page
   // in flight and makes a legitimate replacement chain distinct from a cursor
@@ -2132,41 +2128,9 @@ export default function LibraryPaneBody() {
     }
   };
 
-  const handleDeleteLibrary = async () => {
-    if (
-      !currentLibrary ||
-      currentLibrary.isDefault ||
-      deletingLibraryRef.current
-    ) {
-      return;
-    }
-    if (!confirm(`Delete "${currentLibrary.name}"? This cannot be undone.`)) {
-      return;
-    }
-
-    deletingLibraryRef.current = true;
-    setDeletingLibrary(true);
-    try {
-      await apiFetch(`/api/libraries/${currentLibrary.id}`, {
-        method: "DELETE",
-      });
-      // Deletion can change visible membership and many placements: publish an
-      // Unknown-scope placement advance so every mounted pane reconciles.
-      publishLibraryPlacementChange("Unknown");
-      committedSnapshotRef.current = null;
-      clearAllVisitData();
-      router.push("/libraries");
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      presentFailure(err, "Library wasn’t deleted", "LibraryMutation", {
-        label: "Retry",
-        onClick: () => void handleDeleteLibrary(),
-      });
-    } finally {
-      deletingLibraryRef.current = false;
-      setDeletingLibrary(false);
-    }
-  };
+  // Delete library and Library settings are canonical resource actions now: the
+  // pane publishes its resourceTarget and the app runtime dispatches
+  // DeleteLibrary (confirm + client + reconcile) and LibrarySettings (overlay).
 
   // Continuation recovery replaces the exact committed view's first page while
   // preserving its rendered rows until the replacement commits.
@@ -2303,28 +2267,6 @@ export default function LibraryPaneBody() {
       });
   };
 
-  const paneResourceGroups = currentLibrary
-    ? libraryResourceOptions({
-        settings: currentLibrary.canRename
-          ? {
-              kind: "Available",
-              execute: () =>
-                resourceOverlays.openLibrarySettings(currentLibrary.id),
-            }
-          : { kind: "Unavailable" },
-        deleteLibrary: currentLibrary.canDelete
-          ? {
-              kind: "Available",
-              execute: handleDeleteLibrary,
-            }
-          : { kind: "Unavailable" },
-        busyIds: deletingLibrary
-          ? new Set<ResourceActionId>([
-              RESOURCE_ACTION_CATALOG.DeleteLibrary.id,
-            ])
-          : new Set<ResourceActionId>(),
-      })
-    : null;
   const addContentAction: ActionDescriptor[] =
     currentLibrary && canEditEntries && viewIsCommitted
       ? [
@@ -2675,21 +2617,21 @@ export default function LibraryPaneBody() {
           }
         : undefined,
     actions: companionAction ? [companionAction] : [],
-    menu:
-      currentLibrary && paneResourceGroups
+    resourceTarget: currentLibrary
+      ? routeResourceActionSubject({
+          scheme: "library",
+          id: currentLibrary.id,
+          href: `/libraries/${currentLibrary.id}`,
+        })
+      : undefined,
+    // "Add content" is a pane view control, ejected from the resource menu into
+    // the pane's own dedicated menu (AC4).
+    viewMenu:
+      addContentAction.length > 0
         ? {
-            kind: "ResourceMenu",
-            target: routeResourceActionSubject({
-              scheme: "library",
-              id: currentLibrary.id,
-              href: `/libraries/${currentLibrary.id}`,
-            }),
-            groups: {
-              core: [],
-              operations: paneResourceGroups.operations,
-              relationships: paneResourceGroups.relationships,
-              view: addContentAction,
-            },
+            label: "Add content",
+            icon: <Plus size={16} aria-hidden="true" />,
+            actions: addContentAction,
           }
         : undefined,
     header: {

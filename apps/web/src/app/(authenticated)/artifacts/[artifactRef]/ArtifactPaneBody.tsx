@@ -16,7 +16,6 @@ import DossierSurface, {
 import type { DossierDocumentFindCapability } from "@/components/dossier/DossierDocumentFrame";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
-import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import {
   createDossierControllerStore,
@@ -331,14 +330,7 @@ export default function ArtifactPaneBody() {
               },
             }
           : {}),
-      menu:
-        state.head.kind === "Ready"
-          ? {
-              kind: "ResourceMenu" as const,
-              target: actionTarget,
-              groups: emptyResourceMenuGroups(),
-            }
-          : undefined,
+      resourceTarget: state.head.kind === "Ready" ? actionTarget : undefined,
     }),
     [actionTarget, identity, state.head.kind],
   );

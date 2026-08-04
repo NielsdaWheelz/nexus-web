@@ -4,6 +4,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Share2,
 } from "lucide-react";
 import {
   useCallback,
@@ -14,6 +15,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import PaneSearchBar from "@/components/workspace/PaneSearchBar";
 import SurfaceHeader, {
@@ -37,12 +39,6 @@ import {
   type TargetLinkMouseEvent,
 } from "@/lib/panes/targetLinkActivation";
 import {
-  RESOURCE_ACTION_CATALOG,
-  composeResourceMenu,
-  resolveResourceCoreActions,
-  resolveUniversalResourceRelationshipActions,
-} from "@/lib/actions/resourceActions";
-import {
   arePanePrimaryChromePublicationsEqual,
   secondaryPublicationIncludesSurface,
   type PaneFixedChromePublication,
@@ -57,26 +53,12 @@ import type {
   PaneRouteHeaderContract,
 } from "@/lib/panes/paneRouteModel";
 import type { PaneRouteShareIdentity } from "@/lib/panes/paneResourceLocator";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
-import {
-  executeResourceChat,
-  executeResourceLibraryPlacement,
-  executeResourceShare,
-} from "@/lib/resources/resourceActionExecution";
-import { useLibraryPlacementController } from "@/lib/libraries/placementController";
+import Button from "@/components/ui/Button";
 import { useShareController } from "@/lib/sharing/controller";
 import { present } from "@/lib/api/presence";
 import { usePaneSearchRequested } from "@/lib/panes/paneSearchEvents";
 import type { PaneSearchPublication } from "@/lib/panes/paneSearch";
-import type {
-  ActionDescriptor,
-  PaneHeaderAction,
-} from "@/lib/ui/actionDescriptor";
+import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import {
   useMobileChrome,
   useMobileChromeSurface,
@@ -103,39 +85,10 @@ const noopResizeSecondaryPane = () => {};
 const noopCloseSecondary = () => {};
 const noopSetActiveSecondarySurface = () => {};
 const EMPTY_HEADER_ACTIONS: readonly PaneHeaderAction[] = [];
-const EMPTY_OPTIONS: readonly ActionDescriptor[] = [];
 const PANE_REFRESH_ARM_DISTANCE_PX = 72;
 const PANE_REFRESH_MAX_OFFSET_PX = 96;
 const PANE_REFRESH_DRAG_RESISTANCE = 0.45;
 const PANE_REFRESH_SETTLED_MS = 900;
-
-function paneShellChatErrorMessage(error: ApiError): FeedbackContent {
-  switch (error.code) {
-    case "E_FORBIDDEN":
-      return {
-        tone: "Danger",
-        title: "You don’t have permission to start this chat.",
-        requestId: error.requestId,
-      };
-    case "E_NOT_FOUND":
-    case "E_BAD_REQUEST":
-    case "E_INVALID_REQUEST":
-      return {
-        tone: "Danger",
-        title: "A chat about this resource couldn’t begin.",
-        requestId: error.requestId,
-      };
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title: "It’s unclear whether the chat began.",
-        message: "Check your chats before trying again.",
-        requestId: error.requestId,
-      };
-    default:
-      throw error;
-  }
-}
 
 type PaneRefreshState =
   | { readonly kind: "Idle" }
@@ -337,14 +290,12 @@ export default function PaneShell({
         : null,
   });
   const { openShare } = useShareController();
-  const { openLibraryPlacement } = useLibraryPlacementController();
   const currentRouteKeyRef = useRef(routeKey);
   currentRouteKeyRef.current = routeKey;
   const currentFilterRowsContinuityKeyRef = useRef(filterRowsContinuityKey);
   currentFilterRowsContinuityKeyRef.current = filterRowsContinuityKey;
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
-  const [chatError, setChatError] = useState<FeedbackContent | null>(null);
   const [primaryChromeRecord, setPrimaryChromeRecord] = useState<{
     readonly routeKey: string;
     readonly publication: PanePrimaryChromePublication;
@@ -730,7 +681,8 @@ export default function PaneShell({
   );
   const effectiveActions =
     acceptedPrimaryChrome?.actions ?? EMPTY_HEADER_ACTIONS;
-  const effectiveMenu = acceptedPrimaryChrome?.menu;
+  const effectiveResourceTarget = acceptedPrimaryChrome?.resourceTarget;
+  const effectiveViewMenu = acceptedPrimaryChrome?.viewMenu;
   const contextualSurfaceInteractive =
     motionPhase.kind === "Visible" || motionPhase.kind === "Pinned";
   const contextualSurfaceUnavailable =
@@ -866,165 +818,58 @@ export default function PaneShell({
     return () => observer.disconnect();
   }, [effectiveInstrument, isMobile, searchExpanded]);
 
-  const chatBusyRefs = useRef(new Set<string>());
-  const [chatBusySubjects, setChatBusySubjects] = useState<
-    ReadonlySet<string>
-  >(new Set());
-  const paneMenuOptions = useMemo<readonly ActionDescriptor[]>(() => {
-    const prependRefresh = (
-      options: readonly ActionDescriptor[],
-    ): readonly ActionDescriptor[] => {
-      if (!acceptedRefresh) return options;
-      const existingOptions =
-        options.length > 0 && options[0]?.separatorBefore === undefined
-          ? [{ ...options[0], separatorBefore: true }, ...options.slice(1)]
-          : options;
-      return [
-        {
-          kind: "command",
-          id: "Pane.Refresh",
-          label: "Refresh",
-          icon: <RefreshCw size={16} aria-hidden="true" />,
-          disabled: refreshState.kind === "Refreshing",
-          disabledReason:
-            refreshState.kind === "Refreshing"
-              ? "Refresh is already running"
-              : undefined,
-          onSelect: startPaneRefresh,
-        },
-        ...existingOptions,
-      ];
-    };
-    const routeShareOption: ActionDescriptor[] = routeShareIdentity
-      ? [
-          {
-            kind: "command",
-            id: "RouteAction.Share",
-            label: "Share…",
-            restoreFocusOnClose: false,
-            onSelect: ({ triggerEl }) =>
-              openShare(routeShareIdentity, {
-                returnFocusTo: () => triggerEl,
-                returnFocusFallback: present(resolvePaneReturnFocusFallback),
-              }),
-          },
-        ]
-      : [];
-    if (!effectiveMenu) {
-      return prependRefresh(
-        routeShareOption.length > 0 ? routeShareOption : EMPTY_OPTIONS,
-      );
-    }
-    if (effectiveMenu.kind === "FlatMenu") {
-      const contextualOptions = effectiveMenu.actions.map((option, index) =>
-        routeShareOption.length > 0 &&
-        index === 0 &&
-        option.separatorBefore === undefined
-          ? { ...option, separatorBefore: true }
-          : option,
-      );
-      return prependRefresh([...routeShareOption, ...contextualOptions]);
-    }
-    if (routeShareIdentity) {
-      // justify-defect: a resource pane must not retain the route-share path.
-      throw new Error("Resource pane received a route Share identity");
-    }
-    if (effectiveMenu.target.kind !== "Resource") {
-      // justify-defect: external targets are representations, never current panes.
-      throw new Error("Pane ResourceMenu target must be Resource");
-    }
-    if (effectiveMenu.groups.core.length > 0) {
-      // justify-defect: PaneShell is the sole owner of current-pane core policy.
-      throw new Error("Pane ResourceMenu must publish an empty core group");
-    }
-    const target = effectiveMenu.target;
-    const busyIds = chatBusySubjects.has(target.ref)
-      ? new Set([RESOURCE_ACTION_CATALOG.Chat.id])
-      : new Set<never>();
-    const core = resolveResourceCoreActions({
-      target,
-      projection: "CurrentPane",
-      busyIds,
-      executors: {
-        share: (subject, detail) => {
-          executeResourceShare({
-            subject,
-            openShare,
-            options: {
-              returnFocusTo: () => detail.triggerEl,
-              returnFocusFallback: present(resolvePaneReturnFocusFallback),
-            },
+  // The pane's non-resource controls. Refresh and route-share are ejected from
+  // the resource menu (AC4): refresh is a dedicated affordance (never a menu
+  // item — the pane already owns pull-to-refresh + this button), and route-share
+  // is its own control. The resource dropdown itself is the canonical
+  // `ResourceActionMenu` keyed by `effectiveResourceTarget`, rendered by
+  // SurfaceHeader / the mobile bar — so Open appears in the open pane's own menu.
+  const paneControls = useMemo<ReactNode>(() => {
+    const refreshControl = acceptedRefresh ? (
+      <Button
+        key="refresh"
+        variant="ghost"
+        size="sm"
+        iconOnly
+        aria-label="Refresh"
+        title="Refresh"
+        disabled={refreshState.kind === "Refreshing"}
+        data-action-id="Pane.Refresh"
+        onClick={startPaneRefresh}
+      >
+        <RefreshCw size={16} aria-hidden="true" />
+      </Button>
+    ) : null;
+    const routeShareControl = routeShareIdentity ? (
+      <Button
+        key="route-share"
+        variant="ghost"
+        size="sm"
+        iconOnly
+        aria-label="Share…"
+        title="Share…"
+        data-action-id="RouteAction.Share"
+        onClick={(event) => {
+          const triggerEl = event.currentTarget;
+          openShare(routeShareIdentity, {
+            returnFocusTo: () => triggerEl,
+            returnFocusFallback: present(resolvePaneReturnFocusFallback),
           });
-        },
-        chat: async (subject) => {
-          if (chatBusyRefs.current.has(subject.ref)) return;
-          setChatError(null);
-          chatBusyRefs.current.add(subject.ref);
-          setChatBusySubjects(new Set(chatBusyRefs.current));
-          try {
-            await executeResourceChat({
-              ref: subject.ref,
-              openConversation: (conversationId) => {
-                void activateTarget({
-                  target: {
-                    href: `/conversations/${conversationId}`,
-                    labelHint: "Chat",
-                  },
-                  disposition: { kind: "Adopt" },
-                });
-              },
-            });
-          } catch (error: unknown) {
-            if (handleUnauthenticatedApiError(error)) return;
-            if (!isApiError(error) || isSameSystemApiDefect(error)) {
-              setAsyncDefect({ error });
-              return;
-            }
-            try {
-              setChatError(paneShellChatErrorMessage(error));
-            } catch (defect) {
-              setAsyncDefect({ error: defect });
-            }
-          } finally {
-            chatBusyRefs.current.delete(subject.ref);
-            setChatBusySubjects(new Set(chatBusyRefs.current));
-          }
-        },
-      },
-    }).core;
-    const universalRelationships =
-      resolveUniversalResourceRelationshipActions({
-        target,
-        executors: {
-          libraryPlacement: (subject, detail) => {
-            executeResourceLibraryPlacement({
-              subject,
-              openLibraryPlacement,
-              options: {
-                anchor: () => detail.triggerEl,
-                returnFocusFallback: present(resolvePaneReturnFocusFallback),
-              },
-            });
-          },
-        },
-      }).relationships;
-    return prependRefresh(
-      composeResourceMenu({
-        ...effectiveMenu.groups,
-        core,
-        relationships: [
-          ...universalRelationships,
-          ...effectiveMenu.groups.relationships,
-        ],
-      }),
+        }}
+      >
+        <Share2 size={16} aria-hidden="true" />
+      </Button>
+    ) : null;
+    if (!refreshControl && !routeShareControl) return null;
+    return (
+      <>
+        {routeShareControl}
+        {refreshControl}
+      </>
     );
   }, [
     acceptedRefresh,
-    chatBusySubjects,
-    effectiveMenu,
-    openLibraryPlacement,
     openShare,
-    activateTarget,
     refreshState.kind,
     resolvePaneReturnFocusFallback,
     routeShareIdentity,
@@ -1039,9 +884,10 @@ export default function PaneShell({
   }, [identityId, isMobile, paneId, routeKey, setPaneChrome]);
   useLayoutEffect(() => {
     if (!isMobile) return;
-    // Direct header actions (e.g. the Companion toggle) travel on their own
-    // channel so the mobile top bar renders them beside — never folded into —
-    // the Options menu.
+    // Direct header actions (Companion, Search), dedicated pane controls
+    // (refresh, route-share), and the pane's own view menu travel on their own
+    // channels so the mobile bar renders them beside — never folded into — the
+    // canonical resource dropdown, which is keyed by `resourceTarget` alone.
     setPaneChrome({
       paneId,
       routeKey,
@@ -1050,7 +896,9 @@ export default function PaneShell({
       activateIdentityAnchor,
       navigation,
       actions: reconciledActions,
-      options: paneMenuOptions,
+      controls: paneControls,
+      viewMenu: effectiveViewMenu,
+      resourceTarget: effectiveResourceTarget,
     });
   }, [
     activateIdentityAnchor,
@@ -1061,7 +909,9 @@ export default function PaneShell({
     paneId,
     routeKey,
     reconciledActions,
-    paneMenuOptions,
+    paneControls,
+    effectiveViewMenu,
+    effectiveResourceTarget,
     setPaneChrome,
   ]);
 
@@ -1184,8 +1034,10 @@ export default function PaneShell({
             <SurfaceHeader
               header={header}
               identityId={identityId}
-              options={paneMenuOptions}
               actions={reconciledActions}
+              controls={paneControls}
+              viewMenu={effectiveViewMenu}
+              resourceTarget={effectiveResourceTarget}
               navigation={navigation}
             />
           ) : null}
@@ -1249,9 +1101,6 @@ export default function PaneShell({
             }
             style={bodyStyle}
           >
-            {chatError ? (
-              <FeedbackNotice content={chatError} announcement="Assertive" />
-            ) : null}
             <NexusPanePerformanceContext.Provider
               value={panePerformance}
             >
