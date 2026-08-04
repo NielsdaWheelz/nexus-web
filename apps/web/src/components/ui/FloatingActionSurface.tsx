@@ -31,8 +31,6 @@ type FloatingActionStyle = CSSProperties & {
 interface FloatingActionPosition {
   style: FloatingActionStyle;
   placement: FloatingActionPlacement;
-  compactWidth?: boolean;
-  reflowWidth?: boolean;
 }
 
 const CARET_SIZE_PX = 6;
@@ -85,8 +83,6 @@ export default function FloatingActionSurface({
   const [position, setPosition] = useState<FloatingActionPosition>({
     style: { position: "fixed", visibility: "hidden" },
     placement: "below",
-    compactWidth: false,
-    reflowWidth: false,
   });
 
   const updatePosition = useCallback(() => {
@@ -124,12 +120,6 @@ export default function FloatingActionSurface({
       "--floating-action-content-max-height",
       `${contentMaxHeight}px`,
     );
-    surface.dataset.reflowWidth = "false";
-    const reflowWidth =
-      !isMobileViewport && surface.scrollWidth > surface.clientWidth;
-    surface.dataset.reflowWidth = reflowWidth ? "true" : "false";
-    const compactWidth = contentMaxWidth < 240;
-    surface.dataset.compactWidth = compactWidth ? "true" : "false";
     const surfaceRect = DOMRect.fromRect({
       width: surface.offsetWidth,
       height: surface.offsetHeight,
@@ -138,8 +128,6 @@ export default function FloatingActionSurface({
       next: FloatingActionPosition,
     ): FloatingActionPosition => ({
       ...next,
-      compactWidth,
-      reflowWidth,
       style: {
         ...next.style,
         maxWidth,
@@ -214,8 +202,6 @@ export default function FloatingActionSurface({
       setPosition({
         style: { position: "fixed", visibility: "hidden" },
         placement: "below",
-        compactWidth: false,
-        reflowWidth: false,
       });
       return;
     }
@@ -283,12 +269,8 @@ export default function FloatingActionSurface({
       style={position.style}
       role={role}
       aria-label={label}
-      data-floating-action-surface="true"
       data-dismiss-ignore={dismissIgnore ? "true" : undefined}
       data-placement={position.placement}
-      data-mobile={isMobileViewport ? "true" : "false"}
-      data-compact-width={position.compactWidth ? "true" : "false"}
-      data-reflow-width={position.reflowWidth ? "true" : "false"}
       data-positioned={positioned ? "true" : "false"}
       data-strategy={strategy}
       onPointerDown={(event) => {

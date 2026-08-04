@@ -1,6 +1,8 @@
 import {
   BookOpenText,
+  Highlighter,
   Link2,
+  MessageCircleQuestion,
   MessageSquarePlus,
   MessagesSquare,
   NotebookPen,
@@ -27,14 +29,29 @@ function ColorDot({ color }: { color: HighlightColor }) {
 }
 
 /**
+ * The fresh-selection Highlight glyph. The Highlighter identifies the action on
+ * its own; the bar underneath reports which ink the next swatch press lays down,
+ * because colour configures Highlight rather than standing beside it.
+ */
+function HighlighterGlyph({ color }: { color: HighlightColor }) {
+  return (
+    <span className={styles.highlighterGlyph} aria-hidden="true">
+      <Highlighter aria-hidden="true" />
+      <span className={cx(styles.colorBar, styles[`dot-${color}`])} />
+    </span>
+  );
+}
+
+/**
  * The single source of truth for highlight actions: which exist, their icons,
  * order, tone, toggled state, and gating. Pure — given the same target, flags,
  * state, and handlers it returns the same descriptors. Existing Highlights are
- * rendered by ActionBar/ActionMenu; fresh selections use SelectionActionDock.
+ * rendered by ActionBar/ActionMenu; fresh selections are partitioned by
+ * {@link projectSelectionActionPlan} and rendered by SelectionActionDock.
  *
  * `selection` targets have no highlight yet. Their descriptors expose the
- * complete Passage Palette; edit-bounds and delete remain existing-highlight
- * actions only.
+ * complete fresh-selection action set; edit-bounds and delete remain
+ * existing-highlight actions only.
  */
 export function buildHighlightActions({
   target,
@@ -74,8 +91,12 @@ export function buildHighlightActions({
     options.push({
       kind: "custom",
       id: "color",
-      label: isExisting ? "Highlight color" : "Colour",
-      icon: <ColorDot color={color} />,
+      label: isExisting ? "Highlight color" : "Highlight",
+      icon: isExisting ? (
+        <ColorDot color={color} />
+      ) : (
+        <HighlighterGlyph color={color} />
+      ),
       disabled: state.changingColor,
       render: ({ closeMenu }) => (
         <HighlightColorPicker
@@ -124,9 +145,7 @@ export function buildHighlightActions({
       disabledReason: "Creating highlight",
       onSelect: handlers.onShare,
     });
-    options.push(
-      isExisting ? share : { ...share, label: "Share", separatorBefore: true },
-    );
+    options.push(isExisting ? share : { ...share, label: "Share" });
   }
 
   if (hasQuoteText && handlers.onLearn) {
@@ -135,7 +154,6 @@ export function buildHighlightActions({
       id: "learn",
       label: "Learn",
       icon: <BookOpenText size={14} aria-hidden="true" />,
-      separatorBefore: !isExisting,
       disabled: !isExisting && state.changingColor,
       onSelect: handlers.onLearn,
     });
@@ -145,15 +163,19 @@ export function buildHighlightActions({
     options.push({
       kind: "command",
       id: "quote-new",
-      label: isExisting ? "Ask in new chat" : "New chat",
-      icon: <MessageSquarePlus size={14} aria-hidden="true" />,
+      label: isExisting ? "Ask in new chat" : "Ask",
+      icon: isExisting ? (
+        <MessageSquarePlus size={14} aria-hidden="true" />
+      ) : (
+        <MessageCircleQuestion aria-hidden="true" />
+      ),
       disabled: !isExisting && state.changingColor,
       onSelect: quoteToNewChat,
     });
     options.push({
       kind: "command",
       id: "quote-existing",
-      label: isExisting ? "Ask in existing chat…" : "Existing chat",
+      label: "Ask in existing chat…",
       icon: <MessagesSquare size={14} aria-hidden="true" />,
       disabled: !isExisting && state.changingColor,
       onSelect: quoteToExistingChat,
@@ -185,4 +207,48 @@ export function buildHighlightActions({
   }
 
   return options;
+}
+
+/** Semantic order of the fresh-selection toolbar: mark, interpret, connect, interrogate. */
+const DIRECT_ACTION_IDS = ["color", "note", "link", "quote-new"] as const;
+const OVERFLOW_ACTION_IDS = [
+  "learn",
+  "quote-existing",
+  "ResourceAction.Share",
+] as const;
+
+export type SelectionActionPlan = Readonly<{
+  direct: readonly PaneHeaderAction[];
+  overflow: readonly PaneHeaderAction[];
+}>;
+
+/**
+ * Partitions the fresh-selection catalog into the icon row and the overflow
+ * menu. Order is the fixed id data above, never the catalog's emission order,
+ * so capability decides presence and never priority. Never called for an
+ * existing-Highlight target.
+ */
+export function projectSelectionActionPlan(
+  actions: readonly PaneHeaderAction[],
+): SelectionActionPlan {
+  const byId = new Map<string, PaneHeaderAction>();
+  for (const action of actions) {
+    if (
+      !DIRECT_ACTION_IDS.some((id) => id === action.id) &&
+      !OVERFLOW_ACTION_IDS.some((id) => id === action.id)
+    ) {
+      // justify-defect: the catalog gained a fresh-selection action this
+      // projection does not classify. A fallback tier would ship an unreviewed
+      // slot with no owner for its order, label, or glyph.
+      throw new Error(`Unclassified fresh-selection action: ${action.id}`);
+    }
+    if (byId.has(action.id)) {
+      // justify-defect: one id names exactly one descriptor. De-duplicating
+      // here would hide a catalog that emitted the same action twice.
+      throw new Error(`Duplicate fresh-selection action: ${action.id}`);
+    }
+    byId.set(action.id, action);
+  }
+  const tier = (ids: readonly string[]) => ids.flatMap((id) => byId.get(id) ?? []);
+  return { direct: tier(DIRECT_ACTION_IDS), overflow: tier(OVERFLOW_ACTION_IDS) };
 }

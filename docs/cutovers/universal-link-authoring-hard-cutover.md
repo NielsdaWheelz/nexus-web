@@ -7,10 +7,10 @@ Date: 2026-07-20
 Open questions: none
 
 Presentation note: the later
-[`text-selection-passage-palette-hard-cutover.md`](text-selection-passage-palette-hard-cutover.md)
+[`text-selection-icon-toolbar-hard-cutover.md`](text-selection-icon-toolbar-hard-cutover.md)
 supersedes this specification's fresh-selection label and role examples. Fresh
-selection now uses **Link** in `toolbar "Selection actions"`; existing Highlights
-retain **Link…**.
+selection uses an icon control named **Link** in `toolbar "Selection actions"`;
+existing Highlights retain **Link…**.
 
 SME synthesis: Codex's repo-grounded architecture, data, search, reader, product,
 accessibility, and production-engineering review; no external endorsement.

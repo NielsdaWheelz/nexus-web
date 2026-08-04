@@ -224,18 +224,26 @@ semantic filters, and typed related-object disclosures is
 Evidence exposes only that target-centered payload; no removed reader lens,
 route, or storage-shaped response remains.
 
-### fresh-selection Passage Palette
+### fresh-selection icon toolbar
 
 `SelectionPopover` mounts one `SelectionActionDock` inside
-`FloatingActionSurface`. Full-capability selections expose the fixed visible
-order **Colour**, **Note**, **Link**, **Share**, **Learn**, **New chat**, and
-**Existing chat**. Desktop is one labeled row; the canonical mobile render
-environment projects the same descriptors as a non-scrolling `4 + 3` grid.
-The dock owns toolbar focus and color disclosure only. Readers remain the sole
-selection-normalization and Highlight-creation owners, while
-`buildHighlightActions` remains the sole action-order and capability owner.
-Existing Highlight surfaces continue to use `HighlightActionBar` and keep their
-existing labels and behavior.
+`FloatingActionSurface`. Full-capability selections expose one content-sized,
+non-wrapping row of icon-only controls named **Highlight**, **Note**, **Link**,
+**Ask**, and **More**; **More** exists only while overflow is non-empty and
+opens the shared `ActionMenu` on the text-labeled **Learn**,
+**Ask in existing chat…**, and **Share**. The row carries no visible action
+text: each control's accessible name is also its native `title`.
+`buildHighlightActions` remains the sole capability owner and
+`projectSelectionActionPlan` the sole order owner, so an ineligible action is
+absent and never promotes an overflow action into the direct row. Density
+belongs to the pointer — 32px targets, 16px glyphs, 4px gaps, and 44px targets
+under `@media (pointer: coarse)` — never to viewport width or action count. The
+dock owns toolbar focus, the overflow trigger, and color disclosure only; color
+is a parameter of **Highlight**, shown as an ink bar under its `Highlighter`
+glyph rather than as a sibling verb. Readers remain the sole
+selection-normalization and Highlight-creation owners. Existing Highlight
+surfaces continue to use `HighlightActionBar` and keep their existing labels and
+behavior.
 
 ### quick-note composer
 
@@ -253,8 +261,9 @@ skins.
   concurrently and opens the composer in the same gesture), the
   existing-highlight click popover's **Add note**/**Edit note** action, and
   the bare-`n` chord while a reader selection is active. `SelectionPopover`
-  is the single highlight-first composite-action sequencer for Colour, Share,
-  Learn, and chat; Note and Link retain the distinct reader-owned flows above.
+  is the single highlight-first composite-action sequencer for Highlight,
+  Share, Learn, and chat; Note and Link retain the distinct reader-owned flows
+  above.
 - pending-create sessions hand the editor a stable opaque session id as its
   `highlightId` and bridge to the real highlight id inside the composer's
   save wrapper once the concurrent create resolves; the editor is never
@@ -360,7 +369,7 @@ update cadences.
 ### reader-to-chat quote selection
 
 quote-to-chat is highlight-first. A durable Highlight must exist first; fresh
-selection actions are **New chat** and **Existing chat**, while existing
+selection actions are **Ask** and **Ask in existing chat…**, while existing
 Highlight surfaces retain **Ask in new chat** and **Ask in existing chat…**.
 Both launch chat with a typed intent and perform no conversation mutation on launch. The launch
 address is the pane-local intent hash `#mediaId=<uuid>&highlightId=<uuid>` (the

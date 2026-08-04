@@ -302,6 +302,9 @@ export default function ActionMenu({
         role="menu"
         style={menuStyle}
         aria-labelledby={triggerId}
+        // A portaled menu is logically inside its trigger, so an ancestor
+        // dismissal owner must never treat a pointerdown here as "outside".
+        data-dismiss-ignore="true"
         onKeyDown={handleMenuKeyDown}
       >
         {options.map((option, index) => {

@@ -6,6 +6,25 @@
   border: var(--stroke-hairline) solid var(--edge);
 }
 
+/* Fresh-selection Highlight glyph: marker plus the ink it will lay down. */
+.highlighterGlyph {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.colorBar {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 3px;
+  border-radius: var(--radius-full);
+  border: var(--stroke-hairline) solid var(--edge);
+}
+
 .dot-yellow {
   background: var(--highlight-yellow);
 }
@@ -24,4 +43,11 @@
 
 .dot-purple {
   background: var(--highlight-purple);
+}
+
+@media (forced-colors: active) {
+  .colorBar {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+  }
 }

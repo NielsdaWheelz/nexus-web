@@ -178,7 +178,7 @@ it("keeps a committed PDF highlight visible while BFF reconciliation is pending"
     document.dispatchEvent(new Event("selectionchange"));
 
     await userEvent.click(
-      await screen.findByRole("button", { name: "Colour" }),
+      await screen.findByRole("button", { name: "Highlight" }),
     );
     await userEvent.click(
       await screen.findByRole("button", { name: "Green" }),

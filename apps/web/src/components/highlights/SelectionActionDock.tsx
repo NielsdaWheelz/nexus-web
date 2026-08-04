@@ -1,7 +1,7 @@
 "use client";
 
+import { Ellipsis } from "lucide-react";
 import {
-  Fragment,
   useCallback,
   useEffect,
   useId,
@@ -9,47 +9,52 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
-import {
-  projectActionControlState,
-  type PaneHeaderAction,
-} from "@/lib/ui/actionDescriptor";
-import { cx } from "@/lib/ui/cx";
+import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
+import type { SelectionActionPlan } from "./highlightActions";
 import styles from "./SelectionActionDock.module.css";
 
 export type SelectionPendingActionId =
   "color" | "share" | "learn" | "quote-new" | "quote-existing";
 
 interface SelectionActionDockProps {
-  readonly actions: readonly PaneHeaderAction[];
+  readonly plan: SelectionActionPlan;
   readonly pendingActionId: SelectionPendingActionId | null;
   readonly externalBusy: boolean;
 }
 
+/**
+ * The fresh-selection icon toolbar: one row of icon-only direct controls plus a
+ * `More` trigger for the overflow menu, with one roving tab stop across both.
+ * It renders the supplied plan — it never ranks actions or infers capability.
+ */
 export default function SelectionActionDock({
-  actions,
+  plan,
   pendingActionId,
   externalBusy,
 }: SelectionActionDockProps) {
   const [rovingIndex, setRovingIndex] = useState(0);
   const [customActionId, setCustomActionId] = useState<string | null>(null);
   const frameRef = useRef<HTMLDivElement>(null);
-  const actionRefs = useRef<Array<HTMLElement | null>>([]);
+  const controlRefs = useRef<Array<HTMLElement | null>>([]);
   const customTriggerRef = useRef<HTMLButtonElement>(null);
   const customContentRef = useRef<HTMLDivElement>(null);
   const focusCustomContentOnOpenRef = useRef(false);
   const priorFocusRef = useRef<HTMLElement | null>(null);
   const focusEnteredRef = useRef(false);
   const customContentId = useId();
-  const safeRovingIndex = Math.min(
-    rovingIndex,
-    Math.max(0, actions.length - 1),
-  );
-  const customAction = actions.find(
+  const overflowIndex = plan.direct.length;
+  const controlCount = overflowIndex + (plan.overflow.length > 0 ? 1 : 0);
+  const safeRovingIndex = Math.min(rovingIndex, Math.max(0, controlCount - 1));
+  const customAction = plan.direct.find(
     (action): action is Extract<PaneHeaderAction, { kind: "custom" }> =>
       action.id === customActionId && action.kind === "custom",
+  );
+  const overflowPending = plan.overflow.some((action) =>
+    actionIsPending(action.id, pendingActionId),
   );
   const busy = externalBusy || pendingActionId !== null;
 
@@ -59,6 +64,13 @@ export default function SelectionActionDock({
       relatedTarget instanceof HTMLElement ? relatedTarget : null;
     focusEnteredRef.current = true;
   }, []);
+
+  const setOverflowRef = useCallback(
+    (node: HTMLButtonElement | null) => {
+      controlRefs.current[overflowIndex] = node;
+    },
+    [overflowIndex],
+  );
 
   useEffect(() => {
     if (!customAction || !focusCustomContentOnOpenRef.current) return;
@@ -86,7 +98,7 @@ export default function SelectionActionDock({
   }, []);
 
   useEffect(() => {
-    const focusPalette = (event: KeyboardEvent) => {
+    const focusToolbar = (event: KeyboardEvent) => {
       if (
         event.key !== "F10" ||
         !event.altKey ||
@@ -102,10 +114,10 @@ export default function SelectionActionDock({
           ? document.activeElement
           : null;
       recordFocusEntry(activeElement);
-      actionRefs.current[safeRovingIndex]?.focus();
+      controlRefs.current[safeRovingIndex]?.focus();
     };
-    window.addEventListener("keydown", focusPalette);
-    return () => window.removeEventListener("keydown", focusPalette);
+    window.addEventListener("keydown", focusToolbar);
+    return () => window.removeEventListener("keydown", focusToolbar);
   }, [recordFocusEntry, safeRovingIndex]);
 
   const closeCustomAction = useCallback((restoreFocus: boolean) => {
@@ -116,23 +128,21 @@ export default function SelectionActionDock({
     }
   }, []);
 
-  if (actions.length === 0) return null;
-
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const activeIndex = actionRefs.current.findIndex(
-      (action) => action === document.activeElement,
+    const activeIndex = controlRefs.current.findIndex(
+      (control) => control === document.activeElement,
     );
     const nextIndex = nextRovingIndexForKey({
       key: event.key,
       currentIndex: activeIndex < 0 ? safeRovingIndex : activeIndex,
-      itemCount: actions.length,
+      itemCount: controlCount,
       orientation: "horizontal",
       wrap: false,
     });
     if (nextIndex === null) return;
     event.preventDefault();
     setRovingIndex(nextIndex);
-    actionRefs.current[nextIndex]?.focus();
+    controlRefs.current[nextIndex]?.focus();
   };
 
   return (
@@ -143,54 +153,104 @@ export default function SelectionActionDock({
         aria-orientation="horizontal"
         aria-keyshortcuts="Alt+F10"
         aria-busy={busy || undefined}
-        data-action-count={actions.length}
         className={styles.dock}
         onFocusCapture={(event) => recordFocusEntry(event.relatedTarget)}
         onKeyDown={handleKeyDown}
       >
-        {actions.map((action, index) => {
+        {plan.direct.map((action, index) => {
+          if (
+            action.kind === "link" ||
+            (action.kind === "custom" && action.id !== "color")
+          ) {
+            // justify-defect: the fresh-selection catalog projects exactly one
+            // custom action — the colour picker — and no link descriptors, so
+            // anything else here is a catalog change without a toolbar.
+            throw new Error(
+              `Unrenderable selection action: ${action.kind}:${action.id}`,
+            );
+          }
+          if (action.kind !== "command" && action.kind !== "custom") {
+            // justify-defect: a descriptor kind reached the toolbar with no
+            // reviewed glyph, label, or activation path. The `never` binding
+            // makes adding one to the shared schema a compile error here
+            // instead of a bare icon at runtime.
+            const unrenderable: never = action;
+            throw new Error(
+              `Unrenderable selection action kind: ${unrenderable}`,
+            );
+          }
           const pending = actionIsPending(action.id, pendingActionId);
           const disabled = action.disabled === true || pendingActionId !== null;
+          const customOpen = customActionId === action.id;
           return (
-            <Fragment key={action.id}>
-              {action.separatorBefore && index > 0 ? (
-                <span
-                  className={styles.separator}
-                  data-selection-separator="true"
-                  aria-hidden="true"
-                />
-              ) : null}
-              {renderAction({
-                action,
-                index,
-                tabIndex: index === safeRovingIndex ? 0 : -1,
-                disabled,
-                pending,
-                customContentId,
-                customOpen: customActionId === action.id,
-                setActionRef: (node) => {
-                  actionRefs.current[index] = node;
-                  if (action.kind === "custom") {
-                    customTriggerRef.current =
-                      node instanceof HTMLButtonElement ? node : null;
-                  }
-                },
-                onOpenCustom: (focusContent) => {
-                  if (!disabled) {
-                    const opening = customActionId !== action.id;
-                    focusCustomContentOnOpenRef.current =
-                      opening && focusContent;
-                    setRovingIndex(index);
-                    setCustomActionId(opening ? action.id : null);
-                  }
-                },
-                onPrepareKeyboardCustom: () => {
-                  focusCustomContentOnOpenRef.current = true;
-                },
-              })}
-            </Fragment>
+            <Button
+              key={action.id}
+              ref={(node) => {
+                controlRefs.current[index] = node;
+                if (action.kind === "custom") customTriggerRef.current = node;
+              }}
+              variant="ghost"
+              size="sm"
+              iconOnly
+              className={styles.action}
+              aria-label={action.label}
+              title={action.label}
+              aria-busy={pending || undefined}
+              aria-disabled={disabled || undefined}
+              aria-haspopup={action.kind === "custom" ? "dialog" : undefined}
+              aria-expanded={action.kind === "custom" ? customOpen : undefined}
+              aria-controls={customOpen ? customContentId : undefined}
+              data-action-id={action.id}
+              data-pending={pending ? "true" : undefined}
+              tabIndex={index === safeRovingIndex ? 0 : -1}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (disabled) return;
+                if (action.kind === "custom") {
+                  // A keyboard activation reports no click count; that is the
+                  // signal to move focus into the swatches.
+                  focusCustomContentOnOpenRef.current =
+                    !customOpen && event.detail === 0;
+                  setRovingIndex(index);
+                  setCustomActionId(customOpen ? null : action.id);
+                  return;
+                }
+                action.onSelect({ triggerEl: event.currentTarget });
+              }}
+            >
+              <span className={styles.actionIcon} aria-hidden="true">
+                {pending ? (
+                  <span className={styles.busyIndicator} />
+                ) : (
+                  action.icon
+                )}
+              </span>
+            </Button>
           );
         })}
+        {plan.overflow.length > 0 ? (
+          <ActionMenu
+            options={plan.overflow}
+            label="More"
+            triggerRef={setOverflowRef}
+            renderTrigger={(trigger) => (
+              <Button
+                {...trigger}
+                variant="ghost"
+                size="sm"
+                iconOnly
+                className={styles.action}
+                title="More"
+                aria-busy={overflowPending || undefined}
+                tabIndex={safeRovingIndex === overflowIndex ? 0 : -1}
+              >
+                <span className={styles.actionIcon} aria-hidden="true">
+                  <Ellipsis aria-hidden="true" />
+                </span>
+              </Button>
+            )}
+          />
+        ) : null}
         <span
           className="sr-only"
           role="status"
@@ -198,7 +258,7 @@ export default function SelectionActionDock({
           aria-atomic="true"
         >
           {pendingActionId !== null
-            ? `${pendingActionLabel(actions, pendingActionId)} in progress`
+            ? `${pendingActionLabel(plan, pendingActionId)} in progress`
             : externalBusy
               ? "Selection action in progress"
               : ""}
@@ -237,143 +297,6 @@ export default function SelectionActionDock({
   );
 }
 
-function renderAction({
-  action,
-  index,
-  tabIndex,
-  disabled,
-  pending,
-  customContentId,
-  customOpen,
-  setActionRef,
-  onOpenCustom,
-  onPrepareKeyboardCustom,
-}: {
-  action: PaneHeaderAction;
-  index: number;
-  tabIndex: number;
-  disabled: boolean;
-  pending: boolean;
-  customContentId: string;
-  customOpen: boolean;
-  setActionRef: (node: HTMLElement | null) => void;
-  onOpenCustom: (focusContent: boolean) => void;
-  onPrepareKeyboardCustom: () => void;
-}) {
-  const common = {
-    "aria-busy": pending || undefined,
-    "aria-disabled": disabled || undefined,
-    "data-action-id": action.id,
-    "data-action-index": index,
-    "data-pending": pending ? "true" : undefined,
-    tabIndex,
-    title: action.disabledReason,
-  } as const;
-  const icon = (
-    <span className={styles.actionIcon} aria-hidden="true">
-      {pending ? (
-        <span
-          className={styles.busyIndicator}
-          data-selection-busy-indicator="true"
-        />
-      ) : (
-        action.icon
-      )}
-    </span>
-  );
-  const content = (
-    <span className={styles.actionLabel} data-selection-action-label="true">
-      {action.label}
-    </span>
-  );
-
-  switch (action.kind) {
-    case "command": {
-      const control = projectActionControlState(action.label, action.state);
-      return (
-        <Button
-          ref={setActionRef}
-          variant={action.tone === "danger" ? "danger" : "ghost"}
-          size="sm"
-          leadingIcon={icon}
-          className={cx(styles.action, control.active && styles.active)}
-          aria-pressed={control.barPressed}
-          aria-expanded={control.barExpanded}
-          aria-controls={control.barControls}
-          {...common}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (disabled) return;
-            action.onSelect({ triggerEl: event.currentTarget });
-          }}
-        >
-          {content}
-        </Button>
-      );
-    }
-    case "link":
-      return (
-        <Button
-          variant={action.tone === "danger" ? "danger" : "ghost"}
-          size="sm"
-          asChild
-          className={styles.action}
-        >
-          <a
-            ref={setActionRef}
-            href={disabled ? undefined : action.href}
-            {...common}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (disabled) {
-                event.preventDefault();
-                return;
-              }
-              action.onSelect?.({ triggerEl: null });
-            }}
-          >
-            {icon}
-            {content}
-          </a>
-        </Button>
-      );
-    case "custom":
-      if (action.id !== "color") {
-        throw new Error(`Unexpected selection custom action: ${action.id}`);
-      }
-      return (
-        <Button
-          ref={setActionRef}
-          variant="ghost"
-          size="sm"
-          leadingIcon={icon}
-          className={styles.action}
-          aria-haspopup="dialog"
-          aria-expanded={customOpen}
-          aria-controls={customOpen ? customContentId : undefined}
-          {...common}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              onPrepareKeyboardCustom();
-            }
-          }}
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenCustom(event.detail === 0);
-          }}
-        >
-          {content}
-        </Button>
-      );
-    default: {
-      const exhaustive: never = action;
-      throw new Error(
-        `Unhandled selection action: ${JSON.stringify(exhaustive)}`,
-      );
-    }
-  }
-}
-
 function actionIsPending(
   actionId: string,
   pendingActionId: SelectionPendingActionId | null,
@@ -389,6 +312,8 @@ function actionIsPending(
     case "quote-existing":
       return actionId === pendingActionId;
     default: {
+      // justify-defect: every pending id names a fresh-selection action; a new
+      // one without a mapping here would silently announce nothing.
       const exhaustive: never = pendingActionId;
       throw new Error(`Unhandled pending selection action: ${exhaustive}`);
     }
@@ -396,15 +321,18 @@ function actionIsPending(
 }
 
 function pendingActionLabel(
-  actions: readonly PaneHeaderAction[],
+  plan: SelectionActionPlan,
   pendingActionId: SelectionPendingActionId,
 ): string {
-  const action = actions.find((candidate) =>
+  const action = [...plan.direct, ...plan.overflow].find((candidate) =>
     actionIsPending(candidate.id, pendingActionId),
   );
-  if (!action)
+  if (!action) {
+    // justify-defect: only a control the plan rendered can become pending, so a
+    // pending id with no descriptor means the plan changed under the sequencer.
     throw new Error(
       `Pending selection action is not available: ${pendingActionId}`,
     );
+  }
   return action.label;
 }

@@ -225,7 +225,7 @@ sync hook would blur.
 ### reader-to-chat quote selection
 
 - quote-to-chat is highlight-first: a durable Highlight must exist before
-  launch; fresh selection uses **New chat** / **Existing chat**, existing
+  launch; fresh selection uses **Ask** / **Ask in existing chat…**, existing
   Highlights use **Ask in new chat** / **Ask in existing chat…**, and neither
   path mutates a conversation on launch
 - the request sends only `reader_selection = { key: {media_id, highlight_id},

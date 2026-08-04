@@ -6,10 +6,11 @@ Implemented 2026-06-09. Single-user prototype; hard cutover; no flags, no legacy
 paths, no backward compatibility.
 
 Presentation note: the later
-[`text-selection-passage-palette-hard-cutover.md`](text-selection-passage-palette-hard-cutover.md)
+[`text-selection-icon-toolbar-hard-cutover.md`](text-selection-icon-toolbar-hard-cutover.md)
 supersedes this historical cutover's fresh-selection label and role examples.
-Fresh selection now uses **Note** in `toolbar "Selection actions"`; existing
-Highlights retain **Add note**/**Edit note**.
+Fresh selection uses an icon control named **Note** in
+`toolbar "Selection actions"`; existing Highlights retain
+**Add note**/**Edit note**.
 
 ## Summary
 
@@ -70,8 +71,8 @@ has a canonical owner.
 
 ### Desktop
 
-1. User selects text → the labeled selection toolbar shows **Note** after
-   **Colour**.
+1. User selects text → the selection toolbar shows **Note** after
+   **Highlight**.
 2. Clicking **Note** (or pressing `n` with a reader selection active): the
    selection popover is replaced *in place* by the composer — a small anchored
    popover at the selection rect containing the highlight-note editor, focused,

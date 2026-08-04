@@ -9,6 +9,14 @@ Quote presentation geometry is finalized by
 `docs/cutovers/chat-interface-hard-cutover.md`; snapshot, send, and prompt
 semantics remain owned here.
 
+Presentation note: the later
+[`text-selection-icon-toolbar-hard-cutover.md`](text-selection-icon-toolbar-hard-cutover.md)
+owns the fresh-selection action names and tiering. Fresh selection uses the
+direct icon control **Ask** and the **More** menu item
+**Ask in existing chat…**; existing Highlights retain **Ask in new chat** and
+**Ask in existing chat…**. The launch, mutation, and destination rules below
+stand.
+
 ## One-Line
 
 Make a reader Highlight a visible, immutable, one-turn chat attachment from
@@ -73,13 +81,13 @@ Out of scope:
 
 ### Reader actions
 
-- Fresh-selection **New chat** and existing-Highlight **Ask in new chat** open
+- Fresh-selection **Ask** and existing-Highlight **Ask in new chat** open
   `/conversations/new` with a typed Highlight intent. Chat launch performs no
   conversation mutation; creating a new durable Highlight from a fresh
   selection is the required preceding mutation.
-- Fresh-selection **Existing chat** and existing-Highlight
-  **Ask in existing chat…** open a real destination picker. Selecting a row
-  opens that exact conversation and performs no conversation mutation.
+- **Ask in existing chat…**, on a fresh selection and on an existing Highlight
+  alike, opens a real destination picker. Selecting a row opens that exact
+  conversation and performs no conversation mutation.
 - Highlight creation must succeed before either navigation occurs.
 - A new quote replaces an already-pending quote for that destination, preserves
   typed text, and announces the replacement.

@@ -2,6 +2,8 @@
  * SelectionPopover styles.
  *
  * Styling for the selection actions popover that appears on text selection.
+ * The icon toolbar is content-sized and always fits, so the surface needs no
+ * width-reflow, mobile-width, or compaction path.
  */
 
 .popover {
@@ -10,27 +12,4 @@
   max-width: calc(100vw - var(--space-4));
   padding: var(--space-1);
   box-shadow: var(--shadow-2);
-}
-
-.popover[data-mobile="true"] {
-  width: min(
-    360px,
-    calc(
-      100vw - max(var(--space-2), var(--viewport-safe-left)) -
-        max(var(--space-2), var(--viewport-safe-right)) - var(--space-4)
-    )
-  );
-  max-width: calc(
-    100vw - max(var(--space-2), var(--viewport-safe-left)) -
-      max(var(--space-2), var(--viewport-safe-right)) - var(--space-4)
-  );
-  padding: var(--space-1);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-2);
-  min-width: 0;
-}
-
-.popover:is([data-reflow-width="true"], [data-compact-width="true"]) {
-  width: var(--floating-action-content-max-width);
-  min-width: 0;
 }

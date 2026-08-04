@@ -16,7 +16,10 @@ import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import SelectionActionDock, {
   type SelectionPendingActionId,
 } from "@/components/highlights/SelectionActionDock";
-import { buildHighlightActions } from "@/components/highlights/highlightActions";
+import {
+  buildHighlightActions,
+  projectSelectionActionPlan,
+} from "@/components/highlights/highlightActions";
 import styles from "./SelectionPopover.module.css";
 import { useShareController } from "@/lib/sharing/controller";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
@@ -148,27 +151,29 @@ export default function SelectionPopover<H extends { id: string }>({
       }
     : {};
 
-  const actions = buildHighlightActions({
-    target: { kind: "selection", color: DEFAULT_COLOR },
-    canQuoteToChat: chatDestinations !== null,
-    canAddNote: Boolean(onAddNote),
-    isReflowable: false,
-    state: {
-      isEditingBounds: false,
-      deleting: false,
-      changingColor: actionBusy,
-    },
-    handlers: {
-      onSelectColor: (color) => runHighlightFirst("color", color),
-      onAddNote,
-      onLink,
-      onShare: ({ triggerEl }) => shareHighlight(triggerEl),
-      onLearn: learnHighlight,
-      ...chatHandlers,
-      onToggleEditBounds: () => {},
-      onDelete: () => {},
-    },
-  });
+  const plan = projectSelectionActionPlan(
+    buildHighlightActions({
+      target: { kind: "selection", color: DEFAULT_COLOR },
+      canQuoteToChat: chatDestinations !== null,
+      canAddNote: Boolean(onAddNote),
+      isReflowable: false,
+      state: {
+        isEditingBounds: false,
+        deleting: false,
+        changingColor: actionBusy,
+      },
+      handlers: {
+        onSelectColor: (color) => runHighlightFirst("color", color),
+        onAddNote,
+        onLink,
+        onShare: ({ triggerEl }) => shareHighlight(triggerEl),
+        onLearn: learnHighlight,
+        ...chatHandlers,
+        onToggleEditBounds: () => {},
+        onDelete: () => {},
+      },
+    }),
+  );
 
   return (
     <FloatingActionSurface
@@ -182,7 +187,7 @@ export default function SelectionPopover<H extends { id: string }>({
       onDismiss={onDismiss}
     >
       <SelectionActionDock
-        actions={actions}
+        plan={plan}
         pendingActionId={pendingActionId}
         externalBusy={isCreating && pendingActionId === null}
       />

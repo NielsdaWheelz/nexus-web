@@ -424,15 +424,17 @@ It owns fixed positioning, viewport clamping, mobile visual-viewport handling, t
 line-rect placement, Escape/outside-pointer dismissal, scroll dismissal/reposition policy,
 `data-dismiss-ignore`, and pointerdown prevention for preserving live text selections.
 
-Fresh reader selection is the **Passage Palette**: `SelectionPopover` sequences
-Highlight-first chat creation and `SelectionActionDock` renders the fixed
-**New chat** and **Existing chat** labels inside a labeled toolbar. The dock does
-not create conversations or own destination behavior. Both actions create or
-reuse the default-yellow Highlight before launch, and neither creates a
-Conversation before the first send.
+Fresh reader selection is the icon toolbar: `SelectionPopover` sequences
+Highlight-first chat creation and `SelectionActionDock` renders **Ask** as a
+direct icon control and **Ask in existing chat…** as a text-labeled item in the
+**More** menu. The dock does not create conversations or own destination
+behavior. Both actions create or reuse the default-yellow Highlight before
+launch, and neither creates a Conversation before the first send.
 
 `ActionMenu` remains separate because it owns menu semantics: roving keyboard behavior,
-menu roles, focus restoration, and menuitem rendering.
+menu roles, focus restoration, and menuitem rendering. Its portaled `<ul role="menu">` carries
+`data-dismiss-ignore`, because a portaled menu is logically inside its trigger: an enclosing
+floating surface must not read a menu-item pointerdown as an outside dismissal.
 
 `FloatingActionSurface` is the documented non-modal action-surface owner. It
 keeps its own visual-viewport handling and must not migrate to `MobileSheet`

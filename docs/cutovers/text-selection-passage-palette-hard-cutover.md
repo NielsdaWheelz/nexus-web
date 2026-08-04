@@ -7,6 +7,16 @@ is broad and was excluded by the brief · literal browser-geometry gate for actu
 backward/long Range and PDF page-scale zoom pending · physical-device gates
 pending · full CI/check-front not run · 2026-07-31
 
+**Superseded presentation:**
+[`text-selection-icon-toolbar-hard-cutover.md`](text-selection-icon-toolbar-hard-cutover.md)
+owns the fresh-selection action order, names, icons, tiering, and layout. Where
+this document states a labeled seven-action row, a `4 + 3` mobile grid, a
+viewport- or count-driven layout, palette separators, or the labels `Colour`,
+`New chat`, and `Existing chat`, that document is authoritative instead;
+sections 1–7, 12, and 15 carry per-section markers. Selection normalization,
+floating geometry, dismissal, action write order, concurrency, single-flight,
+and Undo semantics remain authoritative here.
+
 **Posture:** One frontend hard cut. No legacy renderer, fallback viewport rule,
 feature flag, compatibility prop, new dependency, backend change, or parallel
 action catalog.
@@ -16,6 +26,10 @@ action catalog.
 module docs govern implementation.
 
 ## 1. Decision
+
+**Superseded:** the labeled seven-action order and the desktop-row/mobile-grid
+projection. The captured selection, action set, mutations, overlays, and
+`FloatingActionSurface` ownership stand.
 
 There are no blocking questions.
 
@@ -33,6 +47,10 @@ remain authoritative.
 
 ## 2. Philosophy, Goals, And Scope
 
+**Superseded:** the seven-action stop line and the readable-label goal; the
+direct row is icon-only. The preserve-the-line, stable-order, escalate-depth,
+and quiet-press goals stand.
+
 - **Preserve the line.** The surface stays near the passage without covering it.
 - **Preserve muscle memory.** Order never changes from history, prediction, or AI.
 - **Escalate depth, not chrome.** Actions open existing owned workflows; the
@@ -49,6 +67,11 @@ geometry integration, reader creation guard, focused proof, and contradicted
 docs. Everything named in section 14 is outside the cut.
 
 ## 3. Target Behavior
+
+**Superseded:** the Desktop and Mobile label, grouping, grid, reflow, and
+target-size clauses; density is pointer-owned, not viewport-owned. Placement,
+clamping, caret, safe-area, native-edit-menu, material, and motion clauses
+stand.
 
 ### Desktop
 
@@ -98,6 +121,9 @@ docs. Everything named in section 14 is outside the cut.
 
 ## 4. Action Semantics
 
+**Superseded:** the action names only. Every required behavior, capability
+gating, order-stability, and busy-in-place rule below stands.
+
 Presentation changes only. Existing capability owners and write order remain:
 
 | Action        | Required behavior                                                                                                                  |
@@ -115,6 +141,12 @@ canonical for genuinely unavailable actions, including unreliable PDF text
 geometry. Never reorder remaining actions. Busy actions remain in place.
 
 ## 5. Final Architecture
+
+**Superseded:** the dock's labeled desktop/mobile rendering and the
+responsive-classification ownership row. `projectSelectionActionPlan` sits
+between `buildHighlightActions` and `SelectionActionDock` and owns tiering and
+order; `ActionMenu` renders the overflow tier; density is pointer-owned CSS.
+Every other ownership row stands.
 
 ```text
 MediaPaneBody / PdfReader
@@ -155,6 +187,12 @@ surfaces. They do not render fresh-selection actions after this cut.
 | Share, Learn, Link, Note, chat behavior | their existing subsystem owners                       |
 
 ## 6. Capability And Component Contracts
+
+**Superseded:** the `SelectionActionDockProps` shape, the visible-label and
+separator rendering rules, and the selection label list. `SelectionPopover`'s
+external contract, the single `PaneHeaderAction` schema, the local pending-action
+union, the reuse-existing-primitives rule, and the no-new-dock-framework rule
+stand.
 
 No network or persistence API changes.
 
@@ -200,6 +238,11 @@ Range geometry and compact placement remain local reader/surface state.
 Existing `PaneHeaderAction` remains the one action descriptor schema.
 
 ## 7. Interaction And Accessibility Contract
+
+**Superseded:** the two-projection wording and the 44px desktop / 48px mobile
+swatch split. The toolbar role and name, the single roving tab stop, `Alt+F10`,
+Escape unwinding, focus restoration, selection preservation, `aria-disabled`
+busy treatment, the status-channel rules, and the zoom clause stand.
 
 - The surface is `role="toolbar"`, `aria-label="Selection actions"`, and
   `aria-orientation="horizontal"` in both projections; expose
@@ -333,6 +376,9 @@ No intermediate dual renderer may merge.
 
 ## 12. Acceptance Criteria
 
+**Superseded:** AC-1 and AC-2, and the action names in AC-5. The remaining
+criteria stand.
+
 - **AC-1:** A full-capability HTML or reliable-text PDF selection visibly shows
   the seven labeled actions in the exact canonical order.
 - **AC-2:** Desktop is one labeled row with `>=44px` targets; 390px and 320px
@@ -397,6 +443,10 @@ No intermediate dual renderer may merge.
 - backend, persistence, schema, migration, worker, auth, or sharing-policy work.
 
 ## 15. Final-State Laws
+
+**Superseded:** "Labels are visible" and "responsive behavior comes from the
+canonical render environment" — direct actions are icon-only, overflow actions
+are text-labeled, and density follows the pointer. The remaining laws stand.
 
 - One selection, one palette, one action catalog, one geometry owner.
 - Order is stable; capability may remove an action but never move another.

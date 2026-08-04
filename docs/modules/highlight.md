@@ -164,14 +164,18 @@ The wide reader may also project highlight-linked marginalia through
 mutation behavior.
 
 A fresh reader selection has no Highlight yet. Its `SelectionPopover` renders
-the dedicated labeled `SelectionActionDock`; `HighlightActionBar` renders only
+the dedicated icon-only `SelectionActionDock`; `HighlightActionBar` renders only
 existing Highlights. `buildHighlightActions` is the shared descriptor owner,
-using the fixed selection labels **Colour**, **Note**, **Link**, **Share**,
-**Learn**, **New chat**, and **Existing chat** without changing existing-
-Highlight labels. Composite selection actions are synchronously single-flight;
-the reader creation entrypoint independently prevents same-turn duplicate
-Highlight writes and releases after a null result or failure so the selection
-can retry.
+using the fixed selection names **Highlight**, **Note**, **Link**, **Ask**,
+**Learn**, **Ask in existing chat…**, and **Share** without changing existing-
+Highlight labels. `projectSelectionActionPlan`, beside that catalog, is the sole
+owner of their presentation order: the direct icon row is **Highlight**,
+**Note**, **Link**, **Ask**, and the **More** overflow menu is **Learn**,
+**Ask in existing chat…**, **Share**. Capability decides which descriptors exist
+and never which tier they land in. Composite selection actions are
+synchronously single-flight; the reader creation entrypoint independently
+prevents same-turn duplicate Highlight writes and releases after a null result
+or failure so the selection can retry.
 
 The canonical passage/document scope and typed highlight association contract
 is
@@ -181,7 +185,7 @@ is
 
 Reader quote-to-chat is Highlight-first: a durable Highlight must exist before
 launch, and chat launch performs no conversation mutation. Fresh selection
-offers **New chat** and **Existing chat**; an existing Highlight offers
+offers **Ask** and **Ask in existing chat…**; an existing Highlight offers
 **Ask in new chat** and **Ask in existing chat…**. Both navigate to the chat
 destination and pass a typed launch intent, never a generic subject send.
 
