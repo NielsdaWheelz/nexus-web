@@ -304,7 +304,8 @@ items / show finished.
 Pane-local Filter is a visit-local view over the committed rows. It matches
 presented entry title and contributor display/credited names after the
 server-owned projection and before the existing order. It never enters
-`LibraryEntryView`, request, cursor, snapshot, or folio identity. `Type`, `View`,
+`LibraryEntryView`, request, cursor, snapshot, or published pane-header
+metadata. `Type`, `View`,
 `Sort by`, and applicable `Hide finished` render in expanded Pane Search; when
 collapsed, the Filter action marks their non-default state. A query-key row
 change bypasses the collection View Transition, while domain commits and

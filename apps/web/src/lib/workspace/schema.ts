@@ -29,7 +29,6 @@ export const MAX_PANES = 12;
 export const MAX_RECENTLY_CLOSED_PANES = 5;
 export const MAX_PANE_HISTORY_STACK_LENGTH = 12;
 export const MAX_TOTAL_PANE_HISTORY_ENTRIES = 48;
-const MAX_PANE_LABEL_LENGTH = 120;
 
 type WorkspacePaneVisibility = "visible" | "minimized";
 type WorkspaceSecondaryPaneVisibility = "visible" | "collapsed";
@@ -305,15 +304,17 @@ export function restoreClosedPaneSnapshot(input: {
   };
 }
 
+/**
+ * The pane label is the canonical route title, so it is never shortened here:
+ * truncation is the header's presentation concern (one CSS-clipped line whose
+ * full text stays in the DOM, the accessible name, and the native disclosure).
+ * The label is not persisted, so no storage bound applies either.
+ */
 export function normalizePaneLabel(raw: string | null | undefined): string | null {
   if (typeof raw !== "string") {
     return null;
   }
-  const normalized = collapseWhitespace(raw);
-  if (!normalized) {
-    return null;
-  }
-  return normalized.slice(0, MAX_PANE_LABEL_LENGTH).trim();
+  return collapseWhitespace(raw) || null;
 }
 
 export function createDefaultWorkspaceState(

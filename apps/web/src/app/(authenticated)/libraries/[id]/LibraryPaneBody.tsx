@@ -80,7 +80,6 @@ import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 import Toggle from "@/components/ui/Toggle";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SectionOpener from "@/components/ui/SectionOpener";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
@@ -160,6 +159,7 @@ import type {
   ActionDescriptor,
   ActionSelectDetail,
 } from "@/lib/ui/actionDescriptor";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { isAbortError } from "@/lib/errors";
@@ -319,7 +319,7 @@ interface LibraryPaneFeedback {
 }
 
 // The one full-date formatter for the "Added …" row line; the whole instant is
-// formatted (not a date-only weekday folio), so it reads unambiguously.
+// formatted (not a date-only weekday), so it reads unambiguously.
 const ADDED_DATE_FORMAT: Intl.DateTimeFormatOptions = {
   year: "numeric",
   month: "short",
@@ -2542,13 +2542,10 @@ export default function LibraryPaneBody() {
       ),
     [filterQuery, visibleEntries],
   );
-  const entryFolio = entryCollectionComplete
-      ? {
-          kind: "count" as const,
-          value: visibleEntries.length,
-          unit: "entry" as const,
-        }
-      : { kind: "none" as const };
+  const entryMeta: PaneHeaderMeta =
+    loading || !entryCollectionComplete
+      ? { kind: "Pending" }
+      : { kind: "Count", value: visibleEntries.length, unit: "entry" };
   const connectionsComposerController = useConnectionsComposerController({
     scheme: "library",
     id,
@@ -2693,11 +2690,7 @@ export default function LibraryPaneBody() {
             },
           }
         : undefined,
-    header: {
-      kind: "section",
-      folio: entryFolio,
-      pending: loading || !entryCollectionComplete,
-    },
+    header: { kind: "Section", meta: entryMeta },
   });
 
   const visibleRowSignature = filteredEntries
@@ -3330,7 +3323,6 @@ export default function LibraryPaneBody() {
   return (
     <>
       <PaneSurface
-        opener={<SectionOpener heading={entriesAccessibleName} scale="title" />}
         state={
           error || authorityFeedback || entryReconciliationNotice ? (
             <>

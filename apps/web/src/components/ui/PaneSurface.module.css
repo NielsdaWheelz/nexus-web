@@ -8,7 +8,6 @@
   padding: var(--space-4);
 }
 
-.opener,
 .brief,
 .toolbar,
 .state,
@@ -18,11 +17,14 @@
   min-width: 0;
 }
 
-/* rule→toolbar air: the flex column gap is var(--space-4); the opener adds
-   var(--space-2) so the section opener's hairline rule clears the toolbar by
-   var(--space-6) (§7.8 binding (g)) without widening the other slot gaps. */
-.opener {
-  margin-block-end: var(--space-2);
+/* The standfirst voice the deleted section opener owned: a measure-constrained
+   serif lede that orients the surface without competing with its chrome title. */
+.brief {
+  max-width: 60ch;
+  color: var(--ink-muted);
+  font-family: var(--font-serif);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
 }
 
 .toolbar,

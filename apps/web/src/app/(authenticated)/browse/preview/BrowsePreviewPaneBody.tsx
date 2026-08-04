@@ -16,7 +16,6 @@ import Button from "@/components/ui/Button";
 import MediaImage from "@/components/ui/MediaImage";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { CursorPage } from "@/lib/api/useCursorPagination";
@@ -257,20 +256,16 @@ export default function BrowsePreviewPaneBody() {
   useSetPaneLabel(preview?.title ?? null);
   usePanePrimaryChrome({
     header:
-      decoded.kind === "Invalid"
-        ? {
-            kind: "resource",
-            resource: { status: "failed", title: "Invalid preview link" },
-          }
+      decoded.kind === "Invalid" || resource.status === "error"
+        ? { kind: "Resource", resource: { status: "Failed" } }
         : preview
           ? {
-              kind: "resource",
+              kind: "Resource",
               resource: {
-                status: "ready",
-                title: preview.title,
+                status: "Ready",
                 creditGroups: [
                   {
-                    kind: "role",
+                    kind: "Role",
                     label: "Source",
                     credits: [
                       {
@@ -298,7 +293,6 @@ export default function BrowsePreviewPaneBody() {
   if (decoded.kind === "Invalid") {
     return (
       <PaneSurface
-        opener={<SectionOpener heading="Invalid preview link" scale="title" />}
         state={
           <FeedbackNotice
             content={{
@@ -327,7 +321,6 @@ export default function BrowsePreviewPaneBody() {
     const failure = browsePreviewErrorMessage(resource.error);
     return (
       <PaneSurface
-        opener={<SectionOpener heading={failure.content.title} scale="title" />}
         state={
           <FeedbackNotice
             content={failure.content}
@@ -406,9 +399,7 @@ export default function BrowsePreviewPaneBody() {
   );
 
   return (
-    <PaneSurface
-      opener={<SectionOpener heading={resource.data.title} scale="title" />}
-    >
+    <PaneSurface>
       {resource.data.kind === "Podcast" ? (
         <>
           <PodcastOverview

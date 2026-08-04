@@ -24,7 +24,7 @@ import LecternPaneBody from "./LecternPaneBody";
  * risks that only exist there: a view sort that silently rewrites the authored
  * order through `SetOrder`, a drag affordance that survives a filtered or
  * sorted view (the server rejects anything but the exact visible permutation),
- * and a folio that starts describing the local subset.
+ * and published header metadata that starts describing the local subset.
  */
 
 const SHOW_TITLE = "The Signal Room";
@@ -284,7 +284,7 @@ describe("Lectern pane refinement", () => {
     expect(sortControl()).toHaveValue("added-newest");
   });
 
-  it("matches the local filter on the title and the presented subtitle while the folio keeps counting the whole snapshot", async () => {
+  it("matches the local filter on the title and the presented subtitle while the published count keeps describing the whole snapshot", async () => {
     stubLecternNetwork();
     const { chrome } = renderLectern();
     await waitFor(() => expect(renderedTitles()).toHaveLength(3));
@@ -293,7 +293,7 @@ describe("Lectern pane refinement", () => {
 
     await waitFor(() => expect(renderedTitles()).toEqual([RUMOR]));
     expect(chrome.current?.header).toMatchObject({
-      folio: { kind: "count", value: 3, unit: "item" },
+      meta: { kind: "Count", value: 3, unit: "item" },
     });
 
     await userEvent.clear(filterInput());

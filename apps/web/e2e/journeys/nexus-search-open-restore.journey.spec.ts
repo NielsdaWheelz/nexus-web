@@ -11,6 +11,11 @@ import { pageRequest } from "../request";
 
 test.use({ journeyId: "nexus-search-open-restore" });
 
+// A "no other pane may write the browser title" claim needs an observation
+// window. This one is bounded to ~30 committed frames and samples real state
+// every frame; it never sleeps and never waits for a deadline to pass.
+const TITLE_OBSERVATION_FRAMES = 30;
+
 interface WorkspacePane {
   id: string;
   currentVisit: { id: string; href: string };
@@ -55,6 +60,53 @@ function workspacePaneButton(page: Page, name: RegExp) {
     .getByRole("button", { name });
 }
 
+/** Every distinct browser title committed across a bounded window of frames. */
+async function observedDocumentTitles(
+  page: Page,
+  frames: number,
+): Promise<string[]> {
+  return page.evaluate(async (count) => {
+    const observed: string[] = [];
+    for (let frame = 0; frame < count; frame += 1) {
+      if (observed[observed.length - 1] !== document.title) {
+        observed.push(document.title);
+      }
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+    }
+    return observed;
+  }, frames);
+}
+
+/**
+ * The accessible name of the focused pane landmark, or a description of the
+ * element that actually holds focus so a failure names where focus escaped to.
+ */
+async function focusedPaneLandmarkName(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const focused = document.activeElement;
+    if (!(focused instanceof HTMLElement)) {
+      return "focus is on no element";
+    }
+    if (focused.dataset.paneFocusLandmark !== "true") {
+      const identity = focused
+        .getAttributeNames()
+        .filter((name) => name.startsWith("data-"))
+        .sort()
+        .join(" ");
+      return `focus is on <${focused.tagName.toLowerCase()} ${identity}>, which is not a pane landmark`;
+    }
+    return (focused.getAttribute("aria-labelledby") ?? "")
+      .split(/\s+/)
+      .filter((id) => id.length > 0)
+      .map((id) => document.getElementById(id)?.textContent ?? "")
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+  });
+}
+
 test("Nexus finds and opens a place whose workspace survives a fresh document", async ({
   page,
   journeyUser,
@@ -89,6 +141,20 @@ test("Nexus finds and opens a place whose workspace survives a fresh document", 
   await expect(workspacePaneButton(page, /^Search\b/)).toBeVisible();
   await expect(page).toHaveURL(/\/notes$/);
 
+  await expect(
+    page,
+    `Restored workspace for device ${deviceId} did not project its active Notes pane as the browser title "Notes · Nexus".`,
+  ).toHaveTitle("Notes · Nexus", { timeout: 15_000 });
+
+  await expect(
+    page.getByRole("region", { name: "Search", exact: true }),
+    `Device ${deviceId} did not mount its inactive Search pane, so the browser-title race with the active Notes pane could not be observed.`,
+  ).toBeVisible({ timeout: 15_000 });
+  expect(
+    await observedDocumentTitles(page, TITLE_OBSERVATION_FRAMES),
+    `Across ${TITLE_OBSERVATION_FRAMES} frames the browser title for device ${deviceId} must stay exactly "Notes · Nexus": only the active pane may write it, and the visible but inactive Search pane must never race it.`,
+  ).toEqual(["Notes · Nexus"]);
+
   await page
     .getByRole("button", { name: "Search or ask anything" })
     .click();
@@ -118,6 +184,11 @@ test("Nexus finds and opens a place whose workspace survives a fresh document", 
   const statsUrl = new URL(page.url());
   const statsHref = `${statsUrl.pathname}${statsUrl.search}`;
 
+  await expect(
+    page,
+    `Opening Stats in device ${deviceId}'s active pane did not move the browser title to "Stats · Nexus".`,
+  ).toHaveTitle("Stats · Nexus", { timeout: 15_000 });
+
   await expect
     .poll(
       async () => {
@@ -146,4 +217,63 @@ test("Nexus finds and opens a place whose workspace survives a fresh document", 
     "page",
   );
   await expect(workspacePaneButton(page, /^Search\b/)).toBeVisible();
+
+  await expect(
+    page,
+    `Fresh document for device ${deviceId} restored the Stats pane but not its browser title "Stats · Nexus".`,
+  ).toHaveTitle("Stats · Nexus", { timeout: 15_000 });
+
+  // Leave and re-enter the Stats pane by keyboard. Stats publishes no body route
+  // heading and holds no focusable row, so the return has nothing to fall back
+  // to except the pane landmark named by the canonical title.
+  await page
+    .getByRole("button", { name: "Search or ask anything" })
+    .click();
+  await expect(input).toBeFocused();
+  await input.fill("notes");
+  const notes = nexus.getByRole("gridcell", { name: /^Notes\b/ });
+  await expect(
+    notes,
+    `Nexus did not project the canonical Notes place for workspace device ${deviceId}.`,
+  ).toBeVisible();
+  await expect
+    .poll(
+      async () => {
+        const [activeDescendant, notesCellId] = await Promise.all([
+          input.getAttribute("aria-activedescendant"),
+          notes.getAttribute("id"),
+        ]);
+        return activeDescendant === notesCellId
+          ? "Notes"
+          : `active descendant ${activeDescendant}`;
+      },
+      {
+        message: `Nexus did not make the Notes place the keyboard-active entry for device ${deviceId}, so pressing Enter would leave the Stats pane for a different place.`,
+        timeout: 10_000,
+      },
+    )
+    .toBe("Notes");
+  await input.press("Enter");
+  await expect(
+    page,
+    `Keyboard activation in Nexus did not leave ${statsHref} for the Notes place in device ${deviceId}'s active pane.`,
+  ).toHaveURL(/\/notes$/);
+  await expect(
+    page,
+    `Navigating device ${deviceId}'s active pane to Notes did not move the browser title to "Notes · Nexus".`,
+  ).toHaveTitle("Notes · Nexus", { timeout: 15_000 });
+
+  await page
+    .getByRole("button", { name: "Go back in this pane", disabled: false })
+    .press("Enter");
+  await expect(
+    page,
+    `Keyboard return in device ${deviceId}'s active pane did not restore ${statsHref}.`,
+  ).toHaveURL(statsUrl.toString());
+  await expect
+    .poll(() => focusedPaneLandmarkName(page), {
+      message: `Keyboard return to ${statsHref} in device ${deviceId}'s workspace must hand focus to that pane's landmark, whose accessible name is the canonical title "Stats".`,
+      timeout: 15_000,
+    })
+    .toBe("Stats");
 });

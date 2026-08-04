@@ -5,11 +5,6 @@ import type { ContributorCredit, MediaAuthorCredit } from "@/lib/contributors/ty
 import type { PaneResourceHeaderPublication } from "@/lib/panes/paneHeaderModel";
 import { isApiError } from "@/lib/api/client";
 
-export interface Media {
-  title: string;
-  contributors: ContributorCredit[];
-}
-
 type CanonicalMediaRefetchFailure = "unavailable" | "retain-ready";
 
 export function classifyCanonicalMediaRefetchFailure(
@@ -47,17 +42,16 @@ export function mapMediaAuthorCredits(
   return rows;
 }
 
-export function buildMediaResourceHeader(
-  media: Pick<Media, "title" | "contributors">,
-): PaneResourceHeaderPublication {
+export function buildMediaResourceHeader(media: {
+  readonly contributors: readonly ContributorCredit[];
+}): PaneResourceHeaderPublication {
   return {
-    status: "ready",
-    title: media.title,
+    status: "Ready",
     creditGroups: groupContributorCredits(media.contributors).map((group) =>
       group.role === "author"
-        ? { kind: "authors", credits: group.credits }
+        ? { kind: "Authors", credits: group.credits }
         : {
-            kind: "role",
+            kind: "Role",
             label: group.label,
             credits: group.credits,
           },

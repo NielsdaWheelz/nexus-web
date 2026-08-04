@@ -10,6 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 import Link from "next/link";
+import { Compass } from "lucide-react";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import {
   decodeCollectionPage,
@@ -22,12 +23,10 @@ import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
-import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
@@ -76,9 +75,22 @@ import {
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
 import type { PodcastRefreshResult } from "@/lib/podcasts/types";
 import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
+import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import styles from "./page.module.css";
 
 const PAGE_SIZE = 100;
+
+// Module-level so the published descriptor keeps one identity: the chrome
+// republishes whenever an action's icon element changes.
+const PODCASTS_ACTIONS: readonly PaneHeaderAction[] = [
+  {
+    kind: "link",
+    id: "Podcasts.Browse",
+    label: "Browse",
+    icon: <Compass size={16} aria-hidden="true" />,
+    href: "/browse?kind=Podcast",
+  },
+];
 
 type PodcastsLoadOperation = "Subscriptions" | "Libraries" | "Revalidate";
 
@@ -919,12 +931,23 @@ export default function PodcastsPaneBody() {
   );
   usePanePrimaryChrome({
     header: {
-      kind: "section",
-      folio:
-        finalCount === null
-          ? { kind: "none" }
-          : { kind: "count", value: finalCount, unit: "show" },
-      pending: loading || exhaustion.kind !== "Complete",
+      kind: "Section",
+      meta:
+        finalCount === null || loading || exhaustion.kind !== "Complete"
+          ? { kind: "Pending" }
+          : { kind: "Count", value: finalCount, unit: "show" },
+    },
+    actions: PODCASTS_ACTIONS,
+    menu: {
+      kind: "FlatMenu",
+      actions: [
+        {
+          kind: "link",
+          id: "Podcasts.ExportOpml",
+          label: "Export OPML",
+          href: "/api/podcasts/export/opml",
+        },
+      ],
     },
     search: subscriptionFilterRows.publication,
     refresh: {
@@ -1002,29 +1025,6 @@ export default function PodcastsPaneBody() {
           rows={collectionRows}
           status={loading ? "loading" : "ready"}
           ariaLabel="Followed podcasts"
-          opener={
-            <SectionOpener
-              heading="Podcasts"
-              actions={
-                <>
-                  <Button asChild variant="primary" size="md">
-                    <Link href="/browse?kind=Podcast">Browse</Link>
-                  </Button>
-                  <ActionMenu
-                    label="Podcast page actions"
-                    options={[
-                      {
-                        kind: "link",
-                        id: "export-opml",
-                        label: "Export OPML",
-                        href: "/api/podcasts/export/opml",
-                      },
-                    ]}
-                  />
-                </>
-              }
-            />
-          }
           rowChangePresentation={{
             kind: "ImmediateOnKeyChange",
             key: subscriptionFilterRows.query.trim(),

@@ -43,7 +43,6 @@ export default function CollectionView({
   rows,
   status,
   ariaLabel,
-  opener,
   toolbar,
   notice,
   error,
@@ -62,7 +61,6 @@ export default function CollectionView({
   readonly rows: readonly CollectionRowView[];
   readonly status: "loading" | "error" | "ready";
   readonly ariaLabel: string;
-  readonly opener?: ReactNode;
   readonly toolbar?: ReactNode;
   readonly notice?: ReactNode;
   readonly error?: ReactNode;
@@ -198,7 +196,6 @@ export default function CollectionView({
     >
       {surface ? (
         <PaneSurface
-          opener={opener}
           toolbar={toolbar}
           state={notice}
           footer={status === "ready" ? footer : undefined}
@@ -207,7 +204,6 @@ export default function CollectionView({
         </PaneSurface>
       ) : (
         <>
-          {opener}
           {toolbar}
           {notice}
           {body}

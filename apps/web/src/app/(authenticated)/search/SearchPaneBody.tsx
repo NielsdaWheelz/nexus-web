@@ -26,7 +26,6 @@ import Input from "@/components/ui/Input";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import ActionMenu from "@/components/ui/ActionMenu";
 import CollectionView from "@/components/collections/CollectionView";
-import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import ContributorFilter from "@/components/contributors/ContributorFilter";
 import KindChips from "@/components/search/KindChips";
@@ -451,12 +450,12 @@ export default function SearchPaneBody() {
 
   usePanePrimaryChrome({
     header: {
-      kind: "section",
-      folio:
-        rows.length > 0
-          ? { kind: "count", value: rows.length, unit: "result" }
-          : { kind: "none" },
-      pending: searching,
+      kind: "Section",
+      meta: searching
+        ? { kind: "Pending" }
+        : rows.length > 0
+          ? { kind: "Count", value: rows.length, unit: "result" }
+          : { kind: "None" },
     },
   });
 
@@ -508,7 +507,6 @@ export default function SearchPaneBody() {
       rows={rows}
       status="ready"
       ariaLabel="Search results"
-      opener={<SectionOpener heading="Search" />}
       toolbar={
         <div className={styles.searchForm}>
           <Input

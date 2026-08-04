@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -27,7 +27,6 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import SectionOpener from "@/components/ui/SectionOpener";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
@@ -62,6 +61,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import type { ConversationsPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
+import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { useStringIdSet } from "@/lib/useStringIdSet";
@@ -78,6 +78,17 @@ const CONVERSATIONS_VISIT_DATA = definePaneVisitDataKey<CommittedChatsView>(
 );
 const NO_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
 const ZERO_REVISION = 0 as CollectionRevision;
+// Module-level so the published descriptor keeps one identity: the chrome
+// republishes whenever an action's icon element changes.
+const NEW_CHAT_ACTIONS: readonly PaneHeaderAction[] = [
+  {
+    kind: "link",
+    id: "Conversations.New",
+    label: "New chat",
+    icon: <Plus size={16} aria-hidden="true" />,
+    href: "/conversations/new",
+  },
+];
 
 function conversationsErrorMessage(
   error: ApiError,
@@ -689,17 +700,17 @@ export default function ConversationsPaneBody() {
       sourceKey: "Conversations:mine",
       execute: executeRefresh,
     },
+    actions: NEW_CHAT_ACTIONS,
     header: {
-      kind: "section",
-      folio:
-        finalCount === null || invalidView
-          ? { kind: "none" }
-          : { kind: "count", value: finalCount, unit: "chat" },
-      pending:
-        !invalidView &&
-        (status === "loading" ||
-          requestsFirstPage ||
-          exhaustion.kind !== "Complete"),
+      kind: "Section",
+      meta: invalidView
+        ? { kind: "None" }
+        : finalCount === null ||
+            status === "loading" ||
+            requestsFirstPage ||
+            exhaustion.kind !== "Complete"
+          ? { kind: "Pending" }
+          : { kind: "Count", value: finalCount, unit: "chat" },
     },
   });
 
@@ -738,16 +749,6 @@ export default function ConversationsPaneBody() {
           key: filterQuery.trim(),
         }}
         collectionBusy={exhaustion.kind === "Draining"}
-        opener={
-          <SectionOpener
-            heading="Chats"
-            actions={
-              <Button asChild size="lg">
-                <Link href="/conversations/new">New chat</Link>
-              </Button>
-            }
-          />
-        }
         notice={
           controller !== null && feedback ? (
             <FeedbackNotice content={feedback} announcement="Assertive" />
@@ -777,12 +778,14 @@ export default function ConversationsPaneBody() {
             />
           ) : (
             <FeedbackNotice
-              content={{
-                tone: "Neutral",
-                title: "No chats yet.",
-                message: "Choose New chat to begin.",
-              }}
+              content={{ tone: "Neutral", title: "No chats yet." }}
               announcement="None"
+              actions={[
+                {
+                  label: "New chat",
+                  onClick: () => runtime.router.push("/conversations/new"),
+                },
+              ]}
             />
           )
         }

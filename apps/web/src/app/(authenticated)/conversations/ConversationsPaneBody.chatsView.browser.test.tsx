@@ -160,9 +160,9 @@ function ChatsPane({
                     paneId="pane"
                     routeKey={routeKey}
                     routeHeader={{
-                      kind: "section",
+                      kind: "Section",
                       destinationId: "chats",
-                      defaultFolio: "none",
+                      context: "None",
                     }}
                     label="Chats"
                     returnMementoEnabled

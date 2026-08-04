@@ -497,6 +497,45 @@ def test_changed_web_static_and_kernel_use_final_suffix_owner(tmp_path: Path) ->
     ]
 
 
+def test_changed_web_stylesheets_reach_the_token_check_and_never_eslint(
+    tmp_path: Path,
+) -> None:
+    # The web ESLint config matches no CSS file, so a stylesheet handed to it is
+    # an unmatched-file warning that `--max-warnings 0` reports as a failure —
+    # which would make every changed stylesheet fail its own static gate.
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    _write(tmp_path / "apps/web/src/components/ui/Card.tsx", "export {};\n")
+    _write(tmp_path / "apps/web/src/components/ui/Card.module.css", ".card {\n}\n")
+    environment = _stub_tools(tmp_path, "bun")
+    context = CapabilityContext(
+        tmp_path,
+        Workflow.CHANGED,
+        (
+            Selection(
+                "apps/web/src/components/ui/Card.module.css",
+                Capability.STATIC_WEB,
+                SelectionReason.FRONTEND_RELATED,
+            ),
+            Selection(
+                "apps/web/src/components/ui/Card.tsx",
+                Capability.STATIC_WEB,
+                SelectionReason.FRONTEND_RELATED,
+            ),
+        ),
+    )
+
+    assert (
+        run_capability(context, Capability.STATIC_WEB, environment).evidence.status
+        is RunStatus.PASS
+    )
+
+    assert [command["argv"] for command in _commands(tmp_path)] == [
+        ["run", "lint:css-tokens"],
+        ["run", "eslint", "--max-warnings", "0", "./src/components/ui/Card.tsx"],
+    ]
+
+
 def test_changed_static_treats_a_deleted_source_as_no_remaining_input(tmp_path: Path) -> None:
     _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
     (tmp_path / "python/.venv").mkdir()

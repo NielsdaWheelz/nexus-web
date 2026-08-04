@@ -9,7 +9,6 @@ import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SectionOpener from "@/components/ui/SectionOpener";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useResource } from "@/lib/api/useResource";
 import {
@@ -156,7 +155,7 @@ export default function SettingsIdentitiesPaneBody() {
   if (defect !== null) throw defect.error;
 
   return (
-    <PaneSurface opener={<SectionOpener heading="Linked Identities" />}>
+    <PaneSurface>
       <PaneSection>
         <div className={styles.content}>
         {loading && (

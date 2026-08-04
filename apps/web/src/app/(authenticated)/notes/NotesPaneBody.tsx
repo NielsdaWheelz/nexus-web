@@ -10,7 +10,6 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import CollectionView from "@/components/collections/CollectionView";
-import SectionOpener from "@/components/ui/SectionOpener";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { notePagesResource } from "@/lib/api/resource";
@@ -341,13 +340,14 @@ export default function NotesPaneBody() {
   usePanePrimaryChrome({
     search,
     header: {
-      kind: "section",
-      // The folio describes the exhaustive committed view, never the subset.
-      folio:
-        committed !== null && !invalidView
-          ? { kind: "count", value: pages.length, unit: "page" }
-          : { kind: "none" },
-      pending: pagesResource.status === "loading",
+      kind: "Section",
+      // The metadata describes the exhaustive committed view, never the subset.
+      meta:
+        pagesResource.status === "loading"
+          ? { kind: "Pending" }
+          : committed !== null && !invalidView
+            ? { kind: "Count", value: pages.length, unit: "page" }
+            : { kind: "None" },
     },
   });
 
@@ -498,7 +498,6 @@ export default function NotesPaneBody() {
         kind: "ImmediateOnKeyChange",
         key: filterQuery.trim(),
       }}
-      opener={<SectionOpener heading="Notes" />}
       notice={
         visibleFeedback ? (
           <FeedbackNotice

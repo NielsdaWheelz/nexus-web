@@ -22,6 +22,7 @@ import {
   usePaneReturnReady,
   usePaneRuntime,
   usePaneSearchParams,
+  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
@@ -777,7 +778,7 @@ function YearReading({ data, year }: { data: ConsumptionStats; year: number }) {
         >
           {data.activity.media.rows[0]?.title.slice(0, 1) ?? ""}
         </div>
-        <h1>{year}</h1>
+        <h2>{year}</h2>
         <strong>{duration(data.activity.totals.activeMs)}</strong>
         <span>observed active time</span>
       </header>
@@ -862,6 +863,7 @@ export default function StatsPaneBody() {
     [],
   );
   const { state, setState } = usePaneUrlState<StatsUrlState>(codec);
+  useSetPaneLabel(state.view === "year" ? "Year in Reading" : "Stats");
   const paneSearchParams = usePaneSearchParams();
   const rawSearch = paneSearchParams.toString();
   const canonicalSearch = encodeStatsUrlState(
@@ -997,11 +999,6 @@ export default function StatsPaneBody() {
               ? "A factual annual record"
               : "Consumption activity"}
           </p>
-          <h1>
-            {state.view === "year"
-              ? "Year in Reading"
-              : "Reading, listening, and video-pane time"}
-          </h1>
           <p className={styles.timeZone}>
             Local time · {hydratedTimeZone ?? "detecting your time zone"}
           </p>

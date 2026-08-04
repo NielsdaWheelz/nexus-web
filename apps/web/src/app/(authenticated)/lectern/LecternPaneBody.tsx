@@ -10,7 +10,6 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SectionOpener from "@/components/ui/SectionOpener";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import {
@@ -494,10 +493,12 @@ export default function LecternPaneBody() {
   usePanePrimaryChrome({
     search,
     header: {
-      kind: "section",
-      // The folio describes the exhaustive Lectern, never the local subset.
-      folio: { kind: "count", value: items.length, unit: "item" },
-      pending: queueStatus === "loading",
+      kind: "Section",
+      // The metadata describes the exhaustive Lectern, never the local subset.
+      meta:
+        queueStatus === "loading"
+          ? { kind: "Pending" }
+          : { kind: "Count", value: items.length, unit: "item" },
     },
   });
 
@@ -557,7 +558,6 @@ export default function LecternPaneBody() {
 
   return (
     <PaneSurface
-      opener={<SectionOpener heading="Lectern" />}
       state={
         feedback ? (
           <FeedbackNotice content={feedback} announcement="Assertive" />

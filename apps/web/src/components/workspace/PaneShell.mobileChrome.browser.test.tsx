@@ -31,8 +31,7 @@ import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
 const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 const noop = () => {};
 
-function Reader() {
-  const [title, setTitle] = useState("Document title");
+function Reader({ onUpdateTitle }: { onUpdateTitle: () => void }) {
   const visibleLocks = useMobileChromeVisibleLocks();
   const releaseFindLockRef = useRef<(() => void) | null>(null);
   const openFind = useCallback(() => {
@@ -45,10 +44,9 @@ function Reader() {
   useEffect(() => dismissFind, [dismissFind]);
   usePanePrimaryChrome({
     header: {
-      kind: "resource",
+      kind: "Resource",
       resource: {
-        status: "ready",
-        title,
+        status: "Ready",
         creditGroups: [],
       },
     },
@@ -90,10 +88,7 @@ function Reader() {
     >
       <div style={{ height: 1_200 }}>
         Reader document
-        <button
-          type="button"
-          onClick={() => setTitle("Updated document title")}
-        >
+        <button type="button" onClick={onUpdateTitle}>
           Update reader title
         </button>
       </div>
@@ -143,6 +138,77 @@ describe("PaneShell mobile Find chrome composition", () => {
     let paneShellRenders = 0;
     let nexusRenders = 0;
     let readerRenders = 0;
+    // The canonical title is the pane label, so the reader's title change is
+    // published where the workspace publishes it — through `label`.
+    function PaneUnderTest() {
+      const [title, setTitle] = useState("Document title");
+      return (
+        <PaneRuntimeProvider
+          paneId="pane-a"
+          visitId={TEST_VISIT_ID}
+          isActive
+          href="/media/document-a"
+          routeId="media"
+          routeKey="media:/media/document-a"
+          canGoBack={false}
+          canGoForward={false}
+          onNavigatePane={noop}
+          onReplacePane={noop}
+          onActivateWorkspaceTarget={() => ({
+            kind: "CreatedPane",
+            paneId: "pane-b",
+          })}
+          onGoBackPane={noop}
+          onGoForwardPane={noop}
+        >
+          <div data-pane-id="pane-a" data-active="true">
+            <Profiler
+              id="PaneShell"
+              onRender={() => {
+                paneShellRenders += 1;
+              }}
+            >
+              <PaneShell
+                paneId="pane-a"
+                routeKey="media:/media/document-a"
+                routeHeader={{
+                  kind: "Resource",
+                  pendingLabel: "Loading document…",
+                }}
+                routeShareIdentity={null}
+                label={title}
+                returnMementoEnabled={false}
+                sizing={{
+                  primaryWidthPx: 390,
+                  primaryMinWidthPx: 320,
+                  primaryMaxWidthPx: 1_400,
+                  renderedPrimarySlotWidthPx: 390,
+                  renderedPrimarySlotMinWidthPx: 320,
+                  renderedPrimarySlotMaxWidthPx: 1_400,
+                  fixedChromeWidthPx: 0,
+                  storedWidthCorrectionPx: null,
+                }}
+                bodyMode="document"
+                onResizePrimaryPane={noop}
+                isActive
+                isMobile
+              >
+                <Profiler
+                  id="Reader"
+                  onRender={() => {
+                    readerRenders += 1;
+                  }}
+                >
+                  <Reader
+                    onUpdateTitle={() => setTitle("Updated document title")}
+                  />
+                </Profiler>
+              </PaneShell>
+            </Profiler>
+          </div>
+        </PaneRuntimeProvider>
+      );
+    }
     render(
       withRenderEnvironment(
         <MobileChromeProvider>
@@ -170,68 +236,7 @@ describe("PaneShell mobile Find chrome composition", () => {
                       onOpen={noop}
                     />
                   </Profiler>
-                  <PaneRuntimeProvider
-                    paneId="pane-a"
-                    visitId={TEST_VISIT_ID}
-                    isActive
-                    href="/media/document-a"
-                    routeId="media"
-                    routeKey="media:/media/document-a"
-                    canGoBack={false}
-                    canGoForward={false}
-                    onNavigatePane={noop}
-                    onReplacePane={noop}
-                    onActivateWorkspaceTarget={() => ({
-                      kind: "CreatedPane",
-                      paneId: "pane-b",
-                    })}
-                    onGoBackPane={noop}
-                    onGoForwardPane={noop}
-                  >
-                    <div data-pane-id="pane-a" data-active="true">
-                      <Profiler
-                        id="PaneShell"
-                        onRender={() => {
-                          paneShellRenders += 1;
-                        }}
-                      >
-                        <PaneShell
-                          paneId="pane-a"
-                          routeKey="media:/media/document-a"
-                          routeHeader={{
-                            kind: "resource",
-                            pendingLabel: "Loading document…",
-                          }}
-                          routeShareIdentity={null}
-                          label="Document"
-                          returnMementoEnabled={false}
-                          sizing={{
-                            primaryWidthPx: 390,
-                            primaryMinWidthPx: 320,
-                            primaryMaxWidthPx: 1_400,
-                            renderedPrimarySlotWidthPx: 390,
-                            renderedPrimarySlotMinWidthPx: 320,
-                            renderedPrimarySlotMaxWidthPx: 1_400,
-                            fixedChromeWidthPx: 0,
-                            storedWidthCorrectionPx: null,
-                          }}
-                          bodyMode="document"
-                          onResizePrimaryPane={noop}
-                          isActive
-                          isMobile
-                        >
-                          <Profiler
-                            id="Reader"
-                            onRender={() => {
-                              readerRenders += 1;
-                            }}
-                          >
-                            <Reader />
-                          </Profiler>
-                        </PaneShell>
-                      </Profiler>
-                    </div>
-                  </PaneRuntimeProvider>
+                  <PaneUnderTest />
                 </PaneReturnMementoProvider>
               </LibraryPlacementControllerProvider>
             </ShareControllerProvider>

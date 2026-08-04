@@ -204,9 +204,9 @@ function PodcastDetailPane({
                         paneId="pane"
                         routeKey={routeKey}
                         routeHeader={{
-                          kind: "section",
+                          kind: "Section",
                           destinationId: "podcasts",
-                          defaultFolio: "pane-label",
+                          context: "Destination",
                         }}
                         label="Podcast"
                         returnMementoEnabled

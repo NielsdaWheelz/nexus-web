@@ -197,9 +197,9 @@ function AuthorPane({
                     paneId="pane"
                     routeKey={routeKey}
                     routeHeader={{
-                      kind: "section",
+                      kind: "Section",
                       destinationId: "authors",
-                      defaultFolio: "none",
+                      context: "Destination",
                     }}
                     label="Ada Lovelace"
                     returnMementoEnabled
