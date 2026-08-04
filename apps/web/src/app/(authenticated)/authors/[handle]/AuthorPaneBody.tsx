@@ -10,6 +10,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { PenLine } from "lucide-react";
 import Button from "@/components/ui/Button";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
@@ -26,7 +27,11 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { contributorResource } from "@/lib/api/resource";
+import {
+  AUTHOR_WORKS_LIMIT,
+  contributorResource,
+  contributorWorksResource,
+} from "@/lib/api/resource";
 import type {
   CollectionCursor,
   CollectionPage,
@@ -46,6 +51,18 @@ import type {
   ContributorDetail,
   ContributorWorkItem,
 } from "@/lib/contributors/types";
+import {
+  AUTHOR_WORKS_SORT_OPTION_IDS,
+  CANONICAL_AUTHOR_WORKS_VIEW,
+  authorWorksSortOptionLabel,
+  authorWorksSortOptionOf,
+  authorWorksViewForSortOption,
+  decodeAuthorWorksView,
+  encodeAuthorWorksView,
+  type AuthorWorksSortOptionId,
+  type AuthorWorksView,
+  type DecodedAuthorWorksView,
+} from "@/lib/contributors/workView";
 import { presentContributorWork } from "@/lib/collections/presenters/presentContributorWork";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
@@ -66,19 +83,40 @@ import {
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
+import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
+import SelectField from "@/components/ui/SelectField";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { isAbortError } from "@/lib/errors";
 import styles from "./page.module.css";
+
+const RENAME_AUTHOR_ICON = <PenLine size={16} aria-hidden="true" />;
 
 type AuthorConnectionsResource =
   | { kind: "Ready"; ref: { scheme: "contributor"; id: string } }
   | { kind: "Loading" }
   | { kind: "Unavailable" };
 
+/** The author detail plus the works page committed as one exact works view. */
+interface CommittedAuthorWorks extends AuthorPaneSeed {
+  readonly view: AuthorWorksView;
+}
+
 const AUTHOR_VISIT_DATA =
-  definePaneVisitDataKey<AuthorPaneSeed>("Author.Works");
+  definePaneVisitDataKey<CommittedAuthorWorks>("Author.Works");
 const NO_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
 const ZERO_REVISION = 0 as CollectionRevision;
+
+// The one code that turns a works fetch failure into the "Invalid works view"
+// terminal state: the backend rejects a bad view/cursor with these codes.
+function isInvalidViewError(error: unknown): boolean {
+  return (
+    isApiError(error) &&
+    (error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_CURSOR")
+  );
+}
 
 function authorLoadErrorMessage(error: unknown): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
@@ -178,95 +216,225 @@ function resolveAuthorConnectionsResource(
 
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
+  if (!handle) {
+    throw new Error("author route requires a handle");
+  }
   const paneRuntime = usePaneRuntime();
   const runtime = requirePaneRuntime(paneRuntime, "AuthorPaneBody");
   const isPaneActive = usePaneIsActive();
   const activateTarget = runtime.activateTarget;
-  const committedSnapshotRef = useRef<AuthorPaneSeed | null>(null);
+  // The pane URL owns the works view through a strict, total codec; `view` is
+  // null only for an Invalid URL, a terminal, user-recoverable state.
+  const worksViewCodec = useMemo(
+    () => ({
+      basePath: `/authors/${encodeURIComponent(handle)}`,
+      decode: decodeAuthorWorksView,
+      encode: (
+        decoded: DecodedAuthorWorksView,
+        current: URLSearchParams,
+      ): URLSearchParams =>
+        encodeAuthorWorksView(
+          decoded.kind === "Valid" ? decoded.view : CANONICAL_AUTHOR_WORKS_VIEW,
+          current,
+        ),
+      replaceOptions: {
+        viewTransition: { kind: "collection-reflow" as const },
+      },
+    }),
+    [handle],
+  );
+  const { state: decodedView, setState: setDecodedView } =
+    usePaneUrlState(worksViewCodec);
+  const view = decodedView.kind === "Valid" ? decodedView.view : null;
+  // Set when the backend rejects the requested view; cleared whenever another
+  // view is requested.
+  const [viewInvalid, setViewInvalid] = useState(false);
+  const invalidView = decodedView.kind === "Invalid" || viewInvalid;
+  const worksRegionRef = useRef<HTMLElement | null>(null);
+  const committedSnapshotRef = useRef<CommittedAuthorWorks | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(AUTHOR_VISIT_DATA, captureCommitted);
-  if (committedSnapshotRef.current === null && restored !== null) {
-    committedSnapshotRef.current = restored;
-  }
-  const allowResourceAdoptionRef = useRef(restored === null);
+  const initialRestored = useRef(restored).current;
   const clearAllVisitData = useClearAllPaneVisitData();
   const [firstPageVersion, setFirstPageVersion] = useState(0);
   const firstPageVersionRef = useRef(0);
   const pendingAuthorRevalidationRef =
     useRef<PendingAuthorRevalidation | null>(null);
   const completedAuthorRevalidationVersionRef = useRef<number | null>(null);
-  const [refreshingWorks, setRefreshingWorks] = useState(false);
   const [chainEpoch, setChainEpoch] = useState(0);
-  const initialAuthor = useResource<AuthorPaneSeed>({
-    cacheKey:
-      handle && (restored === null || firstPageVersion > 0)
-        ? firstPageVersion === 0
-          ? contributorResource.cacheKey({ handle })
-          : `${contributorResource.cacheKey({ handle })}:collection:${firstPageVersion}`
-        : null,
-    load: (signal) =>
-      paneResourceLoaders.author!.load(clientResourceFetcher(signal), {
-        handle: handle!,
-      }) as Promise<AuthorPaneSeed>,
-  });
-
-  const [data, setData] = useState<AuthorPaneSeed | null>(restored);
+  const [data, setData] = useState<CommittedAuthorWorks | null>(initialRestored);
+  if (
+    committedSnapshotRef.current === null &&
+    initialRestored !== null &&
+    data === initialRestored
+  ) {
+    committedSnapshotRef.current = initialRestored;
+  }
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
+  const capturePaneScroll = usePaneScrollRetention(worksRegionRef, data);
+  // Set by a refresh so the already-committed view refetches once under a new
+  // request identity; cleared by the commit that answers it. A view change needs
+  // no flag — the requested and committed identities differ on their own.
+  const refreshPendingRef = useRef(false);
+  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
+  // Set before a view replacement the user initiated from the sort control, so
+  // the commit that answers it returns focus there.
+  const pendingCommitFocusRef = useRef(false);
+  const focusPendingSortControl = useCallback(() => {
+    if (!pendingCommitFocusRef.current) return;
+    pendingCommitFocusRef.current = false;
+    const element = sortSelectRef.current;
+    if (element === null) return;
+    requestAnimationFrame(() => element.focus());
+  }, []);
+  const setView = useCallback(
+    (next: AuthorWorksView) => {
+      capturePaneScroll();
+      committedSnapshotRef.current = null;
+      setDecodedView({ kind: "Valid", view: next });
+    },
+    [capturePaneScroll, setDecodedView],
+  );
+  const renameTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const openRename = useCallback(({ triggerEl }: ActionSelectDetail) => {
+    renameTriggerRef.current = triggerEl;
+    setRenameOpen(true);
+  }, []);
 
-  const loading =
-    !!handle && !error && (data === null || data.detail.handle !== handle);
+  // The route seed composes the detail with the canonical first works page. Its
+  // works are adopted only for the canonical view; every other view takes just
+  // the detail and loads its own exact page.
+  const allowSeedAdoptionRef = useRef(initialRestored === null);
+  const seed = useResource<AuthorPaneSeed>({
+    cacheKey:
+      initialRestored === null && !invalidView
+        ? contributorResource.cacheKey({ handle })
+        : null,
+    load: (signal) =>
+      paneResourceLoaders.author!.load(clientResourceFetcher(signal), {
+        handle,
+      }) as Promise<AuthorPaneSeed>,
+  });
+  const seedDetail = seed.status === "ready" ? seed.data.detail : null;
 
-  // Reset the local copy whenever the route handle changes, so stale author data
-  // never bleeds across panes while the next initial load runs.
+  const requestedViewKey =
+    view === null ? null : contributorWorksResource.cacheKey({ handle, view });
+  const committedViewKey =
+    data === null
+      ? null
+      : contributorWorksResource.cacheKey({ handle, view: data.view });
+  const requestsFirstPage =
+    view !== null &&
+    !viewInvalid &&
+    (data === null
+      ? !(view.kind === "Canonical" && allowSeedAdoptionRef.current)
+      : requestedViewKey !== committedViewKey || refreshPendingRef.current);
+  const firstPageRequestKey =
+    requestsFirstPage && requestedViewKey !== null
+      ? `${requestedViewKey}:collection:${firstPageVersion}`
+      : null;
+  const firstPage = useResource<CollectionPage<ContributorWorkItem>>({
+    cacheKey: firstPageRequestKey,
+    load: (signal) => {
+      if (view === null) {
+        // justify-defect: a non-null request key is built from this exact view.
+        throw new Error("Author works request lost its view identity");
+      }
+      return fetchContributorWorks(handle, {
+        view,
+        limit: AUTHOR_WORKS_LIMIT,
+        signal,
+      });
+    },
+  });
+
+  // Latest-wins atomic commit: the resource reports a result only for the
+  // current request identity, so a superseded view can never install its rows.
   useEffect(() => {
-    if (restored === null) setData(null);
-    setError(
-      handle ? null : { tone: "Danger", title: "Author handle is missing" },
-    );
-    setRenameOpen(false);
-  }, [handle, restored]);
-
-  // Seed the local copy from the initial resource's ready/error branch.
-  useEffect(() => {
-    if (initialAuthor.status === "ready" && allowResourceAdoptionRef.current) {
-      allowResourceAdoptionRef.current = false;
-      committedSnapshotRef.current = initialAuthor.data;
-      setData(initialAuthor.data);
+    const detail = data?.detail ?? seedDetail;
+    if (firstPage.status === "ready" && view !== null && detail !== null) {
+      allowSeedAdoptionRef.current = false;
+      refreshPendingRef.current = false;
+      const committed: CommittedAuthorWorks = {
+        detail,
+        view,
+        works: firstPage.data.items,
+        collectionRevision: firstPage.data.collectionRevision,
+        nextCursor: firstPage.data.nextCursor,
+        exhaustion:
+          firstPage.data.nextCursor.kind === "Absent" ? "Complete" : "Partial",
+      };
+      committedSnapshotRef.current = committed;
+      setData(committed);
       setChainEpoch((epoch) => epoch + 1);
       setError(null);
-      setRefreshingWorks(false);
+      focusPendingSortControl();
       const pending = pendingAuthorRevalidationRef.current;
       if (pending?.version === firstPageVersion) {
         completedAuthorRevalidationVersionRef.current = pending.version;
       }
-    } else if (
-      initialAuthor.status === "error" &&
-      allowResourceAdoptionRef.current
-    ) {
-      setRefreshingWorks(false);
-      try {
-        setError(authorLoadErrorMessage(initialAuthor.error));
-      } catch (caughtDefect) {
-        setDefect({ error: caughtDefect });
+      return;
+    }
+    if (firstPage.status === "error") {
+      if (isInvalidViewError(firstPage.error)) {
+        setViewInvalid(true);
+      } else {
+        try {
+          setError(authorLoadErrorMessage(firstPage.error));
+        } catch (caughtDefect) {
+          setDefect({ error: caughtDefect });
+        }
       }
       const pending = pendingAuthorRevalidationRef.current;
       if (pending?.version === firstPageVersion) {
         pendingAuthorRevalidationRef.current = null;
         completedAuthorRevalidationVersionRef.current = null;
         pending.removeAbortListener();
-        pending.reject(initialAuthor.error);
+        pending.reject(firstPage.error);
       }
     }
-  }, [firstPageVersion, initialAuthor]);
+  }, [
+    data?.detail,
+    firstPage,
+    firstPageVersion,
+    focusPendingSortControl,
+    seedDetail,
+    view,
+  ]);
+
+  // A newly requested view retires the previous view's rejection.
+  useEffect(() => setViewInvalid(false), [requestedViewKey]);
+
+  // The canonical seed commits as the canonical view; a seed failure is the
+  // pane's load failure whether or not a works request is also in flight.
+  useEffect(() => {
+    if (seed.status === "ready") {
+      if (!allowSeedAdoptionRef.current) return;
+      allowSeedAdoptionRef.current = false;
+      if (view === null || view.kind !== "Canonical") return;
+      const committed: CommittedAuthorWorks = { ...seed.data, view };
+      committedSnapshotRef.current = committed;
+      setData(committed);
+      setChainEpoch((epoch) => epoch + 1);
+      setError(null);
+      return;
+    }
+    if (seed.status === "error") {
+      try {
+        setError(authorLoadErrorMessage(seed.error));
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
+      }
+    }
+  }, [seed, view]);
 
   useLayoutEffect(() => {
-    committedSnapshotRef.current = data;
+    committedSnapshotRef.current = requestsFirstPage ? null : data;
     const pending = pendingAuthorRevalidationRef.current;
     if (
       data === null ||
-      data.detail.handle !== handle ||
       pending === null ||
       completedAuthorRevalidationVersionRef.current !== pending.version
     ) {
@@ -276,9 +444,10 @@ export default function AuthorPaneBody() {
     pendingAuthorRevalidationRef.current = null;
     pending.removeAbortListener();
     pending.resolve();
-  }, [data, handle]);
+  }, [data, requestsFirstPage]);
 
-  usePaneReturnReady(data !== null || error !== null);
+  const loading = !invalidView && error === null && data === null;
+  usePaneReturnReady(data !== null || error !== null || invalidView);
   useSetPaneLabel(loading ? null : (data?.detail.displayName ?? "Author"));
 
   const rejectPendingAuthorRevalidation = useCallback((error: unknown) => {
@@ -289,18 +458,23 @@ export default function AuthorPaneBody() {
     pending.removeAbortListener();
     pending.reject(error);
   }, []);
+  // Refresh reloads the committed works view, never the canonical seed: the
+  // author detail is stable and a refreshed canonical page would contradict the
+  // requested view.
   const refreshWorks = useCallback(() => {
     rejectPendingAuthorRevalidation(
       new DOMException("Author refresh was superseded.", "AbortError"),
     );
-    allowResourceAdoptionRef.current = true;
+    capturePaneScroll();
+    allowSeedAdoptionRef.current = false;
+    refreshPendingRef.current = true;
+    committedSnapshotRef.current = null;
     clearAllVisitData();
     setError(null);
-    setRefreshingWorks(true);
     const version = firstPageVersionRef.current + 1;
     firstPageVersionRef.current = version;
     setFirstPageVersion(version);
-  }, [clearAllVisitData, rejectPendingAuthorRevalidation]);
+  }, [capturePaneScroll, clearAllVisitData, rejectPendingAuthorRevalidation]);
   const revalidateWorks = useCallback(
     (signal: AbortSignal): Promise<void> => {
       if (signal.aborted) {
@@ -318,8 +492,6 @@ export default function AuthorPaneBody() {
           pendingAuthorRevalidationRef.current = null;
           completedAuthorRevalidationVersionRef.current = null;
           pending.removeAbortListener();
-          allowResourceAdoptionRef.current = false;
-          setRefreshingWorks(false);
           reject(
             signal.reason ??
               new DOMException("Author refresh was aborted.", "AbortError"),
@@ -344,7 +516,7 @@ export default function AuthorPaneBody() {
         new DOMException("Author refresh source was replaced.", "AbortError"),
       );
     },
-    [handle, rejectPendingAuthorRevalidation],
+    [rejectPendingAuthorRevalidation],
   );
   const commitWorksPage = useCallback(
     (page: CollectionPage<ContributorWorkItem>): number => {
@@ -362,7 +534,7 @@ export default function AuthorPaneBody() {
         seen.add(work.href);
         works.push(work);
       }
-      const next: AuthorPaneSeed = {
+      const next: CommittedAuthorWorks = {
         ...current,
         works,
         nextCursor: page.nextCursor,
@@ -374,23 +546,27 @@ export default function AuthorPaneBody() {
     },
     [],
   );
+  // Continuation runs only while the committed view is the requested one, and
+  // every page of a chain carries that same view.
   const exhaustion = useExhaustivePagination<ContributorWorkItem>({
-    active:
-      isPaneActive &&
-      data !== null &&
-      data.detail.handle === handle &&
-      !refreshingWorks,
-    chainKey: `${handle ?? ""}:${chainEpoch}`,
+    active: isPaneActive && data !== null && !requestsFirstPage,
+    chainKey: `${committedViewKey ?? ""}:${chainEpoch}`,
     cursor: data?.nextCursor ?? NO_CURSOR,
     collectionRevision: data?.collectionRevision ?? ZERO_REVISION,
     itemCount: data?.works.length ?? 0,
-    loadPage: (cursor, collectionRevision, signal) =>
-      fetchContributorWorks(handle!, {
+    loadPage: (cursor, collectionRevision, signal) => {
+      if (data === null) {
+        // justify-defect: continuation runs only over a committed exact view.
+        throw new Error("Author works continuation lost its committed view");
+      }
+      return fetchContributorWorks(handle, {
+        view: data.view,
         cursor,
         collectionRevision,
-        limit: 100,
+        limit: AUTHOR_WORKS_LIMIT,
         signal,
-      }),
+      });
+    },
     commitPage: commitWorksPage,
     refresh: refreshWorks,
   });
@@ -423,13 +599,56 @@ export default function AuthorPaneBody() {
     },
     [data?.works, exhaustion.kind, workCount],
   );
+  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
+  const clearDomainFilters = useCallback(() => {
+    dismissFilterRowsRef.current();
+    pendingCommitFocusRef.current = true;
+    setView(CANONICAL_AUTHOR_WORKS_VIEW);
+  }, [setView]);
+  const domainFilterControls = useMemo(
+    () =>
+      invalidView || view === null ? undefined : (
+        <>
+          <SelectField
+            layout="Stacked"
+            label="Sort by"
+            ref={sortSelectRef}
+            value={authorWorksSortOptionOf(view)}
+            onChange={(event) => {
+              pendingCommitFocusRef.current = true;
+              setView(
+                authorWorksViewForSortOption(
+                  event.target.value as AuthorWorksSortOptionId,
+                ),
+              );
+            }}
+          >
+            {AUTHOR_WORKS_SORT_OPTION_IDS.map((optionId) => (
+              <option key={optionId} value={optionId}>
+                {authorWorksSortOptionLabel(optionId)}
+              </option>
+            ))}
+          </SelectField>
+          {view.kind === "Canonical" ? null : (
+            <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
+              Clear filters
+            </Button>
+          )}
+        </>
+      ),
+    [clearDomainFilters, invalidView, setView, view],
+  );
   const { query: filterQuery, publication: search } = usePaneFilterRows({
-    sourceKey: `Author.Works:${handle ?? ""}`,
+    sourceKey: `Author.Works:${handle}`,
     inputLabel: "Filter works",
     placeholder: "Filter works",
     getRowStatus: getFilterStatus,
-    activeDomainControlCount: 0,
+    // Truthful while the controls are published; an invalid view publishes none.
+    activeDomainControlCount:
+      invalidView || view === null || view.kind === "Canonical" ? 0 : 1,
+    filters: domainFilterControls,
   });
+  dismissFilterRowsRef.current = search.onDismiss;
   const filteredWorkRows = useMemo(
     () =>
       workRows.filter((row) =>
@@ -440,7 +659,7 @@ export default function AuthorPaneBody() {
   const canonicalHandle = data?.detail.handle ?? null;
   const connectionsComposerController = useConnectionsComposerController({
     scheme: "contributor",
-    id: canonicalHandle ?? handle ?? "",
+    id: canonicalHandle ?? handle,
   });
   const connectionsResource = useMemo(
     () =>
@@ -500,21 +719,40 @@ export default function AuthorPaneBody() {
   );
   usePanePrimaryChrome({
     search,
-    refresh: handle
-      ? {
-          sourceKey: `Author.Works:${handle}`,
-          execute: executeRefresh,
-        }
-      : undefined,
+    refresh: {
+      sourceKey: `Author.Works:${handle}`,
+      execute: executeRefresh,
+    },
     actions: companionAction ? [companionAction] : [],
     resourceTarget: data ? data.detail.actionTarget : undefined,
+    // Renaming the author is not a canonical resource action (no per-scheme
+    // capability), so it rides the pane's own non-resource menu beside the
+    // identity — which now lives in chrome — never the canonical resource menu.
+    viewMenu: data?.detail.canRename
+      ? {
+          label: "Author name",
+          icon: RENAME_AUTHOR_ICON,
+          actions: [
+            {
+              kind: "command",
+              id: "Author.Rename",
+              label: "Edit name…",
+              icon: RENAME_AUTHOR_ICON,
+              // The dialog owns focus return to this exact trigger, so the
+              // menu must not claim it back as it closes.
+              restoreFocusOnClose: false,
+              onSelect: openRename,
+            },
+          ],
+        }
+      : undefined,
     header: {
-      kind: "section",
-      folio:
-        exhaustion.kind === "Complete"
-          ? { kind: "count", value: workCount, unit: "work" }
-          : { kind: "none" },
-      pending: loading || refreshingWorks || exhaustion.kind !== "Complete",
+      kind: "Section",
+      meta: invalidView
+        ? { kind: "None" }
+        : loading || requestsFirstPage || exhaustion.kind !== "Complete"
+          ? { kind: "Pending" }
+          : { kind: "Count", value: workCount, unit: "work" },
     },
   });
 
@@ -532,6 +770,27 @@ export default function AuthorPaneBody() {
   );
 
   if (defect) throw defect.error;
+
+  if (invalidView) {
+    return (
+      <FeedbackNotice
+        content={{ tone: "Danger", title: "Invalid works view" }}
+        announcement="Assertive"
+        actions={[
+          {
+            label: "Reset view",
+            onClick: () => {
+              search.onDismiss();
+              setDecodedView({
+                kind: "Valid",
+                view: CANONICAL_AUTHOR_WORKS_VIEW,
+              });
+            },
+          },
+        ]}
+      />
+    );
+  }
 
   return (
     <PaneSurface
@@ -559,22 +818,6 @@ export default function AuthorPaneBody() {
     >
       {data ? (
         <div className={styles.detail}>
-          <header className={styles.header}>
-            <h1 className={styles.heading} dir="auto">
-              {data.detail.displayName}
-            </h1>
-            {data.detail.canRename ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                className={styles.editName}
-                onClick={() => setRenameOpen(true)}
-              >
-                Edit name
-              </Button>
-            ) : null}
-          </header>
-
           {otherNames.length > 0 ? (
             <section className={styles.otherNames}>
               <h2 className={styles.sectionHeading}>Other names</h2>
@@ -589,7 +832,7 @@ export default function AuthorPaneBody() {
             </section>
           ) : null}
 
-          <section aria-label="Works">
+          <section aria-label="Works" ref={worksRegionRef}>
             <CollectionView
               returnScope="Author.Works"
               rows={filteredWorkRows}
@@ -639,6 +882,10 @@ export default function AuthorPaneBody() {
               currentName={data.detail.displayName}
               onClose={() => setRenameOpen(false)}
               onRenamed={handleRenamed}
+              returnFocusTo={() => renameTriggerRef.current}
+              returnFocusFallback={() =>
+                findPaneLandmarkFocusTarget(runtime.paneId)
+              }
             />
           ) : null}
         </div>
@@ -652,11 +899,15 @@ function RenameAuthorDialog({
   currentName,
   onClose,
   onRenamed,
+  returnFocusTo,
+  returnFocusFallback,
 }: {
   handle: string;
   currentName: string;
   onClose: () => void;
   onRenamed: (detail: ContributorDetail) => void;
+  returnFocusTo: () => HTMLElement | null;
+  returnFocusFallback: () => HTMLElement | null;
 }) {
   const [value, setValue] = useState(currentName);
   const [saving, setSaving] = useState(false);
@@ -715,7 +966,13 @@ function RenameAuthorDialog({
   if (defect) throw defect.error;
 
   return (
-    <Dialog open title="Edit name" onClose={onClose}>
+    <Dialog
+      open
+      title="Edit name"
+      onClose={onClose}
+      returnFocusTo={returnFocusTo}
+      returnFocusFallback={returnFocusFallback}
+    >
       <form className={styles.renameForm} onSubmit={submit}>
         <p className={styles.renameHelper}>
           Used across Nexus. Each work keeps the name it was credited under.

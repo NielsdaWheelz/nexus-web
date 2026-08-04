@@ -493,7 +493,9 @@ export default function Conversation() {
     scrollRef: convo.scrollRef,
   });
 
-  useSetPaneLabel(convo.conversationId ? `Chat: ${convo.title}` : "New chat");
+  // Exact identity while it is known; the route label once the load is terminal
+  // without one, so a failed conversation never sits pending forever.
+  useSetPaneLabel(convo.loading ? null : (convo.title ?? "Chat"));
 
   // --------------------------------------------------------------------------
   // Composer wiring

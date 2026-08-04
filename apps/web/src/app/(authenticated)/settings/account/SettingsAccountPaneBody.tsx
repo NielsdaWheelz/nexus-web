@@ -23,7 +23,6 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SectionOpener from "@/components/ui/SectionOpener";
 import {
   DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
   EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
@@ -310,7 +309,7 @@ export default function SettingsAccountPaneBody() {
   if (contractDefect) throw contractDefect.error;
 
   return (
-    <PaneSurface opener={<SectionOpener heading="Account" />}>
+    <PaneSurface>
       <PaneSection title="Email">
         <form className={styles.form} onSubmit={handleEmailSubmit}>
           {accountLoadFailure ? (

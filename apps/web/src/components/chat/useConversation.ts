@@ -184,7 +184,8 @@ interface UseConversation {
 
   // identity
   conversationId: string | null;
-  title: string;
+  /** `null` until the server names an existing conversation. */
+  title: string | null;
 
   // send pipeline (passed straight into <ChatComposer/>). The atomic send
   // (destination:New) creates the conversation; there is no eager pre-create.
@@ -226,7 +227,11 @@ export function useConversation(
   const [conversationId, setConversationId] = useState<string | null>(
     initialConversationId,
   );
-  const [title, setTitle] = useState("New chat");
+  // An existing conversation has no known title until the server sends one; the
+  // canonical pane title must stay unresolved rather than claim "New chat".
+  const [title, setTitle] = useState<string | null>(
+    initialConversationId ? null : "New chat",
+  );
   // The reducer is the single owner of every transcript transition; the engine
   // holds the state and dispatches actions (it is the only `setMessages`-class
   // consumer — there is no raw setter).

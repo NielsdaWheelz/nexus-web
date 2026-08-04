@@ -1580,6 +1580,12 @@ function WorkspaceHost() {
     ) ??
     panes.find((pane) => pane.visibility === "visible") ??
     null;
+  // The host is the workspace's only writer of the browser title, so an
+  // inactive pane can never race the active pane's identity into the tab.
+  const documentTitle = activePane ? `${activePane.label} · Nexus` : "Nexus";
+  useEffect(() => {
+    document.title = documentTitle;
+  }, [documentTitle]);
   const renderedPanes = isMobile ? (activePane ? [activePane] : []) : panes;
 
   // --- Pane focus management ---

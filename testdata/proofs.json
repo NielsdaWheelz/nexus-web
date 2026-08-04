@@ -389,7 +389,12 @@
         "apps/web/src/components/nexus/**/*",
         "apps/web/src/lib/nexus/**/*",
         "apps/web/src/lib/workspace/**/*",
-        "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+        "apps/web/src/lib/panes/paneRenderRegistry.tsx",
+        "apps/web/src/components/workspace/WorkspaceHost.tsx",
+        "apps/web/src/components/workspace/PaneShell.tsx",
+        "apps/web/src/components/ui/PaneHeaderIdentity.tsx",
+        "apps/web/src/lib/panes/paneHeaderModel.ts",
+        "apps/web/src/lib/panes/paneRouteModel.ts"
       ],
       "risks": [
         "database-object-convergence"

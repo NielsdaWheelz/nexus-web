@@ -19,7 +19,7 @@ import {
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PaneToolbar from "@/components/ui/PaneToolbar";
-import Select from "@/components/ui/Select";
+import SelectField from "@/components/ui/SelectField";
 import Toggle from "@/components/ui/Toggle";
 import type {
   PaneFindResult,
@@ -207,21 +207,20 @@ function FindOptions({
   return (
     <div className={styles.findOptions} role="group" aria-label="Find options">
       {scope.kind === "Selectable" ? (
-        <label className={styles.scopeField} htmlFor={scopeId}>
-          <span>Scope</span>
-          <Select
-            id={scopeId}
-            size="sm"
-            value={scope.selectedId}
-            onChange={(event) => scope.onChange(event.target.value)}
-          >
-            {scope.options.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-        </label>
+        <SelectField
+          layout="Inline"
+          label="Scope"
+          id={scopeId}
+          size="sm"
+          value={scope.selectedId}
+          onChange={(event) => scope.onChange(event.target.value)}
+        >
+          {scope.options.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </SelectField>
       ) : null}
       <Toggle
         size="sm"

@@ -61,20 +61,28 @@ and renders edge fades only in desktop mode.
 
 Every supported route declares one `PaneRouteHeaderContract`:
 
-- `section` resolves the destination-owned standing head and an optional folio
-- `resource` resolves a title plus structured credit groups
+- `Section` declares its owning destination plus
+  `context: "None" | "Destination"`, which decides whether that destination
+  label appears beside the title
+- `Resource` declares the pending label its identity carries until the body
+  resolves
 
-Pane bodies publish the orthogonal `{ header, search, instrument, actions, menu,
-refresh }`
+The pane runtime label is the only title value for both kinds. Bodies publish a
+typed `PaneHeaderMeta` — `None`, `Pending`, `Count`, or `Date` — for section
+routes, or a typed `Ready`/`Unavailable`/`Failed` resource status with its
+structured credit groups. No publication carries a title.
+
+Pane bodies publish the orthogonal
+`{ header, search, instrument, actions, resourceTarget, viewMenu, refresh, filters }`
 capabilities through `usePanePrimaryChrome`. Each update carries the current
 `routeKey`; `PaneShell` rejects stale updates before validating the header kind.
 There is no route-level chrome descriptor, body-mode inference, or ambient title
 override.
 
 `refresh` publishes one source-fenced, abortable, awaitable owner operation.
-`PaneShell` owns its menu action, mobile top-edge pull gesture, progress, and
-announcement; the pane owner resolves only after its canonical first page is
-installed. Only the six explicitly supported finite standard-scroll panes
+`PaneShell` renders the canonical `ResourceActionMenu` and owns the refresh
+control's mobile top-edge pull gesture, progress, and announcement; the pane
+owner resolves only after its canonical first page is installed. Only the six explicitly supported finite standard-scroll panes
 publish it. Refresh never reloads the route or polls for completion.
 
 `search` is one closed pane-local capability: `FilterRows` derives local primary
@@ -87,6 +95,19 @@ active pane consumes the request. Cmd/Ctrl+K remains Nexus retrieval.
 If the live browser viewport leads React during a responsive host replacement,
 the arbiter carries one pane-and-route-fenced Search handoff; the incoming
 `PaneShell` acknowledges it only after its current publication is ready.
+
+A `FilterRows` producer publishes its domain View/Filter/Sort controls as
+`publication.filters`, ending with `Clear filters`, and reports
+`activeDomainControlCount` — the number of controls differing from that
+surface's canonical default, excluding the local query. `PaneShell` renders the
+collapsed marker and the accessible label **Filter, N control(s) active** from
+that count. The local query lives in `usePaneFilterRows`, keyed on a source key
+that must never embed the domain view: a view change replaces the pane URL on
+the same path, and the local text, the expanded row, and the focused native
+control all have to survive it. Every refinement-capable route therefore
+declares `queryNavigation: "in-place"` so its body is not remounted by the
+replacement, and `usePaneScrollRetention` restores the scrollport once the new
+view commits.
 
 A resource pane publishes only its canonical `resourceTarget`
 (`ResourceActionSubject`); `PaneShell` renders the one canonical
@@ -108,9 +129,13 @@ one labelled `instrument` containing control content only. `PaneShell` owns its
 40px desktop or 48px mobile contextual frame and renders it as an accessible
 group. Expanded Search takes exclusive occupancy of that same track.
 
-Each pane landmark is named from its resolved header. Resource identity owns its
-`h1`; imported reader headings are projected beneath it, and pending resource
-identity supplies an accessible loading name. The
+`PaneHeaderIdentity` owns the single route-level `h1` for every pane kind. Body
+outlines start at `h2`, and imported reader headings are projected beneath the
+chrome heading. Each pane landmark is named from the exact title plus its
+optional context, never from a count or date, and pending identity is marked
+`aria-busy` while keeping a non-empty accessible name. `WorkspaceHost` projects
+the active pane's label as the browser document title `Title · Nexus` and
+restores `Nexus` when no active pane exists; inactive panes never write it. The
 route-scoped error boundary wraps runtime, chrome, body, and mobile secondary
 composition so one pane failure cannot replace its siblings or the workspace.
 
@@ -208,8 +233,9 @@ The Browse visit identity is the exact normalized `q`, `kind`, `source`, and
 cursors together with focus and scroll, so Back restores the accepted snapshot
 without refanning provider requests.
 
-Preview identity is its sealed discovery target. It re-resolves provider truth
-and publishes title/source credit plus an explicit acquisition action, but no
+Preview identity is its sealed discovery target. It re-resolves provider truth,
+sets its exact title as the pane label, and publishes a source credit plus an
+explicit acquisition action, but no
 canonical resource target before acquisition. Open/reload/play/leave Preview
 writes no Media, subscription, Library entry, job, progress, completion, or
 activity fact. Successful Add or Subscribe replaces Preview with the canonical

@@ -185,6 +185,7 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
                 title=row.title[:_MAX_TITLE_CHARS],
                 subtitle=subtitle,
                 href=f"/media/{row.media_id}",
+                added_at=row.added_at,
                 consumption=consumption,
                 activation=activation,
             )

@@ -9,6 +9,8 @@ import {
   type CollectionPage,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
+import { conversationsInitialResource } from "@/lib/api/resource";
+import type { ConversationIndexView } from "@/lib/conversations/indexView";
 import type { ConversationListItem } from "@/lib/conversations/types";
 import {
   expectExactRecord,
@@ -16,13 +18,11 @@ import {
   expectString,
 } from "@/lib/validation";
 
-export type ConversationIndexScope = "mine" | "all" | "shared";
-
 export interface ConversationIndexPageOptions {
-  readonly scope?: ConversationIndexScope;
+  /** The exact chats view this page belongs to; every page of a chain shares it. */
+  readonly view: ConversationIndexView;
   readonly cursor?: CollectionCursor;
   readonly collectionRevision?: CollectionRevision;
-  readonly limit?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -59,20 +59,17 @@ export function decodeConversationIndexItem(
   };
 }
 
-export async function fetchConversationIndex(
-  options: ConversationIndexPageOptions = {},
-): Promise<CollectionPage<ConversationListItem>> {
-  const params = new URLSearchParams();
-  if (options.scope) params.set("scope", options.scope);
-  if (options.cursor) params.set("cursor", options.cursor);
-  if (options.collectionRevision !== undefined) {
-    params.set("collection_revision", String(options.collectionRevision));
-  }
-  if (options.limit !== undefined) params.set("limit", String(options.limit));
-  const suffix = params.toString();
+export async function fetchConversationIndex({
+  view,
+  cursor,
+  collectionRevision,
+  signal,
+}: ConversationIndexPageOptions): Promise<
+  CollectionPage<ConversationListItem>
+> {
   const response = await apiFetch<unknown>(
-    `/api/conversations${suffix ? `?${suffix}` : ""}` as ApiPath,
-    { cache: "no-store", signal: options.signal },
+    conversationsInitialResource.clientPath({ view, cursor, collectionRevision }),
+    { cache: "no-store", signal },
   );
   return decodeCollectionPage(response, decodeConversationIndexItem);
 }

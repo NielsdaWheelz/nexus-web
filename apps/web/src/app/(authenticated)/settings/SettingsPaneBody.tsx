@@ -1,7 +1,6 @@
 "use client";
 
 import CollectionView from "@/components/collections/CollectionView";
-import SectionOpener from "@/components/ui/SectionOpener";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { isAndroidShellRestrictedHref } from "@/lib/androidShell";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
@@ -61,7 +60,6 @@ export default function SettingsPaneBody() {
       )}
       status="ready"
       ariaLabel="Settings"
-      opener={<SectionOpener heading="Settings" />}
     />
   );
 }

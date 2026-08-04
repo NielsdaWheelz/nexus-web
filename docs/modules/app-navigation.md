@@ -124,9 +124,10 @@ declare `sectionDestinationId` because their header has no section identity:
 - Atlas, Oracle, Lectern, and settings map to their own destinations.
 
 Routes that are intentionally absent from fixed navigation, such as Search and
-Authors, do not fabricate a selected rail item. Section headers resolve the
-route's typed `header.destinationId` through the same destination registry, so
-running heads and navigation cannot drift through parallel maps.
+Authors, do not fabricate a selected rail item. Section pane titles resolve
+their orientation context from the route's typed `header.destinationId` through
+the same destination registry, so pane identity and navigation cannot drift
+through parallel maps.
 
 ## Activation and pane reuse
 

@@ -4,7 +4,7 @@ import { forwardRef, type SelectHTMLAttributes } from "react";
 import { ChevronDown } from "lucide-react";
 import styles from "./Select.module.css";
 
-type SelectSize = "sm" | "md" | "lg";
+export type SelectSize = "sm" | "md" | "lg";
 
 interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, "size"> {
   size?: SelectSize;

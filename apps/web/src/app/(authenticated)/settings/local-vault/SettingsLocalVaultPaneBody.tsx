@@ -26,7 +26,6 @@ import {
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SectionOpener from "@/components/ui/SectionOpener";
 import Pill from "@/components/ui/Pill";
 import Toggle from "@/components/ui/Toggle";
 import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
@@ -257,7 +256,7 @@ export default function SettingsLocalVaultPaneBody() {
 
   if (androidShell) {
     return (
-      <PaneSurface opener={<SectionOpener heading="Local Vault" />}>
+      <PaneSurface>
         <PaneSection>
           <FeedbackNotice
             content={{
@@ -274,7 +273,7 @@ export default function SettingsLocalVaultPaneBody() {
 
   if (!supported) {
     return (
-      <PaneSurface opener={<SectionOpener heading="Local Vault" />}>
+      <PaneSurface>
         <PaneSection>
           <FeedbackNotice
             content={{
@@ -290,7 +289,7 @@ export default function SettingsLocalVaultPaneBody() {
   }
 
   return (
-    <PaneSurface opener={<SectionOpener heading="Local Vault" />}>
+    <PaneSurface>
       <PaneSection>
         <div className={styles.content}>
         {failure ? (

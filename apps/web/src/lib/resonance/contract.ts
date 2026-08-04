@@ -11,6 +11,7 @@ import { assumeAppHref, type AppHref } from "@/lib/lectern/contract";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import { expectIsoInstant } from "@/lib/validation";
 
 const SLATE_LIMIT = 10;
 const MEDIA_KINDS = [
@@ -99,33 +100,6 @@ function asLiteral<T extends string>(
     );
   }
   return raw as T;
-}
-
-function isRealCalendarDate(value: string): boolean {
-  const parsed = new Date(`${value}T00:00:00Z`);
-  return (
-    !value.startsWith("0000-") &&
-    !Number.isNaN(parsed.getTime()) &&
-    parsed.toISOString().slice(0, 10) === value
-  );
-}
-
-function asInstant(raw: unknown, context: string): string {
-  const value = asString(raw, context);
-  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.exec(
-    value,
-  );
-  if (
-    match === null ||
-    !isRealCalendarDate(match[1]) ||
-    Number(match[2]) > 23 ||
-    Number(match[3]) > 59 ||
-    Number(match[4]) > 59 ||
-    Number.isNaN(Date.parse(value))
-  ) {
-    throw new Error(`Invalid ${context}: expected an ISO 8601 instant`);
-  }
-  return value;
 }
 
 function asFraction(raw: unknown, context: string): number {
@@ -269,7 +243,7 @@ function decodeReason(raw: unknown): SlateReason {
             value: asFraction(progress, "SlateReasonOut.Continue.progress"),
           }),
         ),
-        lastEngagedAt: asInstant(
+        lastEngagedAt: expectIsoInstant(
           value.lastEngagedAt,
           "SlateReasonOut.Continue.lastEngagedAt",
         ),
@@ -278,7 +252,7 @@ function decodeReason(raw: unknown): SlateReason {
       exactKeys(value, ["kind", "addedAt"], "SlateReasonOut.AddedToNexus");
       return {
         kind,
-        addedAt: asInstant(value.addedAt, "SlateReasonOut.AddedToNexus.addedAt"),
+        addedAt: expectIsoInstant(value.addedAt, "SlateReasonOut.AddedToNexus.addedAt"),
       };
     case "Published":
       exactKeys(value, ["kind", "publishedOn"], "SlateReasonOut.Published");

@@ -22,10 +22,23 @@ while the podcast backend remains the sole XML/feed/import policy owner.
 Followed-show and episode pane text filtering is local Pane Search over the
 exhaustively loaded current domain view. It matches title and contributor
 display/credited names, preserves the server-owned state/sort order, and never
-enters URL, request, cursor, snapshot, or folio identity. The list APIs reject
+enters URL, request, cursor, snapshot, or published pane-header metadata. The
+list APIs reject
 `q`. Episode-wide Mark Played and transcript selection is state-only and
 server-resolved; while a local query is active those commands remain
 discoverably disabled because rendered rows never define command scope.
+
+The subscription `filter`/`library_id`/`sort` and episode `state`/`sort` pane
+state is URL-owned and decoded by one strict, total codec per surface
+(`lib/podcasts/subscriptionView.ts`, `lib/podcasts/episodeView.ts`). Canonical
+values are omitted, so a fresh `/podcasts` or `/podcasts/{id}` carries no query
+and performs no replace on mount. An unknown value, an empty value, a duplicate
+key, or an explicitly written default is `Invalid`: the pane renders
+`Invalid podcasts view` / `Invalid episodes view` with `Reset view` and issues
+no request. There is no permissive decoder, no component state mirroring the
+URL, and no effect that canonicalizes the URL after the fact. The podcast HTTP
+API is unchanged — the panes still send every list parameter explicitly,
+including default values.
 
 ## Android Offline Downloads
 

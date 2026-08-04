@@ -36,6 +36,7 @@ import {
   usePaneReturnReady,
   requirePaneRuntime,
   usePaneRuntime,
+  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
@@ -576,6 +577,10 @@ export default function OracleReadingPaneBody() {
     return null;
   }, [detailResource, readingId]);
   usePaneReturnReady(committedReadingId === readingId || loadError !== null);
+  // The question is the reading's exact identity. A failed load never resolves
+  // one, so the terminal state falls back to the route label rather than
+  // leaving the pane's title pending forever.
+  useSetPaneLabel(state.question || (loadError === null ? null : "Reading"));
 
   const retryLoad = useCallback(() => {
     setLoadError(null);
@@ -739,7 +744,10 @@ export default function OracleReadingPaneBody() {
             {state.folioMottoGloss !== null && (
               <div className={styles.foliumGloss}>{state.folioMottoGloss}</div>
             )}
-            <h1 className={styles.readingQuestion}>{state.question || "…"}</h1>
+            {/* The question the reader asked is the folium's authored subject:
+                the argument answers it and a shared reading must stay
+                self-contained. Route identity is the chrome title above. */}
+            <h2 className={styles.readingQuestion}>{state.question || "…"}</h2>
             {state.argument !== null && state.argument.length > 0 && (
               <p className={styles.argument}>{state.argument}</p>
             )}

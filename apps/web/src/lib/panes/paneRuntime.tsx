@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
 } from "react";
@@ -750,7 +751,11 @@ export function useSetPaneLabel(label: string | null | undefined): void {
   const routeKey = paneRuntime?.routeKey ?? null;
   const setPaneLabel = paneRuntime?.setPaneLabel;
 
-  useEffect(() => {
+  // The label is the pane's canonical title, so it and the header publication
+  // are one UI contract and must commit in the same phase. A passive effect
+  // here would paint one frame of the route placeholder beside an already-ready
+  // header — a confident wrong identity.
+  useLayoutEffect(() => {
     if (!paneId || !routeKey || !setPaneLabel) {
       return;
     }

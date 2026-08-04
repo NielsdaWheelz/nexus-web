@@ -79,6 +79,7 @@ function item(key: string): LecternItem {
     title: `Title ${key}`,
     subtitle: absent(),
     href: assumeAppHref(`/media/${id}`),
+    addedAt: "2025-11-17T21:05:45+00:00",
     consumption: {
       state: "Unread",
       progress: absent(),

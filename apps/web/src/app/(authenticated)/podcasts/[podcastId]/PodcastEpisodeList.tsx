@@ -20,6 +20,7 @@ import {
 import { absent } from "@/lib/api/presence";
 import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import type { LocalAvailability } from "@/lib/offlineMedia/contract";
+import type { EpisodeStateFilter } from "@/lib/podcasts/episodeView";
 import { useOfflineMediaItem } from "@/lib/offlineMedia/OfflineMediaProvider";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useStringIdSet } from "@/lib/useStringIdSet";
@@ -32,7 +33,6 @@ import {
   episodePlayerDescriptor,
   canRequestTranscriptForEpisode,
   shouldPollTranscriptProvisioningForEpisode,
-  type EpisodeStateFilter,
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
 import type { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";

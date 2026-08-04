@@ -199,11 +199,12 @@ inline primer, tooltip, modal, or remote-page iframe.
 
 ### media identity and credits
 
-Media publishes a typed resource header through `usePanePrimaryChrome`. Its
-title and compact structured credits are the identity; each line truncates
-independently inside the 60px resource bar. The desktop section/resource bars
-are 44px/60px, and the mobile bar is 60px plus safe area.
-`ResourceHead` owns the route `h1`; each reader context explicitly offsets
+Media publishes a typed resource header through `usePanePrimaryChrome`. The pane
+label is the title and the publication carries the compact structured credits;
+each line truncates independently inside the 60px resource bar. Desktop pane
+chrome is one 60px header track (`--pane-chrome-header-height`) for every route
+kind, and the mobile bar is 60px plus safe area.
+`PaneHeaderIdentity` owns the route `h1`; each reader context explicitly offsets
 imported HTML headings beneath its local outline and saturates at `h6` while
 preserving anchor IDs. Main document/transcript content uses offset 1; podcast
 show notes, nested below the local section heading, use offset 2.

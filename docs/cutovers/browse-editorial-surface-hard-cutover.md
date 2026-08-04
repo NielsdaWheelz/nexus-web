@@ -155,7 +155,12 @@ state. Chapters and source blocks never reorder as requests settle.
 | `empty` | Quiet prompt for a valid empty query |
 | children | Applicable kind chapters containing source blocks; five for All |
 
-An Invalid external URL renders `PaneSurface(opener, state)` with the existing
+_Superseded by
+[`canonical-pane-title-ownership-hard-cutover.md`](canonical-pane-title-ownership-hard-cutover.md):
+`PaneSurface.opener` and `SectionOpener` are deleted. Browse's heading is the
+canonical pane title in chrome and its standfirst moved to `PaneSurface.brief`._
+
+An Invalid external URL renders `PaneSurface(state)` with the existing
 warning and **Reset Browse**. It renders no toolbar, children, or provider
 controller.
 

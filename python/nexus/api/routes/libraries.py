@@ -21,7 +21,6 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.responses import ok, ok_page
-from nexus.schemas.collection_page import parse_collection_query
 from nexus.schemas.library import (
     CreateLibraryInviteRequest,
     CreateLibraryRequest,
@@ -115,17 +114,17 @@ def list_libraries(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    """List all libraries the viewer is a member of.
+    """List all libraries the viewer is a member of, in the requested view.
 
-    Returns libraries ordered by created_at ASC, id ASC.
+    Errors:
+        E_INVALID_REQUEST (400): A view state outside the advertised inventory.
+        E_INVALID_CURSOR (400): Cursor is malformed or outside its binding.
     """
-    query = parse_collection_query(
-        request.query_params.multi_items(),
-        domain_keys=frozenset(),
-    )
+    view, query = library_governance.parse_libraries_index_query(request.query_params.multi_items())
     page = library_governance.list_libraries(
         db,
         viewer.user_id,
+        view=view,
         cursor=query.cursor,
         collection_revision=query.collection_revision,
         limit=query.limit,

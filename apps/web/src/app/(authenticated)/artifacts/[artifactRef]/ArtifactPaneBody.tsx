@@ -311,22 +311,15 @@ export default function ArtifactPaneBody() {
       ...(identity
         ? {
             header: {
-              kind: "resource" as const,
-              resource: {
-                status: "ready" as const,
-                title: identity.title,
-                creditGroups: [],
-              },
+              kind: "Resource" as const,
+              resource: { status: "Ready" as const, creditGroups: [] },
             },
           }
         : state.head.kind === "Failed"
           ? {
               header: {
-                kind: "resource" as const,
-                resource: {
-                  status: "failed" as const,
-                  title: "Dossier failed to load",
-                },
+                kind: "Resource" as const,
+                resource: { status: "Failed" as const },
               },
             }
           : {}),

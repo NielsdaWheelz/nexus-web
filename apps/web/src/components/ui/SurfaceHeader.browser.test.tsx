@@ -69,10 +69,11 @@ const MEDIA_SNAPSHOT = {
 } as const;
 
 const sectionHeader: PaneHeaderModel = {
-  kind: "section",
-  standingHead: "Document",
-  folio: { kind: "none" },
-  pending: false,
+  kind: "Section",
+  title: "Document",
+  titlePending: false,
+  context: { kind: "Absent" },
+  meta: { kind: "None" },
 };
 
 const readerSettingsViewMenu: PaneViewMenuPublication = {

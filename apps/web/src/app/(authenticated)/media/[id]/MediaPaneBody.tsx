@@ -6268,10 +6268,10 @@ export default function MediaPaneBody() {
     useMemo<PaneResourceHeaderPublication | null>(() => {
       if (media) return buildMediaResourceHeader(media);
       if (initialHeaderFailure === "unavailable") {
-        return { status: "unavailable", title: "Media unavailable" };
+        return { status: "Unavailable" };
       }
       if (initialHeaderFailure === "failed") {
-        return { status: "failed", title: "Media failed to load" };
+        return { status: "Failed" };
       }
       return null;
     }, [initialHeaderFailure, media]);
@@ -6285,7 +6285,7 @@ export default function MediaPaneBody() {
   const readerViewActions = useMemo<ActionDescriptor[]>(() => {
     if (!media) return [];
     const view: ActionDescriptor[] = [];
-    if (mediaResourceHeader?.status === "ready") {
+    if (mediaResourceHeader?.status === "Ready") {
       view.push({
         kind: "command",
         id: "ViewAction.Resource.Credits",
@@ -7670,7 +7670,7 @@ export default function MediaPaneBody() {
       ...(mediaResourceHeader
         ? {
             header: {
-              kind: "resource" as const,
+              kind: "Resource" as const,
               resource: mediaResourceHeader,
             },
           }
@@ -8400,10 +8400,10 @@ export default function MediaPaneBody() {
         onSelectConversation={handleSelectExistingChatDestination}
       />
 
-      {creditsOverlayMounted && mediaResourceHeader?.status === "ready" ? (
+      {creditsOverlayMounted && mediaResourceHeader?.status === "Ready" ? (
         <ResourceCreditsOverlay
           open={creditsOverlayOpen}
-          title={mediaResourceHeader.title}
+          title={media.title}
           creditGroups={mediaResourceHeader.creditGroups}
           returnFocusTo={() => creditsOverlayTrigger}
           returnFocusFallback={returnFocusFallback}

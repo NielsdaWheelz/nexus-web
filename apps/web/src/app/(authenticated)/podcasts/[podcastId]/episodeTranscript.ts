@@ -6,6 +6,7 @@
  */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
+import type { EpisodeStateFilter } from "@/lib/podcasts/episodeView";
 import type {
   PositiveMinutes,
   ProgressFraction,
@@ -35,8 +36,6 @@ export const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
 
 export type TranscriptRequestReason = "search" | "highlight" | "quote";
 export type EpisodeState = "unplayed" | "in_progress" | "played";
-export type EpisodeStateFilter = "all" | EpisodeState;
-export type EpisodeSort = "newest" | "oldest" | "duration_asc" | "duration_desc";
 
 export const EPISODE_WIDE_COMMAND_LABELS = {
   all: {

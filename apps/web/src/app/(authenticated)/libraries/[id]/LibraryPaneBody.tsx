@@ -52,10 +52,9 @@ import {
 import type { PodcastSubscriptionSettingsResponse } from "@/lib/podcasts/subscriptionSettings";
 import { usePodcastSubscriptionSettingsModal } from "@/app/(authenticated)/podcasts/usePodcastSubscriptionSettingsModal";
 import Button from "@/components/ui/Button";
-import Select from "@/components/ui/Select";
+import SelectField from "@/components/ui/SelectField";
 import Toggle from "@/components/ui/Toggle";
 import PaneSurface from "@/components/ui/PaneSurface";
-import SectionOpener from "@/components/ui/SectionOpener";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
@@ -87,6 +86,7 @@ import {
   type LibraryRequest,
 } from "@/lib/libraries/libraryRequestErrorMessage";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
+import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import {
   CANONICAL_LIBRARY_VIEW,
   LIBRARY_ENTRY_TYPE_OPTION_IDS,
@@ -128,6 +128,7 @@ import {
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { isAbortError } from "@/lib/errors";
@@ -270,7 +271,7 @@ interface LibraryPaneFeedback {
 }
 
 // The one full-date formatter for the "Added …" row line; the whole instant is
-// formatted (not a date-only weekday folio), so it reads unambiguously.
+// formatted (not a date-only weekday), so it reads unambiguously.
 const ADDED_DATE_FORMAT: Intl.DateTimeFormatOptions = {
   year: "numeric",
   month: "short",
@@ -374,15 +375,18 @@ export default function LibraryPaneBody() {
   const isInitialView = view !== null && isInitialLibraryView(view);
   const committedViewInvalidatedRef = useRef(false);
   const committedSnapshotRef = useRef<LibrarySnapshot | null>(null);
-  const pendingScrollTopRef = useRef<number | null>(null);
   const reorderGenerationRef = useRef(0);
-  const capturePaneScroll = useCallback(() => {
-    const region = document.getElementById(`library-entry-region-${id}`);
-    const scrollport = region?.closest<HTMLElement>("[data-pane-content]");
-    if (scrollport) {
-      pendingScrollTopRef.current = scrollport.scrollTop;
-    }
-  }, [id]);
+  // Focus continuity: when an action removes the focused row, move focus to the
+  // next filtered row, else the previous, else the canonical Pane Search target.
+  const listRegionRef = useRef<HTMLDivElement | null>(null);
+
+  const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
+  const restored = usePaneVisitData(LIBRARY_VISIT_DATA, captureCommitted);
+  const initialRestored = useRef(restored).current;
+  const [controller, setController] = useState<LibrarySnapshot | null>(
+    initialRestored,
+  );
+  const capturePaneScroll = usePaneScrollRetention(listRegionRef, controller);
   const setView = useCallback(
     (next: LibraryEntryView) => {
       capturePaneScroll();
@@ -392,13 +396,6 @@ export default function LibraryPaneBody() {
       setDecodedView({ kind: "Valid", view: next });
     },
     [capturePaneScroll, setDecodedView],
-  );
-
-  const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
-  const restored = usePaneVisitData(LIBRARY_VISIT_DATA, captureCommitted);
-  const initialRestored = useRef(restored).current;
-  const [controller, setController] = useState<LibrarySnapshot | null>(
-    initialRestored,
   );
   const controllerRef = useRef(controller);
   controllerRef.current = controller;
@@ -556,9 +553,6 @@ export default function LibraryPaneBody() {
   // is kept only for its install subscription, which keeps the pane's list rows
   // current after an app-level settings save.
   usePodcastSubscriptionSettingsModal({ onSaved: handlePodcastSettingsSaved });
-  // Focus continuity: when an action removes the focused row, move focus to the
-  // next filtered row, else the previous, else the canonical Pane Search target.
-  const listRegionRef = useRef<HTMLDivElement | null>(null);
   const typeSelectRef = useRef<HTMLSelectElement | null>(null);
   const viewSelectRef = useRef<HTMLSelectElement | null>(null);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
@@ -1353,20 +1347,6 @@ export default function LibraryPaneBody() {
     pending.removeAbortListener();
     pending.resolve();
   }, [controller, entryReconciliationRequest, requestedViewKey]);
-  useLayoutEffect(() => {
-    const scrollTop = pendingScrollTopRef.current;
-    if (scrollTop === null) return;
-    const region = document.getElementById(`library-entry-region-${id}`);
-    const scrollport = region?.closest<HTMLElement>("[data-pane-content]");
-    if (!scrollport) return;
-    scrollport.scrollTop = scrollTop;
-    const frame = requestAnimationFrame(() => {
-      scrollport.scrollTop = scrollTop;
-      pendingScrollTopRef.current = null;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [controller, id]);
-
   usePaneReturnReady(
     entriesState?.kind === "Ready" ||
       entriesState?.kind === "RefreshFailed" ||
@@ -1684,73 +1664,70 @@ export default function LibraryPaneBody() {
     () =>
       invalidView || view === null ? undefined : (
         <>
-          <label className={styles.selectField}>
-            <span>Type</span>
-            <Select
-              ref={typeSelectRef}
-              value={entryTypeOptionOf(view)}
-              onChange={(event) => {
-                pendingCommitFocusRef.current = "Type";
-                setView(
-                  withEntryTypeOption(
-                    view,
-                    event.target.value as LibraryEntryTypeOptionId,
-                  ),
-                );
-              }}
-            >
-              {LIBRARY_ENTRY_TYPE_OPTION_IDS.map((optionId) => (
-                <option key={optionId} value={optionId}>
-                  {entryTypeOptionLabel(optionId)}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label className={styles.selectField}>
-            <span>View</span>
-            <Select
-              ref={viewSelectRef}
-              value={projectionOptionOf(view)}
-              onChange={(event) => {
-                pendingCommitFocusRef.current = "View";
-                setView(
-                  withProjectionOption(
-                    view,
-                    event.target.value as ProjectionOptionId,
-                  ),
-                );
-              }}
-            >
-              {projectionOptions.map((optionId) => (
-                <option key={optionId} value={optionId}>
-                  {projectionOptionLabel(optionId)}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label className={styles.selectField}>
-            <span>Sort by</span>
-            <Select
-              ref={sortSelectRef}
-              value={orderToPresetId(view.order)}
-              onChange={(event) => {
-                pendingCommitFocusRef.current = "Sort";
-                setView({
-                  order: presetIdToOrder(
-                    event.target.value as LibraryOrderPresetId,
-                  ),
-                  projection: view.projection,
-                  entryType: view.entryType,
-                });
-              }}
-            >
-              {orderPresetIds.map((presetId) => (
-                <option key={presetId} value={presetId}>
-                  {presetLabel(presetId, isDefaultLibrary)}
-                </option>
-              ))}
-            </Select>
-          </label>
+          <SelectField
+            layout="Stacked"
+            label="Type"
+            ref={typeSelectRef}
+            value={entryTypeOptionOf(view)}
+            onChange={(event) => {
+              pendingCommitFocusRef.current = "Type";
+              setView(
+                withEntryTypeOption(
+                  view,
+                  event.target.value as LibraryEntryTypeOptionId,
+                ),
+              );
+            }}
+          >
+            {LIBRARY_ENTRY_TYPE_OPTION_IDS.map((optionId) => (
+              <option key={optionId} value={optionId}>
+                {entryTypeOptionLabel(optionId)}
+              </option>
+            ))}
+          </SelectField>
+          <SelectField
+            layout="Stacked"
+            label="View"
+            ref={viewSelectRef}
+            value={projectionOptionOf(view)}
+            onChange={(event) => {
+              pendingCommitFocusRef.current = "View";
+              setView(
+                withProjectionOption(
+                  view,
+                  event.target.value as ProjectionOptionId,
+                ),
+              );
+            }}
+          >
+            {projectionOptions.map((optionId) => (
+              <option key={optionId} value={optionId}>
+                {projectionOptionLabel(optionId)}
+              </option>
+            ))}
+          </SelectField>
+          <SelectField
+            layout="Stacked"
+            label="Sort by"
+            ref={sortSelectRef}
+            value={orderToPresetId(view.order)}
+            onChange={(event) => {
+              pendingCommitFocusRef.current = "Sort";
+              setView({
+                order: presetIdToOrder(
+                  event.target.value as LibraryOrderPresetId,
+                ),
+                projection: view.projection,
+                entryType: view.entryType,
+              });
+            }}
+          >
+            {orderPresetIds.map((presetId) => (
+              <option key={presetId} value={presetId}>
+                {presetLabel(presetId, isDefaultLibrary)}
+              </option>
+            ))}
+          </SelectField>
           {projectionSupportsCompletion(view) ? (
             <Toggle
               id={hideFinishedInputId}
@@ -1824,13 +1801,10 @@ export default function LibraryPaneBody() {
       ),
     [filterQuery, visibleEntries],
   );
-  const entryFolio = entryCollectionComplete
-      ? {
-          kind: "count" as const,
-          value: visibleEntries.length,
-          unit: "entry" as const,
-        }
-      : { kind: "none" as const };
+  const entryMeta: PaneHeaderMeta =
+    loading || !entryCollectionComplete
+      ? { kind: "Pending" }
+      : { kind: "Count", value: visibleEntries.length, unit: "entry" };
   const connectionsComposerController = useConnectionsComposerController({
     scheme: "library",
     id,
@@ -1975,11 +1949,7 @@ export default function LibraryPaneBody() {
             actions: addContentAction,
           }
         : undefined,
-    header: {
-      kind: "section",
-      folio: entryFolio,
-      pending: loading || !entryCollectionComplete,
-    },
+    header: { kind: "Section", meta: entryMeta },
   });
 
   if (defect !== null) throw defect.error;
@@ -2395,7 +2365,6 @@ export default function LibraryPaneBody() {
   return (
     <>
       <PaneSurface
-        opener={<SectionOpener heading={entriesAccessibleName} scale="title" />}
         state={
           error || authorityFeedback || entryReconciliationNotice ? (
             <>

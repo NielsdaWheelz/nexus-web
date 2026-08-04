@@ -4,20 +4,20 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import { isApiError } from "@/lib/api/client";
 import {
   type CollectionCursor,
   type CollectionPage,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
 import { absent, type Presence } from "@/lib/api/presence";
-import {
-  librariesResource as librariesResourceDescriptor,
-  type LibraryListResourceParams,
-} from "@/lib/api/resource";
+import { librariesResource } from "@/lib/api/resource";
 import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
+import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -26,11 +26,23 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import SelectField from "@/components/ui/SelectField";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
-import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { presentLibrary } from "@/lib/collections/presenters/library";
+import {
+  CANONICAL_LIBRARIES_INDEX_VIEW,
+  LIBRARIES_SORT_OPTION_IDS,
+  decodeLibrariesIndexView,
+  encodeLibrariesIndexView,
+  librariesSortOptionLabel,
+  librariesSortOptionOf,
+  librariesViewForSortOption,
+  type DecodedLibrariesIndexView,
+  type LibrariesIndexView,
+  type LibrariesSortOptionId,
+} from "@/lib/libraries/libraryIndexView";
 import {
   isReservedLibraryName,
   libraryPresentation,
@@ -53,6 +65,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import {
   acceptLibraryInvite,
@@ -71,12 +84,24 @@ import styles from "./page.module.css";
 
 type Library = LibraryOut;
 const EMPTY_LIBRARIES: readonly Library[] = [];
+const LIBRARIES_PAGE_LIMIT = 100;
 
+/** The index committed as one exact view: its rows, revision, and cursor. */
 interface LibrariesSnapshot {
+  readonly view: LibrariesIndexView;
   readonly libraries: readonly Library[];
   readonly collectionRevision: CollectionRevision;
   readonly nextCursor: Presence<CollectionCursor>;
   readonly exhaustion: "Partial" | "Complete";
+}
+
+// The one code that turns a first-page failure into the "Invalid libraries
+// view" terminal state: the backend rejects a bad view/cursor with these codes.
+function isInvalidViewError(error: unknown): boolean {
+  return (
+    isApiError(error) &&
+    (error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_CURSOR")
+  );
 }
 
 interface PendingLibrariesRevalidation {
@@ -96,10 +121,8 @@ export default function LibrariesPaneBody() {
   requirePaneRuntime(usePaneRuntime(), "LibrariesPaneBody");
   const isPaneActive = usePaneIsActive();
   const committedSnapshotRef = useRef<LibrariesSnapshot | null>(null);
-  const refreshFallbackSnapshotRef = useRef<LibrariesSnapshot | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(LIBRARIES_VISIT_DATA, captureCommitted);
-  const allowResourceAdoptionRef = useRef(restored === null);
   const [controller, setController] = useState<LibrariesSnapshot | null>(
     restored,
   );
@@ -109,7 +132,6 @@ export default function LibrariesPaneBody() {
     useRef<PendingLibrariesRevalidation | null>(null);
   const completedLibrariesRevalidationVersionRef = useRef<number | null>(null);
   const [chainEpoch, setChainEpoch] = useState(0);
-  const [refreshingLibraries, setRefreshingLibraries] = useState(false);
   const clearAllVisitData = useClearAllPaneVisitData();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -133,17 +155,116 @@ export default function LibrariesPaneBody() {
     libraryId: string;
     name: string;
   } | null>(null);
-  const librariesResource = useResource<
-    CollectionPage<Library>,
-    LibraryListResourceParams
-  >({
-    descriptor: librariesResourceDescriptor,
-    params:
-      restored !== null && librariesRefreshVersion === 0
-        ? null
-        : { refreshVersion: librariesRefreshVersion },
-    load: (_params, signal) => fetchLibrariesPage({ limit: 100, signal }),
+
+  // The pane URL owns the index view through a strict, total codec; `view` is
+  // null only for an Invalid URL, a terminal, user-recoverable state.
+  const librariesViewCodec = useMemo(
+    () => ({
+      basePath: "/libraries",
+      decode: decodeLibrariesIndexView,
+      encode: (
+        decoded: DecodedLibrariesIndexView,
+        current: URLSearchParams,
+      ): URLSearchParams =>
+        encodeLibrariesIndexView(
+          decoded.kind === "Valid"
+            ? decoded.view
+            : CANONICAL_LIBRARIES_INDEX_VIEW,
+          current,
+        ),
+      replaceOptions: {
+        viewTransition: { kind: "collection-reflow" as const },
+      },
+    }),
+    [],
+  );
+  const { state: decodedView, setState: setDecodedView } =
+    usePaneUrlState(librariesViewCodec);
+  const view = decodedView.kind === "Valid" ? decodedView.view : null;
+  // Set when the backend rejects the requested view; cleared whenever another
+  // view is requested.
+  const [viewInvalid, setViewInvalid] = useState(false);
+  const invalidView = decodedView.kind === "Invalid" || viewInvalid;
+  const listRegionRef = useRef<HTMLDivElement | null>(null);
+  const capturePaneScroll = usePaneScrollRetention(listRegionRef, controller);
+  // Set by a refresh, which re-requests the view already committed; the
+  // requested/committed key comparison alone cannot see that.
+  const committedViewInvalidatedRef = useRef(false);
+  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
+  // Set before a view replacement the user initiated from the sort control, so
+  // the commit that answers it returns focus there.
+  const pendingCommitFocusRef = useRef(false);
+  const focusPendingSortControl = useCallback(() => {
+    if (!pendingCommitFocusRef.current) return;
+    pendingCommitFocusRef.current = false;
+    const element = sortSelectRef.current;
+    if (element === null) return;
+    requestAnimationFrame(() => element.focus());
+  }, []);
+  // A view replacement only writes the URL: the committed rows stay rendered,
+  // and the requested/committed key mismatch that the new URL creates is what
+  // requests the exact first page. Invalidating the commit here instead would
+  // re-request the OLD view during the view transition's async window.
+  const setView = useCallback(
+    (next: LibrariesIndexView) => {
+      capturePaneScroll();
+      setDecodedView({ kind: "Valid", view: next });
+    },
+    [capturePaneScroll, setDecodedView],
+  );
+
+  const requestedViewKey =
+    view === null
+      ? null
+      : librariesResource.cacheKey({
+          refreshVersion: librariesRefreshVersion,
+          view,
+        });
+  const committedViewKey =
+    controller === null
+      ? null
+      : librariesResource.cacheKey({
+          refreshVersion: librariesRefreshVersion,
+          view: controller.view,
+        });
+  // The committed rows are not the ones the URL asks for, so the exact first
+  // page is outstanding and continuation stays fenced until it commits.
+  const requestsFirstPage =
+    view === null ||
+    controller === null ||
+    requestedViewKey !== committedViewKey ||
+    committedViewInvalidatedRef.current;
+  // The canonical first page at refresh zero is the route's server seed (whose
+  // resource key this one matches); every other exact view and every refresh
+  // owns its own request under its own identity. An invalid view requests
+  // nothing at all.
+  const firstPage = useResource<CollectionPage<Library>>({
+    cacheKey: requestsFirstPage && !invalidView ? requestedViewKey : null,
+    load: (signal) => {
+      if (view === null) {
+        // justify-defect: a non-null request key is built from this exact view.
+        throw new Error("Libraries index request lost its view identity");
+      }
+      return fetchLibrariesPage({
+        view,
+        limit: LIBRARIES_PAGE_LIMIT,
+        signal,
+      });
+    },
   });
+  const loadFailure =
+    firstPage.status === "error" && !isInvalidViewError(firstPage.error)
+      ? {
+          content: libraryRequestErrorMessage(firstPage.error, {
+            title:
+              controller === null
+                ? "Libraries couldn’t be loaded"
+                : "Libraries couldn’t be refreshed",
+            request: "LibraryCollectionRead",
+          }),
+          retry: firstPage.retry,
+        }
+      : null;
   const libraries = controller?.libraries ?? EMPTY_LIBRARIES;
   const viewerInvitesResource = useResource<ViewerLibraryInvitation[]>({
     cacheKey: `viewer-library-invites:${invitesRefreshVersion}`,
@@ -154,14 +275,8 @@ export default function LibrariesPaneBody() {
       ? viewerInvitesResource.data
       : null;
   const status =
-    controller !== null
-      ? "ready"
-      : librariesResource.status === "error"
-        ? "error"
-        : "loading";
-  usePaneReturnReady(
-    controller !== null || librariesResource.status === "error",
-  );
+    controller !== null ? "ready" : loadFailure !== null ? "error" : "loading";
+  usePaneReturnReady(controller !== null || loadFailure !== null || invalidView);
 
   const rejectPendingLibrariesRevalidation = useCallback((error: unknown) => {
     const pending = pendingLibrariesRevalidationRef.current;
@@ -175,18 +290,19 @@ export default function LibrariesPaneBody() {
     rejectPendingLibrariesRevalidation(
       new DOMException("Libraries refresh was superseded.", "AbortError"),
     );
-    if (committedSnapshotRef.current !== null) {
-      refreshFallbackSnapshotRef.current = committedSnapshotRef.current;
-    }
+    capturePaneScroll();
+    committedViewInvalidatedRef.current = true;
     committedSnapshotRef.current = null;
     clearAllVisitData();
-    allowResourceAdoptionRef.current = true;
-    setRefreshingLibraries(true);
     setChainEpoch((epoch) => epoch + 1);
     const version = librariesRefreshVersionRef.current + 1;
     librariesRefreshVersionRef.current = version;
     setLibrariesRefreshVersion(version);
-  }, [clearAllVisitData, rejectPendingLibrariesRevalidation]);
+  }, [
+    capturePaneScroll,
+    clearAllVisitData,
+    rejectPendingLibrariesRevalidation,
+  ]);
   const revalidateLibraries = useCallback(
     (signal: AbortSignal): Promise<void> => {
       if (signal.aborted) {
@@ -204,10 +320,6 @@ export default function LibrariesPaneBody() {
           pendingLibrariesRevalidationRef.current = null;
           completedLibrariesRevalidationVersionRef.current = null;
           pending.removeAbortListener();
-          allowResourceAdoptionRef.current = false;
-          setRefreshingLibraries(false);
-          committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
-          refreshFallbackSnapshotRef.current = null;
           reject(
             signal.reason ??
               new DOMException("Libraries refresh was aborted.", "AbortError"),
@@ -235,50 +347,49 @@ export default function LibrariesPaneBody() {
     [rejectPendingLibrariesRevalidation],
   );
 
+  // Latest-wins atomic commit: the resource reports a result only under the
+  // current request identity, so a superseded view can never install its rows.
   useEffect(() => {
-    if (
-      librariesResource.status === "ready" &&
-      allowResourceAdoptionRef.current
-    ) {
-      allowResourceAdoptionRef.current = false;
+    if (firstPage.status === "ready" && view !== null) {
+      committedViewInvalidatedRef.current = false;
       const next: LibrariesSnapshot = {
-        libraries: librariesResource.data.items,
-        collectionRevision: librariesResource.data.collectionRevision,
-        nextCursor: librariesResource.data.nextCursor,
+        view,
+        libraries: firstPage.data.items,
+        collectionRevision: firstPage.data.collectionRevision,
+        nextCursor: firstPage.data.nextCursor,
         exhaustion:
-          librariesResource.data.nextCursor.kind === "Absent"
-            ? "Complete"
-            : "Partial",
+          firstPage.data.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = next;
       setController(next);
-      setRefreshingLibraries(false);
       setChainEpoch((epoch) => epoch + 1);
+      focusPendingSortControl();
       const pending = pendingLibrariesRevalidationRef.current;
       if (pending?.version === librariesRefreshVersion) {
         completedLibrariesRevalidationVersionRef.current = pending.version;
       }
-    } else if (
-      librariesResource.status === "error" &&
-      allowResourceAdoptionRef.current
-    ) {
-      allowResourceAdoptionRef.current = false;
-      setRefreshingLibraries(false);
-      committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
-      refreshFallbackSnapshotRef.current = null;
+      return;
+    }
+    if (firstPage.status === "error") {
+      if (isInvalidViewError(firstPage.error)) setViewInvalid(true);
       const pending = pendingLibrariesRevalidationRef.current;
       if (pending?.version === librariesRefreshVersion) {
-        rejectPendingLibrariesRevalidation(librariesResource.error);
+        rejectPendingLibrariesRevalidation(firstPage.error);
       }
     }
   }, [
+    firstPage,
+    focusPendingSortControl,
     librariesRefreshVersion,
-    librariesResource,
     rejectPendingLibrariesRevalidation,
+    view,
   ]);
 
+  // A newly requested view retires the previous view's rejection.
+  useEffect(() => setViewInvalid(false), [requestedViewKey]);
+
   useLayoutEffect(() => {
-    committedSnapshotRef.current = controller;
+    committedSnapshotRef.current = requestsFirstPage ? null : controller;
     const pending = pendingLibrariesRevalidationRef.current;
     if (
       controller === null ||
@@ -291,7 +402,7 @@ export default function LibrariesPaneBody() {
     pendingLibrariesRevalidationRef.current = null;
     pending.removeAbortListener();
     pending.resolve();
-  }, [controller]);
+  }, [controller, requestsFirstPage]);
 
   useEffect(() => {
     if (readyViewerInvites) {
@@ -318,6 +429,7 @@ export default function LibrariesPaneBody() {
         libraries.push(library);
       }
       const next: LibrariesSnapshot = {
+        ...current,
         libraries,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
@@ -329,44 +441,32 @@ export default function LibrariesPaneBody() {
     },
     [],
   );
+  // Continuation runs only while the committed view is the requested one, and
+  // every page of a chain carries that same view.
   const exhaustion = useExhaustivePagination<Library>({
-    active: isPaneActive && controller !== null && !refreshingLibraries,
-    chainKey: `libraries:${chainEpoch}`,
+    active: isPaneActive && controller !== null && !requestsFirstPage,
+    chainKey: `${committedViewKey ?? ""}:${chainEpoch}`,
     cursor: controller?.nextCursor ?? NO_CURSOR,
     collectionRevision: controller?.collectionRevision ?? ZERO_REVISION,
     itemCount: controller?.libraries.length ?? 0,
-    loadPage: (cursor, collectionRevision, signal) =>
-      fetchLibrariesPage({
+    loadPage: (cursor, collectionRevision, signal) => {
+      if (controller === null) {
+        // justify-defect: continuation runs only over a committed exact view.
+        throw new Error("Libraries continuation lost its committed view");
+      }
+      return fetchLibrariesPage({
+        view: controller.view,
         cursor,
         collectionRevision,
-        limit: 100,
+        limit: LIBRARIES_PAGE_LIMIT,
         signal,
-      }),
+      });
+    },
     commitPage: commitLibrariesPage,
     refresh: refreshLibraries,
   });
   const collectionComplete =
     controller !== null && exhaustion.kind === "Complete";
-  const initialLoadError =
-    controller === null && librariesResource.status === "error"
-      ? libraryRequestErrorMessage(
-          librariesResource.error,
-          {
-            title: "Libraries couldn’t be loaded",
-            request: "LibraryCollectionRead",
-          },
-        )
-      : null;
-  const refreshLoadError =
-    controller !== null && librariesResource.status === "error"
-      ? libraryRequestErrorMessage(
-          librariesResource.error,
-          {
-            title: "Libraries couldn’t be refreshed",
-            request: "LibraryCollectionRead",
-          },
-        )
-      : null;
 
   const inviteLoadError =
     viewerInvitesResource.status === "error"
@@ -474,13 +574,55 @@ export default function LibrariesPaneBody() {
     },
     [collectionComplete, libraries],
   );
+  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
+  const clearDomainFilters = useCallback(() => {
+    dismissFilterRowsRef.current();
+    pendingCommitFocusRef.current = true;
+    setView(CANONICAL_LIBRARIES_INDEX_VIEW);
+  }, [setView]);
+  const domainFilterControls = useMemo(
+    () =>
+      invalidView || view === null ? undefined : (
+        <>
+          <SelectField
+            layout="Stacked"
+            label="Sort by"
+            ref={sortSelectRef}
+            value={librariesSortOptionOf(view)}
+            onChange={(event) => {
+              pendingCommitFocusRef.current = true;
+              setView(
+                librariesViewForSortOption(
+                  event.target.value as LibrariesSortOptionId,
+                ),
+              );
+            }}
+          >
+            {LIBRARIES_SORT_OPTION_IDS.map((optionId) => (
+              <option key={optionId} value={optionId}>
+                {librariesSortOptionLabel(optionId)}
+              </option>
+            ))}
+          </SelectField>
+          {view.kind === "Canonical" ? null : (
+            <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
+              Clear filters
+            </Button>
+          )}
+        </>
+      ),
+    [clearDomainFilters, invalidView, setView, view],
+  );
   const { query: filterQuery, publication: search } = usePaneFilterRows({
     sourceKey: "Libraries.Index",
     inputLabel: "Filter libraries",
     placeholder: "Filter libraries",
     getRowStatus: getFilterStatus,
-    activeDomainControlCount: 0,
+    activeDomainControlCount:
+      view === null || invalidView || view.kind === "Canonical" ? 0 : 1,
+    filters: domainFilterControls,
   });
+  dismissFilterRowsRef.current = search.onDismiss;
   const libraryRows = libraries.map((library) => presentLibrary(library));
   const filteredLibraryRows = libraryRows.filter((row) =>
     matchesPaneFilterQuery(filterQuery, [row.title.text]),
@@ -520,18 +662,39 @@ export default function LibrariesPaneBody() {
       execute: executeRefresh,
     },
     header: {
-      kind: "section",
-      folio: collectionComplete
-        ? { kind: "count", value: libraries.length, unit: "library" }
-        : { kind: "none" },
-      pending:
-        status === "loading" ||
-        refreshingLibraries ||
-        !collectionComplete,
+      kind: "Section",
+      // The metadata describes the exhaustive committed view, never the subset.
+      meta:
+        collectionComplete && !invalidView
+          ? { kind: "Count", value: libraries.length, unit: "library" }
+          : invalidView
+            ? { kind: "None" }
+            : { kind: "Pending" },
     },
   });
 
   if (defect) throw defect.error;
+
+  if (invalidView) {
+    return (
+      <FeedbackNotice
+        content={{ tone: "Danger", title: "Invalid libraries view" }}
+        announcement="Assertive"
+        actions={[
+          {
+            label: "Reset view",
+            onClick: () => {
+              search.onDismiss();
+              setDecodedView({
+                kind: "Valid",
+                view: CANONICAL_LIBRARIES_INDEX_VIEW,
+              });
+            },
+          },
+        ]}
+      />
+    );
+  }
 
   const createLibraryAction = (
     <div>
@@ -654,6 +817,7 @@ export default function LibrariesPaneBody() {
           </div>
         </section>
       ) : null}
+      <div ref={listRegionRef}>
       <CollectionView
         returnScope="Libraries.Items"
         rows={filteredLibraryRows}
@@ -663,10 +827,8 @@ export default function LibrariesPaneBody() {
           kind: "ImmediateOnKeyChange",
           key: filterQuery.trim(),
         }}
-        collectionBusy={refreshingLibraries || exhaustion.kind === "Draining"}
-        opener={
-          <SectionOpener heading="Libraries" actions={createLibraryAction} />
-        }
+        collectionBusy={requestsFirstPage || exhaustion.kind === "Draining"}
+        toolbar={createLibraryAction}
         notice={
           feedback ? (
             <FeedbackNotice content={feedback} announcement="Assertive" />
@@ -681,20 +843,11 @@ export default function LibrariesPaneBody() {
           ) : undefined
         }
         error={
-          initialLoadError ? (
+          controller === null && loadFailure !== null ? (
             <FeedbackNotice
-              content={initialLoadError}
+              content={loadFailure.content}
               announcement="Assertive"
-              actions={[
-                {
-                  label: "Retry",
-                  onClick: () => {
-                    if (librariesResource.status === "error") {
-                      librariesResource.retry();
-                    }
-                  },
-                },
-              ]}
+              actions={[{ label: "Retry", onClick: loadFailure.retry }]}
             />
           ) : undefined
         }
@@ -724,28 +877,21 @@ export default function LibrariesPaneBody() {
           status === "ready" ? (
             <>
               <CollectionExhaustionNotice
-                state={refreshingLibraries ? { kind: "Idle" } : exhaustion}
+                state={requestsFirstPage ? { kind: "Idle" } : exhaustion}
               />
-              {refreshLoadError ? (
+              {loadFailure !== null ? (
                 <FeedbackNotice
-                  content={refreshLoadError}
+                  content={loadFailure.content}
                   announcement="Assertive"
-                  actions={[
-                    {
-                      label: "Retry",
-                      onClick: () => {
-                        if (librariesResource.status === "error") {
-                          librariesResource.retry();
-                        }
-                      },
-                    },
-                  ]}
+                  actions={[{ label: "Retry", onClick: loadFailure.retry }]}
                 />
               ) : null}
             </>
           ) : null
         }
       />
+      </div>
+
     </>
   );
 }

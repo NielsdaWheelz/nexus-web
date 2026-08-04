@@ -201,8 +201,8 @@ function areCreditGroupsEqual(
     if (
       !other ||
       group.kind !== other.kind ||
-      (group.kind === "role" &&
-        (other.kind !== "role" || group.label !== other.label)) ||
+      (group.kind === "Role" &&
+        (other.kind !== "Role" || group.label !== other.label)) ||
       group.credits.length !== other.credits.length
     ) {
       return false;
@@ -221,10 +221,12 @@ function areResourceHeaderPublicationsEqual(
   right: PaneResourceHeaderPublication,
 ): boolean {
   if (left === right) return true;
-  if (left.status !== right.status || left.title !== right.title) return false;
-  return left.status !== "ready" ||
-    (right.status === "ready" &&
-      areCreditGroupsEqual(left.creditGroups, right.creditGroups));
+  if (left.status !== right.status) return false;
+  return (
+    left.status !== "Ready" ||
+    (right.status === "Ready" &&
+      areCreditGroupsEqual(left.creditGroups, right.creditGroups))
+  );
 }
 
 function arePaneHeaderPublicationsEqual(
@@ -233,28 +235,27 @@ function arePaneHeaderPublicationsEqual(
 ): boolean {
   if (left === right) return true;
   if (!left || !right || left.kind !== right.kind) return false;
-  if (left.kind === "resource") {
+  if (left.kind === "Resource") {
     return (
-      right.kind === "resource" &&
+      right.kind === "Resource" &&
       areResourceHeaderPublicationsEqual(left.resource, right.resource)
     );
   }
-  if (right.kind !== "section" || left.pending !== right.pending) return false;
-  if (left.folio === right.folio) return true;
-  if (left.folio.kind !== right.folio.kind) return false;
-  switch (left.folio.kind) {
-    case "none":
+  if (right.kind !== "Section" || left.meta.kind !== right.meta.kind) {
+    return false;
+  }
+  switch (left.meta.kind) {
+    case "None":
+    case "Pending":
       return true;
-    case "count":
+    case "Count":
       return (
-        right.folio.kind === "count" &&
-        left.folio.value === right.folio.value &&
-        left.folio.unit === right.folio.unit
+        right.meta.kind === "Count" &&
+        left.meta.value === right.meta.value &&
+        left.meta.unit === right.meta.unit
       );
-    case "date":
-      return right.folio.kind === "date" && left.folio.iso === right.folio.iso;
-    case "title":
-      return right.folio.kind === "title" && left.folio.value === right.folio.value;
+    case "Date":
+      return right.meta.kind === "Date" && left.meta.iso === right.meta.iso;
   }
 }
 

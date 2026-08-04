@@ -167,6 +167,15 @@ episodes immediately resurface with their consumption state intact.
   `collectionRevision`; concurrent membership or ordering changes return
   `409 E_COLLECTION_CHANGED`. A cursor from the wrong viewer, library, view, or
   pre-cutover family is `400 E_INVALID_CURSOR`, never reinterpreted.
+- **Libraries index views.** `GET /libraries` accepts `sort=created|name` plus
+  `direction=asc|desc`. `Created — oldest` is canonical and omits both keys; the
+  only valid non-default pairs are `created+desc` and `name+asc|desc`. A partial
+  pair, an unknown value, a duplicate key, or the explicit default pair is
+  `400 E_INVALID_REQUEST`. The name order sorts on the presented name — `All`
+  for the viewer's Default library, otherwise the authored `name` — so the
+  server order matches `libraryPresentation`, then on `id ASC` in both
+  directions. Cursors are the `LibrariesIndex:v2` family bound to viewer, order
+  plan, and collection revision.
 - **Fixed entry projections.** `GET /libraries/{id}/entries` accepts
   `projection=unfiled|in-progress` (omitted means All items). `Unfiled` is
   valid only for the viewer's own Default library: direct-Default media with
@@ -295,7 +304,8 @@ items / show finished.
 Pane-local Filter is a visit-local view over the committed rows. It matches
 presented entry title and contributor display/credited names after the
 server-owned projection and before the existing order. It never enters
-`LibraryEntryView`, request, cursor, snapshot, or folio identity. `Type`, `View`,
+`LibraryEntryView`, request, cursor, snapshot, or published pane-header
+metadata. `Type`, `View`,
 `Sort by`, and applicable `Hide finished` render in expanded Pane Search; when
 collapsed, the Filter action marks their non-default state. A query-key row
 change bypasses the collection View Transition, while domain commits and

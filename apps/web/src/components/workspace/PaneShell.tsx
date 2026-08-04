@@ -241,7 +241,7 @@ export default function PaneShell({
   );
   const recordNavigationModality = useRecordPaneNavigationModality();
   const activateTarget = paneRuntime.activateTarget;
-  const activateIdentityAnchor = useCallback(
+  const activateChromeAnchor = useCallback(
     (event: TargetLinkMouseEvent, anchor: HTMLAnchorElement) => {
       recordNavigationModality(event.detail === 0 ? "Keyboard" : "Pointer");
       activateTargetAnchor({ event, runtime: { activateTarget }, anchor });
@@ -713,7 +713,7 @@ export default function PaneShell({
       acceptedSearch.kind === "FilterRows" ? "Filter" : "Find";
     const collapsedSearchLabel =
       !searchExpanded && activeDomainControlCount > 0
-        ? `${searchLabel}, ${activeDomainControlCount} controls active`
+        ? `${searchLabel}, ${activeDomainControlCount} ${activeDomainControlCount === 1 ? "control" : "controls"} active`
         : searchLabel;
     const actions: PaneHeaderAction[] = [
       ...effectiveActions,
@@ -893,7 +893,7 @@ export default function PaneShell({
       routeKey,
       identityId,
       header,
-      activateIdentityAnchor,
+      activateChromeAnchor,
       navigation,
       actions: reconciledActions,
       controls: paneControls,
@@ -901,7 +901,7 @@ export default function PaneShell({
       resourceTarget: effectiveResourceTarget,
     });
   }, [
-    activateIdentityAnchor,
+    activateChromeAnchor,
     header,
     identityId,
     isMobile,
@@ -995,7 +995,6 @@ export default function PaneShell({
       data-testid="pane-shell-root"
       data-pane-shell="true"
       data-pane-focus-landmark="true"
-      data-header-kind={header.kind}
       data-active={isActive ? "true" : "false"}
       data-mobile={isMobile ? "true" : "false"}
       tabIndex={-1}
