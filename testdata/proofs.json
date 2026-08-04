@@ -432,6 +432,17 @@
       "risks": [
         "destructive-side-effects"
       ]
+    },
+    {
+      "id": "resource-action-parity",
+      "proof": "apps/web/e2e/journeys/resource-action-parity.journey.spec.ts",
+      "source_globs": [
+        "python/nexus/services/resource_items/action_snapshots.py",
+        "python/nexus/api/routes/resource_items.py",
+        "apps/web/src/lib/actions/resourceActionRuntime.tsx",
+        "apps/web/src/components/resources/ResourceActionMenu.tsx"
+      ],
+      "risks": []
     }
   ]
 }
