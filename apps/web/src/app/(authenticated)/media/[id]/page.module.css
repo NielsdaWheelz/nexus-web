@@ -783,12 +783,12 @@
 }
 
 .fragments::highlight(nexus-find-all) {
-  background: var(--highlight-yellow);
+  background-color: var(--highlight-yellow);
   color: inherit;
 }
 
 .fragments::highlight(nexus-find-active) {
-  background: var(--highlight-yellow);
+  background-color: rgba(255, 193, 7, 0.65);
   color: var(--reader-text, var(--ink));
   text-decoration: underline double currentColor;
   text-underline-offset: 0.14em;
@@ -807,8 +807,11 @@
 
   .fragments::highlight(nexus-find-all),
   .fragments::highlight(nexus-find-active) {
-    background: Highlight;
+    background-color: Highlight;
     color: HighlightText;
+  }
+
+  .fragments::highlight(nexus-find-active) {
     text-decoration: underline double HighlightText;
   }
 }

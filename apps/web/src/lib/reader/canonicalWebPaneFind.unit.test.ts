@@ -33,7 +33,7 @@ it("keeps web-pane Find aligned with the canonical text corpus", async () => {
       clearPreviewFragment: () => {},
       focusReaderViewport: () => {},
       previewLease: createMediaFindPreviewLease(),
-      highlightOwner: { publish: () => {}, clear: () => {} },
+      presentation: { publish: () => {}, clear: () => {} },
       scrollPositioner: {
         async run() {
           throw new Error(

@@ -25,9 +25,9 @@ import {
   type PaneFindPreviewReceipt,
 } from "@/lib/panes/usePaneFind";
 import {
-  createCanonicalTextFindHighlightOwner,
-  type CanonicalTextFindHighlightOwner,
-} from "@/lib/reader/canonicalTextFindHighlights";
+  createPaneFindHighlightOwner,
+  type PaneFindHighlightOwner,
+} from "@/lib/reader/paneFindHighlightRegistry";
 import type {
   ChatReadingPosition,
   ChatScrollHandle,
@@ -79,7 +79,7 @@ function createConversationFindAdapter({
   readonly snapshot: ConversationFindSnapshot;
   readonly getCurrentSourceKey: () => PaneFindSourceKey;
   readonly getScrollHandle: () => ChatScrollHandle | null;
-  readonly highlightOwner: CanonicalTextFindHighlightOwner;
+  readonly highlightOwner: PaneFindHighlightOwner;
 }): ConversationFindAdapter {
   let prepared: {
     readonly sessionId: number;
@@ -304,7 +304,7 @@ export function useConversationPaneFind({
 
   const currentSourceKeyRef = useRef(committedSnapshot.sourceKey);
   const highlightOwner = useMemo(
-    () => createCanonicalTextFindHighlightOwner(),
+    () => createPaneFindHighlightOwner(),
     [],
   );
   const adapter = useMemo(

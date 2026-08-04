@@ -1,17 +1,20 @@
 export const CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME = "nexus-find-all";
 export const CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME = "nexus-find-active";
 
-export interface CanonicalTextFindHighlightRanges {
+const PASSIVE_HIGHLIGHT_PRIORITY = 0;
+const ACTIVE_HIGHLIGHT_PRIORITY = 1;
+
+export interface PaneFindHighlightRanges {
   readonly all: readonly Range[];
   readonly active: readonly Range[];
 }
 
-export interface CanonicalTextFindHighlightOwner {
-  publish(ranges: CanonicalTextFindHighlightRanges): void;
+export interface PaneFindHighlightOwner {
+  publish(ranges: PaneFindHighlightRanges): void;
   clear(): void;
 }
 
-const ownerRanges = new Map<symbol, CanonicalTextFindHighlightRanges>();
+const ownerRanges = new Map<symbol, PaneFindHighlightRanges>();
 
 function requireCustomHighlightRegistry(): HighlightRegistry {
   if (
@@ -29,6 +32,7 @@ function requireCustomHighlightRegistry(): HighlightRegistry {
 function publishFixedHighlight(
   registry: HighlightRegistry,
   name: string,
+  priority: number,
   ranges: Range[],
 ): void {
   if (ranges.length === 0) {
@@ -36,6 +40,7 @@ function publishFixedHighlight(
     return;
   }
   const highlight = new Highlight();
+  highlight.priority = priority;
   for (const range of ranges) {
     highlight.add(range);
   }
@@ -52,17 +57,19 @@ function publishRegistry(registry: HighlightRegistry): void {
   publishFixedHighlight(
     registry,
     CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME,
+    PASSIVE_HIGHLIGHT_PRIORITY,
     all,
   );
   publishFixedHighlight(
     registry,
     CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME,
+    ACTIVE_HIGHLIGHT_PRIORITY,
     active,
   );
 }
 
-export function createCanonicalTextFindHighlightOwner(): CanonicalTextFindHighlightOwner {
-  const ownerId = Symbol("CanonicalTextFindHighlightOwner");
+export function createPaneFindHighlightOwner(): PaneFindHighlightOwner {
+  const ownerId = Symbol("PaneFindHighlightOwner");
   return {
     publish(ranges) {
       const registry = requireCustomHighlightRegistry();

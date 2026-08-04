@@ -4130,25 +4130,26 @@ export default function MediaPaneBody() {
   // Canonical Cursor Building
   // ==========================================================================
 
-  useEffect(() => {
-    if (!activeContent) {
+  // Ordered post-commit canonical seam: after each renderedHtml/fragment commit,
+  // rebuild the cursor and publish the active canonical format's rendered-state
+  // ref from one local validity read, so the format rebind below repaints exact
+  // ranges against current DOM before paint (see canonicalFindRebind).
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    const viewport = textViewportRef.current;
+    if (!activeContent || !content) {
       cursorRef.current = null;
       setIsMismatchDisabled(false);
+      webFindRenderedStateRef.current = null;
+      epubFindRenderedStateRef.current = null;
       return;
     }
-    if (!contentRef.current) {
-      cursorRef.current = null;
-      setIsMismatchDisabled(false);
-      return;
-    }
-
-    const cursor = buildCanonicalCursor(contentRef.current);
+    const cursor = buildCanonicalCursor(content);
     const isValid = validateCanonicalText(
       cursor,
       activeContent.canonicalText,
       activeContent.fragmentId,
     );
-
     cursorRef.current = cursor;
     setIsMismatchDisabled(!isValid);
     if (
@@ -4162,65 +4163,33 @@ export default function MediaPaneBody() {
         expectedLength: canonicalCpLength(activeContent.canonicalText),
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: rebuild when rendered content changes
-  }, [activeContent?.fragmentId, activeContent?.canonicalText, renderedHtml]);
+    webFindRenderedStateRef.current =
+      isValid && viewport && media?.kind === "web_article"
+        ? {
+            fragmentId: activeContent.fragmentId,
+            canonicalText: activeContent.canonicalText,
+            cursor,
+            viewport,
+          }
+        : null;
+    epubFindRenderedStateRef.current =
+      isValid && viewport && isEpub && renderedEpubSection
+        ? { section: renderedEpubSection, cursor, viewport }
+        : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: rebuild when rendered canonical content changes
+  }, [
+    activeContent?.fragmentId,
+    activeContent?.canonicalText,
+    renderedHtml,
+    media?.kind,
+    isEpub,
+    renderedEpubSection,
+    readerLayoutReady,
+  ]);
 
   useEffect(() => {
     mismatchLoggedFragmentRef.current = null;
   }, [activeContent?.fragmentId]);
-
-  useEffect(() => {
-    const cursor = cursorRef.current;
-    const viewport = textViewportRef.current;
-    if (
-      media?.kind !== "web_article" ||
-      !activeContent ||
-      !cursor ||
-      !viewport ||
-      isMismatchDisabled
-    ) {
-      webFindRenderedStateRef.current = null;
-      return;
-    }
-    webFindRenderedStateRef.current = {
-      fragmentId: activeContent.fragmentId,
-      canonicalText: activeContent.canonicalText,
-      cursor,
-      viewport,
-    };
-  }, [
-    activeContent,
-    isMismatchDisabled,
-    media?.kind,
-    readerLayoutReady,
-    renderedHtml,
-  ]);
-
-  useEffect(() => {
-    const cursor = cursorRef.current;
-    const viewport = textViewportRef.current;
-    if (
-      !isEpub ||
-      !renderedEpubSection ||
-      !cursor ||
-      !viewport ||
-      isMismatchDisabled
-    ) {
-      epubFindRenderedStateRef.current = null;
-      return;
-    }
-    epubFindRenderedStateRef.current = {
-      section: renderedEpubSection,
-      cursor,
-      viewport,
-    };
-  }, [
-    isEpub,
-    isMismatchDisabled,
-    readerLayoutReady,
-    renderedEpubSection,
-    renderedHtml,
-  ]);
 
   const transcriptFindSnapshotCandidate = useMemo(
     () =>
@@ -4412,19 +4381,25 @@ export default function MediaPaneBody() {
     mediaPaneFindResult.kind === "Available"
       ? mediaPaneFindResult.controller
       : null;
-  const rebuildMediaFindPresentation =
-    webPaneFindCapability.kind === "Available"
-      ? webPaneFindCapability.adapter.rebuildPresentation
-      : null;
-  useEffect(() => {
-    if (media?.kind === "web_article" && rebuildMediaFindPresentation) {
-      rebuildMediaFindPresentation();
-    }
+  const canonicalFindRebind =
+    media?.kind === "web_article"
+      ? webPaneFindCapability.kind === "Available"
+        ? webPaneFindCapability.adapter.rebuildPresentation
+        : null
+      : isEpub
+        ? epubPaneFindCapability.kind === "Available"
+          ? epubPaneFindCapability.adapter.rebuildPresentation
+          : null
+        : null;
+  useLayoutEffect(() => {
+    canonicalFindRebind?.();
   }, [
+    canonicalFindRebind,
     activeContent?.fragmentId,
-    media?.kind,
-    rebuildMediaFindPresentation,
+    activeContent?.canonicalText,
     renderedHtml,
+    renderedEpubSection,
+    readerLayoutReady,
   ]);
 
   useLayoutEffect(() => {

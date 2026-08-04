@@ -101,6 +101,34 @@ owns query, cancellation, preview, and Return. App-owned page, zoom, restore,
 and preview positioning runs under `paneScroll.ts`; PDF.js-internal scrolling
 remains library-owned.
 
+### canonical Find marks and rebind
+
+Web-article and EPUB Find share one presentation owner,
+`canonicalTextFindPresentation.ts`. Its `publish` filters an adapter's logical
+occurrences to the rendered fragment, projects each through
+`resolveCanonicalTextRanges` against the current cursor, and defects on any range
+that is absent, collapsed, disconnected, outside the viewport, or inconsistent
+with its nonempty span. It paints every in-fragment passive range and only the
+visible active target; it stores no occurrence source of truth. It privately
+composes `paneFindHighlightRegistry.ts`, the document-global fixed-name CSS
+Custom Highlight aggregate (`nexus-find-all`/`nexus-find-active`) with explicit
+active-over-passive priority and owner-scoped clearing. Conversation Find
+consumes that lower-level registry directly.
+
+The Web and EPUB adapters expose `rebuildPresentation()`. `MediaPaneBody` owns
+one ordered post-commit `useLayoutEffect`: after each committed
+`renderedHtml`/fragment change it rebuilds the cursor, republishes the active
+format's rendered-state ref from one local validity read, and invokes the
+selected canonical (Web or EPUB) rebind before paint. Exact marks therefore
+survive same-fragment HTML replacement (delayed persisted-highlight load),
+cross-fragment/section preview, and reflow; stale ranges are never retained, and
+Find never converts into a persisted Highlight. `page.module.css` styles the
+marks with only `::highlight()`-supported properties (`background-color`, not the
+`background` shorthand); active is distinguishable without color via a double
+underline, and forced colors keeps both marks perceivable while retaining the
+active cue. There is no native, DOM-wrapper, or approximate fallback; a missing
+CSS Custom Highlight API fails loudly.
+
 ### natural document completion
 
 Web articles and the final EPUB section render a semantic end marker inside the

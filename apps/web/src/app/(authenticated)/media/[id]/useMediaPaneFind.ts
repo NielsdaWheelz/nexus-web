@@ -21,20 +21,17 @@ import {
   type PaneFindResultKey,
   type PaneFindSourceKey,
 } from "@/lib/panes/paneSearch";
-import {
-  type PaneFindAdapter,
-  type PaneFindPreviewReceipt,
-} from "@/lib/panes/usePaneFind";
+import { type PaneFindPreviewReceipt } from "@/lib/panes/usePaneFind";
 import { canonicalTextFind } from "@/lib/reader/canonicalTextFind";
 import {
-  createCanonicalTextFindHighlightOwner,
-  type CanonicalTextFindHighlightOwner,
-} from "@/lib/reader/canonicalTextFindHighlights";
+  createCanonicalTextFindPresentationOwner,
+  type CanonicalTextFindAdapter,
+  type CanonicalTextFindPresentationOwner,
+} from "@/lib/reader/canonicalTextFindPresentation";
 import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import {
   findFirstVisibleCanonicalOffset,
   measureCanonicalTextAnchorViewportDelta,
-  resolveCanonicalTextRanges,
   restoreCanonicalTextAnchorViewportPosition,
   scrollToExactCanonicalTextAnchor,
 } from "./paneTextAnchor";
@@ -89,8 +86,8 @@ interface PreparedSectionScope {
   readonly endCp: number;
 }
 
-export interface WebFindAdapter extends PaneFindAdapter<MediaPaneFindError> {
-  rebuildPresentation(): void;
+export interface WebFindAdapter
+  extends CanonicalTextFindAdapter<MediaPaneFindError> {
   resume(): void;
   invalidate(): void;
   dispose(): void;
@@ -290,7 +287,7 @@ export function createWebFindAdapter({
   clearPreviewFragment,
   focusReaderViewport,
   previewLease,
-  highlightOwner,
+  presentation,
   scrollPositioner,
 }: {
   readonly snapshot: WebFindSnapshot;
@@ -303,7 +300,7 @@ export function createWebFindAdapter({
   readonly clearPreviewFragment: () => void;
   readonly focusReaderViewport: () => void;
   readonly previewLease: MediaFindPreviewLease;
-  readonly highlightOwner: CanonicalTextFindHighlightOwner;
+  readonly presentation: CanonicalTextFindPresentationOwner;
   readonly scrollPositioner: ReaderScrollPositioner;
 }): WebFindAdapter {
   let preparedScopeBySession = new Map<number, PreparedSectionScope | null>();
@@ -355,28 +352,14 @@ export function createWebFindAdapter({
     }
   };
 
-  const publishRenderedRanges = (rendered: WebFindRenderedState): void => {
+  const publishCurrentRanges = (rendered: WebFindRenderedState): void => {
     assertRenderedFragment(snapshot, rendered);
-    const visibleOccurrences = [...occurrencesByKey.values()].filter(
-      (occurrence) => occurrence.fragmentId === rendered.fragmentId,
-    );
-    const resolveOccurrence = (occurrence: WebFindOccurrence) => {
-      const ranges = resolveCanonicalTextRanges(
-        rendered.cursor,
-        occurrence.startCp,
-        occurrence.endCp,
-      );
-      if (!ranges) {
-        throw new Error("Web Find occurrence is not exactly renderable.");
-      }
-      return ranges;
-    };
-    highlightOwner.publish({
-      all: visibleOccurrences.flatMap(resolveOccurrence),
-      active:
-        activeOccurrence?.fragmentId === rendered.fragmentId
-          ? resolveOccurrence(activeOccurrence)
-          : [],
+    presentation.publish({
+      fragmentId: rendered.fragmentId,
+      cursor: rendered.cursor,
+      viewport: rendered.viewport,
+      targets: [...occurrencesByKey.values()],
+      activeKey: activeOccurrence?.key ?? null,
     });
   };
   const invalidate = (): void => {
@@ -384,7 +367,7 @@ export function createWebFindAdapter({
     occurrencesByKey.clear();
     activeOccurrence = null;
     origin = null;
-    highlightOwner.clear();
+    presentation.clear();
     if (!leaseRetired) {
       previewLease.retire();
       leaseRetired = true;
@@ -588,7 +571,7 @@ export function createWebFindAdapter({
           };
         }
         activeOccurrence = occurrence;
-        publishRenderedRanges(rendered);
+        publishCurrentRanges(rendered);
         if (!(await positionExactAnchor(rendered, occurrence.startCp))) {
           throw new Error("Web Find occurrence anchor is not renderable.");
         }
@@ -598,7 +581,7 @@ export function createWebFindAdapter({
           throw new DOMException("Web Find source was replaced.", "AbortError");
         }
         activeOccurrence = null;
-        highlightOwner.clear();
+        presentation.clear();
         if (isAbort(error) && originWasNew) {
           const current = getRenderedState();
           if (current?.fragmentId === occurrence.fragmentId) {
@@ -643,7 +626,7 @@ export function createWebFindAdapter({
     },
     async clearPresentation(request) {
       assertCurrent(request.sourceKey);
-      highlightOwner.clear();
+      presentation.clear();
     },
     async returnToReadingPosition(request) {
       assertCurrent(request.sourceKey);
@@ -661,7 +644,7 @@ export function createWebFindAdapter({
         throw new Error("Web Find reading origin is no longer renderable.");
       }
       activeOccurrence = null;
-      highlightOwner.clear();
+      presentation.clear();
       origin = null;
       clearPreviewFragment();
       focusReaderViewport();
@@ -670,9 +653,11 @@ export function createWebFindAdapter({
     errorMessage: mediaPaneFindErrorMessage,
     rebuildPresentation() {
       const rendered = getRenderedState();
-      if (rendered && occurrencesByKey.size > 0) {
-        publishRenderedRanges(rendered);
+      if (!rendered || occurrencesByKey.size === 0) {
+        presentation.clear();
+        return;
       }
+      publishCurrentRanges(rendered);
     },
     resume() {
       leaseRetired = false;
@@ -761,8 +746,8 @@ export function useWebPaneFindCapability({
   useLayoutEffect(() => {
     sourceKeyRef.current = snapshot?.sourceKey ?? null;
   }, [snapshot?.sourceKey]);
-  const highlightOwner = useMemo(
-    () => createCanonicalTextFindHighlightOwner(),
+  const presentation = useMemo(
+    () => createCanonicalTextFindPresentationOwner(),
     [],
   );
   const liveInputsRef = useRef({
@@ -813,13 +798,13 @@ export function useWebPaneFindCapability({
             focusReaderViewport: () =>
               liveInputsRef.current.focusReaderViewport(),
             previewLease,
-            highlightOwner,
+            presentation,
             scrollPositioner,
           }),
     [
       clearPreviewFragment,
       getRenderedState,
-      highlightOwner,
+      presentation,
       previewLease,
       scrollPositioner,
       showPreviewFragment,
