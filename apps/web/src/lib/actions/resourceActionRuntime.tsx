@@ -58,6 +58,10 @@ import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assumeMediaId } from "@/lib/lectern/contract";
 import { useLectern, type LecternCapability } from "@/lib/lectern/LecternProvider";
 import {
+  useCompletionUndo,
+  type CompletionUndoInput,
+} from "@/lib/lectern/useCompletionUndo";
+import {
   useOfflineMediaCapability,
   type OfflineMediaCapability,
 } from "@/lib/offlineMedia/OfflineMediaProvider";
@@ -217,6 +221,9 @@ interface RuntimePorts {
   readonly lectern: LecternCapability;
   readonly offlineCapability: OfflineMediaCapability;
   readonly feedback: FeedbackContextValue;
+  // A user-invoked exact completion (Mark finished / Mark played) offers the
+  // pre-migration 10-second completion Undo HUD.
+  readonly offerCompletionUndo: (input: CompletionUndoInput) => void;
 }
 
 function requireRefId(target: ResourceActionSubject): string {
@@ -342,9 +349,25 @@ async function runResourceActionEffect(
       await ports.lectern.resetProgress(assumeMediaId(requireRefId(target)));
       return;
     case "MarkFinished":
-    case "MarkPlayed":
-      await ports.lectern.ensureMediaFinished(assumeMediaId(requireRefId(target)));
+    case "MarkPlayed": {
+      // Restore the pre-migration completion Undo: capture the pre-completion
+      // canonical snapshot, finish the media, then offer the 10-second Undo HUD.
+      // The snapshot + completed item id let Undo restore the exact Lectern row.
+      const mediaId = assumeMediaId(requireRefId(target));
+      const preCompletionSnapshot =
+        ports.lectern.getCanonicalSnapshot() ?? { items: [] };
+      const completedItemId =
+        preCompletionSnapshot.items.find((item) => item.mediaId === mediaId)
+          ?.itemId ?? null;
+      const result = await ports.lectern.ensureMediaFinished(mediaId);
+      ports.offerCompletionUndo({
+        mediaId,
+        preCompletionSnapshot,
+        completedItemId,
+        completionHandle: result.completionHandle,
+      });
       return;
+    }
     case "MarkUnread":
     case "MarkUnplayed":
       await ports.lectern.setUnread(assumeMediaId(requireRefId(target)));
@@ -645,6 +668,7 @@ export function ResourceActionRuntimeProvider({
   const lectern = useLectern();
   const offlineCapability = useOfflineMediaCapability();
   const feedback = useFeedback();
+  const offerCompletionUndo = useCompletionUndo();
 
   const ports: RuntimePorts = {
     workspace,
@@ -658,6 +682,7 @@ export function ResourceActionRuntimeProvider({
     lectern,
     offlineCapability,
     feedback,
+    offerCompletionUndo,
   };
   const portsRef = useRef<RuntimePorts>(ports);
   useEffect(() => {

@@ -37,15 +37,10 @@ import {
   RESERVED_LIBRARY_NAME_MESSAGE,
 } from "@/lib/libraries/presentation";
 import { isAbortError } from "@/lib/errors";
-import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
-import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
-import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import {
   createLibrary,
-  deleteMemberLibrary,
   fetchLibrariesPage,
-  renameMemberLibrary,
 } from "@/lib/libraries/client";
 import {
   definePaneVisitDataKey,
@@ -59,7 +54,6 @@ import {
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
-import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
 import {
   acceptLibraryInvite,
   declineLibraryInvite,
@@ -69,7 +63,6 @@ import type {
   LibraryOut,
   ViewerLibraryInvitation,
 } from "@/lib/libraries/contract";
-import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   libraryRequestErrorMessage,
   type LibraryRequest,
@@ -100,26 +93,8 @@ const NO_CURSOR = absent<CollectionCursor>();
 const ZERO_REVISION = 0 as CollectionRevision;
 
 export default function LibrariesPaneBody() {
-  const paneRuntime = requirePaneRuntime(usePaneRuntime(), "LibrariesPaneBody");
+  requirePaneRuntime(usePaneRuntime(), "LibrariesPaneBody");
   const isPaneActive = usePaneIsActive();
-  const visibleRowIdsRef = useRef<readonly string[]>([]);
-  const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
-  const pendingFocusRafRef = useRef(0);
-  const deferredSettingsFocusNeighborRef = useRef<
-    string | null | undefined
-  >(undefined);
-  const filterQueryRef = useRef("");
-  const [focusRecoverySerial, setFocusRecoverySerial] = useState(0);
-  const focusNeighborFor = useCallback((removedId: string) => {
-    const visibleIds = visibleRowIdsRef.current;
-    const index = visibleIds.indexOf(removedId);
-    return index < 0
-      ? null
-      : (visibleIds[index + 1] ?? visibleIds[index - 1] ?? null);
-  }, []);
-  const setFocusNeighbor = useCallback((removedId: string) => {
-    pendingFocusNeighborRef.current = focusNeighborFor(removedId);
-  }, [focusNeighborFor]);
   const committedSnapshotRef = useRef<LibrariesSnapshot | null>(null);
   const refreshFallbackSnapshotRef = useRef<LibrariesSnapshot | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
@@ -128,7 +103,6 @@ export default function LibrariesPaneBody() {
   const [controller, setController] = useState<LibrariesSnapshot | null>(
     restored,
   );
-  const deletingLibraryIds = useStringIdSet();
   const [librariesRefreshVersion, setLibrariesRefreshVersion] = useState(0);
   const librariesRefreshVersionRef = useRef(0);
   const pendingLibrariesRevalidationRef =
@@ -259,30 +233,6 @@ export default function LibrariesPaneBody() {
       );
     },
     [rejectPendingLibrariesRevalidation],
-  );
-
-  const [settingsLibrary, setSettingsLibrary] = useState<Library | null>(null);
-  const installSafeMutation = useCallback(
-    (
-      collectionRevision: CollectionRevision,
-      update: (libraries: readonly Library[]) => readonly Library[],
-    ) => {
-      const current = committedSnapshotRef.current;
-      if (current === null) {
-        throw new Error("Libraries mutation settled without a committed list");
-      }
-      const next: LibrariesSnapshot = {
-        ...current,
-        libraries: update(current.libraries),
-        collectionRevision,
-      };
-      committedSnapshotRef.current = next;
-      refreshFallbackSnapshotRef.current = null;
-      setController(next);
-      clearAllVisitData();
-      setChainEpoch((epoch) => epoch + 1);
-    },
-    [clearAllVisitData],
   );
 
   useEffect(() => {
@@ -460,86 +410,12 @@ export default function LibrariesPaneBody() {
       setFeedback(null);
       refreshLibraries();
     } catch (err) {
-      pendingFocusNeighborRef.current = undefined;
       if (handleUnauthenticatedApiError(err)) return;
       presentFailure(err, "Library wasn’t created", "LibraryCreate");
     } finally {
       setCreating(false);
     }
   };
-
-  const handleDeleteLibrary = async (
-    library: Library,
-    triggerEl: HTMLButtonElement | null,
-  ) => {
-    if (!confirm(`Delete "${library.name}"? This cannot be undone.`)) return;
-    if (deletingLibraryIds.has(library.id)) return;
-    deletingLibraryIds.add(library.id);
-
-    try {
-      const collectionRevision = await deleteMemberLibrary(library.id);
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => resolve()),
-      );
-      const activeElement = document.activeElement;
-      if (
-        activeElement === document.body ||
-        activeElement === triggerEl ||
-        (activeElement instanceof HTMLElement && !activeElement.isConnected)
-      ) {
-        setFocusNeighbor(library.id);
-      }
-      installSafeMutation(collectionRevision, (current) =>
-        current.filter((candidate) => candidate.id !== library.id),
-      );
-      publishLibraryPlacementChange("Unknown");
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      presentFailure(err, "Library wasn’t deleted", "LibraryMutation");
-    } finally {
-      deletingLibraryIds.remove(library.id);
-    }
-  };
-
-  const handleRename = useCallback(
-    async (name: string) => {
-      if (!settingsLibrary) return;
-      const result = await renameMemberLibrary(settingsLibrary.id, name);
-      const query = filterQueryRef.current;
-      deferredSettingsFocusNeighborRef.current =
-        query.trim() &&
-        !matchesPaneFilterQuery(query, [
-          libraryPresentation(result.library).name,
-        ])
-          ? focusNeighborFor(settingsLibrary.id)
-          : undefined;
-      installSafeMutation(result.collectionRevision, (current) =>
-        current.map((library) =>
-          library.id === result.library.id ? result.library : library,
-        ),
-      );
-      setSettingsLibrary(result.library);
-    },
-    [focusNeighborFor, installSafeMutation, settingsLibrary],
-  );
-
-  const handleDeleteFromSettings = useCallback(async () => {
-    if (!settingsLibrary) return;
-    const libraryId = settingsLibrary.id;
-    try {
-    const collectionRevision = await deleteMemberLibrary(libraryId);
-      setFocusNeighbor(libraryId);
-    installSafeMutation(collectionRevision, (current) =>
-      current.filter((library) => library.id !== libraryId),
-    );
-    publishLibraryPlacementChange("Unknown");
-      deferredSettingsFocusNeighborRef.current = undefined;
-    setSettingsLibrary(null);
-    } catch (error) {
-      pendingFocusNeighborRef.current = undefined;
-      throw error;
-    }
-  }, [installSafeMutation, setFocusNeighbor, settingsLibrary]);
 
   const handleInvitation = useCallback(
     async (invite: ViewerLibraryInvitation, action: "accept" | "decline") => {
@@ -605,73 +481,10 @@ export default function LibrariesPaneBody() {
     getRowStatus: getFilterStatus,
     activeDomainControlCount: 0,
   });
-  filterQueryRef.current = filterQuery;
-  const libraryRows = libraries.map((library) =>
-    presentLibrary(library, {
-      settings: library.canRename
-        ? {
-            kind: "Available",
-            execute: () => {
-              deferredSettingsFocusNeighborRef.current = undefined;
-              setSettingsLibrary(library);
-            },
-          }
-        : { kind: "Unavailable" },
-      deleteLibrary: library.canDelete
-        ? {
-            kind: "Available",
-            execute: ({ triggerEl }) =>
-              handleDeleteLibrary(library, triggerEl),
-          }
-        : { kind: "Unavailable" },
-      busyIds: deletingLibraryIds.ids.has(library.id)
-        ? new Set([RESOURCE_ACTION_CATALOG.DeleteLibrary.id])
-        : new Set(),
-    }),
-  );
+  const libraryRows = libraries.map((library) => presentLibrary(library));
   const filteredLibraryRows = libraryRows.filter((row) =>
     matchesPaneFilterQuery(filterQuery, [row.title.text]),
   );
-  visibleRowIdsRef.current = filteredLibraryRows.map((row) => row.id);
-  const visibleRowSignature = visibleRowIdsRef.current.join("\u001f");
-  useEffect(() => {
-    const neighborId = pendingFocusNeighborRef.current;
-    if (neighborId === undefined) return;
-    const focus = () => {
-      if (pendingFocusNeighborRef.current !== neighborId) return;
-      pendingFocusNeighborRef.current = undefined;
-      const pane = Array.from(
-        document.querySelectorAll<HTMLElement>("[data-pane-id]"),
-      ).find((candidate) => candidate.dataset.paneId === paneRuntime.paneId);
-      const row =
-        neighborId === null
-          ? null
-          : pane?.querySelector<HTMLElement>(
-              `[data-collection-row-id="${CSS.escape(neighborId)}"]`,
-            );
-      const focusable = row?.querySelector<HTMLElement>(
-        'a, button, [tabindex]:not([tabindex="-1"])',
-      );
-      if (focusable) {
-        focusable.focus();
-        return;
-      }
-      findPaneSearchFocusTarget(paneRuntime.paneId)?.focus();
-    };
-    const outer = requestAnimationFrame(() => {
-      pendingFocusRafRef.current = requestAnimationFrame(focus);
-    });
-    pendingFocusRafRef.current = outer;
-    return () => cancelAnimationFrame(pendingFocusRafRef.current);
-  }, [focusRecoverySerial, paneRuntime.paneId, visibleRowSignature]);
-  const closeSettings = useCallback(() => {
-    setSettingsLibrary(null);
-    const neighbor = deferredSettingsFocusNeighborRef.current;
-    deferredSettingsFocusNeighborRef.current = undefined;
-    if (neighbor === undefined) return;
-    pendingFocusNeighborRef.current = neighbor;
-    setFocusRecoverySerial((serial) => serial + 1);
-  }, []);
   const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
     async ({ signal, reportProgress }) => {
       reportProgress({
@@ -933,21 +746,6 @@ export default function LibrariesPaneBody() {
           ) : null
         }
       />
-
-      {settingsLibrary ? (
-        <LibrarySettingsDialog
-          open
-          onClose={closeSettings}
-          library={{
-            id: settingsLibrary.id,
-            name: settingsLibrary.name,
-            canRename: settingsLibrary.canRename,
-            canDelete: settingsLibrary.canDelete,
-          }}
-          onRename={handleRename}
-          onDelete={handleDeleteFromSettings}
-        />
-      ) : null}
     </>
   );
 }

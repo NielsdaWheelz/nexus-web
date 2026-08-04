@@ -30,7 +30,6 @@ import {
   lecternActivityFacts,
 } from "@/lib/lectern/contract";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { runProgressReset } from "@/lib/consumption/progressReset";
 import { descriptorFromLecternItem } from "@/lib/player/playerSession";
 import { usePlayerCommands } from "@/lib/player/globalPlayer";
 import {
@@ -74,7 +73,7 @@ function snapshotItems(
   return resourceData ? resourceData.items : [];
 }
 
-type LecternErrorOperation = "Load" | "Remove" | "Reorder" | "ResetProgress";
+type LecternErrorOperation = "Load" | "Reorder";
 
 /** Exhaustive copy adapter for the Lectern pane's modeled error channel. */
 function lecternErrorMessage(
@@ -87,11 +86,7 @@ function lecternErrorMessage(
   const title =
     operation === "Load"
       ? "Lectern couldn’t be loaded"
-      : operation === "Remove"
-        ? "Item wasn’t removed from Lectern"
-        : operation === "Reorder"
-          ? "Lectern wasn’t reordered"
-          : "Progress wasn’t reset";
+      : "Lectern wasn’t reordered";
   switch (error.code) {
     case "E_NETWORK":
       return {
@@ -115,36 +110,12 @@ function lecternErrorMessage(
         message: "Wait a moment, then retry.",
         requestId,
       };
-    case "E_NOT_FOUND":
-      if (operation !== "Remove" && operation !== "ResetProgress") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "This item is no longer available. Review the current Lectern before trying again.",
-        requestId,
-      };
-    case "E_MEDIA_NOT_FOUND":
-      if (operation !== "ResetProgress") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "This item is no longer available.",
-        requestId,
-      };
     case "E_INVALID_REQUEST":
       if (operation === "Reorder") {
         return {
           tone: "Danger",
           title,
           message: "Lectern changed while you were reordering. Review the current order and try again.",
-          requestId,
-        };
-      }
-      if (operation === "ResetProgress") {
-        return {
-          tone: "Danger",
-          title,
-          message: "Progress can no longer be reset for this item.",
           requestId,
         };
       }
@@ -159,9 +130,7 @@ export default function LecternPaneBody() {
     resource,
     mutation,
     placeItems,
-    removeItem,
     setOrder,
-    resetProgress,
   } = useLectern();
   const { playAudio } = usePlayerCommands();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
@@ -198,39 +167,6 @@ export default function LecternPaneBody() {
     [],
   );
 
-  const handleRemove = useCallback(
-    (itemId: LecternItemId, triggerEl: HTMLButtonElement | null) => {
-      const queueSection = document.getElementById(queueSectionId);
-      const rows = queueSection
-        ? Array.from(
-            queueSection.querySelectorAll<HTMLElement>(
-              "[data-collection-row-id]",
-            ),
-          )
-        : [];
-      const rowIndex = rows.findIndex(
-        (row) => row.dataset.collectionRowId === itemId,
-      );
-      const nextPrimary =
-        rowIndex >= 0
-          ? (rows[rowIndex + 1] ?? rows[rowIndex - 1])?.querySelector<HTMLElement>(
-              "[data-row-focusable]",
-            )
-          : undefined;
-      setFeedback(null);
-      void removeItem(itemId).catch((err) => {
-        if (handleUnauthenticatedApiError(err)) return;
-        presentFailure(err, "Remove");
-      });
-      if (triggerEl) {
-        requestAnimationFrame(() => {
-          (nextPrimary ?? queueSection)?.focus();
-        });
-      }
-    },
-    [presentFailure, queueSectionId, removeItem],
-  );
-
   const handleReorder = useCallback(
     (itemIds: LecternItemId[]) => {
       setFeedback(null);
@@ -240,25 +176,6 @@ export default function LecternPaneBody() {
       });
     },
     [presentFailure, setOrder],
-  );
-
-  const handleResetProgress = useCallback(
-    async (item: LecternItem) => {
-      setFeedback(null);
-      try {
-        const outcome = await runProgressReset({
-          mediaId: item.mediaId,
-          isVideo: item.kind === "video",
-          confirmReset: (message) => window.confirm(message),
-          resetProgress,
-        });
-        if (outcome.kind === "Cancelled") return;
-      } catch (error) {
-        if (handleUnauthenticatedApiError(error)) return;
-        presentFailure(error, "ResetProgress");
-      }
-    },
-    [presentFailure, resetProgress],
   );
 
   const acceptSlateTarget = useCallback<ReadingSlateAccept>(
@@ -358,30 +275,7 @@ export default function LecternPaneBody() {
   });
 
   const queueRows = items.map((item) =>
-    presentLecternItem(
-      item,
-      {
-        remove: (triggerEl) => handleRemove(item.itemId, triggerEl),
-        playback:
-          item.activation.kind === "FooterAudio"
-            ? {
-                kind: "Available",
-                execute: () => playAudio(descriptorFromLecternItem(item)),
-              }
-            : { kind: "Unavailable" },
-        progressReset: item.consumption.progressResettable
-          ? {
-              kind: "Available",
-              execute: () => handleResetProgress(item),
-            }
-          : { kind: "Unavailable" },
-        progressResetBusy:
-          mutation.kind === "Pending" &&
-          mutation.attempt.kind === "ResetProgress" &&
-          mutation.attempt.mediaId === item.mediaId,
-      },
-      lecternActivityFacts(item),
-    ),
+    presentLecternItem(item, lecternActivityFacts(item)),
   );
   const queueControls = Object.fromEntries(
     items.flatMap((item) => {

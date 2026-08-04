@@ -88,14 +88,16 @@ If the live browser viewport leads React during a responsive host replacement,
 the arbiter carries one pane-and-route-fenced Search handoff; the incoming
 `PaneShell` acknowledges it only after its current publication is ready.
 
-`menu` is an `ActionPublication`. Resource panes publish an explicit canonical
-target and the four semantic groups `core | operations | relationships | view`;
-non-resource panes use `FlatMenu`. `PaneShell` resolves current-pane core policy
-from the resource target—Share and Chat, with Open remaining
-representation-only—merges the published groups, and invokes
-`composeResourceMenu` exactly once. Pane bodies never publish flat resource
-arrays or duplicate core behavior. Share and promoted header actions project
-from the universal resource-action catalog.
+A resource pane publishes only its canonical `resourceTarget`
+(`ResourceActionSubject`); `PaneShell` renders the one canonical
+`ResourceActionMenu` for it, identical to every other surface
+(`canonical-resource-action-menu-hard-cutover.md`). Membership, current verb,
+order, and danger-last come from the server action snapshot and the pure planner,
+so the pane menu includes `Open` (it is no longer projection-dropped for the
+already-open pane). Pane view/session controls (reader settings, add-content,
+date navigation) publish through a separate non-resource `viewMenu`; pane refresh
+and route-share are dedicated header controls. Pane bodies never build resource
+action arrays.
 
 Every primary identity projection uses one 60px track. The mobile safe area is
 additive.

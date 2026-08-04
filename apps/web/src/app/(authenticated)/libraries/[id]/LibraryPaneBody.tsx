@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -33,8 +31,6 @@ import {
   libraryResource as libraryResourceDescriptor,
   type LibraryEntriesResourceParams,
 } from "@/lib/api/resource";
-import { runSourceProcessingAction } from "@/lib/media/sourceActions";
-import { retryMediaMetadata } from "@/lib/media/ingestionClient";
 import {
   FeedbackNotice,
   type FeedbackAnnouncement,
@@ -43,39 +39,18 @@ import {
 } from "@/components/feedback/Feedback";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
-import {
-  RESOURCE_ACTION_CATALOG,
-  type ResourceActionId,
-} from "@/lib/actions/resourceActions";
-import { useLectern } from "@/lib/lectern/LecternProvider";
-import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
-import {
-  parseMediaId,
-  type ConsumptionResult,
-  type LecternItemId,
-} from "@/lib/lectern/contract";
-import { runProgressReset } from "@/lib/consumption/progressReset";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import { confirmAndDeleteMedia } from "@/lib/media/mediaLibraries";
-import {
-  addLibraryPlacement,
-  listLibraryPlacements,
-} from "@/lib/libraries/libraryPlacement";
-import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
+import { addLibraryPlacement } from "@/lib/libraries/libraryPlacement";
+import { useStringIdSet } from "@/lib/useStringIdSet";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
 import {
   paneResourceLoaders,
   type LibraryPaneSeed,
 } from "@/lib/panes/paneResourceLoaders";
-import {
-  buildPodcastUnsubscribeConfirmation,
-  unsubscribeFromPodcast,
-} from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import type { PodcastSubscriptionSettingsResponse } from "@/lib/podcasts/subscriptionSettings";
 import { usePodcastSubscriptionSettingsModal } from "@/app/(authenticated)/podcasts/usePodcastSubscriptionSettingsModal";
-import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import Toggle from "@/components/ui/Toggle";
@@ -150,43 +125,22 @@ import {
   consumptionProjectionSnapshot,
   useConsumptionProjectionRevision,
 } from "@/lib/consumption/projectionRevision";
-import type { ContributorCredit, MediaAuthors } from "@/lib/contributors/types";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import type {
-  ActionDescriptor,
-  ActionSelectDetail,
-} from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { isAbortError } from "@/lib/errors";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
-import { mapMediaAuthorCredits } from "@/app/(authenticated)/media/[id]/mediaFormatting";
 import {
   decodeLibraryEntryListItem,
   type LibraryEntryListItem,
-  type LibraryMediaListItem,
-  type LibraryMediaListValue,
-  type LibraryPodcastListItem,
 } from "@/lib/libraries/entryListItem";
 import { slateTargetId } from "@/lib/resonance/contract";
 import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
-import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./LibraryPaneBody.module.css";
 
-const MediaAuthorsEditor = lazy(
-  () =>
-    import(/* @vite-ignore */ "@/components/contributors/MediaAuthorsEditor"),
-);
-
 type Library = LibraryOut;
-
-type LibraryMediaEntry = LibraryMediaListValue;
-
-type LibraryMediaConsumption = Pick<
-  LibraryMediaEntry,
-  "read_state" | "progress_fraction"
->;
 
 type LibraryEntry = LibraryEntryListItem;
 type LibraryEntryPage = CollectionPage<LibraryEntry>;
@@ -372,8 +326,6 @@ export default function LibraryPaneBody() {
   ).activateTarget;
   const isPaneActive = usePaneIsActive();
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
-  const lectern = useLectern();
-  const offerCompletionUndo = useCompletionUndo();
 
   // The two process-local fact revisions. A placement advance can change which
   // media are filed (and whether Unfiled qualifies); a consumption advance can
@@ -529,17 +481,6 @@ export default function LibraryPaneBody() {
   // whenever the view changes. Renders the terminal "Invalid library view" state.
   const [viewInvalid, setViewInvalid] = useState(false);
   const removedEntryIds = useStringIdSet();
-  const retryingMediaIds = useStringIdSet();
-  const refreshingMediaIds = useStringIdSet();
-  const retryingMetadataMediaIds = useStringIdSet();
-  const deletingMediaIds = useStringIdSet();
-  const updatingConsumptionMediaIds = useStringIdSet();
-  const resettingProgressMediaIds = useStringIdSet();
-  const addingToLecternMediaIds = useStringIdSet();
-  const removingFromLecternMediaIds = useStringIdSet();
-  const refreshingPodcastIds = useStringIdSet();
-  const podcastRowRefreshControllersRef = useRef(new Set<AbortController>());
-  const unsubscribingPodcastIds = useStringIdSet();
   const [error, setError] = useState<LibraryPaneFeedback | null>(null);
   const [authorityFeedback, setAuthorityFeedback] =
     useState<FeedbackContent | null>(null);
@@ -587,7 +528,6 @@ export default function LibraryPaneBody() {
     useState<EntryReconciliationRequest | null>(null);
   const entryReconciliationRequestRef = useRef(entryReconciliationRequest);
   entryReconciliationRequestRef.current = entryReconciliationRequest;
-  const consumptionOperationTokensRef = useRef(new Map<string, symbol>());
   const handlePodcastSettingsSaved = useCallback(
     (response: PodcastSubscriptionSettingsResponse) => {
       setEntries((current) =>
@@ -612,36 +552,10 @@ export default function LibraryPaneBody() {
     },
     [installEntryCollectionRevision, setEntries],
   );
-  const resourceOverlays = useResourceOverlaysController();
   // The settings overlay is owned app-level (ResourceActionOverlays); this hook
   // is kept only for its install subscription, which keeps the pane's list rows
   // current after an app-level settings save.
   usePodcastSubscriptionSettingsModal({ onSaved: handlePodcastSettingsSaved });
-  const [authorsEditorMounted, setAuthorsEditorMounted] = useState(false);
-  const [authorsEditorOpen, setAuthorsEditorOpen] = useState(false);
-  const [authorsEditorMediaId, setAuthorsEditorMediaId] = useState<
-    string | null
-  >(null);
-  const [authorsEditorRowKey, setAuthorsEditorRowKey] = useState<string | null>(
-    null,
-  );
-  const [authorsEditorTrigger, setAuthorsEditorTrigger] =
-    useState<HTMLButtonElement | null>(null);
-  const authorsEditorMedia =
-    entries.find(
-      (entry): entry is LibraryMediaListItem =>
-        entry.kind === "media" && entry.media.id === authorsEditorMediaId,
-    )?.media ?? null;
-  const openAuthorsEditor = useCallback(
-    (mediaId: string, rowKey: string, { triggerEl }: ActionSelectDetail) => {
-      setAuthorsEditorMediaId(mediaId);
-      setAuthorsEditorRowKey(rowKey);
-      setAuthorsEditorTrigger(triggerEl);
-      setAuthorsEditorMounted(true);
-      setAuthorsEditorOpen(true);
-    },
-    [],
-  );
   // Focus continuity: when an action removes the focused row, move focus to the
   // next filtered row, else the previous, else the canonical Pane Search target.
   const listRegionRef = useRef<HTMLDivElement | null>(null);
@@ -675,100 +589,8 @@ export default function LibraryPaneBody() {
       requestAnimationFrame(() => element.focus());
     }
   }, [hideFinishedInputId]);
-  const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
-  const pendingFocusRafRef = useRef(0);
   const filterQueryRef = useRef("");
-  const clearPendingFocusNeighbor = useCallback(() => {
-    pendingFocusNeighborRef.current = undefined;
-  }, []);
-  const captureFocusNeighbor = useCallback((removedKey: string) => {
-    const region = listRegionRef.current;
-    if (!region) {
-      pendingFocusNeighborRef.current = null;
-      return;
-    }
-    const rows = Array.from(
-      region.querySelectorAll<HTMLElement>("[data-collection-row-id]"),
-    );
-    const index = rows.findIndex(
-      (el) => el.dataset.collectionRowId === removedKey,
-    );
-    if (index === -1) {
-      pendingFocusNeighborRef.current = undefined;
-      return;
-    }
-    const neighbor = rows[index + 1] ?? rows[index - 1] ?? null;
-    pendingFocusNeighborRef.current = neighbor?.dataset.collectionRowId ?? null;
-  }, []);
 
-  const patchMediaInViews = useCallback(
-    (
-      mediaId: string,
-      patch: (media: LibraryMediaEntry) => LibraryMediaEntry,
-    ) => {
-      setEntries((current) =>
-        current.map((entry) =>
-          entry.kind === "media" && entry.media.id === mediaId
-            ? { ...entry, media: patch(entry.media) }
-            : entry,
-        ),
-      );
-    },
-    [setEntries],
-  );
-  const handleAuthorsSaved = useCallback(
-    (result: MediaAuthors) => {
-      if (authorsEditorMediaId === null) return;
-        const authorCredits: ContributorCredit[] = result.authors.map(
-          (author, index) => ({
-            contributor_handle: author.contributorHandle,
-            contributor_display_name: author.displayName,
-            credited_name: author.creditedName,
-            role: "author",
-            href: author.href,
-            ordinal: index,
-          }),
-        );
-      const contributors = [
-        ...authorCredits,
-        ...(authorsEditorMedia?.contributors.filter(
-          (credit) => credit.role !== "author",
-        ) ?? []),
-      ];
-      if (
-        authorsEditorMedia !== null &&
-        authorsEditorRowKey !== null &&
-        filterQueryRef.current.trim() &&
-        !matchesPaneFilterQuery(filterQueryRef.current, [
-          authorsEditorMedia.title,
-          ...contributors.flatMap((credit) => [
-            credit.contributor_display_name ?? "",
-            credit.credited_name,
-          ]),
-        ])
-      ) {
-        captureFocusNeighbor(authorsEditorRowKey);
-      }
-      patchMediaInViews(authorsEditorMediaId, (media) => {
-        return {
-          ...media,
-          contributors,
-          author_mode: result.authorMode,
-        };
-      });
-      setAuthorsEditorOpen(false);
-      clearAllVisitData();
-      reconcileAfterMutationRef.current("Unknown");
-    },
-    [
-      authorsEditorMediaId,
-      authorsEditorMedia,
-      authorsEditorRowKey,
-      captureFocusNeighbor,
-      clearAllVisitData,
-      patchMediaInViews,
-    ],
-  );
   const libraryResource = useResource<LibraryPaneResource, { id: string }>({
     descriptor: libraryResourceDescriptor,
     params: initialRestored === null ? { id } : null,
@@ -1000,7 +822,6 @@ export default function LibraryPaneBody() {
   }, []);
   useEffect(() => {
     cancelEntryLoadMore();
-    consumptionOperationTokensRef.current.clear();
   }, [cancelEntryLoadMore, id]);
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
@@ -1103,12 +924,6 @@ export default function LibraryPaneBody() {
   );
   useEffect(
     () => () => {
-      for (const controller of podcastRowRefreshControllersRef.current) {
-        controller.abort(
-          new DOMException("Library refresh source was replaced.", "AbortError"),
-        );
-      }
-      podcastRowRefreshControllersRef.current.clear();
       rejectPendingLibraryRevalidation(
         new DOMException("Library refresh source was replaced.", "AbortError"),
       );
@@ -1320,14 +1135,6 @@ export default function LibraryPaneBody() {
     if (!isPaneActive) return;
     if (!viewIsCommitted || controller === null) return;
     if (entryReconciliationRequest !== null) return;
-    if (
-      consumptionOperationTokensRef.current.size > 0 ||
-      resettingProgressMediaIds.ids.size > 0 ||
-      deletingMediaIds.ids.size > 0 ||
-      unsubscribingPodcastIds.ids.size > 0
-    ) {
-      return;
-    }
     const current: LibraryRevisions = {
       placement: placementChange.revision,
       consumption: consumptionChange.revision,
@@ -1341,14 +1148,11 @@ export default function LibraryPaneBody() {
   }, [
     consumptionChange.revision,
     controller,
-    deletingMediaIds.ids,
     entryReconciliationRequest,
     isPaneActive,
     placementChange.revision,
     requestEntryReconciliation,
-    resettingProgressMediaIds.ids,
     revisionsAreStale,
-    unsubscribingPodcastIds.ids,
     viewIsCommitted,
   ]);
 
@@ -1664,469 +1468,6 @@ export default function LibraryPaneBody() {
     },
     [committedView, id, viewIsCommitted],
   );
-
-  const runMediaProcessingMutation = useCallback(
-    async (args: {
-      mediaId: string;
-      busySet: StringIdSet;
-      action: "retry" | "refresh";
-      successTitle: string;
-      errorTitle: string;
-    }) => {
-      if (args.busySet.has(args.mediaId)) return;
-      args.busySet.add(args.mediaId);
-      try {
-        const projection = await runSourceProcessingAction({
-          mediaId: args.mediaId,
-          action: args.action,
-          successTitle: args.successTitle,
-        });
-        patchMediaInViews(args.mediaId, (media) => ({
-          ...media,
-          processing_status: projection.processingStatus,
-          capabilities: {
-            ...media.capabilities,
-            ...projection.capabilityPatch,
-          },
-        }));
-        clearAllVisitData();
-        reconcileAfterMutationRef.current("SafePatch");
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        presentFailure(err, args.errorTitle, "EntryMutation");
-      } finally {
-        args.busySet.remove(args.mediaId);
-      }
-    },
-    [clearAllVisitData, patchMediaInViews, presentFailure],
-  );
-
-  const handleRetryProcessing = useCallback(
-    (mediaId: string) =>
-      runMediaProcessingMutation({
-        mediaId,
-        busySet: retryingMediaIds,
-        action: "retry",
-        successTitle: "Processing retry started.",
-        errorTitle: "Processing retry wasn’t started",
-      }),
-    [retryingMediaIds, runMediaProcessingMutation],
-  );
-
-  const handleRefreshSource = useCallback(
-    (mediaId: string) =>
-      runMediaProcessingMutation({
-        mediaId,
-        busySet: refreshingMediaIds,
-        action: "refresh",
-        successTitle: "Source refresh started.",
-        errorTitle: "Source refresh wasn’t started",
-      }),
-    [refreshingMediaIds, runMediaProcessingMutation],
-  );
-
-  const handleRetryMetadata = useCallback(
-    async (mediaId: string) => {
-      if (retryingMetadataMediaIds.has(mediaId)) return;
-      retryingMetadataMediaIds.add(mediaId);
-      try {
-        await retryMediaMetadata(mediaId);
-        clearAllVisitData();
-        reconcileAfterMutationRef.current("Unknown");
-      } catch (metadataError) {
-        if (handleUnauthenticatedApiError(metadataError)) return;
-        presentFailure(
-          metadataError,
-          "Metadata enrichment wasn’t started",
-          "EntryMutation",
-        );
-      } finally {
-        retryingMetadataMediaIds.remove(mediaId);
-      }
-    },
-    [clearAllVisitData, presentFailure, retryingMetadataMediaIds],
-  );
-
-  const handleDeleteMedia = useCallback(
-    async (entry: LibraryMediaListItem) => {
-      if (deletingMediaIds.has(entry.media.id)) return;
-      deletingMediaIds.add(entry.media.id);
-
-      try {
-        const outcome = await confirmAndDeleteMedia({
-          mediaId: entry.media.id,
-          mediaTitle: entry.media.title,
-          confirmRemoval: (message) => window.confirm(message),
-        });
-        if (outcome.kind === "Cancelled") return;
-        captureFocusNeighbor(libraryRowKey(entry, isDefaultLibrary));
-        const { result } = outcome;
-        // The row leaves the pane whether the media was removed, hidden, or is
-        // still being deleted server-side.
-        setEntries((current) =>
-          current.filter(
-            (candidate) =>
-              candidate.kind !== "media" ||
-              candidate.media.id !== entry.media.id,
-          ),
-        );
-        if (result.kind !== "Deleting") {
-          committedRevisionsRef.current = {
-            ...committedRevisionsRef.current,
-            placement: libraryPlacementSnapshot().revision,
-          };
-        }
-        if (result.kind === "Deleting") {
-          clearAllVisitData();
-          reconcileAfterMutationRef.current("Unknown");
-        } else {
-          installEntryCollectionRevision(
-            result.libraryEntriesCollectionRevision,
-          );
-          reconcileAfterMutationRef.current("SafeRebase");
-        }
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        presentFailure(err, "Media wasn’t removed", "EntryMutation");
-      } finally {
-        deletingMediaIds.remove(entry.media.id);
-      }
-    },
-    [
-      clearAllVisitData,
-      captureFocusNeighbor,
-      deletingMediaIds,
-      installEntryCollectionRevision,
-      isDefaultLibrary,
-      presentFailure,
-      setEntries,
-    ],
-  );
-
-  const handleSetConsumption = useCallback(
-    async (mediaId: string, status: "finished" | "unread") => {
-      if (
-        updatingConsumptionMediaIds.has(mediaId) ||
-        resettingProgressMediaIds.has(mediaId)
-      ) {
-        clearPendingFocusNeighbor();
-        return;
-      }
-      updatingConsumptionMediaIds.add(mediaId);
-      const previous = new Map<string, LibraryMediaConsumption>();
-      for (const entry of entries) {
-        if (entry.kind === "media" && entry.media.id === mediaId) {
-          previous.set(libraryTargetId(entry), {
-            read_state: entry.media.read_state,
-            progress_fraction: entry.media.progress_fraction,
-          });
-        }
-      }
-      if (previous.size === 0) {
-        clearPendingFocusNeighbor();
-        updatingConsumptionMediaIds.remove(mediaId);
-        throw new Error(`Library media ${mediaId} is not present`);
-      }
-      const operationToken = Symbol(mediaId);
-      consumptionOperationTokensRef.current.set(mediaId, operationToken);
-      patchMediaInViews(mediaId, (media) => ({
-        ...media,
-        read_state: status,
-      }));
-
-      try {
-        let result: ConsumptionResult;
-        if (status === "finished") {
-          const parsedMediaId = parseMediaId(mediaId);
-          const preCompletionSnapshot = lectern.getCanonicalSnapshot() ?? {
-            items: [],
-          };
-          const completedItem =
-            preCompletionSnapshot.items.find(
-              (item) => item.mediaId === mediaId,
-            ) ?? null;
-          result = await lectern.ensureMediaFinished(parsedMediaId);
-          offerCompletionUndo({
-            mediaId: parsedMediaId,
-            preCompletionSnapshot,
-            completedItemId: completedItem?.itemId ?? null,
-            completionHandle: result.completionHandle,
-          });
-        } else {
-          result = await lectern.setUnread(parseMediaId(mediaId));
-        }
-        committedRevisionsRef.current = {
-          ...committedRevisionsRef.current,
-          consumption: consumptionProjectionSnapshot().revision,
-        };
-        installEntryCollectionRevision(result.libraryEntriesCollectionRevision);
-        reconcileAfterMutationRef.current("SafeRebase");
-      } catch (err) {
-        clearPendingFocusNeighbor();
-        if (
-          consumptionOperationTokensRef.current.get(mediaId) !== operationToken
-        ) {
-          return;
-        }
-        setEntries((current) =>
-          current.map((entry) => {
-            const fields = previous.get(libraryTargetId(entry));
-            return entry.kind === "media" &&
-              entry.media.id === mediaId &&
-              fields
-              ? { ...entry, media: { ...entry.media, ...fields } }
-              : entry;
-          }),
-        );
-        if (handleUnauthenticatedApiError(err)) return;
-        presentFailure(err, "Read state wasn’t updated", "EntryMutation");
-      } finally {
-        if (
-          consumptionOperationTokensRef.current.get(mediaId) === operationToken
-        ) {
-          consumptionOperationTokensRef.current.delete(mediaId);
-        }
-        updatingConsumptionMediaIds.remove(mediaId);
-      }
-    },
-    [
-      entries,
-      clearPendingFocusNeighbor,
-      installEntryCollectionRevision,
-      lectern,
-      offerCompletionUndo,
-      patchMediaInViews,
-      presentFailure,
-      setEntries,
-      resettingProgressMediaIds,
-      updatingConsumptionMediaIds,
-    ],
-  );
-
-  const handleResetProgress = useCallback(
-    async (
-      mediaId: string,
-      isVideo: boolean,
-      removedRowKey: string | null,
-    ) => {
-      if (
-        resettingProgressMediaIds.has(mediaId) ||
-        updatingConsumptionMediaIds.has(mediaId)
-      ) {
-        clearPendingFocusNeighbor();
-        return;
-      }
-      if (!viewIsCommitted || committedView === null) {
-        clearPendingFocusNeighbor();
-        return;
-      }
-      resettingProgressMediaIds.add(mediaId);
-      try {
-        const outcome = await runProgressReset({
-          mediaId: parseMediaId(mediaId),
-          isVideo,
-          confirmReset: (message) => window.confirm(message),
-          resetProgress: lectern.resetProgress,
-        });
-        if (outcome.kind === "Cancelled") {
-          clearPendingFocusNeighbor();
-          return;
-        }
-        if (removedRowKey !== null) {
-          captureFocusNeighbor(removedRowKey);
-        }
-        // Immediate local patch: Reset removes the row from an In Progress view.
-        // lectern.resetProgress already published the consumption revision, so a
-        // consumption-sensitive view reconciles against fresh truth.
-        patchMediaInViews(mediaId, (media) => ({
-          ...media,
-          read_state: "unread",
-        }));
-        committedRevisionsRef.current = {
-          ...committedRevisionsRef.current,
-          consumption: consumptionProjectionSnapshot().revision,
-        };
-        installEntryCollectionRevision(
-          outcome.result.libraryEntriesCollectionRevision,
-        );
-        reconcileAfterMutationRef.current("SafeRebase");
-      } catch (error) {
-        clearPendingFocusNeighbor();
-        if (handleUnauthenticatedApiError(error)) return;
-        presentFailure(error, "Progress wasn’t reset", "EntryMutation");
-      } finally {
-        resettingProgressMediaIds.remove(mediaId);
-      }
-    },
-    [
-      committedView,
-      clearPendingFocusNeighbor,
-      captureFocusNeighbor,
-      installEntryCollectionRevision,
-      lectern.resetProgress,
-      patchMediaInViews,
-      presentFailure,
-      resettingProgressMediaIds,
-      updatingConsumptionMediaIds,
-      viewIsCommitted,
-    ],
-  );
-
-  const handleAddToLectern = useCallback(
-    async (mediaId: string) => {
-      if (addingToLecternMediaIds.has(mediaId)) return;
-      addingToLecternMediaIds.add(mediaId);
-      try {
-        await lectern.placeItems({
-          mediaIds: [parseMediaId(mediaId)],
-          placement: { kind: "Last" },
-        });
-        clearAllVisitData();
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        presentFailure(err, "Item wasn’t added to Lectern", "LecternMutation");
-      } finally {
-        addingToLecternMediaIds.remove(mediaId);
-      }
-    },
-    [addingToLecternMediaIds, clearAllVisitData, lectern, presentFailure],
-  );
-
-  const handleRemoveFromLectern = useCallback(
-    async (mediaId: string, itemId: LecternItemId) => {
-      if (removingFromLecternMediaIds.has(mediaId)) return;
-      removingFromLecternMediaIds.add(mediaId);
-      try {
-        await lectern.removeItem(itemId);
-        clearAllVisitData();
-      } catch (removeError) {
-        if (handleUnauthenticatedApiError(removeError)) return;
-        presentFailure(
-          removeError,
-          "Item wasn’t removed from Lectern",
-          "LecternMutation",
-        );
-      } finally {
-        removingFromLecternMediaIds.remove(mediaId);
-      }
-    },
-    [clearAllVisitData, lectern, presentFailure, removingFromLecternMediaIds],
-  );
-
-  const handleRefreshPodcast = async (
-    entry: LibraryPodcastListItem,
-  ): Promise<void> => {
-    const podcastId = entry.podcast.id;
-    if (refreshingPodcastIds.has(podcastId)) return;
-    refreshingPodcastIds.add(podcastId);
-    setError(null);
-    const controller = new AbortController();
-    podcastRowRefreshControllersRef.current.add(controller);
-    try {
-      const result = await runPodcastRefresh(
-        { kind: "Podcast", podcastId },
-        {
-          signal: controller.signal,
-          onProgress: () => {},
-        },
-      );
-      await revalidateLibraryEntries(controller.signal);
-      if (result.kind !== "Complete") {
-        setError({
-          content: {
-            tone: result.kind === "Failed" ? "Danger" : "Warning",
-            title: result.announcement,
-          },
-          actions: [
-            {
-              label: "Retry",
-              onClick: () => void handleRefreshPodcast(entry),
-            },
-          ],
-        });
-      }
-    } catch (refreshError) {
-      if (isAbortError(refreshError)) return;
-      if (handleUnauthenticatedApiError(refreshError)) return;
-      presentFailure(
-        refreshError,
-        "Podcast wasn’t refreshed",
-        "PodcastMutation",
-        {
-          label: "Retry",
-          onClick: () => void handleRefreshPodcast(entry),
-        },
-      );
-    } finally {
-      podcastRowRefreshControllersRef.current.delete(controller);
-      refreshingPodcastIds.remove(podcastId);
-    }
-  };
-
-  const handleUnsubscribePodcast = async (
-    entry: LibraryPodcastListItem,
-  ): Promise<void> => {
-    const podcastId = entry.podcast.id;
-    if (unsubscribingPodcastIds.has(podcastId)) return;
-    unsubscribingPodcastIds.add(podcastId);
-    try {
-      const placements = await listLibraryPlacements({
-        kind: "Podcast",
-        id: podcastId,
-      });
-      if (
-        !confirm(
-          buildPodcastUnsubscribeConfirmation(entry.podcast.title, placements),
-        )
-      ) {
-        return;
-      }
-      const result = await unsubscribeFromPodcast(podcastId);
-      const currentPlacement = placements.find(
-        (placement) => placement.id === id,
-      );
-      if (currentPlacement?.canRemove) {
-        captureFocusNeighbor(libraryRowKey(entry, isDefaultLibrary));
-      }
-      setEntries((current) =>
-        current.flatMap((candidate) => {
-          if (
-            candidate.kind !== "podcast" ||
-            candidate.podcast.id !== podcastId
-          ) {
-            return [candidate];
-          }
-          return isDefaultLibrary || currentPlacement?.canRemove
-            ? []
-            : [
-                {
-                  ...candidate,
-                  subscription: { kind: "Absent" as const },
-                  podcast: {
-                    ...candidate.podcast,
-                    syncStatus: { kind: "Absent" as const },
-                  },
-                },
-              ];
-        }),
-      );
-      committedRevisionsRef.current = {
-        ...committedRevisionsRef.current,
-        placement: libraryPlacementSnapshot().revision,
-      };
-      installEntryCollectionRevision(result.libraryEntriesCollectionRevision);
-      reconcileAfterMutationRef.current("SafeRebase");
-    } catch (unsubscribeError) {
-      if (handleUnauthenticatedApiError(unsubscribeError)) return;
-      presentFailure(
-        unsubscribeError,
-        "Podcast wasn’t unsubscribed",
-        "PodcastMutation",
-      );
-    } finally {
-      unsubscribingPodcastIds.remove(podcastId);
-    }
-  };
 
   // Delete library and Library settings are canonical resource actions now: the
   // pane publishes its resourceTarget and the app runtime dispatches
@@ -2641,42 +1982,6 @@ export default function LibraryPaneBody() {
     },
   });
 
-  const visibleRowSignature = filteredEntries
-    .map((entry) => libraryRowKey(entry, isDefaultLibrary))
-    .join("");
-  useEffect(() => {
-    const neighborKey = pendingFocusNeighborRef.current;
-    if (neighborKey === undefined) return;
-    const moveFocus = () => {
-      if (pendingFocusNeighborRef.current !== neighborKey) return;
-      pendingFocusNeighborRef.current = undefined;
-      const region = listRegionRef.current;
-      const focusInRow = (key: string): boolean => {
-        const rowEl = region?.querySelector<HTMLElement>(
-          `[data-collection-row-id="${CSS.escape(key)}"]`,
-        );
-        const focusable = rowEl?.querySelector<HTMLElement>(
-          'a, button, [tabindex]:not([tabindex="-1"])',
-        );
-        if (focusable) {
-          focusable.focus();
-          return true;
-        }
-        return false;
-      };
-      if (neighborKey !== null && focusInRow(neighborKey)) return;
-      findPaneSearchFocusTarget(paneId)?.focus();
-    };
-    // Defer past the menu's own focus-restore and the row-removal reflow so the
-    // sibling (not the vanished trigger) ends up focused.
-    const outer = requestAnimationFrame(() => {
-      const inner = requestAnimationFrame(moveFocus);
-      pendingFocusRafRef.current = inner;
-    });
-    pendingFocusRafRef.current = outer;
-    return () => cancelAnimationFrame(pendingFocusRafRef.current);
-  }, [paneId, visibleRowSignature]);
-
   if (defect !== null) throw defect.error;
 
   const firstPageFailureContent =
@@ -2895,10 +2200,6 @@ export default function LibraryPaneBody() {
   const entryRowView = (item: LibraryEntry): CollectionRowView => {
     const showAdded = committedView?.order.kind === "Added";
     if (item.kind === "podcast") {
-      const subscription =
-        item.subscription.kind === "Present"
-          ? item.subscription.value
-          : null;
       const row = presentPodcast(
         {
           id: item.podcast.id,
@@ -2908,38 +2209,7 @@ export default function LibraryPaneBody() {
           publicationDate: item.podcast.publicationDate,
           syncStatus: item.podcast.syncStatus,
         },
-        {
-          settings:
-            viewIsCommitted && subscription !== null
-              ? {
-                  kind: "Available",
-                  execute: () =>
-                    resourceOverlays.openPodcastSettings(item.podcast.id),
-                }
-              : { kind: "Unavailable" },
-          checkForNewEpisodes:
-            viewIsCommitted && subscription !== null
-              ? {
-                  kind: "Available",
-                  execute: () => handleRefreshPodcast(item),
-                }
-              : { kind: "Unavailable" },
-          subscription:
-            viewIsCommitted && subscription !== null
-              ? {
-                  kind: "Subscribed",
-                  execute: () => handleUnsubscribePodcast(item),
-                }
-              : { kind: "Unavailable" },
-          busyIds: new Set<ResourceActionId>([
-            ...(refreshingPodcastIds.ids.has(item.podcast.id)
-              ? [RESOURCE_ACTION_CATALOG.RefreshPodcast.id]
-              : []),
-            ...(unsubscribingPodcastIds.ids.has(item.podcast.id)
-              ? [RESOURCE_ACTION_CATALOG.UnsubscribePodcast.id]
-              : []),
-          ]),
-        },
+        {},
       );
       return {
         ...row,
@@ -2947,138 +2217,8 @@ export default function LibraryPaneBody() {
         context: showAdded ? addedContext(item) : row.context,
       };
     }
-    const lecternItem =
-      lectern.resource.status === "ready"
-        ? (lectern.resource.data.items.find(
-            (candidate) => candidate.mediaId === item.media.id,
-          ) ?? null)
-        : null;
     const row = presentMedia(item.media, {
       readingTimeEstimate: item.readingTimeEstimate,
-      retryProcessing:
-        viewIsCommitted && item.media.capabilities.can_retry
-          ? {
-              kind: "Available",
-              execute: () => handleRetryProcessing(item.media.id),
-            }
-          : { kind: "Unavailable" },
-      refreshSource:
-        viewIsCommitted && item.media.capabilities.can_refresh_source
-          ? {
-              kind: "Available",
-              execute: () => handleRefreshSource(item.media.id),
-            }
-          : { kind: "Unavailable" },
-      retryMetadata:
-        viewIsCommitted && item.media.capabilities.can_retry_metadata
-          ? {
-              kind: "Available",
-              execute: () => handleRetryMetadata(item.media.id),
-            }
-          : { kind: "Unavailable" },
-      editAuthors:
-        viewIsCommitted && item.media.capabilities.can_edit_authors
-          ? {
-              kind: "Available",
-              execute: (detail) =>
-                openAuthorsEditor(
-                  item.media.id,
-                  libraryRowKey(item, isDefaultLibrary),
-                  detail,
-                ),
-            }
-          : { kind: "Unavailable" },
-      removeMedia:
-        viewIsCommitted && item.media.capabilities.can_delete
-          ? {
-              kind: "Available",
-              execute: () => handleDeleteMedia(item),
-            }
-          : { kind: "Unavailable" },
-      progressReset:
-        viewIsCommitted &&
-        item.media.progress_resettable &&
-        !updatingConsumptionMediaIds.has(item.media.id)
-          ? {
-              kind: "Available",
-              execute: () => {
-                return handleResetProgress(
-                  item.media.id,
-                  item.media.kind === "video",
-                  isInProgressView
-                    ? libraryRowKey(item, isDefaultLibrary)
-                    : null,
-                );
-              },
-            }
-          : { kind: "Unavailable" },
-      readState: !viewIsCommitted
-        ? { kind: "Unavailable" }
-        : item.media.read_state === "finished"
-          ? {
-              kind: "MarkUnread",
-              execute: () => {
-                // Mark Unread drops the row from an In Progress view.
-                if (isInProgressView) {
-                  captureFocusNeighbor(libraryRowKey(item, isDefaultLibrary));
-                }
-                return handleSetConsumption(item.media.id, "unread");
-              },
-            }
-          : {
-              kind: "MarkFinished",
-              execute: () => {
-                // Mark Finished drops the row under the unfinished filter OR from
-                // an In Progress view.
-                if (hideFinished || isInProgressView) {
-                  captureFocusNeighbor(libraryRowKey(item, isDefaultLibrary));
-                }
-                return handleSetConsumption(item.media.id, "finished");
-              },
-            },
-      lecternMembership:
-        !viewIsCommitted || lectern.resource.status !== "ready"
-          ? { kind: "Unavailable" }
-          : lecternItem
-            ? {
-                kind: "Remove",
-                itemId: lecternItem.itemId,
-                execute: () =>
-                  handleRemoveFromLectern(item.media.id, lecternItem.itemId),
-              }
-            : {
-                kind: "Add",
-                execute: () => handleAddToLectern(item.media.id),
-              },
-      busyIds: new Set<ResourceActionId>([
-        ...(retryingMediaIds.ids.has(item.media.id)
-          ? [RESOURCE_ACTION_CATALOG.RetryProcessing.id]
-          : []),
-        ...(refreshingMediaIds.ids.has(item.media.id)
-          ? [RESOURCE_ACTION_CATALOG.RefreshSource.id]
-          : []),
-        ...(retryingMetadataMediaIds.ids.has(item.media.id)
-          ? [RESOURCE_ACTION_CATALOG.RetryMetadata.id]
-          : []),
-        ...(deletingMediaIds.ids.has(item.media.id)
-          ? [RESOURCE_ACTION_CATALOG.RemoveMedia.id]
-          : []),
-        ...(updatingConsumptionMediaIds.ids.has(item.media.id)
-          ? [
-              RESOURCE_ACTION_CATALOG.MarkFinished.id,
-              RESOURCE_ACTION_CATALOG.MarkUnread.id,
-            ]
-          : []),
-        ...(resettingProgressMediaIds.ids.has(item.media.id)
-          ? [RESOURCE_ACTION_CATALOG.ResetProgress.id]
-          : []),
-        ...(addingToLecternMediaIds.ids.has(item.media.id)
-          ? [RESOURCE_ACTION_CATALOG.AddToLectern.id]
-          : []),
-        ...(removingFromLecternMediaIds.ids.has(item.media.id)
-          ? [RESOURCE_ACTION_CATALOG.RemoveFromLectern.id]
-          : []),
-      ]),
     });
     return {
       ...row,
@@ -3311,21 +2451,6 @@ export default function LibraryPaneBody() {
           />
         ) : null}
       </PaneSurface>
-
-      {authorsEditorMounted && authorsEditorMedia ? (
-        <Suspense fallback={null}>
-          <MediaAuthorsEditor
-            mediaId={authorsEditorMedia.id}
-            open={authorsEditorOpen}
-            authors={mapMediaAuthorCredits(authorsEditorMedia.contributors)}
-            authorMode={authorsEditorMedia.author_mode}
-            returnFocusTo={() => authorsEditorTrigger}
-            returnFocusFallback={() => sortSelectRef.current}
-            onClose={() => setAuthorsEditorOpen(false)}
-            onSaved={handleAuthorsSaved}
-          />
-        </Suspense>
-      ) : null}
     </>
   );
 }

@@ -30,7 +30,6 @@ import CollectionExhaustionNotice from "@/components/collections/CollectionExhau
 import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -39,30 +38,24 @@ import {
   decodePodcastSubscriptionListItem,
   type PodcastSubscriptionListItem,
 } from "./podcastSubscriptions";
-import { usePodcastSubscriptionActions } from "./usePodcastSubscriptionActions";
 import { usePodcastSubscriptionSettingsModal } from "./usePodcastSubscriptionSettingsModal";
-import PodcastSubscriptionSettingsModal from "./PodcastSubscriptionSettingsModal";
 import {
   listMemberLibraries,
   type MemberLibrary,
 } from "@/lib/libraries/client";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
   usePaneIsActive,
   usePaneReturnReady,
   usePaneRouter,
-  usePaneRuntime,
   usePaneSearchParams,
-  requirePaneRuntime,
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
 import { isAbortError } from "@/lib/errors";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
-import type { PodcastRefreshResult } from "@/lib/podcasts/types";
 import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import styles from "./page.module.css";
 
@@ -140,31 +133,6 @@ function podcastsLoadErrorMessage(
   }
 }
 
-function podcastRefreshFeedback(result: PodcastRefreshResult): FeedbackContent | null {
-  switch (result.kind) {
-    case "Complete":
-      return null;
-    case "Partial":
-      return {
-        tone: "Warning",
-        title: "Some podcasts couldn’t be refreshed",
-        message: "Available episode updates were kept. Check again later for the remaining shows.",
-      };
-    case "Failed":
-      return {
-        tone: "Danger",
-        title: "Episodes weren’t refreshed",
-        message: "No refresh result was committed. Retry when the podcast source is available.",
-      };
-    case "ObservationLost":
-      return {
-        tone: "Warning",
-        title: "Refresh status couldn’t be confirmed",
-        message: "The refresh may still be running. Wait for the list to update before starting another.",
-      };
-  }
-}
-
 interface PodcastsSnapshot {
   readonly subscriptions: readonly PodcastSubscriptionListItem[];
   readonly queryIdentity: string;
@@ -225,7 +193,6 @@ function encodePodcastListState(
 }
 
 export default function PodcastsPaneBody() {
-  const paneRuntime = requirePaneRuntime(usePaneRuntime(), "PodcastsPaneBody");
   const isPaneActive = usePaneIsActive();
   const paneRouter = usePaneRouter();
   const paneSearchParams = usePaneSearchParams();
@@ -412,50 +379,13 @@ export default function PodcastsPaneBody() {
     },
     [],
   );
-  const actions = usePodcastSubscriptionActions(setError);
-  const rowRefreshOwnerRef = useRef<{
-    readonly sourceKey: string;
-    readonly controller: AbortController;
-  } | null>(null);
-  useEffect(() => {
-    const owner = {
-      sourceKey: subscriptionQueryIdentity,
-      controller: new AbortController(),
-    };
-    rowRefreshOwnerRef.current = owner;
-    return () => {
-      owner.controller.abort(
-        new DOMException("Podcasts view was replaced.", "AbortError"),
-      );
-      if (rowRefreshOwnerRef.current === owner) {
-        rowRefreshOwnerRef.current = null;
-      }
-    };
-  }, [subscriptionQueryIdentity]);
-  const listRegionRef = useRef<HTMLDivElement | null>(null);
-  const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
-  const pendingFocusRafRef = useRef(0);
-  const captureFocusNeighbor = useCallback((removedId: string) => {
-    const region = listRegionRef.current;
-    const row = region?.querySelector<HTMLElement>(
-      `[data-collection-row-id="${CSS.escape(removedId)}"]`,
-    );
-    if (!region || !row) {
-      pendingFocusNeighborRef.current = undefined;
-      return;
-    }
-    const rows = Array.from(
-      region.querySelectorAll<HTMLElement>("[data-collection-row-id]"),
-    );
-    const index = rows.indexOf(row);
-    const neighbor = rows[index + 1] ?? rows[index - 1] ?? null;
-    pendingFocusNeighborRef.current = neighbor?.dataset.collectionRowId ?? null;
-  }, []);
   const previousSubscriptionQueryIdentityRef = useRef(
     subscriptionQueryIdentity,
   );
   const [librariesLoading, setLibrariesLoading] = useState(restored === null);
-  const settingsModal = usePodcastSubscriptionSettingsModal({
+  // The settings overlay is owned app-level now; this hook is kept only for its
+  // install subscription, which keeps the pane's list rows current after a save.
+  usePodcastSubscriptionSettingsModal({
     onSaved: (response) => {
       setRows((prev) =>
         prev.map((row) =>
@@ -676,64 +606,9 @@ export default function PodcastsPaneBody() {
     refresh: refreshSubscriptions,
   });
 
-  const unsubscribePodcast = useCallback(
-    (row: PodcastSubscriptionListItem) => {
-      return actions.unsubscribe(
-        row.podcast_id,
-        row.title,
-        (_libraries, result) => {
-          captureFocusNeighbor(row.podcast_id);
-          setController((current) => {
-            if (current === null) return current;
-            const next = {
-              ...current,
-              subscriptions: current.subscriptions.filter(
-                (candidate) => candidate.podcast_id !== row.podcast_id,
-              ),
-              collectionRevision: result.collectionRevision,
-            };
-            controllerRef.current = next;
-            return next;
-          });
-          setChainEpoch((epoch) => epoch + 1);
-          clearAllVisitData();
-        },
-      );
-    },
-    [actions, captureFocusNeighbor, clearAllVisitData],
-  );
-
-  const checkForNewEpisodes = useCallback(
-    (podcastId: string) => {
-      const owner = rowRefreshOwnerRef.current;
-      if (owner?.sourceKey !== subscriptionQueryIdentity) {
-        return Promise.resolve();
-      }
-      return actions.checkForNewEpisodes(
-        podcastId,
-        owner.controller.signal,
-        async (result, signal) => {
-          try {
-            await revalidateSubscriptions(signal);
-            setError(podcastRefreshFeedback(result));
-          } catch (refreshError: unknown) {
-            if (isAbortError(refreshError)) throw refreshError;
-            if (handleUnauthenticatedApiError(refreshError)) return;
-            captureLoadError(refreshError, "Revalidate");
-          }
-        },
-      );
-    },
-    [actions, captureLoadError, revalidateSubscriptions, subscriptionQueryIdentity],
-  );
-
   const finalCount =
     !loading && exhaustion.kind === "Complete"
       ? exhaustion.itemCount
-      : null;
-  const settingsRow =
-    settingsModal.podcastId !== null
-      ? (rows.find((row) => row.podcast_id === settingsModal.podcastId) ?? null)
       : null;
   const hasActiveDomainFilters =
     subscriptionFilter !== "all" ||
@@ -887,36 +762,6 @@ export default function PodcastsPaneBody() {
     loading &&
     subscriptionFilterRows.query.trim().length > 0 &&
     visibleRows.length === 0;
-  const visibleRowSignature = visibleRows
-    .map((row) => row.podcast_id)
-    .join("\u001f");
-  useEffect(() => {
-    const neighborId = pendingFocusNeighborRef.current;
-    if (neighborId === undefined) return;
-    const moveFocus = () => {
-      if (pendingFocusNeighborRef.current !== neighborId) return;
-      pendingFocusNeighborRef.current = undefined;
-      const neighbor =
-        neighborId === null
-          ? null
-          : listRegionRef.current?.querySelector<HTMLElement>(
-              `[data-collection-row-id="${CSS.escape(neighborId)}"]`,
-            );
-      const target = neighbor?.querySelector<HTMLElement>(
-        'a, button, [tabindex]:not([tabindex="-1"])',
-      );
-      if (target) {
-        target.focus();
-        return;
-      }
-      findPaneSearchFocusTarget(paneRuntime.paneId)?.focus();
-    };
-    const outer = requestAnimationFrame(() => {
-      pendingFocusRafRef.current = requestAnimationFrame(moveFocus);
-    });
-    pendingFocusRafRef.current = outer;
-    return () => cancelAnimationFrame(pendingFocusRafRef.current);
-  }, [paneRuntime.paneId, visibleRowSignature]);
 
   const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
     async ({ signal, reportProgress }) => {
@@ -973,10 +818,8 @@ export default function PodcastsPaneBody() {
 
   if (asyncDefect !== null) throw asyncDefect.error;
 
-  const collectionRows = visibleRows.map((row) => {
-    const rowBusy = actions.unsubscribingPodcastIds.ids.has(row.podcast_id);
-    const rowRefreshing = actions.refreshingPodcastIds.ids.has(row.podcast_id);
-    return presentPodcast(
+  const collectionRows = visibleRows.map((row) =>
+    presentPodcast(
       {
         id: row.podcast_id,
         title: row.title,
@@ -985,46 +828,12 @@ export default function PodcastsPaneBody() {
         publicationDate: row.publicationDate,
         syncStatus: row.syncStatus,
       },
-      {
-        settings: {
-          kind: "Available",
-          execute: () =>
-            settingsModal.open({
-              podcast_id: row.podcast_id,
-              default_playback_speed: row.default_playback_speed,
-              pause_shortening_mode: row.pause_shortening_mode,
-              auto_queue: row.auto_queue,
-            }),
-        },
-        checkForNewEpisodes: {
-          kind: "Available",
-          execute: async () => {
-            if (actions.refreshingPodcastIds.has(row.podcast_id)) return;
-            await checkForNewEpisodes(row.podcast_id);
-          },
-        },
-        subscription: {
-          kind: "Subscribed",
-          execute: async () => {
-            if (actions.unsubscribingPodcastIds.has(row.podcast_id)) return;
-            await unsubscribePodcast(row);
-          },
-        },
-        busyIds: new Set([
-          ...(rowRefreshing
-            ? [RESOURCE_ACTION_CATALOG.RefreshPodcast.id]
-            : []),
-          ...(rowBusy
-            ? [RESOURCE_ACTION_CATALOG.UnsubscribePodcast.id]
-            : []),
-        ]),
-      },
-    );
-  });
+      {},
+    ),
+  );
 
   return (
-    <>
-      <div ref={listRegionRef} style={{ display: "contents" }}>
+      <div style={{ display: "contents" }}>
         <CollectionView
           returnScope="Podcasts.Subscriptions"
           rows={collectionRows}
@@ -1118,11 +927,5 @@ export default function PodcastsPaneBody() {
           footer={<CollectionExhaustionNotice state={exhaustion} />}
         />
       </div>
-
-      <PodcastSubscriptionSettingsModal
-        podcastTitle={settingsRow?.title ?? null}
-        settingsModal={settingsModal}
-      />
-    </>
   );
 }

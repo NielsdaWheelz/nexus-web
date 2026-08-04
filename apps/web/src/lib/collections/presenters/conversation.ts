@@ -1,7 +1,6 @@
 /** Pure semantic projections for conversation rows. */
 
 import { absent, present } from "@/lib/api/presence";
-import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { presentConversationListItem } from "@/lib/conversations/presentation";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -11,9 +10,6 @@ import type {
 
 export function presentConversation(
   item: ConversationListItem,
-  // The row no longer builds actions; the canonical resource menu resolves them
-  // from the conversation's server snapshot. Kept for caller-signature compat.
-  _ctx: Parameters<typeof conversationResourceOptions>[0],
   environment: Parameters<typeof presentConversationListItem>[1],
 ): CollectionRowView {
   const presentation = presentConversationListItem(item, environment);

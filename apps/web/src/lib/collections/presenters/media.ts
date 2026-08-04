@@ -1,7 +1,6 @@
 /** Pure semantic projection for one Library media row. */
 
 import { absent, present, type Presence } from "@/lib/api/presence";
-import { mediaResourceOptions } from "@/lib/actions/resourceActions";
 import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
@@ -40,13 +39,10 @@ export interface MediaPresenterItem extends ReadStateFields {
   };
 }
 
-export type MediaPresenterContext = Omit<
-  Parameters<typeof mediaResourceOptions>[0],
-  "media"
-> & {
-  connectionSummary?: ConnectionSummaryOut;
-  readingTimeEstimate: ReadingTimeEstimatePresence;
-};
+export interface MediaPresenterContext {
+  readonly connectionSummary?: ConnectionSummaryOut;
+  readonly readingTimeEstimate: ReadingTimeEstimatePresence;
+}
 
 function modalityFor(kind: LibraryMediaKind): ConsumptionModality {
   if (kind === "podcast_episode") return "Listen";

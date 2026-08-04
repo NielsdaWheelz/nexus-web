@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { type ApiError } from "@/lib/api/client";
 import {
   type CollectionCursor,
   type CollectionPage,
@@ -19,7 +19,6 @@ import type { Presence } from "@/lib/api/presence";
 import { conversationsInitialResource } from "@/lib/api/resource";
 import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { useResource } from "@/lib/api/useResource";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import {
@@ -29,28 +28,20 @@ import {
 import Button from "@/components/ui/Button";
 import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
-import {
-  deleteConversation,
-  fetchConversationIndex,
-} from "@/lib/conversations/indexApi";
+import { fetchConversationIndex } from "@/lib/conversations/indexApi";
 import type { ConversationListItem } from "@/lib/conversations/types";
 import {
   definePaneVisitDataKey,
-  requirePaneRuntime,
   useClearAllPaneVisitData,
   usePaneIsActive,
   usePaneReturnReady,
-  usePaneRuntime,
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
 import type { ConversationsPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import { useStringIdSet } from "@/lib/useStringIdSet";
-import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
 import { isAbortError } from "@/lib/errors";
 
 const CONVERSATIONS_VISIT_DATA = definePaneVisitDataKey<ConversationsPaneSeed>(
@@ -115,19 +106,7 @@ function seedFromPage(
 }
 
 export default function ConversationsPaneBody() {
-  const runtime = requirePaneRuntime(usePaneRuntime(), "ConversationsPaneBody");
   const isPaneActive = usePaneIsActive();
-  const visibleRowIdsRef = useRef<readonly string[]>([]);
-  const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
-  const pendingFocusRafRef = useRef(0);
-  const setFocusNeighbor = useCallback((removedId: string) => {
-    const visibleIds = visibleRowIdsRef.current;
-    const index = visibleIds.indexOf(removedId);
-    pendingFocusNeighborRef.current =
-      index < 0
-        ? null
-        : (visibleIds[index + 1] ?? visibleIds[index - 1] ?? null);
-  }, []);
   const renderEnvironment = useRenderEnvironment();
   const committedSnapshotRef = useRef<ConversationsPaneSeed | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
@@ -146,7 +125,6 @@ export default function ConversationsPaneBody() {
   );
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
-  const deletingConversationIds = useStringIdSet();
   const clearAllVisitData = useClearAllPaneVisitData();
   const initial = useResource<ConversationsPaneSeed>({
     cacheKey:
@@ -341,81 +319,12 @@ export default function ConversationsPaneBody() {
     refresh: refreshIndex,
   });
 
-  const handleDelete = useCallback(
-    async (id: string, triggerEl: HTMLButtonElement | null) => {
-      if (!confirm("Delete this conversation? This cannot be undone.")) return;
-      if (deletingConversationIds.has(id)) return;
-      deletingConversationIds.add(id);
-      try {
-        const collectionRevision = await deleteConversation(id);
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => resolve()),
-        );
-        const activeElement = document.activeElement;
-        if (
-          activeElement === document.body ||
-          activeElement === triggerEl ||
-          (activeElement instanceof HTMLElement && !activeElement.isConnected)
-        ) {
-          setFocusNeighbor(id);
-        }
-        setController((current) => {
-          if (current === null) return current;
-          const next = {
-            ...current,
-            conversations: current.conversations.filter(
-              (conversation) => conversation.id !== id,
-            ),
-            collectionRevision,
-          };
-          committedSnapshotRef.current = next;
-          return next;
-        });
-        setChainEpoch((epoch) => epoch + 1);
-        clearAllVisitData();
-      } catch (error) {
-        pendingFocusNeighborRef.current = undefined;
-        if (handleUnauthenticatedApiError(error)) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error)) {
-          setAsyncDefect({ error });
-          return;
-        }
-        try {
-          setFeedback(conversationsErrorMessage(error, "Delete"));
-        } catch (defect) {
-          setAsyncDefect({ error: defect });
-        }
-      } finally {
-        deletingConversationIds.remove(id);
-      }
-    },
-    [clearAllVisitData, deletingConversationIds, setFocusNeighbor],
-  );
-
   const rows = useMemo(
     () =>
       (controller?.conversations ?? []).map((conversation) =>
-        presentConversation(
-          conversation,
-          {
-            deleteConversation: {
-              kind: "Available",
-              execute: ({ triggerEl }) =>
-                handleDelete(conversation.id, triggerEl),
-            },
-            busyIds: deletingConversationIds.ids.has(conversation.id)
-              ? new Set([RESOURCE_ACTION_CATALOG.DeleteConversation.id])
-              : new Set(),
-          },
-          renderEnvironment,
-        ),
+        presentConversation(conversation, renderEnvironment),
       ),
-    [
-      controller?.conversations,
-      deletingConversationIds.ids,
-      handleDelete,
-      renderEnvironment,
-    ],
+    [controller?.conversations, renderEnvironment],
   );
   const status =
     controller !== null
@@ -463,39 +372,6 @@ export default function ConversationsPaneBody() {
       ),
     [filterQuery, rows],
   );
-  visibleRowIdsRef.current = filteredRows.map((row) => row.id);
-  const visibleRowSignature = visibleRowIdsRef.current.join("\u001f");
-  useEffect(() => {
-    const neighborId = pendingFocusNeighborRef.current;
-    if (neighborId === undefined) return;
-    const focus = () => {
-      if (pendingFocusNeighborRef.current !== neighborId) return;
-      pendingFocusNeighborRef.current = undefined;
-      const pane = Array.from(
-        document.querySelectorAll<HTMLElement>("[data-pane-id]"),
-      ).find((candidate) => candidate.dataset.paneId === runtime.paneId);
-      const row =
-        neighborId === null
-          ? null
-          : pane?.querySelector<HTMLElement>(
-              `[data-collection-row-id="${CSS.escape(neighborId)}"]`,
-            );
-      const focusable = row?.querySelector<HTMLElement>(
-        'a, button, [tabindex]:not([tabindex="-1"])',
-      );
-      if (focusable) {
-        focusable.focus();
-        return;
-      }
-      findPaneSearchFocusTarget(runtime.paneId)?.focus();
-    };
-    const outer = requestAnimationFrame(() => {
-      pendingFocusRafRef.current = requestAnimationFrame(focus);
-    });
-    pendingFocusRafRef.current = outer;
-    return () => cancelAnimationFrame(pendingFocusRafRef.current);
-  }, [runtime.paneId, visibleRowSignature]);
-
   const executeRefresh = useCallback(
     async ({ signal }: { readonly signal: AbortSignal }) => {
       try {

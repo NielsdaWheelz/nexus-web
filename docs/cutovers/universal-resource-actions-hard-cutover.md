@@ -1,6 +1,20 @@
 # Universal Resource Actions — Hard Cutover
 
-**Status:** IMPLEMENTED AND LOCALLY VERIFIED · Rev 3 · 2026-07-24
+**Status:** PARTIALLY SUPERSEDED by
+`canonical-resource-action-menu-hard-cutover.md` (2026-08-04). That cutover
+replaced the caller-published, thin/rich, projection-based resource-action model
+described below with a server action-snapshot → pure planner → shared runtime →
+`ResourceActionMenu` pipeline.
+
+**Superseded clauses (no longer authoritative):** the `ResourceActionProjection`
+(`Representation`/`CurrentPane`) machinery, the thin/rich surface comparison, the
+caller-published resource groups (`ResourceMenuGroups`/`ActionPublication`/
+`publishResourceRowActions`/`*ResourceOptions`), context/view/session mixing into
+the resource menu, and the action-free resource-row portions. These symbols no
+longer exist in code. **Still authoritative:** existing command ownership,
+domain authorization/mutation ownership, and the non-resource menu rules.
+
+**Original status:** IMPLEMENTED AND LOCALLY VERIFIED · Rev 3 · 2026-07-24
 
 **Type:** Hard cutover. One action grammar; no compatibility paths.
 

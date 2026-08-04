@@ -17,17 +17,11 @@ import {
   type EpisodePresenterContext,
   type EpisodePresenterItem,
 } from "@/lib/collections/presenters/episode";
-import {
-  RESOURCE_ACTION_CATALOG,
-  type ResourceActionId,
-} from "@/lib/actions/resourceActions";
+import { absent } from "@/lib/api/presence";
 import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
-import type { LecternItemId } from "@/lib/lectern/contract";
+import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import { useOfflineMediaItem } from "@/lib/offlineMedia/OfflineMediaProvider";
-import type {
-  ActionDescriptor,
-  ActionSelectDetail,
-} from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import EpisodeControls from "./EpisodeControls";
 import {
@@ -55,7 +49,7 @@ type EpisodeTranscriptController = ReturnType<
 type StringIdSet = ReturnType<typeof useStringIdSet>;
 type EpisodePresenterBaseContext = Omit<
   EpisodePresenterContext,
-  "offlineDownload"
+  "localAvailability"
 >;
 
 interface EpisodePresentation {
@@ -72,29 +66,17 @@ function OfflineEpisodeCollectionRow({
 }) {
   const { item, context } = presentation;
   const offlineMedia = useOfflineMediaItem(item.id, item.title);
-  const controller =
-    offlineMedia.capability.kind === "Ready"
-      ? offlineMedia.capability.controller
-      : null;
-  const offlineDownload =
-    controller !== null &&
+  const offlineReady = offlineMedia.capability.kind === "Ready";
+  const localAvailability =
+    offlineReady &&
     (item.offline_download_eligible ||
       offlineMedia.availability.kind === "Present")
-      ? {
-          kind: "Available" as const,
-          availability: offlineMedia.availability,
-          execute: {
-            download: () => controller.enqueue(item.id),
-            cancel: () => controller.cancel(item.id),
-            retry: () => controller.retry(item.id),
-            remove: () => controller.remove(item.id),
-          },
-        }
-      : { kind: "Unavailable" as const };
+      ? offlineMedia.availability
+      : absent<LocalAvailability>();
   return (
     <CollectionRow
       {...rowRenderProps}
-      row={presentEpisode(item, { ...context, offlineDownload })}
+      row={presentEpisode(item, { ...context, localAvailability })}
     />
   );
 }
@@ -108,10 +90,7 @@ interface PodcastEpisodeListProps {
   transcript: EpisodeTranscriptController;
   transcriptionAllowed: boolean;
   busyEpisodeActionKeys: StringIdSet;
-  markingEpisodeIds: StringIdSet;
   expandedShowNotesMediaIds: StringIdSet;
-  unconfirmedMetadataMediaIds: ReadonlySet<string>;
-  lecternItemsByMediaId: ReadonlyMap<string, LecternItemId>;
   playNextDisabledMediaId: string | null;
   /** Whether the Lectern snapshot is Ready; its mutations defect until then. */
   lecternReady: boolean;
@@ -122,24 +101,6 @@ interface PodcastEpisodeListProps {
   onMarkAllAsPlayed: () => void;
   onToggleShowNotes: (mediaId: string) => void;
   onPlayNext: (mediaId: string) => Promise<void>;
-  onAddToLectern: (mediaId: string) => Promise<void>;
-  onRemoveFromLectern: (
-    mediaId: string,
-    itemId: LecternItemId,
-  ) => Promise<void>;
-  onRetry: (mediaId: string) => Promise<void>;
-  onRefreshSource: (mediaId: string) => Promise<void>;
-  onRetryMetadata: (mediaId: string) => Promise<void>;
-  onEditAuthors: (
-    episode: PodcastEpisodeMedia,
-    detail: ActionSelectDetail,
-  ) => void;
-  onDelete: (episode: PodcastEpisodeMedia) => Promise<void>;
-  onTogglePlayed: (
-    episode: PodcastEpisodeMedia,
-    isCompleted: boolean,
-  ) => Promise<void>;
-  onResetProgress: (mediaId: string) => Promise<void>;
 }
 
 export default function PodcastEpisodeList({
@@ -151,10 +112,7 @@ export default function PodcastEpisodeList({
   transcript,
   transcriptionAllowed,
   busyEpisodeActionKeys,
-  markingEpisodeIds,
   expandedShowNotesMediaIds,
-  unconfirmedMetadataMediaIds,
-  lecternItemsByMediaId,
   playNextDisabledMediaId,
   lecternReady,
   matchingEpisodeCount,
@@ -164,15 +122,6 @@ export default function PodcastEpisodeList({
   onMarkAllAsPlayed,
   onToggleShowNotes,
   onPlayNext,
-  onAddToLectern,
-  onRemoveFromLectern,
-  onRetry,
-  onRefreshSource,
-  onRetryMetadata,
-  onEditAuthors,
-  onDelete,
-  onTogglePlayed,
-  onResetProgress,
 }: PodcastEpisodeListProps) {
   const localFilterActive = filterQuery.trim().length > 0;
   const commandLabels = EPISODE_WIDE_COMMAND_LABELS[episodeStateFilter];
@@ -192,145 +141,24 @@ export default function PodcastEpisodeList({
     [episodes],
   );
 
-  const rowPresentations: EpisodePresentation[] = episodes.map((episode) => {
-    const lecternItemId = lecternItemsByMediaId.get(episode.id);
-    const actionBusy = (actionId: ResourceActionId) =>
-      busyEpisodeActionKeys.has(episodeActionBusyKey(episode.id, actionId));
-    return {
-      item: {
-        id: episode.id,
-        title: episode.title,
-        kind: episode.kind,
-        processing_status: requireDocumentProcessingStatus(
-          episode.processing_status,
-        ),
-        episode_state: deriveEpisodeState(episode),
-        canonical_source_url: episode.canonical_source_url,
-        offline_download_eligible: episode.offline_download_eligible,
-        contributors: episode.contributors,
-        capabilities: episode.capabilities,
-        publicationDate: decodeEpisodePublicationDate(episode.published_date),
-        activityFacts: decodeEpisodeTimingFacts(episode.listening_state),
-      },
-      context: {
-        retryProcessing: episode.capabilities.can_retry
-          ? {
-              kind: "Available",
-              execute: async () => {
-                if (actionBusy(RESOURCE_ACTION_CATALOG.RetryProcessing.id))
-                  return;
-                await onRetry(episode.id);
-              },
-            }
-          : { kind: "Unavailable" },
-        refreshSource: episode.capabilities.can_refresh_source
-          ? {
-              kind: "Available",
-              execute: async () => {
-                if (actionBusy(RESOURCE_ACTION_CATALOG.RefreshSource.id))
-                  return;
-                await onRefreshSource(episode.id);
-              },
-            }
-          : { kind: "Unavailable" },
-        retryMetadata:
-          episode.capabilities.can_retry_metadata &&
-          !unconfirmedMetadataMediaIds.has(episode.id)
-          ? {
-              kind: "Available",
-              execute: async () => {
-                if (actionBusy(RESOURCE_ACTION_CATALOG.RetryMetadata.id))
-                  return;
-                await onRetryMetadata(episode.id);
-              },
-            }
-          : { kind: "Unavailable" },
-        editAuthors: episode.capabilities.can_edit_authors
-          ? {
-              kind: "Available",
-              execute: (detail) => onEditAuthors(episode, detail),
-            }
-          : { kind: "Unavailable" },
-        removeMedia: episode.capabilities.can_delete
-          ? {
-              kind: "Available",
-              execute: async () => {
-                if (actionBusy(RESOURCE_ACTION_CATALOG.RemoveMedia.id)) return;
-                await onDelete(episode);
-              },
-            }
-          : { kind: "Unavailable" },
-        progressReset: episode.progress_resettable
-          ? {
-              kind: "Available",
-              execute: async () => {
-                if (actionBusy(RESOURCE_ACTION_CATALOG.ResetProgress.id)) {
-                  return;
-                }
-                await onResetProgress(episode.id);
-              },
-            }
-          : { kind: "Unavailable" },
-        playedState:
-          deriveEpisodeState(episode) === "played"
-            ? {
-                kind: "MarkUnplayed",
-                execute: async () => {
-                  if (markingEpisodeIds.has(episode.id)) return;
-                  await onTogglePlayed(episode, false);
-                },
-              }
-            : {
-                kind: "MarkPlayed",
-                execute: async () => {
-                  if (markingEpisodeIds.has(episode.id)) return;
-                  await onTogglePlayed(episode, true);
-                },
-              },
-        lecternMembership: !lecternReady
-          ? { kind: "Unavailable" }
-          : lecternItemId
-            ? {
-                kind: "Remove",
-                itemId: lecternItemId,
-                execute: async () => {
-                  if (
-                    actionBusy(RESOURCE_ACTION_CATALOG.RemoveFromLectern.id)
-                  ) {
-                    return;
-                  }
-                  await onRemoveFromLectern(episode.id, lecternItemId);
-                },
-              }
-            : {
-                kind: "Add",
-                execute: async () => {
-                  if (actionBusy(RESOURCE_ACTION_CATALOG.AddToLectern.id)) {
-                    return;
-                  }
-                  await onAddToLectern(episode.id);
-                },
-              },
-        busyIds: new Set<ResourceActionId>([
-          ...[
-            RESOURCE_ACTION_CATALOG.RetryProcessing.id,
-            RESOURCE_ACTION_CATALOG.RefreshSource.id,
-            RESOURCE_ACTION_CATALOG.RetryMetadata.id,
-            RESOURCE_ACTION_CATALOG.RemoveMedia.id,
-            RESOURCE_ACTION_CATALOG.ResetProgress.id,
-            RESOURCE_ACTION_CATALOG.AddToLectern.id,
-            RESOURCE_ACTION_CATALOG.RemoveFromLectern.id,
-          ].filter(actionBusy),
-          ...(markingEpisodeIds.ids.has(episode.id)
-            ? [
-                RESOURCE_ACTION_CATALOG.MarkPlayed.id,
-                RESOURCE_ACTION_CATALOG.MarkUnplayed.id,
-              ]
-            : []),
-        ]),
-      },
-    };
-  });
+  const rowPresentations: EpisodePresentation[] = episodes.map((episode) => ({
+    item: {
+      id: episode.id,
+      title: episode.title,
+      kind: episode.kind,
+      processing_status: requireDocumentProcessingStatus(
+        episode.processing_status,
+      ),
+      episode_state: deriveEpisodeState(episode),
+      canonical_source_url: episode.canonical_source_url,
+      offline_download_eligible: episode.offline_download_eligible,
+      contributors: episode.contributors,
+      capabilities: episode.capabilities,
+      publicationDate: decodeEpisodePublicationDate(episode.published_date),
+      activityFacts: decodeEpisodeTimingFacts(episode.listening_state),
+    },
+    context: {},
+  }));
   const presentationsByIdRef = useRef(new Map<string, EpisodePresentation>());
   for (const presentation of rowPresentations) {
     presentationsByIdRef.current.set(presentation.item.id, presentation);
@@ -338,7 +166,7 @@ export default function PodcastEpisodeList({
   const rows = rowPresentations.map((presentation) =>
     presentEpisode(presentation.item, {
       ...presentation.context,
-      offlineDownload: { kind: "Unavailable" },
+      localAvailability: absent<LocalAvailability>(),
     }),
   );
 

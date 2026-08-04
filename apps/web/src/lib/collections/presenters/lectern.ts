@@ -1,7 +1,6 @@
 /** Pure semantic projection for one Lectern row. */
 
 import { absent, present, type Presence } from "@/lib/api/presence";
-import type { ExecutableResourceAction } from "@/lib/actions/resourceActions";
 import type {
   CollectionActivity,
   CollectionRowView,
@@ -64,16 +63,6 @@ export function playbackVerb(consumption: ConsumptionInfo): "Play" | "Replay" | 
 
 export function presentLecternItem(
   item: LecternItem,
-  // The playback verb is now the row's own PlaybackButton (rendered separately in
-  // LecternPaneBody); RemoveFromLectern and ResetProgress come from the canonical
-  // resource menu resolved from this media's server snapshot. Kept for
-  // caller-signature compatibility.
-  _actions: {
-    readonly remove: (triggerEl: HTMLButtonElement | null) => void;
-    readonly playback: ExecutableResourceAction;
-    readonly progressReset: ExecutableResourceAction;
-    readonly progressResetBusy: boolean;
-  },
   activityFacts: LecternActivityFacts,
 ): CollectionRowView {
   return {

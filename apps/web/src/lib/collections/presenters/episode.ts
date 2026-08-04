@@ -1,9 +1,9 @@
 /** Pure semantic projection for one podcast-episode row. */
 
 import { absent, present, type Presence } from "@/lib/api/presence";
-import { episodeResourceOptions } from "@/lib/actions/resourceActions";
 import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import type {
   CollectionActivity,
   CollectionRowView,
@@ -36,12 +36,10 @@ export interface EpisodePresenterItem {
   };
 }
 
-export type EpisodePresenterContext = Omit<
-  Parameters<typeof episodeResourceOptions>[0],
-  "media"
-> & {
-  connectionSummary?: ConnectionSummaryOut;
-};
+export interface EpisodePresenterContext {
+  readonly connectionSummary?: ConnectionSummaryOut;
+  readonly localAvailability: Presence<LocalAvailability>;
+}
 
 function episodeActivity(
   item: EpisodePresenterItem,
@@ -94,7 +92,7 @@ export function presentEpisode(
   item: EpisodePresenterItem,
   ctx: EpisodePresenterContext,
 ): CollectionRowView {
-  const { connectionSummary, offlineDownload } = ctx;
+  const { connectionSummary, localAvailability } = ctx;
   const href = `/media/${item.id}`;
 
   return {
@@ -112,10 +110,7 @@ export function presentEpisode(
     context: absent(),
     activity: episodeActivity(item),
     exceptionalStatus: exceptionalStatus(item.processing_status),
-    localAvailability:
-      offlineDownload.kind === "Available"
-        ? offlineDownload.availability
-        : absent(),
+    localAvailability,
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: present(item.id),
     resourceTarget: routeResourceActionSubject({

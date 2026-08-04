@@ -1,7 +1,6 @@
 /** Pure semantic projection for one followed-podcast row. */
 
 import { absent, present, type Presence } from "@/lib/api/presence";
-import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type {
@@ -24,9 +23,9 @@ export interface PodcastPresenterItem {
   publicationDate: Presence<PublicationDate>;
 }
 
-export type PodcastPresenterContext = Parameters<typeof podcastResourceOptions>[0] & {
-  connectionSummary?: ConnectionSummaryOut;
-};
+export interface PodcastPresenterContext {
+  readonly connectionSummary?: ConnectionSummaryOut;
+}
 
 function exceptionalStatus(
   syncStatus: Presence<PodcastSyncStatus>,
