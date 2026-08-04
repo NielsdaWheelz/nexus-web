@@ -34,6 +34,10 @@ import {
 } from "@/lib/player/playerChromeModel";
 import Button from "@/components/ui/Button";
 import MediaImage from "@/components/ui/MediaImage";
+import {
+  routeResourceActionSubject,
+  type ResourceActionSubject,
+} from "@/lib/resources/resourceActionTarget";
 import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 import styles from "./PlayerControls.module.css";
 
@@ -56,6 +60,25 @@ export function playerTargetHref(model: PresentPlayerChrome): string {
   return model.kind === "Canonical"
     ? `/media/${model.state.session.descriptor.mediaId}`
     : model.state.session.descriptor.previewHref;
+}
+
+/**
+ * The canonical resource identity of the now-playing media. Every player
+ * surface renders the ONE canonical resource dropdown for this target
+ * (`ResourceActionMenu`), so its Open / OpenSource / media operations match the
+ * dropdown shown for the same media everywhere else. Only the Canonical player
+ * model has a stable media `ResourceRef`; the Preview model is a transient
+ * resource excluded from the resource-action system (spec Scope).
+ */
+export function playerMediaActionTarget(
+  model: Extract<PresentPlayerChrome, { readonly kind: "Canonical" }>,
+): ResourceActionSubject {
+  const mediaId = model.state.session.descriptor.mediaId;
+  return routeResourceActionSubject({
+    scheme: "media",
+    id: mediaId,
+    href: `/media/${mediaId}`,
+  });
 }
 
 export function PlayerArtwork({

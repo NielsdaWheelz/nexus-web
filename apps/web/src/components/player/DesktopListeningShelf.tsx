@@ -11,6 +11,7 @@ import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import { PlayerChapterList } from "./PlayerContentsSheet";
 import {
   PlayerCaptureButton,
@@ -19,6 +20,7 @@ import {
   PlayerStatus,
   PlayerTransport,
   PlayerVolumeControl,
+  playerMediaActionTarget,
   playerSourceHref,
   type PresentPlayerChrome,
 } from "./PlayerControls";
@@ -115,18 +117,26 @@ export default function DesktopListeningShelf({
           },
         ]
       : []),
-    {
-      id: "Player.OpenTrack",
-      kind: "command",
-      label: model.kind === "Canonical" ? "Open recording" : "Open preview",
-      onSelect: onOpenTarget,
-    },
-    {
-      id: "Player.OpenSource",
-      kind: "link",
-      label: "Open source",
-      href: playerSourceHref(model),
-    },
+    // A canonical recording's Open / Open-source / media operations are the
+    // shared resource dropdown (rendered separately below), not player-local
+    // menu items. A Preview is a transient resource with no canonical
+    // ResourceRef, so it keeps its own plain open/source controls.
+    ...(model.kind === "Preview"
+      ? [
+          {
+            id: "Player.OpenPreview",
+            kind: "command" as const,
+            label: "Open preview",
+            onSelect: onOpenTarget,
+          },
+          {
+            id: "Player.PreviewSource",
+            kind: "link" as const,
+            label: "Open source",
+            href: playerSourceHref(model),
+          },
+        ]
+      : []),
     ...(model.kind === "Canonical"
       ? [
           {
@@ -183,6 +193,24 @@ export default function DesktopListeningShelf({
           <span className={styles.desktopSetting}>
             <PlayerVolumeControl />
           </span>
+        ) : null}
+        {model.kind === "Canonical" ? (
+          <ResourceActionMenu
+            target={playerMediaActionTarget(model)}
+            label="Recording actions"
+            placement="above"
+            renderTrigger={(props) => (
+              <Button
+                {...props}
+                variant="ghost"
+                size="lg"
+                iconOnly
+                className={styles.iconButton}
+              >
+                <Ellipsis aria-hidden="true" />
+              </Button>
+            )}
+          />
         ) : null}
         <ActionMenu
           options={options}

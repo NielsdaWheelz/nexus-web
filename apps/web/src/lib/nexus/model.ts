@@ -141,11 +141,6 @@ export type NexusTarget =
   | { readonly kind: "ResourceShare"; readonly subject: ResourceActionSubject }
   | { readonly kind: "ResourceChat"; readonly ref: CanonicalResourceRef }
   | { readonly kind: "Ask"; readonly text: string }
-  | {
-      readonly kind: "QueueAdd";
-      readonly mediaId: string;
-      readonly title: string;
-    }
   | { readonly kind: "NewConversation"; readonly initialDraft: string }
   | { readonly kind: "Share"; readonly target: ShareTarget }
   | { readonly kind: "CopyExternalLink"; readonly href: string }
@@ -207,11 +202,29 @@ export interface NexusEntry {
   };
   readonly primaryAction: NexusAction;
   readonly secondaryActions: readonly NexusAction[];
+  /**
+   * When present, this entry is a canonical resource. Its overflow/secondary
+   * menu is the ONE canonical resource dropdown for `resourceTarget` (rendered
+   * via `ResourceActionMenu` / the shared catalog projection), NOT a private
+   * NexusAction array. Resource entries carry only their resource identity plus
+   * primary activation; their secondary resource actions come from the shared
+   * planner, so `secondaryActions` stays empty for them.
+   */
+  readonly resourceTarget?: ResourceActionSubject;
   readonly rank: {
     readonly tier: NexusRankTier;
     readonly score: number;
     readonly frecency: number;
   };
+}
+
+/**
+ * A Nexus entry exposes a secondary/overflow menu when it either carries local
+ * NexusAction secondaries (panes, continuations) or is a canonical resource
+ * (its overflow is the shared resource dropdown for `resourceTarget`).
+ */
+export function nexusEntryHasSecondaryActions(entry: NexusEntry): boolean {
+  return entry.secondaryActions.length > 0 || entry.resourceTarget !== undefined;
 }
 
 export interface NexusCommand {

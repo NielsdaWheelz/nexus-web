@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import {
   useMobileViewport,
   useRootTextEntryFocused,
@@ -30,6 +31,7 @@ import {
   PlayerMiniProgress,
   PlayerStatus,
   PlayerTransport,
+  playerMediaActionTarget,
   playerSourceHref,
   playerTitle,
   type PresentPlayerChrome,
@@ -142,18 +144,25 @@ export default function MobileMiniPlayer({
           },
         ]
       : []),
-    {
-      id: "Player.OpenTrack",
-      kind: "command",
-      label: model.kind === "Canonical" ? "Open recording" : "Open preview",
-      onSelect: onOpenTarget,
-    },
-    {
-      id: "Player.OpenSource",
-      kind: "link",
-      label: "Open source",
-      href: playerSourceHref(model),
-    },
+    // A canonical recording's open/source/media actions are the shared resource
+    // dropdown (rendered separately below); a Preview is a transient resource
+    // and keeps its own plain open/source controls.
+    ...(model.kind === "Preview"
+      ? [
+          {
+            id: "Player.OpenPreview",
+            kind: "command" as const,
+            label: "Open preview",
+            onSelect: onOpenTarget,
+          },
+          {
+            id: "Player.PreviewSource",
+            kind: "link" as const,
+            label: "Open source",
+            href: playerSourceHref(model),
+          },
+        ]
+      : []),
     ...(model.kind === "Canonical" && chapters.length > 0
       ? [
           {
@@ -209,6 +218,24 @@ export default function MobileMiniPlayer({
           <PlayerCaptureButton model={model} capture={capture} />
         ) : null}
         <PlayerTransport model={model} compact />
+        {model.kind === "Canonical" ? (
+          <ResourceActionMenu
+            target={playerMediaActionTarget(model)}
+            label="Recording actions"
+            placement="above"
+            renderTrigger={(props) => (
+              <Button
+                {...props}
+                variant="ghost"
+                size="lg"
+                iconOnly
+                className={styles.more}
+              >
+                <Ellipsis aria-hidden="true" />
+              </Button>
+            )}
+          />
+        ) : null}
         <ActionMenu
           options={options}
           label="More player controls"

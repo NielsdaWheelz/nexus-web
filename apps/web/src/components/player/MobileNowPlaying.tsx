@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { ChevronDown, Ellipsis, List, Mic, X } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
@@ -21,6 +22,7 @@ import {
   PlayerSeek,
   PlayerStatus,
   PlayerTransport,
+  playerMediaActionTarget,
   playerSourceHref,
   playerTitle,
   type PresentPlayerChrome,
@@ -109,18 +111,25 @@ export default function MobileNowPlaying({
           },
         ]
       : []),
-    {
-      id: "Player.OpenTrack",
-      kind: "command",
-      label: model.kind === "Canonical" ? "Open recording" : "Open preview",
-      onSelect: onOpenTarget,
-    },
-    {
-      id: "Player.OpenSource",
-      kind: "link",
-      label: "Open source",
-      href: playerSourceHref(model),
-    },
+    // A canonical recording's open/source/media actions are the shared resource
+    // dropdown (rendered separately below); a Preview is a transient resource
+    // and keeps its own plain open/source controls.
+    ...(model.kind === "Preview"
+      ? [
+          {
+            id: "Player.OpenPreview",
+            kind: "command" as const,
+            label: "Open preview",
+            onSelect: onOpenTarget,
+          },
+          {
+            id: "Player.PreviewSource",
+            kind: "link" as const,
+            label: "Open source",
+            href: playerSourceHref(model),
+          },
+        ]
+      : []),
     ...(model.kind === "Canonical"
       ? [
           {
@@ -218,22 +227,42 @@ export default function MobileNowPlaying({
               ) : null}
 
               {shortViewport ? (
-                <ActionMenu
-                  options={secondaryOptions}
-                  label="More Now Playing controls"
-                  placement="above"
-                  align="center"
-                  renderTrigger={(props) => (
-                    <Button
-                      {...props}
-                      variant="ghost"
-                      size="lg"
-                      leadingIcon={<Ellipsis aria-hidden="true" />}
-                    >
-                      More
-                    </Button>
-                  )}
-                />
+                <>
+                  {model.kind === "Canonical" ? (
+                    <ResourceActionMenu
+                      target={playerMediaActionTarget(model)}
+                      label="Recording actions"
+                      placement="above"
+                      align="center"
+                      renderTrigger={(props) => (
+                        <Button
+                          {...props}
+                          variant="ghost"
+                          size="lg"
+                          leadingIcon={<Ellipsis aria-hidden="true" />}
+                        >
+                          Recording actions
+                        </Button>
+                      )}
+                    />
+                  ) : null}
+                  <ActionMenu
+                    options={secondaryOptions}
+                    label="More Now Playing controls"
+                    placement="above"
+                    align="center"
+                    renderTrigger={(props) => (
+                      <Button
+                        {...props}
+                        variant="ghost"
+                        size="lg"
+                        leadingIcon={<Ellipsis aria-hidden="true" />}
+                      >
+                        More
+                      </Button>
+                    )}
+                  />
+                </>
               ) : (
                 <div className={styles.secondaryActions}>
                   {model.kind === "Canonical" && chapters.length > 0 ? (
@@ -241,20 +270,39 @@ export default function MobileNowPlaying({
                       <PlayerContentsButton onClick={onOpenContents} />
                     </span>
                   ) : null}
-                  <Button variant="ghost" size="lg" onClick={onOpenTarget}>
-                    {model.kind === "Canonical"
-                      ? "Open recording"
-                      : "Open preview"}
-                  </Button>
-                  <Button variant="ghost" size="lg" asChild>
-                    <a
-                      href={playerSourceHref(model)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Open source
-                    </a>
-                  </Button>
+                  {model.kind === "Canonical" ? (
+                    <ResourceActionMenu
+                      target={playerMediaActionTarget(model)}
+                      label="Recording actions"
+                      placement="above"
+                      align="center"
+                      renderTrigger={(props) => (
+                        <Button
+                          {...props}
+                          variant="ghost"
+                          size="lg"
+                          leadingIcon={<Ellipsis aria-hidden="true" />}
+                        >
+                          Recording actions
+                        </Button>
+                      )}
+                    />
+                  ) : (
+                    <>
+                      <Button variant="ghost" size="lg" onClick={onOpenTarget}>
+                        Open preview
+                      </Button>
+                      <Button variant="ghost" size="lg" asChild>
+                        <a
+                          href={playerSourceHref(model)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Open source
+                        </a>
+                      </Button>
+                    </>
+                  )}
                   {model.kind === "Canonical" ? (
                     <>
                       <Button

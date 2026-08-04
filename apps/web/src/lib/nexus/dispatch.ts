@@ -9,8 +9,6 @@ import {
 } from "@/lib/notes/openDailyPage";
 import { readDailyDraft } from "@/lib/notes/dailyDraftStore";
 import { browseHref } from "@/lib/browse/query";
-import { parseMediaId } from "@/lib/lectern/contract";
-import type { LecternCapability } from "@/lib/lectern/LecternProvider";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import {
@@ -156,7 +154,6 @@ export interface NexusDispatchCtx {
   activateWorkspaceTarget(
     request: WorkspaceTargetActivationRequest,
   ): WorkspaceTargetActivationResult;
-  readonly placeItems: LecternCapability["placeItems"];
   readonly panes: readonly NexusPaneTarget[];
   activatePane(paneId: string): void;
   restorePane(paneId: string): void;
@@ -232,7 +229,6 @@ export function nexusTargetNavigates(target: NexusTarget): boolean {
     case "OpenDailyPage":
     case "Browse":
       return true;
-    case "QueueAdd":
     case "CopyExternalLink":
     case "PaneClose":
     case "PaneSearch":
@@ -364,13 +360,6 @@ export function dispatchNexusTarget(
         context,
         activation,
       );
-    case "QueueAdd":
-      return Promise.resolve(
-        context.placeItems({
-          mediaIds: [parseMediaId(target.mediaId)],
-          placement: { kind: "Last" },
-        }),
-      ).then(() => ({ kind: "Stayed" }));
     case "NewConversation":
       return activateTarget(
         {

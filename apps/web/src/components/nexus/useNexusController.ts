@@ -24,7 +24,6 @@ import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createLibrary } from "@/lib/libraries/client";
-import { useLectern } from "@/lib/lectern/LecternProvider";
 import { DESTINATIONS } from "@/lib/navigation/destinations";
 import { createNotePage } from "@/lib/notes/api";
 import {
@@ -73,7 +72,10 @@ import type {
   RetainedActivation,
   RetainedActivationSource,
 } from "@/lib/nexus/model";
-import { nexusEntryKeyValue } from "@/lib/nexus/model";
+import {
+  nexusEntryHasSecondaryActions,
+  nexusEntryKeyValue,
+} from "@/lib/nexus/model";
 import { useNexusSelectionJournal } from "@/lib/nexus/useNexusSelectionJournal";
 import {
   commitNexusRevision,
@@ -394,7 +396,6 @@ export function useNexusController(): NexusController {
   const feedback = useFeedback();
   const { openShare } = useShareController();
   const warmPane = usePaneWarm();
-  const { placeItems } = useLectern();
   const playerSession = usePlayerSession();
   const playerCommands = usePlayerCommands();
   const openDailyPage = useOpenDailyPage();
@@ -548,6 +549,40 @@ export function useNexusController(): NexusController {
       })),
     [recentlyClosedPanes, runtimeLabelByPaneId],
   );
+
+  // When the workspace navigates to a pane while the Nexus is open, the
+  // destination must not sit BEHIND the full-screen Nexus. A resource overflow
+  // action (Open, Chat) now routes through the Nexus-unaware resource runtime,
+  // which activates a pane without asking the Nexus to close (there is no menu
+  // callback by contract). Observe the active pane's identity plus its current
+  // visit; any change while open means a navigation landed, so dismiss —
+  // matching the prior NexusAction dispatch's NavigationAccepted -> setOpen(false).
+  // Non-navigating resource actions (Add to Lectern, Remove media, Share
+  // overlay) never move the active pane, so the token is unchanged and the
+  // Nexus stays open.
+  const activeNavigationToken = useMemo(() => {
+    const activePane = getWorkspacePrimaryPanes(state).find(
+      (pane) => pane.id === state.activePrimaryPaneId,
+    );
+    return activePane
+      ? `${activePane.id} ${activePane.currentVisit.id}`
+      : ` ${state.activePrimaryPaneId}`;
+  }, [state]);
+  const navigationBaselineRef = useRef(activeNavigationToken);
+  useEffect(() => {
+    if (!open) {
+      // While closed, track the workspace so the next open baselines against
+      // the pane as it stands then; this also guards the initial open.
+      navigationBaselineRef.current = activeNavigationToken;
+      return;
+    }
+    if (activeNavigationToken === navigationBaselineRef.current) return;
+    navigationBaselineRef.current = activeNavigationToken;
+    // Focus should follow the freshly navigated pane, not return to the Nexus
+    // opener, exactly as the internal navigation paths already arrange.
+    suppressReturnFocusRef.current = true;
+    setOpen(false);
+  }, [activeNavigationToken, open]);
 
   const commandShortcutHints = useMemo(
     () =>
@@ -845,11 +880,6 @@ export function useNexusController(): NexusController {
       feedback,
       activePaneId: state.activePrimaryPaneId,
       activateWorkspaceTarget,
-      placeItems: async (input) => {
-        const result = await placeItems(input);
-        invalidateOpenables();
-        return result;
-      },
       panes,
       activatePane,
       restorePane,
@@ -877,11 +907,9 @@ export function useNexusController(): NexusController {
       androidShell,
       closePane,
       feedback,
-      invalidateOpenables,
       openDailyPage,
       openShare,
       panes,
-      placeItems,
       playerCommands.resume,
       restorePane,
       state.activePrimaryPaneId,
@@ -1239,7 +1267,10 @@ export function useNexusController(): NexusController {
     setQueryState(next);
   }, []);
   const openEntryActions = useCallback((entry: NexusEntry) => {
-    if (entry.secondaryActions.length === 0) return;
+    // Align with requestActiveActions: a resource entry has no local
+    // NexusAction secondaries but still owns the shared resource dropdown, so
+    // gate on the same predicate the keyboard "open actions" request uses.
+    if (!nexusEntryHasSecondaryActions(entry)) return;
     setPage({ kind: "EntryActions", entry });
   }, []);
   const announceUnavailable = useCallback((reason: string) => {
@@ -1253,7 +1284,7 @@ export function useNexusController(): NexusController {
     const entry = projection.groups
       .flatMap((group) => group.entries)
       .find((candidate) => nexusEntryKeyValue(candidate.key) === key);
-    if (!entry || entry.secondaryActions.length === 0) return;
+    if (!entry || !nexusEntryHasSecondaryActions(entry)) return;
     setActionsRequest({ requestId: ++requestIdRef.current, entry });
   }, [page.kind, projection]);
 

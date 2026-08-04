@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { LecternResult } from "@/lib/lectern/contract";
 import {
   dispatchNexusTarget,
   settleNexusDispatch,
   type NexusDispatchCtx,
 } from "./dispatch";
 
-const MEDIA_ID = "00000000-0000-4000-8000-000000000001";
 const ACTIVATION = {
   disposition: { kind: "Follow" as const },
   modality: "Pointer" as const,
@@ -14,25 +12,6 @@ const ACTIVATION = {
 
 function unexpected(capability: string): never {
   throw new Error(`unexpected Nexus dispatch capability: ${capability}`);
-}
-
-function deferred<T>(): {
-  readonly promise: Promise<T>;
-  resolve(value: T): void;
-} {
-  let complete: ((value: T) => void) | undefined;
-  const promise = new Promise<T>((resolve) => {
-    complete = resolve;
-  });
-  return {
-    promise,
-    resolve(value) {
-      if (complete === undefined) {
-        throw new Error("deferred completion was not initialized");
-      }
-      complete(value);
-    },
-  };
 }
 
 function dispatchContext(
@@ -48,7 +27,6 @@ function dispatchContext(
     activePaneId: "pane-a",
     activateWorkspaceTarget: () =>
       unexpected("activateWorkspaceTarget"),
-    placeItems: async () => unexpected("placeItems"),
     panes: [
       {
         id: "pane-a",
@@ -93,31 +71,16 @@ describe("Nexus dispatch timing contract", () => {
     expect(result).not.toBeInstanceOf(Promise);
   });
 
-  it("settles an asynchronous target through the common Promise boundary", async () => {
+  it("settles an asynchronous dispatch result through the common Promise boundary", async () => {
     const events: string[] = [];
-    const placement = deferred<LecternResult>();
-    const context = dispatchContext({
-      placeItems: ({ mediaIds }) => {
-        events.push(`placement:${mediaIds.join(",")}`);
-        return placement.promise;
-      },
+    const settled = settleNexusDispatch(() => {
+      // The run executes eagerly inside the initiating call; only its async
+      // result crosses the shared Promise boundary that settleNexusDispatch owns.
+      events.push("ran");
+      return Promise.resolve({ kind: "Stayed" as const });
     });
 
-    const settled = settleNexusDispatch(() =>
-      dispatchNexusTarget(
-        { kind: "QueueAdd", mediaId: MEDIA_ID, title: "Queued reading" },
-        context,
-        ACTIVATION,
-      ),
-    );
-
-    expect(events).toEqual([`placement:${MEDIA_ID}`]);
-    placement.resolve({
-      outcome: { kind: "Placed", itemIds: [] },
-      lectern: { items: [] },
-    });
-
+    expect(events).toEqual(["ran"]);
     await expect(settled).resolves.toEqual({ kind: "Stayed" });
-    expect(events).toEqual([`placement:${MEDIA_ID}`]);
   });
 });

@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { nexusEntryKeyValue, type NexusEntry } from "@/lib/nexus/model";
+import {
+  nexusEntryHasSecondaryActions,
+  nexusEntryKeyValue,
+  type NexusEntry,
+} from "@/lib/nexus/model";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import {
   ModalLayerProvider,
@@ -94,7 +98,7 @@ export default function DesktopNexus({
     const activeEntry = controller.projection.groups
       .flatMap((group) => group.entries)
       .find((entry) => nexusEntryKeyValue(entry.key) === activeKey);
-    if (!activeEntry || activeEntry.secondaryActions.length === 0) {
+    if (!activeEntry || !nexusEntryHasSecondaryActions(activeEntry)) {
       setActiveCell("Primary");
     }
   }, [activeCell, controller.projection]);

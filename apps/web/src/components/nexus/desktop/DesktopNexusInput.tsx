@@ -3,6 +3,7 @@
 import { useRef, type Ref } from "react";
 import Input from "@/components/ui/Input";
 import {
+  nexusEntryHasSecondaryActions,
   nexusEntryKeyValue,
   type NexusEntry,
   type NexusEntryKey,
@@ -67,7 +68,7 @@ export default function DesktopNexusInput({
     const next = entries[nextIndex];
     if (!next) return;
     controller.setActiveEntry(next.key);
-    if (activeCell === "Actions" && next.secondaryActions.length === 0) {
+    if (activeCell === "Actions" && !nexusEntryHasSecondaryActions(next)) {
       setActiveCell("Primary");
     }
   };
@@ -129,7 +130,7 @@ export default function DesktopNexusInput({
           if (
             (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
             activeEntry &&
-            activeEntry.secondaryActions.length > 0
+            nexusEntryHasSecondaryActions(activeEntry)
           ) {
             event.preventDefault();
             setActiveCell(event.key === "ArrowRight" ? "Actions" : "Primary");

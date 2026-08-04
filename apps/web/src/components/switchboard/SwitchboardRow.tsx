@@ -1,17 +1,45 @@
 "use client";
 
 import { MoreHorizontal } from "lucide-react";
-import { useEffect, useRef, type MouseEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  type ComponentProps,
+  type MouseEvent,
+} from "react";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import ActionMenu from "@/components/ui/ActionMenu";
+import { useResourceActionCatalogProjection } from "@/lib/actions/resourceActionRuntime";
 import {
   nexusEntryKeyValue,
   type NexusAction,
   type NexusEntry,
   type NexusTargetActivation,
 } from "@/lib/nexus/model";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import styles from "./switchboard.module.css";
+
+type ActionMenuProps = ComponentProps<typeof ActionMenu>;
+
+/**
+ * The overflow menu for a canonical resource switchboard row. It renders the
+ * SAME catalog projection every other surface shows for `target`, over the
+ * row's own `ActionMenu` trigger — the resource secondary actions come from the
+ * shared planner, never a private NexusAction array. The trigger is withheld
+ * until the ref's snapshot is ready, so opening the menu performs no request.
+ */
+function SwitchboardRowResourceMenu({
+  target,
+  menuProps,
+}: {
+  target: ResourceActionSubject;
+  menuProps: Omit<ActionMenuProps, "options">;
+}) {
+  const model = useResourceActionCatalogProjection(target);
+  if (!model.ready) return null;
+  return <ActionMenu options={model.descriptors} {...menuProps} />;
+}
 
 function openStateLabel(state: NexusEntry["openState"]): string | undefined {
   switch (state) {
@@ -112,6 +140,26 @@ export default function SwitchboardRow({
     },
   );
 
+  // Trigger wiring shared by the resource dropdown and the plain NexusAction
+  // menu, so a resource row's overflow behaves like every other row's.
+  const menuProps: Omit<ActionMenuProps, "options"> = {
+    label: `Actions for ${entry.label}`,
+    align: "end",
+    onOpenChange: (open) => {
+      if (open) onActive();
+    },
+    renderTrigger: (trigger) => (
+      <button
+        {...trigger}
+        type="button"
+        className={styles.rowMenu}
+        aria-label={`Actions for ${entry.label}`}
+      >
+        <MoreHorizontal size={18} aria-hidden="true" />
+      </button>
+    ),
+  };
+
   useEffect(() => {
     if (!active) return;
     rowRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -165,25 +213,13 @@ export default function SwitchboardRow({
           <kbd className={styles.rowShortcut}>{entry.shortcutHint}</kbd>
         ) : null}
       </button>
-      {actions.length > 0 ? (
-        <ActionMenu
-          options={actions}
-          label={`Actions for ${entry.label}`}
-          align="end"
-          onOpenChange={(open) => {
-            if (open) onActive();
-          }}
-          renderTrigger={(trigger) => (
-            <button
-              {...trigger}
-              type="button"
-              className={styles.rowMenu}
-              aria-label={`Actions for ${entry.label}`}
-            >
-              <MoreHorizontal size={18} aria-hidden="true" />
-            </button>
-          )}
+      {entry.resourceTarget ? (
+        <SwitchboardRowResourceMenu
+          target={entry.resourceTarget}
+          menuProps={menuProps}
         />
+      ) : actions.length > 0 ? (
+        <ActionMenu options={actions} {...menuProps} />
       ) : null}
     </li>
   );

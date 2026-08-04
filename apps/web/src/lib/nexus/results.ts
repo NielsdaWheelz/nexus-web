@@ -21,7 +21,6 @@ import { parseSearchInput } from "@/lib/search/parseSearchInput";
 import { searchHref } from "@/lib/search/searchParams";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
-import { buildResourceNexusActions } from "./actions";
 import {
   NEXUS_COMMAND_IDS,
   getNexusCommand,
@@ -600,37 +599,13 @@ function resourceEntry(input: {
   readonly tier: NexusRankTier;
   readonly score: number;
   readonly frecency: number;
-  readonly queue?: { readonly mediaId: string; readonly title: string };
   readonly parent?: NexusEntry["parent"];
 }): NexusEntry {
-  const resourceActions = [...buildResourceNexusActions(input.subject, input.label)];
-  const primaryAction = resourceActions.find(
-    (candidate) =>
-      candidate.availability.kind === "Available" &&
-      candidate.availability.target.kind === "ResourceOpen",
-  );
-  if (!primaryAction) {
-    throw new Error(
-      `Routeable Nexus resource has no Open action: ${input.occurrenceRef}`,
-    );
-  }
-  const secondaryActions = resourceActions.filter(
-    (candidate) => candidate !== primaryAction,
-  );
-  if (input.queue) {
-    secondaryActions.push(
-      action({
-        id: "queue-add",
-        label: "Add to Lectern",
-        icon: FileText,
-        target: {
-          kind: "QueueAdd",
-          mediaId: input.queue.mediaId,
-          title: input.queue.title,
-        },
-      }),
-    );
-  }
+  // A resource entry keeps its resource identity + primary activation (Open as
+  // the row primary). Its secondary/overflow actions are the ONE canonical
+  // resource dropdown, projected from the shared planner off `resourceTarget`
+  // by the render site — never a private NexusAction array. Both callers only
+  // build resource entries for routeable resources, so Open is always valid.
   return {
     key: { kind: "Resource", occurrenceRef: input.occurrenceRef },
     historySource: input.historySource,
@@ -640,8 +615,18 @@ function resourceEntry(input: {
     snippetSegments: input.snippetSegments,
     icon: input.icon,
     parent: input.parent,
-    primaryAction,
-    secondaryActions,
+    primaryAction: action({
+      id: "open",
+      label: "Open",
+      icon: input.icon,
+      target: {
+        kind: "ResourceOpen",
+        subject: input.subject,
+        labelHint: input.label,
+      },
+    }),
+    secondaryActions: [],
+    resourceTarget: input.subject,
     rank: {
       tier: input.tier,
       score: input.score,
@@ -775,11 +760,6 @@ export function projectNexusSearchEntries(input: {
       (row.resourceRef === row.ownerResourceRef
         ? undefined
         : directParent);
-    const queue =
-      (row.type === "media" || row.type === "episode" || row.type === "video") &&
-      row.mediaId !== null
-        ? { mediaId: row.mediaId, title: row.primaryText }
-        : undefined;
     return [
       resourceEntry({
         occurrenceRef: row.resourceRef,
@@ -796,7 +776,6 @@ export function projectNexusSearchEntries(input: {
           row.resourceRef === row.ownerResourceRef
             ? (input.frecencyByHref[href] ?? 0)
             : 0,
-        queue,
         parent,
       }),
     ];
