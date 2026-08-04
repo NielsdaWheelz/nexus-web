@@ -424,7 +424,10 @@
   right: 0;
   z-index: var(--z-overlay);
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) 48px;
+  /* The trailing control cluster sizes to its content: the canonical resource
+     Actions menu, the pane view menu, and Pane options are separate controls
+     (never folded), so the column must fit however many the pane publishes. */
+  grid-template-columns: 48px minmax(0, 1fr) auto;
   align-items: center;
   block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
   min-block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
@@ -445,9 +448,8 @@
 .topBarControls {
   display: flex;
   align-items: center;
-  justify-content: center;
-  inline-size: 48px;
-  min-width: 0;
+  justify-content: flex-end;
+  min-width: 48px;
 }
 
 .topBarButton {
