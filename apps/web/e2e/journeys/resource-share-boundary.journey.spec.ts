@@ -93,8 +93,25 @@ test("a link grant exposes only its read-only resource and does not mint an acco
       "Read-only shared view. No Nexus account is required.",
     ),
   ).toBeVisible();
+  // The reader owns this tab in every state, so the recipient's browser names
+  // the shared document rather than the app. Read the settled title instead of
+  // polling for it: a polled title that never arrives times out, and a timeout
+  // is an execution failure that can never demonstrate this defect.
+  expect(
+    await anonymousPage.title(),
+    `Link grant ${share.handle} did not name the recipient's tab after media ${mediaId}.`,
+  ).toBe(`${ownerMedia.data.title} · Nexus`);
 
   const anonymousApi = pageRequest(anonymousPage, webOrigin);
+  const servedShareTitles = [
+    ...(await (await anonymousApi.get("/s")).text()).matchAll(
+      /<title[^>]*>([^<]*)<\/title>/g,
+    ),
+  ].map((match) => match[1]);
+  expect(
+    servedShareTitles.at(-1),
+    `The document served for a share link must end at the reader's own title element; a metadata title would outlive it and rename the open share after hydration. Received ${JSON.stringify(servedShareTitles)}.`,
+  ).toBe("Shared reading · Nexus");
   const accountResponse = await anonymousApi.get("/api/me");
   expect(
     accountResponse.status(),
@@ -107,4 +124,17 @@ test("a link grant exposes only its read-only resource and does not mint an acco
     privateMediaResponse.status(),
     `Public grant ${share.handle} escaped its projection and exposed the authenticated media API.`,
   ).toBe(401);
+
+  // A token outside the grant reveals nothing, and the tab names that state
+  // instead of the app: the reader owns the title whether or not it resolves.
+  const strangerPage = await page.context().newPage();
+  await gotoWithStrictCsp(strangerPage, `${webOrigin}/s#share=${"0".repeat(43)}`);
+  await expect(
+    strangerPage.getByRole("heading", { level: 1, name: "Share unavailable" }),
+    `An unknown share token must resolve to nothing readable, not to media ${mediaId}.`,
+  ).toBeVisible();
+  expect(
+    await strangerPage.title(),
+    "An unresolved share must name its own state in the recipient's tab.",
+  ).toBe("Share unavailable · Nexus");
 });
