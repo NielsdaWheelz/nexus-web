@@ -38,6 +38,7 @@ class EndpointKind(StrEnum):
     POSTGRES = "postgres"
     MINIO = "minio"
     SUPABASE = "supabase"
+    INBUCKET = "inbucket"
     API = "api"
     EXTERNAL = "external"
     WEB = "web"
@@ -274,7 +275,8 @@ def record_planned(
         elif normalized_command is not None:
             raise RuntimeContractError("only a process can record a command")
         if resource.kind is ResourceKind.SUPABASE_USER:
-            _require_match(external_id, _UUID, "planned Supabase admin user id")
+            if external_id is not None:
+                _require_match(external_id, _UUID, "planned Supabase admin user id")
         elif resource.kind is ResourceKind.TEMPLATE_BUILD:
             _require_match(external_id, _FINGERPRINT, "template build fingerprint")
         elif resource.kind is ResourceKind.PROCESS:
@@ -330,7 +332,7 @@ def record_created(
                 raise RuntimeContractError("created process owner changed after planning")
         elif resource.kind is ResourceKind.SUPABASE_USER:
             _require_match(resolved_external_id, _UUID, "Supabase admin user id")
-            if resolved_external_id != entry.external_id:
+            if entry.external_id is not None and resolved_external_id != entry.external_id:
                 raise RuntimeContractError("created Supabase user id changed after planning")
         elif resource.kind is ResourceKind.TEMPLATE_BUILD:
             _require_match(resolved_external_id, _FINGERPRINT, "template build fingerprint")
@@ -654,7 +656,8 @@ def _validate_ledger(ledger: RunLedger) -> None:
         if entry.resource.kind is ResourceKind.PROCESS:
             _require_match(entry.external_id, _PROCESS_OWNER, "process owner token")
         elif entry.resource.kind is ResourceKind.SUPABASE_USER:
-            _require_match(entry.external_id, _UUID, "Supabase admin user id")
+            if entry.phase is ResourcePhase.CREATED or entry.external_id is not None:
+                _require_match(entry.external_id, _UUID, "Supabase admin user id")
         elif entry.resource.kind is ResourceKind.TEMPLATE_BUILD:
             _require_match(entry.external_id, _FINGERPRINT, "template build fingerprint")
         elif entry.external_id is not None:
@@ -716,6 +719,7 @@ def _endpoint(ports: RuntimePorts, kind: EndpointKind) -> str:
         EndpointKind.POSTGRES: ports.postgres,
         EndpointKind.MINIO: ports.minio,
         EndpointKind.SUPABASE: ports.supabase_api,
+        EndpointKind.INBUCKET: ports.supabase_inbucket,
         EndpointKind.API: ports.api,
         EndpointKind.EXTERNAL: ports.external,
         EndpointKind.WEB: ports.web,

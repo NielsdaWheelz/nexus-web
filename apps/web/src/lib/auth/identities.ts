@@ -2,12 +2,16 @@ export type OAuthProvider = "google" | "github";
 
 export interface LinkedIdentity {
   id: string;
-  provider: string;
+  provider: OAuthProvider;
   email: string | null;
   createdAt: string | null;
 }
 
 const SUPPORTED_OAUTH_PROVIDERS: OAuthProvider[] = ["google", "github"];
+
+export function isOAuthProvider(value: unknown): value is OAuthProvider {
+  return value === "google" || value === "github";
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -27,10 +31,7 @@ function readIdentityEmail(identity: SupabaseIdentityRecord): string | null {
     return identity.email;
   }
 
-  if (
-    isRecord(identity.identity_data) &&
-    "email" in identity.identity_data
-  ) {
+  if (isRecord(identity.identity_data) && "email" in identity.identity_data) {
     const email = identity.identity_data.email;
     if (typeof email === "string" && email.trim()) {
       return email;
@@ -62,10 +63,7 @@ export function normalizeLinkedIdentities(payload: unknown): LinkedIdentity[] {
     }
 
     const id = normalizeIdentityId(entry);
-    const provider =
-      typeof entry.provider === "string" && entry.provider.trim()
-        ? entry.provider
-        : null;
+    const provider = isOAuthProvider(entry.provider) ? entry.provider : null;
     if (!id || !provider) {
       return [];
     }
@@ -90,7 +88,7 @@ export function findSupabaseIdentityForLinkedIdentity<
   T extends SupabaseIdentityRecord,
 >(
   payload: { identities?: T[] } | null | undefined,
-  identity: Pick<LinkedIdentity, "id" | "provider">
+  identity: Pick<LinkedIdentity, "id" | "provider">,
 ): T | null {
   const identities = payload?.identities;
   if (!Array.isArray(identities)) {
@@ -100,23 +98,25 @@ export function findSupabaseIdentityForLinkedIdentity<
     identities.find(
       (entry) =>
         normalizeIdentityId(entry) === identity.id &&
-        entry.provider === identity.provider
+        entry.provider === identity.provider,
     ) ?? null
   );
 }
 
 export function getConnectableProviders(
-  identities: readonly LinkedIdentity[]
+  identities: readonly LinkedIdentity[],
 ): OAuthProvider[] {
-  const linkedProviders = new Set(identities.map((identity) => identity.provider));
+  const linkedProviders = new Set(
+    identities.map((identity) => identity.provider),
+  );
   return SUPPORTED_OAUTH_PROVIDERS.filter(
-    (provider) => !linkedProviders.has(provider)
+    (provider) => !linkedProviders.has(provider),
   );
 }
 
 export function mayUnlinkIdentity(
   identities: readonly LinkedIdentity[],
-  identityId: string
+  identityId: string,
 ): boolean {
   if (identities.length < 2) {
     return false;
@@ -124,30 +124,12 @@ export function mayUnlinkIdentity(
   return identities.some((identity) => identity.id === identityId);
 }
 
-export function findEmailIdentity(
-  identities: readonly LinkedIdentity[]
-): LinkedIdentity | null {
-  return identities.find((identity) => identity.provider === "email") ?? null;
-}
-
-export function mayRemovePassword(
-  identities: readonly LinkedIdentity[]
-): boolean {
-  if (identities.length < 2) {
-    return false;
+export function formatIdentityProvider(provider: OAuthProvider): string {
+  switch (provider) {
+    case "google":
+      return "Google";
+    case "github":
+      return "GitHub";
   }
-  return identities.some((identity) => identity.provider === "email");
-}
-
-export function formatIdentityProvider(provider: string): string {
-  if (provider === "google") {
-    return "Google";
-  }
-  if (provider === "github") {
-    return "GitHub";
-  }
-  if (provider === "email") {
-    return "Email";
-  }
-  return provider;
+  return provider satisfies never;
 }

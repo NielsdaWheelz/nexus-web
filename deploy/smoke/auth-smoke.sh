@@ -24,7 +24,9 @@ Checks:
   - Anonymous non-default protected page redirects 307 to /login with preserved next.
   - A valid-shaped expired auth cookie on a protected page prompts a redirect
     with no timeout (the MIDDLEWARE_INVOCATION_TIMEOUT incident reproduction).
-  - Public pages return 200.
+  - Closed-membership public pages return 200.
+  - Google and GitHub OAuth initiation target the exact Supabase authorize
+    endpoint and app callback.
   - Anonymous and expired-cookie BFF routes return JSON 401 E_UNAUTHENTICATED.
   - /docs is not reachable in production.
   - The API health endpoint returns 200.
@@ -84,7 +86,7 @@ API_URL="${API_URL%/}"
 PROTECTED_PATH="/browse"
 DEFAULT_PROTECTED_PATH="/lectern"
 # Routes that must stay reachable without an auth cookie.
-PUBLIC_PATHS="/login /terms /privacy /android"
+PUBLIC_PATHS="/login /forgot-password /auth/invite /auth/recovery /terms /privacy /android"
 # A BFF route under /api/* that the middleware passes through to the proxy.
 BFF_PATH="/api/me"
 # Per-request budget. The incident was a 25s Edge timeout; a healthy redirect
@@ -230,6 +232,44 @@ assert_bff_unauthenticated() {
   pass "$label"
 }
 
+assert_oauth_start() {
+  local provider="$1"
+  local status="$2"
+  local location="$3"
+
+  if [ "$status" != "307" ]; then
+    fail "${provider} OAuth start: expected 307, got ${status}"
+    return
+  fi
+  if ! LOCATION="$location" PROVIDER="$provider" APP_URL="$APP_URL" SUPABASE_URL="$SUPABASE_URL" \
+    python3 - <<'PY'
+import os
+import sys
+from urllib.parse import parse_qs, urlparse
+
+location = urlparse(os.environ["LOCATION"])
+supabase = urlparse(os.environ["SUPABASE_URL"])
+query = parse_qs(location.query)
+redirect_to = urlparse(query.get("redirect_to", [""])[0])
+app = urlparse(os.environ["APP_URL"])
+valid = (
+    location.scheme == supabase.scheme
+    and location.netloc == supabase.netloc
+    and location.path == "/auth/v1/authorize"
+    and query.get("provider") == [os.environ["PROVIDER"]]
+    and redirect_to.scheme == app.scheme
+    and redirect_to.netloc == app.netloc
+    and redirect_to.path == "/auth/callback"
+)
+sys.exit(0 if valid else 1)
+PY
+  then
+    fail "${provider} OAuth start did not target the exact provider callback contract"
+    return
+  fi
+  pass "${provider} OAuth start targets the exact provider callback contract"
+}
+
 echo "Auth production smoke check"
 echo "  app: ${APP_URL}"
 echo "  api: ${API_URL}"
@@ -271,6 +311,13 @@ for path in $PUBLIC_PATHS; do
   else
     fail "public page ${path}: expected 200, got ${status}"
   fi
+done
+
+for provider in google github; do
+  IFS=$'\t' read -r status location < <(
+    http_status_and_location "${APP_URL}/auth/oauth?provider=${provider}"
+  )
+  assert_oauth_start "$provider" "$status" "$location"
 done
 
 # Anonymous BFF route returns JSON 401 E_UNAUTHENTICATED.

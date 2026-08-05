@@ -8,8 +8,9 @@ import {
 } from "./redirects";
 import { resolveCallbackRedirectOrigin } from "./callback-origin";
 import {
+  AUTH_CALLBACK_CANCELLED_MESSAGE,
   AUTH_CALLBACK_FAILURE_MESSAGE,
-  toPublicAuthErrorMessage,
+  projectOAuthCallbackError,
 } from "./messages";
 
 interface AuthCallbackDeps {
@@ -28,36 +29,33 @@ const TEMPORARY_REDIRECT = 307;
 
 export async function handleAuthCallback(
   request: Request,
-  deps: AuthCallbackDeps
+  deps: AuthCallbackDeps,
 ): Promise<NextResponse> {
   const requestUrl = new URL(request.url);
   const target = parseAuthReturnTarget(requestUrl.searchParams.get("next"));
   const redirectOrigin = resolveCallbackRedirectOrigin(request);
   const isHandoff = requestUrl.searchParams.get("flow") === "handoff";
-  const providerError =
-    requestUrl.searchParams.get("error_description") ??
-    requestUrl.searchParams.get("error");
+  const providerErrorCode = requestUrl.searchParams.get("error");
+  const hasProviderError =
+    providerErrorCode !== null ||
+    requestUrl.searchParams.has("error_description");
 
-  if (providerError) {
+  if (hasProviderError) {
+    const publicError = projectOAuthCallbackError(providerErrorCode);
     if (isHandoff) {
-      const normalized = providerError.trim().toLowerCase();
       const handoffErrorCode =
-        normalized === "access_denied" ||
-        normalized === "user_denied" ||
-        normalized === "consent_required"
+        publicError === AUTH_CALLBACK_CANCELLED_MESSAGE
           ? "oauth_user_cancelled"
           : "oauth_provider_error";
       return NextResponse.redirect(
         new URL(buildAuthHandoffErrorDeepLink(handoffErrorCode, target)),
-        { status: TEMPORARY_REDIRECT }
+        { status: TEMPORARY_REDIRECT },
       );
     }
-    const publicError =
-      toPublicAuthErrorMessage(providerError) ?? AUTH_CALLBACK_FAILURE_MESSAGE;
     return NextResponse.redirect(
       buildLoginUrl(redirectOrigin, target, {
         errorDescription: publicError,
-      })
+      }),
     );
   }
 
@@ -66,15 +64,15 @@ export async function handleAuthCallback(
     if (isHandoff) {
       return NextResponse.redirect(
         new URL(
-          buildAuthHandoffErrorDeepLink("oauth_callback_missing_code", target)
+          buildAuthHandoffErrorDeepLink("oauth_callback_missing_code", target),
         ),
-        { status: TEMPORARY_REDIRECT }
+        { status: TEMPORARY_REDIRECT },
       );
     }
     return NextResponse.redirect(
       buildLoginUrl(redirectOrigin, target, {
         errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
-      })
+      }),
     );
   }
 
@@ -83,15 +81,15 @@ export async function handleAuthCallback(
     if (isHandoff) {
       return NextResponse.redirect(
         new URL(
-          buildAuthHandoffErrorDeepLink("handoff_exchange_failed", target)
+          buildAuthHandoffErrorDeepLink("handoff_exchange_failed", target),
         ),
-        { status: TEMPORARY_REDIRECT }
+        { status: TEMPORARY_REDIRECT },
       );
     }
     return NextResponse.redirect(
       buildLoginUrl(redirectOrigin, target, {
         errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
-      })
+      }),
     );
   }
 
@@ -100,9 +98,9 @@ export async function handleAuthCallback(
     if (!session) {
       return NextResponse.redirect(
         new URL(
-          buildAuthHandoffErrorDeepLink("handoff_exchange_failed", target)
+          buildAuthHandoffErrorDeepLink("handoff_exchange_failed", target),
         ),
-        { status: TEMPORARY_REDIRECT }
+        { status: TEMPORARY_REDIRECT },
       );
     }
     const hc = requestUrl.searchParams.get("hc") ?? "";
@@ -113,17 +111,17 @@ export async function handleAuthCallback(
     });
     if ("error" in mintResult) {
       return NextResponse.redirect(
-        new URL(
-          buildAuthHandoffErrorDeepLink("handoff_mint_failed", target)
-        ),
-        { status: TEMPORARY_REDIRECT }
+        new URL(buildAuthHandoffErrorDeepLink("handoff_mint_failed", target)),
+        { status: TEMPORARY_REDIRECT },
       );
     }
     return NextResponse.redirect(
       new URL(buildAuthHandoffSuccessDeepLink(mintResult.code, target)),
-      { status: TEMPORARY_REDIRECT }
+      { status: TEMPORARY_REDIRECT },
     );
   }
 
-  return NextResponse.redirect(buildAuthReturnTargetUrl(redirectOrigin, target));
+  return NextResponse.redirect(
+    buildAuthReturnTargetUrl(redirectOrigin, target),
+  );
 }

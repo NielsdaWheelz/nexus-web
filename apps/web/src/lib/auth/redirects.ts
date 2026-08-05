@@ -15,7 +15,9 @@ const AUTH_RETURN_TARGET_BASE = "http://localhost";
 
 type AuthSearchParam = string | string[] | undefined;
 
-export function getFirstSearchParamValue(value: AuthSearchParam): string | null {
+export function getFirstSearchParamValue(
+  value: AuthSearchParam,
+): string | null {
   if (typeof value === "string") {
     return value;
   }
@@ -38,14 +40,17 @@ function isBlockedAuthPath(pathname: string): boolean {
 }
 
 export function parseAuthReturnTarget(
-  rawValue: string | null | undefined
+  rawValue: string | null | undefined,
 ): AuthReturnTarget {
-  return parseAuthReturnTargetWithFallback(rawValue, DEFAULT_AUTH_RETURN_TARGET);
+  return parseAuthReturnTargetWithFallback(
+    rawValue,
+    DEFAULT_AUTH_RETURN_TARGET,
+  );
 }
 
 export function parseAuthReturnTargetWithFallback(
   rawValue: string | null | undefined,
-  fallback: AuthReturnTarget
+  fallback: AuthReturnTarget,
 ): AuthReturnTarget {
   if (!rawValue) {
     return fallback;
@@ -91,12 +96,9 @@ function setNonDefaultNext(url: URL, target: AuthReturnTarget): void {
 export function buildLoginUrl(
   origin: string,
   target: AuthReturnTarget,
-  options: { mode?: "create"; errorDescription?: string } = {}
+  options: { errorDescription?: string } = {},
 ): URL {
   const loginUrl = new URL(LOGIN_PATH, origin);
-  if (options.mode === "create") {
-    loginUrl.searchParams.set("mode", "create");
-  }
   setNonDefaultNext(loginUrl, target);
   if (options.errorDescription) {
     loginUrl.searchParams.set("error_description", options.errorDescription);
@@ -106,7 +108,7 @@ export function buildLoginUrl(
 
 export function buildAuthRefreshUrl(
   origin: string,
-  target: AuthReturnTarget
+  target: AuthReturnTarget,
 ): URL {
   const refreshUrl = new URL("/auth/refresh", origin);
   setNonDefaultNext(refreshUrl, target);
@@ -116,7 +118,7 @@ export function buildAuthRefreshUrl(
 export function buildAuthCallbackUrl(
   redirectOrigin: string,
   target: AuthReturnTarget,
-  options?: { flow?: "handoff"; challenge?: string }
+  options?: { flow?: "handoff"; challenge?: string },
 ): string {
   const callbackUrl = new URL("/auth/callback", redirectOrigin);
   setNonDefaultNext(callbackUrl, target);
@@ -131,7 +133,7 @@ export function buildAuthCallbackUrl(
 
 export function buildAuthHandoffSuccessDeepLink(
   code: string,
-  target: AuthReturnTarget
+  target: AuthReturnTarget,
 ): string {
   const deepLink = new URL("nexus://auth/handoff");
   deepLink.searchParams.set("code", code);
@@ -141,7 +143,7 @@ export function buildAuthHandoffSuccessDeepLink(
 
 export function buildAuthHandoffErrorDeepLink(
   errorCode: string,
-  target: AuthReturnTarget
+  target: AuthReturnTarget,
 ): string {
   const deepLink = new URL("nexus://auth/handoff");
   deepLink.searchParams.set("error", errorCode);
@@ -152,7 +154,7 @@ export function buildAuthHandoffErrorDeepLink(
 export function buildAuthStartDeepLink(
   provider: OAuthProvider,
   mode: "signin" | "link",
-  target: AuthReturnTarget
+  target: AuthReturnTarget,
 ): string {
   const deepLink = new URL("nexus://auth/start");
   deepLink.searchParams.set("provider", provider);
@@ -162,7 +164,7 @@ export function buildAuthStartDeepLink(
 }
 
 export function buildAuthNativeGoogleDeepLink(
-  target: AuthReturnTarget
+  target: AuthReturnTarget,
 ): string {
   const deepLink = new URL("nexus://auth/native");
   deepLink.searchParams.set("provider", "google");
@@ -172,7 +174,7 @@ export function buildAuthNativeGoogleDeepLink(
 
 export function buildAuthReturnTargetUrl(
   origin: string,
-  target: AuthReturnTarget
+  target: AuthReturnTarget,
 ): URL {
   return new URL(authReturnTargetToHref(target), origin);
 }

@@ -75,10 +75,19 @@ Cutover checks before syncing env:
   policy are created.
 - X API credits are available for the official API token if X thread capture is
   expected to work in production.
-- `deploy/supabase/verify-auth-redirects.sh` passes: hosted Supabase Auth
-  `site_url` equals `APP_PUBLIC_URL`, every `AUTH_ALLOWED_REDIRECT_ORIGINS`
-  entry has an exact `/auth/callback` redirect URL, and production redirect URLs
-  contain no wildcards.
+- `deploy/supabase/verify-auth-config.sh` passes: hosted Supabase Auth has
+  signup and anonymous users closed; phone disabled; email, Google, and GitHub
+  sign-in enabled; custom OAuth, SAML, passkeys, CAPTCHA, compromised-password
+  policy, Auth hooks, third-party Auth integrations, unverified-email sign-in,
+  and reauthentication disabled; Google/GitHub identity linking enabled;
+  confirmation and a 15-character minimum password configured; production
+  SMTP, Nexus invite and recovery templates, and password-change notification
+  enabled; `site_url` equals `APP_PUBLIC_URL`; and the callback allowlist is
+  exact and wildcard-free.
+- In the Supabase dashboard, **Require current password when changing password**
+  is off. The supported public Management API does not expose this newer
+  setting, so it remains an explicit operator check rather than a private-API
+  dependency.
 - `NEXUS_INTERNAL_SECRET` matches between Vercel and the VPS.
 - Old backend writers and workers are stopped before the two Hetzner worker
   lanes start.

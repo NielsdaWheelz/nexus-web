@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -358,6 +359,17 @@ export default function SettingsAccountPaneBody() {
             Update email
           </Button>
         </form>
+      </PaneSection>
+
+      <PaneSection title="Password">
+        <p className={styles.current}>
+          Set or replace the password used with your account email.
+        </p>
+        <Button asChild variant="secondary">
+          <Link href="/account/password?next=%2Fsettings%2Faccount">
+            Set or replace password
+          </Link>
+        </Button>
       </PaneSection>
 
       <PaneSection title="Display name">

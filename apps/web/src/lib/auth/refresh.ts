@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import {
   getSupabaseAuthCookieNames,
@@ -44,7 +45,7 @@ function readAuthCookieValue(cookieList: readonly CookieValue[]): string {
   const cookieNames = getSupabaseAuthCookieNames(cookieList);
   return cookieNames
     .map(
-      (name) => cookieList.find((cookie) => cookie.name === name)?.value ?? ""
+      (name) => cookieList.find((cookie) => cookie.name === name)?.value ?? "",
     )
     .join("");
 }
@@ -78,7 +79,7 @@ async function runBoundedRefresh(): Promise<RefreshAttempt> {
       global: {
         fetch: createSupabaseDeadlineFetch("Supabase refresh timed out"),
       },
-    }
+    },
   );
 
   // refreshSession() with no argument reads the refresh token from the cookie
@@ -95,6 +96,13 @@ async function runBoundedRefresh(): Promise<RefreshAttempt> {
 
   const { data, error } = result;
   if (error) {
+    // auth-js catches fetch aborts/network failures and returns them as a
+    // retryable error (status 0); provider 5xx responses use the same type.
+    // Neither proves that the refresh token is dead, so callers must preserve
+    // the session and surface a retryable terminal response.
+    if (isAuthRetryableFetchError(error)) {
+      return { status: "failed", reason: "timeout" };
+    }
     return { status: "failed", reason: "auth_error", code: error.code ?? null };
   }
 
@@ -162,15 +170,23 @@ async function refreshOnceWithRetry(): Promise<RefreshResult> {
 export async function refreshSession(): Promise<RefreshResult> {
   const cookieKey = readAuthCookieValue((await cookies()).getAll());
 
-  const inFlight = inFlightRefreshes.get(cookieKey);
-  if (inFlight) {
-    return inFlight;
+  let refresh = inFlightRefreshes.get(cookieKey);
+  if (!refresh) {
+    refresh = refreshOnceWithRetry().finally(() => {
+      inFlightRefreshes.delete(cookieKey);
+    });
+    inFlightRefreshes.set(cookieKey, refresh);
   }
 
-  const refresh = refreshOnceWithRetry().finally(() => {
-    inFlightRefreshes.delete(cookieKey);
-  });
-
-  inFlightRefreshes.set(cookieKey, refresh);
-  return refresh;
+  const result = await refresh;
+  if (result.status === "refreshed") {
+    // Every waiter has a distinct request-local cookie store. The refresh
+    // owner was updated inside runBoundedRefresh; re-stage the same cookies for
+    // it and stage them for any single-flight joiners before callers continue.
+    const cookieStore = await cookies();
+    for (const { name, value, options } of result.cookiesToSet) {
+      cookieStore.set(name, value, options);
+    }
+  }
+  return result;
 }

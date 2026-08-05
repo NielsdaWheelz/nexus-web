@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 import { resolveServerActionRedirectOrigin } from "@/lib/auth/callback-origin";
 import {
   EMAIL_CHANGE_FAILURE_MESSAGE,
-  toPublicAuthErrorMessage,
+  projectEmailChangeError,
 } from "@/lib/auth/messages";
 import {
   buildAuthCallbackUrl,
@@ -54,8 +54,7 @@ export async function changeEmailAction({
   if (error) {
     return {
       ok: false,
-      error:
-        toPublicAuthErrorMessage(error.message) ?? EMAIL_CHANGE_FAILURE_MESSAGE,
+      error: projectEmailChangeError(error.code),
     };
   }
   return { ok: true };

@@ -82,6 +82,7 @@ from nexus_test_control.runtime import (
 )
 from nexus_test_control.services import (
     TEST_EXTENSION_PUBLIC_KEY,
+    InvitedTestUser,
     StartedProcess,
     SupabaseCredentials,
     TestRun,
@@ -91,6 +92,7 @@ from nexus_test_control.services import (
     clean_run,
     create_supabase_user,
     grant_scenario_ai_entitlement,
+    invite_supabase_user,
     new_run_id,
     prepare_run,
     resolve_adb,
@@ -239,6 +241,7 @@ _CRITICAL_JOURNEY_IDS = frozenset(
         "auth-session",
         "grounded-chat-citation",
         "nexus-search-open-restore",
+        "password-recovery",
         "resource-share-boundary",
     }
 )
@@ -458,6 +461,16 @@ class _RunnerPorts:
         supabase: SupabaseCredentials,
     ) -> TestUser:
         return create_supabase_user(repo_root, environment, run_id, scenario_id, supabase)
+
+    def invite_supabase_user(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run_id: str,
+        scenario_id: str,
+        supabase: SupabaseCredentials,
+    ) -> InvitedTestUser:
+        return invite_supabase_user(repo_root, environment, run_id, scenario_id, supabase)
 
     def grant_scenario_ai_entitlement(
         self,
@@ -1792,7 +1805,18 @@ def _run_journeys(
         return _with_browser_process_logs(runtime_failure, context, execution)
     try:
         scenario_users: dict[str, dict[str, str]] = {}
+        scenario_invites: dict[str, dict[str, str]] = {}
         for journey_id in tuple(_journey_id(path) for path in paths):
+            if journey_id == "auth-session":
+                invited = execution.ports.invite_supabase_user(
+                    context.repo_root,
+                    {"NEXUS_ENV": "test"},
+                    prepared.run_id,
+                    journey_id,
+                    prepared.supabase,
+                )
+                scenario_invites[journey_id] = {"email": invited.email}
+                continue
             user = execution.ports.create_supabase_user(
                 context.repo_root,
                 {"NEXUS_ENV": "test"},
@@ -1836,6 +1860,11 @@ def _run_journeys(
     )
     child_environment["NEXUS_TEST_SCENARIO_USERS"] = json.dumps(
         scenario_users,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    child_environment["NEXUS_TEST_SCENARIO_INVITES"] = json.dumps(
+        scenario_invites,
         separators=(",", ":"),
         sort_keys=True,
     )

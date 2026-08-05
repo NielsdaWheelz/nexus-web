@@ -4,7 +4,7 @@
 .PHONY: help setup dev down logs clean api web worker-interactive worker-background \
 	migrate migrate-down seed format format-back fix-front build build-android \
 	build-android-release build-icons generate-resource-capabilities \
-	smoke smoke-auth-redirects
+	smoke smoke-auth
 
 -include .env
 -include .dev-ports
@@ -56,7 +56,7 @@ help:
 	@echo "Testing:"
 	@echo "  ./scripts/test --help   - List the sole test and verification API"
 	@echo "  make smoke              - Post-deploy auth smoke check against production URLs"
-	@echo "  make smoke-auth-redirects - Auth redirect/provider smoke and Supabase allowlist verification"
+	@echo "  make smoke-auth         - Full hosted Auth configuration and production smoke gate"
 	@echo ""
 	@echo "Formatting:"
 	@echo "  make format             - Apply backend formatting and frontend lint fixes"
@@ -216,5 +216,6 @@ generate-resource-capabilities:
 smoke:
 	./deploy/smoke/auth-smoke.sh
 
-smoke-auth-redirects:
-	./deploy/smoke/auth-redirect-construction-smoke.sh --mode prod-readonly
+smoke-auth:
+	./deploy/supabase/verify-auth-config.sh
+	./deploy/smoke/auth-smoke.sh

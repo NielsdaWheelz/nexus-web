@@ -1,0 +1,9 @@
+diff --git a/apps/web/src/lib/auth/email-confirmation.ts b/apps/web/src/lib/auth/email-confirmation.ts
+--- a/apps/web/src/lib/auth/email-confirmation.ts
++++ b/apps/web/src/lib/auth/email-confirmation.ts
+@@ -77,4 +77,5 @@
+   switch (input.error.code) {
+     case "otp_expired":
++      return { kind: "ServiceUnavailable" };
+     case "user_banned":
+     case "user_not_found":

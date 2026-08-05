@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { sanitizeCspReportUrl } from "@/lib/security/csp";
 
 /**
  * Public CSP violation sink. Browsers POST here via the CSP `report-to`/`Reporting-Endpoints`
@@ -28,13 +29,16 @@ function readString(
 // Reads either the modern reports+json body (camelCase) or the legacy csp-report (hyphenated).
 function logViolation(body: Record<string, unknown>): void {
   console.warn("csp_violation", {
-    blockedURL: readString(body, "blockedURL") ?? readString(body, "blocked-uri"),
+    blockedURL: sanitizeCspReportUrl(
+      readString(body, "blockedURL") ?? readString(body, "blocked-uri"),
+    ),
     effectiveDirective:
       readString(body, "effectiveDirective") ??
       readString(body, "effective-directive") ??
       readString(body, "violated-directive"),
-    documentURL:
+    documentURL: sanitizeCspReportUrl(
       readString(body, "documentURL") ?? readString(body, "document-uri"),
+    ),
     disposition: readString(body, "disposition"),
   });
 }
@@ -59,8 +63,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (isRecord(body)) logViolation(body);
       }
     }
-  } catch {
-    // Best-effort telemetry — never fail a report POST.
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    // justify-ignore-error: CSP reports are untrusted, best-effort telemetry;
+    // parse/read failures intentionally produce the fixed empty 204 response.
   }
   return noContent();
 }

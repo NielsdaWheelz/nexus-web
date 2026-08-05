@@ -32,6 +32,7 @@ export interface BrowserRuntime {
   apiOrigin: string;
   minioOrigin: string;
   supabaseOrigin: string;
+  inbucketOrigin: string;
   externalOrigin: string;
   browserOrigins: ReadonlySet<string>;
 }
@@ -41,7 +42,10 @@ function parseRuntimeRecord(value: unknown, repoRoot: string): RuntimeRecord {
     throw new Error("The Nexus test runtime record must be an object.");
   }
   const record = value as Record<string, unknown>;
-  const repoId = createHash("sha256").update(repoRoot).digest("hex").slice(0, 16);
+  const repoId = createHash("sha256")
+    .update(repoRoot)
+    .digest("hex")
+    .slice(0, 16);
   const portsValue = record.ports;
   const ownedRunIds = record.owned_run_ids;
   const activeRunId = process.env.NEXUS_TEST_RUN_ID;
@@ -49,7 +53,8 @@ function parseRuntimeRecord(value: unknown, repoRoot: string): RuntimeRecord {
     record.version !== 2 ||
     record.repo_id !== repoId ||
     record.compose_project !== `nexus-test-${repoId}` ||
-    record.supabase_workdir !== path.join(repoRoot, ".nexus-test", "supabase") ||
+    record.supabase_workdir !==
+      path.join(repoRoot, ".nexus-test", "supabase") ||
     !Array.isArray(ownedRunIds) ||
     !ownedRunIds.every(
       (runId) => typeof runId === "string" && /^[0-9a-f]{16}$/.test(runId),
@@ -61,14 +66,20 @@ function parseRuntimeRecord(value: unknown, repoRoot: string): RuntimeRecord {
     portsValue === null ||
     Array.isArray(portsValue)
   ) {
-    throw new Error("The Nexus test runtime record does not own this repository.");
+    throw new Error(
+      "The Nexus test runtime record does not own this repository.",
+    );
   }
 
   const rawPorts = portsValue as Record<string, unknown>;
   const ports = Object.fromEntries(
     PORT_KEYS.map((key) => {
       const port = rawPorts[key];
-      if (!Number.isInteger(port) || Number(port) < 1 || Number(port) > 65_535) {
+      if (
+        !Number.isInteger(port) ||
+        Number(port) < 1 ||
+        Number(port) > 65_535
+      ) {
         throw new Error(`The Nexus test runtime has an invalid ${key} port.`);
       }
       return [key, Number(port)];
@@ -111,6 +122,7 @@ export function loadBrowserRuntime(): BrowserRuntime {
     origin(runtime.ports.api),
     origin(runtime.ports.minio),
     origin(runtime.ports.supabase_api),
+    origin(runtime.ports.supabase_inbucket),
     origin(runtime.ports.external),
   ]);
   return {
@@ -119,6 +131,7 @@ export function loadBrowserRuntime(): BrowserRuntime {
     apiOrigin: origin(runtime.ports.api),
     minioOrigin: origin(runtime.ports.minio),
     supabaseOrigin: origin(runtime.ports.supabase_api),
+    inbucketOrigin: origin(runtime.ports.supabase_inbucket),
     externalOrigin: origin(runtime.ports.external),
     browserOrigins,
   };

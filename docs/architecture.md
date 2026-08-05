@@ -160,7 +160,7 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
   POSTs before app code; `apps/web/src/lib/auth/callback-origin.ts` resolves one
   safe app origin from request metadata; `apps/web/src/lib/auth/redirects.ts`
   builds `/auth/callback` URLs; hosted Supabase Auth must have exact callback
-  redirect URLs verified by `deploy/supabase/verify-auth-redirects.sh`.
+  redirect URLs verified by `deploy/supabase/verify-auth-config.sh`.
 - Direct Vercel custom-domain frontend deploys leave
   `SERVER_ACTION_ALLOWED_ORIGINS` empty. A host-rewriting frontend proxy must set
   a minimal Next.js domain-pattern list and matching trusted-proxy auth origins.
@@ -645,6 +645,20 @@ admin membership; its bounded process-local LRU carries the resulting
 database hop. Eviction only repeats the idempotent bootstrap on a later request.
 Visibility is enforced by boolean predicates (`auth/permissions.py`) that take an
 explicit session and never leak existence (not-found == not-visible).
+
+Membership is closed: global Supabase signup and anonymous users are disabled,
+the phone provider is off, and email, Google, and GitHub remain enabled for
+existing users. The operator
+creates the only new principals with Supabase Dashboard invitations. Custom
+invite and recovery messages lead to non-consuming Nexus GET landings; an
+explicit POST fixes the token purpose, establishes the Supabase session, and
+uses the same protected **Set or replace password** surface. Supabase alone
+owns password hashes, email tokens, provider identities, and sessions. Nexus
+stores no invitation, enrollment, authenticator, or password-presence state,
+and `auth.identities` is never interpreted as evidence of a password. Linked
+Identities projects only Google and GitHub; an OAuth identity can be unlinked
+only while another supported OAuth identity remains, so unlink safety never
+depends on inferred password presence.
 
 Other identity surfaces:
 
@@ -1730,7 +1744,7 @@ one separate typed entrypoint, `./scripts/test`.
 - **Formatting**: `make format`, `make format-back`, `make fix-front`.
 - **Tests and verification**: see §12; no Make aliases.
 - **Build**: `make build` (Next.js), `make build-android[-release]`.
-- **Smoke**: `make smoke`, `make smoke-auth-redirects`.
+- **Smoke**: `make smoke`, `make smoke-auth`.
 
 **Deploy** (`deployment.md`, `deploy/`): the frontend deploys to **Vercel on push
 to `main`** (Git integration). The backend deploys via `deploy/hetzner/deploy.sh`:
@@ -1743,9 +1757,14 @@ Oracle preconditions via the background worker image:
 --force-recreate`. Env contracts live in `deploy/env/*` (real values untracked,
 `.example` tracked); the sync scripts strongly validate them and reject legacy
 Supabase/`STORAGE_*` keys. R2 CORS/lifecycle are applied as code via
-`deploy/cloudflare/*`. Supabase hosted Auth redirect config is verified as
-provider state with `deploy/supabase/verify-auth-redirects.sh`, not trusted as a
-manual dashboard checklist.
+`deploy/cloudflare/*`. Supabase hosted Auth configuration exposed by the public
+Management API is verified as provider state with
+`deploy/supabase/verify-auth-config.sh`. The gate covers membership closure,
+enabled sign-in providers and hooks, absence of third-party Auth integrations,
+password/update policy, SMTP, notification and email templates, site URL, and
+the exact redirect allowlist. The newer
+dashboard-only current-password toggle is the one documented manual check; no
+private Studio API is a deployment dependency.
 
 **Migrations** are hand-written Alembic files (`migrations/alembic/versions/`,
 linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. Test: the

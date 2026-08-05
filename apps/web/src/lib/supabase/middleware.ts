@@ -30,16 +30,22 @@ const TEMPORARY_REDIRECT = 307;
  */
 const PUBLIC_ROUTES = new Set([
   "/login",
+  "/forgot-password",
   "/android",
   "/.well-known/assetlinks.json",
   "/privacy",
-  "/sign-up",
   "/terms",
   "/auth/callback",
+  "/auth/confirm/invite",
+  "/auth/confirm/recovery",
   "/auth/handoff",
+  "/auth/invite",
   "/auth/native/google",
   "/auth/oauth",
-  "/auth/password",
+  "/auth/password/recovery",
+  "/auth/password/sign-in",
+  "/auth/password/update",
+  "/auth/recovery",
   "/auth/refresh",
   "/auth/signout",
   "/extension/connect/start",
@@ -52,17 +58,17 @@ const PUBLIC_ROUTES = new Set([
 function clearAndRedirectToLogin(
   request: NextRequest,
   cookieNames: string[],
-  options?: { sessionEndedFeedback?: boolean }
+  options?: { sessionEndedFeedback?: boolean },
 ): NextResponse {
   const target = parseAuthReturnTarget(
-    `${request.nextUrl.pathname}${request.nextUrl.search}`
+    `${request.nextUrl.pathname}${request.nextUrl.search}`,
   );
   const response = NextResponse.redirect(
     buildLoginUrl(request.nextUrl.origin, target, {
       errorDescription: options?.sessionEndedFeedback
         ? SESSION_ENDED_MESSAGE
         : undefined,
-    })
+    }),
   );
   clearSupabaseAuthCookies(response, cookieNames);
   if (options?.sessionEndedFeedback) {
@@ -88,7 +94,7 @@ function isSessionEndedLoginRequest(request: NextRequest): boolean {
 export function updateSession(
   request: NextRequest,
   nonce: string,
-  contentSecurityPolicy?: string | null
+  contentSecurityPolicy?: string | null,
 ): NextResponse {
   const pathname = request.nextUrl.pathname;
 
@@ -116,9 +122,13 @@ export function updateSession(
     const cookie = requestHeaders.get("cookie");
     requestHeaders.set(
       "cookie",
-      cookie ? `${cookie}; ${DEVICE_COOKIE_NAME}=${value}` : `${DEVICE_COOKIE_NAME}=${value}`
+      cookie
+        ? `${cookie}; ${DEVICE_COOKIE_NAME}=${value}`
+        : `${DEVICE_COOKIE_NAME}=${value}`,
     );
-    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    const response = NextResponse.next({
+      request: { headers: requestHeaders },
+    });
     response.cookies.set(DEVICE_COOKIE_NAME, value, options);
     return response;
   };
@@ -132,8 +142,8 @@ export function updateSession(
       return NextResponse.redirect(
         buildAuthReturnTargetUrl(
           request.nextUrl.origin,
-          parseAuthReturnTarget(request.nextUrl.searchParams.get("next"))
-        )
+          parseAuthReturnTarget(request.nextUrl.searchParams.get("next")),
+        ),
       );
     }
     return passThrough();
@@ -152,7 +162,7 @@ export function updateSession(
   // Protected page request.
   requestHeaders.set(
     REQUEST_PATH_HEADER,
-    `${request.nextUrl.pathname}${request.nextUrl.search}`
+    `${request.nextUrl.pathname}${request.nextUrl.search}`,
   );
   const hasSessionEndedFeedback =
     request.cookies.get(AUTH_ENDED_FEEDBACK_COOKIE)?.value === "1";
@@ -178,10 +188,10 @@ export function updateSession(
         buildAuthRefreshUrl(
           request.nextUrl.origin,
           parseAuthReturnTarget(
-            `${request.nextUrl.pathname}${request.nextUrl.search}`
-          )
+            `${request.nextUrl.pathname}${request.nextUrl.search}`,
+          ),
         ),
-        { status: TEMPORARY_REDIRECT }
+        { status: TEMPORARY_REDIRECT },
       );
     }
     case "ended":
