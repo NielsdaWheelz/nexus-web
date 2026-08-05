@@ -1,101 +1,77 @@
-import { useRef } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useEffect, useRef } from "react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it } from "vitest";
 import "@/app/globals.css";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
-import {
-  MobileViewportProvider,
-  useMobileViewport,
-} from "@/lib/mobileViewport/MobileViewportProvider";
+import { useMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 
+/**
+ * Risk: a full-window mobile overlay is drawn under the Android bar, under the
+ * keyboard, or — since the bottom-geometry cutover — against a registered
+ * surface's element-local clearance instead of the window one.
+ * `FloatingActionSurface` is the boundary that consumes the published safe area
+ * (docs/cutovers/mobile-reader-bottom-geometry-hard-cutover.md).
+ * Publication, registration lifecycle, and cleanup belong to
+ * MobileViewportProvider.browser.test.tsx.
+ */
+
+const CONTENT_BOTTOM_CLEARANCE = "--mobile-content-bottom-clearance";
+/** FloatingActionSurface's default `viewportPadding`. */
+const VIEWPORT_PADDING_PX = 8;
+const OVERLAY_KEYBOARD_INSET_PX = 260;
+/** How far above the window bottom the registered pane body ends. */
+const PANE_BODY_BOTTOM_GAP_PX = 80;
+
+/**
+ * Read the published value straight off the root. A probe element would mutate
+ * the DOM inside `waitFor`, whose MutationObserver would re-enter the callback
+ * on the probe's own mutation and spin the page.
+ */
 function readRootLength(property: string): number {
-  const probe = document.createElement("div");
-  probe.style.height = `var(${property})`;
-  document.body.append(probe);
-  const value = Number.parseFloat(getComputedStyle(probe).height);
-  probe.remove();
-  return value;
+  return Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue(property),
+  );
 }
 
-function SafeAreaCompositionProbe() {
-  const capability = useMobileViewport();
-  const playerRef = useRef<HTMLDivElement>(null);
-  const nexusRef = useRef<HTMLDivElement>(null);
-  const unregisterPlayerRef = useRef<(() => void) | null>(null);
-  const unregisterNexusRef = useRef<(() => void) | null>(null);
-  const keyboardReportsRef = useRef<Array<() => void>>([]);
+function readSurfaceClearance(element: HTMLElement): number {
+  return Number.parseFloat(
+    getComputedStyle(element).getPropertyValue(CONTENT_BOTTOM_CLEARANCE),
+  );
+}
 
+/**
+ * A mobile pane body that ends above the window bottom, plus the keyboard a
+ * mobile modal reports — so the window clearance and the surface-local
+ * clearance are two different numbers while the floating surface is placed.
+ */
+function MobilePaneBodyWithKeyboard() {
+  const viewport = useMobileViewport();
+  const paneBodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const paneBody = paneBodyRef.current;
+    if (!paneBody) throw new Error("safe-area proof pane body did not mount");
+    const releaseSurface = viewport.registerContentSurface(paneBody);
+    const releaseKeyboard = viewport.reportMobileOverlayKeyboardInset(
+      OVERLAY_KEYBOARD_INSET_PX,
+    );
+    return () => {
+      releaseKeyboard();
+      releaseSurface();
+    };
+  }, [viewport]);
   return (
-    <>
-      <div
-        ref={playerRef}
-        style={{ position: "fixed", insetInline: 0, bottom: 0, height: 80 }}
-      />
-      <div
-        ref={nexusRef}
-        style={{ position: "fixed", insetInline: 0, bottom: 0, height: 150 }}
-      />
-      <button
-        type="button"
-        onClick={() => {
-          const player = playerRef.current;
-          if (!player) throw new Error("safe-area proof player did not mount");
-          unregisterPlayerRef.current =
-            capability.registerFixedObstruction("Player", player);
-        }}
-      >
-        Register Player
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          const nexus = nexusRef.current;
-          if (!nexus) throw new Error("safe-area proof Nexus did not mount");
-          unregisterNexusRef.current =
-            capability.registerFixedObstruction("Nexus", nexus);
-        }}
-      >
-        Register Nexus
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          unregisterNexusRef.current?.();
-          unregisterNexusRef.current = null;
-        }}
-      >
-        Unregister Nexus
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          unregisterPlayerRef.current?.();
-          unregisterPlayerRef.current = null;
-        }}
-      >
-        Unregister Player
-      </button>
-      {[212, 312].map((inset) => (
-        <button
-          key={inset}
-          type="button"
-          onClick={() => {
-            keyboardReportsRef.current.push(
-              capability.reportMobileOverlayKeyboardInset(inset),
-            );
-          }}
-        >
-          Report keyboard {inset}
-        </button>
-      ))}
-      <button
-        type="button"
-        onClick={() => keyboardReportsRef.current.pop()?.()}
-      >
-        Release newest keyboard
-      </button>
-    </>
+    <div
+      ref={paneBodyRef}
+      data-testid="pane-body"
+      style={{
+        position: "fixed",
+        insetInline: 0,
+        top: 0,
+        bottom: PANE_BODY_BOTTOM_GAP_PX,
+      }}
+    />
   );
 }
 
@@ -109,70 +85,6 @@ describe("mobile safe-area composition", () => {
     ]) {
       document.documentElement.style.removeProperty(property);
     }
-  });
-
-  it("composes safe bottom, measured chrome, and keyboard without stale teardown state", async () => {
-    await page.viewport(390, 844);
-    document.documentElement.style.setProperty("--viewport-safe-bottom", "37px");
-    const { unmount } = render(
-      <MobileViewportProvider>
-        <SafeAreaCompositionProbe />
-      </MobileViewportProvider>,
-    );
-
-    expect(readRootLength("--mobile-content-bottom-clearance")).toBe(37);
-    expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(37);
-
-    fireEvent.click(screen.getByRole("button", { name: "Register Player" }));
-    await waitFor(() => {
-      expect(readRootLength("--mobile-content-bottom-clearance")).toBe(80);
-      expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(80);
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Register Nexus" }));
-    await waitFor(() => {
-      expect(readRootLength("--mobile-content-bottom-clearance")).toBe(150);
-      expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(80);
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Report keyboard 212" }));
-    await waitFor(() => {
-      expect(readRootLength("--mobile-content-bottom-clearance")).toBe(212);
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Report keyboard 312" }));
-    await waitFor(() => {
-      expect(readRootLength("--mobile-content-bottom-clearance")).toBe(312);
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Release newest keyboard" }),
-    );
-    await waitFor(() => {
-      expect(readRootLength("--mobile-content-bottom-clearance")).toBe(212);
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Release newest keyboard" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Unregister Nexus" }));
-    await waitFor(() => {
-      expect(readRootLength("--mobile-content-bottom-clearance")).toBe(80);
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Unregister Player" }));
-    await waitFor(() => {
-      expect(readRootLength("--mobile-content-bottom-clearance")).toBe(37);
-    });
-
-    document.documentElement.style.setProperty("--viewport-safe-bottom", "93px");
-    expect(readRootLength("--mobile-content-bottom-clearance")).toBe(93);
-    expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(93);
-
-    unmount();
-    expect(
-      document.documentElement.style.getPropertyValue(
-        "--mobile-content-bottom-clearance",
-      ),
-    ).toBe("");
-    expect(readRootLength("--mobile-content-bottom-clearance")).toBe(93);
-    expect(readRootLength("--mobile-nexus-bottom-offset")).toBe(93);
   });
 
   it("keeps floating actions inside canonical mobile side insets", async () => {
@@ -189,16 +101,14 @@ describe("mobile safe-area composition", () => {
       onDismiss: () => undefined,
     };
     const { rerender } = render(
-      <MobileViewportProvider>
-        <FloatingActionSurface
-          {...props}
-          anchor={new DOMRect(0, 180, 20, 20)}
-        >
+      withRenderEnvironment(
+        <FloatingActionSurface {...props} anchor={new DOMRect(0, 180, 20, 20)}>
           <button type="button" style={{ width: 160, height: 48 }}>
             Actions
           </button>
-        </FloatingActionSurface>
-      </MobileViewportProvider>,
+        </FloatingActionSurface>,
+        { initialViewport: "mobile" },
+      ),
     );
     const surface = await screen.findByRole("group", {
       name: "Floating actions",
@@ -209,7 +119,7 @@ describe("mobile safe-area composition", () => {
     });
 
     rerender(
-      <MobileViewportProvider>
+      withRenderEnvironment(
         <FloatingActionSurface
           {...props}
           anchor={new DOMRect(370, 180, 20, 20)}
@@ -217,11 +127,57 @@ describe("mobile safe-area composition", () => {
           <button type="button" style={{ width: 160, height: 48 }}>
             Actions
           </button>
-        </FloatingActionSurface>
-      </MobileViewportProvider>,
+        </FloatingActionSurface>,
+        { initialViewport: "mobile" },
+      ),
     );
     await waitFor(() => {
       expect(surface.getBoundingClientRect().right).toBeLessThanOrEqual(369);
+    });
+  });
+
+  it("bounds a full-window floating surface by the window content clearance, not by a registered surface's local clearance", async () => {
+    await page.viewport(390, 844);
+    render(
+      withRenderEnvironment(
+        <>
+          <MobilePaneBodyWithKeyboard />
+          <FloatingActionSurface
+            open
+            anchor={new DOMRect(100, 800, 20, 20)}
+            role="group"
+            label="Floating actions"
+            onDismiss={() => undefined}
+          >
+            <button type="button" style={{ width: 160, height: 48 }}>
+              Actions
+            </button>
+          </FloatingActionSurface>
+        </>,
+        { initialViewport: "mobile" },
+      ),
+    );
+    const paneBody = screen.getByTestId("pane-body");
+    const surface = await screen.findByRole("group", {
+      name: "Floating actions",
+    });
+
+    // The window band and the pane body's local band are genuinely different
+    // numbers: the pane body already ends above the keyboard.
+    await waitFor(() => {
+      expect(readRootLength(CONTENT_BOTTOM_CLEARANCE)).toBe(
+        OVERLAY_KEYBOARD_INSET_PX,
+      );
+      expect(readSurfaceClearance(paneBody)).toBe(
+        OVERLAY_KEYBOARD_INSET_PX - PANE_BODY_BOTTOM_GAP_PX,
+      );
+    });
+
+    await waitFor(() => {
+      expect(surface.getBoundingClientRect().bottom).toBeCloseTo(
+        window.innerHeight - VIEWPORT_PADDING_PX - OVERLAY_KEYBOARD_INSET_PX,
+        0,
+      );
     });
   });
 });

@@ -13,7 +13,7 @@ import os
 import subprocess
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 
@@ -140,8 +140,11 @@ def test_cli_requires_both_sha_and_path() -> None:
 
 def test_device_account_email_and_id_are_stable_and_test_namespaced() -> None:
     assert av.device_account_email("primary") == "nexus+android-visual+primary@example.invalid"
-    assert av.device_account_id("primary") == av.device_account_id("primary")
-    assert isinstance(av.device_account_id("primary"), UUID)
+    # Independent oracle: the id is uuid5 of the alias under the published
+    # account namespace, so a changed namespace or derivation reddens here.
+    assert av.device_account_id("primary") == uuid5(
+        uuid5(NAMESPACE_URL, "https://nexus.test/android-visual"), "primary"
+    )
     with pytest.raises(ValueError):
         av.device_account_email("laptop")
 

@@ -125,7 +125,7 @@ WorkspaceStore primary pane order (1…MAX_PANES)
        nexusWrapper
          -> fixed position
          -> safe-area/player offset
-         -> MobileViewportProvider "Nexus" obstruction
+         -> MobileViewportProvider "Nexus" bottom surface
        nexusButton (48x48)
          -> native button capability
          -> MobileChromeProvider "NexusControl"

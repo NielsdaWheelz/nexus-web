@@ -840,33 +840,9 @@
   (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
   .documentViewport {
     padding-top: var(--mobile-pane-content-offset);
-    scroll-padding-top: var(--mobile-pane-content-offset);
-  }
-
-  .documentViewport:not(.textDocumentViewport) {
     padding-bottom: var(--mobile-content-bottom-clearance);
+    scroll-padding-top: var(--mobile-pane-content-offset);
     scroll-padding-bottom: var(--mobile-content-bottom-clearance);
-  }
-
-  .textDocumentReaderFrame {
-    padding-bottom: var(--mobile-reader-paint-bottom-inset);
-  }
-
-  .textDocumentViewport {
-    padding-bottom: max(
-      0px,
-      calc(
-        var(--mobile-content-bottom-clearance) -
-          var(--mobile-nexus-bottom-offset)
-      )
-    );
-    scroll-padding-bottom: max(
-      0px,
-      calc(
-        var(--mobile-content-bottom-clearance) -
-          var(--mobile-nexus-bottom-offset)
-      )
-    );
   }
 
   .mobileDocumentState {

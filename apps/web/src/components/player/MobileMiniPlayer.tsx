@@ -76,7 +76,7 @@ export default function MobileMiniPlayer({
 
   useLayoutEffect(() => {
     if (hidden || playerRef.current === null) return;
-    return mobileViewport.registerFixedObstruction("Player", playerRef.current);
+    return mobileViewport.registerBottomSurface("Player", playerRef.current);
   }, [hidden, mobileViewport]);
 
   useLayoutEffect(() => {

@@ -67,7 +67,6 @@ export default function PublicShareReader() {
       const controller = new AbortController();
       activeController = controller;
       const requestGeneration = ++generation;
-      document.title = "Nexus";
       setState({ status: "Resolving" });
       const token = parsePublicShareFragment(window.location.hash);
       if (!token) {
@@ -113,7 +112,6 @@ export default function PublicShareReader() {
         ) {
           return;
         }
-        document.title = `${bootstrap.media.title} · Nexus`;
         setState({ status: "Ready", token, bootstrap, readerData });
       } catch (error) {
         if (
@@ -137,16 +135,27 @@ export default function PublicShareReader() {
       generation += 1;
       activeController?.abort();
       window.removeEventListener("hashchange", resolveFragment);
-      document.title = "Nexus";
     };
   }, []);
 
+  // The tab names what the page is showing, in every state.
+  const documentTitle =
+    state.status === "Resolving"
+      ? "Shared reading · Nexus"
+      : state.status === "Unavailable"
+        ? "Share unavailable · Nexus"
+        : `${state.bootstrap.media.title} · Nexus`;
+
   if (state.status === "Resolving") {
-    return <PublicShell><StatusCard>Opening shared reading…</StatusCard></PublicShell>;
+    return (
+      <PublicShell title={documentTitle}>
+        <StatusCard>Opening shared reading…</StatusCard>
+      </PublicShell>
+    );
   }
   if (state.status === "Unavailable") {
     return (
-      <PublicShell>
+      <PublicShell title={documentTitle}>
         <StatusCard>
           <h1>Share unavailable</h1>
           <p>This link is invalid, revoked, or no longer readable.</p>
@@ -160,7 +169,7 @@ export default function PublicShareReader() {
       ? state.bootstrap.subject.highlight
       : null;
   return (
-    <PublicShell>
+    <PublicShell title={documentTitle}>
       <header className={styles.header}>
         <div className={styles.brand}>Nexus</div>
         <h1>{state.bootstrap.media.title}</h1>
@@ -205,8 +214,21 @@ export default function PublicShareReader() {
   );
 }
 
-function PublicShell({ children }: { children: ReactNode }) {
-  return <div className={styles.shell}>{children}</div>;
+function PublicShell({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={styles.shell}>
+      {/* The route emits no metadata title, so this rendered element is the
+          document's only one and React re-asserts it on every commit. */}
+      <title>{title}</title>
+      {children}
+    </div>
+  );
 }
 
 function StatusCard({ children }: { children: ReactNode }) {

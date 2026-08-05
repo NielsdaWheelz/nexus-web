@@ -141,6 +141,23 @@ test("Nexus finds and opens a place whose workspace survives a fresh document", 
   await expect(workspacePaneButton(page, /^Search\b/)).toBeVisible();
   await expect(page).toHaveURL(/\/notes$/);
 
+  // Losing the title to a late metadata write is a race, so watching the tab
+  // only catches it on a slow enough machine — and a polling assertion that
+  // times out is an execution failure, never a demonstrable red. The served
+  // document carries the deterministic half of the claim: the workspace renders
+  // the title element it owns, so the document ends at the active pane's
+  // identity. Assigning the title imperatively instead leaves only the
+  // inherited metadata title here — the element whose re-application after
+  // hydration renamed the tab. Assert it before the tab itself.
+  const restoredDocument = await (await api.get("/notes")).text();
+  const restoredTitles = [
+    ...restoredDocument.matchAll(/<title[^>]*>([^<]*)<\/title>/g),
+  ].map((match) => match[1]);
+  expect(
+    restoredTitles.at(-1),
+    `The document the server sends device ${deviceId} must end at the active pane's title, not at an app-name title element that outlives it. Received ${JSON.stringify(restoredTitles)}.`,
+  ).toBe("Notes · Nexus");
+
   await expect(
     page,
     `Restored workspace for device ${deviceId} did not project its active Notes pane as the browser title "Notes · Nexus".`,

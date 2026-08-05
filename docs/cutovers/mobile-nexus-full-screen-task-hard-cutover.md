@@ -118,7 +118,7 @@ Out of scope:
 - No scrim, exposed backdrop action, grabber, rounded sheet edge, max-height,
   detent, or drag/swipe dismissal exists.
 - The Nexus wrapper stays mounted for focus and geometry continuity. Its
-  `"Nexus"` fixed-obstruction registration releases synchronously while the
+  `"Nexus"` bottom-surface registration releases synchronously while the
   task is open; the inner control is hidden and inert. Closing re-registers
   exactly once.
 - One content region owns scrolling. The task itself never scrolls the page
@@ -297,13 +297,18 @@ Hard-rename the capability; add no alias:
 
 ```ts
 interface MobileViewportCapability {
-  registerFixedObstruction(
-    id: MobileFixedObstructionId,
+  registerBottomSurface(
+    id: MobileBottomSurfaceId,
     element: HTMLElement,
   ): () => void;
   reportMobileOverlayKeyboardInset(px: number): () => void;
 }
 ```
+
+The surface-registration member is shown under its current name; it was renamed
+from the fixed-obstruction spelling by
+[`mobile-reader-bottom-geometry-hard-cutover.md`](mobile-reader-bottom-geometry-hard-cutover.md).
+This cutover changes only the keyboard-report member.
 
 Rename `mobileSheetKeyboardInsetPx` to `mobileOverlayKeyboardInsetPx`,
 `MobileSheetKeyboardReport` to `MobileOverlayKeyboardReport`, and all related

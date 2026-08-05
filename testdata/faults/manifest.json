@@ -275,11 +275,11 @@
     {
       "id": "native-system-safe-area-bypass",
       "patch": "testdata/faults/native-system-safe-area-bypass.patch",
-      "sha256": "dbc0edbf5118c6ea2a5a1559d79be91375bb1704aa91c2cc5057e31d04be65d7",
+      "sha256": "ff62eef1a0d3a9b5523a604a8147b472a40f88276f30bcae07e70e7c8659d1ef",
       "proofs": [
-        "vitest:apps/web/src/lib/mobileViewport/mobileSafeArea.browser.test.tsx"
+        "vitest:apps/web/src/lib/mobileViewport/MobileViewportProvider.browser.test.tsx"
       ],
-      "expected_failure": "expected +0 to be 37"
+      "expected_failure": "expected +0 to be 48"
     },
     {
       "id": "active-pane-reactivation-identity-corruption",
@@ -406,15 +406,6 @@
         "vitest:apps/web/src/components/nexus/desktop/DesktopNexusSelection.browser.test.tsx"
       ],
       "expected_failure": "Stationary-pointer reflow moved selection away from"
-    },
-    {
-      "id": "mobile-chrome-interrupted-settle-coordination-bypass",
-      "patch": "testdata/faults/mobile-chrome-interrupted-settle-coordination-bypass.patch",
-      "sha256": "1a5e1d8da9b5a81367fbda945491acf17898dd5b0d9b63db70369e12325e7c79",
-      "proofs": [
-        "vitest:apps/web/src/components/workspace/PaneShell.mobileChrome.browser.test.tsx"
-      ],
-      "expected_failure": "Interrupted reader motion retained stale collapse transitions or exposed non-atomic interactive chrome:"
     },
     {
       "id": "public-share-subject-identity-bypass",

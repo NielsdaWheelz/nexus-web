@@ -643,30 +643,33 @@ In particular, Highlights never requests `note_block` from openables and never
 client-filters general Notes. Highlight notes enter only through the canonical
 server-side Highlights profile.
 
-### Mobile viewport and obstruction
+### Mobile viewport and bottom surfaces
 
-`MobileViewportProvider` is shell-mounted and is the sole composition owner:
+`MobileViewportProvider` is shell-mounted and is the sole composition owner.
+The capability now reads (renamed and extended by
+[`mobile-reader-bottom-geometry-hard-cutover.md`](mobile-reader-bottom-geometry-hard-cutover.md)):
 
 ```ts
-type MobileFixedObstructionId = "Nexus" | "Player";
+type MobileBottomSurfaceId = "Nexus" | "Player";
 
 interface MobileViewportCapability {
-  registerFixedObstruction(
-    id: MobileFixedObstructionId,
+  registerBottomSurface(
+    id: MobileBottomSurfaceId,
     element: HTMLElement,
   ): () => void;
   reportMobileSheetKeyboardInset(px: number): () => void; // MobileSheet only
 }
 ```
 
-- Nexus control and active player report their measured fixed rectangles through
+- Nexus control and active player report their measured rectangles through
   named registrations backed by `ResizeObserver`.
-- Duplicate active registration for a closed obstruction id defects. Unmount or
-  inactive state unregisters synchronously.
-- Safe-area inset and the union of active fixed rectangles produce
+- Duplicate active registration for a closed bottom-surface id defects. Unmount
+  or inactive state unregisters synchronously.
+- Safe-area inset and the fixed Nexus rectangle produce
   `--mobile-content-bottom-clearance`; shared scroll-owner styling consumes it
-  in reader, chat, collection, and other pane roots.
-- Nexus positioning consumes the player obstruction and safe area from the same
+  in reader, chat, collection, and other pane roots. The normal-flow player is
+  not added again — its own layout already shortens those roots.
+- Nexus positioning consumes the player rectangle and safe area from the same
   owner.
 - `MobileSheet` remains the only caller of `useKeyboardInset`; it reports that
   value into the provider and consumes the provider’s overlay keyboard channel.

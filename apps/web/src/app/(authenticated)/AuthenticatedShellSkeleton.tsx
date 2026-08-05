@@ -10,6 +10,9 @@ import styles from "./AuthenticatedShellSkeleton.module.css";
 export function AuthenticatedShellSkeleton() {
   return (
     <div className={layout.layout} data-testid="shell-skeleton">
+      {/* No pane label exists yet, and this tree carries no metadata title, so
+          the first flush names the app until the host reveals and replaces it. */}
+      <title>Nexus</title>
       <div className={styles.rail} aria-hidden />
       <main className={layout.main}>
         <PaneLoadingState label="Loading workspace…" announcement="None" />
