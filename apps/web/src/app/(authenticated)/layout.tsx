@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import "@/components/PdfReader.module.css";
 import { verifySession } from "@/lib/auth/dal";
@@ -6,6 +7,13 @@ import "./media/[id]/page.module.css";
 import { AuthenticatedShellSkeleton } from "./AuthenticatedShellSkeleton";
 import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 import WorkspaceBootstrapGate from "./WorkspaceBootstrapGate";
+
+// The active pane's label is the browser title, and only the workspace host
+// knows it. Dropping the inherited metadata title leaves the host's rendered
+// <title> as the single title element in this tree: Next resolves a null title
+// to no element at all, so its streamed metadata can no longer overwrite the
+// pane identity with the generic app name.
+export const metadata: Metadata = { title: null };
 
 // Pane JavaScript stays lazy, but reader layout CSS is shell-critical. Next's
 // runtime CSS hook resolves dynamic imports before their stylesheets commit;

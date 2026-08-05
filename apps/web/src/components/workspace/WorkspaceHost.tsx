@@ -1581,11 +1581,11 @@ function WorkspaceHost() {
     panes.find((pane) => pane.visibility === "visible") ??
     null;
   // The host is the workspace's only writer of the browser title, so an
-  // inactive pane can never race the active pane's identity into the tab.
+  // inactive pane can never race the active pane's identity into the tab. The
+  // title is rendered, not assigned: the authenticated tree emits no metadata
+  // title (see its layout), so React owns this element and re-asserts it on
+  // every commit instead of losing it to a late streamed metadata write.
   const documentTitle = activePane ? `${activePane.label} · Nexus` : "Nexus";
-  useEffect(() => {
-    document.title = documentTitle;
-  }, [documentTitle]);
   const renderedPanes = isMobile ? (activePane ? [activePane] : []) : panes;
 
   // --- Pane focus management ---
@@ -1734,6 +1734,7 @@ function WorkspaceHost() {
 
   return (
     <section className={styles.host} aria-label="Workspace host">
+      <title>{documentTitle}</title>
       {!isMobile && (
         <WorkspacePaneStrip
           items={stripItems}
