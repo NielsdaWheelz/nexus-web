@@ -20,7 +20,7 @@ cutover: production does not fall back to Supabase Database or Supabase Storage.
 - Hetzner IPv4: `5.78.194.235`
 - Hetzner location/type: `hil` / `cpx11`
 - Vercel project: `niels-erik-nandals-projects/nexus-web`
-- Supabase Auth project URL: `https://jiaozhsisiphjtomoamy.supabase.co`
+- Supabase Auth project URL: `https://rpchuualftcjjbpgxlbt.supabase.co`
 
 ## Runtime Shape
 
@@ -223,7 +223,7 @@ Current frontend values should use:
 
 ```bash
 FASTAPI_BASE_URL=https://api.nexus.nielseriknandal.com
-NEXT_PUBLIC_SUPABASE_URL=https://jiaozhsisiphjtomoamy.supabase.co
+NEXT_PUBLIC_SUPABASE_URL=https://rpchuualftcjjbpgxlbt.supabase.co
 ```
 
 Frontend production deploys are GitHub-triggered. Push `main` to GitHub and let
@@ -604,7 +604,7 @@ returns `200`.
 ```bash
 NEXUS_SMOKE_APP_URL=https://nexus.nielseriknandal.com \
 NEXUS_SMOKE_API_URL=https://api.nexus.nielseriknandal.com \
-NEXUS_SMOKE_SUPABASE_URL=https://jiaozhsisiphjtomoamy.supabase.co \
+NEXUS_SMOKE_SUPABASE_URL=https://rpchuualftcjjbpgxlbt.supabase.co \
   make smoke
 ```
 
@@ -668,7 +668,7 @@ checklist.
 SUPABASE_MANAGEMENT_ACCESS_TOKEN=<operator-token> \
 NEXUS_SMOKE_APP_URL=https://nexus.nielseriknandal.com \
 NEXUS_SMOKE_API_URL=https://api.nexus.nielseriknandal.com \
-NEXUS_SMOKE_SUPABASE_URL=https://jiaozhsisiphjtomoamy.supabase.co \
+NEXUS_SMOKE_SUPABASE_URL=https://rpchuualftcjjbpgxlbt.supabase.co \
   make smoke-auth
 ```
 
