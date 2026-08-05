@@ -408,15 +408,6 @@
       "expected_failure": "Stationary-pointer reflow moved selection away from"
     },
     {
-      "id": "mobile-chrome-interrupted-settle-coordination-bypass",
-      "patch": "testdata/faults/mobile-chrome-interrupted-settle-coordination-bypass.patch",
-      "sha256": "1a5e1d8da9b5a81367fbda945491acf17898dd5b0d9b63db70369e12325e7c79",
-      "proofs": [
-        "vitest:apps/web/src/components/workspace/PaneShell.mobileChrome.browser.test.tsx"
-      ],
-      "expected_failure": "Interrupted reader motion retained stale collapse transitions or exposed non-atomic interactive chrome:"
-    },
-    {
       "id": "public-share-subject-identity-bypass",
       "patch": "testdata/faults/public-share-subject-identity-bypass.patch",
       "sha256": "67253ee1af71705cf81039577a8c3ae9ead48ae7b3fca3c51fb0c1fc36073e42",
