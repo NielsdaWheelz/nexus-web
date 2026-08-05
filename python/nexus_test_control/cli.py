@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import TextIO
 
+from nexus_test_control.android_visual import DEVICE_ALIASES, validate_owned_path
 from nexus_test_control.evidence import (
     EVIDENCE_SCHEMA_VERSION,
     CapabilityEvidence,
@@ -73,10 +74,18 @@ from nexus_test_control.services import clean_owned_runtime, new_run_id, test_en
 _PROOF_RUNNERS = frozenset({"gradle", "playwright", "pytest", "static", "vitest"})
 _FAULT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _RUN_ID = re.compile(r"[0-9a-f]{16}\Z")
+_HEAD_SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
 class ControlPlaneError(ValueError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class AndroidVisualRequest:
+    sha: str
+    path: str
+    device: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +94,7 @@ class WorkflowCommand:
     base: str | None = None
     focus: tuple[str, ...] = ()
     ui: bool = False
+    android_visual: AndroidVisualRequest | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +137,11 @@ def parser() -> argparse.ArgumentParser:
     confidence = workflow_parsers[Workflow.CONFIDENCE]
     confidence.add_argument("--base")
 
+    android_visual = workflow_parsers[Workflow.ANDROID_VISUAL]
+    android_visual.add_argument("--sha", required=True)
+    android_visual.add_argument("--path", required=True)
+    android_visual.add_argument("--device", default="primary", choices=sorted(DEVICE_ALIASES))
+
     prove = commands.add_parser("prove")
     prove.add_argument("--proof", required=True)
     prove.add_argument("--against", required=True)
@@ -155,6 +170,17 @@ def parse_command(argv: Sequence[str]) -> Command:
     if command == Workflow.CONFIDENCE.value:
         _validate_git_ref(parsed.base, argument_parser)
         return WorkflowCommand(Workflow.CONFIDENCE, parsed.base)
+    if command == Workflow.ANDROID_VISUAL.value:
+        if _HEAD_SHA.fullmatch(parsed.sha) is None:
+            argument_parser.error("--sha must be a 40-character lowercase git SHA")
+        try:
+            validate_owned_path(parsed.path)
+        except ValueError as error:
+            argument_parser.error(str(error))
+        return WorkflowCommand(
+            Workflow.ANDROID_VISUAL,
+            android_visual=AndroidVisualRequest(parsed.sha, parsed.path, parsed.device),
+        )
     if command in {workflow.value for workflow in WORKFLOW_REGISTRY}:
         return WorkflowCommand(Workflow(command))
     if command == "prove":
@@ -282,6 +308,10 @@ def _execute_workflow(
         "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
         "NEXUS_TEST_RUN_ID": run_id,
     }
+    if command.android_visual is not None:
+        owned_environment["NEXUS_ANDROID_VISUAL_SHA"] = command.android_visual.sha
+        owned_environment["NEXUS_ANDROID_VISUAL_PATH"] = command.android_visual.path
+        owned_environment["NEXUS_ANDROID_VISUAL_DEVICE"] = command.android_visual.device
     with measure_owned_memory(repo_root, include_containers=False) as memory_sampler:
         try:
             git_sha = _git_sha(repo_root, "HEAD")

@@ -28,6 +28,7 @@ import psycopg
 from botocore.exceptions import BotoCoreError
 from sqlalchemy.exc import SQLAlchemyError
 
+from nexus_test_control import android_visual
 from nexus_test_control.build import StandaloneBuild, ensure_standalone_build
 from nexus_test_control.evidence import (
     BrowserIdentity,
@@ -86,11 +87,13 @@ from nexus_test_control.services import (
     TestRun,
     TestUser,
     _repository_template_fingerprint,
+    authorized_device_serials,
     clean_run,
     create_supabase_user,
     grant_scenario_ai_entitlement,
     new_run_id,
     prepare_run,
+    resolve_adb,
     run_environment,
     start_python_process,
     start_web_process,
@@ -1127,6 +1130,8 @@ def _run_capability_unlocked(
             return _run_release_artifact(context, caller_environment, execution)
         case Capability.DOCTOR:
             return _run_doctor(context, caller_environment)
+        case Capability.ANDROID_VISUAL:
+            return _run_android_visual(context, caller_environment, execution)
         case _ as unreachable:
             assert_never(unreachable)
 
@@ -3056,6 +3061,24 @@ def _run_android_device(
         )
 
 
+def _run_android_visual(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution | None,
+) -> CapabilityResult:
+    capability = Capability.ANDROID_VISUAL
+    if execution is None:
+        return _not_run(capability, "android-visual requires a controller run identity")
+    started = time.monotonic_ns()
+    outcome = android_visual.run_android_visual(
+        context.repo_root, environment, run_id=execution.run_id
+    )
+    duration_ms = (time.monotonic_ns() - started) // 1_000_000
+    return _result(
+        capability, outcome.status, duration_ms, outcome.detail, artifacts=outcome.artifacts
+    )
+
+
 def _run_android_device_exact(
     context: CapabilityContext,
     node: str,
@@ -3582,15 +3605,9 @@ def _authorized_emulator(
     adb: Path,
     environment: Mapping[str, str],
 ) -> tuple[str | None, str]:
-    child_environment = _child_environment(environment)
-    listed = _release_command((str(adb), "devices"), repo_root, child_environment)
-    if listed.returncode != 0:
+    devices = authorized_device_serials(adb, environment, repo_root)
+    if devices is None:
         return None, "Android emulator inventory could not be read"
-    devices = tuple(
-        line.split("\t", 1)[0]
-        for line in listed.stdout.splitlines()[1:]
-        if line.endswith("\tdevice")
-    )
     if not devices:
         return None, "no authorized Android emulator is attached"
     if len(devices) != 1 or not devices[0].startswith("emulator-"):
@@ -3599,7 +3616,7 @@ def _authorized_emulator(
     qemu = _release_command(
         (str(adb), "-s", serial, "shell", "getprop", "ro.kernel.qemu"),
         repo_root,
-        child_environment,
+        _child_environment(environment),
     )
     if qemu.returncode != 0 or qemu.stdout.strip() != "1":
         return None, "unsafe Android device inventory: selected device is not qemu"
@@ -4125,24 +4142,8 @@ def _android_sdk_available(android_root: Path, environment: Mapping[str, str]) -
 
 
 def _android_device_attached(android_root: Path, environment: Mapping[str, str]) -> bool:
-    sdk_root = environment.get("ANDROID_HOME") or environment.get("ANDROID_SDK_ROOT")
-    adb = Path(sdk_root) / "platform-tools/adb" if sdk_root else Path("adb")
-    command = str(adb) if adb.is_file() else shutil.which("adb", path=environment.get("PATH"))
-    if command is None:
-        return False
-    try:
-        result = run_command(
-            (command, "devices"),
-            cwd=android_root,
-            env=_child_environment(environment),
-            capture_output=True,
-            check=False,
-        )
-    except OSError:
-        return False
-    return result.returncode == 0 and any(
-        line.endswith("\tdevice") for line in result.stdout.splitlines()[1:]
-    )
+    adb = resolve_adb(environment)
+    return adb is not None and bool(authorized_device_serials(adb, environment, android_root))
 
 
 def _gradle_assertion_failed(android_root: Path, target: str) -> bool:

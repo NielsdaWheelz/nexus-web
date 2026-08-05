@@ -270,6 +270,62 @@ def new_run_id() -> str:
     return secrets.token_hex(8)
 
 
+_ANDROID_TOOL_ENV = (
+    "ANDROID_HOME",
+    "ANDROID_SDK_ROOT",
+    "GRADLE_USER_HOME",
+    "HOME",
+    "JAVA_HOME",
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "TMPDIR",
+    "TZ",
+)
+
+
+def android_tool_environment(environment: Mapping[str, str]) -> dict[str, str]:
+    """The safe child environment for owned adb/Gradle subprocesses."""
+    child = {key: value for key in _ANDROID_TOOL_ENV if (value := environment.get(key))}
+    child["NEXUS_ENV"] = "test"
+    return child
+
+
+def resolve_adb(environment: Mapping[str, str]) -> Path | None:
+    """Resolve the one adb transport from the SDK or PATH, without inventing another."""
+    sdk = environment.get("ANDROID_HOME") or environment.get("ANDROID_SDK_ROOT")
+    if sdk:
+        candidate = Path(sdk) / "platform-tools/adb"
+        if candidate.is_file():
+            return candidate
+    found = shutil.which("adb", path=environment.get("PATH"))
+    return Path(found) if found else None
+
+
+def authorized_device_serials(
+    adb: Path, environment: Mapping[str, str], cwd: Path
+) -> tuple[str, ...] | None:
+    """The one `adb devices` parse. ``None`` means the inventory could not be read;
+    ``()`` means no authorized device; otherwise the authorized serials."""
+    try:
+        listed = run_command(
+            (str(adb), "devices"),
+            cwd=cwd,
+            env=android_tool_environment(environment),
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if listed.returncode != 0:
+        return None
+    return tuple(
+        line.split("\t", 1)[0]
+        for line in listed.stdout.splitlines()[1:]
+        if line.endswith("\tdevice")
+    )
+
+
 def test_environment(caller_environment: Mapping[str, str]) -> dict[str, str]:
     nexus_environment = caller_environment.get("NEXUS_ENV")
     if nexus_environment not in {None, "", "test"}:
@@ -535,6 +591,8 @@ def start_python_process(
     environment: Mapping[str, str],
     run: TestRun,
     role: str,
+    *,
+    overrides: Mapping[str, str] | None = None,
 ) -> StartedProcess:
     require_test_environment(environment)
     root = canonical_repo_root(repo_root)
@@ -582,6 +640,7 @@ def start_python_process(
         "PODCAST_INDEX_BASE_URL": f"http://127.0.0.1:{runtime.ports.external}",
         "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
         **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
+        **(overrides or {}),
     }
     return _start_owned_process(
         root,
@@ -599,6 +658,8 @@ def start_web_process(
     environment: Mapping[str, str],
     run: TestRun,
     build: StandaloneBuild,
+    *,
+    overrides: Mapping[str, str] | None = None,
 ) -> StartedProcess:
     """Start the one ledger-owned standalone web artifact for a journey capability."""
     require_test_environment(environment)
@@ -623,6 +684,7 @@ def start_web_process(
             "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
             "NODE_ENV": "production",
             "PORT": str(runtime.ports.web),
+            **(overrides or {}),
         },
     )
 
