@@ -38,7 +38,7 @@ and 120ms idle settlement.
 | Route/source/EPUB-unit/mobile-mode change | Fully visible; baseline from the live scrollport. |
 | Focus in a real chrome control | Fully visible while focus remains there. |
 | Find, menu, selection, restore, positioning, navigation, sheet, or picker | Fully visible under its owned lock. |
-| Reduced motion | Fully visible; no motion is required. |
+| Reduced motion | Chrome still retreats and reveals on scroll, but snaps instantly — the settle animation is disabled, never the retreat itself. |
 | Tracking, settling, or hidden | Whole moving surfaces are inert, non-hit-testable, and `aria-hidden`. |
 | Hidden chrome receives a blank-canvas tap | Reveal only; never activate covered content. |
 | New scroll during settlement | Sample immediately, cancel stale settlement, continue from current progress. |
@@ -128,8 +128,10 @@ type Phase =
 ```
 
 The state also owns `progress: number` in `[0, 1]`, the last clamped
-`scrollTop`, direction, and reversal distance. `Pinned` is valid only for
-reduced motion or at least one live focus/visibility lock.
+`scrollTop`, direction, and reversal distance. `Pinned` is valid only while at
+least one live focus/visibility lock is held. Reduced motion does **not** pin:
+it drops the settle animation (CSS `transition: none`) so the collapse snaps,
+but the chrome still retreats and reveals with the scroll.
 
 The only public lock capability is:
 
@@ -215,8 +217,13 @@ Proof files:
 - Add focused unit/browser proofs beside `mobileChromeMotion.ts` and
   `mobileChrome.tsx` for the reducer, registration, locks, focus, and surface
   inertness contracts.
-- Add `apps/web/e2e/journeys/mobile-reader-chrome.journey.spec.ts` and a mobile
-  Playwright project in `apps/web/e2e/playwright.config.ts` for real touch input.
+- Add `apps/web/e2e/journeys/mobile-reader-chrome.journey.spec.ts` driving real
+  trusted touch input. The canonical `./scripts/test` harness runs every journey
+  under one hardcoded Playwright `--project journeys`, so the mobile device
+  profile is applied per-journey with `test.use({ ...devices["Pixel 7"] })` and
+  the swipe is dispatched through CDP `Input.dispatchTouchEvent` — the same
+  trusted-touch coverage a separate config project would give, with no config
+  branch the harness never selects.
 
 ## Implementation order
 
@@ -252,6 +259,61 @@ The cutover is incomplete unless all are green:
 Use the repository’s canonical `./scripts/test` capability surface and record
 each deferred physical/deployment gate explicitly; a green synthetic test is
 not acceptance.
+
+## Implementation status — branch `codex/mobile-reader-unified-scroll-chrome`
+
+The provider, reducer, positioning boundary, focus ownership, and surface
+inertness source is already correct on `main`; commit `a6ed5c99` ("cut over
+verification infrastructure") deleted this cut's entire behavioral proof suite
+(≈1,900 lines) with no replacement, leaving one synthetic-scroll test. This
+branch rebuilds that proof at the trusted-input standard. No product source
+changed.
+
+Rebuilt proof (green, and each shown red under an injected fault):
+
+- Reducer kernel — `mobileChromeMotion.unit.test.ts` (17 scenarios; sensitivity:
+  a travel-divisor mutant reddens 10).
+- Provider real-input browser — `mobileChrome.browser.test.tsx` (11 scenarios:
+  single-registration + duplicate defect, forward retreat + reverse reveal,
+  short content, derived focus pin + focused-control-removal reconciliation,
+  overlapping locks + final-release rebaseline, reduced-motion pin, blank-canvas
+  window-bubble reveal, transform-only tracking with no volatile rerender,
+  focus-return landmark fallback, optional-capability discovery; sensitivity:
+  scroll / focus / `hasPin` mutants each redden the matching scenarios).
+- Component integration — `PaneShell.mobileChrome.browser.test.tsx`,
+  de-syntheticized: the synthetic `fireEvent.scroll` loop is replaced by real
+  native scroll, proving whole-surface `inert`/`aria-hidden`, Find pin +
+  rebaseline, blank-tap reveal, no-rerender, and safe-area geometry.
+- Primitives — `composeRefs.browser.test.tsx`, `interactiveTarget.browser.test.tsx`,
+  `paneScroll.browser.test.tsx` (positioning pins for the run's duration and
+  rebaselines on release).
+- Trusted-touch journey — `apps/web/e2e/journeys/mobile-reader-chrome.journey.spec.ts`,
+  registered in `testdata/proofs.json`; a Pixel 7 profile via
+  `test.use({ ...devices["Pixel 7"] })` drives a real CDP
+  `Input.dispatchTouchEvent` swipe over the Web reader and asserts AppBar and
+  Nexus retreat then reveal.
+
+Gates green: all residue searches, `bun run typecheck`, full `bun run lint`
+(src + e2e), and the canonical `./scripts/test changed` routing runs the reducer
+proof, the provider proof, AND the trusted-touch journey green through the
+harness. The journey executes end-to-end against the full local real stack
+(Postgres + MinIO + Next + FastAPI): a real CDP touch drag on a Pixel 7 profile
+retreats the AppBar and Nexus to the hidden, inert, `aria-hidden` state and a
+reverse drag reveals them — trusted input, not a synthetic scroll, drives the
+acceptance path.
+
+Deferred gates (not executable in the build environment; recorded per contract):
+
+- Physical Android WebView GREEN smoke on the authenticated primary device —
+  requires deploying this branch to a device-reachable origin. Evidence: the
+  currently deployed release build was exercised on the authenticated primary
+  device (Samsung SM-S906W) with a real forward touch drag on the EPUB reader;
+  it reproduced the RED production state — content advanced while AppBar,
+  PaneToolbar, and Nexus stayed fully visible — confirming the gate is
+  meaningful and currently red on the deployed build. GREEN on-device
+  verification of this branch is deferred to its deployment.
+- iOS Safari article smoke and exact-deployed-SHA production verification —
+  require a device and a deploy, respectively.
 
 ## Open questions
 

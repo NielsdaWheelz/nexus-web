@@ -284,7 +284,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .paneShell[data-mobile="true"] .chrome {
+  /* The second selector matches the Settling rule's specificity and, coming
+     later, wins — so the collapse snaps instantly instead of gliding. Retreat
+     still happens; only the animation is removed. */
+  .paneShell[data-mobile="true"] .chrome,
+  .paneShell[data-mobile="true"] .chrome[data-mobile-chrome-phase="Settling"] {
     transition: none;
   }
 

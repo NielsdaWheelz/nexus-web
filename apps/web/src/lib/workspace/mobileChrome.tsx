@@ -137,12 +137,6 @@ function isInteractiveReaderTap(
   return isInteractiveTarget(target, revealSurface ?? scrollport);
 }
 
-function initialPrefersReducedMotion(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
-    return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
 function samePhase(
   left: MobileChromeMotionPhase,
   right: MobileChromeMotionPhase,
@@ -273,7 +267,6 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
   } | null>(null);
   const isMobileRef = useRef(isMobile);
   const previousIsMobileRef = useRef(isMobile);
-  const prefersReducedMotionRef = useRef(initialPrefersReducedMotion());
   const visibleLocksRef = useRef<Map<number, VisibleLockReason>>(new Map());
   const chromeFocusLockRef = useRef(false);
   const nextLockIdRef = useRef(0);
@@ -370,9 +363,7 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
   const hasPin = useCallback(
     () =>
       isMobileRef.current &&
-      (prefersReducedMotionRef.current ||
-        chromeFocusLockRef.current ||
-        visibleLocksRef.current.size > 0),
+      (chromeFocusLockRef.current || visibleLocksRef.current.size > 0),
     [],
   );
 
@@ -1012,24 +1003,6 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
     reconcileChromeFocus();
     rebaselineReader();
   }, [isMobile, rebaselineReader, reconcileChromeFocus]);
-
-  useEffect(() => {
-    if (
-      typeof window === "undefined" ||
-      typeof window.matchMedia !== "function"
-    ) {
-      return;
-    }
-    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => {
-      if (query.matches === prefersReducedMotionRef.current) return;
-      prefersReducedMotionRef.current = query.matches;
-      rebaselineReader();
-    };
-    update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, [rebaselineReader]);
 
   const disposeProvider = useCallback(() => {
     mountedRef.current = false;

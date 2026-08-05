@@ -417,6 +417,7 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 | `./scripts/test nightly` | `full` plus randomized/property audit, one hosted canary, and Android device proof |
 | `./scripts/test release` | `full` plus bounded provider certification, signed Android release proof, and exact staged artifacts |
 | `./scripts/test doctor` | local tool, dependency, browser, SDK, service, port, and template readiness; protected-workflow inputs only when that lane is explicitly enabled |
+| `./scripts/test android-visual --sha HEAD_SHA --path /OWNED_PATH [--device primary]` | explicit opt-in physical-device authenticated WebView visual check of the current non-`main` worktree; never included in `changed`/`confidence`/`pr`/`full`/`nightly`/`release` |
 | `./scripts/test prove --proof PROOF --against base:REF\|fault:FAULT_ID` | exact demonstrated-red then green sensitivity evidence |
 | `./scripts/test diagnose --of RUN_ID` | one separately recorded replay of the exact failed workflow; never a new verdict |
 | `./scripts/test clean` | delete exact ledger-owned runs, the recorded local workspace stack/volumes, and its runtime state |
@@ -427,7 +428,7 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
-<!-- nexus-test-routing-sha256: 1d56430548745366039562788c98ccc4bc277477917c465a4e275fa260b6aeea -->
+<!-- nexus-test-routing-sha256: 7a693675984885346af3f7e43755a733ba060b7c3ab161b83d590420f86f2705 -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and
