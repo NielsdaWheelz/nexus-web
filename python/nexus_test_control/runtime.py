@@ -562,12 +562,17 @@ def _state_lock(repo_root: Path, name: str) -> Iterator[None]:
 
 
 @contextmanager
-def workspace_heavy_lock(repo_root: Path) -> Iterator[Path]:
-    """Serialize memory-heavy work across every controller for one checkout."""
+def workspace_heavy_lock(repo_root: Path, *, blocking: bool = True) -> Iterator[Path]:
+    """Serialize memory-heavy work across every controller for one checkout.
+
+    ``blocking=False`` acquires the lock without waiting and raises
+    ``BlockingIOError`` when another run already holds it, so a single-active-run
+    lane can report ``NOT_RUN`` instead of queueing behind the first run.
+    """
     root = canonical_repo_root(repo_root)
     identity = hashlib.sha256(os.fsencode(_git_common_identity(root))).hexdigest()[:16]
     path = Path(tempfile.gettempdir()) / f"nexus-test-heavy-{identity}.lock"
-    with _locked_path(path):
+    with _locked_path(path, blocking=blocking):
         yield path
 
 
@@ -595,11 +600,16 @@ def _git_common_identity(repo_root: Path) -> Path:
 
 
 @contextmanager
-def _locked_path(path: Path) -> Iterator[None]:
+def _locked_path(path: Path, *, blocking: bool = True) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = path.open("a+b")
+    operation = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
     try:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        fcntl.flock(lock_file.fileno(), operation)
+    except BlockingIOError:
+        lock_file.close()
+        raise
+    try:
         yield
     finally:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)

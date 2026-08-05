@@ -28,6 +28,7 @@ class Workflow(StrEnum):
     NIGHTLY = "nightly"
     RELEASE = "release"
     DOCTOR = "doctor"
+    ANDROID_VISUAL = "android-visual"
 
 
 class Capability(StrEnum):
@@ -57,6 +58,7 @@ class Capability(StrEnum):
     ANDROID_RELEASE = "android-release"
     RELEASE_ARTIFACT = "release-artifact"
     DOCTOR = "doctor"
+    ANDROID_VISUAL = "android-visual"
 
 
 class PriorityRiskId(StrEnum):
@@ -410,6 +412,10 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
         Workflow.DOCTOR: WorkflowDefinition(
             Workflow.DOCTOR,
             (CapabilityRequirement(Capability.DOCTOR, SelectionScope.COMPLETE),),
+        ),
+        Workflow.ANDROID_VISUAL: WorkflowDefinition(
+            Workflow.ANDROID_VISUAL,
+            (CapabilityRequirement(Capability.ANDROID_VISUAL, SelectionScope.COMPLETE),),
         ),
     }
 )
