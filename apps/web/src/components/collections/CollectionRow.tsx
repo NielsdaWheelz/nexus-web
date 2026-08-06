@@ -272,7 +272,7 @@ function RowActionMenu({
 }
 
 /**
- * The list reorder handle. It is a SEPARATE control from the resource menu (AC4:
+ * The list reorder handle. It is a SEPARATE occurrence control from the resource menu:
  * reorder is not a resource action). It reuses RowActionMenu so the drag
  * activator, Alt+Arrow keyboard reorder, and the Move up / Move down affordances
  * for pointer/keyboard users all live together — never merged into the resource
@@ -321,7 +321,7 @@ function RowReorderControl({
 
 /**
  * The "Connections and related" disclosure. It is a SEPARATE row control (a
- * companion/inspector toggle), never a resource-menu item (AC4).
+ * companion/inspector toggle), never a resource-menu item.
  */
 function RowRelatedToggle({
   expanded,
@@ -486,7 +486,7 @@ export default function CollectionRow({
       </span>
     ) : undefined;
 
-  // The three row controls are SEPARATE affordances (AC4): reorder and the
+  // The three row controls are SEPARATE affordances: reorder and the
   // connections disclosure never live inside the resource dropdown. The resource
   // dropdown is the one canonical `ResourceActionMenu` keyed only by the row's
   // resource target; non-resource rows fall back to a plain flat menu (settings)
@@ -511,9 +511,9 @@ export default function CollectionRow({
     ) : null;
   let resourceMenu: ReactNode = null;
   if (rowActionsAvailable) {
-    if (row.resourceTarget) {
+    if (row.actionSubject) {
       resourceMenu = (
-        <ResourceActionMenu target={row.resourceTarget} label={menuLabel} />
+        <ResourceActionMenu actionSubject={row.actionSubject} label={menuLabel} />
       );
     } else if (row.flatActions && row.flatActions.length > 0) {
       resourceMenu = (

@@ -25,7 +25,6 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.contributor_taxonomy import clean_contributor_display
 
 # Bounds are inlined literals (matching migration D-32 / observation value types):
@@ -246,25 +245,9 @@ class ContributorRoleFactOut(BaseModel):
 
 
 class ResourceActionSubjectOut(BaseModel):
-    kind: Literal["Resource"] = "Resource"
     ref: str
-    activation: ResourceActivationOut
-    missing: bool
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ExternalActionTargetOut(BaseModel):
-    kind: Literal["External"] = "External"
-    href: str
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-StandingActionTargetOut = Annotated[
-    ResourceActionSubjectOut | ExternalActionTargetOut,
-    Field(discriminator="kind"),
-]
 
 
 class ContributorDetailOut(BaseModel):
@@ -273,7 +256,7 @@ class ContributorDetailOut(BaseModel):
     display_name: str = Field(alias="displayName")
     other_names: list[str] = Field(alias="otherNames")
     can_rename: bool = Field(alias="canRename")
-    action_target: ResourceActionSubjectOut = Field(alias="actionTarget")
+    action_subject: ResourceActionSubjectOut = Field(alias="actionSubject")
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -284,6 +267,6 @@ class ContributorWorkItemOut(BaseModel):
     content_kind: str = Field(alias="contentKind")
     date: str | None = None
     role_facts: list[ContributorRoleFactOut] = Field(alias="roleFacts")
-    action_target: StandingActionTargetOut = Field(alias="actionTarget")
+    action_subject: ResourceActionSubjectOut | None = Field(alias="actionSubject")
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")

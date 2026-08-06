@@ -1,19 +1,32 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
+import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
+import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+import {
+  ResourceActionOverlays,
+  ResourceOverlaysProvider,
+} from "@/lib/resources/resourceOverlaysController";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import {
   PaneReturnMementoProvider,
   PaneReturnVisitScope,
 } from "@/lib/workspace/paneReturnMemento";
-import {
-  dailyDraftKey,
-  writeDailyDraft,
-} from "@/lib/notes/dailyDraftStore";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
+import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { dailyDraftKey, writeDailyDraft } from "@/lib/notes/dailyDraftStore";
 import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { PaneEntryDelivery } from "@/lib/workspace/targetActivation";
 import PagePaneBody from "./PagePaneBody";
 
@@ -24,6 +37,10 @@ const SERVER_NOTE_ID = "33333333-3333-4333-8333-333333333333";
 const LOCAL_DATE = "2026-07-30";
 const DEFAULT_TITLE = "Thursday, July 30";
 const RENAMED_TITLE = "Field Notes";
+const WORKSPACE_METRICS: WorkspacePrimaryMetrics = {
+  primaryMinWidthPx: 684,
+  primaryDefaultWidthPx: 684,
+};
 const PAGE_REF_DELIVERY: PaneEntryDelivery = {
   activationId: "daily-page-ref-activation",
   paneId: "pane",
@@ -105,6 +122,77 @@ function noteItem(noteId: string) {
   };
 }
 
+function canonicalActionFetch(
+  request: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+) {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), "http://localhost").pathname;
+    if (path.startsWith("/api/lectern")) {
+      return Response.json({ data: { items: [] } });
+    }
+    if (path === "/api/resource-items/action-snapshots/resolve") {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      const refs: string[] = Array.isArray(body?.refs) ? body.refs : [];
+      return Response.json({
+        data: {
+          snapshots: refs.map((ref) => ({
+            ref,
+            activation: {
+              resourceRef: ref,
+              kind: "none",
+              href: null,
+              unresolvedReason: null,
+            },
+            missing: true,
+            factsRevision: "0".repeat(64),
+            capabilities: [],
+          })),
+        },
+      });
+    }
+    return request(input, init);
+  });
+}
+
+function CanonicalActionTestProviders({
+  initialHref,
+  children,
+}: {
+  readonly initialHref: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <MobileChromeProvider>
+      <FeedbackProvider>
+        <ShareControllerProvider>
+          <LibraryPlacementControllerProvider>
+            <WorkspaceStoreProvider
+              workspacePrimaryMetrics={WORKSPACE_METRICS}
+              initialState={createDefaultWorkspaceState(
+                initialHref,
+                WORKSPACE_METRICS,
+              )}
+            >
+              <LecternProvider>
+                <OfflineMediaProvider accountId={ACCOUNT_ID} transport={null}>
+                  <ResourceOverlaysProvider>
+                    <GlobalPlayerProvider>
+                      <ResourceActionRuntimeProvider>
+                        {children}
+                        <ResourceActionOverlays />
+                      </ResourceActionRuntimeProvider>
+                    </GlobalPlayerProvider>
+                  </ResourceOverlaysProvider>
+                </OfflineMediaProvider>
+              </LecternProvider>
+            </WorkspaceStoreProvider>
+          </LibraryPlacementControllerProvider>
+        </ShareControllerProvider>
+      </FeedbackProvider>
+    </MobileChromeProvider>
+  );
+}
+
 function App() {
   return (
     <AuthenticatedAccountProvider
@@ -114,32 +202,34 @@ function App() {
       }}
     >
       <PaneReturnMementoProvider>
-        <PaneReturnVisitScope visitId={"visit" as never} routeKey="daily">
-          <PaneRuntimeProvider
-            paneId="pane"
-            visitId={"visit" as never}
-            isActive
-            href={`/daily/${LOCAL_DATE}`}
-            routeId="dailyDate"
-            pathParams={{ localDate: LOCAL_DATE }}
-            canGoBack={false}
-            canGoForward={false}
-            onNavigatePane={vi.fn()}
-            onReplacePane={vi.fn()}
-            onActivateWorkspaceTarget={vi.fn(() => ({
-              kind: "ActivatedExisting" as const,
-              paneId: "pane",
-            }))}
-            onGoBackPane={vi.fn()}
-            onGoForwardPane={vi.fn()}
-          >
-            <PanePrimaryChromeProvider publish={vi.fn()}>
-              <div data-pane-content="true" data-testid="daily-scrollport">
-                <PagePaneBody />
-              </div>
-            </PanePrimaryChromeProvider>
-          </PaneRuntimeProvider>
-        </PaneReturnVisitScope>
+        <CanonicalActionTestProviders initialHref={`/daily/${LOCAL_DATE}`}>
+          <PaneReturnVisitScope visitId={"visit" as never} routeKey="daily">
+            <PaneRuntimeProvider
+              paneId="pane"
+              visitId={"visit" as never}
+              isActive
+              href={`/daily/${LOCAL_DATE}`}
+              routeId="dailyDate"
+              pathParams={{ localDate: LOCAL_DATE }}
+              canGoBack={false}
+              canGoForward={false}
+              onNavigatePane={vi.fn()}
+              onReplacePane={vi.fn()}
+              onActivateWorkspaceTarget={vi.fn(() => ({
+                kind: "ActivatedExisting" as const,
+                paneId: "pane",
+              }))}
+              onGoBackPane={vi.fn()}
+              onGoForwardPane={vi.fn()}
+            >
+              <PanePrimaryChromeProvider publish={vi.fn()}>
+                <div data-pane-content="true" data-testid="daily-scrollport">
+                  <PagePaneBody />
+                </div>
+              </PanePrimaryChromeProvider>
+            </PaneRuntimeProvider>
+          </PaneReturnVisitScope>
+        </CanonicalActionTestProviders>
       </PaneReturnMementoProvider>
     </AuthenticatedAccountProvider>
   );
@@ -158,44 +248,44 @@ function PageRefApp({
       }}
     >
       <PaneReturnMementoProvider>
-        <PaneReturnVisitScope visitId={"visit" as never} routeKey="page">
-          <PaneRuntimeProvider
-            paneId="pane"
-            visitId={"visit" as never}
-            isActive
-            href={`/pages/${PAGE_ID}`}
-            routeId="page"
-            pathParams={{ pageId: PAGE_ID }}
-            paneEntryDelivery={PAGE_REF_DELIVERY}
-            canGoBack={false}
-            canGoForward={false}
-            onNavigatePane={vi.fn()}
-            onReplacePane={vi.fn()}
-            onActivateWorkspaceTarget={vi.fn(() => ({
-              kind: "ActivatedExisting" as const,
-              paneId: "pane",
-            }))}
-            onGoBackPane={vi.fn()}
-            onGoForwardPane={vi.fn()}
-            onAcknowledgePaneEntryDelivery={onAcknowledge}
-          >
-            <PanePrimaryChromeProvider publish={vi.fn()}>
-              <PagePaneBody
-                pageIdOverride={PAGE_ID}
-                initialPage={{
-                  id: PAGE_ID,
-                  title: DEFAULT_TITLE,
-                  actionTarget: routeResourceActionSubject({
-                    scheme: "page",
+        <CanonicalActionTestProviders initialHref={`/pages/${PAGE_ID}`}>
+          <PaneReturnVisitScope visitId={"visit" as never} routeKey="page">
+            <PaneRuntimeProvider
+              paneId="pane"
+              visitId={"visit" as never}
+              isActive
+              href={`/pages/${PAGE_ID}`}
+              routeId="page"
+              pathParams={{ pageId: PAGE_ID }}
+              paneEntryDelivery={PAGE_REF_DELIVERY}
+              canGoBack={false}
+              canGoForward={false}
+              onNavigatePane={vi.fn()}
+              onReplacePane={vi.fn()}
+              onActivateWorkspaceTarget={vi.fn(() => ({
+                kind: "ActivatedExisting" as const,
+                paneId: "pane",
+              }))}
+              onGoBackPane={vi.fn()}
+              onGoForwardPane={vi.fn()}
+              onAcknowledgePaneEntryDelivery={onAcknowledge}
+            >
+              <PanePrimaryChromeProvider publish={vi.fn()}>
+                <PagePaneBody
+                  pageIdOverride={PAGE_ID}
+                  initialPage={{
                     id: PAGE_ID,
-                    href: `/pages/${PAGE_ID}`,
-                  }),
-                  dailyPage: { localDate: LOCAL_DATE },
-                }}
-              />
-            </PanePrimaryChromeProvider>
-          </PaneRuntimeProvider>
-        </PaneReturnVisitScope>
+                    title: DEFAULT_TITLE,
+                    actionSubject: {
+                      ref: canonicalResourceRef({ scheme: "page", id: PAGE_ID }),
+                    },
+                    dailyPage: { localDate: LOCAL_DATE },
+                  }}
+                />
+              </PanePrimaryChromeProvider>
+            </PaneRuntimeProvider>
+          </PaneReturnVisitScope>
+        </CanonicalActionTestProviders>
       </PaneReturnMementoProvider>
     </AuthenticatedAccountProvider>
   );
@@ -204,7 +294,7 @@ function PageRefApp({
 describe("PagePaneBody daily hydration", () => {
   it("keeps a latent daily view read-only and unfocused until the user adds a note", async () => {
     localStorage.clear();
-    const fetchMock = vi.fn(
+    const fetchMock = canonicalActionFetch(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = new URL(String(input), "http://localhost").pathname;
         if (path === `/api/notes/daily/${LOCAL_DATE}`) {
@@ -243,7 +333,7 @@ describe("PagePaneBody daily hydration", () => {
   it("claims a daily append delivery in an already-open PageRef pane and focuses its provisional tail", async () => {
     localStorage.clear();
     const onAcknowledge = vi.fn();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = canonicalActionFetch(async (input: RequestInfo | URL) => {
       const path = decodeURIComponent(
         new URL(String(input), "http://localhost").pathname,
       );
@@ -254,17 +344,19 @@ describe("PagePaneBody daily hydration", () => {
               item: pageItem(),
               content: { kind: "page_title", title: DEFAULT_TITLE },
             },
-            ordered_items: [{
-              occurrence_id: "server-row",
-              target: {
-                item: noteItem(SERVER_NOTE_ID),
-                content: {
-                  kind: "note_body",
-                  body_pm_json: paragraphFromText("Persisted").toJSON(),
-                  body_text: "Persisted",
+            ordered_items: [
+              {
+                occurrence_id: "server-row",
+                target: {
+                  item: noteItem(SERVER_NOTE_ID),
+                  content: {
+                    kind: "note_body",
+                    body_pm_json: paragraphFromText("Persisted").toJSON(),
+                    body_text: "Persisted",
+                  },
                 },
               },
-            }],
+            ],
           },
         });
       }
@@ -303,7 +395,7 @@ describe("PagePaneBody daily hydration", () => {
     const descriptor = deferred<Response>();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      canonicalActionFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = new URL(String(input), "http://localhost").pathname;
         if (path === `/api/notes/daily/${LOCAL_DATE}`) {
           return descriptor.promise;
@@ -400,25 +492,27 @@ describe("PagePaneBody daily hydration", () => {
         item: pageItem(),
         content: { kind: "page_title", title: DEFAULT_TITLE },
       },
-      ordered_items: [{
-        occurrence_id: "daily-note-row",
-        target: {
-          item: {
-            ...noteItem(noteId),
-            versionByLane: { body: bodyVersion, outgoing_edges: 1 },
-          },
-          content: {
-            kind: "note_body",
-            body_pm_json: bodyPmJson,
-            body_text: bodyText,
+      ordered_items: [
+        {
+          occurrence_id: "daily-note-row",
+          target: {
+            item: {
+              ...noteItem(noteId),
+              versionByLane: { body: bodyVersion, outgoing_edges: 1 },
+            },
+            content: {
+              kind: "note_body",
+              body_pm_json: bodyPmJson,
+              body_text: bodyText,
+            },
           },
         },
-      }],
+      ],
     });
 
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      canonicalActionFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = decodeURIComponent(
           new URL(String(input), "http://localhost").pathname,
         );
@@ -578,7 +672,7 @@ describe("PagePaneBody daily hydration", () => {
     const descriptor = deferred<Response>();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
+      canonicalActionFetch(async (input: RequestInfo | URL) => {
         const path = new URL(String(input), "http://localhost").pathname;
         if (path === `/api/notes/daily/${LOCAL_DATE}`) {
           return descriptor.promise;
@@ -685,7 +779,7 @@ describe("PagePaneBody daily hydration", () => {
     let capturePosts = 0;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      canonicalActionFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = new URL(String(input), "http://localhost").pathname;
         if (path === `/api/notes/daily/${LOCAL_DATE}`) {
           return Response.json({
@@ -718,9 +812,7 @@ describe("PagePaneBody daily hydration", () => {
     const editor = await screen.findByRole("textbox", { name: "Edit note 1" });
     await userEvent.type(editor, "   ");
     await userEvent.keyboard("{Control>}a{/Control}{Backspace}");
-    await userEvent.click(
-      screen.getByRole("textbox", { name: "Page title" }),
-    );
+    await userEvent.click(screen.getByRole("textbox", { name: "Page title" }));
 
     await waitFor(() =>
       expect(

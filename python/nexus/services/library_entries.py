@@ -43,6 +43,11 @@ from nexus.schemas.collection_page import (
     parse_collection_query,
 )
 from nexus.schemas.library import (
+    AbsentLibraryPlacementRelationOut,
+    AvailableLibraryPlacementAvailabilityOut,
+    BlockedLibraryPlacementAvailabilityOut,
+    DirectLibraryPlacementRelationOut,
+    InheritedLibraryPlacementRelationOut,
     LibraryEntryKind,
     LibraryEntryListItemOut,
     LibraryEntryMediaCapabilitiesOut,
@@ -52,11 +57,15 @@ from nexus.schemas.library import (
     LibraryEntryPodcastOut,
     LibraryEntryPodcastSubscriptionOut,
     LibraryEntryRemovalOut,
+    LibraryIdentityOut,
+    LibraryLibraryPlacementDestinationOut,
     LibraryMediaListItemOut,
     LibraryPlacementOptionOut,
     LibraryPodcastListItemOut,
+    PodcastPlacementAdditionOut,
     PodcastPlacementRemovalOut,
     ReadingTimeEstimateOut,
+    SavedInNexusLibraryPlacementDestinationOut,
 )
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
 from nexus.schemas.presence import Presence, absent, presence_from_nullable, present
@@ -1234,7 +1243,7 @@ def _hydrate_entry_rows(
 def list_item_libraries(
     db: Session, *, viewer_id: UUID, target: EntryTarget
 ) -> list[LibraryPlacementOptionOut]:
-    """Per-library placement options for one media or podcast."""
+    """Canonical typed placement inventory for one visible Media or Podcast."""
     if target.kind == "media":
         if not can_read_media(db, viewer_id, target.id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
@@ -1259,21 +1268,35 @@ def list_item_libraries(
         assert_never(target.kind)
 
     column = _TARGET_COLUMN[target.kind]
+    inherited_sql = (
+        """
+        EXISTS(
+            SELECT 1
+            FROM podcast_episodes episode
+            JOIN library_entries parent_entry
+              ON parent_entry.podcast_id = episode.podcast_id
+             AND parent_entry.library_id = l.id
+            WHERE episode.media_id = :target_id
+        )
+        """
+        if target.kind == "media"
+        else "false"
+    )
     rows = (
         db.execute(
             text(f"""
             SELECT
-                l.id, l.name, l.color,
+                l.id, l.name, l.color, l.owner_user_id, l.is_default,
+                l.system_key,
                 EXISTS(
                     SELECT 1 FROM library_entries le
                     WHERE le.library_id = l.id AND le.{column} = :target_id
-                ) AS in_library,
+                ) AS is_direct,
+                {inherited_sql} AS is_inherited,
                 m.role
             FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-            WHERE l.is_default = false
-              AND l.system_key IS NULL
-            ORDER BY lower(l.name) ASC, l.name ASC, l.id ASC
+            ORDER BY l.is_default DESC, lower(l.name) ASC, l.name ASC, l.id ASC
         """),
             {"viewer_id": viewer_id, "target_id": target.id},
         )
@@ -1281,19 +1304,56 @@ def list_item_libraries(
         .all()
     )
 
-    return [
-        LibraryPlacementOptionOut(
-            id=row["id"],
-            name=row["name"],
-            color=row["color"],
-            is_in_library=bool(row["in_library"]),
-            can_add=(
-                target_can_be_added and row["role"] == "admin" and not bool(row["in_library"])
-            ),
-            can_remove=row["role"] == "admin" and bool(row["in_library"]),
+    options: list[LibraryPlacementOptionOut] = []
+    for row in rows:
+        is_default = bool(row["is_default"])
+        if is_default:
+            if target.kind != "media" or UUID(str(row["owner_user_id"])) != viewer_id:
+                continue
+            options.append(
+                LibraryPlacementOptionOut(
+                    destination=SavedInNexusLibraryPlacementDestinationOut(),
+                    relation=(
+                        DirectLibraryPlacementRelationOut()
+                        if bool(row["is_direct"])
+                        else AbsentLibraryPlacementRelationOut()
+                    ),
+                    availability=AvailableLibraryPlacementAvailabilityOut(),
+                )
+            )
+            continue
+
+        identity = LibraryIdentityOut(
+            id=UUID(str(row["id"])),
+            name=str(row["name"]),
+            color=cast(str | None, row["color"]),
         )
-        for row in rows
-    ]
+        inherited = not bool(row["is_direct"]) and bool(row["is_inherited"])
+        if inherited:
+            relation = InheritedLibraryPlacementRelationOut(provenance=[identity])
+            availability = BlockedLibraryPlacementAvailabilityOut(reason="Inherited")
+        else:
+            relation = (
+                DirectLibraryPlacementRelationOut()
+                if bool(row["is_direct"])
+                else AbsentLibraryPlacementRelationOut()
+            )
+            if row["system_key"] is not None:
+                availability = BlockedLibraryPlacementAvailabilityOut(reason="SystemManaged")
+            elif not target_can_be_added:
+                availability = BlockedLibraryPlacementAvailabilityOut(reason="RequiresSubscription")
+            elif row["role"] != "admin":
+                availability = BlockedLibraryPlacementAvailabilityOut(reason="RequiresAdmin")
+            else:
+                availability = AvailableLibraryPlacementAvailabilityOut()
+        options.append(
+            LibraryPlacementOptionOut(
+                destination=LibraryLibraryPlacementDestinationOut(library=identity),
+                relation=relation,
+                availability=availability,
+            )
+        )
+    return options
 
 
 def ensure_media_in_library(
@@ -1375,7 +1435,7 @@ def ensure_media_in_library_in_current_transaction(
 def ensure_media_absent_from_library_for_viewer(
     db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID
 ) -> LibraryEntryRemovalOut:
-    """Idempotently remove one media from a writable non-default library."""
+    """Idempotently remove one Media from a mutable named Library."""
     return _ensure_media_absent_from_library_for_viewer(
         db,
         viewer_id=viewer_id,
@@ -1850,9 +1910,9 @@ def place_subscribed_podcast_in_named_library_in_current_transaction(
         },
     ).first()
     if subscription is None:
-        raise NotFoundError(
-            ApiErrorCode.E_NOT_FOUND,
-            "Active Podcast subscription not found",
+        raise ConflictError(
+            ApiErrorCode.E_PODCAST_SUBSCRIPTION_REQUIRED,
+            "Subscribe to this Podcast before adding it to a Library",
         )
     placement = place_podcast_in_named_libraries_in_current_transaction(
         db,
@@ -1862,6 +1922,84 @@ def place_subscribed_podcast_in_named_library_in_current_transaction(
         confirmation_fingerprint=None,
     )
     return LibraryFilingOutcome(kind="Added" if placement.added_library_ids else "AlreadyPresent")
+
+
+def place_subscribed_podcast_in_named_library(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    podcast_id: UUID,
+    *,
+    idempotency_key: str,
+) -> PodcastPlacementAdditionOut:
+    """Idempotently place, but never create, an active Podcast subscription."""
+    from nexus.services.podcasts.control_replay import (
+        PODCAST_CONTROL_REPLAY_SCOPE,
+        podcast_control_request_bytes,
+    )
+
+    if not idempotency_key.strip():
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Idempotency-Key must be nonblank",
+        )
+    path = f"/libraries/{library_id}/podcasts/{podcast_id}"
+    request_bytes = podcast_control_request_bytes(method="PUT", path=path)
+    try:
+        replay = lookup_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=PODCAST_CONTROL_REPLAY_SCOPE,
+            client_mutation_id=idempotency_key,
+            request_bytes=request_bytes,
+        )
+    finally:
+        db.rollback()
+    if replay is not None:
+        return PodcastPlacementAdditionOut.model_validate(replay)
+
+    def attempt() -> PodcastPlacementAdditionOut:
+        with transaction(db):
+            replay = lookup_replay(
+                db,
+                viewer_id=viewer_id,
+                scope=PODCAST_CONTROL_REPLAY_SCOPE,
+                client_mutation_id=idempotency_key,
+                request_bytes=request_bytes,
+            )
+            if replay is not None:
+                return PodcastPlacementAdditionOut.model_validate(replay)
+            filing = place_subscribed_podcast_in_named_library_in_current_transaction(
+                db,
+                viewer_id=viewer_id,
+                library_id=library_id,
+                podcast_id=podcast_id,
+            )
+            if filing.kind == "IncludedThroughPodcast":
+                # justify-service-invariant-check: Podcast filing returns only its
+                # two direct placement outcomes.
+                # justify-defect: inherited-through-Podcast applies only to Media.
+                raise AssertionError("Podcast placement produced a Media-only outcome")
+            response = PodcastPlacementAdditionOut(
+                outcome=filing.kind,
+                library_entries_collection_revision=read_collection_revision(
+                    db,
+                    viewer_id=viewer_id,
+                    family=CollectionFamily.LibraryEntries,
+                ),
+            )
+            record_replay(
+                db,
+                viewer_id=viewer_id,
+                scope=PODCAST_CONTROL_REPLAY_SCOPE,
+                client_mutation_id=idempotency_key,
+                request_bytes=request_bytes,
+                response_json=response.model_dump(mode="json", by_alias=True),
+                changed_lanes={},
+            )
+            return response
+
+    return retry_read_committed(db, "place_subscribed_podcast_in_named_library", attempt)
 
 
 def remove_unsubscribed_podcast_placements(
@@ -2556,6 +2694,32 @@ def reorder_entries(
 # ---------------------------------------------------------------------------
 # Default-library + bulk assignment commands
 # ---------------------------------------------------------------------------
+
+
+def ensure_media_saved_in_nexus_for_viewer(
+    db: Session, *, viewer_id: UUID, media_id: UUID
+) -> LibraryFilingOutcome:
+    """Idempotently create the identity-free ``SavedInNexus`` relation."""
+    return ensure_media_in_library(
+        db,
+        viewer_id,
+        governance.default_library_id_for_user(db, viewer_id),
+        media_id,
+    )
+
+
+def ensure_media_absent_from_saved_in_nexus_for_viewer(
+    db: Session, *, viewer_id: UUID, media_id: UUID
+) -> LibraryEntryRemovalOut:
+    """Idempotently remove ``SavedInNexus`` while preserving lifetime safety."""
+    return _ensure_media_absent_from_library_for_viewer(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        library_id=governance.default_library_id_for_user(db, viewer_id),
+        require_non_default_destination=False,
+        retry_label="ensure_media_absent_from_saved_in_nexus",
+    )
 
 
 def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> bool:

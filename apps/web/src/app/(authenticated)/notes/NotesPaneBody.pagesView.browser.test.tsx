@@ -6,6 +6,7 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import {
   ResourceActionOverlays,
   ResourceOverlaysProvider,
@@ -84,8 +85,12 @@ function stubNotePages(titleAscPage?: Promise<Response>) {
   const requests: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), window.location.origin);
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : null;
+      const url = new URL(
+        request?.url ?? String(input),
+        window.location.origin,
+      );
       // The canonical resource-action runtime the pane rows and chrome render
       // into mounts the Lectern owner (initial snapshot GET) and prefetches the
       // per-ref action snapshots. Serve both off the recorded pages requests so
@@ -94,7 +99,25 @@ function stubNotePages(titleAscPage?: Promise<Response>) {
         return Response.json({ data: { items: [] } });
       }
       if (url.pathname === "/api/resource-items/action-snapshots/resolve") {
-        return Response.json({ data: { snapshots: [] } });
+        const body =
+          typeof init?.body === "string" ? JSON.parse(init.body) : null;
+        const refs: string[] = Array.isArray(body?.refs) ? body.refs : [];
+        return Response.json({
+          data: {
+            snapshots: refs.map((ref) => ({
+              ref,
+              activation: {
+                resourceRef: ref,
+                kind: "none",
+                href: null,
+                unresolvedReason: null,
+              },
+              missing: true,
+              factsRevision: "0".repeat(64),
+              capabilities: [],
+            })),
+          },
+        });
       }
       if (url.pathname !== "/api/notes/pages") {
         throw new Error(`Unexpected notes request: ${url.pathname}`);
@@ -168,6 +191,7 @@ function NotesPane({
                 <LecternProvider>
                 <OfflineMediaProvider accountId={ACCOUNT_ID} transport={null}>
                 <ResourceOverlaysProvider>
+                <GlobalPlayerProvider>
                 <ResourceActionRuntimeProvider>
                 <div data-pane-id="pane" data-active="true">
                   <PaneShell
@@ -200,6 +224,7 @@ function NotesPane({
                 </div>
                 <ResourceActionOverlays />
                 </ResourceActionRuntimeProvider>
+                </GlobalPlayerProvider>
                 </ResourceOverlaysProvider>
                 </OfflineMediaProvider>
                 </LecternProvider>

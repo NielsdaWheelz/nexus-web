@@ -18,7 +18,7 @@ import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import {
   ResourceActionRuntimeProvider,
-  useResourceActionCatalogProjection,
+  useResourceActionMenuModel,
 } from "@/lib/actions/resourceActionRuntime";
 import {
   ResourceActionOverlays,
@@ -44,7 +44,7 @@ import {
 } from "@/lib/lectern/contract";
 import { projectNexusSearchEntries } from "@/lib/nexus/results";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import SwitchboardRow from "@/components/switchboard/SwitchboardRow";
 import Nexus from "@/components/nexus/Nexus";
 import DesktopListeningShelf from "@/components/player/DesktopListeningShelf";
@@ -52,38 +52,42 @@ import type { PresentPlayerChrome } from "@/components/player/PlayerControls";
 import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 
 // LEAF-slice proof (Nexus + players). The system under test is the shared,
-// canonical resource dropdown rendered by two migrated leaf surfaces:
-//   1. a resource Nexus/switchboard row (its secondary/overflow menu now comes
-//      from the shared catalog projection, not a private NexusAction array — and
-//      the row model carries NO ad-hoc `queue-add`), and
+// canonical resource dropdown rendered by two leaf surfaces:
+//   1. a resource Nexus/switchboard row whose secondary/overflow menu comes
+//      from the shared semantic model, and
 //   2. a now-playing media player (its recording actions are ResourceActionMenu,
 //      and the player-controls menu no longer carries Player.OpenTrack /
 //      Player.OpenSource).
-// Only the BFF fetch boundary is stubbed; the real runtime, planner, catalog
-// projector, and ActionMenu compose the observed menu.
+// Only the BFF fetch boundary is stubbed; the real runtime, planner, catalog,
+// and ActionMenu compose the observed menu.
 
 const ACCOUNT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const MEDIA_REF = `media:${MEDIA_ID}`;
 const MEDIA_HREF = `/media/${MEDIA_ID}`;
 const RESOLVE_PATH = "/api/resource-items/action-snapshots/resolve";
+const MEDIA_FACTS_REVISION = "6".repeat(64);
+const MISSING_FACTS_REVISION = "0".repeat(64);
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
   primaryDefaultWidthPx: 684,
 };
 
-const mediaTarget = routeResourceActionSubject({
-  scheme: "media",
-  id: MEDIA_ID,
+const mediaSubject = {
+  ref: canonicalResourceRef({ scheme: "media", id: MEDIA_ID }),
+};
+const mediaActivation = {
+  resourceRef: MEDIA_REF,
+  kind: "route" as const,
   href: MEDIA_HREF,
-});
+  unresolvedReason: null,
+};
 
 // A schema-valid media snapshot whose capabilities arrive out of catalog order
-// and span all three groups plus a danger action, so the observed menu proves
-// the shared PLANNER — not the surface — owns membership and order. Crucially it
-// includes the canonical Lectern relationship (Absent -> "Add to Lectern"),
-// which is exactly what the deleted ad-hoc Nexus `queue-add` used to duplicate.
+// and span several semantic groups plus a Danger action, so the observed menu
+// proves the shared planner — not the surface — owns membership and order. It
+// includes the canonical Lectern relationship (Absent -> "Add to Lectern").
 const MEDIA_SNAPSHOT = {
   ref: MEDIA_REF,
   activation: {
@@ -93,7 +97,7 @@ const MEDIA_SNAPSHOT = {
     unresolvedReason: null,
   },
   missing: false,
-  factsRevision: "facts-rev-1",
+  factsRevision: MEDIA_FACTS_REVISION,
   capabilities: [
     { kind: "RemoveMedia", availability: { kind: "Available" } },
     { kind: "Chat", availability: { kind: "Available" } },
@@ -107,14 +111,14 @@ const MEDIA_SNAPSHOT = {
   ],
 } as const;
 
-// Catalog-owned order (core -> operations -> relationships), danger last. This
-// is the AC1/AC5 oracle — from the catalog + planner, not the wire order above.
+// Catalog-owned semantic-group order with Danger terminal. This
+// is the AC1/AC3 oracle — from the catalog + planner, not the wire order above.
 const EXPECTED_MENU_ORDER = [
   "Open",
-  "Share…",
-  "Chat about this resource",
   "Add to Lectern",
-  "Remove media",
+  "Chat about this…",
+  "Share…",
+  "Remove from Nexus",
 ];
 
 function jsonResponse(body: unknown): Response {
@@ -134,7 +138,10 @@ function installBff(): Bff {
     "fetch",
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : null;
-      const url = new URL(request?.url ?? String(input), window.location.origin);
+      const url = new URL(
+        request?.url ?? String(input),
+        window.location.origin,
+      );
       const method = init?.method ?? request?.method ?? "GET";
       const path = url.pathname;
 
@@ -150,12 +157,12 @@ function installBff(): Bff {
                 ref,
                 activation: {
                   resourceRef: ref,
-                  kind: "route",
-                  href: "/",
+                  kind: "none",
+                  href: null,
                   unresolvedReason: null,
                 },
                 missing: true,
-                factsRevision: "missing",
+                factsRevision: MISSING_FACTS_REVISION,
                 capabilities: [],
               },
         );
@@ -197,12 +204,12 @@ function renderInRuntime(node: ReactNode) {
                           transport={null}
                         >
                           <ResourceOverlaysProvider>
-                            <ResourceActionRuntimeProvider>
-                              <GlobalPlayerProvider>
+                            <GlobalPlayerProvider>
+                              <ResourceActionRuntimeProvider>
                                 {node}
                                 <ResourceActionOverlays />
-                              </GlobalPlayerProvider>
-                            </ResourceActionRuntimeProvider>
+                              </ResourceActionRuntimeProvider>
+                            </GlobalPlayerProvider>
                           </ResourceOverlaysProvider>
                         </OfflineMediaProvider>
                       </ShareControllerProvider>
@@ -218,16 +225,15 @@ function renderInRuntime(node: ReactNode) {
   );
 }
 
-// A top-level media search row: exactly the input whose old resourceEntry
-// appended the ad-hoc `queue-add` and a private core NexusAction array.
+// A top-level media search row carrying primary Open and one action subject.
 function mediaSearchRow(): SearchResultRowViewModel {
   return {
     key: "row-1",
     score: 1,
     resourceRef: MEDIA_REF,
     ownerResourceRef: MEDIA_REF,
-    activation: mediaTarget.activation,
-    actionTarget: mediaTarget,
+    activation: mediaActivation,
+    actionSubject: mediaSubject,
     citationTarget: null,
     paneLabelHint: "Field Recording",
     type: "media",
@@ -313,12 +319,16 @@ function WorkspaceLocationProbe() {
 }
 
 // Stands in for a resource Nexus/switchboard row's overflow: it renders the
-// SAME canonical descriptors the migrated rows render for `target`
-// (useResourceActionCatalogProjection), so selecting one fires the identical,
+// SAME canonical descriptors the migrated rows render for `actionSubject`
+// (`useResourceActionMenuModel`), so selecting one fires the identical,
 // Nexus-unaware resource-runtime dispatch. Rendered as a sibling of the Nexus so
 // the click can be dispatched without contending with the modal overlay.
-function ResourceActionProbe({ target }: { target: typeof mediaTarget }) {
-  const model = useResourceActionCatalogProjection(target);
+function ResourceActionProbe({
+  actionSubject,
+}: {
+  actionSubject: typeof mediaSubject;
+}) {
+  const model = useResourceActionMenuModel(actionSubject);
   return (
     <div aria-label="Resource overflow probe">
       {model.descriptors.map((descriptor) =>
@@ -352,21 +362,23 @@ describe("canonical resource dropdown on the Nexus + player leaf surfaces", () =
     await page.viewport(1_280, 800);
   });
 
-  it("gives a resource switchboard row the shared catalog projection (no private NexusAction array, no queue-add)", async () => {
+  it("gives a resource switchboard row the shared canonical semantic plan", async () => {
     installBff();
 
-    // results.ts: a media search row becomes a resource entry that carries only
-    // its resource identity + primary Open activation. Its secondary actions are
-    // NOT a private NexusAction array, and the deleted ad-hoc `queue-add` is gone.
+    // A media search row becomes a resource entry carrying its subject and
+    // primary Open activation; secondary actions remain peer/view controls.
     const [entry] = projectNexusSearchEntries({
       query: "field",
       rows: [mediaSearchRow()],
       panes: [],
       frecencyByHref: {},
     });
-    expect(entry, "the media search row did not project a resource entry").toBeTruthy();
     expect(
-      entry!.resourceTarget?.ref,
+      entry,
+      "the media search row did not project a resource entry",
+    ).toBeTruthy();
+    expect(
+      entry!.actionSubject?.ref,
       "the resource entry did not carry its canonical resource identity",
     ).toBe(MEDIA_REF);
     expect(
@@ -389,25 +401,29 @@ describe("canonical resource dropdown on the Nexus + player leaf surfaces", () =
       />,
     );
 
-    // The row's overflow trigger only appears once the snapshot is ready
-    // (zero network on open). Opening it shows the ONE canonical dropdown.
+    // The row's always-present overflow becomes enabled once the snapshot is
+    // ready (zero network on open). Opening it shows the canonical dropdown.
     const trigger = await screen.findByRole("button", {
       name: "Actions for Field Recording",
     });
+    await waitFor(() => expect(trigger).toBeEnabled());
     await userEvent.click(trigger);
     const menu = screen.getByRole("menu");
-    const names = within(menu)
-      .getAllByRole("menuitem")
-      .map((item) => item.textContent?.trim());
+    const names = within(menu).getAllByRole("none").map((container) => {
+      const item =
+        within(container).queryByRole("menuitem") ??
+        within(container).getByRole("menuitemcheckbox");
+      return item.textContent?.trim() ?? "";
+    });
 
     expect(
       names,
       "the resource row did not render the shared catalog-ordered dropdown",
     ).toEqual(EXPECTED_MENU_ORDER);
-    // Open is promoted into the menu even though it is the row primary (AC6).
+    // Open is retained in the menu even though it is the row primary (AC3).
     expect(names[0]).toBe("Open");
-    // The canonical Lectern relationship replaces the deleted ad-hoc queue-add:
-    // it appears exactly once, as the state-machine verb "Add to Lectern".
+    // The canonical Lectern relationship appears exactly once, as the
+    // state-machine verb "Add to Lectern".
     expect(names.filter((name) => name === "Add to Lectern")).toHaveLength(1);
     expect(
       within(menu).queryByRole("menuitem", { name: /queue-add/i }),
@@ -437,19 +453,19 @@ describe("canonical resource dropdown on the Nexus + player leaf surfaces", () =
     const recordingActions = await screen.findByRole("button", {
       name: "Recording actions",
     });
+    await waitFor(() => expect(recordingActions).toBeEnabled());
     await userEvent.click(recordingActions);
     const resourceMenu = screen.getByRole("menu");
     expect(
       within(resourceMenu).getByRole("menuitem", { name: "Open" }),
       "the player's canonical resource menu did not expose Open",
     ).toBeTruthy();
-    // It resolved the now-playing media's canonical ref, proving the player
-    // wired playerMediaActionTarget(model) rather than a player-local Open.
+    // It resolved the now-playing media's canonical ref.
     expect(bff.resolveCalls).toContainEqual({ refs: [MEDIA_REF] });
     await userEvent.keyboard("{Escape}");
 
-    // The player-controls menu is a SEPARATE non-resource control. It no longer
-    // carries the deleted player-local Open recording / Open source duplicates.
+    // The player-controls menu is a separate non-resource control and carries
+    // neither recording navigation nor source navigation.
     const playerControls = await screen.findByRole("button", {
       name: "More player controls",
     });
@@ -473,14 +489,14 @@ describe("canonical resource dropdown on the Nexus + player leaf surfaces", () =
   // Nexus-unaware resource runtime (invoke), so a navigating action activates a
   // pane WITHOUT any menu->Nexus callback (there is none by contract). The open
   // full-screen Nexus must observe the workspace navigation and dismiss, or the
-  // destination pane opens behind it (AC6: dropdown Open closes the Nexus too).
+  // destination pane opens behind it (AC3: dropdown Open closes the Nexus too).
   it("dismisses the open Nexus when a resource overflow action navigates a pane", async () => {
     window.history.replaceState({}, "", "/libraries");
     installBff();
     renderInRuntime(
       <>
         <WorkspaceLocationProbe />
-        <ResourceActionProbe target={mediaTarget} />
+        <ResourceActionProbe actionSubject={mediaSubject} />
         <Nexus />
       </>,
     );
@@ -521,19 +537,19 @@ describe("canonical resource dropdown on the Nexus + player leaf surfaces", () =
   it("leaves the open Nexus open when a resource overflow action does not navigate", async () => {
     window.history.replaceState({}, "", "/libraries");
     installBff();
-    // Decline the danger confirm: "Remove media" performs no navigation.
+    // Decline the Danger confirmation: removal performs no navigation.
     vi.stubGlobal("confirm", () => false);
     renderInRuntime(
       <>
         <WorkspaceLocationProbe />
-        <ResourceActionProbe target={mediaTarget} />
+        <ResourceActionProbe actionSubject={mediaSubject} />
         <Nexus />
       </>,
     );
 
     const probe = screen.getByLabelText("Resource overflow probe");
     const removeAction = await within(probe).findByRole("button", {
-      name: "Remove media",
+      name: "Remove from Nexus",
     });
 
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });

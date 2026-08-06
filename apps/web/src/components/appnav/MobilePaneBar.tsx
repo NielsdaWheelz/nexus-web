@@ -59,7 +59,7 @@ export default function MobilePaneBar() {
   // The mobile "Pane options" menu carries ONLY non-resource pane furniture:
   // forward navigation + promoted actions (Companion, Search). The resource
   // dropdown is rendered separately as the canonical ResourceActionMenu — nav
-  // and actions are never folded into it (AC4).
+  // and actions are never folded into it by the resource-action taxonomy.
   const menuOptions = useMemo<readonly ActionDescriptor[]>(() => {
     const forward: ActionDescriptor[] = navigation?.canGoForward
       ? [
@@ -75,7 +75,7 @@ export default function MobilePaneBar() {
     return [...forward, ...(paneChrome?.actions ?? [])];
   }, [navigation, paneChrome?.actions]);
   const viewMenu = paneChrome?.viewMenu;
-  const resourceTarget = paneChrome?.resourceTarget;
+  const actionSubject = paneChrome?.actionSubject;
   const activeFilterAction = activeCollapsedFilterAction(
     paneChrome?.actions ?? [],
   );
@@ -205,8 +205,8 @@ export default function MobilePaneBar() {
             }
           />
         ) : null}
-        {resourceTarget ? (
-          <ResourceActionMenu target={resourceTarget} label="Actions" />
+        {actionSubject ? (
+          <ResourceActionMenu actionSubject={actionSubject} label="Actions" />
         ) : null}
       </div>
     </header>

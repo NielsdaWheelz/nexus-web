@@ -251,6 +251,34 @@ def build_citation_outs_for_sources(
     return out
 
 
+def citation_counts_for_sources(
+    db: Session, *, source_scheme: ResourceScheme, source_ids: Sequence[UUID]
+) -> dict[UUID, int]:
+    """Count canonical citation edges for a batch of output resources."""
+    ordered = list(dict.fromkeys(source_ids))
+    if not ordered:
+        return {}
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT source_id, count(*) AS citation_count
+                FROM resource_edges
+                WHERE source_scheme = :source_scheme
+                  AND source_id = ANY(:source_ids)
+                  AND origin = 'citation'
+                  AND ordinal IS NOT NULL
+                GROUP BY source_id
+                """
+            ),
+            {"source_scheme": source_scheme, "source_ids": ordered},
+        )
+        .mappings()
+        .all()
+    )
+    return {UUID(str(row["source_id"])): int(row["citation_count"]) for row in rows}
+
+
 def citation_reader_target_for_edge(
     db: Session,
     *,

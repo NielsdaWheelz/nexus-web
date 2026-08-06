@@ -11,7 +11,6 @@ import type {
   ResourceRowPrimary,
 } from "@/lib/collections/types";
 import type { ContributorWorkItem } from "@/lib/contributors/types";
-import { hrefForResourceActivation } from "@/lib/resources/activation";
 
 // Singular role labels carried over from AuthorPaneBody. One work role-fact is
 // one credit, and an unrecognized token keeps the established generic label.
@@ -35,23 +34,10 @@ function roleFactLabel(role: string): string {
 }
 
 function primaryForWork(work: ContributorWorkItem): ResourceRowPrimary {
-  const target = work.actionTarget;
-  if (target.kind === "External") {
-    return {
-      kind: "link",
-      href: target.href,
-      paneLabelHint: work.title,
-    };
-  }
-  const href = hrefForResourceActivation(target.activation);
-  if (target.missing || href === null) {
-    return { kind: "static" };
-  }
   return {
     kind: "link",
-    href,
+    href: work.href,
     paneLabelHint: work.title,
-    resourceActivation: target.activation,
   };
 }
 
@@ -61,10 +47,7 @@ export function presentContributorWork(work: ContributorWorkItem): CollectionRow
   ].join(" · ");
 
   return {
-    id:
-      work.actionTarget.kind === "Resource"
-        ? work.actionTarget.ref
-        : work.actionTarget.href,
+    id: work.actionSubject?.ref ?? work.href,
     kind: "contributor_work",
     primary: primaryForWork(work),
     title: { text: work.title },
@@ -81,8 +64,7 @@ export function presentContributorWork(work: ContributorWorkItem): CollectionRow
     relatedMediaId: absent(),
     // External works are a plain link with no resource menu; resource works get
     // the canonical dropdown resolved from their server snapshot.
-    resourceTarget:
-      work.actionTarget.kind === "Resource" ? work.actionTarget : null,
+    actionSubject: work.actionSubject,
     selected: false,
   };
 }

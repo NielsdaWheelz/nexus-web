@@ -144,7 +144,7 @@ geometry. Never reorder remaining actions. Busy actions remain in place.
 
 **Superseded:** the dock's labeled desktop/mobile rendering and the
 responsive-classification ownership row. `projectSelectionActionPlan` sits
-between `buildHighlightActions` and `SelectionActionDock` and owns tiering and
+between `buildSelectionActions` and `SelectionActionDock` and owns tiering and
 order; `ActionMenu` renders the overflow tier; density is pointer-owned CSS.
 Every other ownership row stands.
 
@@ -158,7 +158,7 @@ SelectionPopover
   own fresh-selection lifecycle and action sequencing
             |
             v
-buildHighlightActions
+buildSelectionActions
   own action identity, order, labels, icons, grouping, and capability gating
             |
             v
@@ -180,7 +180,7 @@ surfaces. They do not render fresh-selection actions after this cut.
 | DOM/PDF selection normalization         | `MediaPaneBody` / `PdfReader`                         |
 | Durable Highlight creation              | existing reader creation handlers                     |
 | Composite create-then-open sequencing   | `SelectionPopover`                                    |
-| Action catalog/order/gating             | `buildHighlightActions`                               |
+| Action catalog/order/gating             | `buildSelectionActions`                               |
 | Passage Palette layout/focus            | `SelectionActionDock`                                 |
 | Floating geometry/dismissal             | `FloatingActionSurface`                               |
 | Responsive classification               | `RenderEnvironmentProvider` via `useIsMobileViewport` |
@@ -226,7 +226,7 @@ Rules:
 - add no generic dock framework, registry, slot API, polymorphic layout option,
   or second descriptor type.
 
-For `target.kind === "selection"`, `buildHighlightActions` owns the concise
+For a fresh selection, `buildSelectionActions` owns the concise
 labels `Colour`, `Note`, `Link`, `Share`, `Learn`, `New chat`, and
 `Existing chat`, plus separators before `Share` and `Learn`. Existing-Highlight
 labels remain unchanged.
@@ -303,7 +303,7 @@ busy treatment, the status-channel rules, and the zoom clause stand.
   rule. `FloatingActionSurface` uses `useIsMobileViewport` with no fallback.
 - Delete tests and comments that specify icon-only selection actions or
   `role="group"` for the palette; replace them with observable final behavior.
-- Do not duplicate `buildHighlightActions`, color-picker logic, viewport
+- Do not duplicate `buildSelectionActions`, color-picker logic, viewport
   measurement, safe-area reads, or action sequencing.
 
 ## 10. Files

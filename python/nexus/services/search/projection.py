@@ -288,6 +288,26 @@ def search_owner_ref(result: InternalSearchResult) -> ResourceRef:
     raise AssertionError(f"Unknown search result type: {type(result).__name__}")
 
 
+def search_action_subject_ref(result: InternalSearchResult) -> ResourceRef:
+    """Truthful action operand for one search occurrence.
+
+    Passage-like rows activate their precise match but act on the readable
+    owner. Rows that represent a durable Resource (Highlight, Message, Artifact
+    revision, and the top-level resources) act on that exact Resource.
+    """
+    if isinstance(
+        result,
+        (
+            _RankedContentChunkResult,
+            _RankedFragmentResult,
+            _RankedEvidenceSpanResult,
+            _RankedReaderApparatusItemResult,
+        ),
+    ):
+        return search_owner_ref(result)
+    return _result_resource_ref(result)
+
+
 def _required_locator(
     result_type: str,
     locator: RetrievalLocator | dict[str, Any] | None,
@@ -314,7 +334,8 @@ def _result_model_fields(
     fields = {
         "resource_ref": ref.uri,
         "owner_resource_ref": search_owner_ref(result).uri,
-        "activation": activation,
+        "action_subject_ref": search_action_subject_ref(result).uri,
+        "activation": activation.model_dump(mode="python", by_alias=False),
         "citation_target": ref.uri if resource_citation_result_type(ref) is not None else None,
         "context_ref": context_ref,
     }

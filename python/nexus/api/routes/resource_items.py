@@ -71,6 +71,7 @@ def resolve_action_snapshots(
         action_snapshots.resolve_action_snapshots(
             db,
             viewer_id=viewer.user_id,
+            viewer_roles=viewer.roles,
             refs=[_parse_ref(raw) for raw in request.refs],
         ),
         by_alias=True,

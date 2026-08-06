@@ -50,10 +50,11 @@ import {
 } from "@/lib/libraries/presentation";
 import { isAbortError } from "@/lib/errors";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
+import { createLibrary, fetchLibrariesPage } from "@/lib/libraries/client";
 import {
-  createLibrary,
-  fetchLibrariesPage,
-} from "@/lib/libraries/client";
+  libraryPlacementUnknownSince,
+  useLibraryPlacementRevision,
+} from "@/lib/libraries/placementRevision";
 import {
   definePaneVisitDataKey,
   requirePaneRuntime,
@@ -120,6 +121,8 @@ const ZERO_REVISION = 0 as CollectionRevision;
 export default function LibrariesPaneBody() {
   requirePaneRuntime(usePaneRuntime(), "LibrariesPaneBody");
   const isPaneActive = usePaneIsActive();
+  const placementChange = useLibraryPlacementRevision();
+  const observedPlacementRevisionRef = useRef(placementChange.revision);
   const committedSnapshotRef = useRef<LibrariesSnapshot | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(LIBRARIES_VISIT_DATA, captureCommitted);
@@ -276,7 +279,9 @@ export default function LibrariesPaneBody() {
       : null;
   const status =
     controller !== null ? "ready" : loadFailure !== null ? "error" : "loading";
-  usePaneReturnReady(controller !== null || loadFailure !== null || invalidView);
+  usePaneReturnReady(
+    controller !== null || loadFailure !== null || invalidView,
+  );
 
   const rejectPendingLibrariesRevalidation = useCallback((error: unknown) => {
     const pending = pendingLibrariesRevalidationRef.current;
@@ -303,6 +308,13 @@ export default function LibrariesPaneBody() {
     clearAllVisitData,
     rejectPendingLibrariesRevalidation,
   ]);
+  useEffect(() => {
+    const observedRevision = observedPlacementRevisionRef.current;
+    if (placementChange.revision === observedRevision) return;
+    observedPlacementRevisionRef.current = placementChange.revision;
+    if (!libraryPlacementUnknownSince(observedRevision)) return;
+    refreshLibraries();
+  }, [placementChange.revision, refreshLibraries]);
   const revalidateLibraries = useCallback(
     (signal: AbortSignal): Promise<void> => {
       if (signal.aborted) {
@@ -470,13 +482,10 @@ export default function LibrariesPaneBody() {
 
   const inviteLoadError =
     viewerInvitesResource.status === "error"
-      ? libraryRequestErrorMessage(
-          viewerInvitesResource.error,
-          {
-            title: "Library invitations couldn’t be loaded",
-            request: "InvitationRead",
-          },
-        )
+      ? libraryRequestErrorMessage(viewerInvitesResource.error, {
+          title: "Library invitations couldn’t be loaded",
+          request: "InvitationRead",
+        })
       : null;
 
   const presentFailure = useCallback(
@@ -818,80 +827,79 @@ export default function LibrariesPaneBody() {
         </section>
       ) : null}
       <div ref={listRegionRef}>
-      <CollectionView
-        returnScope="Libraries.Items"
-        rows={filteredLibraryRows}
-        status={status}
-        ariaLabel="Libraries"
-        rowChangePresentation={{
-          kind: "ImmediateOnKeyChange",
-          key: filterQuery.trim(),
-        }}
-        collectionBusy={requestsFirstPage || exhaustion.kind === "Draining"}
-        toolbar={createLibraryAction}
-        notice={
-          feedback ? (
-            <FeedbackNotice content={feedback} announcement="Assertive" />
-          ) : status === "loading" && filterQuery.trim() ? (
-            <FeedbackNotice
-              content={{
-                tone: "Neutral",
-                title: "No matching library found so far.",
-              }}
-              announcement="Polite"
-            />
-          ) : undefined
-        }
-        error={
-          controller === null && loadFailure !== null ? (
-            <FeedbackNotice
-              content={loadFailure.content}
-              announcement="Assertive"
-              actions={[{ label: "Retry", onClick: loadFailure.retry }]}
-            />
-          ) : undefined
-        }
-        empty={
-          filterQuery.trim() ? (
-            <FeedbackNotice
-              content={{
-                tone: "Neutral",
-                title: collectionComplete
-                  ? "No libraries match this filter."
-                  : "No matching library found so far.",
-              }}
-              announcement="Polite"
-            />
-          ) : (
-            <FeedbackNotice
-              content={{
-                tone: "Neutral",
-                title: "No libraries yet.",
-                message: "Create your first library above.",
-              }}
-              announcement="Polite"
-            />
-          )
-        }
-        footer={
-          status === "ready" ? (
-            <>
-              <CollectionExhaustionNotice
-                state={requestsFirstPage ? { kind: "Idle" } : exhaustion}
+        <CollectionView
+          returnScope="Libraries.Items"
+          rows={filteredLibraryRows}
+          status={status}
+          ariaLabel="Libraries"
+          rowChangePresentation={{
+            kind: "ImmediateOnKeyChange",
+            key: filterQuery.trim(),
+          }}
+          collectionBusy={requestsFirstPage || exhaustion.kind === "Draining"}
+          toolbar={createLibraryAction}
+          notice={
+            feedback ? (
+              <FeedbackNotice content={feedback} announcement="Assertive" />
+            ) : status === "loading" && filterQuery.trim() ? (
+              <FeedbackNotice
+                content={{
+                  tone: "Neutral",
+                  title: "No matching library found so far.",
+                }}
+                announcement="Polite"
               />
-              {loadFailure !== null ? (
-                <FeedbackNotice
-                  content={loadFailure.content}
-                  announcement="Assertive"
-                  actions={[{ label: "Retry", onClick: loadFailure.retry }]}
+            ) : undefined
+          }
+          error={
+            controller === null && loadFailure !== null ? (
+              <FeedbackNotice
+                content={loadFailure.content}
+                announcement="Assertive"
+                actions={[{ label: "Retry", onClick: loadFailure.retry }]}
+              />
+            ) : undefined
+          }
+          empty={
+            filterQuery.trim() ? (
+              <FeedbackNotice
+                content={{
+                  tone: "Neutral",
+                  title: collectionComplete
+                    ? "No libraries match this filter."
+                    : "No matching library found so far.",
+                }}
+                announcement="Polite"
+              />
+            ) : (
+              <FeedbackNotice
+                content={{
+                  tone: "Neutral",
+                  title: "No libraries yet.",
+                  message: "Create your first library above.",
+                }}
+                announcement="Polite"
+              />
+            )
+          }
+          footer={
+            status === "ready" ? (
+              <>
+                <CollectionExhaustionNotice
+                  state={requestsFirstPage ? { kind: "Idle" } : exhaustion}
                 />
-              ) : null}
-            </>
-          ) : null
-        }
-      />
+                {loadFailure !== null ? (
+                  <FeedbackNotice
+                    content={loadFailure.content}
+                    announcement="Assertive"
+                    actions={[{ label: "Retry", onClick: loadFailure.retry }]}
+                  />
+                ) : null}
+              </>
+            ) : null
+          }
+        />
       </div>
-
     </>
   );
 }

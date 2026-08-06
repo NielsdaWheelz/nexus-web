@@ -48,17 +48,8 @@ import {
   type EpisodeSort,
 } from "@/lib/podcasts/episodeView";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
-import {
-  canonicalSessionOfGlobalState,
-  usePlayerSession,
-} from "@/lib/player/globalPlayer";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import { pluralize } from "@/lib/text/pluralize";
-import { useLectern } from "@/lib/lectern/LecternProvider";
-import {
-  assumeMediaId,
-  type Placement,
-} from "@/lib/lectern/contract";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastOverview from "@/components/podcasts/PodcastOverview";
 import AcquisitionControl from "@/components/browse/AcquisitionControl";
@@ -93,17 +84,17 @@ import {
   decodePodcastEpisodeMedia,
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
-import {
-  EPISODE_PLAY_NEXT_ACTION_ID,
-  episodeActionBusyKey,
-  type EpisodeActionId,
-} from "./episodeActionBusy";
 import styles from "./page.module.css";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { isAbortError } from "@/lib/errors";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import {
+  notifyPodcastActionIntentOwnerReady,
+  usePodcastActionIntentOwner,
+  type PodcastActionIntent,
+} from "@/lib/podcasts/actionIntent";
 import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 
 const EPISODES_PAGE_SIZE = 100;
@@ -119,7 +110,6 @@ type PodcastDetailOperation =
   | "ResetProgress"
   | "LoadNotes"
   | "MarkAllPlayed"
-  | "Lectern"
   | "PaneRefresh";
 
 function podcastDetailErrorTitle(operation: PodcastDetailOperation): string {
@@ -144,8 +134,6 @@ function podcastDetailErrorTitle(operation: PodcastDetailOperation): string {
       return "Episode notes couldn’t be loaded";
     case "MarkAllPlayed":
       return "Episodes weren’t marked as played";
-    case "Lectern":
-      return "Lectern wasn’t updated";
     case "PaneRefresh":
       return "Podcast wasn’t refreshed";
   }
@@ -316,8 +304,6 @@ export default function PodcastDetailPaneBody() {
   const isPaneActive = usePaneIsActive();
   const activateTarget = paneRuntime.activateTarget;
   const { account: billingAccount } = useBillingAccount();
-  const { state: playerState } = usePlayerSession();
-  const lectern = useLectern();
   const committedSnapshotRef = useRef<PodcastDetailSnapshot | null>(null);
   const refreshFallbackSnapshotRef =
     useRef<PodcastDetailSnapshot | null>(null);
@@ -393,20 +379,6 @@ export default function PodcastDetailPaneBody() {
     view === null
       ? null
       : [podcastId, podcastEpisodeViewQuery(view).toString()].join("\u0000");
-  const busyEpisodeActionKeys = useStringIdSet();
-  const beginEpisodeAction = useCallback(
-    (mediaId: string, actionId: EpisodeActionId): string | null => {
-      const key = episodeActionBusyKey(mediaId, actionId);
-      if (busyEpisodeActionKeys.has(key)) return null;
-      busyEpisodeActionKeys.add(key);
-      return key;
-    },
-    [busyEpisodeActionKeys],
-  );
-  const finishEpisodeAction = useCallback(
-    (key: string) => busyEpisodeActionKeys.remove(key),
-    [busyEpisodeActionKeys],
-  );
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const expandedShowNotesMediaIds = useStringIdSet();
   const [loading, setLoading] = useState(restored === null);
@@ -911,7 +883,7 @@ export default function PodcastDetailPaneBody() {
   );
 
   // Unsubscribe and Settings are canonical resource actions now: the pane
-  // publishes its resourceTarget and the app runtime dispatches Unsubscribe
+  // publishes its actionSubject and the app runtime dispatches Unsubscribe
   // (client + snapshot reconcile) and PodcastSettings (app-level overlay).
 
   const retryBackfill = useCallback(async () => {
@@ -1036,59 +1008,6 @@ export default function PodcastDetailPaneBody() {
     view,
   ]);
 
-  // "Play next" is disabled/no-op for the media that is the active Lectern
-  // origin's descriptor (spec §5.1 "targeting the current origin is disabled").
-  const playNextDisabledMediaId = useMemo<string | null>(() => {
-    const session = canonicalSessionOfGlobalState(playerState);
-    return session?.origin.kind === "Lectern"
-      ? session.descriptor.mediaId
-      : null;
-  }, [playerState]);
-
-  // Play next: place After the exact Lectern origin item, else at the head
-  // (spec §5.1). Add to Lectern: append Last.
-  const runEpisodeLecternMutation = useCallback(
-    async (
-      mediaId: string,
-      actionId: EpisodeActionId,
-      execute: () => Promise<unknown>,
-    ) => {
-      const busyKey = beginEpisodeAction(mediaId, actionId);
-      if (busyKey === null) return;
-      setError(null);
-      try {
-        await execute();
-        clearAllVisitData();
-      } catch (lecternError) {
-        if (handleUnauthenticatedApiError(lecternError)) return;
-        captureDetailError(lecternError, "Lectern");
-      } finally {
-        finishEpisodeAction(busyKey);
-      }
-    },
-    [beginEpisodeAction, captureDetailError, clearAllVisitData, finishEpisodeAction],
-  );
-
-  const handlePlayNext = useCallback(
-    async (mediaId: string) => {
-      const session = canonicalSessionOfGlobalState(playerState);
-      const placement: Placement =
-        session && session.origin.kind === "Lectern"
-          ? { kind: "After", itemId: session.origin.itemId }
-          : { kind: "First" };
-      await runEpisodeLecternMutation(
-        mediaId,
-        EPISODE_PLAY_NEXT_ACTION_ID,
-        () =>
-          lectern.placeItems({
-            mediaIds: [assumeMediaId(mediaId)],
-            placement,
-          }),
-      );
-    },
-    [lectern, playerState, runEpisodeLecternMutation],
-  );
-
   const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
     async ({ signal, reportProgress }) => {
       if (!podcastId) {
@@ -1133,6 +1052,75 @@ export default function PodcastDetailPaneBody() {
     [podcastId, revalidatePodcastDetail],
   );
   const activeSubscription = detail?.subscription ?? null;
+  const refreshIntentRef = useRef<PodcastActionIntent | null>(null);
+  const reportMountedRefreshError = useCallback(
+    (refreshError: unknown) => {
+      if (isAbortError(refreshError)) return;
+      if (handleUnauthenticatedApiError(refreshError)) return;
+      captureDetailError(refreshError, "PaneRefresh");
+    },
+    [captureDetailError],
+  );
+  const acceptPodcastActionIntent = useCallback(
+    (intent: PodcastActionIntent) => {
+      if (
+        !podcastId ||
+        !detail ||
+        !activeSubscription ||
+        refreshIntentRef.current !== null
+      ) {
+        return false;
+      }
+      refreshIntentRef.current = intent;
+      void (async () => {
+        let refreshCommitted = false;
+        try {
+          await runPodcastRefresh(
+            { kind: "Podcast", podcastId },
+            { signal: new AbortController().signal, onProgress: () => {} },
+          );
+          // The refresh run has reached its terminal/observation boundary.
+          // Settle the global invocation before projecting the mounted pane so
+          // a local revalidation failure cannot turn a committed refresh into
+          // an aborted action.
+          refreshCommitted = true;
+          await intent.onCommitted();
+          try {
+            await revalidatePodcastDetail(new AbortController().signal);
+          } catch (refreshError) {
+            reportMountedRefreshError(refreshError);
+          }
+        } catch (refreshError) {
+          if (!refreshCommitted) {
+            intent.onAborted();
+            reportMountedRefreshError(refreshError);
+          } else {
+            setAsyncDefect({ error: refreshError });
+          }
+        } finally {
+          if (refreshIntentRef.current === intent) {
+            refreshIntentRef.current = null;
+          }
+          // A second action may have queued while this one was running.
+          notifyPodcastActionIntentOwnerReady(intent.ref);
+        }
+      })();
+      return true;
+    },
+    [
+      activeSubscription,
+      detail,
+      podcastId,
+      reportMountedRefreshError,
+      revalidatePodcastDetail,
+    ],
+  );
+  usePodcastActionIntentOwner(
+    podcastId && detail
+      ? canonicalResourceRef({ scheme: "podcast", id: podcastId })
+      : null,
+    acceptPodcastActionIntent,
+  );
 
   const connectionsComposerController = useConnectionsComposerController({
     scheme: "podcast",
@@ -1162,13 +1150,11 @@ export default function PodcastDetailPaneBody() {
             execute: executeRefresh,
           }
         : undefined,
-    resourceTarget:
+    actionSubject:
       podcastId && detail
-        ? routeResourceActionSubject({
-            scheme: "podcast",
-            id: podcastId,
-            href: `/podcasts/${podcastId}`,
-          })
+        ? {
+            ref: canonicalResourceRef({ scheme: "podcast", id: podcastId }),
+          }
         : undefined,
     header: {
       kind: "Section",
@@ -1189,7 +1175,7 @@ export default function PodcastDetailPaneBody() {
   if (asyncDefect !== null) throw asyncDefect.error;
 
   const podcastLibraryCount = podcastLibraries.filter(
-    (library) => library.isInLibrary,
+    (placement) => placement.relation.kind !== "Absent",
   ).length;
   const episodePaneContent =
     view === null ? (
@@ -1208,17 +1194,13 @@ export default function PodcastDetailPaneBody() {
           episodeStateFilter={view.state}
           transcript={transcript}
           transcriptionAllowed={transcriptionAllowed}
-          busyEpisodeActionKeys={busyEpisodeActionKeys}
           expandedShowNotesMediaIds={expandedShowNotesMediaIds}
-          playNextDisabledMediaId={playNextDisabledMediaId}
-          lecternReady={lectern.resource.status === "ready"}
           matchingEpisodeCount={episodes.length}
           markAllAsPlayedBusy={markAllAsPlayedBusy}
           collectionBusy={episodeExhaustion.kind === "Draining"}
           exhaustion={episodeExhaustion}
           onMarkAllAsPlayed={() => void handleMarkAllAsPlayed()}
           onToggleShowNotes={toggleEpisodeShowNotesExpansion}
-          onPlayNext={handlePlayNext}
         />
       </div>
     );

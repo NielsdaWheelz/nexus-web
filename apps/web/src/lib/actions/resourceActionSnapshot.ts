@@ -1,4 +1,8 @@
 import type { ResourceActivation } from "@/lib/resources/activation";
+import {
+  decodePlayerDescriptor,
+  type PlayerDescriptor,
+} from "@/lib/lectern/contract";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import {
@@ -20,21 +24,22 @@ export type ServerActionAvailability =
   | { readonly kind: "Available" }
   | {
       readonly kind: "Blocked";
-      readonly reason: "Locked" | "Processing" | "TemporarilyUnavailable";
+      readonly reason:
+        | "PermissionDenied"
+        | "Locked"
+        | "Processing"
+        | "TemporarilyUnavailable";
     };
 
 export type ResourceActionCapability =
   | {
-      readonly kind: "Open" | "Share" | "Chat";
-      readonly availability: ServerActionAvailability;
-    }
-  | {
-      readonly kind: "OpenSource";
-      readonly availability: ServerActionAvailability;
-      readonly href: string;
-    }
-  | {
       readonly kind:
+        | "Open"
+        | "OpenInNewPane"
+        | "Share"
+        | "Chat"
+        | "PlayNext"
+        | "DownloadOriginal"
         | "RetryProcessing"
         | "RefreshSource"
         | "RetryMetadata"
@@ -44,11 +49,38 @@ export type ResourceActionCapability =
         | "DeleteLibrary"
         | "PodcastSettings"
         | "RefreshPodcast"
+        | "RetryPodcastBackfill"
         | "DeleteConversation"
         | "RemoveMedia"
         | "LibraryPlacement"
-        | "OfflineAudio";
+        | "OfflineAudio"
+        | "ForkMessage"
+        | "WalkMessageSources"
+        | "RerunMessage"
+        | "RegenerateMessage"
+        | "DeleteMessage"
+        | "EditHighlight"
+        | "LinkHighlight"
+        | "LearnHighlight"
+        | "EditHighlightBounds"
+        | "DeleteHighlight"
+        | "EditPageTitle"
+        | "DeletePage"
+        | "EditNoteBody"
+        | "RenameContributor"
+        | "RegenerateArtifact"
+        | "MakeArtifactRevisionCurrent";
       readonly availability: ServerActionAvailability;
+    }
+  | {
+      readonly kind: "OpenSource";
+      readonly availability: ServerActionAvailability;
+      readonly href: string;
+    }
+  | {
+      readonly kind: "Playback";
+      readonly availability: ServerActionAvailability;
+      readonly playerDescriptor: PlayerDescriptor;
     }
   | {
       readonly kind: "Consumption";
@@ -68,9 +100,59 @@ export type ResourceActionCapability =
   | {
       readonly kind: "LecternMembership";
       readonly availability: ServerActionAvailability;
-      readonly state: "Absent" | "Present";
-      readonly lecternItemId?: string;
+      readonly state: "Absent";
+    }
+  | {
+      readonly kind: "LecternMembership";
+      readonly availability: ServerActionAvailability;
+      readonly state: "Present";
+      readonly lecternItemId: string;
+    }
+  | {
+      readonly kind: "Transcript";
+      readonly availability: ServerActionAvailability;
+      readonly state:
+        | "NotRequested"
+        | "Queued"
+        | "Running"
+        | "Ready"
+        | "Partial"
+        | "Unavailable"
+        | "FailedQuota"
+        | "FailedProvider";
+      readonly coverage: "None" | "Partial" | "Full";
+    }
+  | {
+      readonly kind: "HighlightNote";
+      readonly availability: ServerActionAvailability;
+      readonly state: "Absent";
+    }
+  | {
+      readonly kind: "HighlightNote";
+      readonly availability: ServerActionAvailability;
+      readonly state: "Present";
+      readonly noteBlockId: string;
     };
+
+const CANONICAL_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const FACTS_REVISION_RE = /^[0-9a-f]{64}$/;
+
+function expectCanonicalUuid(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (!CANONICAL_UUID_RE.test(value)) {
+    throw new TypeError(`${name} must be a canonical UUID`);
+  }
+  return value;
+}
+
+function expectFactsRevision(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (!FACTS_REVISION_RE.test(value)) {
+    throw new TypeError(`${name} must be a lowercase SHA-256 hex digest`);
+  }
+  return value;
+}
 
 export interface ResourceActionSnapshot {
   readonly ref: CanonicalResourceRef;
@@ -96,7 +178,12 @@ function decodeServerActionAvailability(
         kind: "Blocked",
         reason: expectOneOf(
           record.reason,
-          ["Locked", "Processing", "TemporarilyUnavailable"] as const,
+          [
+            "PermissionDenied",
+            "Locked",
+            "Processing",
+            "TemporarilyUnavailable",
+          ] as const,
           `${name}.reason`,
         ),
       };
@@ -115,18 +202,6 @@ function decodeResourceActionCapability(
   const record = expectRecord(raw, name);
   const kind = expectString(record.kind, `${name}.kind`);
   switch (kind) {
-    case "Open":
-    case "Share":
-    case "Chat": {
-      expectExactRecord(record, ["kind", "availability"], name);
-      return {
-        kind,
-        availability: decodeServerActionAvailability(
-          record.availability,
-          `${name}.availability`,
-        ),
-      };
-    }
     case "OpenSource": {
       expectExactRecord(record, ["kind", "availability", "href"], name);
       return {
@@ -138,6 +213,27 @@ function decodeResourceActionCapability(
         href: expectString(record.href, `${name}.href`),
       };
     }
+    case "Playback": {
+      expectExactRecord(
+        record,
+        ["kind", "availability", "playerDescriptor"],
+        name,
+      );
+      return {
+        kind,
+        availability: decodeServerActionAvailability(
+          record.availability,
+          `${name}.availability`,
+        ),
+        playerDescriptor: decodePlayerDescriptor(record.playerDescriptor),
+      };
+    }
+    case "Open":
+    case "OpenInNewPane":
+    case "Share":
+    case "Chat":
+    case "PlayNext":
+    case "DownloadOriginal":
     case "RetryProcessing":
     case "RefreshSource":
     case "RetryMetadata":
@@ -147,10 +243,27 @@ function decodeResourceActionCapability(
     case "DeleteLibrary":
     case "PodcastSettings":
     case "RefreshPodcast":
+    case "RetryPodcastBackfill":
     case "DeleteConversation":
     case "RemoveMedia":
     case "LibraryPlacement":
-    case "OfflineAudio": {
+    case "OfflineAudio":
+    case "ForkMessage":
+    case "WalkMessageSources":
+    case "RerunMessage":
+    case "RegenerateMessage":
+    case "DeleteMessage":
+    case "EditHighlight":
+    case "LinkHighlight":
+    case "LearnHighlight":
+    case "EditHighlightBounds":
+    case "DeleteHighlight":
+    case "EditPageTitle":
+    case "DeletePage":
+    case "EditNoteBody":
+    case "RenameContributor":
+    case "RegenerateArtifact":
+    case "MakeArtifactRevisionCurrent": {
       expectExactRecord(record, ["kind", "availability"], name);
       return {
         kind,
@@ -206,16 +319,6 @@ function decodeResourceActionCapability(
       };
     }
     case "LecternMembership": {
-      // `lecternItemId` is an optional key on the wire (present only for the
-      // Present state), so accept it absent or null identically.
-      const hasItemId = "lecternItemId" in record;
-      expectExactRecord(
-        record,
-        hasItemId
-          ? ["kind", "availability", "state", "lecternItemId"]
-          : ["kind", "availability", "state"],
-        name,
-      );
       const availability = decodeServerActionAvailability(
         record.availability,
         `${name}.availability`,
@@ -225,12 +328,83 @@ function decodeResourceActionCapability(
         ["Absent", "Present"] as const,
         `${name}.state`,
       );
-      const lecternItemId = hasItemId
-        ? expectNullableString(record.lecternItemId, `${name}.lecternItemId`)
-        : null;
-      return lecternItemId === null
-        ? { kind, availability, state }
-        : { kind, availability, state, lecternItemId };
+      if (state === "Absent") {
+        expectExactRecord(record, ["kind", "availability", "state"], name);
+        return { kind, availability, state };
+      }
+      expectExactRecord(
+        record,
+        ["kind", "availability", "state", "lecternItemId"],
+        name,
+      );
+      return {
+        kind,
+        availability,
+        state,
+        lecternItemId: expectCanonicalUuid(
+          record.lecternItemId,
+          `${name}.lecternItemId`,
+        ),
+      };
+    }
+    case "Transcript": {
+      expectExactRecord(
+        record,
+        ["kind", "availability", "state", "coverage"],
+        name,
+      );
+      return {
+        kind,
+        availability: decodeServerActionAvailability(
+          record.availability,
+          `${name}.availability`,
+        ),
+        state: expectOneOf(
+          record.state,
+          [
+            "NotRequested",
+            "Queued",
+            "Running",
+            "Ready",
+            "Partial",
+            "Unavailable",
+            "FailedQuota",
+            "FailedProvider",
+          ] as const,
+          `${name}.state`,
+        ),
+        coverage: expectOneOf(
+          record.coverage,
+          ["None", "Partial", "Full"] as const,
+          `${name}.coverage`,
+        ),
+      };
+    }
+    case "HighlightNote": {
+      const availability = decodeServerActionAvailability(
+        record.availability,
+        `${name}.availability`,
+      );
+      const state = expectOneOf(
+        record.state,
+        ["Absent", "Present"] as const,
+        `${name}.state`,
+      );
+      if (state === "Absent") {
+        expectExactRecord(record, ["kind", "availability", "state"], name);
+        return { kind, availability, state };
+      }
+      expectExactRecord(
+        record,
+        ["kind", "availability", "state", "noteBlockId"],
+        name,
+      );
+      return {
+        kind,
+        availability,
+        state,
+        noteBlockId: expectCanonicalUuid(record.noteBlockId, `${name}.noteBlockId`),
+      };
     }
     default:
       // justify-defect: this closed capability union has no open extension
@@ -309,11 +483,19 @@ function decodeResourceActionSnapshot(
     // capabilities; a missing snapshot carrying actions is wire corruption.
     throw new TypeError(`${name} is missing but carries capabilities`);
   }
+  if (missing && activation.kind !== "none") {
+    // justify-defect: a resource cannot be both missing and routeable; the
+    // snapshot is the only owner of both facts and must publish one truth.
+    throw new TypeError(`${name} is missing but carries an activation`);
+  }
   return {
     ref,
     activation,
     missing,
-    factsRevision: expectString(value.factsRevision, `${name}.factsRevision`),
+    factsRevision: expectFactsRevision(
+      value.factsRevision,
+      `${name}.factsRevision`,
+    ),
     capabilities,
   };
 }

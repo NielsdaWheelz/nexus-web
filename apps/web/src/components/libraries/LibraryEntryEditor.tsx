@@ -5,21 +5,27 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import LibraryChooser, {
   type LibraryChooserItem,
 } from "@/components/libraries/LibraryChooser";
-import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
-
-const READ_ONLY_REASON =
-  "Only this library’s owners and editors can change what’s in it.";
+import {
+  libraryPlacementDestinationKey,
+  type LibraryPlacementBlockedReason,
+  type LibraryPlacementDestination,
+  type LibraryPlacementDestinationKey,
+  type LibraryPlacementOption,
+} from "@/lib/libraries/libraryPlacement";
+import {
+  isReservedLibraryName,
+  RESERVED_LIBRARY_NAME_MESSAGE,
+} from "@/lib/libraries/presentation";
 
 export interface LibraryEntryEditorProps {
-  libraries: readonly LibraryPlacementOption[];
-  /** A read is in flight → chooser `loading`. */
+  placements: readonly LibraryPlacementOption[];
   loading: boolean;
-  /** Commands disabled → chooser `busy`. */
   busy: boolean;
-  pendingLibraryId: string | null;
+  creating: boolean;
+  pendingDestinationKey: LibraryPlacementDestinationKey | null;
   error: { content: FeedbackContent; onRetry: (() => void) | null } | null;
-  onAddToLibrary: (libraryId: string) => void;
-  onRemoveFromLibrary: (libraryId: string) => void;
+  onToggle: (destination: LibraryPlacementDestination) => void;
+  onCreateLibrary: ((name: string) => void) | null;
   selectedGroupLabel: string;
   otherGroupLabel: string;
   searchLabel: string;
@@ -28,21 +34,54 @@ export interface LibraryEntryEditorProps {
   emptyInventory: string;
 }
 
+function destinationPresentation(destination: LibraryPlacementDestination) {
+  return destination.kind === "SavedInNexus"
+    ? { name: "Saved in Nexus", color: null }
+    : {
+        name: destination.library.name,
+        color: destination.library.color,
+      };
+}
+
+function blockedReason(reason: LibraryPlacementBlockedReason): string {
+  switch (reason) {
+    case "RequiresAdmin":
+      return "Only a library admin can change this placement.";
+    case "RequiresSubscription":
+      return "Subscribe to this podcast before adding it to a library.";
+    case "SystemManaged":
+      return "This system library is managed automatically.";
+    case "Inherited":
+      return "This placement is inherited from another library.";
+  }
+}
+
+function placementDescription(option: LibraryPlacementOption): string | undefined {
+  const provenance =
+    option.relation.kind === "Inherited"
+      ? `Inherited from ${option.relation.provenance.map(({ name }) => name).join(", ")}`
+      : null;
+  const reason =
+    option.availability.kind === "Blocked"
+      ? blockedReason(option.availability.reason)
+      : null;
+  if (provenance && reason) return `${provenance} · ${reason}`;
+  return provenance ?? reason ?? undefined;
+}
+
 /**
- * The shared placement adapter (docs/cutovers/library-chooser-interaction-hard-
- * cutover.md §2): it owns the search query for client-side substring filtering of
- * the complete inventory, projects LibraryPlacementOption[] into chooser groups,
- * and renders LibraryChooser. It neither fetches nor mutates — those belong to
- * useLibraryPlacement and the caller.
+ * Pure adapter from the canonical placement contract to the shared chooser.
+ * Fetching, commands, and reconciliation remain owned by useLibraryPlacement.
  */
 export default function LibraryEntryEditor({
-  libraries,
+  placements,
   loading,
   busy,
-  pendingLibraryId,
+  creating,
+  pendingDestinationKey,
   error,
-  onAddToLibrary,
-  onRemoveFromLibrary,
+  onToggle,
+  onCreateLibrary,
   selectedGroupLabel,
   otherGroupLabel,
   searchLabel,
@@ -53,61 +92,97 @@ export default function LibraryEntryEditor({
   const [query, setQuery] = useState("");
 
   const { selectedItems, otherItems } = useMemo(() => {
-    const toItem = (library: LibraryPlacementOption): LibraryChooserItem => {
-      const actionable = library.isInLibrary
-        ? library.canRemove
-        : library.canAdd;
+    const toItem = (option: LibraryPlacementOption): LibraryChooserItem => {
+      const key = libraryPlacementDestinationKey(option.destination);
+      const presentation = destinationPresentation(option.destination);
       const interaction: LibraryChooserItem["interaction"] =
-        pendingLibraryId === library.id
+        pendingDestinationKey === key
           ? { kind: "Pending" }
-          : actionable
+          : option.availability.kind === "Available"
             ? { kind: "Enabled" }
-            : { kind: "ReadOnly", reason: READ_ONLY_REASON };
+            : {
+                kind: "ReadOnly",
+                reason: blockedReason(option.availability.reason),
+              };
       return {
-        id: library.id,
-        name: library.name,
-        color: library.color,
-        selected: library.isInLibrary,
+        id: key,
+        name: presentation.name,
+        color: presentation.color,
+        description: placementDescription(option),
+        selected: option.relation.kind !== "Absent",
         interaction,
       };
     };
 
-    const q = query.trim().toLocaleLowerCase();
+    const normalizedQuery = query.trim().toLocaleLowerCase();
     const selected: LibraryChooserItem[] = [];
     const other: LibraryChooserItem[] = [];
-    for (const library of libraries) {
-      // Selected rows are always visible; only the other group is filtered.
-      if (library.isInLibrary) {
-        selected.push(toItem(library));
-      } else if (q === "" || library.name.toLocaleLowerCase().includes(q)) {
-        other.push(toItem(library));
+    for (const option of placements) {
+      const item = toItem(option);
+      // Existing relations stay visible while searching so a user never loses
+      // the context or removal control they opened the editor to manage.
+      if (item.selected) {
+        selected.push(item);
+      } else if (
+        normalizedQuery === "" ||
+        item.name.toLocaleLowerCase().includes(normalizedQuery)
+      ) {
+        other.push(item);
       }
     }
     return { selectedItems: selected, otherItems: other };
-  }, [libraries, query, pendingLibraryId]);
+  }, [placements, query, pendingDestinationKey]);
 
-  const status =
-    loading && libraries.length === 0
+  const byKey = useMemo(
+    () =>
+      new Map(
+        placements.map((option) => [
+          libraryPlacementDestinationKey(option.destination),
+          option,
+        ]),
+      ),
+    [placements],
+  );
+  const createName = query.trim();
+  const normalizedCreateName = createName.toLocaleLowerCase();
+  const createNameReserved =
+    createName.length > 0 && isReservedLibraryName(createName);
+  const duplicateName = placements.some((option) => {
+    if (option.destination.kind !== "Library") return false;
+    return (
+      option.destination.library.name.trim().toLocaleLowerCase() ===
+      normalizedCreateName
+    );
+  });
+  const canCreate =
+    createName.length > 0 &&
+    createName.length <= 100 &&
+    !createNameReserved &&
+    !duplicateName &&
+    !loading &&
+    onCreateLibrary !== null &&
+    error === null;
+
+  const status = creating
+    ? "Creating library…"
+    : loading && placements.length === 0
       ? "Loading libraries…"
       : busy || loading
         ? "Updating libraries…"
-        : libraries.length === 1
-          ? "1 library"
-          : `${libraries.length} libraries`;
+        : createNameReserved
+          ? RESERVED_LIBRARY_NAME_MESSAGE
+          : placements.length === 1
+            ? "1 destination"
+            : `${placements.length} destinations`;
 
   const emptyState =
     selectedItems.length === 0 && otherItems.length === 0
-      ? libraries.length === 0
-        ? emptyInventory
-        : "No libraries match your search."
+      ? createNameReserved
+        ? RESERVED_LIBRARY_NAME_MESSAGE
+        : placements.length === 0 && query.trim() === ""
+          ? emptyInventory
+          : "No libraries match your search."
       : null;
-
-  function onToggle(id: string) {
-    const library = libraries.find((candidate) => candidate.id === id);
-    if (!library) return;
-    if (library.isInLibrary) onRemoveFromLibrary(id);
-    else onAddToLibrary(id);
-  }
 
   return (
     <LibraryChooser
@@ -118,13 +193,24 @@ export default function LibraryEntryEditor({
       listLabel={listLabel}
       selectedGroup={{ label: selectedGroupLabel, items: selectedItems }}
       otherGroup={{ label: otherGroupLabel, items: otherItems }}
-      onToggle={onToggle}
+      onToggle={(key) => {
+        const option = byKey.get(key as LibraryPlacementDestinationKey);
+        if (option) onToggle(option.destination);
+      }}
       busy={busy}
       loading={loading}
       status={status}
       emptyState={emptyState}
       error={error}
-      create={null}
+      create={
+        canCreate
+          ? {
+              name: createName,
+              pending: creating,
+              onCreate: () => onCreateLibrary?.(createName),
+            }
+          : null
+      }
       loadMore={null}
     />
   );

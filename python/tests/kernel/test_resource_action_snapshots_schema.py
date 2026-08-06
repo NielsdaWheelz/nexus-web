@@ -35,6 +35,32 @@ def _activation(ref: str) -> ResourceActivationOut:
     return ResourceActivationOut(resource_ref=ref, kind="route", href="/media/x")
 
 
+def _player_descriptor_wire(media_id: str) -> dict:
+    return {
+        "mediaId": media_id,
+        "title": "Snapshot proof episode",
+        "subtitle": {"kind": "Present", "value": "Snapshot proof cast"},
+        "activation": {
+            "kind": "FooterAudio",
+            "streamUrl": "https://cdn.example.invalid/episode.mp3",
+            "sourceUrl": "https://cdn.example.invalid/episode.mp3",
+            "positionMs": 0,
+            "writeRevision": 0,
+            "resetEpoch": 0,
+            "playbackRate": {
+                "value": 1.0,
+                "source": "Product",
+                "podcastPreference": {"kind": "Absent"},
+            },
+            "pauseShorteningMode": {"kind": "Absent"},
+            "consumptionOverrideRevision": {"kind": "Absent"},
+            "durationMs": {"kind": "Present", "value": 1_200_000},
+            "artworkUrl": {"kind": "Absent"},
+            "chapters": [],
+        },
+    }
+
+
 def _snapshot(ref: str, capabilities: list[dict]) -> ResourceActionSnapshotOut:
     """Build a snapshot from the wire shape the server emits (camelCase)."""
     return ResourceActionSnapshotOut.model_validate(
@@ -93,7 +119,10 @@ def test_capability_union_discriminates_every_kind_and_carries_availability() ->
     capabilities = [
         {"kind": "Open", "availability": {"kind": "Available"}},
         {"kind": "Share", "availability": {"kind": "Available"}},
-        {"kind": "Chat", "availability": {"kind": "Blocked", "reason": "Locked"}},
+        {
+            "kind": "Chat",
+            "availability": {"kind": "Blocked", "reason": "PermissionDenied"},
+        },
         {"kind": "OpenSource", "availability": {"kind": "Available"}, "href": "https://src"},
         {"kind": "RetryProcessing", "availability": {"kind": "Blocked", "reason": "Processing"}},
         {"kind": "RefreshSource", "availability": {"kind": "Available"}},
@@ -122,7 +151,7 @@ def test_capability_union_discriminates_every_kind_and_carries_availability() ->
             "kind": "LecternMembership",
             "availability": {"kind": "Available"},
             "state": "Present",
-            "lecternItemId": "item-1",
+            "lecternItemId": "00000000-0000-0000-0000-000000000002",
         },
     ]
     snapshot = _snapshot(ref, capabilities)
@@ -134,13 +163,16 @@ def test_capability_union_discriminates_every_kind_and_carries_availability() ->
     assert [cap["kind"] for cap in dumped_caps] == [cap["kind"] for cap in capabilities]
 
     by_kind = {cap["kind"]: cap for cap in dumped_caps}
-    assert by_kind["Chat"]["availability"] == {"kind": "Blocked", "reason": "Locked"}
+    assert by_kind["Chat"]["availability"] == {
+        "kind": "Blocked",
+        "reason": "PermissionDenied",
+    }
     assert by_kind["OpenSource"]["href"] == "https://src"
     assert by_kind["Consumption"]["state"] == "InProgress"
     assert by_kind["EpisodeConsumption"]["state"] == "Played"
     assert by_kind["PodcastSubscription"]["state"] == "Subscribed"
     # camelCase alias on the wire, present state carries the lectern item id
-    assert by_kind["LecternMembership"]["lecternItemId"] == "item-1"
+    assert by_kind["LecternMembership"]["lecternItemId"] == "00000000-0000-0000-0000-000000000002"
     assert by_kind["LecternMembership"]["state"] == "Present"
 
 
@@ -159,7 +191,166 @@ def test_lectern_membership_absent_has_no_item_id() -> None:
     dumped = snapshot.model_dump(mode="json", by_alias=True)
     cap = dumped["capabilities"][0]
     assert cap["state"] == "Absent"
-    assert cap.get("lecternItemId") is None
+    assert "lecternItemId" not in cap
+
+
+@pytest.mark.parametrize(
+    "capability",
+    [
+        pytest.param(
+            {
+                "kind": "LecternMembership",
+                "availability": {"kind": "Available"},
+                "state": "Present",
+            },
+            id="present_without_item_id",
+        ),
+        pytest.param(
+            {
+                "kind": "LecternMembership",
+                "availability": {"kind": "Available"},
+                "state": "Absent",
+                "lecternItemId": "00000000-0000-0000-0000-000000000002",
+            },
+            id="absent_with_item_id",
+        ),
+    ],
+)
+def test_lectern_membership_rejects_illegal_state_shapes(capability: dict) -> None:
+    with pytest.raises(ValueError):
+        _snapshot(_media_ref(), [capability])
+
+
+def test_exhaustive_operation_capabilities_round_trip_as_a_closed_union() -> None:
+    ref = _media_ref()
+    capabilities = [
+        {"kind": kind, "availability": {"kind": "Available"}}
+        for kind in (
+            "OpenInNewPane",
+            "PlayNext",
+            "DownloadOriginal",
+            "RetryPodcastBackfill",
+            "ForkMessage",
+            "WalkMessageSources",
+            "RerunMessage",
+            "RegenerateMessage",
+            "DeleteMessage",
+            "EditHighlight",
+            "LinkHighlight",
+            "LearnHighlight",
+            "EditHighlightBounds",
+            "DeleteHighlight",
+            "EditPageTitle",
+            "DeletePage",
+            "EditNoteBody",
+            "RenameContributor",
+            "RegenerateArtifact",
+            "MakeArtifactRevisionCurrent",
+        )
+    ]
+    capabilities.extend(
+        [
+            {
+                "kind": "Playback",
+                "availability": {"kind": "Available"},
+                "playerDescriptor": _player_descriptor_wire(ref.removeprefix("media:")),
+            },
+            {
+                "kind": "Transcript",
+                "availability": {"kind": "Available"},
+                "state": "NotRequested",
+                "coverage": "None",
+            },
+            {
+                "kind": "HighlightNote",
+                "availability": {"kind": "Available"},
+                "state": "Absent",
+            },
+        ]
+    )
+
+    dumped = _snapshot(ref, capabilities).model_dump(mode="json", by_alias=True)
+
+    assert [capability["kind"] for capability in dumped["capabilities"]] == [
+        capability["kind"] for capability in capabilities
+    ]
+    assert dumped["capabilities"][-3] == {
+        "kind": "Playback",
+        "availability": {"kind": "Available"},
+        "playerDescriptor": _player_descriptor_wire(ref.removeprefix("media:")),
+    }
+    assert dumped["capabilities"][-2] == {
+        "kind": "Transcript",
+        "availability": {"kind": "Available"},
+        "state": "NotRequested",
+        "coverage": "None",
+    }
+    assert dumped["capabilities"][-1] == {
+        "kind": "HighlightNote",
+        "availability": {"kind": "Available"},
+        "state": "Absent",
+    }
+
+
+@pytest.mark.parametrize(
+    ("state", "extra", "expected"),
+    [
+        pytest.param("Absent", {}, {"state": "Absent"}, id="absent"),
+        pytest.param(
+            "Present",
+            {"noteBlockId": "00000000-0000-0000-0000-000000000001"},
+            {
+                "state": "Present",
+                "noteBlockId": "00000000-0000-0000-0000-000000000001",
+            },
+            id="present",
+        ),
+    ],
+)
+def test_highlight_note_carries_only_legal_state_facts(
+    state: str, extra: dict, expected: dict
+) -> None:
+    capability = {
+        "kind": "HighlightNote",
+        "availability": {"kind": "Available"},
+        "state": state,
+        **extra,
+    }
+
+    dumped = _snapshot(_media_ref(), [capability]).model_dump(mode="json", by_alias=True)
+
+    assert dumped["capabilities"][0] == {
+        "kind": "HighlightNote",
+        "availability": {"kind": "Available"},
+        **expected,
+    }
+
+
+@pytest.mark.parametrize(
+    "capability",
+    [
+        pytest.param(
+            {
+                "kind": "HighlightNote",
+                "availability": {"kind": "Available"},
+                "state": "Present",
+            },
+            id="present_without_note_block_id",
+        ),
+        pytest.param(
+            {
+                "kind": "HighlightNote",
+                "availability": {"kind": "Available"},
+                "state": "Absent",
+                "noteBlockId": "00000000-0000-0000-0000-000000000001",
+            },
+            id="absent_with_note_block_id",
+        ),
+    ],
+)
+def test_highlight_note_rejects_illegal_state_shapes(capability: dict) -> None:
+    with pytest.raises(ValueError):
+        _snapshot(_media_ref(), [capability])
 
 
 def test_capability_union_rejects_unknown_kind_at_the_boundary() -> None:

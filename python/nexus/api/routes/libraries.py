@@ -153,6 +153,25 @@ def list_writable_library_destinations(
     )
 
 
+@router.get("/podcasts/{podcast_id}/libraries")
+def get_podcast_libraries(
+    podcast_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Read canonical Library placement for one existing Podcast.
+
+    Library placement remains available independently of the optional Podcast
+    ingestion/control router, just like the Library-owned add/remove commands.
+    """
+    rows = library_entries.list_item_libraries(
+        db,
+        viewer_id=viewer.user_id,
+        target=library_entries.podcast_target(podcast_id),
+    )
+    return ok(rows, by_alias=True)
+
+
 @router.post("/libraries", status_code=201)
 def create_library(
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -432,6 +451,25 @@ def remove_podcast_from_library(
 ) -> dict:
     """Remove a podcast reference from one non-default library."""
     result = library_entries.remove_podcast_from_library(
+        db,
+        viewer.user_id,
+        library_id,
+        podcast_id,
+        idempotency_key=idempotency_key,
+    )
+    return ok(result, by_alias=True)
+
+
+@router.put("/libraries/{library_id}/podcasts/{podcast_id}")
+def add_subscribed_podcast_to_library(
+    library_id: UUID,
+    podcast_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)],
+) -> dict:
+    """Place an existing active Podcast subscription in one named Library."""
+    result = library_entries.place_subscribed_podcast_in_named_library(
         db,
         viewer.user_id,
         library_id,

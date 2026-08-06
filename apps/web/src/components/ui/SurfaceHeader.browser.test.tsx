@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
@@ -7,6 +7,7 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
@@ -19,7 +20,7 @@ import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
 import type { PaneViewMenuPublication } from "@/lib/panes/panePublications";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -27,9 +28,10 @@ import SurfaceHeader from "./SurfaceHeader";
 
 // The system under test is the desktop pane header hub. It renders the ONE
 // canonical ResourceActionMenu (wired to the real runtime + planner) for the
-// pane's `resourceTarget`, so the open pane's own menu now INCLUDES Open (AC6),
+// pane's `actionSubject` (AC4), so the open pane's own menu INCLUDES Open (AC3),
 // while the pane refresh and the pane's view menu (reader settings) are ejected
-// into SEPARATE controls that never appear inside the resource dropdown (AC4).
+// into SEPARATE controls that never appear inside the resource dropdown by the
+// Scope/Taxonomy contract.
 // Only the snapshot-resolve fetch boundary is stubbed.
 
 const ACCOUNT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -37,17 +39,17 @@ const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const MEDIA_REF = `media:${MEDIA_ID}`;
 const MEDIA_HREF = `/media/${MEDIA_ID}`;
 const RESOLVE_PATH = "/api/resource-items/action-snapshots/resolve";
+const MEDIA_FACTS_REVISION = "4".repeat(64);
+const MISSING_FACTS_REVISION = "0".repeat(64);
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
   primaryDefaultWidthPx: 684,
 };
 
-const mediaTarget = routeResourceActionSubject({
-  scheme: "media",
-  id: MEDIA_ID,
-  href: MEDIA_HREF,
-});
+const mediaSubject = {
+  ref: canonicalResourceRef({ scheme: "media", id: MEDIA_ID }),
+};
 
 const MEDIA_SNAPSHOT = {
   ref: MEDIA_REF,
@@ -58,7 +60,7 @@ const MEDIA_SNAPSHOT = {
     unresolvedReason: null,
   },
   missing: false,
-  factsRevision: "facts-rev-1",
+  factsRevision: MEDIA_FACTS_REVISION,
   capabilities: [
     { kind: "Open", availability: { kind: "Available" } },
     { kind: "Share", availability: { kind: "Available" } },
@@ -102,7 +104,10 @@ function installBff(): { readonly resolveCalls: unknown[] } {
     "fetch",
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : null;
-      const url = new URL(request?.url ?? String(input), window.location.origin);
+      const url = new URL(
+        request?.url ?? String(input),
+        window.location.origin,
+      );
       const method = init?.method ?? request?.method ?? "GET";
       if (url.pathname === RESOLVE_PATH && method === "POST") {
         const body =
@@ -116,12 +121,12 @@ function installBff(): { readonly resolveCalls: unknown[] } {
                 ref,
                 activation: {
                   resourceRef: ref,
-                  kind: "route",
-                  href: "/",
+                  kind: "none",
+                  href: null,
                   unresolvedReason: null,
                 },
                 missing: true,
-                factsRevision: "missing",
+                factsRevision: MISSING_FACTS_REVISION,
                 capabilities: [],
               },
         );
@@ -162,11 +167,12 @@ function renderHeader() {
                           transport={null}
                         >
                           <ResourceOverlaysProvider>
-                            <ResourceActionRuntimeProvider>
-                              <SurfaceHeader
+                            <GlobalPlayerProvider>
+                              <ResourceActionRuntimeProvider>
+                                <SurfaceHeader
                                 header={sectionHeader}
                                 identityId="pane-identity"
-                                resourceTarget={mediaTarget}
+                                actionSubject={mediaSubject}
                                 viewMenu={readerSettingsViewMenu}
                                 controls={
                                   <button
@@ -183,9 +189,10 @@ function renderHeader() {
                                   onBack: () => {},
                                   onForward: () => {},
                                 }}
-                              />
-                              <ResourceActionOverlays />
-                            </ResourceActionRuntimeProvider>
+                                />
+                                <ResourceActionOverlays />
+                              </ResourceActionRuntimeProvider>
+                            </GlobalPlayerProvider>
                           </ResourceOverlaysProvider>
                         </OfflineMediaProvider>
                       </ShareControllerProvider>
@@ -215,7 +222,7 @@ describe("SurfaceHeader pane hub", () => {
     await page.viewport(1_280, 768);
   });
 
-  it("renders the canonical resource dropdown with Open (AC6), keeping refresh and the view menu as separate controls (AC4)", async () => {
+  it("renders the complete pane-header dropdown (AC4) with Open retained (AC3) and separate control taxonomy", async () => {
     installBff();
     renderHeader();
 
@@ -226,32 +233,34 @@ describe("SurfaceHeader pane hub", () => {
 
     // The resource dropdown is the canonical ResourceActionMenu (label "Options"),
     // appearing only after its snapshot prefetch resolves.
-    const optionsTrigger = await screen.findByRole("button", { name: "Options" });
+    const optionsTrigger = await screen.findByRole("button", {
+      name: "Options",
+    });
+    await waitFor(() => expect(optionsTrigger).toBeEnabled());
     await userEvent.click(optionsTrigger);
     const menu = screen.getByRole("menu");
 
-    // AC6: Open is present in the OPEN pane's own menu (the old CurrentPane
-    // projection dropped it).
+    // AC3: Open remains present in the open pane's own complete menu.
     expect(
       within(menu).getByRole("menuitem", { name: "Open" }),
-      "Open was not present in the open pane's own resource menu (AC6)",
+      "Open was not present in the open pane's own resource menu (AC3)",
     ).toBeTruthy();
     expect(
-      within(menu).getByRole("menuitem", { name: "Chat about this resource" }),
+      within(menu).getByRole("menuitem", { name: "Chat about this…" }),
     ).toBeTruthy();
 
-    // AC4: the pane refresh is NOT inside the resource dropdown — it is a separate
-    // control (asserted above as a top-level button).
+    // Scope/Taxonomy: pane refresh is NOT inside the resource dropdown — it is
+    // a separate control (asserted above as a top-level button).
     expect(
       within(menu).queryByRole("menuitem", { name: "Refresh" }),
-      "the pane refresh leaked into the resource dropdown (AC4)",
+      "the pane refresh leaked into the resource dropdown (Scope/Taxonomy)",
     ).toBeNull();
 
-    // AC4: the reader-view action is NOT inside the resource dropdown; it lives in
-    // the pane's own separate view menu.
+    // Scope/Taxonomy: the reader-view action is NOT inside the resource dropdown;
+    // it lives in the pane's own separate view menu.
     expect(
       within(menu).queryByRole("menuitem", { name: "Reader settings" }),
-      "a reader view action leaked into the resource dropdown (AC4)",
+      "a reader view action leaked into the resource dropdown (Scope/Taxonomy)",
     ).toBeNull();
   });
 
@@ -261,7 +270,8 @@ describe("SurfaceHeader pane hub", () => {
 
     // Ensure the runtime has resolved (resource dropdown present) before probing
     // the sibling view menu.
-    await screen.findByRole("button", { name: "Options" });
+    const options = await screen.findByRole("button", { name: "Options" });
+    await waitFor(() => expect(options).toBeEnabled());
 
     const viewTrigger = screen.getByRole("button", { name: "Reader settings" });
     await userEvent.click(viewTrigger);

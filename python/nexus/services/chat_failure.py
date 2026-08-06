@@ -27,7 +27,9 @@ never from a heuristic:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal, cast
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -366,6 +368,53 @@ def compute_has_write_tool_attempt(db: Session, run: ChatRun) -> bool:
             },
         ).scalar_one()
     )
+
+
+def write_tool_attempt_run_ids(db: Session, runs: Sequence[ChatRun]) -> set[UUID]:
+    """Batch twin of :func:`compute_has_write_tool_attempt`.
+
+    Returns the supplied run ids with any durable assistant-write attempt in two
+    bounded reads, independent of message count. Mutation paths keep using the
+    single-run helper after locking; read projections use this function.
+    """
+    if not runs:
+        return set()
+    from nexus.services.agent_tools.writes import WRITE_TOOL_NAMES
+
+    run_ids = [run.id for run in runs]
+    assistant_message_ids = [run.assistant_message_id for run in runs]
+    message_ids_with_attempts = set(
+        db.scalars(
+            text(
+                """
+                SELECT DISTINCT assistant_message_id
+                FROM message_tool_calls
+                WHERE assistant_message_id = ANY(:assistant_message_ids)
+                  AND scope = 'assistant_write'
+                """
+            ),
+            {"assistant_message_ids": assistant_message_ids},
+        )
+    )
+    event_run_ids = set(
+        db.scalars(
+            text(
+                """
+                SELECT DISTINCT run_id
+                FROM chat_run_events
+                WHERE run_id = ANY(:run_ids)
+                  AND event_type IN ('tool_call_start', 'tool_call_done')
+                  AND payload ->> 'tool_name' = ANY(:tool_names)
+                """
+            ),
+            {"run_ids": run_ids, "tool_names": list(WRITE_TOOL_NAMES)},
+        )
+    )
+    return {
+        run.id
+        for run in runs
+        if run.id in event_run_ids or run.assistant_message_id in message_ids_with_attempts
+    }
 
 
 def compute_terminal_attempts(db: Session, run: ChatRun) -> int | None:

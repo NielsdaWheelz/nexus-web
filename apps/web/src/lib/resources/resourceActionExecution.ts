@@ -1,4 +1,7 @@
-import { activateResource } from "@/lib/resources/activation";
+import {
+  activateResource,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import type { LibraryPlacementOpenOptions } from "@/lib/libraries/placementController";
 import type { LibraryPlacementTarget } from "@/lib/libraries/libraryPlacement";
 import { startResourceContextChat } from "@/lib/resources/resourceContextChat";
@@ -22,10 +25,10 @@ type OpenConversation = (conversationId: string) => void | Promise<void>;
 const resourceChatsInFlight = new Set<CanonicalResourceRef>();
 
 export function executeResourceOpen(input: {
-  readonly target: ResourceActionSubject;
+  readonly activation: ResourceActivation;
   readonly resourceNavigation: ResourceNavigation;
 }): void {
-  activateResource(input.target.activation, input.resourceNavigation);
+  activateResource(input.activation, input.resourceNavigation);
 }
 
 export function executeResourceShare({
@@ -50,14 +53,11 @@ export function executeResourceLibraryPlacement({
   readonly options: LibraryPlacementOpenOptions;
 }): void {
   const ref = parseResourceRef(subject.ref);
-  if (
-    !ref ||
-    subject.activation.resourceRef !== subject.ref ||
-    subject.missing
-  ) {
+  if (!ref) {
     // justify-defect: the relationship action can execute only for one
-    // canonical, present subject.
-    throw new Error("Invalid library placement resource target");
+    // canonical subject. Presence and applicability are snapshot-owned and the
+    // owning placement command reauthorizes before mutation.
+    throw new Error("Invalid library placement resource subject");
   }
   switch (ref.scheme) {
     case "media":

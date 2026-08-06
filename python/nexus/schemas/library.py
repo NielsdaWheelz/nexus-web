@@ -63,13 +63,104 @@ class PodcastPlacementRemovalOut(BaseModel):
     library_entries_collection_revision: CollectionRevision
 
 
-class LibraryPlacementOptionOut(BaseModel):
+class PodcastPlacementAdditionOut(BaseModel):
+    model_config = _LIBRARY_MUTATION_OUT_CONFIG
+
+    outcome: Literal["Added", "AlreadyPresent"]
+    library_entries_collection_revision: CollectionRevision
+
+
+_LIBRARY_PLACEMENT_OUT_CONFIG = ConfigDict(
+    alias_generator=to_camel,
+    populate_by_name=True,
+    extra="forbid",
+)
+
+
+class LibraryIdentityOut(BaseModel):
     id: UUID
     name: str
     color: str | None = None
-    is_in_library: bool
-    can_add: bool
-    can_remove: bool
+
+    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
+
+
+class SavedInNexusLibraryPlacementDestinationOut(BaseModel):
+    kind: Literal["SavedInNexus"] = "SavedInNexus"
+
+    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
+
+
+class LibraryLibraryPlacementDestinationOut(BaseModel):
+    kind: Literal["Library"] = "Library"
+    library: LibraryIdentityOut
+
+    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
+
+
+LibraryPlacementDestinationOut = Annotated[
+    SavedInNexusLibraryPlacementDestinationOut | LibraryLibraryPlacementDestinationOut,
+    Field(discriminator="kind"),
+]
+
+
+class AbsentLibraryPlacementRelationOut(BaseModel):
+    kind: Literal["Absent"] = "Absent"
+
+    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
+
+
+class DirectLibraryPlacementRelationOut(BaseModel):
+    kind: Literal["Direct"] = "Direct"
+
+    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
+
+
+class InheritedLibraryPlacementRelationOut(BaseModel):
+    kind: Literal["Inherited"] = "Inherited"
+    provenance: list[LibraryIdentityOut] = Field(min_length=1)
+
+    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
+
+
+LibraryPlacementRelationOut = Annotated[
+    AbsentLibraryPlacementRelationOut
+    | DirectLibraryPlacementRelationOut
+    | InheritedLibraryPlacementRelationOut,
+    Field(discriminator="kind"),
+]
+
+
+class AvailableLibraryPlacementAvailabilityOut(BaseModel):
+    kind: Literal["Available"] = "Available"
+
+    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
+
+
+class BlockedLibraryPlacementAvailabilityOut(BaseModel):
+    kind: Literal["Blocked"] = "Blocked"
+    reason: Literal[
+        "RequiresAdmin",
+        "RequiresSubscription",
+        "SystemManaged",
+        "Inherited",
+    ]
+
+    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
+
+
+LibraryPlacementAvailabilityOut = Annotated[
+    AvailableLibraryPlacementAvailabilityOut | BlockedLibraryPlacementAvailabilityOut,
+    Field(discriminator="kind"),
+]
+
+
+class LibraryPlacementOptionOut(BaseModel):
+    destination: LibraryPlacementDestinationOut
+    relation: LibraryPlacementRelationOut
+    availability: LibraryPlacementAvailabilityOut
+
+    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
 
 
 class LibraryEntryOrderRequest(BaseModel):

@@ -48,7 +48,7 @@ interface MobileSecondaryPaneHostProps {
 
 interface MobileSecondaryPanePresentationProps
   extends MobileSecondaryPaneHostProps {
-  resourceTarget: ResourceActionSubject | undefined;
+  actionSubject: ResourceActionSubject | undefined;
 }
 
 /**
@@ -70,7 +70,7 @@ function MobileSecondaryPanePresentation({
   onActiveSurfaceChange,
   onSelectDurableFromTransient,
   returnFocusTo,
-  resourceTarget,
+  actionSubject,
 }: MobileSecondaryPanePresentationProps) {
   const baseId = useId();
   const activeSurface =
@@ -164,8 +164,8 @@ function MobileSecondaryPanePresentation({
                 {activeSurfaceDefinition.title}
               </span>
             )}
-            {resourceTarget ? (
-              <ResourceActionMenu target={resourceTarget} label="Actions" />
+            {actionSubject ? (
+              <ResourceActionMenu actionSubject={actionSubject} label="Actions" />
             ) : null}
             <Button
               variant="ghost"
@@ -198,11 +198,11 @@ export default function MobileSecondaryPaneHost(
   props: MobileSecondaryPaneHostProps,
 ) {
   const { paneChrome } = useMobileChrome();
-  const resourceTarget =
+  const actionSubject =
     paneChrome?.paneId === props.primaryPaneId
-      ? paneChrome.resourceTarget
+      ? paneChrome.actionSubject
       : undefined;
   return (
-    <MobileSecondaryPanePresentation {...props} resourceTarget={resourceTarget} />
+    <MobileSecondaryPanePresentation {...props} actionSubject={actionSubject} />
   );
 }

@@ -1,6 +1,6 @@
 import { parseContributorHandle } from "@/lib/contributors/handle";
 import type { ContributorDetail } from "@/lib/contributors/types";
-import { decodeStandingActionTarget } from "@/lib/resources/resourceActionTarget";
+import { decodeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   expectArray,
   expectBoolean,
@@ -17,17 +17,14 @@ export function decodeContributorDetail(raw: unknown): ContributorDetail {
       "displayName",
       "otherNames",
       "canRename",
-      "actionTarget",
+      "actionSubject",
     ],
     "ContributorDetail",
   );
-  const actionTarget = decodeStandingActionTarget(
-    detail.actionTarget,
-    "ContributorDetail.actionTarget",
+  const actionSubject = decodeResourceActionSubject(
+    detail.actionSubject,
+    "ContributorDetail.actionSubject",
   );
-  if (actionTarget.kind !== "Resource") {
-    throw new TypeError("ContributorDetail.actionTarget must be Resource");
-  }
   return {
     handle: parseContributorHandle(
       expectString(detail.handle, "ContributorDetail.handle"),
@@ -44,6 +41,6 @@ export function decodeContributorDetail(raw: unknown): ContributorDetail {
       "ContributorDetail.otherNames",
     ),
     canRename: expectBoolean(detail.canRename, "ContributorDetail.canRename"),
-    actionTarget,
+    actionSubject,
   };
 }

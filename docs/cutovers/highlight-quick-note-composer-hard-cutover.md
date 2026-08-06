@@ -12,6 +12,13 @@ Fresh selection uses an icon control named **Note** in
 `toolbar "Selection actions"`; existing Highlights retain
 **Add note**/**Edit note**.
 
+Action-ownership note: the later
+[`canonical-resource-action-menu-hard-cutover.md`](canonical-resource-action-menu-hard-cutover.md)
+supersedes this document's standing existing-Highlight action model. Fresh
+selection is owned by `buildSelectionActions`; every materialized Highlight is
+owned by `ResourceActionMenu`. References below to the removed combined builder
+and its props are historical implementation-record text, not current contract.
+
 ## Summary
 
 Add a third verb to the selection popover — **Note** — that creates the highlight

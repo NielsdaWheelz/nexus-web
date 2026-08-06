@@ -684,7 +684,7 @@ export default function PaneShell({
   );
   const effectiveActions =
     acceptedPrimaryChrome?.actions ?? EMPTY_HEADER_ACTIONS;
-  const effectiveResourceTarget = acceptedPrimaryChrome?.resourceTarget;
+  const effectiveActionSubject = acceptedPrimaryChrome?.actionSubject;
   const effectiveViewMenu = acceptedPrimaryChrome?.viewMenu;
   const contextualSurfaceInteractive =
     motionPhase.kind === "Visible" || motionPhase.kind === "Pinned";
@@ -830,10 +830,10 @@ export default function PaneShell({
   }, [effectiveInstrument, isMobile, searchExpanded]);
 
   // The pane's non-resource controls. Refresh and route-share are ejected from
-  // the resource menu (AC4): refresh is a dedicated affordance (never a menu
+  // the resource menu: refresh is a dedicated affordance (never a menu
   // item — the pane already owns pull-to-refresh + this button), and route-share
   // is its own control. The resource dropdown itself is the canonical
-  // `ResourceActionMenu` keyed by `effectiveResourceTarget`, rendered by
+  // `ResourceActionMenu` keyed by `effectiveActionSubject`, rendered by
   // SurfaceHeader / the mobile bar — so Open appears in the open pane's own menu.
   const paneControls = useMemo<ReactNode>(() => {
     const refreshControl = acceptedRefresh ? (
@@ -898,7 +898,7 @@ export default function PaneShell({
     // Direct header actions (Companion, Search), dedicated pane controls
     // (refresh, route-share), and the pane's own view menu travel on their own
     // channels so the mobile bar renders them beside — never folded into — the
-    // canonical resource dropdown, which is keyed by `resourceTarget` alone.
+    // canonical resource dropdown, which is keyed by `actionSubject` alone.
     setPaneChrome({
       paneId,
       routeKey,
@@ -909,7 +909,7 @@ export default function PaneShell({
       actions: reconciledActions,
       controls: paneControls,
       viewMenu: effectiveViewMenu,
-      resourceTarget: effectiveResourceTarget,
+      actionSubject: effectiveActionSubject,
     });
   }, [
     activateChromeAnchor,
@@ -922,7 +922,7 @@ export default function PaneShell({
     reconciledActions,
     paneControls,
     effectiveViewMenu,
-    effectiveResourceTarget,
+    effectiveActionSubject,
     setPaneChrome,
   ]);
 
@@ -1047,7 +1047,7 @@ export default function PaneShell({
               actions={reconciledActions}
               controls={paneControls}
               viewMenu={effectiveViewMenu}
-              resourceTarget={effectiveResourceTarget}
+              actionSubject={effectiveActionSubject}
               navigation={navigation}
             />
           ) : null}

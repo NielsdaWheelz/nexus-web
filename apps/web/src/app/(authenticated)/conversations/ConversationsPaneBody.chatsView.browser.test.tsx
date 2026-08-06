@@ -20,11 +20,13 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import {
   ResourceActionOverlays,
   ResourceOverlaysProvider,
 } from "@/lib/resources/resourceOverlaysController";
 import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
+import { publishConversationIndexChange } from "@/lib/conversations/indexRevision";
 import ConversationsPaneBody from "./ConversationsPaneBody";
 
 // The canonical resource-action runtime the pane's rows and chrome render into.
@@ -102,9 +104,13 @@ function chatsPage(items: readonly (typeof MERIDIAN)[]) {
  * view keys, `title` accepts either direction, and every other pair — including
  * the explicitly written default — is rejected as an invalid request.
  */
-function stubChatsIndex(titleAscPage?: Promise<Response>) {
+function stubChatsIndex(
+  titleAscPage?: Promise<Response>,
+  canonicalPages: readonly (readonly (typeof MERIDIAN)[])[] = [UPDATED_NEWEST],
+) {
   const requests: string[] = [];
   const signals = new Map<string, AbortSignal>();
+  let canonicalRequestCount = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -118,7 +124,12 @@ function stubChatsIndex(titleAscPage?: Promise<Response>) {
       const sort = url.searchParams.get("sort");
       const direction = url.searchParams.get("direction");
       if (sort === null && direction === null) {
-        return chatsPage(UPDATED_NEWEST);
+        const items =
+          canonicalPages[
+            Math.min(canonicalRequestCount, canonicalPages.length - 1)
+          ] ?? UPDATED_NEWEST;
+        canonicalRequestCount += 1;
+        return chatsPage(items);
       }
       if (sort === "title" && direction === "asc") {
         return titleAscPage ?? chatsPage(TITLE_ASC);
@@ -182,57 +193,59 @@ function ChatsPane({
                     calendarTimeZone: "UTC",
                   }}
                 >
-                <KeybindingsProvider>
-                <WorkspaceStoreProvider
-                  initialState={createDefaultWorkspaceState(
-                    "/conversations",
-                    RESOURCE_ACTION_METRICS,
-                  )}
-                  workspacePrimaryMetrics={RESOURCE_ACTION_METRICS}
-                >
-                <LecternProvider>
-                <OfflineMediaProvider
-                  accountId={RESOURCE_ACTION_ACCOUNT_ID}
-                  transport={null}
-                >
-                <ResourceOverlaysProvider>
-                <ResourceActionRuntimeProvider>
-                <div data-pane-id="pane" data-active="true">
-                  <PaneShell
-                    paneId="pane"
-                    routeKey={routeKey}
-                    routeHeader={{
-                      kind: "Section",
-                      destinationId: "chats",
-                      context: "None",
-                    }}
-                    label="Chats"
-                    returnMementoEnabled
-                    queryNavigation="in-place"
-                    sizing={{
-                      primaryWidthPx: 720,
-                      primaryMinWidthPx: 320,
-                      primaryMaxWidthPx: 1_400,
-                      renderedPrimarySlotWidthPx: 720,
-                      renderedPrimarySlotMinWidthPx: 320,
-                      renderedPrimarySlotMaxWidthPx: 1_400,
-                      fixedChromeWidthPx: 0,
-                      storedWidthCorrectionPx: null,
-                    }}
-                    bodyMode="standard"
-                    onResizePrimaryPane={noop}
-                    isActive
-                  >
-                    <ConversationsPaneBody />
-                  </PaneShell>
-                </div>
-                <ResourceActionOverlays />
-                </ResourceActionRuntimeProvider>
-                </ResourceOverlaysProvider>
-                </OfflineMediaProvider>
-                </LecternProvider>
-                </WorkspaceStoreProvider>
-                </KeybindingsProvider>
+                  <KeybindingsProvider>
+                    <WorkspaceStoreProvider
+                      initialState={createDefaultWorkspaceState(
+                        "/conversations",
+                        RESOURCE_ACTION_METRICS,
+                      )}
+                      workspacePrimaryMetrics={RESOURCE_ACTION_METRICS}
+                    >
+                      <LecternProvider>
+                        <OfflineMediaProvider
+                          accountId={RESOURCE_ACTION_ACCOUNT_ID}
+                          transport={null}
+                        >
+                          <ResourceOverlaysProvider>
+                            <GlobalPlayerProvider>
+                              <ResourceActionRuntimeProvider>
+                                <div data-pane-id="pane" data-active="true">
+                                  <PaneShell
+                                    paneId="pane"
+                                    routeKey={routeKey}
+                                    routeHeader={{
+                                      kind: "Section",
+                                      destinationId: "chats",
+                                      context: "None",
+                                    }}
+                                    label="Chats"
+                                    returnMementoEnabled
+                                    queryNavigation="in-place"
+                                    sizing={{
+                                      primaryWidthPx: 720,
+                                      primaryMinWidthPx: 320,
+                                      primaryMaxWidthPx: 1_400,
+                                      renderedPrimarySlotWidthPx: 720,
+                                      renderedPrimarySlotMinWidthPx: 320,
+                                      renderedPrimarySlotMaxWidthPx: 1_400,
+                                      fixedChromeWidthPx: 0,
+                                      storedWidthCorrectionPx: null,
+                                    }}
+                                    bodyMode="standard"
+                                    onResizePrimaryPane={noop}
+                                    isActive
+                                  >
+                                    <ConversationsPaneBody />
+                                  </PaneShell>
+                                </div>
+                                <ResourceActionOverlays />
+                              </ResourceActionRuntimeProvider>
+                            </GlobalPlayerProvider>
+                          </ResourceOverlaysProvider>
+                        </OfflineMediaProvider>
+                      </LecternProvider>
+                    </WorkspaceStoreProvider>
+                  </KeybindingsProvider>
                 </AuthenticatedAccountProvider>
               </PaneRuntimeProvider>
             </PaneReturnMementoProvider>
@@ -390,7 +403,9 @@ describe("Chats index domain view", () => {
 
     await userEvent.keyboard("{Escape}");
 
-    expect(screen.queryByRole("searchbox", { name: "Filter chats" })).toBeNull();
+    expect(
+      screen.queryByRole("searchbox", { name: "Filter chats" }),
+    ).toBeNull();
     expect(replaced).toEqual([]);
     expect(chatTitles()).toEqual(titles(TITLE_ASC));
 
@@ -401,12 +416,32 @@ describe("Chats index domain view", () => {
       await screen.findByRole("searchbox", { name: "Filter chats" }),
     ).toHaveValue("");
 
-    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Clear filters" }),
+    );
 
     await waitFor(() => expect(replaced).toEqual(["/conversations"]));
     await waitFor(() => expect(chatTitles()).toEqual(titles(UPDATED_NEWEST)));
     expect(requests).toEqual([TITLE_ASC_REQUEST, CANONICAL_REQUEST]);
     await waitFor(() => expect(sortControl()).toHaveFocus());
     expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  });
+
+  it("authoritatively removes a deleted chat row after the shared index revision", async () => {
+    const { requests } = stubChatsIndex(undefined, [
+      UPDATED_NEWEST,
+      [ZEBRA, AURORA],
+    ]);
+
+    render(<ChatsPane initialHref="/conversations" replaced={[]} />);
+
+    await screen.findByRole("link", { name: MERIDIAN.title });
+    publishConversationIndexChange();
+
+    await waitFor(() =>
+      expect(screen.queryByRole("link", { name: MERIDIAN.title })).toBeNull(),
+    );
+    expect(chatTitles()).toEqual(titles([ZEBRA, AURORA]));
+    expect(requests).toEqual([CANONICAL_REQUEST, CANONICAL_REQUEST]);
   });
 });

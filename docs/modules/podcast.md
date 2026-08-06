@@ -108,6 +108,13 @@ that matter:
 - **Subscription and Library facts.** A `podcast_subscriptions` row means active;
   unsubscribe deletes it. Named placement is only
   `library_entries(podcast_id)`, with `library_entries.py` as sole writer.
+  `GET /podcasts/{podcastId}/libraries` is registered by the always-available
+  Library relationship router, not the optional provider-ingestion router.
+  `PUT /libraries/{libraryId}/podcasts/{podcastId}` is placement-only: it
+  requires and transactionally rechecks the active subscription, uses a stable
+  idempotency key, and never creates a subscription. An existing unsubscribed
+  Podcast remains a canonical actionable resource; its placement inventory
+  exposes named destinations as blocked with `RequiresSubscription`.
   The row owns the nullable playback-rate and pause-shortening defaults;
   nullable pause shortening projects as `Presence<Off | Natural>` and means
   use the Android device default.

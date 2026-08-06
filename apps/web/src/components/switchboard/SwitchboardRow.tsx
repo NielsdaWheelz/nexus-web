@@ -9,7 +9,7 @@ import {
 } from "react";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import ActionMenu from "@/components/ui/ActionMenu";
-import { useResourceActionCatalogProjection } from "@/lib/actions/resourceActionRuntime";
+import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import {
   nexusEntryKeyValue,
   type NexusAction,
@@ -24,21 +24,27 @@ type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
 /**
  * The overflow menu for a canonical resource switchboard row. It renders the
- * SAME catalog projection every other surface shows for `target`, over the
+ * SAME catalog projection every other surface shows for `actionSubject`, over the
  * row's own `ActionMenu` trigger — the resource secondary actions come from the
- * shared planner, never a private NexusAction array. The trigger is withheld
- * until the ref's snapshot is ready, so opening the menu performs no request.
+ * shared planner, never a private NexusAction array. The standing trigger is
+ * inert until the ref's snapshot is ready, so opening performs no request.
  */
 function SwitchboardRowResourceMenu({
-  target,
+  actionSubject,
   menuProps,
 }: {
-  target: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
   menuProps: Omit<ActionMenuProps, "options">;
 }) {
-  const model = useResourceActionCatalogProjection(target);
-  if (!model.ready) return null;
-  return <ActionMenu options={model.descriptors} {...menuProps} />;
+  const model = useResourceActionMenuModel(actionSubject);
+  return (
+    <ActionMenu
+      options={model.descriptors}
+      triggerDisabled={model.triggerDisabled}
+      triggerDisabledReason={model.triggerDisabledReason}
+      {...menuProps}
+    />
+  );
 }
 
 function openStateLabel(state: NexusEntry["openState"]): string | undefined {
@@ -213,9 +219,9 @@ export default function SwitchboardRow({
           <kbd className={styles.rowShortcut}>{entry.shortcutHint}</kbd>
         ) : null}
       </button>
-      {entry.resourceTarget ? (
+      {entry.actionSubject ? (
         <SwitchboardRowResourceMenu
-          target={entry.resourceTarget}
+          actionSubject={entry.actionSubject}
           menuProps={menuProps}
         />
       ) : actions.length > 0 ? (

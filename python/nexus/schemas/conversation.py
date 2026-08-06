@@ -21,6 +21,7 @@ from pydantic import (
 
 from nexus.schemas.chat_reader_selection import ReaderSelectionInput, ReaderSelectionOut
 from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
+from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.execution import DurableExecutionOut
 from nexus.schemas.llm import ExpectedChatFailure
 from nexus.schemas.presence import Absent, Presence, Present, absent, present
@@ -166,6 +167,16 @@ class MessageOut(BaseModel):
         if self.can_regenerate and self.role != "assistant":
             raise ValueError("only assistant messages may be regeneratable")
         return self
+
+
+class MessageDeleteOut(BaseModel):
+    """Authoritative receipt for a committed message-subtree deletion."""
+
+    conversation_id: UUID = Field(alias="conversationId")
+    conversation_deleted: bool = Field(alias="conversationDeleted")
+    collection_revision: CollectionRevision = Field(alias="collectionRevision")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
 class MessageRetrievalOut(BaseModel):

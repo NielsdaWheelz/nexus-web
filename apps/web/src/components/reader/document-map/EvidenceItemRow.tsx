@@ -8,8 +8,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { type FeedbackContent } from "@/components/feedback/Feedback";
-import HighlightActionBar from "@/components/highlights/HighlightActionBar";
-import type { HighlightActionTarget } from "@/components/highlights/highlightActions";
+import HighlightResourceActionMenu from "@/components/highlights/HighlightResourceActionMenu";
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
 import ContextEdgeMenu from "@/components/resources/ContextEdgeMenu";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
@@ -21,7 +20,6 @@ import {
   type ApiError,
 } from "@/lib/api/client";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
-import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -45,7 +43,10 @@ import { anchoredRowForEvidenceItem } from "@/lib/reader/marginItems";
 import type { AnchoredReaderRow } from "../useAnchoredReaderProjection";
 import styles from "./EvidencePaneSurface.module.css";
 
-function evidenceActionErrorMessage(error: ApiError, title: string): FeedbackContent {
+function evidenceActionErrorMessage(
+  error: ApiError,
+  title: string,
+): FeedbackContent {
   switch (error.code) {
     case "E_NETWORK":
       return {
@@ -65,19 +66,6 @@ function evidenceActionErrorMessage(error: ApiError, title: string): FeedbackCon
 }
 
 export interface EvidenceHighlightActions {
-  canQuoteToChat: boolean;
-  focusedHighlightId: string | null;
-  isEditingBounds: boolean;
-  isReflowable: boolean;
-  onFocusHighlight: (highlightId: string) => void;
-  onQuoteToNewChat: (highlightId: string) => void;
-  onQuoteToExistingChat: (highlightId: string) => void;
-  onLearn: (highlightId: string) => void;
-  onLink: (target: HighlightActionTarget) => void;
-  onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
-  onDelete: (highlightId: string) => Promise<void>;
-  onStartEditBounds: () => void;
-  onCancelEditBounds: () => void;
   onNoteSave: (
     highlightId: string,
     noteBlockId: string | null,
@@ -91,7 +79,10 @@ export interface EvidenceHighlightActions {
     clientMutationId: string,
     shouldApply: () => boolean,
   ) => Promise<void>;
-  onOpenNoteLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
+  onOpenNoteLink: (
+    href: string,
+    disposition: WorkspaceTargetDisposition,
+  ) => void;
 }
 
 /**
@@ -217,43 +208,7 @@ export function EvidenceItemRow({
         </div>
         <div className={styles.itemActions}>
           {highlight ? (
-            <HighlightActionBar
-              presentation="menu"
-              highlight={highlight}
-              canQuoteToChat={highlightActions.canQuoteToChat}
-              canAddNote
-              isReflowable={highlightActions.isReflowable}
-              isEditingBounds={
-                highlightActions.focusedHighlightId === highlight.id &&
-                highlightActions.isEditingBounds
-              }
-              onSelectColor={(color) =>
-                highlightActions.onColorChange(highlight.id, color)
-              }
-              onAddNote={() => onEditHighlight(highlight.id)}
-              onLink={() =>
-                highlightActions.onLink({ kind: "existing", highlight })
-              }
-              onLearn={() => highlightActions.onLearn(highlight.id)}
-              onDelete={() => highlightActions.onDelete(highlight.id)}
-              onQuoteToNewChat={() =>
-                highlightActions.onQuoteToNewChat(highlight.id)
-              }
-              onQuoteToExistingChat={() =>
-                highlightActions.onQuoteToExistingChat(highlight.id)
-              }
-              onToggleEditBounds={() => {
-                if (
-                  highlightActions.focusedHighlightId === highlight.id &&
-                  highlightActions.isEditingBounds
-                ) {
-                  highlightActions.onCancelEditBounds();
-                } else {
-                  highlightActions.onFocusHighlight(highlight.id);
-                  highlightActions.onStartEditBounds();
-                }
-              }}
-            />
+            <HighlightResourceActionMenu highlight={highlight} />
           ) : null}
           {item.kind === "Link" || item.kind === "Synapse" ? (
             <ObjectOpenButton
@@ -263,7 +218,7 @@ export function EvidenceItemRow({
           ) : null}
           {item.kind === "Link" || item.kind === "Synapse" ? (
             <EvidenceObjectActions
-              target={item.object.actionTarget}
+              actionSubject={item.object.actionSubject}
               label={item.object.label}
               relationship={
                 item.kind === "Synapse"
@@ -481,7 +436,7 @@ function AssociationRow({
           <ExternalLink size={12} aria-hidden="true" />
         </button>
         <EvidenceObjectActions
-          target={association.object.actionTarget}
+          actionSubject={association.object.actionSubject}
           label={association.object.label}
           relationship={
             removableAssociation
@@ -509,24 +464,27 @@ type EvidenceRelationshipAction =
 
 /**
  * The canonical resource dropdown for an evidence object, paired with the
- * separate context-edge control (AC4). The resource menu is the one canonical
+ * separate context-edge control. The resource menu is the one canonical
  * `ResourceActionMenu` (Open/Share/Chat/… via the runtime); unlink and dismiss
  * are EDGE mutations that leave the resource menu for their own labelled
  * control. `SourceTargetRow` passes `{ kind: "None" }`, so only the resource
  * menu renders there.
  */
 function EvidenceObjectActions({
-  target,
+  actionSubject,
   label,
   relationship,
 }: {
-  target: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
   label: string;
   relationship: EvidenceRelationshipAction;
 }) {
   return (
     <>
-      <ResourceActionMenu target={target} label={`Actions for ${label}`} />
+      <ResourceActionMenu
+        actionSubject={actionSubject}
+        label={`Actions for ${label}`}
+      />
       {relationship.kind !== "None" ? (
         <ContextEdgeMenu
           action={relationship.kind === "Unlink" ? "Unlink" : "Dismiss"}
@@ -612,7 +570,7 @@ function SourceTargetRow({
         )}
       </button>
       <EvidenceObjectActions
-        target={target.actionTarget}
+        actionSubject={target.actionSubject}
         label={label}
         relationship={{ kind: "None" }}
       />

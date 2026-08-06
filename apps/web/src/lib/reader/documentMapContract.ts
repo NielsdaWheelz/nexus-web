@@ -10,7 +10,7 @@ import { EDGE_KINDS, EDGE_ORIGINS } from "@/lib/resourceGraph/connections";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import {
-  decodeStandingActionTarget,
+  decodeResourceActionSubject,
   type ResourceActionSubject,
 } from "@/lib/resources/resourceActionTarget";
 import {
@@ -440,7 +440,7 @@ function decodeSourceTarget(
     label: decodeStringPresence(value.label, `${name}.label`),
     body: decodeStringPresence(value.body, `${name}.body`),
     activation,
-    actionTarget: evidenceActionTarget(ref, activation, name),
+    actionSubject: evidenceActionSubject(ref, activation, name),
     resolution: decodeResolution(value.resolution, `${name}.resolution`),
   };
 }
@@ -513,7 +513,7 @@ function decodeEvidenceObject(
       label: expectString(value.label, `${name}.label`),
       excerpt: decodeStringPresence(value.excerpt, `${name}.excerpt`),
       activation,
-      actionTarget: evidenceActionTarget(ref, activation, name),
+      actionSubject: evidenceActionSubject(ref, activation, name),
     };
   };
   switch (value.kind) {
@@ -587,24 +587,16 @@ function decodeActivation(raw: unknown, name: string): ResourceActivation {
   };
 }
 
-function evidenceActionTarget(
+function evidenceActionSubject(
   ref: string,
   activation: ResourceActivation,
   name: string,
 ): ResourceActionSubject {
-  const target = decodeStandingActionTarget(
-    {
-      kind: "Resource",
-      ref,
-      activation,
-      missing: activation.unresolvedReason === "missing",
-    },
-    `${name}.actionTarget`,
-  );
-  if (target.kind !== "Resource") {
-    defect(`${name}.actionTarget must be Resource`);
+  const subject = decodeResourceActionSubject({ ref }, `${name}.actionSubject`);
+  if (activation.resourceRef !== subject.ref) {
+    defect(`${name}.activation.resource_ref must equal ${name}.ref`);
   }
-  return target;
+  return subject;
 }
 
 function decodeMarker(raw: unknown, index: number): ReaderDocumentMapMarker {

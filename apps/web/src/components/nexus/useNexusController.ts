@@ -1136,8 +1136,8 @@ export function useNexusController(): NexusController {
         target.kind === "InternalHref"
           ? target.href
           : target.kind === "ResourceOpen" &&
-              target.subject.activation.kind === "route"
-            ? target.subject.activation.href
+              target.activation.kind === "route"
+            ? target.activation.href
             : target.kind === "PaneOpen"
               ? panes.find((pane) => pane.id === target.paneId)?.href
               : null;
@@ -1252,10 +1252,10 @@ export function useNexusController(): NexusController {
       if (target?.kind === "InternalHref") warmPane(target.href);
       if (
         target?.kind === "ResourceOpen" &&
-        target.subject.activation.kind === "route" &&
-        target.subject.activation.href
+        target.activation.kind === "route" &&
+        target.activation.href
       ) {
-        warmPane(target.subject.activation.href);
+        warmPane(target.activation.href);
       }
     },
     [parsed.text, projection.groups, warmPane],

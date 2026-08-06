@@ -15,6 +15,7 @@ import {
   noteBodySchema,
   noteBodyValueFromDoc,
 } from "@/lib/notes/prosemirror/schema";
+import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 
 export interface DailySurfaceOwner {
   accountId: string;
@@ -36,6 +37,8 @@ export interface DailySurfaceSessionOptions {
   ) => void;
   beforePrepend?: (noteRef: string) => void;
   onError?: (error: unknown) => void;
+  onTitleMutationStarted?: () => MountedEditorMutationLease | null;
+  onSourceBodyMutationStarted?: () => MountedEditorMutationLease | null;
 }
 
 export type DailySurfaceLoad =

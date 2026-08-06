@@ -3,27 +3,30 @@
  * (spec §10.1) — conversation context edges, replacing the old conversation
  * references client. `ContextRefOut` is the decoded frontend contract for the
  * backend `nexus/schemas/resource_graph.py:ContextRefOut`; the decoder adds the
- * explicit resource-action subject from the wire ref, activation, and missing
- * facts.
+ * explicit resource-action subject from the wire ref. Occurrence activation
+ * and missing state remain separate facts.
  */
 
 import { apiFetch } from "@/lib/api/client";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import { decodeStandingActionTarget } from "@/lib/resources/resourceActionTarget";
+import type { ResourceActivation } from "@/lib/resources/activation";
+import { normalizeResourceActivation } from "@/lib/resources/activation";
+import {
+  decodeResourceActionSubject,
+  type ResourceActionSubject,
+} from "@/lib/resources/resourceActionTarget";
 import {
   expectBoolean,
   expectExactRecord,
   expectString,
 } from "@/lib/validation";
-import { normalizeResourceActivation } from "@/lib/resources/activation";
 import { formatResourceRef, type ResourceRef } from "./resourceRef";
 
 export interface ContextRefOut {
   id: string;
   conversation_id: string;
   resource_ref: string;
-  activation: ResourceActionSubject["activation"];
-  actionTarget: ResourceActionSubject;
+  activation: ResourceActivation;
+  actionSubject: ResourceActionSubject;
   label: string;
   summary: string;
   missing: boolean;
@@ -59,19 +62,16 @@ export function decodeContextRef(
   if (activation === null) {
     throw new TypeError(`${name}.activation must be a resource activation`);
   }
-  const target = decodeStandingActionTarget(
-    {
-      kind: "Resource",
-      ref: resourceRef,
-      activation,
-      missing,
-    },
-    `${name}.actionTarget`,
+  const actionSubject = decodeResourceActionSubject(
+    { ref: resourceRef },
+    `${name}.actionSubject`,
   );
-  if (target.kind !== "Resource") {
-    // justify-defect: this decoder constructs the Resource discriminator
-    // itself, so an External result means its shared decoder contract broke.
-    throw new TypeError(`${name}.actionTarget must be Resource`);
+  if (activation.resourceRef !== actionSubject.ref) {
+    // justify-defect: occurrence navigation and canonical action identity are
+    // separate facts, but a context ref must publish both for one resource.
+    throw new TypeError(
+      `${name}.activation.resource_ref must equal ${name}.resource_ref`,
+    );
   }
   return {
     id: expectString(value.id, `${name}.id`),
@@ -80,8 +80,8 @@ export function decodeContextRef(
       `${name}.conversation_id`,
     ),
     resource_ref: resourceRef,
-    activation: target.activation,
-    actionTarget: target,
+    activation,
+    actionSubject,
     label: expectString(value.label, `${name}.label`),
     summary: expectString(value.summary, `${name}.summary`),
     missing,

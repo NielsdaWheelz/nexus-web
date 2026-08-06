@@ -9,6 +9,12 @@ Type: atomic hard cutover
 > Refinement rows reflow; `FindOccurrences` and reader instruments retain the
 > single-line instrument contract.
 
+> **Canonical-action update (2026-08-05):**
+> [`canonical-resource-action-menu-hard-cutover.md`](canonical-resource-action-menu-hard-cutover.md)
+> supersedes this document's `ActionPublication` and resource-menu publication
+> clauses. Desktop and both mobile pane headers now consume the pane's sole
+> `actionSubject`; pane/view/session controls remain separate.
+
 ## Questions And Locked Defaults
 
 Open questions: none.

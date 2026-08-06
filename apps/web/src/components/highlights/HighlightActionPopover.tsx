@@ -1,44 +1,21 @@
 "use client";
 
-import HighlightActionBar from "@/components/highlights/HighlightActionBar";
+import HighlightResourceActionMenu from "@/components/highlights/HighlightResourceActionMenu";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
-import type { HighlightColor } from "@/lib/highlights/segmenter";
 
 /**
- * The reader-text click surface: the same {@link HighlightActionBar} the sidecar
+ * The reader-text click surface: the same canonical menu the sidecar
  * uses, anchored to the highlight the user clicked. Dismisses on outside-click,
  * Escape, and scroll; the caller re-anchors when another highlight is clicked.
  */
 export default function HighlightActionPopover({
   highlight,
   anchorRect,
-  canQuoteToChat,
-  canAddNote,
-  isReflowable,
-  onSelectColor,
-  onAddNote,
-  onLink,
-  onLearn,
-  onDelete,
-  onQuoteToNewChat,
-  onQuoteToExistingChat,
-  onToggleEditBounds,
   onDismiss,
 }: {
   highlight: AnchoredReaderRow;
   anchorRect: DOMRect;
-  canQuoteToChat: boolean;
-  canAddNote?: boolean;
-  isReflowable: boolean;
-  onSelectColor: (color: HighlightColor) => Promise<void>;
-  onAddNote?: () => void;
-  onLink?: () => void;
-  onLearn?: () => void;
-  onDelete: () => Promise<void>;
-  onQuoteToNewChat: () => void;
-  onQuoteToExistingChat: () => void;
-  onToggleEditBounds: () => void;
   onDismiss: () => void;
 }) {
   return (
@@ -51,22 +28,7 @@ export default function HighlightActionPopover({
       scrollBehavior="dismiss"
       onDismiss={onDismiss}
     >
-      <HighlightActionBar
-        presentation="bar"
-        highlight={highlight}
-        canQuoteToChat={canQuoteToChat}
-        canAddNote={canAddNote}
-        isReflowable={isReflowable}
-        isEditingBounds={false}
-        onSelectColor={onSelectColor}
-        onAddNote={onAddNote}
-        onLink={onLink}
-        onLearn={onLearn}
-        onDelete={onDelete}
-        onQuoteToNewChat={onQuoteToNewChat}
-        onQuoteToExistingChat={onQuoteToExistingChat}
-        onToggleEditBounds={onToggleEditBounds}
-      />
+      <HighlightResourceActionMenu highlight={highlight} />
     </FloatingActionSurface>
   );
 }

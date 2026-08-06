@@ -26,7 +26,7 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Literal, assert_never, cast
+from typing import Any, Literal, assert_never, cast
 from uuid import UUID, uuid4
 
 from provider_runtime import (
@@ -138,7 +138,7 @@ from nexus.services.resource_graph.citations import (
     rehome_citations_for_output,
     replace_citations_for_output,
 )
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import CitationInput
 from nexus.services.structured_synthesis import (
     StructuredSynthesisError,
@@ -152,9 +152,12 @@ logger = get_logger(__name__)
 # Re-export: CP1 imports ``BuildTicket`` from ``engine`` (it is owned by
 # ``dossier_types``). The create outcome value the engine returns.
 __all__ = [
+    "ArtifactActionCandidate",
+    "ArtifactActionFacts",
     "BuildTicket",
     "DossierHeadView",
     "assert_build_viewer",
+    "artifact_action_candidates",
     "bootstrap_resource_dossier",
     "build_execution_phase",
     "cancel_build",
@@ -379,6 +382,173 @@ class DossierHeadView:
     active_build: DossierActiveBuildView | None
     latest_unsuccessful_build: DossierUnsuccessfulBuildView | None
     revision_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactActionFacts:
+    """Set-based action facts for an Artifact head or immutable revision."""
+
+    has_active_build: bool
+    is_current_revision: bool | None
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactActionCandidate:
+    """Audience-visible lifecycle facts plus the subject still needing authz."""
+
+    facts: ArtifactActionFacts
+    subject_ref: ResourceRef | None
+
+
+def artifact_action_candidates(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    artifact_ids: Sequence[UUID],
+    revision_ids: Sequence[UUID],
+) -> tuple[dict[UUID, ArtifactActionCandidate], dict[UUID, ArtifactActionCandidate]]:
+    """Read audience-visible Artifact lifecycle candidates in two bounded queries.
+
+    The query applies the engine-owned audience relation and validates internal
+    Idea ownership. Resource-subject visibility remains with each subject domain;
+    the snapshot composition owner resolves those refs in bounded scheme batches.
+    Mutating commands always re-resolve and reauthorize.
+    """
+    ordered_artifact_ids = list(dict.fromkeys(artifact_ids))
+    ordered_revision_ids = list(dict.fromkeys(revision_ids))
+    artifacts: dict[UUID, ArtifactActionCandidate] = {}
+    revisions: dict[UUID, ArtifactActionCandidate] = {}
+    if ordered_artifact_ids:
+        rows = db.execute(
+            text(
+                """
+                SELECT artifact.id, artifact.subject_scheme, artifact.subject_id,
+                       EXISTS(
+                           SELECT 1
+                           FROM artifact_builds build
+                           WHERE build.artifact_id = artifact.id
+                             AND NOT EXISTS(
+                                 SELECT 1 FROM artifact_revisions revision
+                                 WHERE revision.build_id = build.id
+                             )
+                             AND NOT EXISTS(
+                                 SELECT 1 FROM artifact_build_failures failure
+                                 WHERE failure.build_id = build.id
+                             )
+                             AND NOT EXISTS(
+                                 SELECT 1 FROM artifact_build_cancellations cancellation
+                                 WHERE cancellation.build_id = build.id
+                             )
+                       ) AS has_active_build
+                FROM artifacts artifact
+                WHERE artifact.id = ANY(:artifact_ids)
+                  AND (
+                      (
+                          artifact.audience_scheme = 'user'
+                          AND artifact.audience_id = :viewer_id_text
+                      )
+                      OR (
+                          artifact.audience_scheme = 'library'
+                          AND EXISTS(
+                              SELECT 1
+                              FROM memberships membership
+                              WHERE membership.library_id::text = artifact.audience_id
+                                AND membership.user_id = :viewer_id
+                          )
+                      )
+                  )
+                  AND (
+                      artifact.subject_scheme != 'idea'
+                      OR EXISTS(
+                          SELECT 1
+                          FROM artifact_idea_subjects idea
+                          WHERE idea.id = artifact.subject_id
+                            AND idea.user_id = :viewer_id
+                      )
+                  )
+                """
+            ),
+            {
+                "artifact_ids": ordered_artifact_ids,
+                "viewer_id": viewer_id,
+                "viewer_id_text": str(viewer_id),
+            },
+        ).mappings()
+        artifacts = {
+            UUID(str(row["id"])): ArtifactActionCandidate(
+                facts=ArtifactActionFacts(
+                    has_active_build=bool(row["has_active_build"]),
+                    is_current_revision=None,
+                ),
+                subject_ref=_artifact_action_subject_ref(row),
+            )
+            for row in rows
+        }
+    if ordered_revision_ids:
+        rows = db.execute(
+            text(
+                """
+                SELECT revision.id, artifact.subject_scheme, artifact.subject_id,
+                       artifact.current_revision_id = revision.id AS is_current
+                FROM artifact_revisions revision
+                JOIN artifact_builds build ON build.id = revision.build_id
+                JOIN artifacts artifact ON artifact.id = build.artifact_id
+                WHERE revision.id = ANY(:revision_ids)
+                  AND (
+                      (
+                          artifact.audience_scheme = 'user'
+                          AND artifact.audience_id = :viewer_id_text
+                      )
+                      OR (
+                          artifact.audience_scheme = 'library'
+                          AND EXISTS(
+                              SELECT 1
+                              FROM memberships membership
+                              WHERE membership.library_id::text = artifact.audience_id
+                                AND membership.user_id = :viewer_id
+                          )
+                      )
+                  )
+                  AND (
+                      artifact.subject_scheme != 'idea'
+                      OR EXISTS(
+                          SELECT 1
+                          FROM artifact_idea_subjects idea
+                          WHERE idea.id = artifact.subject_id
+                            AND idea.user_id = :viewer_id
+                      )
+                  )
+                """
+            ),
+            {
+                "revision_ids": ordered_revision_ids,
+                "viewer_id": viewer_id,
+                "viewer_id_text": str(viewer_id),
+            },
+        ).mappings()
+        revisions = {
+            UUID(str(row["id"])): ArtifactActionCandidate(
+                facts=ArtifactActionFacts(
+                    has_active_build=False,
+                    is_current_revision=bool(row["is_current"]),
+                ),
+                subject_ref=_artifact_action_subject_ref(row),
+            )
+            for row in rows
+        }
+    return artifacts, revisions
+
+
+def _artifact_action_subject_ref(row: Any) -> ResourceRef | None:
+    scheme = str(row["subject_scheme"])
+    if scheme == "idea":
+        return None
+    if scheme not in RESOURCE_SCHEMES:
+        raise AssertionError(f"unknown Artifact subject scheme: {scheme!r}")
+    return ResourceRef(
+        scheme=cast("ResourceScheme", scheme),
+        id=UUID(str(row["subject_id"])),
+    )
 
 
 # ---------------------------------------------------------------------------

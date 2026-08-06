@@ -1,261 +1,189 @@
-# Canonical Resource Action Menu Hard Cutover
+# Exhaustive Canonical Resource Actions Hard Cutover
 
-**Status:** APPROVED SPEC · 2026-08-03
+**Status:** IMPLEMENTED + VERIFIED · 2026-08-05
 
-**Type:** Coordinated hard cut. No feature flag, compatibility path, fallback,
-dual publication, or partial migration.
+**Type:** Coordinated hard cut. No flag, dual path, fallback, alias,
+compatibility decoder, or partial migration.
 
-**Supersedes:** The projection, thin/rich, caller-published resource groups,
-context/view mixing, and action-free resource-row portions of
-`universal-resource-actions-hard-cutover.md` and narrower surface specs.
-Existing command ownership and non-resource menu rules remain authoritative.
+**Supersedes:** Every earlier revision of this document; the resource-action
+policy/surface clauses in `universal-resource-actions-hard-cutover.md`,
+`library-placement-resource-action-hard-cutover.md`, and narrower surface specs.
+Existing domain command ownership remains authoritative.
 
-**Open questions:** None. The defaults in this document are final.
+**Open questions:** None. The requested invariant is precise; these defaults are
+final.
 
 ## Decision
 
-For the same canonical resource, viewer, server facts revision, and client
-capability environment, every standing resource dropdown publishes the exact
-same semantic actions: ids, copy, icons, grouping, order, tone, current verbs,
-availability, confirmation, and effects.
+For one canonical action subject, viewer, authoritative shared facts, and
+authoritative client facts, every representation receives one identical,
+complete, ordered semantic action plan.
 
-Surface, route, projection, pane/list placement, DTO richness, callback
-presence, responsive breakpoint, and promoted-primary status are not policy
-inputs.
+Equality includes IDs, current labels, icons, groups, order, control state,
+availability/reason, tone, confirmation, and typed effect. Only trigger and
+container geometry may differ. Different per-device offline state may change a
+stable action's state; platform, breakpoint, and location never change
+structural membership or order.
 
-```text
-static scheme capability ─┐
-server action snapshot ───┼─> pure resource action planner
-client action environment ┤              |
-global keyed busy state ──┘              v
-                                immutable action plan
-                                          |
-                         ResourceActionMenu / header / Nexus
-                                          |
-                              shared action runtime
-                                          |
-                               owning domain command
-```
+This covers rows, cards, Search, acquired Browse results, Library/Libraries,
+Lectern, Chat/Chats, Podcast/Podcasts, Author/Authors, context/evidence/
+connections, players, Nexus/command palette, desktop, mobile, and the resource's
+**desktop, primary-mobile, and secondary-mobile pane headers**.
+
+Surface, route, occurrence, list, pane, header, player, DTO richness, callback
+presence, and promoted-primary status are forbidden policy inputs.
+
+Philosophy: the menu is a capability inspector, not surface decoration.
+Location controls presentation, never policy. Omission means structurally
+inapplicable; a constraint stays visible and explains itself.
 
 ## Target Behaviour
 
-- The resource dropdown is identical in panes, Nexus, Author, Podcast,
-  Library, Browse, search, Lectern, context cards, Connections, Evidence,
-  player resource representations, and desktop/mobile presentations.
-- `Open` remains in the menu when promoted or already open. It opens or focuses
-  the canonical representation; invoking it in that representation is safe.
-- Header promotion never removes an action from the dropdown.
-- Temporarily blocked or busy actions remain visible and `aria-disabled` with a
-  reason. Unsupported or viewer-ineligible actions are omitted everywhere.
-- Relationship state machines publish exactly one current verb, such as Add to
-  Lectern or Remove from Lectern.
-- Menu order is static. Usage, surface, AI, recency, and telemetry never reorder
-  it.
-- Opening a menu performs no network request. Standing surfaces prefetch their
-  snapshots in a deduplicated batch; the trigger is unavailable until the
-  canonical snapshot exists.
-- A mutation updates busy state in every simultaneous representation, awaits
-  canonical snapshot reconciliation, then clears busy state.
+- Every applicable resource action is reachable from every standing
+  representation.
+- At minimum: Open, Open in new pane, Share, Chat, Edit, Libraries, Lectern,
+  Play/Resume, Subscribe/Unsubscribe, Download, source/transcript operations,
+  settings, export, and Delete/Remove wherever applicable.
+- Open and Open in new pane remain in an already-open pane's header dropdown and
+  after promotion to a primary control.
+- Stateful capabilities have one stable ID; current facts select the verb,
+  checked state, and reason.
+- Blocked/busy actions remain discoverable and inert. Danger is last. Order is
+  static, never surface-, usage-, AI-, recency-, or telemetry-ranked.
+- Opening an already-mounted menu performs no request. Mutations update all
+  mounted representations together.
 
 ## Goals
 
-- One owner for resource-action membership, presentation, execution, and state.
-- Make surface-specific divergence unrepresentable.
-- Centralize existing user-visible actions; do not invent new effects.
-- Preserve domain authorization and mutation ownership.
-- Reuse `ActionMenu`, resource identity/activation, resource capabilities,
-  existing API clients, and existing domain services.
-- Remove private action registries, callback-gated policy, duplicate adapters,
-  and dead publication machinery.
-- Achieve strict parity without menu-open hydration or N+1 reads.
+- One owner each for subject identity, applicability, presentation, execution,
+  and reconciliation.
+- Exhaust every existing user-reachable single-resource command and global
+  resource relationship.
+- Make surface divergence unrepresentable.
+- Make Library and Lectern membership useful everywhere.
+- Reuse existing refs, capabilities, snapshots, planner, menu, workspace,
+  overlays, Library/Lectern owners, and domain commands.
+- Delete duplicate builders, callback policy, local busy stores, neighboring
+  resource ellipses, immortal cache state, and dead tests/docs.
 
-## Governing Standards
+## Governing Rules
 
-- `cleanliness.md`: one concern, state derivation, and capability owner; delete
-  duplication, legacy paths, dead code, and broad public surfaces.
-- `simplicity.md`: one primary capability form; no speculative framework.
-- `boundaries.md` and `frontend.md`: decode once, preserve rich typed facts,
-  derive UI state, and map expected errors at the owning boundary.
-- `tagged-unions.md`: couple each state with exactly the fields legal for it.
-- `naming.md`: global action IDs are stable dot-delimited PascalCase.
-- `testing.md` and `local-rules/testing-standards.md`: red/green tests assert
-  observable behavior through public owners and the real stack.
+All of `docs/rules` applies. Especially: [boundaries](../rules/boundaries.md),
+[cleanliness](../rules/cleanliness.md), [simplicity](../rules/simplicity.md),
+[frontend](../rules/frontend.md), [keys/identities](../rules/keys-and-identities.md),
+[control flow](../rules/control-flow.md), [concurrency](../rules/concurrency.md),
+[mutation ordering](../rules/mutation-ordering.md), and
+[testing](../rules/testing.md).
 
-## Scope
+## Scope and Taxonomy
 
-Included:
+| Subject | Canonical treatment |
+|---|---|
+| Resource | Open, edit, share, chat, consume, source/transcript, export, lifecycle |
+| Global resource relationship | Libraries, Lectern, subscription, portable queue membership |
+| One occurrence/edge | Named control for unlink, reorder, or remove this exact edge |
+| Pane/view/session | Named control for sort, filter, theme, zoom, local visibility, volume, queue reorder |
+| Selection/batch/account/picker/tool | Existing owning surface |
 
-- Every persistent overflow/options affordance whose target is a canonical
-  `ResourceRef`.
-- Menu, promoted-header, Nexus/action-panel, shortcut, and mobile projections
-  of those same semantic resource actions.
-- Static capability generation, dynamic action snapshots, client device facts,
-  global busy state, execution dispatch, invalidation, and parity proofs.
-- Moving context-edge, pane, list, and playback-session commands to their
-  truthful owners.
+`Play next` is canonical when its operand is the resource and it works from any
+representation; reordering one queue occurrence is not. Transcript provisioning
+is canonical; showing the current pane's transcript is a view control. Removing
+a Library relationship is always available inside `Libraries…`; a row-only
+duplicate is unnecessary.
 
-Excluded:
+Every scheme gets an explicit policy branch—never a default "core-only" branch:
 
-- Account, filter, picker, batch, selection, highlight, PDF-tool, editor,
-  citation-chip, and other non-resource menus.
-- Plain links and primary row activation.
-- Transient generated resources without a direct stable `ResourceRef`.
+`media`, `library`, `evidence_span`, `content_chunk`, `highlight`, `page`,
+`note_block`, `fragment`, `conversation`, `message`, `oracle_reading`,
+`oracle_passage_anchor`, `artifact`, `artifact_revision`, `external_snapshot`,
+`contributor`, `podcast`, `reader_apparatus_item`, `passage_anchor`.
 
-## Action Taxonomy
+Cover web article, EPUB, PDF, video, and podcast-episode Media. Do not fabricate
+a `ResourceRef` for a non-resource singleton such as the Lectern container; its
+collection commands keep a truthful owner, while every contained resource gets
+the canonical resource plan.
 
-The canonical resource menu contains only actions whose target is the resource:
+Before implementation, freeze a reviewed command ledger: owner, truthful
+subject, schemes/states, stable action ID or non-resource classification,
+current-verb rule, authority/readiness, confirmation, and reconciliation scope.
+It is a test oracle, not a second production registry. `Unclassified` blocks
+completion.
 
-1. **Core:** Open, Share, Chat.
-2. **Operations:** source/lifecycle operations, offline state, metadata/authors,
-   read/played state, settings, refresh of the resource itself, and canonical
-   deletion/removal.
-3. **Global relationships:** Libraries, Lectern membership, subscription state.
+## Subject Contract
 
-`danger` is an orthogonal consequence class. Danger actions form the final
-group. The planner owns relative order and separators.
+Occurrence activation and action identity are separate:
 
-These commands are not resource actions and leave the resource menu:
+```ts
+interface ResourceActionSubject {
+  readonly ref: CanonicalResourceRef;
+}
 
-- **Context edge:** remove from conversation context, unlink this edge, dismiss
-  this synapse.
-- **Pane/view/list:** refresh the current query, reorder, companion navigation,
-  transcript/notes visibility, theme, and local expansion.
-- **Playback session:** Play next and current queue/session controls.
+interface ResourceBearingOccurrence {
+  readonly activation: ResourceActivation; // row click / deep link
+  readonly actionSubject: ResourceActionSubject; // dropdown identity
+}
+```
 
-They use separately labelled controls or menus. Mobile must not merge them back
-into the resource dropdown.
+- The subject contains only its meaningful key. The snapshot owns canonical
+  activation and missing state, so callers cannot vary Open behavior.
+- A passage result may activate the passage while its menu targets the article.
+  A card representing a Highlight targets the Highlight. Publishers decide;
+  clients never infer from href/type or blindly prefer an owner.
+- Search and other occurrence APIs publish `actionSubjectRef`. Browse
+  `InNexus` publishes it. `Preview`/`ExternalOnly` get no fabricated canonical
+  menu before acquisition.
+- Presenters, Nexus, players, context cards, and pane publications carry only
+  `actionSubject`, never resource actions, flags, activation overrides, or
+  callbacks.
+- Same-system subject/snapshot contradictions defect; no External/Open-only
+  fallback exists.
 
-## Ownership and Structure
+## Architecture and Ownership
+
+```text
+static scheme policy + batched domain facts
+                       |
+                       v
+subject ref ─> snapshot endpoint ─> retained cache
+                                      |
+                         shared client facts
+                                      |
+                                      v
+                           pure planner + catalog
+                                      |
+                               immutable plan
+                                      |
+                    dropdown / pane header / Nexus / mobile
+                                      |
+                                typed runtime
+                                      |
+                            owning domain command
+```
 
 | Concern | Sole owner |
 |---|---|
-| Static per-scheme possibility | `services/resource_items/capabilities.py` |
-| Generated browser static projection | Generated `resourceCapabilities.ts` |
-| Viewer/resource eligibility and relationship state | `services/resource_items/action_snapshots.py` |
-| Device-local facts | Existing offline/connectivity/platform owners |
-| Busy state, execution, reconciliation | Authenticated app resource-action runtime |
-| IDs, copy, icons, tone, confirmation, order | `RESOURCE_ACTION_CATALOG` |
-| Membership and semantic plan | Pure `resolveResourceActionPlan` |
-| Accessible dropdown | `ResourceActionMenu` over `ActionMenu` |
-| Authorization and effects | Existing owning domain command/service |
+| Ref grammar/static possibility | `resource_graph/refs.py`, `resource_items/capabilities.py` |
+| Viewer eligibility/shared state | Set-based domain reads composed by `resource_items/action_snapshots.py` |
+| IDs/copy/icons/groups/order/tone/confirmation | `RESOURCE_ACTION_CATALOG` |
+| Membership/current verb/final availability | Pure `resolveResourceActionPlan` |
+| Prefetch/busy/dispatch/reconciliation | Authenticated resource-action runtime |
+| Responsive UI | `ResourceActionMenu` over existing UI primitives |
+| Authorization/effects | Existing owning domain command/service |
 
-The snapshot service is a read aggregator. It calls public read APIs from domain
-owners and performs no cross-domain mutation. Commands continue to reauthorize
-inside their owning transaction; snapshots are never mutation authority.
+The snapshot service is read-only and calls public domain reads. Snapshots never
+authorize mutations; commands reauthorize and linearize in their owner. Typed
+effect adapters stay near existing clients. Root dispatch exhaustively matches a
+closed intent union—no handler URL, command bus, plugin registry, remote config,
+or metadata bag.
 
-## Capability Contract
+## Capability and API Contract
 
-Applicability has four distinct layers:
-
-1. **Statically unsupported:** absent for the scheme.
-2. **Viewer-ineligible:** absent from the server snapshot.
-3. **Eligible but blocked:** present with one structured blocked reason.
-4. **Eligible and available:** present and invokable.
-
-The server returns a closed union of semantic facts, not UI descriptors:
-
-```ts
-type ServerActionAvailabilityOut =
-  | { kind: "Available" }
-  | {
-      kind: "Blocked";
-      reason:
-        | "Locked"
-        | "Processing"
-        | "TemporarilyUnavailable";
-    };
-
-interface EligibleCapabilityOut {
-  readonly availability: ServerActionAvailabilityOut;
-}
-
-type ResourceActionCapabilityOut =
-  | (EligibleCapabilityOut & { kind: "Open" | "Share" | "Chat" })
-  | (EligibleCapabilityOut & { kind: "OpenSource"; href: string })
-  | (EligibleCapabilityOut & {
-      kind:
-        | "RetryProcessing"
-        | "RefreshSource"
-        | "RetryMetadata"
-        | "EditAuthors"
-        | "ResetProgress"
-        | "LibrarySettings"
-        | "DeleteLibrary"
-        | "PodcastSettings"
-        | "RefreshPodcast"
-        | "DeleteConversation"
-        | "RemoveMedia"
-        | "LibraryPlacement";
-    })
-  | (EligibleCapabilityOut & {
-      kind: "Consumption";
-      state: "Unread" | "InProgress" | "Finished";
-    })
-  | (EligibleCapabilityOut & {
-      kind: "EpisodeConsumption";
-      state: "Unplayed" | "Played";
-    })
-  | (EligibleCapabilityOut & {
-      kind: "PodcastSubscription";
-      state: "Subscribed" | "Unsubscribed";
-    })
-  | (EligibleCapabilityOut & {
-      kind: "LecternMembership";
-      state: "Absent" | "Present";
-      lecternItemId?: string;
-    });
-```
-
-The implementation inventory must add any extant canonical resource operation
-missing from this union before migration. No generic action name, arbitrary
-payload, handler URL, or untyped metadata bag is allowed.
-
-`PodcastSubscription.Unsubscribed` projects a Subscribe action that reuses the
-existing acquisition flow; `Subscribed` projects Unsubscribe. This adds no new
-acquisition semantics.
-
-Device-local offline actions are composed from one client-wide contract:
-
-```ts
-interface ResourceActionEnvironment {
-  readonly platform: "Web" | "Android";
-  readonly connectivity: "Online" | "Offline";
-  readonly offlineMediaByRef: ReadonlyMap<CanonicalResourceRef, LocalAvailability>;
-}
-```
-
-Every surface reads the same environment instance. Device facts never arrive
-through presenter callbacks. The planner derives offline Download, Cancel,
-Retry, and Remove actions plus client-only `RequiresOnline`, `DeviceUnsupported`,
-and `Busy` blocked reasons from this environment and the app runtime. They are
-forbidden from the server snapshot.
-
-## API Design
-
-Add one authenticated batch endpoint:
+Retain and atomically hard-break the existing authenticated batch endpoint as
+needed:
 
 ```http
 POST /resource-items/action-snapshots/resolve
 ```
-
-```json
-{
-  "refs": ["media:00000000-0000-0000-0000-000000000000"]
-}
-```
-
-Rules:
-
-- `refs` contains 1–100 unique canonical refs. Invalid refs or duplicates are
-  `E_INVALID_REQUEST`.
-- Response order equals request order. A missing resource returns a strict
-  missing snapshot with no capabilities; it is not silently dropped.
-- Authorization is derived only from the authenticated viewer.
-- Resolution is set-based and bounded. No per-ref service loop may issue
-  database queries.
-- `factsRevision` is the SHA-256 of the canonical serialized snapshot fields
-  other than itself. It is opaque, deterministic, not persisted, and changes
-  whenever the emitted server capability plan can change.
 
 ```ts
 interface ResourceActionSnapshotOut {
@@ -266,173 +194,215 @@ interface ResourceActionSnapshotOut {
   readonly capabilities: readonly ResourceActionCapabilityOut[];
 }
 
-interface ResourceActionSnapshotResolveResponse {
-  readonly snapshots: readonly ResourceActionSnapshotOut[];
-}
+type ServerAvailabilityOut =
+  | { readonly kind: "Available" }
+  | {
+      readonly kind: "Blocked";
+      readonly reason:
+        | "PermissionDenied"
+        | "Locked"
+        | "Processing"
+        | "TemporarilyUnavailable";
+    };
 ```
 
-Labels, icons, order, separators, confirmation copy, mutation URLs, executors,
-and busy state are forbidden from this API.
+`ResourceActionCapabilityOut` is a closed discriminated union. Simple variants
+carry `{kind, availability}`. Stateful variants—Consumption, Subscription,
+Lectern, Libraries, Queue, Transcript, Offline—carry only legal typed facts.
+No generic name, payload, handler, or UI descriptor is allowed.
 
-## Frontend Composition
+Contract rules:
 
-`resolveResourceActionPlan(snapshot, environment, busyIds)` is total and pure.
-It validates duplicate capability kinds, maps every union variant exhaustively
-to the catalog, emits exactly one verb for each state machine, and returns:
+- Request 1–100 unique canonical refs; return exactly one ordered snapshot per
+  ref. Missing is explicit with no capabilities.
+- Resolution is set-based/bounded; query count cannot scale per ref.
+- Every scheme is exhaustively resolved. Any still-consumed generated browser
+  projection is freshness-checked; delete an action-only mirror with no other
+  consumer.
+- Structurally inapplicable actions are absent. Applicable but forbidden or
+  temporarily unavailable actions are blocked.
+- Shared client facts add closed reasons `Loading`, `CapacityReached`,
+  `RequiresOnline`, `UnsupportedOnDevice`, and `Busy`; platform cannot remove an
+  applicable action.
+- `factsRevision` changes with emitted shared facts. Unknown/contradictory owned
+  variants defect in the strict decoder.
+- The API forbids labels, icons, order, separators, confirmation copy, executor
+  URLs/closures, and client busy state.
+
+The planner returns immutable data, never closures:
 
 ```ts
-interface ResourceActionPlan {
-  readonly core: readonly SemanticResourceAction[];
-  readonly operations: readonly SemanticResourceAction[];
-  readonly relationships: readonly SemanticResourceAction[];
+interface PlannedResourceAction {
+  readonly id: ResourceActionId;
+  readonly presentation: ResourceActionPresentation;
+  readonly control: ResourceActionControlState;
+  readonly availability: ResourceActionAvailability;
+  readonly confirmation: ResourceActionConfirmation;
+  readonly intent: ResourceActionIntent;
 }
 ```
 
-The composer defects on duplicate action IDs, strips caller separators,
-preserves catalog order, emits core → operations → relationships, and moves all
-danger actions to one final group.
+Group order: Navigate → Consume → Organize → Create/Transform → Share/Export →
+Manage → Danger. IDs are dot-delimited PascalCase and name the capability, not
+its current verb: e.g. `RelationshipAction.LecternMembership`.
 
-The app runtime owns:
+## Library and Lectern Contracts
 
-- Deduplicated batch registration/prefetch and snapshot cache.
-- Global keyed busy state by `(resourceRef, actionId)`.
-- Exhaustive action dispatch to existing typed clients.
-- Confirmation, expected-error feedback, auth handling, and defect propagation.
-- Success invalidation of the resource and every affected relationship ref.
-- Awaited snapshot refresh before busy state clears.
+`Libraries…` is one stable action for every placeable resource. It opens the
+existing relationship editor; opening the resource menu never fetches
+destinations.
 
-`ResourceActionMenu` accepts a validated target and only navigation, focus, and
-feedback ports. It accepts no actions, groups, capability flags, callbacks,
-projection, or surface identifier.
+```ts
+interface LibraryPlacementOptionOut {
+  readonly destination:
+    | { readonly kind: "SavedInNexus" }
+    | { readonly kind: "Library"; readonly library: LibraryIdentityOut };
+  readonly relation:
+    | { readonly kind: "Absent" }
+    | { readonly kind: "Direct" }
+    | {
+        readonly kind: "Inherited";
+        readonly provenance: readonly LibraryIdentityOut[];
+      };
+  readonly availability:
+    | { readonly kind: "Available" }
+    | {
+        readonly kind: "Blocked";
+        readonly reason:
+          | "RequiresAdmin"
+          | "RequiresSubscription"
+          | "SystemManaged"
+          | "Inherited";
+      };
+}
+```
 
-Nexus entries retain resource identity and primary activation, not a private
-resource-action array. Nexus desktop/mobile and pane/list consumers invoke the
-same planner, runtime, projector, and `ResourceActionMenu`.
+- Media gets a physical Default-backed `Saved in Nexus` toggle plus every
+  visible named Library. Direct/inherited/read-only/system state shows
+  provenance and reason; remove the query that excludes Default/system.
+- The editor supports search and existing Create Library. All/Default-only users
+  never see a dead empty chooser.
+- Podcast presence in All is subscription, never a fake Default entry; named
+  Podcast placement remains explicit.
+- Placement removal is distinct from Remove download and Remove from Nexus.
+  All writes use `library_entries` public commands.
+- One stable LecternMembership action emits Add/Remove for eligible Media.
+  Snapshot membership is authoritative; the shared Lectern environment adds
+  readiness/capacity/busy only.
+- Lectern loading/full/blocked states explain themselves; pre-ready invocation
+  cannot defect. Existing add/remove commands remain the effect owner; reorder
+  remains occurrence-owned.
 
-## Rules
+## Runtime and UI Rules
 
-- One action fact, policy, state machine, and executor has one owner.
-- Static capability is not viewer authorization. Snapshot eligibility is not
-  command authorization.
-- Surface code cannot add, omit, sort, rename, disable, or replace a resource
-  action.
-- Callback presence cannot determine applicability.
-- Blocked reason codes map to frontend copy in one exhaustive owner.
-- Busy actions remain keyboard discoverable and cannot execute.
-- Stable action IDs remain dot-delimited PascalCase.
-- Trusted identity or snapshot contradictions defect; no downgrade or fallback.
-- Use existing resource transport/cache and domain clients. Do not introduce a
-  parallel fetching, error, notification, or mutation framework.
-- Tests assert observable menus and outcomes through public owners, not wiring.
+- Mounted subjects retain one shared cache entry; unmount releases it. Last
+  release evicts after in-flight work settles. Historical navigation cannot grow
+  the cache forever.
+- First registration batches in the existing scheduling tick; menu open causes
+  zero requests. Cache state is Loading/Ready/Error/Reconciling. The trigger is
+  always visible: Loading is disabled; Error exposes Retry.
+- Per-ref generations prevent stale resolve wins. Busy identity is
+  `(subjectRef, stableActionId)` globally.
+- Effects return `None`, `Subjects(refs)`, or `AllRetained` reconciliation.
+  Nonmutations use `None`; broad effects justify `AllRetained`, bounded to live
+  subjects. Overlay mutations use the same typed completion path, not a global
+  broadcast.
+- Reconciliation is awaited. Failure preserves last good facts but keeps the
+  affected action blocked with Retry; no stale inverse verb re-enables.
+- `ResourceActionMenu` accepts only `actionSubject` plus trigger presentation.
+  It accepts no actions, flags, callbacks, projection, surface ID, or activation.
+- Collection rows, Nexus/Switchboard, players, specialist rows, `PaneShell`,
+  `SurfaceHeader`, `MobilePaneBar`, and `MobileSecondaryPaneHost` consume the
+  same plan. Pane bodies publish only their subject.
+- Promotion never removes an entry. Desktop may anchor a panel and mobile use a
+  sheet/full-screen panel; semantic content is unchanged. Flat actions use menu
+  semantics; searchable content uses dialog/list semantics.
+- One resource overflow exists per representation. Separate view/occurrence
+  controls are explicitly named. Preserve focus, keyboard/typeahead, checked and
+  disabled state, dismissal, scrolling, portals, and 44px mobile targets.
 
-## Hard-Cut Final State
+## Files and Hard-Cut Final State
 
-- `ResourceActionProjection`, caller-published resource groups, rich-option
-  callback capabilities, and surface-local resource busy stores do not exist.
-- `CollectionRow`, `PaneShell`, Nexus, Browse, players, and specialist surfaces
-  render the canonical component or a catalog projection of the same plan.
-- `ActionMenu` remains the only dropdown primitive.
-- Context/view/session actions have separate typed publication contracts.
-- No standing canonical resource representation is action-free.
-- No lower-kebab, player-local, Nexus-local, or duplicated semantic resource
-  action ID remains.
-- Backend static capabilities and the committed generated browser projection
-  are freshness-checked by the repository verification command.
+| Area | Update |
+|---|---|
+| Backend core | `python/nexus/services/resource_graph/refs.py`; `resource_items/{capabilities,action_snapshots}.py`; snapshot schema/route; owning domain reads/commands |
+| Subject boundaries | Search/Browse schemas and projections; frontend search/browse/collection/Nexus presenters; context/evidence/connection/player/pane DTOs |
+| Client core | `resourceActionTarget.ts`; `lib/actions/resourceAction*`; `resourceActionExecution.ts`; `ResourceActionMenu.tsx`; `ActionMenu*`; `actionDescriptor.ts` |
+| Relationship owners | Library placement overlay/editor/chooser, `libraryPlacement.ts`, `library_entries.py`, `LecternProvider.tsx` |
+| Surfaces | `CollectionRow`; specialist rows; Nexus/Switchboard; players; `PaneShell`; `SurfaceHeader`; `MobilePaneBar`; `MobileSecondaryPaneHost`; pane publications |
+| Proof/docs | Snapshot/planner/cache/component tests; lint/repository policy; `testdata/proofs.json`; living resource/workspace/Library/Lectern/podcast docs |
 
-## Files
+Replace `apps/web/e2e/journeys/resource-action-parity.journey.spec.ts` with an
+exhaustive ubiquity journey and hand-authored product oracle.
 
-Add:
+Delete `resourceActionSnapshotInvalidation.ts`, unconditional `reresolveAll()`,
+the duplicate catalog-projection hook, resource mutations duplicated in
+`useDocumentActions.ts`, `episodeActionBusy.ts`, Highlight/player/podcast local
+builders, and any emptied files. Excise all local resource IDs/arrays/flags/busy
+stores/adapters, adjacent resource ellipses, action-free `InNexus` branches,
+superseded tests/imports/styles/comments/docs, and delegation wrappers.
 
-- `python/nexus/schemas/resource_action_snapshots.py`
-- `python/nexus/services/resource_items/action_snapshots.py`
-- `apps/web/src/lib/actions/resourceActionSnapshot.ts`
-- `apps/web/src/lib/actions/resourceActionRuntime.tsx`
-- `apps/web/src/components/resources/ResourceActionMenu.tsx`
-- Focused pure/service/component tests and
-  `apps/web/e2e/journeys/resource-action-parity.journey.spec.ts`
+Final state: one subject contract, snapshot contract, catalog, planner, runtime,
+and responsive renderer; all commands remain owned by their domains; no legacy
+path, fallback, compatibility code, stale normative clause, or dead residue.
 
-Update:
+## Implementation and Proof Order
 
-- `python/nexus/api/routes/resource_items.py`
-- `python/nexus/services/resource_items/capabilities.py`
-- Capability generation/check ownership and generated
-  `apps/web/src/lib/resources/resourceCapabilities.ts`
-- `apps/web/src/lib/actions/{resourceActions,resourceActionExecution}.ts`
-- `CollectionRow`, `PaneShell`, SurfaceHeader/mobile pane chrome, Nexus desktop
-  and mobile, Author, Podcast, Library, Browse/preview/search, Lectern, context
-  refs, Connections, Evidence, and resource-bearing player surfaces.
-- `testdata/proofs.json` and the living workspace/library/podcast/overlay docs.
-- Existing cutovers only to mark the exact superseded clauses.
+1. Baseline `./scripts/test confidence`; freeze the command ledger and write
+   demonstrated-red parity, state, accessibility, performance, and residue
+   proofs.
+2. Hard-cut DTOs/presenters to `actionSubject`; remove caller activation policy.
+3. Complete exhaustive capability/snapshot contracts, strict decoder, generated
+   policy proof, catalog, and planner.
+4. Complete Library and Lectern semantics; harden cache, stable busy identity,
+   typed reconciliation, and effects.
+5. Migrate every representation, including all three pane-header hosts; delete
+   every superseded path and update docs in the same coordinated cut.
+6. Run `./scripts/test changed` per wave, `./scripts/test pr` before merge, and
+   `./scripts/test full` before completion. No transitional state lands.
 
-Delete after migration:
-
-- `buildResourceNexusActions` and duplicate `NexusAction → ActionDescriptor`
-  resource adapters.
-- `ResourceActionProjection` and `Representation`/`CurrentPane` menu branches.
-- `ResourceMenuGroups`, `emptyResourceMenuGroups`, and resource
-  `ActionPublication` caller groups; retain an explicitly non-resource menu
-  publication if still needed.
-- Surface-local resource option builders/callback contracts, ad hoc `queue-add`,
-  duplicated player Open/Open source actions, and dead tests/docs/imports.
-
-Do not add barrels, re-exports, compatibility modules, aliases, or migrations.
-
-## Implementation Order
-
-1. Freeze the complete inventory and write failing parity, API, planner,
-   accessibility, mutation, performance, and residue proofs.
-2. Add generated static-capability freshness checking.
-3. Add the closed snapshot schema, set-based service, endpoint, and decoder.
-4. Add the planner, app runtime, cache/prefetch, and canonical component.
-5. Separate context/view/session controls.
-6. Migrate every standing resource surface in one coordinated cutover.
-7. Delete all superseded paths and update living/superseded docs.
-8. Run focused static, unit, service, component, real-stack E2E, generation, and
-   residue gates. No transitional state lands.
+Proof follows `docs/rules/testing.md`: pure planner/cache units; real-database
+service/API state transitions and query-count proof; renderer component/a11y
+behavior; real-stack cross-surface E2E. The expected menu is hand-authored and
+never imports production catalog constants or mocks internal modules.
 
 ## Acceptance Criteria
 
-- **AC1 — Exact parity.** The same parity key produces an identical dropdown on
-  every included surface and breakpoint.
-- **AC2 — Surface independence.** Planner and snapshot inputs contain no
-  surface, route, projection, DTO-richness, or callback-presence fact.
-- **AC3 — Closed contracts.** Snapshot, environment, plan, and dispatch are
-  exhaustive typed unions with no arbitrary metadata or generic command path.
-- **AC4 — Correct taxonomy.** Context-edge, pane/list/view, and playback-session
-  commands are absent from the resource menu and remain available through their
-  own owners.
-- **AC5 — Stable presentation.** Catalog alone owns IDs, copy, icon, tone,
-  confirmation, reason copy, and deterministic order; danger is last.
-- **AC6 — Promotion parity.** Open and every promoted action remain in the
-  dropdown and share behavior with their promoted projection.
-- **AC7 — Global state.** Busy, blocked, relationship, offline, and post-mutation
-  state agree across simultaneous representations.
-- **AC8 — Authoritative effects.** Every mutation reauthorizes and executes in
-  its existing domain owner; stale snapshots grant no authority.
-- **AC9 — Bounded reads.** Snapshot resolution is batched/set-based; opening a
-  menu causes zero requests and collections cause no N+1 queries.
-- **AC10 — Accessibility.** Existing `ActionMenu` keyboard, focus, portal,
-  dismissal, ARIA, and unavailable-reason behavior is preserved.
-- **AC11 — Generated parity.** Backend static capabilities and the committed
-  browser projection cannot drift without a verification failure.
-- **AC12 — Real-stack proof.** One seeded resource is compared and representative
-  commands are invoked across Nexus, row, pane, Browse, and specialist surfaces
-  on desktop/mobile.
-- **AC13 — Strict residue.** Automated gates reject local resource action IDs,
-  option arrays, projection branches, duplicate adapters, `queue-add`, and old
-  publication/callback types.
-- **AC14 — Hard cut.** No feature flag, fallback, compatibility alias, dual path,
-  dead code, or stale normative documentation survives.
+- **AC1 — Exact parity.** One parity key yields one ordered semantic plan
+  everywhere; only geometry differs.
+- **AC2 — Complete coverage.** All named surfaces, all 19 schemes, five Media
+  subtypes, and every command-ledger row are proven; none is unclassified.
+- **AC3 — Complete actions.** The target-behaviour actions are present or proven
+  structurally inapplicable. Promotion and an already-open pane never filter.
+- **AC4 — Pane headers.** Desktop, primary-mobile, and secondary-mobile headers
+  expose the complete plan.
+- **AC5 — Correct identity.** Search passage and acquired Browse cases act on
+  their explicit canonical subject without client guessing.
+- **AC6 — Libraries.** Saved-in-Nexus and named-Library add/remove persist from
+  representative surfaces; All, inherited/system provenance, authority, and
+  Create Library are truthful.
+- **AC7 — Lectern.** Add/remove works everywhere; loading/capacity/authority are
+  visible blocked states and never pre-ready defects.
+- **AC8 — State/resilience.** Simultaneous representations agree through busy,
+  confirmation, success, failure, Retry, and reconciliation; stale resolves and
+  stale inverse verbs cannot win.
+- **AC9 — Authority/performance.** Commands reauthorize in their owner. Prefetch
+  is batched/set-based, menu-open reads are zero, reconciliation is declared and
+  bounded, and unmounted refs are evicted.
+- **AC10 — Platform/accessibility.** Desktop/mobile retain structural parity;
+  unsupported actions explain themselves. At 320px/390px, pointer/keyboard
+  flows are reachable, scrollable, correctly named, and restore focus.
+- **AC11 — Independent proof.** Tests assert public behavior with a product-owned
+  oracle, real services at integration/E2E tiers, and no internal mocks.
+- **AC12 — Strict residue/hard cut.** Policy gates reject local/surface policy,
+  old cache/invalidation paths, duplicate resource menus, acquired rows without
+  subjects, stale docs, flags, aliases, compatibility, fallback, and dead code.
 
 ## Non-Goals
 
-- No database-backed action registry, server-defined UI menu, generalized
-  command bus, plugin system, or arbitrary automation framework.
-- No rewrite of domain commands, persistence, authorization, durable jobs, or
-  relationship ownership.
-- No database migration.
-- No personalization, adaptive ranking, AI reordering, submenu system, global
-  undo, analytics UI, or visual redesign.
-- No universalization of non-resource dropdowns.
-- No full DTO hydration, per-row request, or request-on-menu-open fallback.
-- No legacy behavior retained for narrower surface specs.
+- No database action registry, server-defined UI menu, generic command bus,
+  plugin system, remote action config, automation framework, or execution API.
+- No AI/adaptive ordering, personalization, analytics UI, macros, or global undo.
+- No unrelated batch/selection/account/picker/editor-tool menu unification,
+  broad restyle, persistence/auth/durable-job rewrite, or database migration
+  unless the command census proves an existing required relationship needs one.

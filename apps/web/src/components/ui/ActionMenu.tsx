@@ -41,6 +41,8 @@ interface ActionMenuTriggerProps extends ActionMenuTriggerAttributes {
   className: string;
   id: string;
   "aria-label": string;
+  "aria-describedby": string | undefined;
+  "aria-disabled": boolean | undefined;
   "aria-haspopup": "menu";
   "aria-controls": string | undefined;
   "aria-expanded": boolean;
@@ -65,6 +67,10 @@ interface ActionMenuProps {
   triggerAttributes?: ActionMenuTriggerAttributes;
   /** Shares the native trigger node with another behavior such as drag activation. */
   triggerRef?: (node: HTMLButtonElement | null) => void;
+  /** Keeps the trigger visible but inert while its options are unavailable. */
+  triggerDisabled?: boolean;
+  /** Required user-facing explanation for a disabled trigger. */
+  triggerDisabledReason?: string;
 }
 
 const MENU_ITEM_SELECTOR =
@@ -92,6 +98,8 @@ export default function ActionMenu({
   renderTrigger,
   triggerAttributes,
   triggerRef,
+  triggerDisabled = false,
+  triggerDisabledReason,
 }: ActionMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [initialFocus, setInitialFocus] = useState<"first" | "last">("first");
@@ -99,6 +107,7 @@ export default function ActionMenu({
   const menuContainerRef = useRef<HTMLDivElement>(null);
   const triggerId = useId();
   const menuId = useId();
+  const triggerDisabledReasonId = useId();
   const modalToken = useContainingModalLayer();
   const modalIsTopmost = useIsModalLayerTopmost(modalToken);
   const setToggleNode = useCallback(
@@ -129,17 +138,15 @@ export default function ActionMenu({
   const getEnabledMenuItems = useCallback((): HTMLElement[] => {
     if (!menuRef.current) return [];
     return Array.from(
-      menuRef.current.querySelectorAll<HTMLElement>(
-        ENABLED_MENU_ITEM_SELECTOR,
-      ),
+      menuRef.current.querySelectorAll<HTMLElement>(ENABLED_MENU_ITEM_SELECTOR),
     );
   }, [menuRef]);
 
   const getTabbableItems = useCallback((): HTMLElement[] => {
     if (!menuRef.current) return [];
-    return Array.from(menuRef.current.querySelectorAll<HTMLElement>(TABBABLE_SELECTOR)).filter(
-      (item) => item.tabIndex >= 0,
-    );
+    return Array.from(
+      menuRef.current.querySelectorAll<HTMLElement>(TABBABLE_SELECTOR),
+    ).filter((item) => item.tabIndex >= 0);
   }, [menuRef]);
 
   const closeMenu = useCallback((restoreFocus: boolean = true) => {
@@ -156,6 +163,10 @@ export default function ActionMenu({
     setInitialFocus(focusTarget);
     setMenuOpen(true);
   }, []);
+
+  useEffect(() => {
+    if (menuOpen && options.length === 0) closeMenu();
+  }, [closeMenu, menuOpen, options.length]);
 
   useEffect(() => {
     onOpenChange?.(menuOpen);
@@ -187,8 +198,7 @@ export default function ActionMenu({
       const menuItems = getMenuItems();
       const enabledMenuItems = getEnabledMenuItems();
       const tabbableItems = getTabbableItems();
-      const focusable =
-        enabledMenuItems.length > 0 ? menuItems : tabbableItems;
+      const focusable = enabledMenuItems.length > 0 ? menuItems : tabbableItems;
       const target =
         initialFocus === "last"
           ? focusable[focusable.length - 1]
@@ -232,7 +242,7 @@ export default function ActionMenu({
     if (menuItems.length === 0) return;
 
     const activeIndex = menuItems.findIndex(
-      (item) => item === document.activeElement
+      (item) => item === document.activeElement,
     );
 
     if (event.key === "ArrowDown") {
@@ -277,7 +287,7 @@ export default function ActionMenu({
         ...menuItems.slice(0, startIndex),
       ];
       const next = orderedItems.find((item) =>
-        item.textContent?.trim().toLocaleLowerCase().startsWith(prefix)
+        item.textContent?.trim().toLocaleLowerCase().startsWith(prefix),
       );
       if (next) {
         event.preventDefault();
@@ -287,128 +297,150 @@ export default function ActionMenu({
     }
   };
 
-  if (options.length === 0) return null;
+  if (options.length === 0 && !triggerDisabled) return null;
 
   const containerClassName = [styles.container, className]
     .filter(Boolean)
     .join(" ");
 
-  const menu =
-    menuOpen ? (
-      <ul
-        ref={menuRef}
-        id={menuId}
-        className={styles.menu}
-        role="menu"
-        style={menuStyle}
-        aria-labelledby={triggerId}
-        // A portaled menu is logically inside its trigger, so an ancestor
-        // dismissal owner must never treat a pointerdown here as "outside".
-        data-dismiss-ignore="true"
-        onKeyDown={handleMenuKeyDown}
-      >
-        {options.map((option, index) => {
-          const control = projectActionControlState(
-            option.label,
-            option.kind === "command" ? option.state : undefined,
-          );
-          const disabledReasonId =
-            option.kind !== "custom" &&
-            option.disabled &&
-            option.disabledReason
-              ? `${menuId}-disabled-reason-${index}`
-              : undefined;
-          const itemClassName = `${styles.menuItem} ${
-            option.tone === "danger" ? styles.menuItemDanger : ""
-          }`;
-          return (
-            <Fragment key={option.id}>
-              {option.separatorBefore && index > 0 ? (
-                <li role="separator" className={styles.separator} />
-              ) : null}
-              {option.kind === "custom" ? (
-                <li role="none">
-                  <div role="group" aria-label={option.label}>
-                    {option.render({
-                      closeMenu,
-                      closeMenuWithoutFocus: () => closeMenu(false),
-                      triggerEl: toggleRef.current,
-                    })}
-                  </div>
-                </li>
-              ) : (
-                <li role="none">
-                  {option.kind === "link" ? (
-                    <a
-                      href={option.disabled ? undefined : option.href}
-                      role="menuitem"
-                      className={itemClassName}
-                      aria-disabled={option.disabled || undefined}
-                      aria-describedby={disabledReasonId}
-                      tabIndex={option.disabled ? -1 : undefined}
-                      onKeyDown={(event: ReactKeyboardEvent<HTMLAnchorElement>) => {
-                        if (
-                          option.disabled &&
-                          (event.key === "Enter" || event.key === " ")
-                        ) {
-                          event.preventDefault();
-                        }
-                      }}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (option.disabled) {
-                          event.preventDefault();
-                          return;
-                        }
-                        const triggerEl = toggleRef.current;
-                        closeMenu(option.restoreFocusOnClose !== false);
-                        option.onSelect?.({ triggerEl });
-                      }}
-                    >
-                      {control.menuLabel}
-                    </a>
-                  ) : (
-                    <button
-                      type="button"
-                      role={control.menuRole}
-                      aria-checked={control.menuChecked}
-                      aria-disabled={option.disabled || undefined}
-                      aria-describedby={disabledReasonId}
-                      className={itemClassName}
-                      onKeyDown={(event) => {
-                        if (
-                          option.disabled &&
-                          (event.key === "Enter" || event.key === " ")
-                        ) {
-                          event.preventDefault();
-                        }
-                      }}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (option.disabled) {
-                          event.preventDefault();
-                          return;
-                        }
-                        const triggerEl = toggleRef.current;
-                        closeMenu(option.restoreFocusOnClose !== false);
-                        option.onSelect({ triggerEl });
-                      }}
-                    >
-                      {control.menuLabel}
-                    </button>
-                  )}
-                  {disabledReasonId ? (
-                    <span id={disabledReasonId} className="sr-only">
-                      {option.disabledReason}
-                    </span>
-                  ) : null}
-                </li>
-              )}
-            </Fragment>
-          );
-        })}
-      </ul>
-    ) : null;
+  const menu = menuOpen ? (
+    <ul
+      ref={menuRef}
+      id={menuId}
+      className={styles.menu}
+      role="menu"
+      style={menuStyle}
+      aria-labelledby={triggerId}
+      // A portaled menu is logically inside its trigger, so an ancestor
+      // dismissal owner must never treat a pointerdown here as "outside".
+      data-dismiss-ignore="true"
+      onKeyDown={handleMenuKeyDown}
+    >
+      {options.map((option, index) => {
+        const control = projectActionControlState(
+          option.label,
+          option.kind === "command" ? option.state : undefined,
+        );
+        const disabledReasonId =
+          option.kind !== "custom" && option.disabled && option.disabledReason
+            ? `${menuId}-disabled-reason-${index}`
+            : undefined;
+        const itemClassName = `${styles.menuItem} ${
+          option.tone === "danger" ? styles.menuItemDanger : ""
+        }`;
+        const semanticAttributes = {
+          "data-action-id": option.id,
+          "data-action-tone": option.tone ?? "default",
+          "data-action-availability": option.disabled
+            ? "Blocked"
+            : "Available",
+        } as const;
+        return (
+          <Fragment key={option.id}>
+            {option.separatorBefore && index > 0 ? (
+              <li role="separator" className={styles.separator} />
+            ) : null}
+            {option.kind === "custom" ? (
+              <li role="none">
+                <div
+                  role="group"
+                  aria-label={option.label}
+                  {...semanticAttributes}
+                >
+                  {option.render({
+                    closeMenu,
+                    closeMenuWithoutFocus: () => closeMenu(false),
+                    triggerEl: toggleRef.current,
+                  })}
+                </div>
+              </li>
+            ) : (
+              <li role="none">
+                {option.kind === "link" ? (
+                  <a
+                    href={option.disabled ? undefined : option.href}
+                    role="menuitem"
+                    {...semanticAttributes}
+                    className={itemClassName}
+                    aria-disabled={option.disabled || undefined}
+                    aria-describedby={disabledReasonId}
+                    tabIndex={option.disabled ? -1 : undefined}
+                    onKeyDown={(
+                      event: ReactKeyboardEvent<HTMLAnchorElement>,
+                    ) => {
+                      if (
+                        option.disabled &&
+                        (event.key === "Enter" || event.key === " ")
+                      ) {
+                        event.preventDefault();
+                      }
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (option.disabled) {
+                        event.preventDefault();
+                        return;
+                      }
+                      const triggerEl = toggleRef.current;
+                      closeMenu(option.restoreFocusOnClose !== false);
+                      option.onSelect?.({ triggerEl });
+                    }}
+                  >
+                    {option.icon ? (
+                      <span className={styles.menuItemIcon} aria-hidden="true">
+                        {option.icon}
+                      </span>
+                    ) : null}
+                    <span>{control.menuLabel}</span>
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    role={control.menuRole}
+                    {...semanticAttributes}
+                    aria-checked={control.menuChecked}
+                    aria-disabled={option.disabled || undefined}
+                    aria-describedby={disabledReasonId}
+                    className={itemClassName}
+                    onKeyDown={(event) => {
+                      if (
+                        option.disabled &&
+                        (event.key === "Enter" || event.key === " ")
+                      ) {
+                        event.preventDefault();
+                      }
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (option.disabled) {
+                        event.preventDefault();
+                        return;
+                      }
+                      const triggerEl = toggleRef.current;
+                      closeMenu(option.restoreFocusOnClose !== false);
+                      option.onSelect({ triggerEl });
+                    }}
+                  >
+                    {option.icon ? (
+                      <span className={styles.menuItemIcon} aria-hidden="true">
+                        {option.icon}
+                      </span>
+                    ) : null}
+                    <span>{control.menuLabel}</span>
+                  </button>
+                )}
+                {disabledReasonId ? (
+                  <span id={disabledReasonId} className="sr-only">
+                    {option.disabledReason}
+                  </span>
+                ) : null}
+              </li>
+            )}
+          </Fragment>
+        );
+      })}
+    </ul>
+  ) : null;
 
   const triggerProps: ActionMenuTriggerProps = {
     ...triggerAttributes,
@@ -417,16 +449,27 @@ export default function ActionMenu({
     className: styles.trigger,
     id: triggerId,
     "aria-label": label,
+    "aria-describedby":
+      triggerDisabled && triggerDisabledReason
+        ? triggerDisabledReasonId
+        : undefined,
+    "aria-disabled": triggerDisabled || undefined,
     "aria-haspopup": "menu",
     "aria-controls": menuOpen ? menuId : undefined,
     "aria-expanded": menuOpen,
     onClick: (event) => {
       event.stopPropagation();
+      if (triggerDisabled) return;
       if (menuOpen) closeMenu(false);
       else openMenu();
     },
     onKeyDown: (event) => {
-      if (event.key === "Enter" || event.key === " " || event.key === "ArrowDown") {
+      if (triggerDisabled) return;
+      if (
+        event.key === "Enter" ||
+        event.key === " " ||
+        event.key === "ArrowDown"
+      ) {
         event.preventDefault();
         event.stopPropagation();
         openMenu("first");
@@ -449,10 +492,13 @@ export default function ActionMenu({
       {renderTrigger ? (
         renderTrigger(triggerProps)
       ) : (
-        <button {...triggerProps}>
-          &hellip;
-        </button>
+        <button {...triggerProps}>&hellip;</button>
       )}
+      {triggerDisabled && triggerDisabledReason ? (
+        <span id={triggerDisabledReasonId} className="sr-only">
+          {triggerDisabledReason}
+        </span>
+      ) : null}
       {menu && typeof document !== "undefined"
         ? createPortal(
             menu,

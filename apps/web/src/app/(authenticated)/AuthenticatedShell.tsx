@@ -151,8 +151,8 @@ function AuthenticatedWorkspace({
                           renders the single overlay copy deep inside the player
                           runtime and a synthetic pane-visit scope. */}
                       <ResourceOverlaysProvider>
-                        <ResourceActionRuntimeProvider>
-                          <GlobalPlayerProvider accountId={accountId}>
+                        <GlobalPlayerProvider accountId={accountId}>
+                          <ResourceActionRuntimeProvider>
                             <Nexus />
                             <ResourceActionOverlays />
                             <div
@@ -168,8 +168,8 @@ function AuthenticatedWorkspace({
                                 </WalknoteSessionProvider>
                               </main>
                             </div>
-                          </GlobalPlayerProvider>
-                        </ResourceActionRuntimeProvider>
+                          </ResourceActionRuntimeProvider>
+                        </GlobalPlayerProvider>
                       </ResourceOverlaysProvider>
                     </OfflineMediaProvider>
                   </ShareControllerProvider>

@@ -52,19 +52,20 @@ export default function LibraryPlacementOverlay({
         {session ? (
           <LibraryEntryEditor
             key={session.key}
-            libraries={state.libraries}
+            placements={state.placements}
             loading={state.loading}
             busy={state.commandsDisabled}
-            pendingLibraryId={state.pendingLibraryId}
+            creating={state.creating}
+            pendingDestinationKey={state.pendingDestinationKey}
             error={error}
-            onAddToLibrary={state.addToLibrary}
-            onRemoveFromLibrary={state.removeFromLibrary}
+            onToggle={state.toggle}
+            onCreateLibrary={state.createLibraryAndAdd}
             selectedGroupLabel="In these libraries"
             otherGroupLabel="Other libraries"
-            searchLabel="Search libraries"
-            searchPlaceholder="Search libraries"
+            searchLabel="Search or create a library"
+            searchPlaceholder="Search or create"
             listLabel="Library options"
-            emptyInventory="No libraries to place this in."
+            emptyInventory="No libraries yet. Type a name to create one."
           />
         ) : null}
       </LibraryChooserSurface>

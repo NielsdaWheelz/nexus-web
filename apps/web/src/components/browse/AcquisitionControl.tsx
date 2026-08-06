@@ -179,7 +179,7 @@ function replacementConflict(error: unknown): {
 
 type AcquisitionControlProps = {
   readonly commit: (command: AcquisitionCommand) => Promise<AcquisitionSuccess>;
-  readonly onCommitted: (href: string) => void;
+  readonly onCommitted: (href: string) => void | Promise<void>;
 } & (
   | {
       readonly kind: "Add";
@@ -332,7 +332,7 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
       setFrozen(null);
       setConflict(null);
       setPickerOpen(false);
-      onCommitted(result.href);
+      await onCommitted(result.href);
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
       let nextConflict: ReturnType<typeof replacementConflict>;

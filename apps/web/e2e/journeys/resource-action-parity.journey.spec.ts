@@ -7,7 +7,8 @@ import {
   test,
   webOrigin,
 } from "../fixtures";
-import { pageRequest } from "../request";
+import { matchesResponse, pageRequest } from "../request";
+import { READY_WEB_ARTICLE_PLAN } from "../resourceActionProductOracle";
 
 test.use({ journeyId: "resource-action-parity" });
 
@@ -16,6 +17,7 @@ test.use({ journeyId: "resource-action-parity" });
 // menuitem SET it opens is identical everywhere. These are the surface triggers.
 const ROW_TRIGGER = `More actions for ${ARTICLE_TITLE}`;
 const NEXUS_TRIGGER = `Actions for ${ARTICLE_TITLE}`;
+const PODCAST_TITLE = "Houston We Have a Podcast";
 // The mobile pane bar renders the same canonical dropdown under the bare label
 // "Actions" (presentation only) — MobilePaneBar.tsx passes label="Actions".
 const MOBILE_PANE_TRIGGER = "Actions";
@@ -24,34 +26,50 @@ const DESKTOP_VIEWPORT = { width: 1_280, height: 900 } as const;
 // widths), so a fresh load renders the mobile pane chrome.
 const MOBILE_VIEWPORT = { width: 390, height: 844 } as const;
 
-// INDEPENDENT ORACLE (spec-derived, NOT read from any live menu). The captured
-// NASA web article is a ready, web-scheme media in the viewer's default library
-// on the Web platform, pinned below to a stable InProgress reading state. For
-// that parity key the catalog + planner project exactly these menuitems, in this
-// order: core (Open, Share, Chat), then the resource operations (with an
-// InProgress article offering both "Mark as finished" and "Reset progress"),
-// then the global relationships, with the sole danger action (Remove media)
-// hoisted to the very end (AC5/AC6). Comparing the live row menu to THIS literal
-// — rather than to itself — is what makes the cross-surface `toEqual(oracle)`
-// checks below a real mid-list regression net: a dropped, reordered, or leaked
-// action anywhere in the list fails here first, instead of passing vacuously
-// because every surface renders the same code.
-const EXPECTED_CANONICAL_MENU: readonly string[] = [
-  "Open",
-  "Share…",
-  "Chat about this resource",
-  "Open source",
-  "Refresh source",
-  "Re-enrich metadata",
-  "Edit authors…",
-  "Mark as finished",
-  "Reset progress",
-  "Libraries…",
-  "Add to Lectern",
-  "Remove media",
-];
+// Independent, product-reviewed literals. The oracle imports no production
+// catalog/planner, so one shared implementation cannot make every surface agree
+// on the same missing, renamed, or reordered action.
+interface ResourceMenuSignatureItem {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: string;
+  readonly groupStart: boolean;
+  readonly control:
+    | { readonly kind: "Command"; readonly checked: null }
+    | { readonly kind: "Toggle"; readonly checked: boolean };
+  readonly availability:
+    | { readonly kind: "Available"; readonly reason: null }
+    | { readonly kind: "Blocked"; readonly reason: string };
+  readonly tone: "default" | "danger";
+}
 
-// AC4 taxonomy guard: these are real, live control labels that belong to OTHER
+function lucideDomIdentity(icon: string): string {
+  return icon
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
+    .replace(/([A-Za-z])([0-9])/g, "$1-$2")
+    .toLowerCase();
+}
+
+// This exact, hand-reviewed ready-article signature is independent of the
+// production catalog/planner. It pins every semantic that ActionMenu exposes:
+// identity/copy/icon, group boundaries, control state, availability, and tone.
+const EXPECTED_CANONICAL_MENU: readonly ResourceMenuSignatureItem[] =
+  READY_WEB_ARTICLE_PLAN.map((action, index, plan) => ({
+    id: action.id,
+    label: action.label,
+    icon: lucideDomIdentity(action.icon),
+    groupStart: index > 0 && plan[index - 1]?.group !== action.group,
+    control:
+      action.id === "ResourceOperation.Media.Consumption" ||
+      action.id === "RelationshipAction.LecternMembership"
+        ? { kind: "Toggle", checked: false }
+        : { kind: "Command", checked: null },
+    availability: { kind: "Available", reason: null },
+    tone: action.tone,
+  }));
+
+// Scope/Taxonomy guard: these are real, live control labels that belong to OTHER
 // owners (the reader view menu, the pane options menu, pane navigation, global
 // nav). None is a resource action, so none may ever appear inside the canonical
 // resource dropdown. A regression that folded any of them back into the resource
@@ -65,49 +83,119 @@ const NON_RESOURCE_LABELS: readonly string[] = [
 ];
 
 /**
- * Open a resource dropdown, read its ordered menuitem labels, and dismiss it.
- * Every surface renders the SAME `ResourceActionMenu`/catalog projection, so the
- * returned array is the parity signature: labels, in catalog order, danger last.
+ * Open a resource dropdown, read its ordered public semantic signature, and
+ * dismiss it. Confirmation and intent are deliberately absent: they are not DOM
+ * semantics and are pinned independently by pure contract tests.
  */
 async function readResourceMenu(
   page: Page,
   trigger: Locator,
   surface: string,
-  openWith: "click" | "keyboard" = "click",
-): Promise<string[]> {
+  expectedCount?: number,
+): Promise<readonly ResourceMenuSignatureItem[]> {
   await expect(
     trigger,
     `${surface}: the canonical resource dropdown trigger never became available.`,
   ).toBeVisible({ timeout: 15_000 });
-  if (openWith === "keyboard") {
-    // Keyboard activation opens the SAME portaled menu without a viewport-bound
-    // pointer click. ActionMenu's trigger opens on Enter/Space/ArrowDown, so this
-    // reaches a trigger that is laid out (visible + enabled) but positioned
-    // outside the narrow mobile viewport — a click there cannot be driven, focus
-    // + Enter can. AC10 keeps this keyboard path a first-class affordance.
-    await trigger.focus();
-    await page.keyboard.press("Enter");
-  } else {
-    await trigger.click();
-  }
+  await expect(
+    trigger,
+    `${surface}: the canonical resource dropdown stayed unavailable.`,
+  ).toBeEnabled({ timeout: 15_000 });
+  await trigger.click();
   const menu = page.getByRole("menu");
   await expect(menu, `${surface}: the resource dropdown did not open.`).toBeVisible();
+  const menuItems = menu
+    .getByRole("menuitem")
+    .or(menu.getByRole("menuitemcheckbox"));
   await expect(
-    menu.getByRole("menuitem").first(),
+    menuItems.first(),
     `${surface}: the resource dropdown opened with no menuitems.`,
   ).toBeVisible();
-  const labels = (await menu.getByRole("menuitem").allInnerTexts())
-    .map((label) => label.trim())
-    .filter((label) => label.length > 0);
+  if (expectedCount !== undefined) {
+    await expect(
+      menuItems,
+      `${surface}: the resource dropdown did not settle on ${expectedCount} actions.`,
+    ).toHaveCount(expectedCount);
+  }
+  const signature = await menuItems.evaluateAll((elements) =>
+    elements.map((element) => {
+      const id = element.getAttribute("data-action-id");
+      const tone = element.getAttribute("data-action-tone");
+      const availabilityKind = element.getAttribute(
+        "data-action-availability",
+      );
+      const iconClass = Array.from(
+        element.querySelector("svg")?.classList ?? [],
+      ).find((name) => name.startsWith("lucide-"));
+      if (
+        id === null ||
+        iconClass === undefined ||
+        (availabilityKind !== "Available" &&
+          availabilityKind !== "Blocked")
+      ) {
+        throw new Error(
+          `Incomplete resource-action semantics for ${id ?? "unknown action"}.`,
+        );
+      }
+      let semanticTone: "default" | "danger";
+      if (tone === "default") semanticTone = "default";
+      else if (tone === "danger") semanticTone = "danger";
+      else throw new Error(`${id} omitted its semantic tone.`);
+
+      const role = element.getAttribute("role");
+      const checked = element.getAttribute("aria-checked");
+      const control =
+        role === "menuitemcheckbox"
+          ? checked === "true" || checked === "false"
+            ? { kind: "Toggle" as const, checked: checked === "true" }
+            : (() => {
+                throw new Error(`${id} toggle omitted aria-checked.`);
+              })()
+          : { kind: "Command" as const, checked: null };
+      const descriptionIds =
+        element.getAttribute("aria-describedby")?.split(/\s+/) ?? [];
+      const reason = descriptionIds
+        .map((descriptionId) =>
+          document.getElementById(descriptionId)?.textContent?.trim(),
+        )
+        .filter((copy): copy is string => Boolean(copy))
+        .join(" ");
+      const ariaBlocked = element.getAttribute("aria-disabled") === "true";
+      if ((availabilityKind === "Blocked") !== ariaBlocked) {
+        throw new Error(`${id} availability disagrees with aria-disabled.`);
+      }
+      if (availabilityKind === "Blocked" && reason.length === 0) {
+        throw new Error(`${id} blocked availability omitted its reason.`);
+      }
+
+      return {
+        id,
+        label: (element as HTMLElement).innerText.trim(),
+        icon: iconClass
+          .slice("lucide-".length)
+          .replace(/([A-Za-z])([0-9])/g, "$1-$2")
+          .toLowerCase(),
+        groupStart:
+          element.parentElement?.previousElementSibling?.getAttribute("role") ===
+          "separator",
+        control,
+        availability:
+          availabilityKind === "Blocked"
+            ? { kind: "Blocked" as const, reason }
+            : { kind: "Available" as const, reason: null },
+        tone: semanticTone,
+      };
+    }),
+  );
   await page.keyboard.press("Escape");
   await expect(
     menu,
     `${surface}: the resource dropdown did not dismiss on Escape.`,
   ).toBeHidden();
-  return labels;
+  return signature;
 }
 
-test("one seeded resource yields the identical canonical dropdown on every surface and reconciles a real mutation across representations", async ({
+test("canonical resources yield identical dropdown semantics across surfaces and reconcile a real mutation", async ({
   page,
   journeyUser,
 }) => {
@@ -218,28 +306,34 @@ test("one seeded resource yields the identical canonical dropdown on every surfa
     `Seeded media ${mediaId} was ready but absent from default Library ${defaultLibraryId}.`,
   ).toBeVisible({ timeout: 15_000 });
   const rowTrigger = page.getByRole("button", { name: ROW_TRIGGER, exact: true });
-  const oracle = await readResourceMenu(page, rowTrigger, "library row");
+  const oracle = await readResourceMenu(
+    page,
+    rowTrigger,
+    "library row",
+    EXPECTED_CANONICAL_MENU.length,
+  );
 
   // INDEPENDENT ORACLE FIRST: the row menu must equal the spec-derived literal
   // exactly. This is the sensitivity anchor — it catches a mid-list drop/reorder
   // /leak that a surface-vs-surface comparison alone would miss (both surfaces
   // render the same implementation). Every `toEqual(oracle)` below then proves
   // the OTHER surfaces match this same, now-independently-verified set. It also
-  // pins AC5/AC6: Open promoted to the top, and the sole danger action last.
+  // pins AC3: Open is retained and promoted to the top, with the exact plan's
+  // sole danger action last.
   expect(
     oracle,
-    `The library-row canonical dropdown diverged from the spec-derived resource action set (AC1/AC5/AC6). got=${JSON.stringify(oracle)} expected=${JSON.stringify(EXPECTED_CANONICAL_MENU)}`,
+    `The library-row canonical dropdown diverged from the spec-derived resource action set (AC1/AC3). got=${JSON.stringify(oracle)} expected=${JSON.stringify(EXPECTED_CANONICAL_MENU)}`,
   ).toEqual(EXPECTED_CANONICAL_MENU);
 
-  // ---- AC4: non-resource controls are NOT in the resource dropdown ----------
+  // ---- Scope/Taxonomy: non-resource controls stay outside this dropdown -----
   // Reader settings, pane options, pane navigation, and global nav live on their
   // own owners; a real regression folding any of them into the resource menu is
   // what the taxonomy split forbids. (A bare "Refresh" check would be vacuous —
   // no such menuitem exists, and "Refresh source" IS a legit resource action.)
   for (const label of NON_RESOURCE_LABELS) {
     expect(
-      oracle,
-      `The non-resource control "${label}" leaked into the canonical resource dropdown (AC4).`,
+      oracle.map((action) => action.label),
+      `The non-resource control "${label}" leaked into the canonical resource dropdown (Scope/Taxonomy).`,
     ).not.toContain(label);
   }
 
@@ -258,7 +352,12 @@ test("one seeded resource yields the identical canonical dropdown on every surfa
   await expect(nexusInput).toBeFocused();
   await nexusInput.fill("Water on the Moon");
   const nexusTrigger = nexus.getByRole("button", { name: NEXUS_TRIGGER, exact: true });
-  const nexusItems = await readResourceMenu(page, nexusTrigger, "Nexus result row");
+  const nexusItems = await readResourceMenu(
+    page,
+    nexusTrigger,
+    "Nexus result row",
+    oracle.length,
+  );
   expect(
     nexusItems,
     `the Nexus result-row overflow diverged from the row's canonical dropdown (AC1). nexus=${JSON.stringify(nexusItems)} oracle=${JSON.stringify(oracle)}`,
@@ -273,27 +372,32 @@ test("one seeded resource yields the identical canonical dropdown on every surfa
     paneOptions,
     `Media pane for ${mediaId} never published its canonical resource dropdown.`,
   ).toBeVisible({ timeout: 20_000 });
-  const paneItems = await readResourceMenu(page, paneOptions, "media pane header");
+  const paneItems = await readResourceMenu(
+    page,
+    paneOptions,
+    "media pane header",
+    oracle.length,
+  );
   expect(
     paneItems,
-    "the media pane header Options dropdown diverged from the row's canonical dropdown (AC1).",
+    "the media pane header Options dropdown diverged from the row's canonical dropdown (AC1/AC4).",
   ).toEqual(oracle);
-  // AC4 positive: the pane's own navigation is a dedicated control OUTSIDE the
+  // Scope/Taxonomy positive: the pane's own navigation is a dedicated control OUTSIDE the
   // resource dropdown — it is not folded into the canonical menu.
   await expect(
     page.getByRole("button", { name: "Go back in this pane" }),
-    "the pane navigation control was missing as a dedicated affordance (AC4).",
+    "the pane navigation control was missing as a dedicated affordance (Scope/Taxonomy).",
   ).toBeVisible();
 
   // ---- SURFACE 4 (Browse negative): a NON-ACQUIRED preview has NO menu -------
-  // AC12 names Browse. A canonical resource dropdown is a standing representation
-  // of an ACQUIRED resource; a Browse preview of a not-yet-acquired result has no
-  // owned ResourceRef, so it must render the acquisition control and NO resource
-  // dropdown at all. We reach the deterministic recorded PodcastIndex fixture and
-  // STOP before subscribing, so the podcast stays non-acquired.
+  // A canonical resource dropdown is a standing representation of an ACQUIRED
+  // resource; a Browse preview of a not-yet-acquired result has no owned
+  // ResourceRef, so the Scope/Taxonomy contract requires the acquisition control
+  // and NO resource dropdown. Observe the deterministic recorded PodcastIndex
+  // fixture before subscribing, while it has no canonical ResourceRef.
   await gotoWithStrictCsp(page, "/browse?kind=Podcast&q=Houston+We+Have+a+Podcast");
   const browseResult = page.getByRole("link", {
-    name: "Houston We Have a Podcast",
+    name: PODCAST_TITLE,
     exact: true,
   });
   await expect(
@@ -318,14 +422,81 @@ test("one seeded resource yields the identical canonical dropdown on every surfa
   ]) {
     await expect(
       missingTrigger,
-      "a canonical resource dropdown leaked onto a NON-ACQUIRED Browse preview (AC4/AC12).",
+      "a canonical resource dropdown leaked onto a NON-ACQUIRED Browse preview (Scope/Taxonomy).",
     ).toHaveCount(0);
   }
+
+  // ---- SURFACE 5 (Browse positive): the ACQUIRED Podcast has the menu -------
+  // Subscribe through the real acquisition boundary, read the canonical
+  // Podcast in its pane, then re-run the same discovery. Browse must now project
+  // an InNexus row for that exact Podcast and expose the byte-for-byte same
+  // public menu signature — including the checked subscription toggle.
+  const subscribeResponsePromise = page.waitForResponse((response) =>
+    matchesResponse(
+      response,
+      webOrigin,
+      "POST",
+      "/api/podcasts/subscriptions",
+    ),
+  );
+  await page.getByRole("button", { name: "Subscribe", exact: true }).click();
+  const subscribeResponse = await subscribeResponsePromise;
+  const subscribeText = await subscribeResponse.text();
+  expect(
+    subscribeResponse.ok(),
+    `Podcast subscription failed: ${subscribeResponse.status()} ${subscribeText.slice(0, 500)}`,
+  ).toBeTruthy();
+  await expect(page).toHaveURL(/\/podcasts\/[0-9a-f-]{36}$/i);
+
+  const podcastPaneSignature = await readResourceMenu(
+    page,
+    page.getByRole("button", { name: "Options", exact: true }),
+    "acquired Podcast pane header",
+  );
+  expect(
+    podcastPaneSignature.find(
+      (action) =>
+        action.id === "RelationshipAction.PodcastSubscription",
+    ),
+    "The acquired Podcast pane did not expose its subscribed toggle state.",
+  ).toEqual(
+    expect.objectContaining({
+      label: "Unsubscribe",
+      control: { kind: "Toggle", checked: true },
+      availability: { kind: "Available", reason: null },
+    }),
+  );
+
+  await gotoWithStrictCsp(
+    page,
+    "/browse?kind=Podcast&q=Houston+We+Have+a+Podcast",
+  );
+  await expect(
+    page.getByRole("link", { name: PODCAST_TITLE, exact: true }),
+    "The acquired Podcast disappeared from its Browse result set.",
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(
+    page.getByText("Podcast Index · In Nexus", { exact: true }),
+    "Browse did not reproject the subscribed Podcast as an acquired InNexus resource.",
+  ).toBeVisible();
+  const acquiredBrowseSignature = await readResourceMenu(
+    page,
+    page.getByRole("button", {
+      name: `More actions for ${PODCAST_TITLE}`,
+      exact: true,
+    }),
+    "acquired Podcast Browse row",
+    podcastPaneSignature.length,
+  );
+  expect(
+    acquiredBrowseSignature,
+    "The acquired Podcast Browse row diverged from the same Podcast's pane menu (AC1/AC5).",
+  ).toEqual(podcastPaneSignature);
 
   // Specialist surfaces (Connections, Evidence, chat context refs) also render
   // the ONE canonical ResourceActionMenu, under a `Actions for <title>` trigger
   // paired with a SEPARATE ContextEdgeMenu for the edge command. That specialist
-  // parity + AC4 taxonomy split is proven at the component level against the real
+  // parity + Scope/Taxonomy split is proven at the component level against the real
   // runtime/planner/catalog by ConversationContextRefsSurface.browser.test.tsx
   // (resource dropdown holds Open/Chat/… and NOT the edge command; the edge
   // control holds the edge command and NOT any resource action). Seeding a live
@@ -339,7 +510,12 @@ test("one seeded resource yields the identical canonical dropdown on every surfa
   // Mobile ROW: the same CollectionRow renders the same canonical dropdown.
   await gotoWithStrictCsp(page, `/libraries/${defaultLibraryId}`);
   const mobileRowTrigger = page.getByRole("button", { name: ROW_TRIGGER, exact: true });
-  const mobileRowItems = await readResourceMenu(page, mobileRowTrigger, "mobile library row");
+  const mobileRowItems = await readResourceMenu(
+    page,
+    mobileRowTrigger,
+    "mobile library row",
+    oracle.length,
+  );
   expect(
     mobileRowItems,
     "the mobile row dropdown diverged from the desktop canonical dropdown (AC1 breakpoint parity).",
@@ -350,34 +526,61 @@ test("one seeded resource yields the identical canonical dropdown on every surfa
   // match the oracle DIRECTLY, not merely structurally. On a fresh /media load the
   // top chrome is in its Visible (interactive, non-inert) phase and opening the
   // dropdown acquires the "action-menu" visible-lock that pins the chrome open.
-  // We open it via KEYBOARD, not a click, for a concrete layout reason: on the
-  // reader the bar packs three 48px controls (Reader settings, Pane options,
-  // Actions) into a single 48px grid column (.topBarControls, justify-content:
-  // center), so the rightmost "Actions" trigger overflows past the 390px viewport
-  // and stays "outside of the viewport" — Playwright cannot scroll a
-  // horizontally-overflowed fixed-header control into view, so a pointer click
-  // cannot be driven, but focus + Enter opens the identical menu deterministically.
+  // Pointer activation is deliberate: the 390px mobile pane header must keep
+  // every separate chrome control, including this canonical dropdown, inside
+  // the interactive viewport. Keyboard reachability is covered independently
+  // by ActionMenu's exhaustive responsive behavior proof.
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
   const mobilePaneItems = await readResourceMenu(
     page,
     page.getByRole("button", { name: MOBILE_PANE_TRIGGER, exact: true }),
     "mobile pane bar",
-    "keyboard",
+    oracle.length,
   );
   expect(
     mobilePaneItems,
-    "the mobile pane Actions dropdown diverged from the desktop canonical dropdown (AC1 breakpoint parity).",
+    "the mobile pane Actions dropdown diverged from the desktop canonical dropdown (AC1/AC4 breakpoint parity).",
   ).toEqual(oracle);
-  // AC4: the reader's own view menu ("Reader settings") and the pane's own
+  // Scope/Taxonomy: the reader's own view menu ("Reader settings") and the pane's own
   // options ("Pane options") stay SEPARATE controls on the bar — never folded
   // into the resource dropdown that we just read above.
   await expect(
     page.getByRole("button", { name: /Pane options/ }),
-    "the mobile pane's own options menu was folded into the resource dropdown (AC4).",
+    "the mobile pane's own options menu was folded into the resource dropdown (Scope/Taxonomy).",
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Reader settings" }),
-    "the mobile reader's view menu was folded into the resource dropdown (AC4).",
+    "the mobile reader's view menu was folded into the resource dropdown (Scope/Taxonomy).",
+  ).toBeVisible();
+
+  // The mobile secondary sheet is a second standing header for this SAME media
+  // ref. Open it through the public pane-options disclosure and compare the
+  // secondary header's Actions dropdown against the desktop/mobile oracle.
+  await page.getByRole("button", { name: /Pane options/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Show Companion", exact: true })
+    .click();
+  const secondarySheet = page.getByTestId("mobile-secondary-host");
+  await expect(
+    secondarySheet,
+    "The mobile Companion secondary sheet did not open.",
+  ).toBeVisible();
+  const secondaryHeaderSignature = await readResourceMenu(
+    page,
+    secondarySheet.getByRole("button", {
+      name: MOBILE_PANE_TRIGGER,
+      exact: true,
+    }),
+    "mobile secondary-sheet header",
+    oracle.length,
+  );
+  expect(
+    secondaryHeaderSignature,
+    "The mobile secondary-sheet Actions dropdown diverged from the same media's canonical menu (AC1/AC4 breakpoint parity).",
+  ).toEqual(oracle);
+  await expect(
+    secondarySheet,
+    "Dismissing the resource dropdown also dismissed its owning secondary sheet.",
   ).toBeVisible();
 
   // ---- AC7/AC8: invoke a real mutation, reconcile across representations -----
@@ -395,13 +598,20 @@ test("one seeded resource yields the identical canonical dropdown on every surfa
   // canonical plan. This e2e does not co-mount two representations, so it makes no
   // single-invocation simultaneous-flip claim.)
   await page.setViewportSize(DESKTOP_VIEWPORT);
-  await gotoWithStrictCsp(page, `/media/${mediaId}`);
-  const optionsAfter = page.getByRole("button", { name: "Options", exact: true });
+  const activeMediaPane = page.getByRole("region", {
+    name: ARTICLE_TITLE,
+    exact: true,
+  });
+  const optionsAfter = activeMediaPane.getByRole("button", {
+    name: "Options",
+    exact: true,
+  });
   await expect(optionsAfter).toBeVisible({ timeout: 20_000 });
+  await expect(optionsAfter).toBeEnabled({ timeout: 20_000 });
   await optionsAfter.click();
   const openMenu = page.getByRole("menu");
   await expect(openMenu).toBeVisible();
-  const addToLectern = openMenu.getByRole("menuitem", {
+  const addToLectern = openMenu.getByRole("menuitemcheckbox", {
     name: "Add to Lectern",
     exact: true,
   });
@@ -416,9 +626,14 @@ test("one seeded resource yields the identical canonical dropdown on every surfa
   await expect
     .poll(
       async () =>
-        (await readResourceMenu(page, optionsAfter, "media pane after mutation")).includes(
-          "Remove from Lectern",
-        ),
+        (
+          await readResourceMenu(
+            page,
+            optionsAfter,
+            "media pane after mutation",
+            oracle.length,
+          )
+        ).some((action) => action.label === "Remove from Lectern"),
       {
         message: `Add-to-Lectern on media ${mediaId} did not reconcile the pane dropdown to its removal verb.`,
         timeout: 15_000,
@@ -432,13 +647,18 @@ test("one seeded resource yields the identical canonical dropdown on every surfa
   // agreement; AC7/AC8).
   await gotoWithStrictCsp(page, `/libraries/${defaultLibraryId}`);
   const reconciledRow = page.getByRole("button", { name: ROW_TRIGGER, exact: true });
-  const reconciledItems = await readResourceMenu(page, reconciledRow, "library row after mutation");
+  const reconciledItems = await readResourceMenu(
+    page,
+    reconciledRow,
+    "library row after mutation",
+    oracle.length,
+  );
   expect(
-    reconciledItems,
+    reconciledItems.map((action) => action.label),
     `The row representation of media ${mediaId} did not reconcile to the removal verb after Add-to-Lectern (AC7/AC8).`,
   ).toContain("Remove from Lectern");
   expect(
-    reconciledItems,
+    reconciledItems.map((action) => action.label),
     "the stale Add-to-Lectern verb survived in another representation after the mutation.",
   ).not.toContain("Add to Lectern");
 });

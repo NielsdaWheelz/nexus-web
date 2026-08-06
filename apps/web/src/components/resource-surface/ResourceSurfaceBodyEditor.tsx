@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Link2, Plus, Trash2 } from "lucide-react";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
 import NoteBodyEditor, {
   type NoteBodyChange,
@@ -23,6 +24,7 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { resourceSurfaceFilterFields } from "./resourceSurfaceFilterFields";
 import styles from "./ResourceSurfaceBodyEditor.module.css";
@@ -230,6 +232,9 @@ export default function ResourceSurfaceBodyEditor({
         {visibleRows.map(({ occurrence, sourceIndex }) => {
           const { item, content } = occurrence.target;
           const label = item.label.trim() || item.scheme.replaceAll("_", " ");
+          const actionSubject = {
+            ref: assumeCanonicalResourceRef(item.ref),
+          } as const;
           if (content.kind === "note_body") {
             return (
               <li
@@ -305,9 +310,83 @@ export default function ResourceSurfaceBodyEditor({
                     onInputHandoffClaimed={onInputHandoffClaimed}
                   />
                 </div>
+                <div className={styles.rowActions}>
+                  <ResourceActionMenu
+                    actionSubject={actionSubject}
+                    label={`More actions for ${label || `note ${sourceIndex + 1}`}`}
+                  />
+                  {structuralEditingAvailable ? (
+                    <SurfaceOccurrenceActions
+                      label={label || `note ${sourceIndex + 1}`}
+                      canMoveUp={sourceIndex > 0}
+                      canMoveDown={sourceIndex < orderedItems.length - 1}
+                      onMoveUp={() => {
+                        const position = positionForMove(
+                          orderedItems,
+                          sourceIndex,
+                          "up",
+                        );
+                        if (position) {
+                          onMoveOccurrence({
+                            occurrenceId: occurrence.occurrenceId,
+                            position,
+                          });
+                        }
+                      }}
+                      onMoveDown={() => {
+                        const position = positionForMove(
+                          orderedItems,
+                          sourceIndex,
+                          "down",
+                        );
+                        if (position) {
+                          onMoveOccurrence({
+                            occurrenceId: occurrence.occurrenceId,
+                            position,
+                          });
+                        }
+                      }}
+                      onRemove={() =>
+                        onRemoveOccurrence(occurrence.occurrenceId)
+                      }
+                    />
+                  ) : null}
+                </div>
+              </li>
+            );
+          }
+
+          return (
+            <li
+              key={item.ref}
+              className={styles.resourceRow}
+              data-occurrence-id={occurrence.occurrenceId}
+              data-collection-row-id={occurrence.occurrenceId}
+            >
+              <button
+                type="button"
+                className={styles.resourceActivation}
+                aria-label={`Open ${label}`}
+                onClick={(event) =>
+                  onActivate(
+                    item,
+                    workspaceTargetClickIntent(event).disposition,
+                  )
+                }
+              >
+                <span className={styles.resourceLabel}>{label}</span>
+                {item.summary ? (
+                  <span className={styles.resourceSummary}>{item.summary}</span>
+                ) : null}
+              </button>
+              <div className={styles.rowActions}>
+                <ResourceActionMenu
+                  actionSubject={actionSubject}
+                  label={`More actions for ${label}`}
+                />
                 {structuralEditingAvailable ? (
-                  <RowActions
-                    label={label || `note ${sourceIndex + 1}`}
+                  <SurfaceOccurrenceActions
+                    label={label}
                     canMoveUp={sourceIndex > 0}
                     canMoveDown={sourceIndex < orderedItems.length - 1}
                     onMoveUp={() => {
@@ -339,67 +418,7 @@ export default function ResourceSurfaceBodyEditor({
                     onRemove={() => onRemoveOccurrence(occurrence.occurrenceId)}
                   />
                 ) : null}
-              </li>
-            );
-          }
-
-          return (
-            <li
-              key={item.ref}
-              className={styles.resourceRow}
-              data-occurrence-id={occurrence.occurrenceId}
-              data-collection-row-id={occurrence.occurrenceId}
-            >
-              <button
-                type="button"
-                className={styles.resourceActivation}
-                aria-label={`Open ${label}`}
-                onClick={(event) =>
-                  onActivate(
-                    item,
-                    workspaceTargetClickIntent(event).disposition,
-                  )
-                }
-              >
-                <span className={styles.resourceLabel}>{label}</span>
-                {item.summary ? (
-                  <span className={styles.resourceSummary}>{item.summary}</span>
-                ) : null}
-              </button>
-              {structuralEditingAvailable ? (
-                <RowActions
-                  label={label}
-                  canMoveUp={sourceIndex > 0}
-                  canMoveDown={sourceIndex < orderedItems.length - 1}
-                  onMoveUp={() => {
-                    const position = positionForMove(
-                      orderedItems,
-                      sourceIndex,
-                      "up",
-                    );
-                    if (position) {
-                      onMoveOccurrence({
-                        occurrenceId: occurrence.occurrenceId,
-                        position,
-                      });
-                    }
-                  }}
-                  onMoveDown={() => {
-                    const position = positionForMove(
-                      orderedItems,
-                      sourceIndex,
-                      "down",
-                    );
-                    if (position) {
-                      onMoveOccurrence({
-                        occurrenceId: occurrence.occurrenceId,
-                        position,
-                      });
-                    }
-                  }}
-                  onRemove={() => onRemoveOccurrence(occurrence.occurrenceId)}
-                />
-              ) : null}
+              </div>
             </li>
           );
         })}
@@ -523,7 +542,7 @@ export default function ResourceSurfaceBodyEditor({
   );
 }
 
-function RowActions({
+function SurfaceOccurrenceActions({
   label,
   canMoveUp,
   canMoveDown,
@@ -566,11 +585,7 @@ function RowActions({
     },
   ];
   return (
-    <ActionMenu
-      className={styles.rowActions}
-      label={`Actions for ${label}`}
-      options={options}
-    />
+    <ActionMenu label={`Surface placement for ${label}`} options={options} />
   );
 }
 

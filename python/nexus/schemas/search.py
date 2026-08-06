@@ -17,7 +17,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from nexus.schemas.contributors import ContributorCreditOut
-from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalLocator, validate_locator_for_result_type
 
 # Valid search result types — the canonical result-discriminant authority for the
@@ -88,6 +87,23 @@ class SearchResultContextRefOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SearchResultActivationOut(BaseModel):
+    """Search-owned snake-case occurrence activation.
+
+    Search uses one intentional camel key (``actionSubjectRef``), but its
+    established transport otherwise remains snake-case. A local DTO prevents
+    outer ``by_alias=True`` serialization from leaking the resource-items
+    activation aliases into this boundary.
+    """
+
+    resource_ref: str
+    kind: Literal["route", "external", "none"]
+    href: str | None = None
+    unresolved_reason: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class SearchResultBaseOut(BaseModel):
     """Envelope fields shared by every typed search result variant."""
 
@@ -99,11 +115,12 @@ class SearchResultBaseOut(BaseModel):
     media_kind: str | None = None
     resource_ref: str
     owner_resource_ref: str
-    activation: ResourceActivationOut
+    action_subject_ref: str = Field(alias="actionSubjectRef")
+    activation: SearchResultActivationOut
     citation_target: str | None
     context_ref: SearchResultContextRefOut
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
 class SearchResultMediaOut(SearchResultBaseOut):

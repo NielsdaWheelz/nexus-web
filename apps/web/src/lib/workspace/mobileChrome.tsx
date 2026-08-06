@@ -79,7 +79,7 @@ export interface MobilePaneChrome {
   /** The pane's own non-resource view menu (reader settings, date navigation). */
   viewMenu?: PaneViewMenuPublication;
   /** The pane's resource identity → the canonical resource dropdown. */
-  resourceTarget?: ResourceActionSubject;
+  actionSubject?: ResourceActionSubject;
 }
 
 interface StableController {

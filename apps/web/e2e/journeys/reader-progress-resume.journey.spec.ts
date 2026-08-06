@@ -382,12 +382,18 @@ test("reader progress resumes, completes, and resets through its product actions
   ).toBeTruthy();
 
   await page.getByRole("button", { name: "Options", exact: true }).click();
+  await expect(
+    page.getByRole("menuitemcheckbox", {
+      name: "Mark as finished",
+      exact: true,
+    }),
+  ).toBeVisible();
   const completionResponsePromise = page.waitForResponse(
     (response) =>
       matchesResponse(response, webOrigin, "POST", "/api/consumption/commands"),
   );
   await page
-    .getByRole("menuitem", { name: "Mark as finished", exact: true })
+    .getByRole("menuitemcheckbox", { name: "Mark as finished", exact: true })
     .click();
   const completionResponse = await completionResponsePromise;
   expect(

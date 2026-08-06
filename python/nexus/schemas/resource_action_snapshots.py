@@ -16,14 +16,25 @@ coercion.
 from __future__ import annotations
 
 import hashlib
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
+from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
+from pydantic.alias_generators import to_camel
 
+from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_mutation_replay import canonical_json_bytes
 
 _MAX_REFS = 100
+_OUT_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
 
 class ResourceActionSnapshotResolveRequest(BaseModel):
@@ -50,14 +61,14 @@ class ResourceActionSnapshotResolveRequest(BaseModel):
 class ServerActionAvailabilityAvailableOut(BaseModel):
     kind: Literal["Available"] = "Available"
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = _OUT_CONFIG
 
 
 class ServerActionAvailabilityBlockedOut(BaseModel):
     kind: Literal["Blocked"] = "Blocked"
-    reason: Literal["Locked", "Processing", "TemporarilyUnavailable"]
+    reason: Literal["PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable"]
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = _OUT_CONFIG
 
 
 ServerActionAvailabilityOut = Annotated[
@@ -68,10 +79,13 @@ ServerActionAvailabilityOut = Annotated[
 # Capability kinds whose only fact is availability. Grouped into one model
 # because they share an identical wire shape (``{kind, availability}``); the
 # frontend union mirrors this.
-_SimpleCapabilityKind = Literal[
+SimpleResourceActionCapabilityKind = Literal[
     "Open",
+    "OpenInNewPane",
     "Share",
     "Chat",
+    "PlayNext",
+    "DownloadOriginal",
     "RetryProcessing",
     "RefreshSource",
     "RetryMetadata",
@@ -81,7 +95,24 @@ _SimpleCapabilityKind = Literal[
     "DeleteLibrary",
     "PodcastSettings",
     "RefreshPodcast",
+    "RetryPodcastBackfill",
     "DeleteConversation",
+    "ForkMessage",
+    "WalkMessageSources",
+    "RerunMessage",
+    "RegenerateMessage",
+    "DeleteMessage",
+    "EditHighlight",
+    "LinkHighlight",
+    "LearnHighlight",
+    "EditHighlightBounds",
+    "DeleteHighlight",
+    "EditPageTitle",
+    "DeletePage",
+    "EditNoteBody",
+    "RenameContributor",
+    "RegenerateArtifact",
+    "MakeArtifactRevisionCurrent",
     "RemoveMedia",
     "LibraryPlacement",
     "OfflineAudio",
@@ -89,10 +120,10 @@ _SimpleCapabilityKind = Literal[
 
 
 class SimpleResourceActionCapabilityOut(BaseModel):
-    kind: _SimpleCapabilityKind
+    kind: SimpleResourceActionCapabilityKind
     availability: ServerActionAvailabilityOut
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = _OUT_CONFIG
 
 
 class OpenSourceResourceActionCapabilityOut(BaseModel):
@@ -100,7 +131,15 @@ class OpenSourceResourceActionCapabilityOut(BaseModel):
     availability: ServerActionAvailabilityOut
     href: str
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = _OUT_CONFIG
+
+
+class PlaybackResourceActionCapabilityOut(BaseModel):
+    kind: Literal["Playback"] = "Playback"
+    availability: ServerActionAvailabilityOut
+    player_descriptor: PlayerDescriptor
+
+    model_config = _OUT_CONFIG
 
 
 class ConsumptionResourceActionCapabilityOut(BaseModel):
@@ -108,7 +147,7 @@ class ConsumptionResourceActionCapabilityOut(BaseModel):
     availability: ServerActionAvailabilityOut
     state: Literal["Unread", "InProgress", "Finished"]
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = _OUT_CONFIG
 
 
 class EpisodeConsumptionResourceActionCapabilityOut(BaseModel):
@@ -116,7 +155,7 @@ class EpisodeConsumptionResourceActionCapabilityOut(BaseModel):
     availability: ServerActionAvailabilityOut
     state: Literal["Unplayed", "Played"]
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = _OUT_CONFIG
 
 
 class PodcastSubscriptionResourceActionCapabilityOut(BaseModel):
@@ -124,29 +163,97 @@ class PodcastSubscriptionResourceActionCapabilityOut(BaseModel):
     availability: ServerActionAvailabilityOut
     state: Literal["Subscribed", "Unsubscribed"]
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = _OUT_CONFIG
+
+
+class TranscriptResourceActionCapabilityOut(BaseModel):
+    kind: Literal["Transcript"] = "Transcript"
+    availability: ServerActionAvailabilityOut
+    state: Literal[
+        "NotRequested",
+        "Queued",
+        "Running",
+        "Ready",
+        "Partial",
+        "Unavailable",
+        "FailedQuota",
+        "FailedProvider",
+    ]
+    coverage: Literal["None", "Partial", "Full"]
+
+    model_config = _OUT_CONFIG
 
 
 class LecternMembershipResourceActionCapabilityOut(BaseModel):
     kind: Literal["LecternMembership"] = "LecternMembership"
     availability: ServerActionAvailabilityOut
     state: Literal["Absent", "Present"]
-    lectern_item_id: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("lectern_item_id", "lecternItemId"),
-        serialization_alias="lecternItemId",
-    )
+    lectern_item_id: UUID | None = None
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = _OUT_CONFIG
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_wire_shape(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        state = value.get("state")
+        has_item_id = "lecternItemId" in value or "lectern_item_id" in value
+        if state == "Present" and not has_item_id:
+            raise ValueError("Present LecternMembership requires lecternItemId")
+        if state == "Absent" and has_item_id:
+            raise ValueError("Absent LecternMembership forbids lecternItemId")
+        return value
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        value = handler(self)
+        if self.state == "Absent":
+            value.pop("lecternItemId", None)
+            value.pop("lectern_item_id", None)
+        return value
+
+
+class HighlightNoteResourceActionCapabilityOut(BaseModel):
+    kind: Literal["HighlightNote"] = "HighlightNote"
+    availability: ServerActionAvailabilityOut
+    state: Literal["Absent", "Present"]
+    note_block_id: UUID | None = None
+
+    model_config = _OUT_CONFIG
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_wire_shape(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        state = value.get("state")
+        has_note_id = "noteBlockId" in value or "note_block_id" in value
+        if state == "Present" and not has_note_id:
+            raise ValueError("Present HighlightNote requires noteBlockId")
+        if state == "Absent" and has_note_id:
+            raise ValueError("Absent HighlightNote forbids noteBlockId")
+        return value
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        value = handler(self)
+        if self.state == "Absent":
+            value.pop("noteBlockId", None)
+            value.pop("note_block_id", None)
+        return value
 
 
 ResourceActionCapabilityOut = Annotated[
     SimpleResourceActionCapabilityOut
     | OpenSourceResourceActionCapabilityOut
+    | PlaybackResourceActionCapabilityOut
     | ConsumptionResourceActionCapabilityOut
     | EpisodeConsumptionResourceActionCapabilityOut
     | PodcastSubscriptionResourceActionCapabilityOut
-    | LecternMembershipResourceActionCapabilityOut,
+    | TranscriptResourceActionCapabilityOut
+    | LecternMembershipResourceActionCapabilityOut
+    | HighlightNoteResourceActionCapabilityOut,
     Field(discriminator="kind"),
 ]
 
@@ -155,20 +262,16 @@ class ResourceActionSnapshotOut(BaseModel):
     ref: str
     activation: ResourceActivationOut
     missing: bool
-    facts_revision: str = Field(
-        default="",
-        validation_alias=AliasChoices("facts_revision", "factsRevision"),
-        serialization_alias="factsRevision",
-    )
+    facts_revision: str = ""
     capabilities: list[ResourceActionCapabilityOut] = Field(default_factory=list)
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = _OUT_CONFIG
 
 
 class ResourceActionSnapshotResolveResponse(BaseModel):
     snapshots: list[ResourceActionSnapshotOut]
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = _OUT_CONFIG
 
 
 def compute_facts_revision(snapshot_out: ResourceActionSnapshotOut) -> str:

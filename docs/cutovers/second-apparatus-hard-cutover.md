@@ -31,6 +31,13 @@ beyond what the universal-link-authoring supersession above records.
 Prerequisite and creation-language below records the historical implementation
 plan rather than pending work.
 
+Also superseded by
+[`canonical-resource-action-menu-hard-cutover.md`](canonical-resource-action-menu-hard-cutover.md):
+every standing action for a materialized Highlight is now planned by the
+canonical resource-action system and rendered by `ResourceActionMenu`.
+References below to `buildHighlightActions` are historical implementation
+record only; fresh text-selection tools remain owned by `selectionActions`.
+
 ## One-line
 
 Build the *second* critical apparatus — the reader's own margin — where the user's writing and the machine's writing appear inline, at passage grain, across documents: widen Synapse to write **evidence_span**-grain edges, add a **Cite** verb that mints cross-document footnotes, add **stance marks** (conceding tick / doubting tilde) that finally fire the `supports`/`contradicts` vocabulary from the user's own hand, and render all of it in a new **MarginRail** beside the exact passage — the physical home dreams' *Take a Side* has been waiting for.

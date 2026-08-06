@@ -17,6 +17,13 @@
 > supersedes this document's flat row-action publication, callback-presence
 > capability rule, and action-group ordering. Reorder behavior and the single
 > overflow affordance remain unchanged.
+>
+> **Canonical-action update (2026-08-05):**
+> [`canonical-resource-action-menu-hard-cutover.md`](canonical-resource-action-menu-hard-cutover.md)
+> supersedes every remaining `ActionPublication`, `ResourceMenuGroups`,
+> `composeResourceMenu`, and caller-published resource-action clause. A
+> resource-bearing row publishes only `actionSubject`; occurrence controls such
+> as reorder remain separate.
 
 **Status:** Implemented and locally verified · 2026-07-21 · adversarially
 reviewed

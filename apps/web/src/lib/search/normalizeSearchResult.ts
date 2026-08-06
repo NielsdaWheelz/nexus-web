@@ -7,7 +7,7 @@ import type { ContributorCredit } from "@/lib/contributors/types";
 import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceActivation } from "@/lib/resources/activation";
-import { decodeStandingActionTarget } from "@/lib/resources/resourceActionTarget";
+import { decodeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   expectExactRecord,
   expectNullableString,
@@ -28,6 +28,14 @@ function isValidSource(value: unknown): value is SearchSourceMetadata {
 
   const source = value as Record<string, unknown>;
   return (
+    hasExactKeys(source, [
+      "media_id",
+      "media_kind",
+      "title",
+      "contributors",
+      "published_date",
+      "summary_md",
+    ]) &&
     typeof source.media_id === "string" &&
     typeof source.media_kind === "string" &&
     typeof source.title === "string" &&
@@ -80,82 +88,71 @@ function locatorMatchesSearchType(
   return false;
 }
 
-const OCCURRENCE_SCHEME_BY_TYPE = {
-  media: "media",
-  episode: "media",
-  video: "media",
-  podcast: "podcast",
-  contributor: "contributor",
-  content_chunk: "content_chunk",
-  fragment: "fragment",
-  page: "page",
-  note_block: "note_block",
-  highlight: "highlight",
-  message: "message",
-  evidence_span: "evidence_span",
-  conversation: "conversation",
-  artifact: "artifact_revision",
-  web_result: "external_snapshot",
-  reader_apparatus_item: "reader_apparatus_item",
-} as const satisfies Record<SearchType, string>;
+const SEARCH_RESULT_BASE_KEYS = [
+  "type",
+  "id",
+  "score",
+  "snippet",
+  "title",
+  "source_label",
+  "media_id",
+  "media_kind",
+  "resource_ref",
+  "owner_resource_ref",
+  "actionSubjectRef",
+  "activation",
+  "citation_target",
+  "context_ref",
+] as const;
 
-function ownerMatchesOccurrence(
-  type: SearchType,
-  occurrenceRef: string,
-  ownerRef: string,
-  row: Record<string, unknown>,
+const SEARCH_RESULT_VARIANT_KEYS = {
+  media: ["source"],
+  episode: ["source"],
+  video: ["source"],
+  podcast: ["contributors"],
+  contributor: ["contributor_handle", "contributor"],
+  content_chunk: [
+    "source_kind",
+    "evidence_span_ids",
+    "source",
+    "citation_label",
+    "locator",
+  ],
+  fragment: ["source", "citation_label", "locator"],
+  page: [],
+  note_block: ["body_text", "highlight_excerpt", "note_origin", "locator"],
+  highlight: ["color", "exact", "source", "citation_label", "locator"],
+  message: ["conversation_id", "seq", "locator"],
+  evidence_span: ["source", "evidence_span_id", "citation_label", "locator"],
+  conversation: [],
+  artifact: ["revision_id", "subject_ref"],
+  web_result: [
+    "result_type",
+    "source_id",
+    "result_ref",
+    "url",
+    "display_url",
+    "extra_snippets",
+    "published_at",
+    "source_name",
+    "rank",
+    "provider",
+    "provider_request_id",
+    "locator",
+    "selected",
+  ],
+  reader_apparatus_item: ["source", "apparatus_kind", "locator"],
+} as const satisfies Record<SearchType, readonly string[]>;
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
 ): boolean {
-  const occurrence = parseResourceRef(occurrenceRef);
-  const owner = parseResourceRef(ownerRef);
-  if (
-    occurrence === null ||
-    owner === null ||
-    occurrence.scheme !== OCCURRENCE_SCHEME_BY_TYPE[type]
-  ) {
-    return false;
-  }
-
-  switch (type) {
-    case "media":
-    case "episode":
-    case "video":
-    case "podcast":
-    case "contributor":
-    case "page":
-    case "note_block":
-    case "conversation":
-    case "web_result":
-      return ownerRef === occurrenceRef;
-    case "content_chunk":
-    case "fragment":
-    case "highlight":
-    case "evidence_span":
-    case "reader_apparatus_item": {
-      if (owner.scheme !== "media") return false;
-      const source = resolveSource(row);
-      const canonicalSourceRef =
-        source === null ? null : parseResourceRef(`media:${source.media_id}`);
-      return canonicalSourceRef === null || canonicalSourceRef.id === owner.id;
-    }
-    case "message": {
-      if (owner.scheme !== "conversation") return false;
-      const conversationId = stringField(row, "conversation_id");
-      const canonicalConversationRef = parseResourceRef(
-        `conversation:${conversationId}`,
-      );
-      return (
-        canonicalConversationRef === null ||
-        canonicalConversationRef.id === owner.id
-      );
-    }
-    case "artifact":
-      return (
-        owner.scheme === "conversation" &&
-        typeof row.subject_ref === "string" &&
-        parseResourceRef(row.subject_ref)?.scheme === "conversation" &&
-        row.subject_ref === ownerRef
-      );
-  }
+  const keys = Object.keys(value);
+  return (
+    keys.length === expected.length &&
+    keys.every((key) => expected.includes(key))
+  );
 }
 
 function decodeSearchActivation(raw: unknown): ResourceActivation {
@@ -189,6 +186,27 @@ function normalizeContributorCredit(value: unknown): ContributorCredit | null {
     return null;
   }
   const credit = value as Record<string, unknown>;
+  if (
+    !hasExactKeys(credit, [
+      "contributor_handle",
+      "contributor_display_name",
+      "href",
+      "credited_name",
+      "role",
+      "raw_role",
+      "ordinal",
+    ]) ||
+    (credit.contributor_handle !== null &&
+      typeof credit.contributor_handle !== "string") ||
+    (credit.contributor_display_name !== null &&
+      typeof credit.contributor_display_name !== "string") ||
+    (credit.href !== null && typeof credit.href !== "string") ||
+    (credit.raw_role !== null && typeof credit.raw_role !== "string") ||
+    (credit.ordinal !== null &&
+      (typeof credit.ordinal !== "number" || !Number.isInteger(credit.ordinal)))
+  ) {
+    return null;
+  }
   // Narrowed embedded credit (D-33): only credited_name + role are required. A
   // handle-less / href-less credit is a legitimate text fact (podcast previews,
   // D-9); source/source_ref/confidence/resolution_status are gone from the wire.
@@ -233,9 +251,7 @@ function normalizeContributorCredits(
   return credits;
 }
 
-function normalizeSearchResultOrNull(
-  result: unknown,
-): SearchApiResult | null {
+function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
   if (typeof result !== "object" || result === null) {
     return null;
   }
@@ -248,6 +264,14 @@ function normalizeSearchResultOrNull(
     return null;
   }
   const resultType = row.type as SearchType;
+  if (
+    !hasExactKeys(row, [
+      ...SEARCH_RESULT_BASE_KEYS,
+      ...SEARCH_RESULT_VARIANT_KEYS[resultType],
+    ])
+  ) {
+    return null;
+  }
   if (typeof row.id !== "string") {
     return null;
   }
@@ -278,39 +302,24 @@ function normalizeSearchResultOrNull(
   if (typeof row.owner_resource_ref !== "string") {
     return null;
   }
-  const activation = decodeSearchActivation(row.activation);
-  const actionTarget = decodeStandingActionTarget(
-    {
-      kind: "Resource",
-      ref: row.resource_ref,
-      activation,
-      missing: false,
-    },
-    "SearchResult.actionTarget",
-  );
-  if (actionTarget.kind !== "Resource") {
-    // justify-defect: same-system search results construct the Resource
-    // discriminator and never downgrade invalid resource facts to External.
-    throw new TypeError("SearchResult.actionTarget must be Resource");
-  }
-  if (actionTarget.activation.kind === "none") {
+  if (typeof row.actionSubjectRef !== "string") {
     return null;
   }
+  const activation = decodeSearchActivation(row.activation);
   if (
-    (row.citation_target !== null &&
-      typeof row.citation_target !== "string") ||
-    (typeof row.citation_target === "string" &&
-      row.citation_target !== row.resource_ref)
+    activation.resourceRef !== row.resource_ref ||
+    activation.kind === "none"
   ) {
     return null;
   }
+  const actionSubject = decodeResourceActionSubject(
+    { ref: row.actionSubjectRef },
+    "SearchResult.actionSubject",
+  );
   if (
-    !ownerMatchesOccurrence(
-      resultType,
-      row.resource_ref,
-      row.owner_resource_ref,
-      row,
-    )
+    (row.citation_target !== null && typeof row.citation_target !== "string") ||
+    (typeof row.citation_target === "string" &&
+      row.citation_target !== row.resource_ref)
   ) {
     return null;
   }
@@ -322,6 +331,14 @@ function normalizeSearchResultOrNull(
     return null;
   }
   if (
+    !hasExactKeys(contextRef, [
+      "type",
+      "id",
+      ...(contextRef.evidence_span_ids === undefined
+        ? []
+        : ["evidence_span_ids"]),
+      ...(contextRef.locator === undefined ? [] : ["locator"]),
+    ]) ||
     typeof contextRef.type !== "string" ||
     !RESULT_TYPE_VALUES.includes(contextRef.type as SearchType) ||
     typeof contextRef.id !== "string"
@@ -338,6 +355,13 @@ function normalizeSearchResultOrNull(
     }
     evidenceSpanIds = contextRef.evidence_span_ids;
   }
+  if (
+    contextRef.locator !== undefined &&
+    contextRef.locator !== null &&
+    !isRetrievalLocator(contextRef.locator)
+  ) {
+    return null;
+  }
   const base = {
     id: row.id,
     score: row.score,
@@ -348,13 +372,16 @@ function normalizeSearchResultOrNull(
     media_kind: row.media_kind,
     resource_ref: row.resource_ref,
     owner_resource_ref: row.owner_resource_ref,
-    activation: actionTarget.activation,
-    actionTarget,
+    activation,
+    actionSubject,
     citation_target: row.citation_target,
     context_ref: {
       type: contextRef.type as SearchType,
       id: contextRef.id,
       ...(evidenceSpanIds ? { evidence_span_ids: evidenceSpanIds } : {}),
+      ...(contextRef.locator !== undefined
+        ? { locator: contextRef.locator as RetrievalLocator | null }
+        : {}),
     },
   };
 
@@ -420,6 +447,7 @@ function normalizeSearchResultOrNull(
         !contributorHandle ||
         typeof contributor !== "object" ||
         contributor === null ||
+        !hasExactKeys(contributor, ["handle", "display_name"]) ||
         typeof contributor.handle !== "string" ||
         !stringField(contributor, "display_name") ||
         base.context_ref.type !== "contributor"
@@ -438,6 +466,9 @@ function normalizeSearchResultOrNull(
     }
     case "content_chunk": {
       if (
+        typeof row.source_kind !== "string" ||
+        !Array.isArray(row.evidence_span_ids) ||
+        !row.evidence_span_ids.every((id) => typeof id === "string") ||
         typeof row.media_id !== "string" ||
         typeof row.media_kind !== "string" ||
         typeof row.citation_label !== "string" ||
@@ -501,8 +532,7 @@ function normalizeSearchResultOrNull(
     case "note_block":
       if (
         typeof row.body_text !== "string" ||
-        (row.note_origin !== "note" &&
-          row.note_origin !== "highlight_note") ||
+        (row.note_origin !== "note" && row.note_origin !== "highlight_note") ||
         (row.highlight_excerpt !== null &&
           typeof row.highlight_excerpt !== "string") ||
         (row.note_origin === "highlight_note") !==
@@ -656,6 +686,13 @@ function normalizeSearchResultOrNull(
         !Array.isArray(row.extra_snippets) ||
         !row.extra_snippets.every((snippet) => typeof snippet === "string") ||
         (row.published_at !== null && typeof row.published_at !== "string") ||
+        (row.display_url !== null && typeof row.display_url !== "string") ||
+        (row.source_name !== null && typeof row.source_name !== "string") ||
+        (row.rank !== null &&
+          (typeof row.rank !== "number" || !Number.isInteger(row.rank))) ||
+        (row.provider !== null && typeof row.provider !== "string") ||
+        (row.provider_request_id !== null &&
+          typeof row.provider_request_id !== "string") ||
         typeof row.selected !== "boolean"
       ) {
         return null;

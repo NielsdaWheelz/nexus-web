@@ -463,7 +463,23 @@
       "proof": "apps/web/e2e/journeys/destructive-delete.journey.spec.ts",
       "source_globs": [
         "python/nexus/services/conversations.py",
+        "python/nexus/api/routes/messages.py",
+        "python/nexus/schemas/conversation.py",
         "apps/web/src/components/chat/Conversation.tsx",
+        "apps/web/src/components/chat/MessageRow.tsx",
+        "apps/web/src/components/chat/useConversation.ts",
+        "apps/web/src/app/api/messages/[messageId]/route.ts",
+        "apps/web/src/app/(authenticated)/conversations/ConversationsPaneBody.tsx",
+        "apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx",
+        "apps/web/src/app/(authenticated)/pages/[pageId]/PagePaneBody.tsx",
+        "apps/web/src/lib/actions/destructiveActionSettlement.ts",
+        "apps/web/src/lib/actions/mountedActionHandoff.ts",
+        "apps/web/src/lib/actions/resourceActionRuntime.tsx",
+        "apps/web/src/lib/actions/resourceDeletionLifecycle.ts",
+        "apps/web/src/lib/chat/messageDeletion.ts",
+        "apps/web/src/lib/chat/messageActionIntent.ts",
+        "apps/web/src/lib/conversations/indexMutation.ts",
+        "apps/web/src/lib/conversations/indexRevision.ts",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
       "risks": [
@@ -489,8 +505,40 @@
       "source_globs": [
         "python/nexus/services/resource_items/action_snapshots.py",
         "python/nexus/api/routes/resource_items.py",
+        "apps/web/src/lib/actions/resourceActions.ts",
+        "apps/web/src/lib/actions/resourceActionSnapshot.ts",
+        "apps/web/src/lib/actions/resourceActionSnapshotCache.ts",
         "apps/web/src/lib/actions/resourceActionRuntime.tsx",
-        "apps/web/src/components/resources/ResourceActionMenu.tsx"
+        "apps/web/src/lib/actions/resourceActionMutation.ts",
+        "apps/web/src/lib/actions/destructiveActionSettlement.ts",
+        "apps/web/src/lib/actions/mountedActionHandoff.ts",
+        "apps/web/src/lib/actions/resourceDeletionLifecycle.ts",
+        "apps/web/src/lib/resources/resourceOverlaysController.tsx",
+        "apps/web/src/lib/actions/resourceActionApplicability.oracle.unit.test.ts",
+        "apps/web/src/components/resource-surface/ResourceSurfaceBodyEditor.tsx",
+        "apps/web/src/components/resources/ResourceActionMenu.tsx",
+        "apps/web/src/components/ui/ActionMenu.tsx",
+        "apps/web/e2e/resourceActionProductOracle.ts",
+        "apps/web/scripts/test-resource-action-surface-policy.mjs"
+      ],
+      "risks": []
+    },
+    {
+      "id": "library-placement",
+      "proof": "apps/web/e2e/journeys/library-placement.journey.spec.ts",
+      "source_globs": [
+        "python/nexus/api/routes/media.py",
+        "python/nexus/api/routes/libraries.py",
+        "python/nexus/schemas/library.py",
+        "python/nexus/services/library_entries.py",
+        "apps/web/src/app/api/media/*/saved-in-nexus/route.ts",
+        "apps/web/src/app/api/libraries/*/podcasts/*/route.ts",
+        "apps/web/src/lib/libraries/libraryPlacement.ts",
+        "apps/web/src/lib/libraries/libraryPlacementCommit.ts",
+        "apps/web/src/lib/libraries/placementController.tsx",
+        "apps/web/src/lib/libraries/useLibraryPlacement.ts",
+        "apps/web/src/components/libraries/LibraryPlacementOverlay.tsx",
+        "apps/web/src/components/libraries/LibraryEntryEditor.tsx"
       ],
       "risks": []
     },

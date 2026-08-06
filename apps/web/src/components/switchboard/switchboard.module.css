@@ -177,6 +177,14 @@
   background: var(--surface-2);
 }
 
+.row[data-group-start="true"] {
+  border-block-start: var(--space-2) solid var(--surface-canvas);
+}
+
+.row[data-tone="danger"] .rowMain {
+  color: var(--danger);
+}
+
 .row[data-current="true"] {
   box-shadow: inset 3px 0 0 var(--accent);
 }

@@ -43,7 +43,7 @@ _DELETED_SEARCH_PARAMS = (
 )
 
 
-@router.get("/search", response_model=SearchResponse, response_model_by_alias=False)
+@router.get("/search", response_model=SearchResponse, response_model_by_alias=True)
 def search(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -115,4 +115,4 @@ def search(
         limit=limit,
     )
     result = search_service(db=db, viewer_id=viewer.user_id, query=query)
-    return result.model_dump(mode="json")
+    return result.model_dump(mode="json", by_alias=True)

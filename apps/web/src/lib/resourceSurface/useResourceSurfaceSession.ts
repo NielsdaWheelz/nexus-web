@@ -15,6 +15,7 @@ import type { ResourceItem, ResourceSurface, ResourceSurfaceOccurrence } from "@
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { isRecord } from "@/lib/validation";
 import { appendDailyDraftText, captureDailySurface, createDailyDraft, dailyDraftBodyChanged, draftNoteRef, loadDailySurface, pendingDailyBody, surfaceContainsDailyDraft, type DailySurfaceSessionOptions } from "@/lib/resourceSurface/dailySurfacePersistence";
+import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import { acknowledgeDailyDraftHandoff, clearDailyDraft, readDailyDraft, writeDailyDraft, type DailyDraft, type DailyDraftHandoff } from "@/lib/notes/dailyDraftStore";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 import { copyText } from "@/lib/ui/copyText";
@@ -275,7 +276,13 @@ function clearPersistedDraft(sourceRef: string): void {
   }
 }
 
-type PersistedSessionOptions = { sourceRef: string; initialSurface: ResourceSurface; onError?: (error: unknown) => void };
+type PersistedSessionOptions = {
+  sourceRef: string;
+  initialSurface: ResourceSurface;
+  onError?: (error: unknown) => void;
+  onTitleMutationStarted?: () => MountedEditorMutationLease | null;
+  onSourceBodyMutationStarted?: () => MountedEditorMutationLease | null;
+};
 
 export function useResourceSurfaceSession(input: PersistedSessionOptions): ResourceSurfaceSession;
 export function useResourceSurfaceSession(input: DailySurfaceSessionOptions): DailyResourceSurfaceSession;
@@ -456,29 +463,39 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     if (ack && sourceRef && !captureReady && title !== undefined && ack.source.content.kind === "page_title" && !intrinsicActiveRef.current.has(ack.source.item.ref)) {
       intrinsicActiveRef.current.add(ack.source.item.ref);
       setStatus("saving");
+      const titleMutation =
+        currentInput.onTitleMutationStarted?.() ?? null;
       void updateResourceSurfaceTitle({
         sourceRef,
         clientMutationId: title.clientMutationId,
         baseVersion: lane(ack.source.item, "title"),
         title: title.value,
-      }).then((item) => {
-        if (generation !== generationRef.current) return;
-        const current = acknowledgedRef.current;
-        if (!current) return;
-        acknowledgedRef.current = {
-          ...current,
-          source: {
-            ...current.source,
-            item,
-            content: current.source.content.kind === "page_title"
-              ? { kind: "page_title", title: title.value }
-              : current.source.content,
-          },
-        };
-        if (titleRef.current === title) titleRef.current = undefined;
-        publish();
-        store();
+      }).then(async (item) => {
+        try {
+          if (generation !== generationRef.current) return;
+          const current = acknowledgedRef.current;
+          if (!current) return;
+          acknowledgedRef.current = {
+            ...current,
+            source: {
+              ...current.source,
+              item,
+              content: current.source.content.kind === "page_title"
+                ? { kind: "page_title", title: title.value }
+                : current.source.content,
+            },
+          };
+          if (titleRef.current === title) titleRef.current = undefined;
+          publish();
+          store();
+        } finally {
+          // The request committed authoritatively. A route transition may have
+          // invalidated this local session, but it cannot erase the accepted
+          // action's reconciliation responsibility.
+          await titleMutation?.committed();
+        }
       }).catch((error) => {
+        titleMutation?.failed();
         if (generation !== generationRef.current) return;
         if (handleUnauthenticatedApiError(error)) return;
         stoppedRef.current = true;
@@ -530,52 +547,61 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       if (!sourceItem) continue;
       intrinsicActiveRef.current.add(ref);
       setStatus("saving");
+      const sourceBodyMutation =
+        ack.source.item.ref === ref
+          ? currentInput.onSourceBodyMutationStarted?.() ?? null
+          : null;
       void updateResourceSurfaceNoteBody({
         noteRef: ref,
         clientMutationId: body.clientMutationId,
         baseVersion: lane(sourceItem, "body"),
         bodyPmJson: body.bodyPmJson,
-      }).then((result) => {
-        if (generation !== generationRef.current) return;
-        const currentAck = acknowledgedRef.current;
-        if (!currentAck) return;
-        if (bodiesRef.current.get(ref) === body) bodiesRef.current.delete(ref);
-        if (currentAck.source.item.ref === ref) {
-          acknowledgedRef.current = {
-            ...currentAck,
-            source: {
-              ...currentAck.source,
-              item: result.item,
-              content: currentAck.source.content.kind === "note_body"
-                ? { kind: "note_body", bodyPmJson: body.bodyPmJson, bodyText: result.bodyText }
-                : currentAck.source.content,
-            },
-          };
-        } else {
-          acknowledgedRef.current = {
-            ...currentAck,
-            orderedItems: currentAck.orderedItems.map((row) =>
-              row.target.item.ref === ref && row.target.content.kind === "note_body"
-                ? {
-                    ...row,
-                    target: {
-                      ...row.target,
-                      item: result.item,
-                      content: {
-                        kind: "note_body",
-                        bodyPmJson: body.bodyPmJson,
-                        bodyText: result.bodyText,
+      }).then(async (result) => {
+        try {
+          if (generation !== generationRef.current) return;
+          const currentAck = acknowledgedRef.current;
+          if (!currentAck) return;
+          if (bodiesRef.current.get(ref) === body) bodiesRef.current.delete(ref);
+          if (currentAck.source.item.ref === ref) {
+            acknowledgedRef.current = {
+              ...currentAck,
+              source: {
+                ...currentAck.source,
+                item: result.item,
+                content: currentAck.source.content.kind === "note_body"
+                  ? { kind: "note_body", bodyPmJson: body.bodyPmJson, bodyText: result.bodyText }
+                  : currentAck.source.content,
+              },
+            };
+          } else {
+            acknowledgedRef.current = {
+              ...currentAck,
+              orderedItems: currentAck.orderedItems.map((row) =>
+                row.target.item.ref === ref && row.target.content.kind === "note_body"
+                  ? {
+                      ...row,
+                      target: {
+                        ...row.target,
+                        item: result.item,
+                        content: {
+                          kind: "note_body",
+                          bodyPmJson: body.bodyPmJson,
+                          bodyText: result.bodyText,
+                        },
                       },
-                    },
-                  }
-                : row,
-            ),
-          };
+                    }
+                  : row,
+              ),
+            };
+          }
+          clearDailyIfSaved();
+          publish();
+          store();
+        } finally {
+          await sourceBodyMutation?.committed();
         }
-        clearDailyIfSaved();
-        publish();
-        store();
       }).catch((error) => {
+        sourceBodyMutation?.failed();
         if (generation !== generationRef.current) return;
         if (handleUnauthenticatedApiError(error)) return;
         stoppedRef.current = true;

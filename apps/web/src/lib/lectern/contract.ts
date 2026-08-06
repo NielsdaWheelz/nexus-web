@@ -27,10 +27,8 @@ import type {
   PositiveMinutes,
   ProgressFraction,
 } from "@/lib/consumption/activityFacts";
-import {
-  routeResourceActionSubject,
-  type ResourceActionSubject,
-} from "@/lib/resources/resourceActionTarget";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import {
   parseReaderCursorSnapshot,
   type ReaderCursorSnapshot,
@@ -152,7 +150,7 @@ export interface LecternItem {
   addedAt: string;
   consumption: ConsumptionInfo;
   activation: Activation;
-  actionTarget: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
 }
 
 export interface LecternActivityFacts {
@@ -343,7 +341,8 @@ export interface ConsumptionResult {
 
 // --- Bounds ------------------------------------------------------------------
 
-const MAX_SNAPSHOT_ITEMS = 2000;
+/** Mirrors backend `LECTERN_MAX_ITEMS`; planners block before invoking writes. */
+export const LECTERN_MAX_ITEMS = 2000;
 const MAX_CHAPTERS = 100;
 const MAX_CHAPTER_TITLE = 300;
 const INT32_MAX = 2_147_483_647;
@@ -635,11 +634,9 @@ export function decodeLecternItem(raw: unknown): LecternItem {
     addedAt: expectIsoInstant(rec.addedAt, "LecternItemOut.addedAt"),
     consumption: decodeConsumption(rec.consumption),
     activation: decodeActivation(rec.activation),
-    actionTarget: routeResourceActionSubject({
-      scheme: "media",
-      id: mediaId,
-      href,
-    }),
+    actionSubject: {
+      ref: canonicalResourceRef({ scheme: "media", id: mediaId }),
+    },
   };
 }
 
@@ -675,9 +672,9 @@ export function decodeLecternSnapshot(raw: unknown): LecternSnapshot {
   const rec = asRecord(raw, "LecternSnapshot");
   exactKeys(rec, ["items"], "LecternSnapshot");
   const items = asArray(rec.items, "LecternSnapshot.items");
-  if (items.length > MAX_SNAPSHOT_ITEMS) {
+  if (items.length > LECTERN_MAX_ITEMS) {
     throw new Error(
-      `Invalid LecternSnapshot.items: at most ${MAX_SNAPSHOT_ITEMS}, got ${items.length}`,
+      `Invalid LecternSnapshot.items: at most ${LECTERN_MAX_ITEMS}, got ${items.length}`,
     );
   }
   return { items: items.map(decodeLecternItem) };

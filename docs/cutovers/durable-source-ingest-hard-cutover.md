@@ -28,6 +28,13 @@ retry, and refresh lanes rather than preserving compatibility branches. Existing
 production data is handled by one-time migrations or repair commands, not by
 permanent runtime fallbacks.
 
+Action-ownership note: the later
+[`canonical-resource-action-menu-hard-cutover.md`](canonical-resource-action-menu-hard-cutover.md)
+supersedes this document's frontend retry/refresh action composition. The
+removed `useDocumentActions` references below are historical implementation
+record; Media retry, refresh, metadata, author, and deletion actions now come
+only from the canonical resource-action planner/runtime.
+
 ## Summary
 
 Nexus must treat every accepted source-ingest request as a durable user intent.

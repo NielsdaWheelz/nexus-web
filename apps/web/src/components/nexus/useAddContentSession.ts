@@ -25,9 +25,10 @@ import {
   type UploadIngestResult,
 } from "@/lib/media/ingestionClient";
 import {
-  addMediaToLibraries,
+  addLibraryPlacement,
+  libraryPlacementDestinationKey,
   listLibraryPlacements,
-  patchLibraryPlacement,
+  projectLibraryPlacement,
   removeLibraryPlacement,
   type LibraryPlacementOption,
 } from "@/lib/libraries/libraryPlacement";
@@ -921,13 +922,17 @@ export function useAddContentSession(): AddContentSessionController {
           mediaId,
           placement: { kind: "Ready", libraries },
         });
+        const commandKey = libraryPlacementDestinationKey(command.destination);
         const target = libraries.find(
-          (library) => library.id === command.libraryId,
+          (placement) =>
+            libraryPlacementDestinationKey(placement.destination) === commandKey,
         );
         const canRun =
           command.kind === "Add"
-            ? target?.canAdd === true && !target.isInLibrary
-            : target?.canRemove === true && target.isInLibrary;
+            ? target?.availability.kind === "Available" &&
+              target.relation.kind === "Absent"
+            : target?.availability.kind === "Available" &&
+              target.relation.kind === "Direct";
         if (canRun) eligible.push({ mediaId, libraries });
       });
 
@@ -956,17 +961,19 @@ export function useAddContentSession(): AddContentSessionController {
             });
           }
           if (command.kind === "Add") {
-            await addMediaToLibraries(
-              mediaId,
-              [command.libraryId],
-              { signal },
-            );
+            await addLibraryPlacement({
+              target: { kind: "Media", id: mediaId },
+              destination: command.destination,
+              clientMutationId: crypto.randomUUID(),
+              signal,
+            });
           } else {
-            await removeLibraryPlacement(
-              { kind: "Media", id: mediaId },
-              command.libraryId,
-              { clientMutationId: crypto.randomUUID(), signal },
-            );
+            await removeLibraryPlacement({
+              target: { kind: "Media", id: mediaId },
+              destination: command.destination,
+              clientMutationId: crypto.randomUUID(),
+              signal,
+            });
           }
           const started = placementProgressByMediaIdRef.current.get(mediaId);
           if (generation === generationRef.current && started) {
@@ -992,10 +999,12 @@ export function useAddContentSession(): AddContentSessionController {
             mediaId: work.mediaId,
             placement: {
               kind: "Ready",
-              libraries: patchLibraryPlacement(
+              libraries: projectLibraryPlacement(
                 [...work.libraries],
-                command.libraryId,
-                command.kind === "Add",
+                command.destination,
+                command.kind === "Add"
+                  ? { kind: "Direct" }
+                  : { kind: "Absent" },
               ),
             },
           });
@@ -1055,13 +1064,15 @@ export function useAddContentSession(): AddContentSessionController {
           }
           return;
         }
+        const commandKey = libraryPlacementDestinationKey(command.destination);
         const target = outcome.value.find(
-          (library) => library.id === command.libraryId,
+          (placement) =>
+            libraryPlacementDestinationKey(placement.destination) === commandKey,
         );
         const desired =
           command.kind === "Add"
-            ? target?.isInLibrary === true
-            : !target?.isInLibrary;
+            ? target?.relation.kind === "Direct"
+            : target?.relation.kind === "Absent";
         if (desired) {
           // The command failed ambiguously but the authoritative re-read confirms
           // the intended placement was applied; publish so panes reconcile (the
@@ -1071,7 +1082,9 @@ export function useAddContentSession(): AddContentSessionController {
             mediaId: work.mediaId,
             placement: { kind: "Ready", libraries: outcome.value },
           });
-          publishLibraryPlacementChange([command.libraryId]);
+          if (command.destination.kind === "Library") {
+            publishLibraryPlacementChange([command.destination.library.id]);
+          }
           try {
             addContentPlacementErrorMessage(work.error);
           } catch (caughtDefect: unknown) {

@@ -520,10 +520,14 @@ export function buildPodcastUnsubscribeConfirmation(
   libraries: readonly LibraryPlacementOption[],
 ): string {
   const removableLibraries = libraries.filter(
-    (library) => library.isInLibrary && library.canRemove,
+    (placement) =>
+      placement.relation.kind === "Direct" &&
+      placement.availability.kind === "Available",
   );
   const retainedLibraries = libraries.filter(
-    (library) => library.isInLibrary && !library.canRemove,
+    (placement) =>
+      placement.relation.kind !== "Absent" &&
+      !removableLibraries.includes(placement),
   );
   const confirmationLines = [
     `Unsubscribe from "${title}"?`,

@@ -54,7 +54,7 @@ interface ReaderEvidenceObjectBase {
   label: string;
   excerpt: Presence<string>;
   activation: ResourceActivation;
-  actionTarget: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
 }
 
 export interface ReaderEvidenceChatObject extends ReaderEvidenceObjectBase {
@@ -157,7 +157,7 @@ export interface ReaderEvidenceSourceTarget {
   label: Presence<string>;
   body: Presence<string>;
   activation: ResourceActivation;
-  actionTarget: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
   resolution: ReaderEvidenceResolution;
 }
 

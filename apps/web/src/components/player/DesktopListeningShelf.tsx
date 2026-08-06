@@ -20,7 +20,7 @@ import {
   PlayerStatus,
   PlayerTransport,
   PlayerVolumeControl,
-  playerMediaActionTarget,
+  playerMediaActionSubject,
   playerSourceHref,
   type PresentPlayerChrome,
 } from "./PlayerControls";
@@ -124,13 +124,13 @@ export default function DesktopListeningShelf({
     ...(model.kind === "Preview"
       ? [
           {
-            id: "Player.OpenPreview",
+            id: "OccurrenceAction.PlayerPreview.Open",
             kind: "command" as const,
             label: "Open preview",
             onSelect: onOpenTarget,
           },
           {
-            id: "Player.PreviewSource",
+            id: "OccurrenceAction.PlayerPreview.OpenSource",
             kind: "link" as const,
             label: "Open source",
             href: playerSourceHref(model),
@@ -196,7 +196,7 @@ export default function DesktopListeningShelf({
         ) : null}
         {model.kind === "Canonical" ? (
           <ResourceActionMenu
-            target={playerMediaActionTarget(model)}
+            actionSubject={playerMediaActionSubject(model)}
             label="Recording actions"
             placement="above"
             renderTrigger={(props) => (

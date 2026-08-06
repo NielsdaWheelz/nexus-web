@@ -91,7 +91,7 @@ import {
 } from "@/lib/dossiers/useResourceInspector";
 import type { PaneFindOccurrencesPublication } from "@/lib/panes/paneSearch";
 import styles from "@/app/(authenticated)/conversations/page.module.css";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 // ---------------------------------------------------------------------------
 // Pending reader-selection hydration (route-owned launch intent)
@@ -262,7 +262,9 @@ function usePendingReaderSelection(
         });
         break;
       case "error": {
-        pendingContext = present(mapHydrationError(selectionResource.error, intent));
+        pendingContext = present(
+          mapHydrationError(selectionResource.error, intent),
+        );
         break;
       }
       default: {
@@ -331,11 +333,8 @@ export default function Conversation() {
       );
     }
   }, [readerIntentHashInvalid, paneHash]);
-  const {
-    pendingContext,
-    retryHydration,
-    replaceWithPreview,
-  } = usePendingReaderSelection(readerIntent);
+  const { pendingContext, retryHydration, replaceWithPreview } =
+    usePendingReaderSelection(readerIntent);
   const [readerAnnouncement, setReaderAnnouncement] = useState("");
 
   const [branchFocusKey, setBranchFocusKey] = useState("");
@@ -550,7 +549,7 @@ export default function Conversation() {
   );
 
   // Deleting the conversation is a canonical resource action now: the pane
-  // publishes its resourceTarget and the runtime dispatches DeleteConversation
+  // publishes its actionSubject and the runtime dispatches DeleteConversation
   // (confirm + delete client + snapshot reconcile). No local delete flow.
 
   // --------------------------------------------------------------------------
@@ -712,7 +711,10 @@ export default function Conversation() {
           />
         ) : (
           <FeedbackNotice
-            content={{ tone: "Neutral", title: "No forks in this conversation yet." }}
+            content={{
+              tone: "Neutral",
+              title: "No forks in this conversation yet.",
+            }}
             announcement="None"
           />
         )}
@@ -720,14 +722,13 @@ export default function Conversation() {
     ),
     [branch, convo.conversationId, handleSelectFork],
   );
-  const searchCommandsRef = useRef<
-    Pick<
-      ResourceInspectorComposition,
-      | "openSearchResults"
-      | "closeSearchResults"
-      | "previewSearchResult"
-    >
-  >(null);
+  const searchCommandsRef =
+    useRef<
+      Pick<
+        ResourceInspectorComposition,
+        "openSearchResults" | "closeSearchResults" | "previewSearchResult"
+      >
+    >(null);
   const dismissPaneFind = paneFind.onDismiss;
   const activatePaneFind = paneFind.onActivate;
   const dismissFind = useCallback(() => {
@@ -819,15 +820,16 @@ export default function Conversation() {
         ? findPublication
         : undefined,
     actions: inspector.companionAction ? [inspector.companionAction] : [],
-    resourceTarget:
+    actionSubject:
       convo.conversationId &&
       !convo.loading &&
       !(conversationId !== null && convo.messages.length === 0 && convo.error)
-        ? routeResourceActionSubject({
-            scheme: "conversation",
-            id: convo.conversationId,
-            href: `/conversations/${convo.conversationId}`,
-          })
+        ? {
+            ref: canonicalResourceRef({
+              scheme: "conversation",
+              id: convo.conversationId,
+            }),
+          }
         : undefined,
   });
 
@@ -891,7 +893,9 @@ export default function Conversation() {
               announcement="Assertive"
             />
           ) : null}
-          {error ? <FeedbackNotice content={error} announcement="Assertive" /> : null}
+          {error ? (
+            <FeedbackNotice content={error} announcement="Assertive" />
+          ) : null}
           <ChatSurface
             ref={convo.scrollRef}
             messages={convo.messages}
@@ -920,13 +924,8 @@ export default function Conversation() {
             onSelectFork={branch ? handleSelectFork : undefined}
             onReplyToAssistant={branch ? handleReplyToAssistant : undefined}
             onRerunAssistantResponse={convo.rerunAssistantResponse}
-            rerunningAssistantMessageIds={
-              convo.rerunningAssistantMessageIds.ids
-            }
             onRegenerateAssistantResponse={convo.regenerateAssistantResponse}
-            regeneratingAssistantMessageIds={
-              convo.regeneratingAssistantMessageIds.ids
-            }
+            onDeleteMessage={convo.deleteMessage}
             connectionLostAssistantIds={convo.connectionLostAssistantIds}
             onReconnectAssistant={convo.reconnectAssistantResponse}
             composer={

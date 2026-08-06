@@ -20,11 +20,13 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import {
   ResourceActionOverlays,
   ResourceOverlaysProvider,
 } from "@/lib/resources/resourceOverlaysController";
 import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import LibrariesPaneBody from "./LibrariesPaneBody";
 
 /**
@@ -112,8 +114,14 @@ function librariesPage(items: readonly (typeof OLDEST_LIBRARY)[]) {
  * every other pair — including the explicitly written default — is rejected as
  * an invalid request.
  */
-function stubLibrariesIndex(nameAscPage?: Promise<Response>) {
+function stubLibrariesIndex(
+  nameAscPage?: Promise<Response>,
+  canonicalPages: readonly (readonly (typeof OLDEST_LIBRARY)[])[] = [
+    CREATED_OLDEST,
+  ],
+) {
   const requests: string[] = [];
+  let canonicalRequestCount = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -128,7 +136,12 @@ function stubLibrariesIndex(nameAscPage?: Promise<Response>) {
       const sort = url.searchParams.get("sort");
       const direction = url.searchParams.get("direction");
       if (sort === null && direction === null) {
-        return librariesPage(CREATED_OLDEST);
+        const items =
+          canonicalPages[
+            Math.min(canonicalRequestCount, canonicalPages.length - 1)
+          ] ?? CREATED_OLDEST;
+        canonicalRequestCount += 1;
+        return librariesPage(items);
       }
       if (sort === "name" && direction === "asc") {
         return nameAscPage ?? librariesPage(NAME_ASC);
@@ -189,57 +202,59 @@ function LibrariesPane({
                     calendarTimeZone: "UTC",
                   }}
                 >
-                <KeybindingsProvider>
-                <WorkspaceStoreProvider
-                  initialState={createDefaultWorkspaceState(
-                    "/libraries",
-                    RESOURCE_ACTION_METRICS,
-                  )}
-                  workspacePrimaryMetrics={RESOURCE_ACTION_METRICS}
-                >
-                <LecternProvider>
-                <OfflineMediaProvider
-                  accountId={RESOURCE_ACTION_ACCOUNT_ID}
-                  transport={null}
-                >
-                <ResourceOverlaysProvider>
-                <ResourceActionRuntimeProvider>
-                <div data-pane-id="pane" data-active="true">
-                  <PaneShell
-                    paneId="pane"
-                    routeKey={routeKey}
-                    routeHeader={{
-                      kind: "Section",
-                      destinationId: "libraries",
-                      context: "None",
-                    }}
-                    label="Libraries"
-                    returnMementoEnabled
-                    queryNavigation="in-place"
-                    sizing={{
-                      primaryWidthPx: 720,
-                      primaryMinWidthPx: 320,
-                      primaryMaxWidthPx: 1_400,
-                      renderedPrimarySlotWidthPx: 720,
-                      renderedPrimarySlotMinWidthPx: 320,
-                      renderedPrimarySlotMaxWidthPx: 1_400,
-                      fixedChromeWidthPx: 0,
-                      storedWidthCorrectionPx: null,
-                    }}
-                    bodyMode="standard"
-                    onResizePrimaryPane={noop}
-                    isActive
-                  >
-                    <LibrariesPaneBody />
-                  </PaneShell>
-                </div>
-                <ResourceActionOverlays />
-                </ResourceActionRuntimeProvider>
-                </ResourceOverlaysProvider>
-                </OfflineMediaProvider>
-                </LecternProvider>
-                </WorkspaceStoreProvider>
-                </KeybindingsProvider>
+                  <KeybindingsProvider>
+                    <WorkspaceStoreProvider
+                      initialState={createDefaultWorkspaceState(
+                        "/libraries",
+                        RESOURCE_ACTION_METRICS,
+                      )}
+                      workspacePrimaryMetrics={RESOURCE_ACTION_METRICS}
+                    >
+                      <LecternProvider>
+                        <OfflineMediaProvider
+                          accountId={RESOURCE_ACTION_ACCOUNT_ID}
+                          transport={null}
+                        >
+                          <ResourceOverlaysProvider>
+                            <GlobalPlayerProvider>
+                              <ResourceActionRuntimeProvider>
+                                <div data-pane-id="pane" data-active="true">
+                                  <PaneShell
+                                    paneId="pane"
+                                    routeKey={routeKey}
+                                    routeHeader={{
+                                      kind: "Section",
+                                      destinationId: "libraries",
+                                      context: "None",
+                                    }}
+                                    label="Libraries"
+                                    returnMementoEnabled
+                                    queryNavigation="in-place"
+                                    sizing={{
+                                      primaryWidthPx: 720,
+                                      primaryMinWidthPx: 320,
+                                      primaryMaxWidthPx: 1_400,
+                                      renderedPrimarySlotWidthPx: 720,
+                                      renderedPrimarySlotMinWidthPx: 320,
+                                      renderedPrimarySlotMaxWidthPx: 1_400,
+                                      fixedChromeWidthPx: 0,
+                                      storedWidthCorrectionPx: null,
+                                    }}
+                                    bodyMode="standard"
+                                    onResizePrimaryPane={noop}
+                                    isActive
+                                  >
+                                    <LibrariesPaneBody />
+                                  </PaneShell>
+                                </div>
+                                <ResourceActionOverlays />
+                              </ResourceActionRuntimeProvider>
+                            </GlobalPlayerProvider>
+                          </ResourceOverlaysProvider>
+                        </OfflineMediaProvider>
+                      </LecternProvider>
+                    </WorkspaceStoreProvider>
+                  </KeybindingsProvider>
                 </AuthenticatedAccountProvider>
               </PaneRuntimeProvider>
             </PaneReturnMementoProvider>
@@ -415,7 +430,9 @@ describe("Libraries index domain view", () => {
       await screen.findByRole("searchbox", { name: "Filter libraries" }),
     ).toHaveValue("");
 
-    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Clear filters" }),
+    );
 
     await waitFor(() => expect(replaced).toEqual(["/libraries"]));
     await waitFor(() => expect(libraryNames()).toEqual([ZEBRA, AURORA]));
@@ -445,5 +462,24 @@ describe("Libraries index domain view", () => {
 
     await waitFor(() => expect(libraryNames()).toEqual([AURORA]));
     expect(screen.getByText("2 libraries")).toBeVisible();
+  });
+
+  it("authoritatively removes a deleted Library row after the shared broad revision", async () => {
+    const requests = stubLibrariesIndex(undefined, [
+      CREATED_OLDEST,
+      [NEWEST_LIBRARY],
+    ]);
+
+    render(<LibrariesPane initialHref="/libraries" replaced={[]} />);
+
+    await screen.findByText(ZEBRA);
+    publishLibraryPlacementChange("Unknown");
+
+    await waitFor(() => expect(screen.queryByText(ZEBRA)).toBeNull());
+    expect(libraryNames()).toEqual([AURORA]);
+    expect(requests).toEqual([
+      "/api/libraries?limit=100",
+      "/api/libraries?limit=100",
+    ]);
   });
 });

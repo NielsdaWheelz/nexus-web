@@ -115,6 +115,22 @@
   white-space: nowrap;
 }
 
+.optionText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.optionDescription {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .check {
   display: flex;
   color: var(--accent);

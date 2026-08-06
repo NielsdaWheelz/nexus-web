@@ -2,14 +2,17 @@
 
 import { ArrowLeft } from "lucide-react";
 import type { MouseEvent } from "react";
-import { useResourceActionCatalogProjection } from "@/lib/actions/resourceActionRuntime";
+import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import type {
   NexusAction,
   NexusEntry,
   NexusTargetActivation,
 } from "@/lib/nexus/model";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import {
+  projectActionControlState,
+  type ActionDescriptor,
+} from "@/lib/ui/actionDescriptor";
 import styles from "./switchboard.module.css";
 
 /**
@@ -90,21 +93,31 @@ function SwitchboardNexusActions({
 
 /**
  * The full-screen actions list for a canonical resource entry. It renders the
- * SAME catalog projection the resource dropdown shows for `target` — the shared
+ * SAME catalog projection the resource dropdown shows for `actionSubject` — the shared
  * planner owns membership, order, and dispatch (each descriptor's port fires
  * only on selection). Navigating actions (Open, Chat) route through the
  * Nexus-unaware runtime, which the controller observes to dismiss the Nexus.
  */
 function SwitchboardResourceActions({
-  target,
+  actionSubject,
 }: {
-  target: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
 }) {
-  const model = useResourceActionCatalogProjection(target);
+  const model = useResourceActionMenuModel(actionSubject);
   return (
     <ul className={styles.rows}>
       {model.descriptors.map((descriptor) => (
-        <li key={descriptor.id} className={styles.row}>
+        <li
+          key={descriptor.id}
+          className={styles.row}
+          data-group-start={descriptor.separatorBefore || undefined}
+          data-tone={descriptor.tone}
+          data-active={
+            descriptor.kind === "command" && descriptor.state?.kind === "toggle"
+              ? descriptor.state.pressed
+              : undefined
+          }
+        >
           <SwitchboardResourceActionItem descriptor={descriptor} />
         </li>
       ))}
@@ -120,13 +133,17 @@ function SwitchboardResourceActionItem({
   const disabled = descriptor.kind !== "custom" && descriptor.disabled === true;
   const disabledReason =
     descriptor.kind !== "custom" ? descriptor.disabledReason : undefined;
+  const control = projectActionControlState(
+    descriptor.label,
+    descriptor.kind === "command" ? descriptor.state : undefined,
+  );
   const body = (
     <>
       <span className={styles.rowIcon} aria-hidden="true">
         {descriptor.icon}
       </span>
       <span className={styles.rowBody}>
-        <span className={styles.rowLabel}>{descriptor.label}</span>
+        <span className={styles.rowLabel}>{control.menuLabel}</span>
         {disabled && disabledReason ? (
           <span className={styles.rowUnavailable}>{disabledReason}</span>
         ) : null}
@@ -135,7 +152,7 @@ function SwitchboardResourceActionItem({
   );
   const ariaLabel =
     disabled && disabledReason
-      ? `${descriptor.label}. Unavailable. ${disabledReason}`
+      ? `${control.menuLabel}. Unavailable. ${disabledReason}`
       : undefined;
 
   if (descriptor.kind === "link") {
@@ -164,6 +181,7 @@ function SwitchboardResourceActionItem({
       className={styles.rowMain}
       aria-disabled={disabled || undefined}
       aria-label={ariaLabel}
+      aria-pressed={control.barPressed}
       onClick={(event) => {
         if (disabled || descriptor.kind === "custom") return;
         descriptor.onSelect({ triggerEl: event.currentTarget });
@@ -203,8 +221,8 @@ export default function SwitchboardActions({
           {entry.label}
         </h2>
       </header>
-      {entry.resourceTarget ? (
-        <SwitchboardResourceActions target={entry.resourceTarget} />
+      {entry.actionSubject ? (
+        <SwitchboardResourceActions actionSubject={entry.actionSubject} />
       ) : (
         <SwitchboardNexusActions
           entry={entry}

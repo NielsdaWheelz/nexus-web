@@ -22,7 +22,7 @@ export function presentNote(item: NotePageSummary): CollectionRowView {
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    resourceTarget: item.actionTarget,
+    actionSubject: item.actionSubject,
     selected: false,
   };
 }

@@ -91,7 +91,7 @@ interface Connection {
   label: string;
   activation: ResourceActivation;
   missing: boolean;
-  actionTarget: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
   kind: EdgeKind;
   origin: ConnectionOut["origin"];
   rationale: string | null;
@@ -339,7 +339,7 @@ export default function ConnectionsSurface({
               label: connection.other.label ?? connection.other.ref,
               activation: connection.other.activation,
               missing: unavailable,
-              actionTarget: connection.other.actionTarget,
+              actionSubject: connection.other.actionSubject,
               kind: connection.kind,
               origin: connection.origin,
               rationale:
@@ -526,7 +526,7 @@ function ConnectionRow({
   // The one edge command this connection exposes: a user-authored edge unlinks
   // (deleteLink for a context Link, deleteStance for a stance), a synapse
   // proposal dismisses. Both are edge mutations owned by the separate
-  // context-edge control (AC4), never the canonical resource dropdown.
+  // context-edge control, never the canonical resource dropdown.
   const edge:
     | {
         readonly action: "Unlink" | "Dismiss";
@@ -600,10 +600,10 @@ function ConnectionRow({
       </button>
       {/* Canonical resource dropdown — Open/Share/Chat/… via the runtime. */}
       <ResourceActionMenu
-        target={connection.actionTarget}
+        actionSubject={connection.actionSubject}
         label={`Actions for ${connection.label}`}
       />
-      {/* Separate context-edge control (AC4): unlink/dismiss are edge mutations,
+      {/* Separate context-edge control: unlink/dismiss are edge mutations,
           not resource actions, so they publish on their own labelled trigger. */}
       {edge ? (
         <ContextEdgeMenu

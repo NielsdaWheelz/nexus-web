@@ -49,7 +49,7 @@ export interface SearchBaseResult {
   resource_ref: string;
   owner_resource_ref: string;
   activation: ResourceActivation;
-  actionTarget: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
   citation_target: string | null;
   context_ref: {
     type: SearchType;
@@ -185,7 +185,7 @@ export interface SearchResultRowViewModel {
   resourceRef: string;
   ownerResourceRef: string;
   activation: ResourceActivation;
-  actionTarget: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
   citationTarget: string | null;
   paneLabelHint: string;
   type: SearchType;

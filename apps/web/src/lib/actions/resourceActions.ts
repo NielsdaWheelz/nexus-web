@@ -1,519 +1,858 @@
-import { createElement, type ComponentType } from "react";
 import {
   ArrowUpRight,
-  CheckCircle2,
+  BookOpenText,
+  Captions,
+  CircleCheck,
   Download,
   ExternalLink,
+  FileDown,
+  FilePenLine,
+  GitFork,
+  Highlighter,
+  History,
   Library,
+  Link2,
   ListMinus,
   ListPlus,
+  ListStart,
   MessageCircle,
+  NotebookPen,
+  PanelsTopLeft,
   Pencil,
+  Play,
   RefreshCw,
   RotateCcw,
   Rss,
   Settings,
   Share2,
   Sparkles,
+  TextSelect,
   Trash2,
   Undo2,
+  Users,
+  Waypoints,
   XCircle,
+  type LucideIcon,
 } from "lucide-react";
-import { assumeLecternItemId, type LecternItemId } from "@/lib/lectern/contract";
-import type { CanonicalResourceRef } from "@/lib/sharing/types";
+
 import type { ResourceActionEnvironment } from "@/lib/actions/resourceActionEnvironment";
 import type {
   ResourceActionCapability,
   ResourceActionSnapshot,
   ServerActionAvailability,
 } from "@/lib/actions/resourceActionSnapshot";
-import type {
-  ActionControlState,
-  ActionDescriptor,
-  ActionSelectDetail,
-  PaneHeaderAction,
-} from "@/lib/ui/actionDescriptor";
+import {
+  assumeLecternItemId,
+  type LecternItemId,
+  type PlayerDescriptor,
+} from "@/lib/lectern/contract";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
+import type { ResourceActivation } from "@/lib/resources/activation";
 
-type ActionIcon = ComponentType<{
-  size?: number;
-  "aria-hidden"?: boolean | "true" | "false";
-}>;
+export type ResourceActionGroup =
+  | "Navigate"
+  | "Consume"
+  | "Organize"
+  | "CreateTransform"
+  | "ShareExport"
+  | "Manage"
+  | "Danger";
+
+export type ResourceActionTone = "default" | "danger";
+
+export type ResourceActionBlockedReason =
+  | "PermissionDenied"
+  | "Locked"
+  | "Processing"
+  | "TemporarilyUnavailable"
+  | "Loading"
+  | "CapacityReached"
+  | "RequiresOnline"
+  | "UnsupportedOnDevice"
+  | "Busy";
+
+export type ResourceActionAvailability =
+  | { readonly kind: "Available" }
+  | {
+      readonly kind: "Blocked";
+      readonly reason: ResourceActionBlockedReason;
+    };
+
+export type ResourceActionControlState =
+  | { readonly kind: "Command" }
+  | { readonly kind: "Toggle"; readonly checked: boolean };
+
+export type ResourceActionConfirmation =
+  | { readonly kind: "None" }
+  | {
+      readonly kind: "Required";
+      readonly title: string;
+      readonly body: string;
+      readonly confirmLabel: string;
+    };
+
+export interface ResourceActionPresentation {
+  readonly label: string;
+  readonly icon: LucideIcon;
+  readonly group: ResourceActionGroup;
+  readonly tone: ResourceActionTone;
+}
 
 interface ResourceActionCatalogEntry {
   readonly id: string;
   readonly label: string;
-  readonly busyLabel?: string;
-  readonly icon: ActionIcon;
-  readonly tone?: "default" | "danger";
-  readonly restoreFocusOnClose?: boolean;
+  readonly icon: LucideIcon;
+  readonly group: ResourceActionGroup;
+  readonly order: number;
+  readonly tone: ResourceActionTone;
+  readonly confirmation: ResourceActionConfirmation;
+}
+
+const NONE = Object.freeze({ kind: "None" } as const);
+
+function requiredConfirmation(
+  title: string,
+  body: string,
+  confirmLabel: string,
+): ResourceActionConfirmation {
+  return Object.freeze({
+    kind: "Required" as const,
+    title,
+    body,
+    confirmLabel,
+  });
+}
+
+function catalogEntry<const Entry extends ResourceActionCatalogEntry>(
+  entry: Entry,
+): Readonly<Entry> {
+  return Object.freeze(entry);
+}
+
+function statePresentation(label: string, icon: LucideIcon) {
+  return Object.freeze({ label, icon });
 }
 
 /**
- * The one owner of cross-surface resource-action identity and presentation
- * metadata. Callers choose applicability and provide execution; they do not
- * restate ids, copy, icons, ordering tone, or focus policy.
+ * The only owner of resource-action identity, default copy, iconography,
+ * semantic grouping, order, tone, and confirmation policy. Keys are the stable
+ * action IDs themselves so callers cannot translate through a second identity.
  */
-export const RESOURCE_ACTION_CATALOG = {
-  Open: {
+export const RESOURCE_ACTION_CATALOG = Object.freeze({
+  "ResourceAction.Open": catalogEntry({
     id: "ResourceAction.Open",
     label: "Open",
     icon: ArrowUpRight,
-  },
-  ExternalOpen: {
-    id: "ExternalAction.Open",
-    label: "Open",
-    icon: ArrowUpRight,
-  },
-  Share: {
-    id: "ResourceAction.Share",
-    label: "Share…",
-    icon: Share2,
-    restoreFocusOnClose: false,
-  },
-  Chat: {
-    id: "ResourceAction.Chat",
-    label: "Chat about this resource",
-    busyLabel: "Starting chat...",
-    icon: MessageCircle,
-  },
-  OpenSource: {
+    group: "Navigate",
+    order: 10,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceAction.OpenInNewPane": catalogEntry({
+    id: "ResourceAction.OpenInNewPane",
+    label: "Open in new pane",
+    icon: PanelsTopLeft,
+    group: "Navigate",
+    order: 20,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.OpenSource": catalogEntry({
     id: "ResourceOperation.OpenSource",
     label: "Open source",
     icon: ExternalLink,
-  },
-  RetryProcessing: {
-    id: "ResourceOperation.Media.RetryProcessing",
-    label: "Retry processing",
-    busyLabel: "Retrying...",
-    icon: RotateCcw,
-  },
-  DownloadOffline: {
-    id: "ResourceOperation.Media.DownloadOffline",
-    label: "Download for offline",
-    icon: Download,
-  },
-  CancelOfflineDownload: {
-    id: "ResourceOperation.Media.CancelOfflineDownload",
-    label: "Cancel download",
-    icon: XCircle,
-  },
-  RetryOfflineDownload: {
-    id: "ResourceOperation.Media.RetryOfflineDownload",
-    label: "Retry download",
-    icon: RotateCcw,
-  },
-  RemoveOfflineDownload: {
-    id: "ResourceOperation.Media.RemoveOfflineDownload",
-    label: "Remove download",
-    busyLabel: "Removing download…",
-    icon: Trash2,
-  },
-  RefreshSource: {
-    id: "ResourceOperation.Media.RefreshSource",
-    label: "Refresh source",
-    busyLabel: "Refreshing...",
-    icon: RefreshCw,
-  },
-  RetryMetadata: {
-    id: "ResourceOperation.Media.RetryMetadata",
-    label: "Re-enrich metadata",
-    busyLabel: "Re-enriching...",
-    icon: Sparkles,
-  },
-  EditAuthors: {
-    id: "ResourceOperation.Media.EditAuthors",
-    label: "Edit authors…",
-    icon: Pencil,
-  },
-  MarkFinished: {
-    id: "ResourceOperation.Media.MarkFinished",
+    group: "Navigate",
+    order: 30,
+    tone: "default",
+    confirmation: NONE,
+  }),
+
+  "ResourceOperation.Media.Playback": catalogEntry({
+    id: "ResourceOperation.Media.Playback",
+    label: "Play",
+    icon: Play,
+    group: "Consume",
+    order: 10,
+    tone: "default",
+    confirmation: NONE,
+    states: Object.freeze({
+      Idle: statePresentation("Play", Play),
+      Paused: statePresentation("Resume", Play),
+      Ended: statePresentation("Replay", RotateCcw),
+    }),
+  }),
+  "ResourceOperation.Media.PlayNext": catalogEntry({
+    id: "ResourceOperation.Media.PlayNext",
+    label: "Play next",
+    icon: ListStart,
+    group: "Consume",
+    order: 20,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Media.Consumption": catalogEntry({
+    id: "ResourceOperation.Media.Consumption",
     label: "Mark as finished",
-    busyLabel: "Marking...",
-    icon: CheckCircle2,
-  },
-  MarkUnread: {
-    id: "ResourceOperation.Media.MarkUnread",
-    label: "Mark as unread",
-    busyLabel: "Marking...",
-    icon: Undo2,
-  },
-  ResetProgress: {
+    icon: CircleCheck,
+    group: "Consume",
+    order: 30,
+    tone: "default",
+    confirmation: NONE,
+    states: Object.freeze({
+      DocumentIncomplete: statePresentation("Mark as finished", CircleCheck),
+      DocumentFinished: statePresentation("Mark as unread", Undo2),
+      EpisodeUnplayed: statePresentation("Mark as played", CircleCheck),
+      EpisodePlayed: statePresentation("Mark as unplayed", Undo2),
+    }),
+  }),
+  "ResourceOperation.Media.ResetProgress": catalogEntry({
     id: "ResourceOperation.Media.ResetProgress",
     label: "Reset progress",
-    busyLabel: "Resetting...",
     icon: RotateCcw,
-  },
-  RemoveMedia: {
-    id: "ResourceOperation.Media.Remove",
-    label: "Remove media",
-    busyLabel: "Removing...",
-    icon: Trash2,
-    tone: "danger",
-    restoreFocusOnClose: false,
-  },
-  LibrarySettings: {
-    id: "ResourceOperation.Library.Settings",
-    label: "Settings",
-    icon: Settings,
-  },
-  DeleteLibrary: {
-    id: "ResourceOperation.Library.Delete",
-    label: "Delete library",
-    busyLabel: "Deleting...",
-    icon: Trash2,
-    tone: "danger",
-    restoreFocusOnClose: false,
-  },
-  PodcastSettings: {
-    id: "ResourceOperation.Podcast.Settings",
-    label: "Settings",
-    busyLabel: "Loading settings...",
-    icon: Settings,
-  },
-  RefreshPodcast: {
-    id: "ResourceOperation.Podcast.Refresh",
-    label: "Check for new episodes",
-    busyLabel: "Checking...",
-    icon: RefreshCw,
-  },
-  MarkPlayed: {
-    id: "ResourceOperation.Episode.MarkPlayed",
-    label: "Mark as played",
-    busyLabel: "Marking...",
-    icon: CheckCircle2,
-  },
-  MarkUnplayed: {
-    id: "ResourceOperation.Episode.MarkUnplayed",
-    label: "Mark as unplayed",
-    busyLabel: "Marking...",
-    icon: Undo2,
-  },
-  DeleteConversation: {
-    id: "ResourceOperation.Conversation.Delete",
-    label: "Delete conversation",
-    busyLabel: "Deleting...",
-    icon: Trash2,
-    tone: "danger",
-    restoreFocusOnClose: false,
-  },
-  EditLibraryPlacement: {
-    id: "RelationshipAction.LibraryPlacement.Edit",
+    group: "Consume",
+    order: 40,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Media.Transcript": catalogEntry({
+    id: "ResourceOperation.Media.Transcript",
+    label: "Request transcript…",
+    icon: Captions,
+    group: "Consume",
+    order: 50,
+    tone: "default",
+    confirmation: NONE,
+    states: Object.freeze({
+      NotRequested: statePresentation("Request transcript…", Captions),
+      Queued: statePresentation("Transcript queued", Captions),
+      Running: statePresentation("Transcript processing", Captions),
+      Ready: statePresentation("Open transcript", Captions),
+      Partial: statePresentation("Open transcript", Captions),
+      Unavailable: statePresentation("Transcript unavailable", Captions),
+      FailedQuota: statePresentation("Retry transcript", RotateCcw),
+      FailedProvider: statePresentation("Retry transcript", RotateCcw),
+    }),
+  }),
+  "ResourceOperation.Media.Offline": catalogEntry({
+    id: "ResourceOperation.Media.Offline",
+    label: "Download for offline",
+    icon: Download,
+    group: "Consume",
+    order: 60,
+    tone: "default",
+    confirmation: NONE,
+    states: Object.freeze({
+      Absent: statePresentation("Download for offline", Download),
+      Downloading: statePresentation("Cancel download", XCircle),
+      Failed: statePresentation("Retry download", RotateCcw),
+      Ready: statePresentation("Remove download", Trash2),
+    }),
+  }),
+
+  "RelationshipAction.LibraryPlacement": catalogEntry({
+    id: "RelationshipAction.LibraryPlacement",
     label: "Libraries…",
     icon: Library,
-    restoreFocusOnClose: false,
-  },
-  AddToLectern: {
-    id: "RelationshipAction.Lectern.Add",
+    group: "Organize",
+    order: 10,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "RelationshipAction.LecternMembership": catalogEntry({
+    id: "RelationshipAction.LecternMembership",
     label: "Add to Lectern",
-    busyLabel: "Adding...",
     icon: ListPlus,
-  },
-  RemoveFromLectern: {
-    id: "RelationshipAction.Lectern.Remove",
-    label: "Remove from Lectern",
-    busyLabel: "Removing...",
-    icon: ListMinus,
-    restoreFocusOnClose: false,
-  },
-  Subscribe: {
-    id: "RelationshipAction.Podcast.Subscribe",
+    group: "Organize",
+    order: 20,
+    tone: "default",
+    confirmation: NONE,
+    states: Object.freeze({
+      Absent: statePresentation("Add to Lectern", ListPlus),
+      Present: statePresentation("Remove from Lectern", ListMinus),
+    }),
+  }),
+  "RelationshipAction.PodcastSubscription": catalogEntry({
+    id: "RelationshipAction.PodcastSubscription",
     label: "Subscribe",
-    busyLabel: "Subscribing…",
     icon: Rss,
-    restoreFocusOnClose: false,
-  },
-  UnsubscribePodcast: {
-    id: "RelationshipAction.Podcast.Unsubscribe",
-    label: "Unsubscribe",
-    busyLabel: "Unsubscribing...",
-    icon: Library,
+    group: "Organize",
+    order: 30,
+    tone: "default",
+    confirmation: NONE,
+    states: Object.freeze({
+      Unsubscribed: statePresentation("Subscribe", Rss),
+      Subscribed: statePresentation("Unsubscribe", Rss),
+    }),
+  }),
+
+  "ResourceAction.Chat": catalogEntry({
+    id: "ResourceAction.Chat",
+    label: "Chat about this…",
+    icon: MessageCircle,
+    group: "CreateTransform",
+    order: 10,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Highlight.Edit": catalogEntry({
+    id: "ResourceOperation.Highlight.Edit",
+    label: "Edit highlight…",
+    icon: Highlighter,
+    group: "CreateTransform",
+    order: 20,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Highlight.Note": catalogEntry({
+    id: "ResourceOperation.Highlight.Note",
+    label: "Add note…",
+    icon: NotebookPen,
+    group: "CreateTransform",
+    order: 30,
+    tone: "default",
+    confirmation: NONE,
+    states: Object.freeze({
+      Absent: statePresentation("Add note…", NotebookPen),
+      Present: statePresentation("Edit note…", NotebookPen),
+    }),
+  }),
+  "ResourceOperation.Highlight.Link": catalogEntry({
+    id: "ResourceOperation.Highlight.Link",
+    label: "Link…",
+    icon: Link2,
+    group: "CreateTransform",
+    order: 40,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Highlight.Learn": catalogEntry({
+    id: "ResourceOperation.Highlight.Learn",
+    label: "Learn from this",
+    icon: BookOpenText,
+    group: "CreateTransform",
+    order: 50,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Highlight.EditBounds": catalogEntry({
+    id: "ResourceOperation.Highlight.EditBounds",
+    label: "Edit bounds",
+    icon: TextSelect,
+    group: "CreateTransform",
+    order: 60,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Message.Fork": catalogEntry({
+    id: "ResourceOperation.Message.Fork",
+    label: "Fork from here",
+    icon: GitFork,
+    group: "CreateTransform",
+    order: 70,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Message.WalkSources": catalogEntry({
+    id: "ResourceOperation.Message.WalkSources",
+    label: "Walk through sources",
+    icon: Waypoints,
+    group: "CreateTransform",
+    order: 80,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Message.Rerun": catalogEntry({
+    id: "ResourceOperation.Message.Rerun",
+    label: "Rerun",
+    icon: RefreshCw,
+    group: "CreateTransform",
+    order: 90,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Message.Regenerate": catalogEntry({
+    id: "ResourceOperation.Message.Regenerate",
+    label: "Regenerate",
+    icon: Sparkles,
+    group: "CreateTransform",
+    order: 100,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Page.EditTitle": catalogEntry({
+    id: "ResourceOperation.Page.EditTitle",
+    label: "Edit title…",
+    icon: Pencil,
+    group: "CreateTransform",
+    order: 110,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.NoteBlock.EditBody": catalogEntry({
+    id: "ResourceOperation.NoteBlock.EditBody",
+    label: "Edit note",
+    icon: FilePenLine,
+    group: "CreateTransform",
+    order: 120,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Contributor.Rename": catalogEntry({
+    id: "ResourceOperation.Contributor.Rename",
+    label: "Edit name…",
+    icon: Pencil,
+    group: "CreateTransform",
+    order: 130,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Artifact.Regenerate": catalogEntry({
+    id: "ResourceOperation.Artifact.Regenerate",
+    label: "Regenerate",
+    icon: Sparkles,
+    group: "CreateTransform",
+    order: 140,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.ArtifactRevision.MakeCurrent": catalogEntry({
+    id: "ResourceOperation.ArtifactRevision.MakeCurrent",
+    label: "Make current",
+    icon: History,
+    group: "CreateTransform",
+    order: 150,
+    tone: "default",
+    confirmation: NONE,
+  }),
+
+  "ResourceAction.Share": catalogEntry({
+    id: "ResourceAction.Share",
+    label: "Share…",
+    icon: Share2,
+    group: "ShareExport",
+    order: 10,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Media.DownloadOriginal": catalogEntry({
+    id: "ResourceOperation.Media.DownloadOriginal",
+    label: "Download original",
+    icon: FileDown,
+    group: "ShareExport",
+    order: 20,
+    tone: "default",
+    confirmation: NONE,
+  }),
+
+  "ResourceOperation.Media.RetryProcessing": catalogEntry({
+    id: "ResourceOperation.Media.RetryProcessing",
+    label: "Retry processing",
+    icon: RotateCcw,
+    group: "Manage",
+    order: 10,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Media.RefreshSource": catalogEntry({
+    id: "ResourceOperation.Media.RefreshSource",
+    label: "Refresh source",
+    icon: RefreshCw,
+    group: "Manage",
+    order: 20,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Media.RetryMetadata": catalogEntry({
+    id: "ResourceOperation.Media.RetryMetadata",
+    label: "Re-enrich metadata",
+    icon: Sparkles,
+    group: "Manage",
+    order: 30,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Media.EditAuthors": catalogEntry({
+    id: "ResourceOperation.Media.EditAuthors",
+    label: "Edit authors…",
+    icon: Users,
+    group: "Manage",
+    order: 40,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Library.Settings": catalogEntry({
+    id: "ResourceOperation.Library.Settings",
+    label: "Library settings…",
+    icon: Settings,
+    group: "Manage",
+    order: 50,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Podcast.Settings": catalogEntry({
+    id: "ResourceOperation.Podcast.Settings",
+    label: "Podcast settings…",
+    icon: Settings,
+    group: "Manage",
+    order: 60,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Podcast.Refresh": catalogEntry({
+    id: "ResourceOperation.Podcast.Refresh",
+    label: "Check for new episodes",
+    icon: RefreshCw,
+    group: "Manage",
+    order: 70,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Podcast.RetryBackfill": catalogEntry({
+    id: "ResourceOperation.Podcast.RetryBackfill",
+    label: "Retry backlog",
+    icon: RotateCcw,
+    group: "Manage",
+    order: 80,
+    tone: "default",
+    confirmation: NONE,
+  }),
+
+  "ResourceOperation.Media.Remove": catalogEntry({
+    id: "ResourceOperation.Media.Remove",
+    label: "Remove from Nexus",
+    icon: Trash2,
+    group: "Danger",
+    order: 10,
     tone: "danger",
-    restoreFocusOnClose: false,
-  },
-} as const satisfies Record<string, ResourceActionCatalogEntry>;
+    confirmation: requiredConfirmation(
+      "Remove from Nexus?",
+      "Remove “{title}” from Nexus, every Library, and the Lectern? This can’t be undone.",
+      "Remove from Nexus",
+    ),
+  }),
+  "ResourceOperation.Library.Delete": catalogEntry({
+    id: "ResourceOperation.Library.Delete",
+    label: "Delete Library",
+    icon: Trash2,
+    group: "Danger",
+    order: 20,
+    tone: "danger",
+    confirmation: requiredConfirmation(
+      "Delete Library?",
+      "Delete “{title}”? Its items stay in Nexus. This can’t be undone.",
+      "Delete Library",
+    ),
+  }),
+  "ResourceOperation.Conversation.Delete": catalogEntry({
+    id: "ResourceOperation.Conversation.Delete",
+    label: "Delete chat",
+    icon: Trash2,
+    group: "Danger",
+    order: 30,
+    tone: "danger",
+    confirmation: requiredConfirmation(
+      "Delete chat?",
+      "Delete “{title}” and its messages? This can’t be undone.",
+      "Delete chat",
+    ),
+  }),
+  "ResourceOperation.Message.Delete": catalogEntry({
+    id: "ResourceOperation.Message.Delete",
+    label: "Delete message",
+    icon: Trash2,
+    group: "Danger",
+    order: 40,
+    tone: "danger",
+    confirmation: requiredConfirmation(
+      "Delete message?",
+      "Delete this message? This can’t be undone.",
+      "Delete message",
+    ),
+  }),
+  "ResourceOperation.Highlight.Delete": catalogEntry({
+    id: "ResourceOperation.Highlight.Delete",
+    label: "Delete highlight",
+    icon: Trash2,
+    group: "Danger",
+    order: 50,
+    tone: "danger",
+    confirmation: requiredConfirmation(
+      "Delete highlight?",
+      "Delete this highlight and its note? This can’t be undone.",
+      "Delete highlight",
+    ),
+  }),
+  "ResourceOperation.Page.Delete": catalogEntry({
+    id: "ResourceOperation.Page.Delete",
+    label: "Delete page",
+    icon: Trash2,
+    group: "Danger",
+    order: 60,
+    tone: "danger",
+    confirmation: requiredConfirmation(
+      "Delete page?",
+      "Delete “{title}” and its note blocks? This can’t be undone.",
+      "Delete page",
+    ),
+  }),
+} as const satisfies Record<string, ResourceActionCatalogEntry>);
 
-export type ResourceActionCatalogKey = keyof typeof RESOURCE_ACTION_CATALOG;
-export type ResourceActionId =
-  (typeof RESOURCE_ACTION_CATALOG)[ResourceActionCatalogKey]["id"];
+export type ResourceActionId = keyof typeof RESOURCE_ACTION_CATALOG;
 
-interface SemanticResourceActionBase {
-  readonly catalogKey: ResourceActionCatalogKey;
-  readonly busy?: boolean;
-  readonly disabledReason?: string;
-}
-
-export type SemanticResourceAction =
-  | (SemanticResourceActionBase & {
-      readonly kind: "command";
-      readonly onSelect: (detail: ActionSelectDetail) => void;
-      readonly state?: ActionControlState;
-    })
-  | (SemanticResourceActionBase & {
-      readonly kind: "link";
-      readonly href: string;
-      readonly onSelect?: (detail: ActionSelectDetail) => void;
-    });
-
-function catalogEntry(
-  key: ResourceActionCatalogKey,
-): ResourceActionCatalogEntry {
-  return RESOURCE_ACTION_CATALOG[key];
-}
-
-function actionIcon(entry: ResourceActionCatalogEntry) {
-  return createElement(entry.icon, { size: 14, "aria-hidden": true });
-}
-
-/** Project one catalog-owned semantic action into an overflow-menu descriptor. */
-export function projectResourceActionToMenu(
-  action: SemanticResourceAction,
-): ActionDescriptor {
-  const entry = catalogEntry(action.catalogKey);
-  if (
-    action.busy === true &&
-    entry.busyLabel === undefined &&
-    action.disabledReason === undefined
-  ) {
-    // justify-defect: an unavailable action whose label does not explain the
-    // state must publish an accessible reason.
-    throw new Error(
-      `Busy resource action requires disabledReason: ${entry.id}`,
-    );
-  }
-  const common = {
-    id: entry.id,
-    label:
-      action.busy && entry.busyLabel !== undefined
-        ? entry.busyLabel
-        : entry.label,
-    icon: actionIcon(entry),
-    disabled: action.busy || undefined,
-    disabledReason: action.busy ? action.disabledReason : undefined,
-    tone: entry.tone,
-  } as const;
-  if (action.kind === "link") {
-    return {
-      ...common,
-      kind: "link",
-      href: action.href,
-      onSelect: action.onSelect,
-      restoreFocusOnClose: entry.restoreFocusOnClose,
-    };
-  }
-  return {
-    ...common,
-    kind: "command",
-    onSelect: action.onSelect,
-    state: action.state,
-    restoreFocusOnClose: entry.restoreFocusOnClose,
-  };
-}
-
-/**
- * Header/action-bar projection of the same semantic action. Metadata and
- * behavior are intentionally shared with the menu projection; only the target
- * descriptor type requires an icon.
- */
-export function projectResourceActionToHeader(
-  action: SemanticResourceAction,
-): PaneHeaderAction {
-  const descriptor = projectResourceActionToMenu(action);
-  if (descriptor.icon === undefined) {
-    // justify-defect: every catalog entry owns an icon, so a missing icon means
-    // the catalog-to-header projection no longer satisfies PaneHeaderAction.
-    throw new Error(
-      `Resource header action is missing its icon: ${descriptor.id}`,
-    );
-  }
-  return { ...descriptor, icon: descriptor.icon };
-}
-
-// ---------------------------------------------------------------------------
-// Pure resource-action planner
-//
-// `resolveResourceActionPlan` is the single owner of resource-action membership,
-// grouping, current verb, blocked/busy state, and order. It is TOTAL, PURE, and
-// dispatch-free: it reads the server snapshot, the client-wide environment, and
-// the global keyed busy set, and returns immutable plan data. The runtime later
-// attaches an executor per `intent`; the planner never holds a closure.
-// ---------------------------------------------------------------------------
-
-/**
- * Every reason a planned resource action can be blocked while still visible and
- * keyboard-discoverable. `Locked`/`Processing`/`TemporarilyUnavailable` are the
- * server availability reasons; `RequiresOnline` is the one client-only reason the
- * planner derives (an offline device cannot start a download). Device-unsupported
- * actions are omitted, not blocked, and in-flight state is the `busy` field.
- */
-export type ResourceActionBlockedReason =
-  | "Locked"
-  | "Processing"
-  | "TemporarilyUnavailable"
-  | "RequiresOnline";
-
-/**
- * The closed union of WHAT a resource action does. It carries only the typed
- * data an executor needs (no closures, no URLs beyond `OpenSource`), so the plan
- * stays immutable, comparable, and dispatch-free.
- */
 export type ResourceActionIntent =
-  | { readonly kind: "Open" }
-  | { readonly kind: "Share" }
-  | { readonly kind: "Chat" }
+  | { readonly kind: "Open"; readonly activation: ResourceActivation }
+  | { readonly kind: "OpenInNewPane"; readonly activation: ResourceActivation }
   | { readonly kind: "OpenSource"; readonly href: string }
-  | { readonly kind: "RetryProcessing" }
-  | { readonly kind: "RefreshSource" }
-  | { readonly kind: "RetryMetadata" }
-  | { readonly kind: "EditAuthors" }
-  | { readonly kind: "ResetProgress" }
-  | { readonly kind: "LibrarySettings" }
-  | { readonly kind: "DeleteLibrary" }
-  | { readonly kind: "PodcastSettings" }
-  | { readonly kind: "RefreshPodcast" }
-  | { readonly kind: "DeleteConversation" }
-  | { readonly kind: "RemoveMedia" }
-  | { readonly kind: "LibraryPlacement" }
+  | { readonly kind: "Play"; readonly playerDescriptor: PlayerDescriptor }
+  | {
+      readonly kind: "ResumePlayback";
+      readonly playerDescriptor: PlayerDescriptor;
+    }
+  | { readonly kind: "Replay"; readonly playerDescriptor: PlayerDescriptor }
+  | { readonly kind: "PlayNext" }
   | { readonly kind: "MarkFinished" }
   | { readonly kind: "MarkUnread" }
   | { readonly kind: "MarkPlayed" }
   | { readonly kind: "MarkUnplayed" }
-  | { readonly kind: "Subscribe" }
-  | { readonly kind: "Unsubscribe" }
-  | { readonly kind: "AddToLectern" }
-  | { readonly kind: "RemoveFromLectern"; readonly lecternItemId: LecternItemId }
+  | { readonly kind: "ResetProgress" }
+  | {
+      readonly kind: "RequestTranscript";
+      readonly resourceRef: CanonicalResourceRef;
+    }
+  | {
+      readonly kind: "OpenTranscript";
+      readonly resourceRef: CanonicalResourceRef;
+    }
+  | {
+      readonly kind: "RetryTranscript";
+      readonly resourceRef: CanonicalResourceRef;
+    }
   | { readonly kind: "OfflineDownload" }
   | { readonly kind: "OfflineCancel" }
   | { readonly kind: "OfflineRetry" }
-  | { readonly kind: "OfflineRemove" };
+  | { readonly kind: "OfflineRemove" }
+  | { readonly kind: "LibraryPlacement" }
+  | { readonly kind: "AddToLectern" }
+  | { readonly kind: "RemoveFromLectern"; readonly lecternItemId: LecternItemId }
+  | { readonly kind: "Subscribe" }
+  | { readonly kind: "Unsubscribe" }
+  | { readonly kind: "Chat" }
+  | { readonly kind: "EditHighlight" }
+  | { readonly kind: "AddHighlightNote" }
+  | { readonly kind: "EditHighlightNote"; readonly noteBlockId: string }
+  | { readonly kind: "LinkHighlight" }
+  | { readonly kind: "LearnHighlight" }
+  | { readonly kind: "EditHighlightBounds" }
+  | { readonly kind: "ForkMessage" }
+  | { readonly kind: "WalkMessageSources" }
+  | { readonly kind: "RerunMessage" }
+  | { readonly kind: "RegenerateMessage" }
+  | { readonly kind: "EditPageTitle" }
+  | { readonly kind: "EditNoteBody" }
+  | { readonly kind: "RenameContributor" }
+  | { readonly kind: "RegenerateArtifact" }
+  | { readonly kind: "MakeArtifactRevisionCurrent" }
+  | { readonly kind: "Share" }
+  | { readonly kind: "DownloadOriginal" }
+  | { readonly kind: "RetryProcessing" }
+  | { readonly kind: "RefreshSource" }
+  | { readonly kind: "RetryMetadata" }
+  | { readonly kind: "EditAuthors" }
+  | { readonly kind: "LibrarySettings" }
+  | { readonly kind: "PodcastSettings" }
+  | { readonly kind: "RefreshPodcast" }
+  | { readonly kind: "RetryPodcastBackfill" }
+  | { readonly kind: "RemoveMedia" }
+  | { readonly kind: "DeleteLibrary" }
+  | { readonly kind: "DeleteConversation" }
+  | { readonly kind: "DeleteMessage" }
+  | { readonly kind: "DeleteHighlight" }
+  | { readonly kind: "DeletePage" };
 
 export interface PlannedResourceAction {
-  readonly catalogKey: ResourceActionCatalogKey;
+  readonly id: ResourceActionId;
+  readonly presentation: ResourceActionPresentation;
+  readonly control: ResourceActionControlState;
+  readonly availability: ResourceActionAvailability;
+  readonly confirmation: ResourceActionConfirmation;
   readonly intent: ResourceActionIntent;
-  readonly busy: boolean;
-  readonly blockedReason?: ResourceActionBlockedReason;
 }
 
-export interface ResourceActionPlan {
-  readonly core: readonly PlannedResourceAction[];
-  readonly operations: readonly PlannedResourceAction[];
-  readonly relationships: readonly PlannedResourceAction[];
+const COMMAND = Object.freeze({ kind: "Command" } as const);
+const AVAILABLE = Object.freeze({ kind: "Available" } as const);
+
+const GROUP_INDEX: Readonly<Record<ResourceActionGroup, number>> = Object.freeze({
+  Navigate: 0,
+  Consume: 1,
+  Organize: 2,
+  CreateTransform: 3,
+  ShareExport: 4,
+  Manage: 5,
+  Danger: 6,
+});
+
+function blocked(reason: ResourceActionBlockedReason): ResourceActionAvailability {
+  return Object.freeze({ kind: "Blocked" as const, reason });
 }
 
-type ResourceActionGroup = "core" | "operations" | "relationships";
-
-interface GroupedPlannedAction {
-  readonly group: ResourceActionGroup;
-  readonly action: PlannedResourceAction;
-}
-
-/** Catalog insertion order — the sole authority for within-group ordering. */
-const RESOURCE_ACTION_CATALOG_INDEX: ReadonlyMap<
-  ResourceActionCatalogKey,
-  number
-> = new Map(
-  (Object.keys(RESOURCE_ACTION_CATALOG) as ResourceActionCatalogKey[]).map(
-    (key, index) => [key, index],
-  ),
-);
-
-function catalogInsertionIndex(key: ResourceActionCatalogKey): number {
-  const index = RESOURCE_ACTION_CATALOG_INDEX.get(key);
-  if (index === undefined) {
-    // justify-defect: the index map is built from the catalog itself, so a miss
-    // means the catalog key type and the runtime catalog disagree.
-    throw new Error(`Unknown resource action catalog key: ${key}`);
-  }
-  return index;
-}
-
-function isDangerCatalogKey(key: ResourceActionCatalogKey): boolean {
-  return catalogEntry(key).tone === "danger";
-}
-
-function isBusyId(
+function finalAvailability(
+  id: ResourceActionId,
+  server: ServerActionAvailability,
   busyIds: ReadonlySet<ResourceActionId>,
-  catalogKey: ResourceActionCatalogKey,
-): boolean {
-  return busyIds.has(RESOURCE_ACTION_CATALOG[catalogKey].id);
+  clientReason?: ResourceActionBlockedReason,
+): ResourceActionAvailability {
+  if (busyIds.has(id)) return blocked("Busy");
+  if (server.kind === "Blocked") return blocked(server.reason);
+  return clientReason === undefined ? AVAILABLE : blocked(clientReason);
 }
 
-function plannedFromServer(
-  group: ResourceActionGroup,
-  catalogKey: ResourceActionCatalogKey,
+function planned(
+  id: ResourceActionId,
+  server: ServerActionAvailability,
+  busyIds: ReadonlySet<ResourceActionId>,
   intent: ResourceActionIntent,
-  availability: ServerActionAvailability,
-  busyIds: ReadonlySet<ResourceActionId>,
-): GroupedPlannedAction {
-  const busy = isBusyId(busyIds, catalogKey);
-  const action: PlannedResourceAction =
-    availability.kind === "Blocked"
-      ? { catalogKey, intent, busy, blockedReason: availability.reason }
-      : { catalogKey, intent, busy };
-  return { group, action };
+  options: {
+    readonly label?: string;
+    readonly icon?: LucideIcon;
+    readonly control?: ResourceActionControlState;
+    readonly clientBlockedReason?: ResourceActionBlockedReason;
+  } = {},
+): PlannedResourceAction {
+  const entry = RESOURCE_ACTION_CATALOG[id];
+  const presentation = Object.freeze({
+    label: options.label ?? entry.label,
+    icon: options.icon ?? entry.icon,
+    group: entry.group,
+    tone: entry.tone,
+  });
+  const control = options.control ?? COMMAND;
+  if (!Object.isFrozen(control)) Object.freeze(control);
+  const frozenIntent = immutableCopy(intent);
+  return Object.freeze({
+    id,
+    presentation,
+    control,
+    availability: finalAvailability(
+      id,
+      server,
+      busyIds,
+      options.clientBlockedReason,
+    ),
+    confirmation: entry.confirmation,
+    intent: frozenIntent,
+  });
 }
 
-/**
- * Derive the concrete offline actions from the one client-wide environment. The
- * server only asserts eligibility (`OfflineAudio`); the concrete Download /
- * Cancel / Retry / Remove verb and the `RequiresOnline` reason live entirely on
- * the client. Web omits offline entirely.
- */
-function deriveOfflineAudioActions(
+function immutableCopy<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map((item) => immutableCopy(item))) as T;
+  }
+  if (typeof value === "object" && value !== null) {
+    const copy = Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, immutableCopy(item)]),
+    );
+    return Object.freeze(copy) as T;
+  }
+  return value;
+}
+
+function toggle(checked: boolean): ResourceActionControlState {
+  return Object.freeze({ kind: "Toggle" as const, checked });
+}
+
+function lecternBlockedReason(
+  environment: ResourceActionEnvironment,
+  capacityMatters: boolean,
+): ResourceActionBlockedReason | undefined {
+  switch (environment.lectern.kind) {
+    case "Loading":
+      return "Loading";
+    case "Error":
+      return "TemporarilyUnavailable";
+    case "Ready":
+      if (environment.lectern.mutation === "Busy") return "Busy";
+      if (capacityMatters && environment.lectern.atCapacity) {
+        return "CapacityReached";
+      }
+      return undefined;
+    default: {
+      const exhaustive: never = environment.lectern;
+      throw new Error(
+        `Unsupported Lectern environment: ${JSON.stringify(exhaustive)}`,
+      );
+    }
+  }
+}
+
+function deriveOfflineAction(
+  availability: ServerActionAvailability,
   environment: ResourceActionEnvironment,
   ref: CanonicalResourceRef,
   busyIds: ReadonlySet<ResourceActionId>,
-): readonly PlannedResourceAction[] {
-  if (environment.platform !== "Android") return [];
-
-  const offlineAction = (
-    catalogKey: ResourceActionCatalogKey,
-    intent: ResourceActionIntent,
-  ): PlannedResourceAction => ({
-    catalogKey,
-    intent,
-    busy: isBusyId(busyIds, catalogKey),
-  });
-
-  const availability = environment.offlineMediaByRef.get(ref);
-  if (availability === undefined) {
-    const busy = isBusyId(busyIds, "DownloadOffline");
-    return environment.connectivity === "Offline"
-      ? [
-          {
-            catalogKey: "DownloadOffline",
-            intent: { kind: "OfflineDownload" },
-            busy,
-            blockedReason: "RequiresOnline",
-          },
-        ]
-      : [{ catalogKey: "DownloadOffline", intent: { kind: "OfflineDownload" }, busy }];
+): PlannedResourceAction {
+  const id = "ResourceOperation.Media.Offline";
+  const states = RESOURCE_ACTION_CATALOG[id].states;
+  if (environment.platform === "Web") {
+    return planned(id, availability, busyIds, { kind: "OfflineDownload" }, {
+      ...states.Absent,
+      control: toggle(false),
+      clientBlockedReason: "UnsupportedOnDevice",
+    });
   }
 
-  switch (availability.kind) {
+  if (environment.offline.kind === "Loading") {
+    return planned(id, availability, busyIds, { kind: "OfflineDownload" }, {
+      ...states.Absent,
+      control: toggle(false),
+      clientBlockedReason: "Loading",
+    });
+  }
+  if (environment.offline.kind === "Unavailable") {
+    return planned(id, availability, busyIds, { kind: "OfflineDownload" }, {
+      ...states.Absent,
+      control: toggle(false),
+      clientBlockedReason: "UnsupportedOnDevice",
+    });
+  }
+
+  const local = environment.offline.byRef.get(ref);
+  if (local === undefined) {
+    return planned(id, availability, busyIds, { kind: "OfflineDownload" }, {
+      control: toggle(false),
+      clientBlockedReason:
+        environment.connectivity === "Offline" ? "RequiresOnline" : undefined,
+    });
+  }
+
+  switch (local.kind) {
     case "Resolving":
     case "Queued":
     case "Downloading":
     case "Restarting":
-      return [offlineAction("CancelOfflineDownload", { kind: "OfflineCancel" })];
+      return planned(id, availability, busyIds, { kind: "OfflineCancel" }, {
+        ...states.Downloading,
+        control: toggle(false),
+      });
     case "Ready":
-      return [offlineAction("RemoveOfflineDownload", { kind: "OfflineRemove" })];
+      return planned(id, availability, busyIds, { kind: "OfflineRemove" }, {
+        ...states.Ready,
+        control: toggle(true),
+      });
     case "Failed":
-      return [
-        offlineAction("RetryOfflineDownload", { kind: "OfflineRetry" }),
-        offlineAction("RemoveOfflineDownload", { kind: "OfflineRemove" }),
-      ];
+      return planned(id, availability, busyIds, { kind: "OfflineRetry" }, {
+        ...states.Failed,
+        control: toggle(false),
+        clientBlockedReason:
+          environment.connectivity === "Offline" ? "RequiresOnline" : undefined,
+      });
     case "Removing":
-      return [
-        {
-          catalogKey: "RemoveOfflineDownload",
-          intent: { kind: "OfflineRemove" },
-          busy: true,
-        },
-      ];
+      return planned(id, availability, busyIds, { kind: "OfflineRemove" }, {
+        ...states.Ready,
+        control: toggle(true),
+        clientBlockedReason: "Busy",
+      });
     default: {
-      const exhaustive: never = availability;
-      // justify-defect: LocalAvailability is a closed union; an unknown state
-      // has no safe offline verb.
+      const exhaustive: never = local;
       throw new Error(
         `Unsupported offline availability: ${JSON.stringify(exhaustive)}`,
       );
@@ -521,103 +860,404 @@ function deriveOfflineAudioActions(
   }
 }
 
-/**
- * Map one decoded capability to its planned action(s). State machines emit
- * exactly one current verb; `OfflineAudio` derives 0..2 device-local actions;
- * every other capability emits exactly one action.
- */
+function planTranscript(
+  capability: Extract<ResourceActionCapability, { readonly kind: "Transcript" }>,
+  ref: CanonicalResourceRef,
+  busyIds: ReadonlySet<ResourceActionId>,
+): PlannedResourceAction {
+  const id = "ResourceOperation.Media.Transcript";
+  const states = RESOURCE_ACTION_CATALOG[id].states;
+  switch (capability.state) {
+    case "NotRequested":
+      return planned(id, capability.availability, busyIds, {
+        kind: "RequestTranscript",
+        resourceRef: ref,
+      }, states.NotRequested);
+    case "Queued":
+      return planned(id, capability.availability, busyIds, {
+        kind: "OpenTranscript",
+        resourceRef: ref,
+      }, { ...states.Queued, clientBlockedReason: "Processing" });
+    case "Running":
+      return planned(id, capability.availability, busyIds, {
+        kind: "OpenTranscript",
+        resourceRef: ref,
+      }, { ...states.Running, clientBlockedReason: "Processing" });
+    case "Ready":
+    case "Partial":
+      return planned(id, capability.availability, busyIds, {
+        kind: "OpenTranscript",
+        resourceRef: ref,
+      }, states[capability.state]);
+    case "Unavailable":
+      return planned(id, capability.availability, busyIds, {
+        kind: "RequestTranscript",
+        resourceRef: ref,
+      }, {
+        ...states.Unavailable,
+        clientBlockedReason: "TemporarilyUnavailable",
+      });
+    case "FailedQuota":
+    case "FailedProvider":
+      return planned(id, capability.availability, busyIds, {
+        kind: "RetryTranscript",
+        resourceRef: ref,
+      }, states[capability.state]);
+    default: {
+      const exhaustive: never = capability.state;
+      throw new Error(`Unsupported transcript state: ${exhaustive}`);
+    }
+  }
+}
+
 function planCapability(
   capability: ResourceActionCapability,
   environment: ResourceActionEnvironment,
   ref: CanonicalResourceRef,
+  activation: ResourceActivation,
   busyIds: ReadonlySet<ResourceActionId>,
-): readonly GroupedPlannedAction[] {
+): PlannedResourceAction {
   const availability = capability.availability;
   switch (capability.kind) {
     case "Open":
-      return [plannedFromServer("core", "Open", { kind: "Open" }, availability, busyIds)];
-    case "Share":
-      return [plannedFromServer("core", "Share", { kind: "Share" }, availability, busyIds)];
-    case "Chat":
-      return [plannedFromServer("core", "Chat", { kind: "Chat" }, availability, busyIds)];
+      return planned("ResourceAction.Open", availability, busyIds, {
+        kind: "Open",
+        activation,
+      });
+    case "OpenInNewPane":
+      return planned("ResourceAction.OpenInNewPane", availability, busyIds, {
+        kind: "OpenInNewPane",
+        activation,
+      });
     case "OpenSource":
-      return [
-        plannedFromServer(
-          "operations",
-          "OpenSource",
-          { kind: "OpenSource", href: capability.href },
+      return planned("ResourceOperation.OpenSource", availability, busyIds, {
+        kind: "OpenSource",
+        href: capability.href,
+      });
+    case "Playback": {
+      const states =
+        RESOURCE_ACTION_CATALOG["ResourceOperation.Media.Playback"].states;
+      const playback = environment.playbackByRef.get(ref) ?? "Idle";
+      if (playback === "Paused") {
+        return planned(
+          "ResourceOperation.Media.Playback",
           availability,
           busyIds,
-        ),
-      ];
-    case "RetryProcessing":
-      return [plannedFromServer("operations", "RetryProcessing", { kind: "RetryProcessing" }, availability, busyIds)];
-    case "RefreshSource":
-      return [plannedFromServer("operations", "RefreshSource", { kind: "RefreshSource" }, availability, busyIds)];
-    case "RetryMetadata":
-      return [plannedFromServer("operations", "RetryMetadata", { kind: "RetryMetadata" }, availability, busyIds)];
-    case "EditAuthors":
-      return [plannedFromServer("operations", "EditAuthors", { kind: "EditAuthors" }, availability, busyIds)];
-    case "ResetProgress":
-      return [plannedFromServer("operations", "ResetProgress", { kind: "ResetProgress" }, availability, busyIds)];
-    case "LibrarySettings":
-      return [plannedFromServer("operations", "LibrarySettings", { kind: "LibrarySettings" }, availability, busyIds)];
-    case "DeleteLibrary":
-      return [plannedFromServer("operations", "DeleteLibrary", { kind: "DeleteLibrary" }, availability, busyIds)];
-    case "PodcastSettings":
-      return [plannedFromServer("operations", "PodcastSettings", { kind: "PodcastSettings" }, availability, busyIds)];
-    case "RefreshPodcast":
-      return [plannedFromServer("operations", "RefreshPodcast", { kind: "RefreshPodcast" }, availability, busyIds)];
-    case "DeleteConversation":
-      return [plannedFromServer("operations", "DeleteConversation", { kind: "DeleteConversation" }, availability, busyIds)];
-    case "RemoveMedia":
-      return [plannedFromServer("operations", "RemoveMedia", { kind: "RemoveMedia" }, availability, busyIds)];
-    case "LibraryPlacement":
-      return [plannedFromServer("relationships", "EditLibraryPlacement", { kind: "LibraryPlacement" }, availability, busyIds)];
-    case "OfflineAudio":
-      return deriveOfflineAudioActions(environment, ref, busyIds).map((action) => ({
-        group: "operations",
-        action,
-      }));
-    case "Consumption":
-      return capability.state === "Finished"
-        ? [plannedFromServer("operations", "MarkUnread", { kind: "MarkUnread" }, availability, busyIds)]
-        : [plannedFromServer("operations", "MarkFinished", { kind: "MarkFinished" }, availability, busyIds)];
-    case "EpisodeConsumption":
-      return capability.state === "Played"
-        ? [plannedFromServer("operations", "MarkUnplayed", { kind: "MarkUnplayed" }, availability, busyIds)]
-        : [plannedFromServer("operations", "MarkPlayed", { kind: "MarkPlayed" }, availability, busyIds)];
-    case "PodcastSubscription":
-      return capability.state === "Subscribed"
-        ? [plannedFromServer("relationships", "UnsubscribePodcast", { kind: "Unsubscribe" }, availability, busyIds)]
-        : [plannedFromServer("relationships", "Subscribe", { kind: "Subscribe" }, availability, busyIds)];
-    case "LecternMembership":
-      if (capability.state === "Present") {
-        if (capability.lecternItemId === undefined) {
-          // justify-defect: a Present Lectern membership must carry the item id
-          // its Remove verb executes against; without it no command is safe.
-          throw new Error(
-            `LecternMembership Present is missing lecternItemId for ${ref}`,
-          );
-        }
-        return [
-          plannedFromServer(
-            "relationships",
-            "RemoveFromLectern",
-            {
-              kind: "RemoveFromLectern",
-              lecternItemId: assumeLecternItemId(capability.lecternItemId),
-            },
-            availability,
-            busyIds,
-          ),
-        ];
+          {
+            kind: "ResumePlayback",
+            playerDescriptor: capability.playerDescriptor,
+          },
+          {
+            ...states.Paused,
+            clientBlockedReason: lecternBlockedReason(environment, false),
+          },
+        );
       }
-      return [plannedFromServer("relationships", "AddToLectern", { kind: "AddToLectern" }, availability, busyIds)];
+      if (playback === "Ended") {
+        return planned(
+          "ResourceOperation.Media.Playback",
+          availability,
+          busyIds,
+          { kind: "Replay", playerDescriptor: capability.playerDescriptor },
+          {
+            ...states.Ended,
+            clientBlockedReason: lecternBlockedReason(environment, false),
+          },
+        );
+      }
+      return planned(
+        "ResourceOperation.Media.Playback",
+        availability,
+        busyIds,
+        { kind: "Play", playerDescriptor: capability.playerDescriptor },
+        {
+          ...states.Idle,
+          clientBlockedReason: lecternBlockedReason(environment, false),
+        },
+      );
+    }
+    case "PlayNext":
+      return planned(
+        "ResourceOperation.Media.PlayNext",
+        availability,
+        busyIds,
+        { kind: "PlayNext" },
+        {
+          clientBlockedReason: lecternBlockedReason(environment, true),
+        },
+      );
+    case "Consumption": {
+      const finished = capability.state === "Finished";
+      const state = RESOURCE_ACTION_CATALOG[
+        "ResourceOperation.Media.Consumption"
+      ].states[finished ? "DocumentFinished" : "DocumentIncomplete"];
+      return planned(
+        "ResourceOperation.Media.Consumption",
+        availability,
+        busyIds,
+        { kind: finished ? "MarkUnread" : "MarkFinished" },
+        {
+          ...state,
+          control: toggle(finished),
+          clientBlockedReason: lecternBlockedReason(environment, false),
+        },
+      );
+    }
+    case "EpisodeConsumption": {
+      const played = capability.state === "Played";
+      const state = RESOURCE_ACTION_CATALOG[
+        "ResourceOperation.Media.Consumption"
+      ].states[played ? "EpisodePlayed" : "EpisodeUnplayed"];
+      return planned(
+        "ResourceOperation.Media.Consumption",
+        availability,
+        busyIds,
+        { kind: played ? "MarkUnplayed" : "MarkPlayed" },
+        {
+          ...state,
+          control: toggle(played),
+          clientBlockedReason: lecternBlockedReason(environment, false),
+        },
+      );
+    }
+    case "ResetProgress":
+      return planned(
+        "ResourceOperation.Media.ResetProgress",
+        availability,
+        busyIds,
+        { kind: "ResetProgress" },
+        {
+          clientBlockedReason: lecternBlockedReason(environment, false),
+        },
+      );
+    case "Transcript":
+      return planTranscript(capability, ref, busyIds);
+    case "OfflineAudio":
+      return deriveOfflineAction(availability, environment, ref, busyIds);
+    case "LibraryPlacement":
+      return planned("RelationshipAction.LibraryPlacement", availability, busyIds, {
+        kind: "LibraryPlacement",
+      });
+    case "LecternMembership": {
+      const states = RESOURCE_ACTION_CATALOG[
+        "RelationshipAction.LecternMembership"
+      ].states;
+      if (capability.state === "Present") {
+        return planned(
+          "RelationshipAction.LecternMembership",
+          availability,
+          busyIds,
+          {
+            kind: "RemoveFromLectern",
+            lecternItemId: assumeLecternItemId(capability.lecternItemId),
+          },
+          {
+            ...states.Present,
+            control: toggle(true),
+            clientBlockedReason: lecternBlockedReason(environment, false),
+          },
+        );
+      }
+      return planned(
+        "RelationshipAction.LecternMembership",
+        availability,
+        busyIds,
+        { kind: "AddToLectern" },
+        {
+          ...states.Absent,
+          control: toggle(false),
+          clientBlockedReason: lecternBlockedReason(environment, true),
+        },
+      );
+    }
+    case "PodcastSubscription": {
+      const subscribed = capability.state === "Subscribed";
+      const state = RESOURCE_ACTION_CATALOG[
+        "RelationshipAction.PodcastSubscription"
+      ].states[subscribed ? "Subscribed" : "Unsubscribed"];
+      return planned(
+        "RelationshipAction.PodcastSubscription",
+        availability,
+        busyIds,
+        { kind: subscribed ? "Unsubscribe" : "Subscribe" },
+        {
+          ...state,
+          control: toggle(subscribed),
+        },
+      );
+    }
+    case "Chat":
+      return planned("ResourceAction.Chat", availability, busyIds, { kind: "Chat" });
+    case "EditHighlight":
+      return planned("ResourceOperation.Highlight.Edit", availability, busyIds, {
+        kind: "EditHighlight",
+      });
+    case "HighlightNote": {
+      const present = capability.state === "Present";
+      const state = RESOURCE_ACTION_CATALOG[
+        "ResourceOperation.Highlight.Note"
+      ].states[present ? "Present" : "Absent"];
+      return planned(
+        "ResourceOperation.Highlight.Note",
+        availability,
+        busyIds,
+        present
+          ? { kind: "EditHighlightNote", noteBlockId: capability.noteBlockId }
+          : { kind: "AddHighlightNote" },
+        state,
+      );
+    }
+    case "LinkHighlight":
+      return planned("ResourceOperation.Highlight.Link", availability, busyIds, {
+        kind: "LinkHighlight",
+      });
+    case "LearnHighlight":
+      return planned("ResourceOperation.Highlight.Learn", availability, busyIds, {
+        kind: "LearnHighlight",
+      });
+    case "EditHighlightBounds":
+      return planned(
+        "ResourceOperation.Highlight.EditBounds",
+        availability,
+        busyIds,
+        { kind: "EditHighlightBounds" },
+      );
+    case "ForkMessage":
+      return planned("ResourceOperation.Message.Fork", availability, busyIds, {
+        kind: "ForkMessage",
+      });
+    case "WalkMessageSources":
+      return planned(
+        "ResourceOperation.Message.WalkSources",
+        availability,
+        busyIds,
+        { kind: "WalkMessageSources" },
+      );
+    case "RerunMessage":
+      return planned("ResourceOperation.Message.Rerun", availability, busyIds, {
+        kind: "RerunMessage",
+      });
+    case "RegenerateMessage":
+      return planned(
+        "ResourceOperation.Message.Regenerate",
+        availability,
+        busyIds,
+        { kind: "RegenerateMessage" },
+      );
+    case "EditPageTitle":
+      return planned("ResourceOperation.Page.EditTitle", availability, busyIds, {
+        kind: "EditPageTitle",
+      });
+    case "EditNoteBody":
+      return planned("ResourceOperation.NoteBlock.EditBody", availability, busyIds, {
+        kind: "EditNoteBody",
+      });
+    case "RenameContributor":
+      return planned(
+        "ResourceOperation.Contributor.Rename",
+        availability,
+        busyIds,
+        { kind: "RenameContributor" },
+      );
+    case "RegenerateArtifact":
+      return planned(
+        "ResourceOperation.Artifact.Regenerate",
+        availability,
+        busyIds,
+        { kind: "RegenerateArtifact" },
+      );
+    case "MakeArtifactRevisionCurrent":
+      return planned(
+        "ResourceOperation.ArtifactRevision.MakeCurrent",
+        availability,
+        busyIds,
+        { kind: "MakeArtifactRevisionCurrent" },
+      );
+    case "Share":
+      return planned("ResourceAction.Share", availability, busyIds, { kind: "Share" });
+    case "DownloadOriginal":
+      return planned(
+        "ResourceOperation.Media.DownloadOriginal",
+        availability,
+        busyIds,
+        { kind: "DownloadOriginal" },
+      );
+    case "RetryProcessing":
+      return planned(
+        "ResourceOperation.Media.RetryProcessing",
+        availability,
+        busyIds,
+        { kind: "RetryProcessing" },
+      );
+    case "RefreshSource":
+      return planned(
+        "ResourceOperation.Media.RefreshSource",
+        availability,
+        busyIds,
+        { kind: "RefreshSource" },
+      );
+    case "RetryMetadata":
+      return planned(
+        "ResourceOperation.Media.RetryMetadata",
+        availability,
+        busyIds,
+        { kind: "RetryMetadata" },
+      );
+    case "EditAuthors":
+      return planned(
+        "ResourceOperation.Media.EditAuthors",
+        availability,
+        busyIds,
+        { kind: "EditAuthors" },
+      );
+    case "LibrarySettings":
+      return planned("ResourceOperation.Library.Settings", availability, busyIds, {
+        kind: "LibrarySettings",
+      });
+    case "PodcastSettings":
+      return planned("ResourceOperation.Podcast.Settings", availability, busyIds, {
+        kind: "PodcastSettings",
+      });
+    case "RefreshPodcast":
+      return planned("ResourceOperation.Podcast.Refresh", availability, busyIds, {
+        kind: "RefreshPodcast",
+      });
+    case "RetryPodcastBackfill":
+      return planned(
+        "ResourceOperation.Podcast.RetryBackfill",
+        availability,
+        busyIds,
+        { kind: "RetryPodcastBackfill" },
+      );
+    case "RemoveMedia":
+      return planned("ResourceOperation.Media.Remove", availability, busyIds, {
+        kind: "RemoveMedia",
+      });
+    case "DeleteLibrary":
+      return planned("ResourceOperation.Library.Delete", availability, busyIds, {
+        kind: "DeleteLibrary",
+      });
+    case "DeleteConversation":
+      return planned(
+        "ResourceOperation.Conversation.Delete",
+        availability,
+        busyIds,
+        { kind: "DeleteConversation" },
+      );
+    case "DeleteMessage":
+      return planned("ResourceOperation.Message.Delete", availability, busyIds, {
+        kind: "DeleteMessage",
+      });
+    case "DeleteHighlight":
+      return planned("ResourceOperation.Highlight.Delete", availability, busyIds, {
+        kind: "DeleteHighlight",
+      });
+    case "DeletePage":
+      return planned("ResourceOperation.Page.Delete", availability, busyIds, {
+        kind: "DeletePage",
+      });
     default: {
       const exhaustive: never = capability;
-      // justify-defect: the capability union is closed and same-system; an
-      // unknown kind cannot be mapped to a safe action.
       throw new Error(
         `Unsupported resource action capability: ${JSON.stringify(exhaustive)}`,
       );
@@ -625,131 +1265,55 @@ function planCapability(
   }
 }
 
-/**
- * Order a group by catalog insertion index. The planner owns order; callers
- * cannot influence it. Danger placement is NOT decided here — the composer
- * hoists all danger actions into one final group across the whole plan.
- */
-function sortByCatalogOrder(
-  actions: readonly PlannedResourceAction[],
-): readonly PlannedResourceAction[] {
-  return [...actions].sort(
-    (left, right) =>
-      catalogInsertionIndex(left.catalogKey) -
-      catalogInsertionIndex(right.catalogKey),
+function compareCatalogOrder(
+  left: PlannedResourceAction,
+  right: PlannedResourceAction,
+): number {
+  const leftEntry = RESOURCE_ACTION_CATALOG[left.id];
+  const rightEntry = RESOURCE_ACTION_CATALOG[right.id];
+  return (
+    GROUP_INDEX[leftEntry.group] - GROUP_INDEX[rightEntry.group] ||
+    leftEntry.order - rightEntry.order
   );
 }
 
 /**
- * The one owner of resource-action membership, grouping, current verb, and
- * order. Total, pure, and dispatch-free.
+ * Resolve one authoritative, final, deeply immutable action plan. Capability
+ * input order cannot affect output order; stable IDs are also the global busy
+ * identity. Renderers and surfaces may only project this result, never amend it.
  */
 export function resolveResourceActionPlan(
   snapshot: ResourceActionSnapshot,
   environment: ResourceActionEnvironment,
   busyIds: ReadonlySet<ResourceActionId>,
-): ResourceActionPlan {
-  if (snapshot.missing) {
-    return { core: [], operations: [], relationships: [] };
-  }
+): readonly PlannedResourceAction[] {
+  if (snapshot.missing) return Object.freeze([]);
 
   const seenKinds = new Set<ResourceActionCapability["kind"]>();
+  const seenIds = new Set<ResourceActionId>();
+  const actions: PlannedResourceAction[] = [];
   for (const capability of snapshot.capabilities) {
     if (seenKinds.has(capability.kind)) {
-      // justify-defect: a snapshot with two facts for one capability kind is a
-      // contradiction; the plan's action identity would be ambiguous.
       throw new Error(
         `Duplicate resource action capability kind: ${capability.kind}`,
       );
     }
     seenKinds.add(capability.kind);
-  }
 
-  const core: PlannedResourceAction[] = [];
-  const operations: PlannedResourceAction[] = [];
-  const relationships: PlannedResourceAction[] = [];
-  for (const capability of snapshot.capabilities) {
-    for (const grouped of planCapability(
+    const action = planCapability(
       capability,
       environment,
       snapshot.ref,
+      snapshot.activation,
       busyIds,
-    )) {
-      switch (grouped.group) {
-        case "core":
-          core.push(grouped.action);
-          break;
-        case "operations":
-          operations.push(grouped.action);
-          break;
-        case "relationships":
-          relationships.push(grouped.action);
-          break;
-        default: {
-          const exhaustive: never = grouped.group;
-          // justify-defect: the group tag is a closed union produced above.
-          throw new Error(`Unknown resource action group: ${exhaustive}`);
-        }
-      }
+    );
+    if (seenIds.has(action.id)) {
+      throw new Error(`Duplicate resource action id: ${action.id}`);
     }
+    seenIds.add(action.id);
+    actions.push(action);
   }
 
-  return {
-    core: sortByCatalogOrder(core),
-    operations: sortByCatalogOrder(operations),
-    relationships: sortByCatalogOrder(relationships),
-  };
-}
-
-/** A planned action placed in the final flat menu, with its group-boundary rule. */
-export interface ComposedResourceAction extends PlannedResourceAction {
-  /** True on the first action of each non-first visual group (separator above). */
-  readonly separatorBefore: boolean;
-}
-
-/**
- * The one flatten policy for a resolved plan: emit the non-danger groups core →
- * operations → relationships (each already in catalog order), then move every
- * danger action into one final terminal group (catalog order within it), and
- * mark a separator at each group boundary. Defects on a duplicate catalog id so
- * no command's identity is ambiguous. This is the composer the spec assigns the
- * danger-last + separators contract to; the planner owns membership/verb/order.
- */
-export function composeResourceActionPlan(
-  plan: ResourceActionPlan,
-): readonly ComposedResourceAction[] {
-  const seen = new Set<ResourceActionId>();
-  for (const action of [...plan.core, ...plan.operations, ...plan.relationships]) {
-    const id = RESOURCE_ACTION_CATALOG[action.catalogKey].id;
-    if (seen.has(id)) {
-      // justify-defect: duplicate ids make focus, execution, and busy identity
-      // ambiguous, so no command can be selected safely.
-      throw new Error(`Duplicate resource action id: ${id}`);
-    }
-    seen.add(id);
-  }
-  const notDanger = (action: PlannedResourceAction) =>
-    !isDangerCatalogKey(action.catalogKey);
-  const danger = sortByCatalogOrder(
-    [...plan.core, ...plan.operations, ...plan.relationships].filter(
-      (action) => isDangerCatalogKey(action.catalogKey),
-    ),
-  );
-  const groups = [
-    plan.core.filter(notDanger),
-    plan.operations.filter(notDanger),
-    plan.relationships.filter(notDanger),
-    danger,
-  ].filter((group) => group.length > 0);
-
-  const result: ComposedResourceAction[] = [];
-  groups.forEach((group, groupIndex) => {
-    group.forEach((action, index) => {
-      result.push({
-        ...action,
-        separatorBefore: groupIndex > 0 && index === 0,
-      });
-    });
-  });
-  return result;
+  actions.sort(compareCatalogOrder);
+  return Object.freeze(actions);
 }

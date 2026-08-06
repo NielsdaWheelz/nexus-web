@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
@@ -7,6 +7,7 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
@@ -20,12 +21,12 @@ import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { absent } from "@/lib/api/presence";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { CollectionRowView } from "@/lib/collections/types";
 import CollectionRow from "./CollectionRow";
 
 // The system under test is CollectionRow's resource dropdown wired to the REAL
-// runtime, planner, catalog projector, and ActionMenu — the row hub renders the
+// runtime, planner, catalog, and ActionMenu — the row hub renders the
 // one canonical ResourceActionMenu, not any surface-local menu. Only the BFF
 // fetch boundary is stubbed: the snapshot-resolve endpoint serves a schema-valid
 // media snapshot whose capabilities arrive deliberately scrambled, so the
@@ -37,21 +38,21 @@ const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const MEDIA_REF = `media:${MEDIA_ID}`;
 const MEDIA_HREF = `/media/${MEDIA_ID}`;
 const RESOLVE_PATH = "/api/resource-items/action-snapshots/resolve";
+const MEDIA_FACTS_REVISION = "3".repeat(64);
+const MISSING_FACTS_REVISION = "0".repeat(64);
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
   primaryDefaultWidthPx: 684,
 };
 
-const mediaTarget = routeResourceActionSubject({
-  scheme: "media",
-  id: MEDIA_ID,
-  href: MEDIA_HREF,
-});
+const mediaSubject = {
+  ref: canonicalResourceRef({ scheme: "media", id: MEDIA_ID }),
+};
 
 // A schema-valid resolve response with capabilities intentionally out of catalog
-// order, mixing all three groups plus a danger action, so the composed row menu
-// proves catalog order + danger-last regardless of the wire order.
+// order, spanning all seven groups, so the row menu proves catalog order with
+// Danger terminal regardless of the wire order.
 const MEDIA_SNAPSHOT = {
   ref: MEDIA_REF,
   activation: {
@@ -61,13 +62,17 @@ const MEDIA_SNAPSHOT = {
     unresolvedReason: null,
   },
   missing: false,
-  factsRevision: "facts-rev-1",
+  factsRevision: MEDIA_FACTS_REVISION,
   capabilities: [
     { kind: "RemoveMedia", availability: { kind: "Available" } },
     { kind: "Chat", availability: { kind: "Available" } },
     { kind: "LibraryPlacement", availability: { kind: "Available" } },
     { kind: "Open", availability: { kind: "Available" } },
-    { kind: "Consumption", availability: { kind: "Available" }, state: "Unread" },
+    {
+      kind: "Consumption",
+      availability: { kind: "Available" },
+      state: "Unread",
+    },
     { kind: "RetryProcessing", availability: { kind: "Available" } },
     { kind: "Share", availability: { kind: "Available" } },
     {
@@ -80,13 +85,13 @@ const MEDIA_SNAPSHOT = {
 
 const EXPECTED_MENU_ORDER = [
   "Open",
-  "Share…",
-  "Chat about this resource",
-  "Retry processing",
   "Mark as finished",
   "Libraries…",
   "Add to Lectern",
-  "Remove media",
+  "Chat about this…",
+  "Share…",
+  "Retry processing",
+  "Remove from Nexus",
 ];
 
 const SNAPSHOTS_BY_REF: Record<string, unknown> = {
@@ -110,7 +115,10 @@ function installBff(): Bff {
     "fetch",
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : null;
-      const url = new URL(request?.url ?? String(input), window.location.origin);
+      const url = new URL(
+        request?.url ?? String(input),
+        window.location.origin,
+      );
       const method = init?.method ?? request?.method ?? "GET";
       const path = url.pathname;
 
@@ -125,12 +133,12 @@ function installBff(): Bff {
               ref,
               activation: {
                 resourceRef: ref,
-                kind: "route",
-                href: "/",
+                kind: "none",
+                href: null,
                 unresolvedReason: null,
               },
               missing: true,
-              factsRevision: "missing",
+              factsRevision: MISSING_FACTS_REVISION,
               capabilities: [],
             },
         );
@@ -161,7 +169,7 @@ function baseRow(overrides: Partial<CollectionRowView>): CollectionRowView {
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    resourceTarget: mediaTarget,
+    actionSubject: mediaSubject,
     selected: false,
     ...overrides,
   };
@@ -192,10 +200,12 @@ function renderRow(row: CollectionRowView) {
                           transport={null}
                         >
                           <ResourceOverlaysProvider>
-                            <ResourceActionRuntimeProvider>
-                              <CollectionRow row={row} as="div" />
-                              <ResourceActionOverlays />
-                            </ResourceActionRuntimeProvider>
+                            <GlobalPlayerProvider>
+                              <ResourceActionRuntimeProvider>
+                                <CollectionRow row={row} as="div" />
+                                <ResourceActionOverlays />
+                              </ResourceActionRuntimeProvider>
+                            </GlobalPlayerProvider>
                           </ResourceOverlaysProvider>
                         </OfflineMediaProvider>
                       </ShareControllerProvider>
@@ -209,6 +219,15 @@ function renderRow(row: CollectionRowView) {
       </AuthenticatedAccountProvider>,
     ),
   );
+}
+
+function menuLabels(menu: HTMLElement): string[] {
+  return within(menu).getAllByRole("none").map((container) => {
+    const item =
+      within(container).queryByRole("menuitem") ??
+      within(container).getByRole("menuitemcheckbox");
+    return item.textContent?.trim() ?? "";
+  });
 }
 
 describe("CollectionRow resource dropdown", () => {
@@ -229,19 +248,18 @@ describe("CollectionRow resource dropdown", () => {
     const bff = installBff();
     renderRow(baseRow({}));
 
-    // The row's dropdown is THE canonical resource menu keyed by the row target.
+    // The row's dropdown is the canonical resource menu keyed by its subject.
     const trigger = await screen.findByRole("button", {
       name: "More actions for Field Guide",
     });
+    await waitFor(() => expect(trigger).toBeEnabled());
     await userEvent.click(trigger);
     const menu = screen.getByRole("menu");
 
-    // The catalog-owned order (core -> operations -> relationships, danger last)
+    // The catalog-owned seven-group order with Danger terminal
     // flows through CollectionRow -> ResourceActionMenu -> real planner, proving
     // the row no longer owns membership or order.
-    const names = within(menu)
-      .getAllByRole("menuitem")
-      .map((item) => item.textContent?.trim());
+    const names = menuLabels(menu);
     expect(
       names,
       "collection row dropdown did not render the catalog-owned order with danger last",
@@ -265,8 +283,8 @@ describe("CollectionRow resource dropdown", () => {
           paneLabelHint: "External Essay",
         },
         title: { text: "External Essay" },
-        // A non-resource / external row: a plain link, no resource target.
-        resourceTarget: null,
+        // A non-resource / external row is a plain link with no action subject.
+        actionSubject: null,
       }),
     );
 

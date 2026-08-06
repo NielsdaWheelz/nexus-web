@@ -5,64 +5,100 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
+import { createLibrary } from "@/lib/libraries/client";
 import {
   addLibraryPlacement,
+  decideCreatedLibraryPlacement,
+  libraryPlacementDestinationKey,
   listLibraryPlacements,
+  projectLibraryPlacement,
   removeLibraryPlacement,
+  type LibraryPlacementDestination,
+  type LibraryPlacementDestinationKey,
   type LibraryPlacementOption,
   type LibraryPlacementTarget,
 } from "@/lib/libraries/libraryPlacement";
+import {
+  decideUnconfirmedLibraryPlacement,
+  reconcileCommittedLibraryPlacement,
+} from "@/lib/libraries/libraryPlacementCommit";
+import type { ResourceActionMutationLease } from "@/lib/actions/resourceActionMutation";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
 
 type PlacementOp = "Add" | "Remove";
-type PlacementRequest = "Load" | PlacementOp;
+type PlacementRequest = "Load" | PlacementOp | "Create";
 
-// One media/podcast's standing library placement as a closed phase union.
-// `rows` is always the last authoritative decoded inventory; the post-204
-// confirmed-membership overlay is derived by id at read time, never mutated in.
+interface PlacementCommand {
+  readonly destination: LibraryPlacementDestination;
+  readonly destinationKey: LibraryPlacementDestinationKey;
+  readonly op: PlacementOp;
+  readonly clientMutationId: string;
+}
+
+interface CreateCommand {
+  readonly name: string;
+  readonly libraryId: string;
+}
+
+// `rows` is always the last authoritative placement inventory. A placement
+// relation is projected only during post-command reconciliation.
 type Phase =
   | { kind: "Loading" }
   | { kind: "Ready"; rows: LibraryPlacementOption[] }
   | {
       kind: "Mutating";
       rows: LibraryPlacementOption[];
-      libraryId: string;
-      op: PlacementOp;
-      clientMutationId: string;
+      command: PlacementCommand;
+      lease: ResourceActionMutationLease;
+    }
+  | {
+      kind: "Creating";
+      rows: LibraryPlacementOption[];
+      command: CreateCommand;
+      lease: ResourceActionMutationLease;
     }
   | {
       kind: "Reconciling";
       rows: LibraryPlacementOption[];
-      libraryId: string;
-      op: PlacementOp;
+      command: PlacementCommand;
+      lease: ResourceActionMutationLease;
     }
   | {
       kind: "ReconcileFailed";
       rows: LibraryPlacementOption[];
-      libraryId: string;
-      op: PlacementOp;
+      command: PlacementCommand;
+      lease: ResourceActionMutationLease;
       content: FeedbackContent;
     }
   | {
       kind: "CommandFailed";
       rows: LibraryPlacementOption[];
-      libraryId: string;
-      op: PlacementOp;
+      command: PlacementCommand;
       content: FeedbackContent;
-      clientMutationId: string;
+    }
+  | {
+      kind: "CreateFailed";
+      rows: LibraryPlacementOption[];
+      command: CreateCommand;
+      content: FeedbackContent;
     }
   | {
       kind: "Unconfirmed";
       rows: LibraryPlacementOption[];
-      libraryId: string;
-      op: PlacementOp;
+      command: PlacementCommand;
+      lease: ResourceActionMutationLease;
       content: FeedbackContent;
     }
   | {
       kind: "ObservingUnconfirmed";
       rows: LibraryPlacementOption[];
-      libraryId: string;
-      op: PlacementOp;
+      command: PlacementCommand;
+      lease: ResourceActionMutationLease;
+    }
+  | {
+      kind: "DestinationGone";
+      rows: LibraryPlacementOption[];
+      content: FeedbackContent;
     }
   | { kind: "LoadFailed"; content: FeedbackContent }
   | { kind: "Unavailable"; content: FeedbackContent };
@@ -77,22 +113,28 @@ export type LibraryPlacementFailure =
   | { kind: "Terminal"; content: FeedbackContent };
 
 export interface LibraryPlacementState {
-  libraries: LibraryPlacementOption[];
+  placements: readonly LibraryPlacementOption[];
   loading: boolean;
   commandsDisabled: boolean;
-  pendingLibraryId: string | null;
+  pendingDestinationKey: LibraryPlacementDestinationKey | null;
+  creating: boolean;
   failure: LibraryPlacementFailure | null;
-  addToLibrary: (libraryId: string) => void;
-  removeFromLibrary: (libraryId: string) => void;
+  toggle: (destination: LibraryPlacementDestination) => void;
+  createLibraryAndAdd: (name: string) => void;
 }
 
-// The two app-defined states carry fixed copy, not the raw API error: the flip
-// already succeeded (ReconcileFailed) or the target is gone (Unavailable), so the
-// state itself is the message. Transient load/command failures still surface the
-// server message when present (via libraryPlacementErrorMessage).
 const RECONCILE_FAILED_MESSAGE =
   "Your change was saved, but the list couldn’t refresh.";
 const UNAVAILABLE_MESSAGE = "This item is no longer available.";
+
+function destinationGoneContent(): FeedbackContent {
+  return {
+    tone: "Warning",
+    title: "Library is no longer available",
+    message:
+      "The authoritative Library list changed while the placement was being confirmed.",
+  };
+}
 
 function assertNever(phase: never): never {
   throw new Error(`Unreachable placement phase: ${JSON.stringify(phase)}`);
@@ -106,6 +148,8 @@ function placementFailureTitle(request: PlacementRequest): string {
       return "Item wasn’t added to the library";
     case "Remove":
       return "Item wasn’t removed from the library";
+    case "Create":
+      return "Library wasn’t created";
   }
 }
 
@@ -181,13 +225,31 @@ function libraryPlacementErrorMessage(
         };
       }
       throw error;
+    case "E_NAME_INVALID":
+      if (request === "Create") {
+        return {
+          tone: "Danger",
+          title,
+          message: error.message,
+          requestId,
+        };
+      }
+      throw error;
+    case "E_RESOURCE_CONFLICT":
+      if (request === "Create") {
+        return {
+          tone: "Danger",
+          title,
+          message: "That library identity is already in use.",
+          requestId,
+        };
+      }
+      throw error;
     default:
       throw error;
   }
 }
 
-// Terminal codes raised by the list/mutation service owners when the media or
-// podcast itself is gone. These do not enter a retry loop.
 function isTargetGone(error: unknown): boolean {
   return (
     isApiError(error) &&
@@ -195,7 +257,10 @@ function isTargetGone(error: unknown): boolean {
   );
 }
 
-function classifyFailure(error: unknown, request: PlacementRequest): FailureClass {
+function classifyFailure(
+  error: unknown,
+  request: PlacementRequest,
+): FailureClass {
   let content: FeedbackContent;
   try {
     content = libraryPlacementErrorMessage(error, request);
@@ -226,15 +291,14 @@ function unconfirmedContent(error: unknown): FeedbackContent {
   };
 }
 
-// Project only the server-confirmed membership flip for one library id. Never
-// synthesize can_add/can_remove; those stay authoritative until the GET.
-function projectMembership(
-  rows: LibraryPlacementOption[],
-  libraryId: string,
-  op: PlacementOp,
+function projectedRows(
+  rows: readonly LibraryPlacementOption[],
+  command: PlacementCommand,
 ): LibraryPlacementOption[] {
-  return rows.map((row) =>
-    row.id === libraryId ? { ...row, isInLibrary: op === "Add" } : row,
+  return projectLibraryPlacement(
+    rows,
+    command.destination,
+    command.op === "Add" ? { kind: "Direct" } : { kind: "Absent" },
   );
 }
 
@@ -242,7 +306,9 @@ export function useLibraryPlacement(
   session: LibraryPlacementSession | null,
 ): LibraryPlacementState {
   const [phase, setPhase] = useState<Phase>({ kind: "Loading" });
-  const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
+  const [defectState, setDefectState] = useState<{ error: unknown } | null>(
+    null,
+  );
   const phaseRef = useRef<Phase>(phase);
   const sessionKeyRef = useRef(session?.key);
   const listAbortRef = useRef<AbortController | null>(null);
@@ -276,8 +342,6 @@ export function useLibraryPlacement(
     [transition],
   );
 
-  // One GET seam for both the initial/retry load and the post-204 reconcile.
-  // It resolves to Ready, to a caller-shaped transient phase, or to Unavailable.
   const runList = useCallback(
     async (
       target: LibraryPlacementTarget,
@@ -319,104 +383,475 @@ export function useLibraryPlacement(
     [runList],
   );
 
-  const reconcile = useCallback(
-    (
-      target: LibraryPlacementTarget,
-      key: number,
+  const finishCommitted = useCallback(
+    async (
+      committedSession: LibraryPlacementSession,
       rows: LibraryPlacementOption[],
-      libraryId: string,
-      op: PlacementOp,
-    ) =>
-      runList(
-        target,
-        key,
-        { kind: "Reconciling", rows, libraryId, op },
-        (failureContent) => ({
-          kind: "ReconcileFailed",
-          rows,
-          libraryId,
-          op,
-          content: {
-            tone: "Warning",
-            title: "Library placement needs to be refreshed",
-            message: RECONCILE_FAILED_MESSAGE,
-            requestId: failureContent.requestId,
-          },
-        }),
-        op,
-      ),
-    [runList],
+      command: PlacementCommand,
+      lease: ResourceActionMutationLease,
+    ) => {
+      if (sessionKeyRef.current === committedSession.key) {
+        transition({ kind: "Reconciling", rows, command, lease });
+      }
+      const outcome = await reconcileCommittedLibraryPlacement({
+        target: committedSession.target,
+        onCommitted: lease.reconcile,
+        readPlacements: () => listLibraryPlacements(committedSession.target),
+      });
+      switch (outcome.kind) {
+        case "ActionSnapshotFailed":
+          // The callback is an application-owned reconciliation boundary. A
+          // rejection is a wiring/contract defect, not a placement API failure.
+          lease.abort();
+          setDefectState({ error: outcome.error });
+          return;
+        case "PlacementReadFailed": {
+          if (handleUnauthenticatedApiError(outcome.error)) {
+            lease.abort();
+            return;
+          }
+          const failure = classifyFailure(outcome.error, command.op);
+          switch (failure.kind) {
+            case "Defect":
+              lease.abort();
+              setDefectState({ error: failure.defect });
+              return;
+            case "Terminal":
+              await lease.commit();
+              if (sessionKeyRef.current === committedSession.key) {
+                transition({ kind: "Unavailable", content: failure.content });
+              }
+              return;
+            case "Transient":
+              if (sessionKeyRef.current === committedSession.key) {
+                transition({
+                  kind: "ReconcileFailed",
+                  rows,
+                  command,
+                  lease,
+                  content: {
+                    tone: "Warning",
+                    title: "Library placement needs to be refreshed",
+                    message: RECONCILE_FAILED_MESSAGE,
+                    requestId: failure.content.requestId,
+                  },
+                });
+              }
+              return;
+          }
+        }
+        case "Ready":
+          await lease.commit();
+          if (sessionKeyRef.current === committedSession.key) {
+            transition({ kind: "Ready", rows: [...outcome.placements] });
+          }
+          return;
+      }
+    },
+    [transition],
   );
 
-  // The POST/DELETE command. It is never aborted on close: closing may drop a
-  // list GET, but an in-flight mutation runs to completion and its result is
-  // discarded when the session it belongs to is gone or superseded.
+  const retryCommittedRead = useCallback(
+    async (
+      committedSession: LibraryPlacementSession,
+      rows: LibraryPlacementOption[],
+      command: PlacementCommand,
+      lease: ResourceActionMutationLease,
+    ) => {
+      transition({ kind: "Reconciling", rows, command, lease });
+      let placements: LibraryPlacementOption[];
+      try {
+        placements = await listLibraryPlacements(committedSession.target);
+      } catch (error) {
+        if (handleUnauthenticatedApiError(error)) {
+          lease.abort();
+          return;
+        }
+        const failure = classifyFailure(error, command.op);
+        switch (failure.kind) {
+          case "Defect":
+            lease.abort();
+            setDefectState({ error: failure.defect });
+            return;
+          case "Terminal":
+            await lease.commit();
+            if (sessionKeyRef.current === committedSession.key) {
+              transition({ kind: "Unavailable", content: failure.content });
+            }
+            return;
+          case "Transient":
+            if (sessionKeyRef.current === committedSession.key) {
+              transition({
+                kind: "ReconcileFailed",
+                rows,
+                command,
+                lease,
+                content: {
+                  tone: "Warning",
+                  title: "Library placement needs to be refreshed",
+                  message: RECONCILE_FAILED_MESSAGE,
+                  requestId: failure.content.requestId,
+                },
+              });
+            }
+            return;
+        }
+      }
+      await lease.commit();
+      if (sessionKeyRef.current === committedSession.key) {
+        transition({ kind: "Ready", rows: placements });
+      }
+    },
+    [transition],
+  );
+
   const runCommand = useCallback(
     async (
-      target: LibraryPlacementTarget,
-      key: number,
+      committedSession: LibraryPlacementSession,
       rows: LibraryPlacementOption[],
-      libraryId: string,
-      op: PlacementOp,
-      clientMutationId: string,
+      command: PlacementCommand,
+      lease: ResourceActionMutationLease,
     ) => {
-      transition({ kind: "Mutating", rows, libraryId, op, clientMutationId });
+      if (sessionKeyRef.current === committedSession.key) {
+        transition({ kind: "Mutating", rows, command, lease });
+      }
       try {
-        if (op === "Add") {
-          await addLibraryPlacement(target, libraryId, { clientMutationId });
+        if (command.op === "Add") {
+          await addLibraryPlacement({
+            target: committedSession.target,
+            destination: command.destination,
+            clientMutationId: command.clientMutationId,
+          });
         } else {
-          await removeLibraryPlacement(target, libraryId, { clientMutationId });
+          await removeLibraryPlacement({
+            target: committedSession.target,
+            destination: command.destination,
+            clientMutationId: command.clientMutationId,
+          });
         }
       } catch (error) {
-        if (handleUnauthenticatedApiError(error)) return;
-        if (sessionKeyRef.current !== key) return;
+        if (handleUnauthenticatedApiError(error)) {
+          lease.abort();
+          return;
+        }
+        if (sessionKeyRef.current !== committedSession.key) {
+          lease.abort();
+          return;
+        }
         if (isMutationSettlementUnknown(error)) {
           transition({
             kind: "Unconfirmed",
             rows,
-            libraryId,
-            op,
+            command,
+            lease,
             content: unconfirmedContent(error),
           });
           return;
         }
-        settleFailure(
-          classifyFailure(error, op),
-          (content) => ({
-            kind: "CommandFailed",
-            rows,
-            libraryId,
-            op,
-            content,
-            clientMutationId,
-          }),
-        );
+        lease.abort();
+        settleFailure(classifyFailure(error, command.op), (content) => ({
+          kind: "CommandFailed",
+          rows,
+          command,
+          content,
+        }));
         return;
       }
-      if (sessionKeyRef.current !== key) return;
-      void reconcile(target, key, rows, libraryId, op);
+      await finishCommitted(committedSession, rows, command, lease);
     },
-    [reconcile, settleFailure, transition],
+    [finishCommitted, settleFailure, transition],
   );
 
-  // One mutation runs at a time per chooser: a command may start only from an
-  // actionable phase, and the synchronous phaseRef gate rejects a second click
-  // before React commits the Mutating render.
-  const start = useCallback(
-    (libraryId: string, op: PlacementOp) => {
+  const observeUnconfirmed = useCallback(
+    async (
+      committedSession: LibraryPlacementSession,
+      rows: LibraryPlacementOption[],
+      command: PlacementCommand,
+      lease: ResourceActionMutationLease,
+    ) => {
+      listAbortRef.current?.abort();
+      const abort = new AbortController();
+      listAbortRef.current = abort;
+      transition({ kind: "ObservingUnconfirmed", rows, command, lease });
+
+      let observed: LibraryPlacementOption[];
+      try {
+        observed = await listLibraryPlacements(committedSession.target, {
+          signal: abort.signal,
+        });
+      } catch (error) {
+        if (isAbortError(error)) return;
+        if (handleUnauthenticatedApiError(error)) {
+          lease.abort();
+          return;
+        }
+        if (!isCurrentGet(committedSession.key, abort)) return;
+        const failure = classifyFailure(error, "Load");
+        switch (failure.kind) {
+          case "Defect":
+            lease.abort();
+            setDefectState({ error: failure.defect });
+            return;
+          case "Terminal":
+            try {
+              await lease.reconcile({ kind: "AllRetained" });
+              await lease.commit();
+            } catch (reconcileError) {
+              lease.abort();
+              setDefectState({ error: reconcileError });
+              return;
+            }
+            transition({ kind: "Unavailable", content: failure.content });
+            return;
+          case "Transient":
+            transition({
+              kind: "Unconfirmed",
+              rows,
+              command,
+              lease,
+              content: {
+                tone: "Warning",
+                title: "Placement couldn’t be confirmed",
+                message:
+                  "Authoritative Library state still couldn’t be loaded. Retry the check before making another change.",
+                requestId: failure.content.requestId,
+              },
+            });
+            return;
+        }
+        return;
+      } finally {
+        if (isCurrentGet(committedSession.key, abort)) {
+          listAbortRef.current = null;
+        }
+      }
+      if (sessionKeyRef.current !== committedSession.key) return;
+
+      const decision = decideUnconfirmedLibraryPlacement({
+        placements: observed,
+        destinationKey: command.destinationKey,
+        op: command.op,
+      });
+      switch (decision.kind) {
+        case "Committed":
+          await finishCommitted(committedSession, observed, command, lease);
+          return;
+        case "RetryCommand":
+          // Replay the exact command identity. Podcast commands replay their
+          // idempotency memo; Media placement commands are themselves
+          // idempotent at the owning endpoint.
+          await runCommand(committedSession, observed, command, lease);
+          return;
+        case "DestinationGone": {
+          const outcome = await reconcileCommittedLibraryPlacement({
+            target: committedSession.target,
+            onCommitted: lease.reconcile,
+            readPlacements: () =>
+              listLibraryPlacements(committedSession.target),
+          });
+          switch (outcome.kind) {
+            case "ActionSnapshotFailed":
+              lease.abort();
+              setDefectState({ error: outcome.error });
+              return;
+            case "PlacementReadFailed":
+              if (handleUnauthenticatedApiError(outcome.error)) {
+                lease.abort();
+                return;
+              }
+              if (sessionKeyRef.current !== committedSession.key) return;
+              const failure = classifyFailure(outcome.error, "Load");
+              switch (failure.kind) {
+                case "Defect":
+                  lease.abort();
+                  setDefectState({ error: failure.defect });
+                  return;
+                case "Terminal":
+                  await lease.commit();
+                  transition({
+                    kind: "Unavailable",
+                    content: failure.content,
+                  });
+                  return;
+                case "Transient":
+                  transition({
+                    kind: "Unconfirmed",
+                    rows: observed,
+                    command,
+                    lease,
+                    content: {
+                      tone: "Warning",
+                      title: "Placement couldn’t be confirmed",
+                      message:
+                        "Authoritative Library state still couldn’t be loaded. Retry the check before making another change.",
+                      requestId: failure.content.requestId,
+                    },
+                  });
+                  return;
+              }
+            case "Ready":
+              await lease.commit();
+              if (sessionKeyRef.current === committedSession.key) {
+                transition({
+                  kind: "DestinationGone",
+                  rows: [...outcome.placements],
+                  content: destinationGoneContent(),
+                });
+              }
+              return;
+          }
+        }
+      }
+    },
+    [finishCommitted, isCurrentGet, runCommand, transition],
+  );
+
+  const runCreate = useCallback(
+    async (
+      committedSession: LibraryPlacementSession,
+      rows: LibraryPlacementOption[],
+      command: CreateCommand,
+      lease: ResourceActionMutationLease,
+    ) => {
+      transition({ kind: "Creating", rows, command, lease });
+      let created;
+      try {
+        created = await createLibrary({
+          libraryId: command.libraryId,
+          name: command.name,
+        });
+      } catch (error) {
+        lease.abort();
+        if (handleUnauthenticatedApiError(error)) return;
+        if (sessionKeyRef.current !== committedSession.key) return;
+        settleFailure(classifyFailure(error, "Create"), (content) => ({
+          kind: "CreateFailed",
+          rows,
+          command,
+          content,
+        }));
+        return;
+      }
+      let refreshed: LibraryPlacementOption[];
+      try {
+        // Reauthorize after governance mutation. In particular, an
+        // unsubscribed Podcast publishes RequiresSubscription for the newly
+        // created destination, so Create can never bypass placement authority.
+        refreshed = await listLibraryPlacements(committedSession.target);
+      } catch (error) {
+        lease.abort();
+        if (handleUnauthenticatedApiError(error)) return;
+        if (sessionKeyRef.current !== committedSession.key) return;
+        settleFailure(classifyFailure(error, "Load"), (content) => ({
+          kind: "CreateFailed",
+          rows,
+          command,
+          content,
+        }));
+        return;
+      }
+      let decision;
+      try {
+        decision = decideCreatedLibraryPlacement({
+          placements: refreshed,
+          libraryId: created.id,
+        });
+      } catch (error) {
+        lease.abort();
+        setDefectState({ error });
+        return;
+      }
+      if (decision.kind === "DoNotAdd") {
+        try {
+          await lease.reconcile({ kind: "AllRetained" });
+          await lease.commit();
+        } catch (error) {
+          lease.abort();
+          setDefectState({ error });
+          return;
+        }
+        if (sessionKeyRef.current === committedSession.key) {
+          transition({ kind: "Ready", rows: refreshed });
+        }
+        return;
+      }
+      const destinationKey = libraryPlacementDestinationKey(
+        decision.destination,
+      );
+      await runCommand(
+        committedSession,
+        refreshed,
+        {
+          destination: decision.destination,
+          destinationKey,
+          op: "Add",
+          clientMutationId: crypto.randomUUID(),
+        },
+        lease,
+      );
+    },
+    [runCommand, settleFailure, transition],
+  );
+
+  const toggle = useCallback(
+    (destination: LibraryPlacementDestination) => {
       if (!session) return;
       const current = phaseRef.current;
-      if (current.kind !== "Ready") return;
+      if (current.kind !== "Ready" && current.kind !== "DestinationGone") {
+        return;
+      }
+      const destinationKey = libraryPlacementDestinationKey(destination);
+      const option = current.rows.find(
+        (row) =>
+          libraryPlacementDestinationKey(row.destination) === destinationKey,
+      );
+      if (!option || option.availability.kind !== "Available") return;
+      const op =
+        option.relation.kind === "Absent"
+          ? "Add"
+          : option.relation.kind === "Direct"
+            ? "Remove"
+            : null;
+      if (op === null) return;
+      const lease = session.options.mutation.begin();
+      if (lease === null) return;
       void runCommand(
-        session.target,
-        session.key,
+        session,
         current.rows,
-        libraryId,
-        op,
-        crypto.randomUUID(),
+        {
+          destination: option.destination,
+          destinationKey,
+          op,
+          clientMutationId: crypto.randomUUID(),
+        },
+        lease,
       );
     },
     [runCommand, session],
+  );
+
+  const createLibraryAndAdd = useCallback(
+    (rawName: string) => {
+      if (!session) return;
+      const current = phaseRef.current;
+      if (current.kind !== "Ready" && current.kind !== "DestinationGone") {
+        return;
+      }
+      const name = rawName.trim();
+      if (name.length === 0 || name.length > 100) return;
+      const lease = session.options.mutation.begin();
+      if (lease === null) return;
+      void runCreate(
+        session,
+        current.rows,
+        {
+          name,
+          libraryId: crypto.randomUUID(),
+        },
+        lease,
+      );
+    },
+    [runCreate, session],
   );
 
   useEffect(() => {
@@ -436,148 +871,170 @@ export function useLibraryPlacement(
 
   if (defectState !== null) throw defectState.error;
 
-  const addToLibrary = (libraryId: string) => start(libraryId, "Add");
-  const removeFromLibrary = (libraryId: string) => start(libraryId, "Remove");
+  const base = {
+    toggle,
+    createLibraryAndAdd,
+  };
 
   switch (phase.kind) {
     case "Loading":
       return {
-        libraries: [],
+        ...base,
+        placements: [],
         loading: true,
         commandsDisabled: false,
-        pendingLibraryId: null,
+        pendingDestinationKey: null,
+        creating: false,
         failure: null,
-        addToLibrary,
-        removeFromLibrary,
       };
     case "Ready":
       return {
-        libraries: phase.rows,
+        ...base,
+        placements: phase.rows,
         loading: false,
         commandsDisabled: false,
-        pendingLibraryId: null,
+        pendingDestinationKey: null,
+        creating: false,
         failure: null,
-        addToLibrary,
-        removeFromLibrary,
       };
     case "Mutating":
       return {
-        libraries: phase.rows,
+        ...base,
+        placements: phase.rows,
         loading: false,
         commandsDisabled: true,
-        pendingLibraryId: phase.libraryId,
+        pendingDestinationKey: phase.command.destinationKey,
+        creating: false,
         failure: null,
-        addToLibrary,
-        removeFromLibrary,
+      };
+    case "Creating":
+      return {
+        ...base,
+        placements: phase.rows,
+        loading: false,
+        commandsDisabled: true,
+        pendingDestinationKey: null,
+        creating: true,
+        failure: null,
       };
     case "Reconciling":
       return {
-        libraries: projectMembership(phase.rows, phase.libraryId, phase.op),
+        ...base,
+        placements: projectedRows(phase.rows, phase.command),
         loading: true,
         commandsDisabled: true,
-        pendingLibraryId: phase.libraryId,
+        pendingDestinationKey: phase.command.destinationKey,
+        creating: false,
         failure: null,
-        addToLibrary,
-        removeFromLibrary,
       };
     case "ObservingUnconfirmed":
       return {
-        libraries: phase.rows,
+        ...base,
+        placements: phase.rows,
         loading: true,
         commandsDisabled: true,
-        pendingLibraryId: phase.libraryId,
+        pendingDestinationKey: phase.command.destinationKey,
+        creating: false,
         failure: null,
-        addToLibrary,
-        removeFromLibrary,
       };
     case "ReconcileFailed": {
-      const { rows, libraryId, op, content } = phase;
+      const { rows, command, lease, content } = phase;
       return {
-        libraries: projectMembership(rows, libraryId, op),
+        ...base,
+        placements: projectedRows(rows, command),
         loading: false,
         commandsDisabled: true,
-        pendingLibraryId: libraryId,
-        failure: {
-          kind: "Retry",
-          content,
-          retry: () => {
-            if (session) void reconcile(session.target, session.key, rows, libraryId, op);
-          },
-        },
-        addToLibrary,
-        removeFromLibrary,
-      };
-    }
-    case "CommandFailed": {
-      const { rows, libraryId, op, content, clientMutationId } = phase;
-      return {
-        libraries: rows,
-        loading: false,
-        commandsDisabled: false,
-        pendingLibraryId: null,
+        pendingDestinationKey: command.destinationKey,
+        creating: false,
         failure: {
           kind: "Retry",
           content,
           retry: () => {
             if (session) {
-              void runCommand(
-                session.target,
-                session.key,
-                rows,
-                libraryId,
-                op,
-                clientMutationId,
-              );
+              void retryCommittedRead(session, rows, command, lease);
             }
           },
         },
-        addToLibrary,
-        removeFromLibrary,
       };
     }
-    case "Unconfirmed": {
-      const { rows, libraryId, op, content } = phase;
+    case "CommandFailed": {
+      const { rows, command, content } = phase;
       return {
-        libraries: rows,
+        ...base,
+        placements: rows,
         loading: false,
-        commandsDisabled: true,
-        pendingLibraryId: libraryId,
+        commandsDisabled: false,
+        pendingDestinationKey: null,
+        creating: false,
         failure: {
           kind: "Retry",
           content,
           retry: () => {
             if (!session) return;
-            void runList(
-              session.target,
-              session.key,
-              { kind: "ObservingUnconfirmed", rows, libraryId, op },
-              (failureContent) => ({
-                kind: "Unconfirmed",
-                rows,
-                libraryId,
-                op,
-                content: {
-                  tone: "Warning",
-                  title: "Placement couldn’t be confirmed",
-                  message:
-                    "Authoritative Library state still couldn’t be loaded. Retry the check before making another change.",
-                  requestId: failureContent.requestId,
-                },
-              }),
-              "Load",
-            );
+            const lease = session.options.mutation.begin();
+            if (lease !== null) void runCommand(session, rows, command, lease);
           },
         },
-        addToLibrary,
-        removeFromLibrary,
       };
     }
-    case "LoadFailed":
+    case "CreateFailed": {
+      const { rows, command, content } = phase;
       return {
-        libraries: [],
+        ...base,
+        placements: rows,
+        loading: false,
+        commandsDisabled: false,
+        pendingDestinationKey: null,
+        creating: false,
+        failure: {
+          kind: "Retry",
+          content,
+          retry: () => {
+            if (!session) return;
+            const lease = session.options.mutation.begin();
+            if (lease !== null) void runCreate(session, rows, command, lease);
+          },
+        },
+      };
+    }
+    case "Unconfirmed": {
+      const { rows, command, lease, content } = phase;
+      return {
+        ...base,
+        placements: rows,
         loading: false,
         commandsDisabled: true,
-        pendingLibraryId: null,
+        pendingDestinationKey: command.destinationKey,
+        creating: false,
+        failure: {
+          kind: "Retry",
+          content,
+          retry: () => {
+            if (session) {
+              void observeUnconfirmed(session, rows, command, lease);
+            }
+          },
+        },
+      };
+    }
+    case "DestinationGone":
+      return {
+        ...base,
+        placements: phase.rows,
+        loading: false,
+        commandsDisabled: false,
+        pendingDestinationKey: null,
+        creating: false,
+        failure: { kind: "Terminal", content: phase.content },
+      };
+    case "LoadFailed":
+      return {
+        ...base,
+        placements: [],
+        loading: false,
+        commandsDisabled: true,
+        pendingDestinationKey: null,
+        creating: false,
         failure: {
           kind: "Retry",
           content: phase.content,
@@ -585,18 +1042,16 @@ export function useLibraryPlacement(
             if (session) void load(session.target, session.key);
           },
         },
-        addToLibrary,
-        removeFromLibrary,
       };
     case "Unavailable":
       return {
-        libraries: [],
+        ...base,
+        placements: [],
         loading: false,
         commandsDisabled: true,
-        pendingLibraryId: null,
+        pendingDestinationKey: null,
+        creating: false,
         failure: { kind: "Terminal", content: phase.content },
-        addToLibrary,
-        removeFromLibrary,
       };
     default:
       return assertNever(phase);

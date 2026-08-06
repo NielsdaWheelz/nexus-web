@@ -20,7 +20,6 @@ from nexus.schemas.podcast import (
     PodcastSubscribeRequest,
     PodcastSubscriptionSettingsPatchRequest,
 )
-from nexus.services import library_entries
 from nexus.services.podcasts import episode_acquisition as podcast_episode_acquisition_service
 from nexus.services.podcasts import episodes as podcast_episodes_service
 from nexus.services.podcasts import refresh as podcast_refresh_service
@@ -165,18 +164,6 @@ def retry_subscription_backfill(
         idempotency_key=idempotency_key,
     )
     return ok(out, by_alias=True)
-
-
-@router.get("/podcasts/{podcast_id}/libraries")
-def get_podcast_libraries(
-    podcast_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    rows = library_entries.list_item_libraries(
-        db, viewer_id=viewer.user_id, target=library_entries.podcast_target(podcast_id)
-    )
-    return ok(rows)
 
 
 @router.patch("/podcasts/subscriptions/{podcast_id}/settings")

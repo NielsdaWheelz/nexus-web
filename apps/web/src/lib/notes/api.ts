@@ -7,7 +7,7 @@ import {
 } from "@/lib/notes/normalize";
 import { isLocalDate } from "@/lib/localDate";
 import { normalizeResourceSurface, type ResourceSurface } from "@/lib/resources/resourceItems";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import {
   expectExactRecord,
   expectNullableString,
@@ -74,11 +74,7 @@ export function decodeNotePage(raw: unknown): NotePage {
     id,
     title: expectString(page.title, "note page.title"),
     ...(updatedAt === null ? {} : { updatedAt }),
-    actionTarget: routeResourceActionSubject({
-      scheme: "page",
-      id,
-      href: `/pages/${id}`,
-    }),
+    actionSubject: { ref: canonicalResourceRef({ scheme: "page", id }) },
     dailyPage,
   };
 }

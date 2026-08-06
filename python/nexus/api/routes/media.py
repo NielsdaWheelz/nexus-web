@@ -198,14 +198,44 @@ def add_media_libraries(
 ) -> Response:
     """Additively attach the media to one or more libraries.
 
-    Idempotent: ids already present are not reinserted. The viewer's default
-    library id is rejected because destination writes are writable non-default
-    libraries only. Success is a bodyless command response.
+    Idempotent: ids already present are not reinserted. This command accepts
+    mutable named Libraries only; ``SavedInNexus`` has an identity-free route.
+    Success is a bodyless command response.
     """
     library_entries.ensure_media_in_libraries_for_viewer(
         db, viewer.user_id, media_id, body.library_ids
     )
     return Response(status_code=204)
+
+
+@router.put("/media/{media_id}/saved-in-nexus", status_code=204)
+def add_media_saved_in_nexus(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Idempotently create the physical Default-backed saved relation."""
+    library_entries.ensure_media_saved_in_nexus_for_viewer(
+        db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+    )
+    return Response(status_code=204)
+
+
+@router.delete("/media/{media_id}/saved-in-nexus")
+def remove_media_saved_in_nexus(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Idempotently remove the saved relation without deleting the Media."""
+    result = library_entries.ensure_media_absent_from_saved_in_nexus_for_viewer(
+        db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+    )
+    return ok(result, by_alias=True)
 
 
 @router.delete("/media/{media_id}/libraries/{library_id}")

@@ -55,6 +55,7 @@ from nexus.schemas.conversation import (
     AssistantTrustTrailOut,
     ConversationListItemOut,
     ConversationOut,
+    MessageDeleteOut,
     MessageDocument,
     MessageOut,
     MessagePageInfo,
@@ -65,6 +66,7 @@ from nexus.services.chat_failure import (
     compute_has_write_tool_attempt,
     profile_selection_active,
     rerun_eligibility,
+    write_tool_attempt_run_ids,
 )
 from nexus.services.chat_reader_selection import (
     decode_reader_selection_snapshot,
@@ -91,6 +93,7 @@ from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.message_trust_trails import build_assistant_trust_trails
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph import context as context_service
+from nexus.services.resource_graph.citations import citation_counts_for_sources
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -978,6 +981,110 @@ def visible_message_ids(db: Session, *, viewer_id: UUID, message_ids: list[UUID]
     return {UUID(str(row[0])) for row in rows}
 
 
+@dataclass(frozen=True, slots=True)
+class MessageActionFacts:
+    """Closed facts needed to plan one visible Message's resource actions."""
+
+    is_owner: bool
+    fork_applicable: bool
+    walk_sources_applicable: bool
+    rerun_applicable: bool
+    regenerate_applicable: bool
+
+
+def message_action_facts(
+    db: Session, *, viewer_id: UUID, message_ids: list[UUID]
+) -> dict[UUID, MessageActionFacts]:
+    """Batch viewer-scoped Message action facts with bounded query count."""
+    ordered = list(dict.fromkeys(message_ids))
+    if not ordered:
+        return {}
+    rows = (
+        db.execute(
+            text(
+                f"""
+                SELECT m.id, m.role, m.status, conversation.owner_user_id
+                FROM messages m
+                JOIN conversations conversation ON conversation.id = m.conversation_id
+                WHERE m.id = ANY(:message_ids)
+                  AND m.status != 'pending'
+                  AND m.conversation_id IN ({visible_conversation_ids_cte_sql()})
+                """
+            ),
+            {"viewer_id": viewer_id, "message_ids": ordered},
+        )
+        .mappings()
+        .all()
+    )
+    assistant_ids = [UUID(str(row["id"])) for row in rows if str(row["role"]) == "assistant"]
+    runs = (
+        list(
+            db.scalars(
+                select(ChatRun)
+                .where(
+                    ChatRun.assistant_message_id.in_(assistant_ids),
+                    ChatRun.status.in_(("complete", "error", "cancelled")),
+                )
+                .order_by(ChatRun.created_at.desc(), ChatRun.id.desc())
+            )
+        )
+        if assistant_ids
+        else []
+    )
+    attempted_run_ids = write_tool_attempt_run_ids(db, runs)
+    latest_run_by_message: dict[UUID, ChatRun] = {}
+    for run in runs:
+        latest_run_by_message.setdefault(run.assistant_message_id, run)
+    citation_counts = citation_counts_for_sources(
+        db,
+        source_scheme="message",
+        source_ids=[UUID(str(row["id"])) for row in rows],
+    )
+    facts: dict[UUID, MessageActionFacts] = {}
+    for row in rows:
+        message_id = UUID(str(row["id"]))
+        is_assistant = str(row["role"]) == "assistant"
+        is_complete = str(row["status"]) == "complete"
+        latest_run = latest_run_by_message.get(message_id)
+        terminal_run = (
+            latest_run
+            if latest_run is not None and latest_run.status in ("error", "cancelled")
+            else None
+        )
+        rerun_applicable = False
+        if terminal_run is not None:
+            error_code = (
+                "cancelled" if terminal_run.status == "cancelled" else terminal_run.error_code
+            )
+            if error_code is not None:
+                rerun_applicable = rerun_eligibility(
+                    error_code=error_code,
+                    run_status=terminal_run.status,
+                    profile_active=(
+                        terminal_run.profile_id is not None
+                        and lookup_profile(terminal_run.profile_id) is not None
+                    ),
+                    has_write_tool_attempt=terminal_run.id in attempted_run_ids,
+                )
+        complete_run = (
+            latest_run if latest_run is not None and latest_run.status == "complete" else None
+        )
+        facts[message_id] = MessageActionFacts(
+            is_owner=UUID(str(row["owner_user_id"])) == viewer_id,
+            fork_applicable=is_assistant and is_complete,
+            walk_sources_applicable=(
+                is_assistant and is_complete and citation_counts.get(message_id, 0) >= 2
+            ),
+            rerun_applicable=rerun_applicable,
+            regenerate_applicable=(
+                complete_run is not None
+                and profile_selection_active(complete_run)
+                and complete_run.id not in attempted_run_ids
+            ),
+        )
+    return facts
+
+
 def delete_conversation(
     db: Session,
     viewer_id: UUID,
@@ -1205,7 +1312,7 @@ def _selected_path_message_rows(db: Session, viewer_id: UUID, conversation_id: U
     )
 
 
-def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
+def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> MessageDeleteOut:
     """Delete a single message.
 
     If this is the last message in the conversation, deletes the conversation too.
@@ -1219,17 +1326,32 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
         NotFoundError(E_MESSAGE_NOT_FOUND): If message doesn't exist
             or viewer is not the conversation owner.
     """
-    # Load message with conversation
-    message = db.get(Message, message_id)
-    if message is None:
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-
-    # Verify viewer owns the conversation (masked as message not found)
-    conversation = message.conversation
-    if conversation.owner_user_id != viewer_id:
+    # Message creation and every Conversation delete linearize on the parent
+    # row. Join through the requested Message so missing/foreign identities stay
+    # masked, then hold that same lock through subtree enumeration, the
+    # remaining-count decision, and commit.
+    conversation = db.scalar(
+        select(Conversation)
+        .join(Message, Message.conversation_id == Conversation.id)
+        .where(Message.id == message_id)
+        .with_for_update(of=Conversation)
+    )
+    if conversation is None or conversation.owner_user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
 
     conversation_id = conversation.id
+    # Revalidate under the parent lock. Every competing Message/Conversation
+    # mutator takes this lock, so the deletion set is now stable.
+    if (
+        db.scalar(
+            select(Message.id).where(
+                Message.id == message_id,
+                Message.conversation_id == conversation_id,
+            )
+        )
+        is None
+    ):
+        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
 
     message_ids = _message_subtree_ids(db, conversation_id, message_id)
     delete_message_rows_without_commit(db, message_ids)
@@ -1240,8 +1362,10 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
         select(func.count()).select_from(Message).where(Message.conversation_id == conversation_id)
     )
 
+    conversation_deleted = remaining == 0
+
     # If no messages remain, delete conversation
-    if remaining == 0:
+    if conversation_deleted:
         delete_conversation_rows_without_commit(db, conversation_id)
         db.flush()
 
@@ -1249,7 +1373,17 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
         db,
         family=CollectionFamily.ConversationIndex,
     )
+    collection_revision = read_collection_revision(
+        db,
+        viewer_id=viewer_id,
+        family=CollectionFamily.ConversationIndex,
+    )
     db.commit()
+    return MessageDeleteOut(
+        conversationId=conversation_id,
+        conversationDeleted=conversation_deleted,
+        collectionRevision=collection_revision,
+    )
 
 
 def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) -> None:

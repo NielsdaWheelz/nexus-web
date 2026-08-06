@@ -83,7 +83,6 @@ from nexus.schemas.contributors import (
     ContributorWorkExampleOut,
     ContributorWorkItemOut,
     ExistingAuthorBinding,
-    ExternalActionTargetOut,
     ManualMediaAuthorsRequest,
     MediaAuthorCreditOut,
     MediaAuthorsOut,
@@ -161,7 +160,6 @@ from nexus.services.contributor_taxonomy import (
     contributor_match_key,
 )
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_items.routing import resource_activation_for_ref
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
@@ -485,13 +483,10 @@ def list_contributor_works(
                 )
                 for fact in row["role_facts"]
             ],
-            actionTarget=_contributor_work_action_target(
-                db,
-                viewer_id=viewer_id,
+            actionSubject=_contributor_work_action_subject(
                 media_id=row["media_id"],
                 podcast_id=row["podcast_id"],
                 gutenberg_ebook_id=row["project_gutenberg_catalog_ebook_id"],
-                href=row["href"],
             ),
         )
         for row in page
@@ -513,15 +508,12 @@ def _bump_contributor_collection_revisions(db: Session) -> None:
         bump_all_collection_revisions(db, family=family)
 
 
-def _contributor_work_action_target(
-    db: Session,
+def _contributor_work_action_subject(
     *,
-    viewer_id: UUID,
     media_id: UUID | None,
     podcast_id: UUID | None,
     gutenberg_ebook_id: int | None,
-    href: str,
-) -> ResourceActionSubjectOut | ExternalActionTargetOut:
+) -> ResourceActionSubjectOut | None:
     populated = sum(
         target_id is not None for target_id in (media_id, podcast_id, gutenberg_ebook_id)
     )
@@ -537,14 +529,10 @@ def _contributor_work_action_target(
         ref = ResourceRef(scheme="podcast", id=UUID(str(podcast_id)))
     else:
         # Project Gutenberg works are not canonical Nexus resources. Their
-        # bridge route is explicit target data, never parsed for identity.
-        return ExternalActionTargetOut(href=href)
+        # bridge href is occurrence activation, never parsed for identity.
+        return None
 
-    return ResourceActionSubjectOut(
-        ref=ref.uri,
-        activation=resource_activation_for_ref(db, viewer_id=viewer_id, ref=ref),
-        missing=False,
-    )
+    return ResourceActionSubjectOut(ref=ref.uri)
 
 
 def resolve_contributor_ref_by_handle(
@@ -1128,15 +1116,7 @@ def _contributor_detail_out(
         displayName=contributor.display_name,
         otherNames=other_names,
         canRename=can_rename,
-        actionTarget=ResourceActionSubjectOut(
-            ref=ref.uri,
-            activation=resource_activation_for_ref(
-                db,
-                viewer_id=viewer_id,
-                ref=ref,
-            ),
-            missing=False,
-        ),
+        actionSubject=ResourceActionSubjectOut(ref=ref.uri),
     )
 
 

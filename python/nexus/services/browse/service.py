@@ -308,10 +308,10 @@ def _with_owned_resolution(
     if not isinstance(candidate.resolution, PreviewResolution):
         return candidate
     target = unseal_target(candidate.resolution.target)
-    href = _owned_href(db, viewer_id=viewer_id, target=target)
-    if href is None:
+    resolution = _owned_resolution(db, viewer_id=viewer_id, target=target)
+    if resolution is None:
         return candidate
-    return candidate.model_copy(update={"resolution": InNexusResolution(href=href)})
+    return candidate.model_copy(update={"resolution": resolution})
 
 
 def _preview_resolution(
@@ -322,24 +322,24 @@ def _preview_resolution(
     target: DiscoveryTarget,
     equivalent_urls: tuple[str, ...] = (),
 ) -> InNexusResolution | PreviewResolution:
-    href = _owned_href(
+    resolution = _owned_resolution(
         db,
         viewer_id=viewer_id,
         target=target,
         equivalent_urls=equivalent_urls,
     )
-    if href is None:
+    if resolution is None:
         return PreviewResolution(target=handle)
-    return InNexusResolution(href=href)
+    return resolution
 
 
-def _owned_href(
+def _owned_resolution(
     db: Session,
     *,
     viewer_id: UUID,
     target: DiscoveryTarget,
     equivalent_urls: tuple[str, ...] = (),
-) -> str | None:
+) -> InNexusResolution | None:
     match target:
         case ProjectGutenbergEpubTarget():
             ebook_ref = target.ebook_ref
@@ -353,7 +353,14 @@ def _owned_href(
                 media_kind="epub",
                 urls=urls,
             )
-            return None if media_id is None else f"/media/{media_id}"
+            return (
+                None
+                if media_id is None
+                else InNexusResolution(
+                    href=f"/media/{media_id}",
+                    action_subject_ref=f"media:{media_id}",
+                )
+            )
         case BraveWebArticleTarget():
             media_id = _visible_media_by_urls(
                 db,
@@ -361,7 +368,14 @@ def _owned_href(
                 media_kind="web_article",
                 urls=(target.canonical_url, *equivalent_urls),
             )
-            return None if media_id is None else f"/media/{media_id}"
+            return (
+                None
+                if media_id is None
+                else InNexusResolution(
+                    href=f"/media/{media_id}",
+                    action_subject_ref=f"media:{media_id}",
+                )
+            )
         case YouTubeVideoTarget():
             media_id = db.scalar(
                 text(
@@ -377,7 +391,14 @@ def _owned_href(
                 ),
                 {"viewer_id": viewer_id, "video_ref": target.video_ref},
             )
-            return None if media_id is None else f"/media/{media_id}"
+            return (
+                None
+                if media_id is None
+                else InNexusResolution(
+                    href=f"/media/{media_id}",
+                    action_subject_ref=f"media:{media_id}",
+                )
+            )
         case PodcastIndexPodcastTarget():
             podcast_id = db.scalar(
                 text(
@@ -393,7 +414,14 @@ def _owned_href(
                 ),
                 {"viewer_id": viewer_id, "podcast_ref": target.podcast_ref},
             )
-            return None if podcast_id is None else f"/podcasts/{podcast_id}"
+            return (
+                None
+                if podcast_id is None
+                else InNexusResolution(
+                    href=f"/podcasts/{podcast_id}",
+                    action_subject_ref=f"podcast:{podcast_id}",
+                )
+            )
         case PodcastIndexEpisodeTarget():
             media_id = select_visible_episode_media_id_by_podcast_index_ref(
                 db,
@@ -401,7 +429,14 @@ def _owned_href(
                 podcast_ref=target.podcast_ref,
                 episode_ref=target.episode_ref,
             )
-            return None if media_id is None else f"/media/{media_id}"
+            return (
+                None
+                if media_id is None
+                else InNexusResolution(
+                    href=f"/media/{media_id}",
+                    action_subject_ref=f"media:{media_id}",
+                )
+            )
         case _:
             assert_never(target)
 

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
@@ -7,6 +7,7 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
@@ -19,15 +20,15 @@ import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
 import ConversationContextRefsSurface from "./ConversationContextRefsSurface";
 
 // The system under test is the migrated ConversationContextRefsSurface wired to
-// the REAL resource-action runtime, planner, catalog projector, ActionMenu, and
+// the real resource-action runtime, planner, catalog, ActionMenu, and
 // the new separate context-edge control. Only the BFF fetch boundary is stubbed:
 // the snapshot-resolve endpoint serves a schema-valid media snapshot whose
-// capabilities are the canonical resource actions. The proof is the AC4 taxonomy
+// capabilities are the canonical resource actions. The proof is the canonical taxonomy
 // split — the resource dropdown holds the resource actions and NOT the context
 // edge command; the separate context-edge control holds the edge command and NOT
 // any resource action.
@@ -39,19 +40,25 @@ const MEDIA_REF = `media:${MEDIA_ID}`;
 const MEDIA_HREF = `/media/${MEDIA_ID}`;
 const RESOLVE_PATH = "/api/resource-items/action-snapshots/resolve";
 const CONTEXT_LABEL = "Field Notes";
+const MEDIA_FACTS_REVISION = "5".repeat(64);
+const MISSING_FACTS_REVISION = "0".repeat(64);
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
   primaryDefaultWidthPx: 684,
 };
 
-const mediaTarget = routeResourceActionSubject({
-  scheme: "media",
-  id: MEDIA_ID,
+const mediaSubject = {
+  ref: canonicalResourceRef({ scheme: "media", id: MEDIA_ID }),
+};
+const mediaActivation = {
+  resourceRef: MEDIA_REF,
+  kind: "route" as const,
   href: MEDIA_HREF,
-});
+  unresolvedReason: null,
+};
 
-// A schema-valid resolve response carrying only the three canonical CORE
+// A schema-valid resolve response carrying three canonical resource actions.
 // resource actions. Crucially it carries NO context-edge capability — the
 // context edge is not a resource-snapshot fact.
 const MEDIA_SNAPSHOT = {
@@ -63,7 +70,7 @@ const MEDIA_SNAPSHOT = {
     unresolvedReason: null,
   },
   missing: false,
-  factsRevision: "facts-rev-1",
+  factsRevision: MEDIA_FACTS_REVISION,
   capabilities: [
     { kind: "Open", availability: { kind: "Available" } },
     { kind: "Share", availability: { kind: "Available" } },
@@ -75,8 +82,8 @@ const CONTEXT_REF: ContextRefOut = {
   id: "edge-1",
   conversation_id: CONVERSATION_ID,
   resource_ref: MEDIA_REF,
-  activation: mediaTarget.activation,
-  actionTarget: mediaTarget,
+  activation: mediaActivation,
+  actionSubject: mediaSubject,
   label: CONTEXT_LABEL,
   summary: "A media resource in the conversation context.",
   missing: false,
@@ -96,7 +103,10 @@ function installBff(): { readonly removeCalls: string[] } {
     "fetch",
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : null;
-      const url = new URL(request?.url ?? String(input), window.location.origin);
+      const url = new URL(
+        request?.url ?? String(input),
+        window.location.origin,
+      );
       const method = init?.method ?? request?.method ?? "GET";
       const path = url.pathname;
 
@@ -111,12 +121,12 @@ function installBff(): { readonly removeCalls: string[] } {
                 ref,
                 activation: {
                   resourceRef: ref,
-                  kind: "route",
-                  href: "/",
+                  kind: "none",
+                  href: null,
                   unresolvedReason: null,
                 },
                 missing: true,
-                factsRevision: "missing",
+                factsRevision: MISSING_FACTS_REVISION,
                 capabilities: [],
               },
         );
@@ -156,14 +166,16 @@ function renderSurface() {
                           transport={null}
                         >
                           <ResourceOverlaysProvider>
-                            <ResourceActionRuntimeProvider>
-                              <ConversationContextRefsSurface
-                                contextRefs={[CONTEXT_REF]}
-                                removeContextRef={async () => {}}
-                                onOpenResource={() => {}}
-                              />
-                              <ResourceActionOverlays />
-                            </ResourceActionRuntimeProvider>
+                            <GlobalPlayerProvider>
+                              <ResourceActionRuntimeProvider>
+                                <ConversationContextRefsSurface
+                                  contextRefs={[CONTEXT_REF]}
+                                  removeContextRef={async () => {}}
+                                  onOpenResource={() => {}}
+                                />
+                                <ResourceActionOverlays />
+                              </ResourceActionRuntimeProvider>
+                            </GlobalPlayerProvider>
                           </ResourceOverlaysProvider>
                         </OfflineMediaProvider>
                       </ShareControllerProvider>
@@ -179,7 +191,7 @@ function renderSurface() {
   );
 }
 
-describe("ConversationContextRefsSurface AC4 taxonomy split", () => {
+describe("ConversationContextRefsSurface taxonomy split", () => {
   beforeEach(async () => {
     localStorage.clear();
     sessionStorage.clear();
@@ -202,13 +214,14 @@ describe("ConversationContextRefsSurface AC4 taxonomy split", () => {
     const resourceTrigger = await screen.findByRole("button", {
       name: `Actions for ${CONTEXT_LABEL}`,
     });
+    await waitFor(() => expect(resourceTrigger).toBeEnabled());
     const edgeTrigger = screen.getByRole("button", {
       name: `Remove ${CONTEXT_LABEL} from context`,
     });
     expect(resourceTrigger).not.toBe(edgeTrigger);
 
     // 1) The RESOURCE dropdown holds the canonical resource actions and does NOT
-    //    contain the context-edge command (AC4).
+    //    contain the context-edge command.
     await userEvent.click(resourceTrigger);
     const resourceMenu = screen.getByRole("menu");
     expect(
@@ -216,7 +229,7 @@ describe("ConversationContextRefsSurface AC4 taxonomy split", () => {
     ).toBeTruthy();
     expect(
       within(resourceMenu).getByRole("menuitem", {
-        name: "Chat about this resource",
+        name: "Chat about this…",
       }),
     ).toBeTruthy();
     expect(
@@ -231,7 +244,7 @@ describe("ConversationContextRefsSurface AC4 taxonomy split", () => {
     expect(screen.queryByRole("menu")).toBeNull();
 
     // 2) The SEPARATE context-edge control holds the edge command and does NOT
-    //    contain any resource action (AC4).
+    //    contain any resource action.
     await userEvent.click(edgeTrigger);
     const edgeMenu = screen.getByRole("menu");
     expect(
@@ -245,7 +258,7 @@ describe("ConversationContextRefsSurface AC4 taxonomy split", () => {
     ).toBeNull();
     expect(
       within(edgeMenu).queryByRole("menuitem", {
-        name: "Chat about this resource",
+        name: "Chat about this…",
       }),
       "a resource action leaked into the separate context-edge control",
     ).toBeNull();

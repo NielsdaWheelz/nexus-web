@@ -28,6 +28,10 @@ import { createRandomId } from "@/lib/createRandomId";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
+import type {
+  ResourceActionMutationBoundary,
+  ResourceActionMutationLease,
+} from "@/lib/actions/resourceActionMutation";
 import AuthorSearchField, { normalizedNameKey } from "./AuthorSearchField";
 import styles from "./MediaAuthorsEditor.module.css";
 
@@ -175,8 +179,13 @@ interface MediaAuthorsEditorProps {
   returnFocusFallback: ReturnFocusTarget;
   /** Dismiss (accepted): close without a PUT. */
   onClose: () => void;
+  /** Exact canonical action boundary acquired immediately before the PUT. */
+  mutation: ResourceActionMutationBoundary;
   /** A successful PUT returned the fresh slice — resource credits update from it. */
-  onSaved: (next: MediaAuthors) => void;
+  onSaved: (
+    next: MediaAuthors,
+    lease: ResourceActionMutationLease,
+  ) => Promise<void>;
 }
 
 export default function MediaAuthorsEditor({
@@ -187,6 +196,7 @@ export default function MediaAuthorsEditor({
   returnFocusTo,
   returnFocusFallback,
   onClose,
+  mutation,
   onSaved,
 }: MediaAuthorsEditorProps) {
   const isMobile = useIsMobileViewport();
@@ -461,6 +471,8 @@ export default function MediaAuthorsEditor({
 
   async function save() {
     if (!dirty || saving) return;
+    const lease = mutation.begin();
+    if (lease === null) return;
     const payloadAuthors = committedRows.map((row) => ({
       creditedName: row.creditedName,
       binding: row.binding,
@@ -475,24 +487,28 @@ export default function MediaAuthorsEditor({
         authors: payloadAuthors,
       });
       intent.discard();
-      onSaved(result);
+      await onSaved(result, lease);
       handleClose();
     } catch (error) {
+      lease.abort();
       handleMutationError(error);
     }
   }
 
   async function resetToAutomatic() {
     if (saving) return;
+    const lease = mutation.begin();
+    if (lease === null) return;
     const clientMutationId = intent.clientMutationId("automatic");
     setSaving(true);
     setNotice(null);
     try {
       const result = await putMediaAuthors(mediaId, { clientMutationId, mode: "automatic" });
       intent.discard();
-      onSaved(result);
+      await onSaved(result, lease);
       handleClose();
     } catch (error) {
+      lease.abort();
       handleMutationError(error);
     }
   }

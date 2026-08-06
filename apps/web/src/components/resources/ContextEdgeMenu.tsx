@@ -18,7 +18,7 @@ type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
 /**
  * The separate control that owns context-edge commands — remove from
- * conversation context, unlink a connection edge, dismiss a synapse edge (AC4).
+ * conversation context, unlink a connection edge, or dismiss a synapse edge.
  * These are edge mutations, NOT resource-snapshot facts, so they never enter the
  * canonical `ResourceActionMenu`: they publish through this dedicated,
  * distinctly-labelled trigger + one-item menu. Busy and expected-error feedback

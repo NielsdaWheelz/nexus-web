@@ -300,7 +300,6 @@ export default function BrowseSection({
         ariaLabel={`${label} results`}
         empty={null}
         surface={false}
-        rowActionsAvailable={false}
       />
       {pagination.status === "ready" && pagination.hasMore && !pagination.error ? (
         <div className={styles.continuation}>

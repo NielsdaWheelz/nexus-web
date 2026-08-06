@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import type { Presence } from "@/lib/api/presence";
 import type { LibraryDestinationSelection } from "@/lib/libraries/client";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import type { CanonicalResourceRef, ShareTarget } from "@/lib/sharing/types";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
@@ -135,7 +136,7 @@ export type NexusTarget =
     }
   | {
       readonly kind: "ResourceOpen";
-      readonly subject: ResourceActionSubject;
+      readonly activation: ResourceActivation;
       readonly labelHint?: string;
     }
   | { readonly kind: "ResourceShare"; readonly subject: ResourceActionSubject }
@@ -204,13 +205,13 @@ export interface NexusEntry {
   readonly secondaryActions: readonly NexusAction[];
   /**
    * When present, this entry is a canonical resource. Its overflow/secondary
-   * menu is the ONE canonical resource dropdown for `resourceTarget` (rendered
+   * menu is the ONE canonical resource dropdown for `actionSubject` (rendered
    * via `ResourceActionMenu` / the shared catalog projection), NOT a private
    * NexusAction array. Resource entries carry only their resource identity plus
    * primary activation; their secondary resource actions come from the shared
    * planner, so `secondaryActions` stays empty for them.
    */
-  readonly resourceTarget?: ResourceActionSubject;
+  readonly actionSubject?: ResourceActionSubject;
   readonly rank: {
     readonly tier: NexusRankTier;
     readonly score: number;
@@ -221,10 +222,10 @@ export interface NexusEntry {
 /**
  * A Nexus entry exposes a secondary/overflow menu when it either carries local
  * NexusAction secondaries (panes, continuations) or is a canonical resource
- * (its overflow is the shared resource dropdown for `resourceTarget`).
+ * (its overflow is the shared resource dropdown for `actionSubject`).
  */
 export function nexusEntryHasSecondaryActions(entry: NexusEntry): boolean {
-  return entry.secondaryActions.length > 0 || entry.resourceTarget !== undefined;
+  return entry.secondaryActions.length > 0 || entry.actionSubject !== undefined;
 }
 
 export interface NexusCommand {

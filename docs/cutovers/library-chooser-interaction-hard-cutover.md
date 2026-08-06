@@ -1,6 +1,13 @@
 # Library Chooser Interaction — Hard Cutover
 
-**Status:** IMPLEMENTED · 2026-07-27
+**Status:** PARTIALLY SUPERSEDED by
+`canonical-resource-action-menu-hard-cutover.md` (2026-08-05). The chooser's
+responsive interaction, grouping, search, Create, and failure-state rules stay
+authoritative. The flat placement capability/API contract in §5 and any
+Default-exclusion or local action-cache rule do not; use the canonical typed
+destination/relation/availability contract and awaited reconciliation path.
+
+**Original status:** IMPLEMENTED · 2026-07-27
 
 **Type:** hard cutover; one final path, no legacy UI, fallback, alias, flag, or
 backward-compatible cursor.
@@ -303,18 +310,21 @@ Add, Share, or podcast surfaces.
 Ready
   -> command running: initiating row pending; all commands disabled
   -> failure: preserve prior state; expected error + Retry
-  -> 204: project only the server-confirmed membership flip
-          keep all commands disabled
-          reconcile with authoritative GET
+  -> acknowledged: project only the server-confirmed relation
+                   reconcile canonical action snapshot, then authoritative GET
+  -> unknown settlement: observe authoritative relation
+       desired relation -> canonical reconciliation
+       unchanged relation -> replay the same idempotent command identity
   -> GET success: replace projection and capabilities; Ready
   -> transient GET failure: ReconcileFailed; show confirmed flip,
                              disable commands, offer Retry
   -> terminal target-gone GET: Unavailable; offer Close only
 ```
 
-- Never project a membership change before `204`.
-- Do not mutate the decoded DTO. Derive the confirmed-membership overlay by ID.
-- Never synthesize `canAdd` or `canRemove`.
+- Never project a relationship change before command acknowledgement.
+- Do not mutate the decoded DTO. Derive the confirmed-relation overlay by
+  destination identity.
+- Availability and inherited provenance come only from the strict inventory.
 - Closing may abort list GET but not an active mutation. A closed or newer
   session cannot receive stale state; reopening fetches afresh.
 - Close exits every failure state. Retry exists only for modeled transient
@@ -332,21 +342,13 @@ standing controller's projection rules on it.
 
 ## 5. Capability And API Contract
 
-No capability or authorization schema changes:
+Standing placement consumes the canonical closed
+`destination × relation × availability` inventory. Saved in Nexus is a physical
+Media destination; visible named Libraries include direct, absent, inherited,
+system-managed, authority-blocked, and subscription-blocked states. Every
+mutation reauthorizes in its existing service owner.
 
-```text
-LibraryPlacementMode = None | ManageEntries
-LibraryPlacementOption = id + name + color
-                       + is_in_library + can_add + can_remove
-```
-
-- `can_add` / `can_remove` remain the only placement action truth.
-- Writable destinations remain owner/admin, non-default, non-system libraries.
-- Every mutation and ingest path reauthorizes in its existing service owner.
-- Existing strict decoders and response bodies remain unchanged.
-- Placement POST/DELETE continue to return `204`.
-
-Reuse the existing routes:
+Current routes:
 
 ```text
 GET    /api/libraries/writable-destinations
@@ -354,12 +356,19 @@ POST   /api/libraries
 
 GET    /api/media/{mediaId}/libraries
 POST   /api/media/{mediaId}/libraries
+PUT    /api/media/{mediaId}/saved-in-nexus
+DELETE /api/media/{mediaId}/saved-in-nexus
 DELETE /api/media/{mediaId}/libraries/{libraryId}
 
 GET    /api/podcasts/{podcastId}/libraries
-POST   /api/libraries/{libraryId}/podcasts
+PUT    /api/libraries/{libraryId}/podcasts/{podcastId}
 DELETE /api/libraries/{libraryId}/podcasts/{podcastId}
 ```
+
+Media add and Saved PUT are idempotent bodyless commands. Media removals and
+Podcast add/removals return typed collection revisions. Podcast writes reuse a
+stable `Idempotency-Key`; named Podcast placement requires an active
+subscription and never creates one.
 
 ### Canonical ordering
 

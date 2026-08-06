@@ -70,11 +70,12 @@ person fields preserve semantic absence as `Presence`; governance commands
 return fully hydrated projections and use the standard serializable retry
 boundary.
 
-Library entry mutations are commands, not refreshed read models. Successful
-media-placement add/remove, add-podcast, and reorder requests return `204 No
-Content`; the placement overlay refreshes server truth after each command.
-Agent filing receives only inserted/already-present truth for Undo and never
-hydrates an entry payload.
+Library entry mutations are commands, not refreshed read models. Media add and
+reorder are bodyless commands. Media removal and idempotent Podcast placement
+add/removal return typed `libraryEntriesCollectionRevision`; the placement
+editor reconciles the canonical resource-action snapshot before reading the
+authoritative placement inventory. Agent filing receives only
+inserted/already-present truth for Undo and never hydrates an entry payload.
 
 ## System libraries
 
@@ -198,7 +199,9 @@ episodes immediately resurface with their consumption state intact.
   contains its Podcast returns `IncludedThroughPodcast` rather than creating a
   redundant child entry. Default/All instead applies the active subscription's
   parent-over-child subsumption as the root-set read predicate above;
-  named-Library behavior is otherwise unchanged.
+  named-Library behavior is otherwise unchanged. The canonical named-placement
+  PUT requires an already-active subscription, rechecks it under the owning
+  transaction, and never subscribes as a side effect.
 - **Media deletion counts physical references only.** Whether a document
   media has any reference left — the question that gates last-reference
   teardown — is answered by counting physical `library_entries` rows for
@@ -208,8 +211,9 @@ episodes immediately resurface with their consumption state intact.
   `library_entries` DML of its own.
 - **Placement removal is convergent and non-destructive.**
   `ensure_media_absent_from_library_for_viewer` authorizes a mutable target
-  library, returns `204` when the entry is already absent without exposing media
-  existence, and removes exactly one present entry. It supports every
+  library, returns the current collection revision when the entry is already
+  absent without exposing media existence, and removes exactly one present
+  entry. It supports every
   media kind and refuses the final lifetime reference with
   `409 E_MEDIA_LAST_REFERENCE`; it never hides or deletes the media resource.
   Whole-resource `DELETE /media/{id}` accepts no query string.
@@ -377,11 +381,24 @@ library the viewer can read.
   committing the created media. `ensure_media_in_libraries_for_viewer` adds
   post-hoc destinations atomically as a bodyless command.
 
-The canonical HTTP placement surface is
-`GET/POST /media/{media_id}/libraries` plus
-`DELETE /media/{media_id}/libraries/{library_id}`. There is no inverse
-library-to-media write route and no scoped resource-delete query mode.
-Both POST and DELETE mutations return `204 No Content`.
+The canonical HTTP placement surface is:
+
+```text
+GET    /media/{media_id}/libraries
+POST   /media/{media_id}/libraries
+PUT    /media/{media_id}/saved-in-nexus
+DELETE /media/{media_id}/saved-in-nexus
+DELETE /media/{media_id}/libraries/{library_id}
+GET    /podcasts/{podcast_id}/libraries
+PUT    /libraries/{library_id}/podcasts/{podcast_id}
+DELETE /libraries/{library_id}/podcasts/{podcast_id}
+```
+
+The GETs return the strict destination/relation/availability inventory. Media
+POST and Saved PUT are idempotent bodyless commands; removals and Podcast
+placement return typed collection revisions. Podcast PUT/DELETE carry a stable
+`Idempotency-Key`. There is no inverse library-to-media write route and no
+scoped resource-delete query mode.
 
 ## Composition Rules
 
