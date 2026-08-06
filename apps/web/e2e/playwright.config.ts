@@ -2,12 +2,9 @@ import { defineConfig, devices } from "playwright/test";
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { loadBrowserRuntime } from "./runtime";
-import { loadDeploymentRuntime } from "./deployment/runtime";
 
 const repoRoot = realpathSync(path.resolve(__dirname, "../../.."));
-const deploymentOrigin = process.env.NEXUS_SMOKE_APP_URL?.replace(/\/$/, "");
-const deploymentRuntime = deploymentOrigin ? loadDeploymentRuntime() : null;
-const runtime = deploymentOrigin ? null : loadBrowserRuntime();
+const runtime = loadBrowserRuntime();
 const runId = process.env.NEXUS_TEST_RUN_ID;
 if (runId && !/^[0-9a-f]{16}$/.test(runId)) {
   throw new Error("Playwright received a non-canonical NEXUS_TEST_RUN_ID.");
@@ -20,7 +17,9 @@ for (const key of [
   "SUPABASE_SERVICE_ROLE_KEY",
 ]) {
   if (process.env[key]) {
-    throw new Error(`Playwright refuses the Supabase admin environment variable ${key}.`);
+    throw new Error(
+      `Playwright refuses the Supabase admin environment variable ${key}.`,
+    );
   }
 }
 
@@ -37,7 +36,7 @@ export default defineConfig({
   use: {
     ...devices["Desktop Chrome"],
     serviceWorkers: "block",
-    trace: "retain-on-failure",
+    trace: "off",
     screenshot: "only-on-failure",
   },
   projects: [
@@ -45,19 +44,13 @@ export default defineConfig({
       name: "journeys",
       testDir: "./journeys",
       testMatch: "**/*.journey.spec.ts",
-      use: { baseURL: runtime?.webOrigin ?? "http://127.0.0.1" },
-    },
-    {
-      name: "deployment-smoke",
-      testDir: "./deployment",
-      testMatch: "**/*.deployed.spec.ts",
-      use: { baseURL: deploymentRuntime?.appOrigin ?? "http://127.0.0.1" },
+      use: { baseURL: runtime.webOrigin },
     },
     {
       name: "extension",
       testDir: "./extension",
       testMatch: "**/*.extension.spec.ts",
-      use: { baseURL: runtime?.webOrigin ?? "http://127.0.0.1" },
+      use: { baseURL: runtime.webOrigin },
     },
   ],
 });

@@ -165,6 +165,11 @@ class TestUser:
 
 
 @dataclass(frozen=True, slots=True)
+class InvitedTestUser:
+    email: str
+
+
+@dataclass(frozen=True, slots=True)
 class StartedProcess:
     role: str
     process_group_id: int
@@ -538,6 +543,37 @@ def create_supabase_user(
     return TestUser(user_id, email, password)
 
 
+def invite_supabase_user(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+    scenario_id: str,
+    credentials: SupabaseCredentials,
+) -> InvitedTestUser:
+    require_test_environment(environment)
+    require_scenario_id(scenario_id)
+    root = canonical_repo_root(repo_root)
+    expected_url = runtime_endpoint(root, environment, EndpointKind.SUPABASE)
+    if credentials.url != expected_url:
+        raise RuntimeContractError("Supabase credentials are not for the recorded runtime")
+    email = supabase_user_email(run_id, scenario_id)
+    resource = Resource(ResourceKind.SUPABASE_USER, email)
+    record_planned(root, environment, run_id, resource, scenario_id=scenario_id)
+    with httpx.Client(trust_env=False, timeout=15) as client:
+        response = client.post(
+            f"{expected_url}/auth/v1/invite",
+            headers=_supabase_admin_headers(credentials.admin_key),
+            json={"email": email, "data": supabase_user_metadata(run_id, scenario_id)},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    user_id = payload.get("id") if isinstance(payload, dict) else None
+    if not isinstance(user_id, str) or payload.get("email") != email:
+        raise RuntimeContractError("Supabase admin invite returned the wrong user")
+    record_created(root, environment, run_id, resource, external_id=user_id)
+    return InvitedTestUser(email)
+
+
 def grant_scenario_ai_entitlement(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -867,8 +903,6 @@ def clean_run(
                 elif resource.kind is ResourceKind.BUCKET:
                     _delete_bucket(root, environment, resource.identity)
                 elif resource.kind is ResourceKind.SUPABASE_USER:
-                    if candidate.external_id is None:
-                        raise RuntimeContractError("Supabase user lacks its planned exact id")
                     if supabase is None:
                         supabase = ensure_services(root, environment)
                     _delete_supabase_user(
@@ -1112,6 +1146,10 @@ def _write_supabase_config(repo_root: Path) -> None:
         if count != 1:
             raise RuntimeContractError(f"required Supabase config shape is missing: {pattern}")
     destination.write_text(text, encoding="utf-8")
+    template_destination = destination.parent / "templates"
+    template_destination.mkdir(exist_ok=True)
+    for name in ("invite.html", "recovery.html"):
+        shutil.copyfile(repo_root / "supabase" / "templates" / name, template_destination / name)
 
 
 def _parse_supabase_status(raw: str) -> dict[str, str]:
@@ -1309,7 +1347,7 @@ def _delete_supabase_user(
     environment: Mapping[str, str],
     run_id: str,
     email: str,
-    user_id: str,
+    user_id: str | None,
     credentials: SupabaseCredentials,
 ) -> None:
     expected_url = runtime_endpoint(repo_root, environment, EndpointKind.SUPABASE)
@@ -1317,6 +1355,56 @@ def _delete_supabase_user(
         raise RuntimeContractError("Supabase credentials are not for the recorded runtime")
     headers = _supabase_admin_headers(credentials.admin_key)
     with httpx.Client(trust_env=False, timeout=15) as client:
+        if user_id is None:
+            page = 1
+            page_size = 1000
+            matches: list[str] = []
+            seen_user_ids: set[str] = set()
+            while True:
+                listed = client.get(
+                    f"{expected_url}/auth/v1/admin/users",
+                    headers=headers,
+                    params={"page": page, "per_page": page_size},
+                )
+                listed.raise_for_status()
+                listed_payload = listed.json()
+                users = listed_payload.get("users") if isinstance(listed_payload, dict) else None
+                if not isinstance(users, list) or len(users) > page_size:
+                    raise RuntimeContractError("Supabase admin user listing is malformed")
+                for item in users:
+                    candidate_id = item.get("id") if isinstance(item, dict) else None
+                    if not isinstance(candidate_id, str) or not candidate_id:
+                        raise RuntimeContractError("Supabase admin user listing is malformed")
+                    try:
+                        candidate_uuid = UUID(candidate_id)
+                    except ValueError as error:
+                        raise RuntimeContractError(
+                            "Supabase admin user listing is malformed"
+                        ) from error
+                    if str(candidate_uuid) != candidate_id:
+                        raise RuntimeContractError("Supabase admin user listing is malformed")
+                    if candidate_id in seen_user_ids:
+                        raise RuntimeContractError("Supabase admin user pagination is malformed")
+                    seen_user_ids.add(candidate_id)
+                    if item.get("email") != email:
+                        continue
+                    metadata = item.get("user_metadata")
+                    if (
+                        not isinstance(metadata, dict)
+                        or metadata.get("nexus_test_run_id") != run_id
+                    ):
+                        raise RuntimeContractError(
+                            "Supabase invitation no longer has exact run ownership"
+                        )
+                    matches.append(candidate_id)
+                if len(users) < page_size:
+                    break
+                page += 1
+            if not matches:
+                return
+            if len(matches) != 1:
+                raise RuntimeContractError("Supabase invitation cleanup identity is ambiguous")
+            user_id = matches[0]
         found = client.get(f"{expected_url}/auth/v1/admin/users/{user_id}", headers=headers)
         if found.status_code == 404:
             return

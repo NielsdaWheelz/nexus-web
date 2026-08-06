@@ -5,6 +5,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1336,7 +1337,7 @@ def test_affected_frontend_source_uses_vitest_related_in_the_browser_project(
     ]
 
 
-def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_processes(
+def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     tmp_path: Path,
 ) -> None:
     web_root = tmp_path / "apps/web"
@@ -1347,6 +1348,7 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
         "grounded-chat-citation",
         "nexus-search-open-restore",
         "not-critical",
+        "password-recovery",
         "resource-share-boundary",
     ):
         _write(
@@ -1354,9 +1356,39 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
             f'test.use({{ journeyId: "{journey_id}" }});\n',
         )
     environment = _stub_tools(tmp_path, "bun")
+    bun = tmp_path / "bin/bun"
+    _write(
+        bun,
+        "#!/usr/bin/python3\n"
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "invites = json.loads(os.environ.get('NEXUS_TEST_SCENARIO_INVITES', '{}'))\n"
+        "password_users = json.loads(os.environ.get('NEXUS_TEST_SCENARIO_USERS', '{}'))\n"
+        "expected = {'auth-session': {"
+        "'email': 'nexus+0123456789abcdef+auth-session@example.invalid'}}\n"
+        "if invites != expected or 'auth-session' in password_users:\n"
+        "    print(\n"
+        "        'journey fixture boundary mismatch: '"
+        "+ f'invites={invites!r} password_user_ids={sorted(password_users)!r}',\n"
+        "        file=sys.stderr,\n"
+        "    )\n"
+        "    raise SystemExit(1)\n"
+        "record = {\n"
+        "    'tool': Path(sys.argv[0]).name,\n"
+        "    'argv': sys.argv[1:],\n"
+        "    'cwd': os.getcwd(),\n"
+        "    'environment': sorted(os.environ),\n"
+        "}\n"
+        "with (Path(os.environ['HOME']) / 'commands.jsonl').open('a') as handle:\n"
+        "    handle.write(json.dumps(record, sort_keys=True) + '\\n')\n",
+    )
+    bun.chmod(0o755)
     build_calls: list[str] = []
     process_roles: list[str] = []
-    users: list[str] = []
+    password_users: list[str] = []
+    invited_users: list[str] = []
     entitlements: list[str] = []
     artifact = tmp_path / ".nexus-test/builds/fingerprint"
     _write(artifact / "server.js", "export {};\n")
@@ -1434,12 +1466,23 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
             scenario_id: str,
             _credentials: SupabaseCredentials,
         ) -> OwnedTestUser:
-            users.append(scenario_id)
+            password_users.append(scenario_id)
             return OwnedTestUser(
                 "00000000-0000-4000-8000-000000000001",
                 f"nexus+0123456789abcdef+{scenario_id}@example.invalid",
                 "test-password",
             )
+
+        def invite_supabase_user(
+            self,
+            _root: Path,
+            _environment: Mapping[str, str],
+            _run_id: str,
+            scenario_id: str,
+            _credentials: SupabaseCredentials,
+        ) -> SimpleNamespace:
+            invited_users.append(scenario_id)
+            return SimpleNamespace(email=f"nexus+0123456789abcdef+{scenario_id}@example.invalid")
 
         def grant_scenario_ai_entitlement(
             self,
@@ -1477,10 +1520,11 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
         "worker-background",
         "web",
     ]
-    assert users == [
-        "auth-session",
+    assert invited_users == ["auth-session"]
+    assert password_users == [
         "grounded-chat-citation",
         "nexus-search-open-restore",
+        "password-recovery",
         "resource-share-boundary",
     ]
     assert entitlements == [
@@ -1502,9 +1546,11 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
         "./e2e/journeys/auth-session.journey.spec.ts",
         "./e2e/journeys/grounded-chat-citation.journey.spec.ts",
         "./e2e/journeys/nexus-search-open-restore.journey.spec.ts",
+        "./e2e/journeys/password-recovery.journey.spec.ts",
         "./e2e/journeys/resource-share-boundary.journey.spec.ts",
     ]
     assert "NEXUS_TEST_SCENARIO_USERS" in command["environment"]
+    assert "NEXUS_TEST_SCENARIO_INVITES" in command["environment"]
     assert {
         "DATABASE_URL",
         "NEXUS_INTERNAL_SECRET",

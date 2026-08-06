@@ -22,7 +22,6 @@ import {
   loadLinkedIdentities,
   unlinkLinkedIdentity,
 } from "./actions";
-import { PasswordRow } from "./PasswordRow";
 import { formatDisplayDate } from "@/lib/display/format";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -80,8 +79,8 @@ export default function SettingsIdentitiesPaneBody() {
       initialIdentities.status === "error",
   );
 
-  // Imperative refresh after mutations (unlink, password change). The initial
-  // load is owned by useResource above; this re-reads the server action.
+  // Imperative refresh after an unlink. The initial load is owned by
+  // useResource above; this re-reads the server action.
   const loadIdentities = useCallback(async () => {
     try {
       const result = await loadLinkedIdentities();
@@ -182,7 +181,7 @@ export default function SettingsIdentitiesPaneBody() {
           <FeedbackNotice
             content={{
               tone: "Neutral",
-              title: "No linked identities were found for this account.",
+              title: "No Google or GitHub identities are linked.",
             }}
             announcement="Polite"
           />
@@ -218,10 +217,6 @@ export default function SettingsIdentitiesPaneBody() {
             surface={false}
           />
         )}
-
-        {loadFailure === null ? (
-          <PasswordRow identities={identities} onChanged={loadIdentities} />
-        ) : null}
 
         {loadFailure !== null ? null : connectableProviders.length === 0 ? (
           <FeedbackNotice

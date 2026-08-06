@@ -22,6 +22,12 @@ requires an Android SDK location (`ANDROID_HOME` or `apps/android/local.properti
 > [`app-launch-resume-hard-cutover.md`](app-launch-resume-hard-cutover.md). The
 > root-redirect and `/libraries` examples below are historical evidence only.
 
+> **Password-auth supersession (2026-08-05):**
+> [`invite-only-password-auth-hard-cutover.md`](invite-only-password-auth-hard-cutover.md)
+> is the normative contract for password authentication and its deployment
+> verification. The sign-up, combined `/auth/password`, and deploy-lane clauses
+> below are retained only as historical implementation evidence.
+
 This is a hard-cutover plan. It does not preserve legacy auth-return URL
 builders, duplicate password sign-in APIs, route-local `next` setters, ad hoc
 path checks, or transport-layer login redirects.

@@ -12,6 +12,12 @@ const SETTINGS_ITEMS: {
   description: string;
 }[] = [
   {
+    href: "/settings/account",
+    title: "Account",
+    description:
+      "Manage your email, display name, calendar time zone, and password.",
+  },
+  {
     href: "/settings/billing",
     title: "Billing",
     description: "Manage your plan, usage, and Stripe subscription.",

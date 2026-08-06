@@ -8,8 +8,8 @@ import {
 } from "@/lib/auth/redirects";
 import {
   AUTH_ENDED_FEEDBACK_COOKIE,
+  readPublicAuthFeedback,
   SESSION_ENDED_MESSAGE,
-  toPublicAuthErrorMessage,
 } from "@/lib/auth/messages";
 import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
 import LoginPageClient from "./LoginPageClient";
@@ -18,7 +18,6 @@ interface LoginPageProps {
   searchParams: Promise<{
     error?: string | string[];
     error_description?: string | string[];
-    mode?: string | string[];
     next?: string | string[];
   }>;
 }
@@ -58,7 +57,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const sessionEndedFeedbackCookie =
     cookieStore.get(AUTH_ENDED_FEEDBACK_COOKIE)?.value === "1";
   const initialFeedback = toInitialFeedback(
-    toPublicAuthErrorMessage(
+    readPublicAuthFeedback(
       getFirstSearchParamValue(params.error_description) ??
         getFirstSearchParamValue(params.error) ??
         (sessionEndedFeedbackCookie ? SESSION_ENDED_MESSAGE : null)
@@ -69,16 +68,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     (await headers()).get("user-agent") ?? ""
   );
 
-  // `?mode=create` opens the page in create-account mode. /sign-up redirects
-  // here with that param. Any other value (or omission) falls through to
-  // sign-in, which is the page's default.
-  const initialMode =
-    getFirstSearchParamValue(params.mode) === "create" ? "create" : "signin";
-
   return (
     <LoginPageClient
       initialFeedback={initialFeedback}
-      initialMode={initialMode}
       nextPath={nextPath}
       isShell={isShell}
     />

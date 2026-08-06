@@ -19,16 +19,14 @@ function getFirstHeaderValue(value: string | null): string | null {
 function parseAllowlistedOrigins(rawValue: string | undefined): string[] {
   const parsed = parseWebOriginList(rawValue);
   if (parsed.invalidValues.length > 0) {
-    throw new Error(
-      `Invalid auth redirect origin: ${parsed.invalidValues[0]}`
-    );
+    throw new Error(`Invalid auth redirect origin: ${parsed.invalidValues[0]}`);
   }
   return parsed.origins.map((origin) => origin.origin);
 }
 
 function getForwardedOrigin(requestHeaders: Headers): string | null {
   const forwardedHost = getFirstHeaderValue(
-    requestHeaders.get("x-forwarded-host")
+    requestHeaders.get("x-forwarded-host"),
   );
   if (!forwardedHost) {
     return null;
@@ -56,20 +54,24 @@ function getHostOrigin(requestHeaders: Headers): string | null {
   const isLocal =
     lowerHost === "localhost" ||
     lowerHost.startsWith("localhost:") ||
+    lowerHost === "10.0.2.2" ||
+    lowerHost.startsWith("10.0.2.2:") ||
     lowerHost.startsWith("127.0.0.1") ||
     lowerHost.startsWith("[::1]");
-  return parseWebOrigin(`${isLocal ? "http" : "https"}://${host}`)?.origin ?? null;
+  return (
+    parseWebOrigin(`${isLocal ? "http" : "https"}://${host}`)?.origin ?? null
+  );
 }
 
 function resolveAllowlistedRedirectOrigin(
   directOrigin: string | null,
-  forwardedOrigin: string | null
+  forwardedOrigin: string | null,
 ): string {
   const allowlistedOrigins = parseAllowlistedOrigins(
-    process.env[AUTH_ALLOWED_REDIRECT_ORIGINS]
+    process.env[AUTH_ALLOWED_REDIRECT_ORIGINS],
   );
   const trustedProxyOrigins = parseAllowlistedOrigins(
-    process.env[AUTH_TRUSTED_PROXY_ORIGINS]
+    process.env[AUTH_TRUSTED_PROXY_ORIGINS],
   );
 
   if (allowlistedOrigins.length === 0) {
@@ -78,7 +80,7 @@ function resolveAllowlistedRedirectOrigin(
     }
 
     throw new Error(
-      `${AUTH_ALLOWED_REDIRECT_ORIGINS} must be configured for non-local auth callbacks`
+      `${AUTH_ALLOWED_REDIRECT_ORIGINS} must be configured for non-local auth callbacks`,
     );
   }
 
@@ -95,23 +97,23 @@ function resolveAllowlistedRedirectOrigin(
     return forwardedOrigin;
   }
 
-  throw new Error(`${AUTH_ALLOWED_REDIRECT_ORIGINS} rejected auth callback origin`);
+  throw new Error(
+    `${AUTH_ALLOWED_REDIRECT_ORIGINS} rejected auth callback origin`,
+  );
 }
 
-export function resolveCallbackRedirectOrigin(
-  request: Request
-): string {
+export function resolveCallbackRedirectOrigin(request: Request): string {
   return resolveAllowlistedRedirectOrigin(
     getHostOrigin(request.headers),
-    getForwardedOrigin(request.headers)
+    getForwardedOrigin(request.headers),
   );
 }
 
 export function resolveServerActionRedirectOrigin(
-  requestHeaders: Headers
+  requestHeaders: Headers,
 ): string {
   return resolveAllowlistedRedirectOrigin(
     getHostOrigin(requestHeaders),
-    getForwardedOrigin(requestHeaders)
+    getForwardedOrigin(requestHeaders),
   );
 }

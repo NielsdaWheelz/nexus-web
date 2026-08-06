@@ -30,7 +30,10 @@
         "python/nexus/schemas/execution.py",
         "python/nexus/api/routes/stream.py",
         "apps/web/src/app/auth/**/*",
+        "apps/web/src/app/account/password/**/*",
+        "apps/web/src/app/forgot-password/**/*",
         "apps/web/src/app/login/**/*",
+        "apps/web/src/components/auth/**/*",
         "apps/web/src/app/api/public/resource-share/**/*",
         "apps/web/src/app/api/resource-items/**/shares/route.ts",
         "apps/web/src/app/api/resource-shares/**/*",
@@ -38,16 +41,24 @@
         "apps/web/src/lib/auth/**/*.tsx",
         "apps/web/src/lib/api/proxy.ts",
         "apps/web/src/lib/supabase/**/*",
-        "apps/web/src/middleware.ts"
+        "apps/web/src/middleware.ts",
+        "deploy/smoke/auth-smoke.sh",
+        "deploy/supabase/**/*",
+        "supabase/config.toml",
+        "supabase/templates/**/*"
       ],
       "proofs": [
+        "pytest:python/tests/kernel/test_auth_config_verifier.py",
         "pytest:python/tests/service/test_auth_bootstrap_cache.py::test_auth_bootstrap_cache_reuses_only_the_matching_users_durable_library",
         "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked",
         "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal",
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject",
+        "vitest:apps/web/src/lib/auth/email-confirmation.unit.test.ts",
+        "vitest:apps/web/src/lib/auth/identities.unit.test.ts",
         "vitest:apps/web/src/lib/api/proxy.unit.test.ts"
       ],
       "capabilities": [
+        "kernel-python",
         "kernel-web",
         "service"
       ]
@@ -267,11 +278,36 @@
       "proof": "apps/web/e2e/journeys/auth-session.journey.spec.ts",
       "source_globs": [
         "python/nexus/auth/**/*",
+        "apps/web/src/app/(authenticated)/settings/account/**/*",
+        "apps/web/src/app/account/password/**/*",
         "apps/web/src/app/auth/**/*",
+        "apps/web/src/app/forgot-password/**/*",
         "apps/web/src/app/login/**/*",
+        "apps/web/src/components/auth/**/*",
         "apps/web/src/lib/auth/**/*",
         "apps/web/src/lib/supabase/**/*",
-        "apps/web/src/middleware.ts"
+        "apps/web/src/middleware.ts",
+        "supabase/config.toml",
+        "supabase/templates/**/*"
+      ],
+      "risks": [
+        "auth-privacy-secrets"
+      ]
+    },
+    {
+      "id": "password-recovery",
+      "proof": "apps/web/e2e/journeys/password-recovery.journey.spec.ts",
+      "source_globs": [
+        "apps/web/src/app/account/password/**/*",
+        "apps/web/src/app/auth/**/*",
+        "apps/web/src/app/forgot-password/**/*",
+        "apps/web/src/app/login/**/*",
+        "apps/web/src/components/auth/**/*",
+        "apps/web/src/lib/auth/**/*",
+        "apps/web/src/lib/supabase/**/*",
+        "apps/web/src/middleware.ts",
+        "supabase/config.toml",
+        "supabase/templates/**/*"
       ],
       "risks": [
         "auth-privacy-secrets"

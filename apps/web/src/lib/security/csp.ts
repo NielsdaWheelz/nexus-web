@@ -14,6 +14,31 @@ import { YOUTUBE_EMBED_ORIGINS } from "./youtube";
 
 export const CSP_REPORT_PATH = "/api/csp-report";
 
+const SAFE_CSP_REPORT_URL_KEYWORDS = new Set([
+  "eval",
+  "inline",
+  "self",
+  "wasm-eval",
+]);
+
+export function sanitizeCspReportUrl(
+  rawUrl: string | undefined,
+): string | undefined {
+  if (!rawUrl) return undefined;
+  if (SAFE_CSP_REPORT_URL_KEYWORDS.has(rawUrl)) return rawUrl;
+
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol === "http:" || url.protocol === "https:") {
+    return `${url.origin}${url.pathname}`;
+  }
+  return url.protocol;
+}
+
 const NONCE_PLACEHOLDER = "{NONCE}";
 
 /**
@@ -156,16 +181,14 @@ export function buildContentSecurityPolicy(opts: CspBuildOptions): string {
 export function buildPublicReaderContentSecurityPolicy(
   opts: Pick<CspBuildOptions, "nonce" | "isDev" | "isHttpsRequest"> & {
     devWebSocketOrigins?: readonly string[];
-  }
+  },
 ): string {
   const values: Record<string, string[]> = {};
-  for (const [name, sources] of Object.entries(
-    PUBLIC_READER_CSP_DIRECTIVES
-  )) {
+  for (const [name, sources] of Object.entries(PUBLIC_READER_CSP_DIRECTIVES)) {
     values[name] = [...sources];
   }
   values["script-src"] = values["script-src"].map((source) =>
-    source.replace(NONCE_PLACEHOLDER, opts.nonce)
+    source.replace(NONCE_PLACEHOLDER, opts.nonce),
   );
   if (opts.isDev) {
     values["script-src"].push("'unsafe-eval'");
@@ -178,9 +201,7 @@ export function buildPublicReaderContentSecurityPolicy(
   for (const name of DIRECTIVE_ORDER) {
     if (!(name in values)) continue;
     const sources = values[name];
-    serialized.push(
-      sources.length > 0 ? `${name} ${sources.join(" ")}` : name
-    );
+    serialized.push(sources.length > 0 ? `${name} ${sources.join(" ")}` : name);
   }
   return serialized.join("; ");
 }

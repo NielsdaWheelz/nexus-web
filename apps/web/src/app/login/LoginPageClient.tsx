@@ -1,39 +1,47 @@
 "use client";
 
+import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
-import AsterismMark from "@/components/AsterismMark";
-import Button from "@/components/ui/Button";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import AuthSurface from "@/components/auth/AuthSurface";
+import authStyles from "@/components/auth/AuthForms.module.css";
 import {
   FeedbackNotice,
+  FieldFeedback,
+  type FeedbackAnnouncement,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import { decodePasswordSignInOutcome } from "@/lib/auth/form-outcomes";
 import { type OAuthProvider } from "@/lib/auth/identities";
+import type { PasswordSignInOutcome } from "@/lib/auth/password-flow";
 import {
   buildAuthNativeGoogleDeepLink,
   buildAuthStartDeepLink,
   isDefaultAuthReturnTarget,
   type AuthReturnTarget,
 } from "@/lib/auth/redirects";
-import styles from "./page.module.css";
-
-type AuthMode = "signin" | "create";
 
 interface LoginPageClientProps {
   initialFeedback?: {
     content: FeedbackContent;
     announcement: "Polite" | "Assertive";
   } | null;
-  initialMode?: AuthMode;
   nextPath: AuthReturnTarget;
   isShell: boolean;
 }
+
+const EMAIL_ERROR_ID = "password-sign-in-email-error";
+const PASSWORD_ERROR_ID = "password-sign-in-password-error";
 
 function GitHubMark() {
   return (
     <svg
       aria-hidden="true"
       viewBox="0 0 24 24"
+      width={18}
+      height={18}
       fill="currentColor"
       focusable="false"
     >
@@ -44,7 +52,13 @@ function GitHubMark() {
 
 function GoogleMark() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={18}
+      height={18}
+      focusable="false"
+    >
       <path
         d="M21.81 12.23c0-.72-.06-1.4-.2-2.04H12v3.87h5.5a4.7 4.7 0 0 1-2.04 3.09v2.56h3.29c1.93-1.78 3.06-4.4 3.06-7.48Z"
         fill="#4285F4"
@@ -65,11 +79,8 @@ function GoogleMark() {
   );
 }
 
-// In a browser, OAuth is initiated server-side via a GET form to `/auth/oauth`.
-// In the Android shell, the WebView is never the OAuth user-agent (RFC 8252):
-// the button is an `<a href="nexus://…">` that native intercepts to launch a
-// Custom Tab (GitHub) or the Credential Manager (Google). The `<a>` is required
-// — `form-action 'self'` in the CSP would block a `<form action="nexus://…">`.
+// Browser OAuth stays server-initiated. In the Android shell, these anchors
+// hand the same fixed provider/return-target intent to the native owner.
 function ProviderForm({
   provider,
   nextPath,
@@ -80,7 +91,7 @@ function ProviderForm({
   provider: OAuthProvider;
   nextPath: AuthReturnTarget;
   label: string;
-  mark: React.ReactNode;
+  mark: ReactNode;
   isShell: boolean;
 }) {
   if (isShell) {
@@ -98,7 +109,7 @@ function ProviderForm({
     );
   }
   return (
-    <form className={styles.providerForm} action="/auth/oauth" method="get">
+    <form className={authStyles.providerForm} action="/auth/oauth" method="get">
       <input type="hidden" name="provider" value={provider} />
       {isDefaultAuthReturnTarget(nextPath) ? null : (
         <input type="hidden" name="next" value={nextPath} />
@@ -110,102 +121,240 @@ function ProviderForm({
   );
 }
 
+function passwordSignInErrorMessage(
+  outcome: PasswordSignInOutcome,
+): FeedbackContent | null {
+  switch (outcome.kind) {
+    case "SignedIn":
+      return null;
+    case "InvalidCredentials":
+      return { tone: "Danger", title: "Email or password is incorrect." };
+    case "RateLimited":
+      return {
+        tone: "Danger",
+        title: "Too many sign-in attempts.",
+        message: "Wait a few minutes, then try again.",
+      };
+    case "ServiceUnavailable":
+      return {
+        tone: "Danger",
+        title: "Sign in is temporarily unavailable.",
+        message: "Try again in a moment.",
+      };
+  }
+  outcome satisfies never;
+}
+
 export default function LoginPageClient({
   initialFeedback = null,
-  initialMode = "signin",
   nextPath,
   isShell,
 }: LoginPageClientProps) {
-  const [mode, setMode] = useState<AuthMode>(initialMode);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [revealed, setRevealed] = useState(false);
+  const [emailError, setEmailError] = useState<FeedbackContent | null>(null);
+  const [passwordError, setPasswordError] = useState<FeedbackContent | null>(
+    null,
+  );
+  const [feedback, setFeedback] = useState<{
+    content: FeedbackContent;
+    announcement: FeedbackAnnouncement;
+  } | null>(initialFeedback);
+  const [pending, setPending] = useState(false);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const pendingRef = useRef(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
-  const isCreate = mode === "create";
-
-  function toggleMode() {
-    setMode((current) => (current === "signin" ? "create" : "signin"));
+  function finishFailure(content: FeedbackContent) {
+    setFeedback({ content, announcement: "Assertive" });
+    if (passwordRef.current) {
+      passwordRef.current.value = "";
+    }
+    setRevealed(false);
+    passwordRef.current?.focus();
   }
 
-  return (
-    <div className={styles.container}>
-      <main className={styles.frame}>
-        <div className={styles.brand}>
-          <AsterismMark size={40} className={styles.brandMark} aria-hidden="true" />
-          <h1 className={styles.wordmark}>Nexus</h1>
-        </div>
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (pendingRef.current) return;
 
-        {initialFeedback ? (
+    const emailControl = event.currentTarget.elements.namedItem("email");
+    if (!(emailControl instanceof HTMLInputElement)) {
+      setDefect({ error: new Error("Sign-in email control is missing") });
+      return;
+    }
+    const passwordControl = event.currentTarget.elements.namedItem("password");
+    if (!(passwordControl instanceof HTMLInputElement)) {
+      setDefect({ error: new Error("Sign-in password control is missing") });
+      return;
+    }
+    const emailValue = emailControl.value;
+    const passwordValue = passwordControl.value;
+    const nextEmailError = !emailValue.trim()
+      ? { tone: "Danger" as const, title: "Enter your email address." }
+      : emailControl.validity.typeMismatch
+        ? { tone: "Danger" as const, title: "Enter a valid email address." }
+        : null;
+    const nextPasswordError = passwordValue
+      ? null
+      : { tone: "Danger" as const, title: "Enter your password." };
+    setEmailError(nextEmailError);
+    setPasswordError(nextPasswordError);
+    if (nextEmailError || nextPasswordError) {
+      (nextEmailError ? emailControl : passwordRef.current)?.focus();
+      return;
+    }
+
+    const body = new FormData(event.currentTarget);
+    pendingRef.current = true;
+    setPending(true);
+    setFeedback(null);
+    try {
+      let response: Response;
+      try {
+        response = await fetch(event.currentTarget.action, {
+          method: "POST",
+          body,
+          credentials: "same-origin",
+          redirect: "follow",
+          headers: { Accept: "application/json" },
+        });
+      } catch (error) {
+        if (error instanceof TypeError) {
+          finishFailure({
+            tone: "Danger",
+            title: "Sign in is temporarily unavailable.",
+            message: "Try again in a moment.",
+          });
+          return;
+        }
+        throw error;
+      }
+      if (response.redirected) {
+        window.location.assign(response.url);
+        return;
+      }
+      const rawOutcome: unknown = await response.json();
+      const outcome = decodePasswordSignInOutcome(rawOutcome);
+      const content = passwordSignInErrorMessage(outcome);
+      if (content === null) {
+        throw new Error("Sign-in success response did not redirect");
+      }
+      finishFailure(content);
+    } catch (error) {
+      setDefect({ error });
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  }
+
+  if (defect) throw defect.error;
+
+  return (
+    <AuthSurface title="Sign in to Nexus">
+      <div className={authStyles.stack}>
+        {feedback ? (
           <FeedbackNotice
-            content={initialFeedback.content}
-            announcement={initialFeedback.announcement}
+            content={feedback.content}
+            announcement={feedback.announcement}
           />
         ) : null}
 
         <form
-          aria-label={isCreate ? "Credential account creation" : "Credential sign in"}
-          className={styles.form}
+          aria-label="Sign in with email and password"
+          aria-busy={pending}
+          className={authStyles.form}
           method="post"
-          action="/auth/password"
+          action="/auth/password/sign-in"
+          noValidate
+          onSubmit={(event) => void submit(event)}
         >
-          <input type="hidden" name="mode" value={isCreate ? "create" : "signin"} />
           {isDefaultAuthReturnTarget(nextPath) ? null : (
             <input type="hidden" name="next" value={nextPath} />
           )}
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Email</span>
-            <input
-              className={styles.fieldInput}
+          <label className={authStyles.field}>
+            <span className={authStyles.label}>Email</span>
+            <Input
               name="email"
               type="email"
+              size="lg"
               autoComplete="email"
+              autoCapitalize="none"
+              inputMode="email"
+              spellCheck={false}
               required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={() => setEmailError(null)}
+              aria-invalid={emailError === null ? undefined : true}
+              aria-describedby={
+                emailError === null ? undefined : EMAIL_ERROR_ID
+              }
             />
+            {emailError ? (
+              <div role="alert">
+                <FieldFeedback id={EMAIL_ERROR_ID} content={emailError} />
+              </div>
+            ) : null}
           </label>
 
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Password</span>
-            <input
-              className={styles.fieldInput}
-              name="password"
-              type="password"
-              autoComplete={isCreate ? "new-password" : "current-password"}
-              required
-              minLength={12}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </label>
-
-          {isCreate ? (
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Display name</span>
-              <input
-                className={styles.fieldInput}
-                name="display_name"
-                type="text"
-                autoComplete="name"
-                required
-                minLength={1}
-                maxLength={80}
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-              />
+          <div className={authStyles.field}>
+            <label
+              className={authStyles.label}
+              htmlFor="password-sign-in-password"
+            >
+              Password
             </label>
-          ) : null}
+            <span className={authStyles.passwordControl}>
+              <Input
+                ref={passwordRef}
+                id="password-sign-in-password"
+                className={authStyles.passwordInput}
+                name="password"
+                type={revealed ? "text" : "password"}
+                size="lg"
+                autoComplete="current-password"
+                required
+                onChange={() => setPasswordError(null)}
+                aria-invalid={passwordError === null ? undefined : true}
+                aria-describedby={
+                  passwordError === null ? undefined : PASSWORD_ERROR_ID
+                }
+              />
+              <Button
+                className={authStyles.reveal}
+                variant="ghost"
+                size="lg"
+                iconOnly
+                type="button"
+                aria-label={revealed ? "Hide password" : "Show password"}
+                aria-controls="password-sign-in-password"
+                onClick={() => setRevealed((current) => !current)}
+              >
+                {revealed ? (
+                  <EyeOff size={18} aria-hidden="true" />
+                ) : (
+                  <Eye size={18} aria-hidden="true" />
+                )}
+              </Button>
+            </span>
+            {passwordError ? (
+              <div role="alert">
+                <FieldFeedback id={PASSWORD_ERROR_ID} content={passwordError} />
+              </div>
+            ) : null}
+          </div>
 
-          <Button variant="primary" size="lg" type="submit">
-            {isCreate ? "Create account" : "Continue"}
+          <Link className={authStyles.forgot} href="/forgot-password">
+            Forgot password?
+          </Link>
+          <Button variant="primary" size="lg" type="submit" loading={pending}>
+            {pending ? "Signing in…" : "Sign in"}
           </Button>
         </form>
 
-        <div className={styles.divider}>
+        <div className={authStyles.divider}>
           <span>or</span>
         </div>
-
-        <div className={styles.providers}>
+        <div className={authStyles.providers}>
           <ProviderForm
             provider="google"
             nextPath={nextPath}
@@ -222,44 +371,12 @@ export default function LoginPageClient({
           />
         </div>
 
-        <p className={styles.toggle}>
-          {isCreate ? (
-            <>
-              Already have an account?{" "}
-              <button
-                type="button"
-                className={styles.toggleLink}
-                onClick={toggleMode}
-              >
-                Sign in
-              </button>
-            </>
-          ) : (
-            <>
-              New to Nexus?{" "}
-              <button
-                type="button"
-                className={styles.toggleLink}
-                onClick={toggleMode}
-              >
-                Create an account
-              </button>
-            </>
-          )}
-        </p>
-
-        <p className={styles.legal}>
+        <p className={authStyles.legal}>
           By continuing, you agree to the{" "}
-          <Link className={styles.legalLink} href="/terms">
-            Terms of Service
-          </Link>{" "}
-          and{" "}
-          <Link className={styles.legalLink} href="/privacy">
-            Privacy Policy
-          </Link>
-          .
+          <Link href="/terms">Terms of Service</Link> and{" "}
+          <Link href="/privacy">Privacy Policy</Link>.
         </p>
-      </main>
-    </div>
+      </div>
+    </AuthSurface>
   );
 }

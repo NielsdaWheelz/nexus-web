@@ -131,6 +131,7 @@ def test_runtime_exposes_only_recorded_loopback_endpoints_in_test_environment(
     )
     assert runtime_endpoint(tmp_path, TEST_ENV, EndpointKind.MINIO) == "http://127.0.0.1:19000"
     assert runtime_endpoint(tmp_path, TEST_ENV, EndpointKind.SUPABASE) == ("http://127.0.0.1:25421")
+    assert runtime_endpoint(tmp_path, TEST_ENV, EndpointKind.INBUCKET) == ("http://127.0.0.1:25424")
     for environment in ({}, {"NEXUS_ENV": "development"}, {"NEXUS_ENV": "production"}):
         with pytest.raises(RuntimeContractError, match="NEXUS_ENV"):
             runtime_endpoint(tmp_path, environment, EndpointKind.MINIO)
@@ -292,20 +293,34 @@ def test_supabase_user_persists_exact_run_and_scenario_identity(tmp_path: Path) 
     assert cleanup_candidates(tmp_path, TEST_ENV, RUN_ID)[0].external_id == user_id
 
 
-def test_supabase_user_requires_exact_id_before_creation(tmp_path: Path) -> None:
+def test_supabase_invite_records_owned_email_before_provider_assigns_user_id(
+    tmp_path: Path,
+) -> None:
     _runtime(tmp_path)
     user = Resource(ResourceKind.SUPABASE_USER, supabase_user_email(RUN_ID, "auth-session"))
 
-    with pytest.raises(RuntimeContractError, match="planned Supabase admin user id"):
-        record_planned(
-            tmp_path,
-            TEST_ENV,
-            RUN_ID,
-            user,
-            scenario_id="auth-session",
-        )
-    with pytest.raises(RuntimeContractError, match="not recorded"):
-        record_created(tmp_path, TEST_ENV, RUN_ID, user)
+    planned = record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        user,
+        scenario_id="auth-session",
+    )
+
+    assert planned.phase is ResourcePhase.PLANNED
+    assert planned.external_id is None
+    assert cleanup_candidates(tmp_path, TEST_ENV, RUN_ID)[0].external_id is None
+
+    user_id = "12345678-1234-4123-8123-123456789abc"
+    created = record_created(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        user,
+        external_id=user_id,
+    )
+    assert created.external_id == user_id
+    assert cleanup_candidates(tmp_path, TEST_ENV, RUN_ID)[0].external_id == user_id
 
 
 def test_processes_use_fixed_roles_and_record_the_group_before_cleanup(tmp_path: Path) -> None:

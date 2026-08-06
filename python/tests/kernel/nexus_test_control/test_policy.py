@@ -174,11 +174,6 @@ def _minimal_repository(root: Path) -> None:
     )
     _write(
         root,
-        "deploy/smoke/auth-redirect-construction-smoke.sh",
-        "bunx playwright test --project deployment-smoke\n",
-    )
-    _write(
-        root,
         "docs/local-rules/codebase.md",
         "typed test control plane\napps/web/e2e/\ntestdata/\n",
     )

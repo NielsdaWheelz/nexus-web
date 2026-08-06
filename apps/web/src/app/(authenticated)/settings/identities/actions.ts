@@ -2,6 +2,7 @@
 
 import {
   findSupabaseIdentityForLinkedIdentity,
+  isOAuthProvider,
   mayUnlinkIdentity,
   normalizeLinkedIdentities,
   type LinkedIdentity,
@@ -31,6 +32,9 @@ export async function unlinkLinkedIdentity(
   identityId: string,
   provider: string
 ): Promise<UnlinkIdentityResult> {
+  if (!isOAuthProvider(provider)) {
+    return { ok: false };
+  }
   const supabase = await createClient();
   const { data, error: loadError } = await supabase.auth.getUserIdentities();
   if (loadError) {

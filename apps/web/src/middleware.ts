@@ -37,6 +37,14 @@ export function middleware(request: NextRequest) {
     "Reporting-Endpoints",
     buildReportingEndpoints(request.nextUrl.origin),
   );
+  if (isAuthResponsePath(request.nextUrl.pathname)) {
+    response.headers.set("Cache-Control", "no-store");
+  }
+  if (isEmailActionLanding(request.nextUrl.pathname)) {
+    response.headers.set("Referrer-Policy", "no-referrer");
+    response.headers.set("X-Robots-Tag", "noindex, nofollow");
+    response.headers.set("X-Content-Type-Options", "nosniff");
+  }
   if (request.nextUrl.pathname === "/s" || isPublicResourceShareApi) {
     response.headers.set("Cache-Control", "private, no-store");
     response.headers.set("Referrer-Policy", "no-referrer");
@@ -49,6 +57,20 @@ export function middleware(request: NextRequest) {
   }
 
   return response;
+}
+
+function isAuthResponsePath(pathname: string): boolean {
+  return (
+    pathname === "/login" ||
+    pathname === "/forgot-password" ||
+    pathname === "/account/password" ||
+    pathname === "/auth" ||
+    pathname.startsWith("/auth/")
+  );
+}
+
+function isEmailActionLanding(pathname: string): boolean {
+  return pathname === "/auth/invite" || pathname === "/auth/recovery";
 }
 
 function buildPublicReaderCsp(request: NextRequest, nonce: string): string {

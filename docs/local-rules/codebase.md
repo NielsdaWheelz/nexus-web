@@ -71,9 +71,10 @@ technology-ownership, import, and module-boundary model.
   clients, OAuth/PKCE exchange logic, upload clients,
   `addJavascriptInterface`, or generic bridges. OAuth/PKCE exchange remains
   server-side.
-- Password identities are managed via Supabase Auth's `auth.identities` table;
-  the application stores no password material. Password-auth Server Actions
-  live in `apps/web/src/lib/auth/password-actions.ts`.
+- Supabase Auth alone owns password hashes, invitation and recovery tokens, and
+  sessions. `auth.identities` describes linked provider identities and MUST NOT
+  be used to infer password presence. Nexus stores no password, invitation, or
+  password-presence state.
 
 ## Environment
 

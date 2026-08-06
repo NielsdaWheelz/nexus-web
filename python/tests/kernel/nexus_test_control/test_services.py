@@ -10,8 +10,10 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 
+import httpx
 import pytest
 
+import nexus_test_control.services as services
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.runtime import (
@@ -352,12 +354,172 @@ def test_supabase_credentials_reject_a_cli_url_outside_the_recorded_runtime() ->
         )
 
 
+def test_admin_invite_records_ownership_before_provider_creation_and_returns_email_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    email = f"nexus+{RUN_ID}+auth-session@example.invalid"
+    user_id = "12345678-1234-4123-8123-123456789abc"
+    admin_key = "controller-only-admin-key"
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        [planned] = read_ledger(tmp_path, RUN_ID).entries
+        assert planned.resource == Resource(ResourceKind.SUPABASE_USER, email)
+        assert planned.scenario_id == "auth-session"
+        assert planned.phase.value == "planned"
+        assert planned.external_id is None
+        assert request.method == "POST"
+        assert request.url.path == "/auth/v1/invite"
+        assert request.headers["authorization"] == f"Bearer {admin_key}"
+        assert request.headers["apikey"] == admin_key
+        assert json.loads(request.content) == {
+            "email": email,
+            "data": {
+                "nexus_test_run_id": RUN_ID,
+                "nexus_test_scenario": "auth-session",
+            },
+        }
+        return httpx.Response(200, json={"id": user_id, "email": email})
+
+    client_type = httpx.Client
+    transport = httpx.MockTransport(provider)
+
+    def provider_client(*, trust_env: bool, timeout: int) -> httpx.Client:
+        return client_type(transport=transport, trust_env=trust_env, timeout=timeout)
+
+    monkeypatch.setattr(httpx, "Client", provider_client)
+
+    invited = services.invite_supabase_user(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "auth-session",
+        SupabaseCredentials("http://127.0.0.1:25421", "public", admin_key),
+    )
+
+    assert invited.email == email
+    assert not hasattr(invited, "id")
+    assert not hasattr(invited, "password")
+    assert admin_key not in repr(invited)
+    [created] = read_ledger(tmp_path, RUN_ID).entries
+    assert created.phase.value == "created"
+    assert created.external_id == user_id
+
+
+def test_cleanup_recovers_provider_created_invite_left_planned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    email = f"nexus+{RUN_ID}+auth-session@example.invalid"
+    user_id = "12345678-1234-4123-8123-123456789abc"
+    admin_key = "controller-only-admin-key"
+    resource = Resource(ResourceKind.SUPABASE_USER, email)
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        resource,
+        scenario_id="auth-session",
+    )
+    calls: list[tuple[str, str]] = []
+    listed_pages: list[int] = []
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        assert request.headers["authorization"] == f"Bearer {admin_key}"
+        assert request.headers["apikey"] == admin_key
+        if request.method == "GET" and request.url.path == "/auth/v1/admin/users":
+            page = int(request.url.params["page"])
+            listed_pages.append(page)
+            assert request.url.params["per_page"] == "1000"
+            if page == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "users": [
+                            {
+                                "id": f"00000000-0000-4000-8000-{index:012x}",
+                                "email": f"unrelated-{index}@example.invalid",
+                                "user_metadata": {},
+                            }
+                            for index in range(1000)
+                        ]
+                    },
+                )
+            assert page == 2
+            return httpx.Response(
+                200,
+                json={
+                    "users": [
+                        {
+                            "id": user_id,
+                            "email": email,
+                            "user_metadata": {
+                                "nexus_test_run_id": RUN_ID,
+                                "nexus_test_scenario": "auth-session",
+                            },
+                        }
+                    ]
+                },
+            )
+        if request.url.path == f"/auth/v1/admin/users/{user_id}":
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": user_id,
+                        "email": email,
+                        "user_metadata": {
+                            "nexus_test_run_id": RUN_ID,
+                            "nexus_test_scenario": "auth-session",
+                        },
+                    },
+                )
+            if request.method == "DELETE":
+                return httpx.Response(204)
+        raise AssertionError(f"unexpected Supabase cleanup request: {request.method}")
+
+    client_type = httpx.Client
+    transport = httpx.MockTransport(provider)
+
+    def provider_client(*, trust_env: bool, timeout: int) -> httpx.Client:
+        return client_type(transport=transport, trust_env=trust_env, timeout=timeout)
+
+    monkeypatch.setattr(httpx, "Client", provider_client)
+
+    clean_run(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        supabase=SupabaseCredentials(
+            "http://127.0.0.1:25421",
+            "public",
+            admin_key,
+        ),
+    )
+
+    assert calls == [
+        ("GET", "/auth/v1/admin/users"),
+        ("GET", "/auth/v1/admin/users"),
+        ("GET", f"/auth/v1/admin/users/{user_id}"),
+        ("DELETE", f"/auth/v1/admin/users/{user_id}"),
+    ]
+    assert listed_pages == [1, 2]
+    assert not (tmp_path / ".nexus-test" / "runs" / RUN_ID).exists()
+
+
 def test_supabase_status_parser_rejects_non_json() -> None:
     with pytest.raises(RuntimeContractError, match="not JSON"):
         _parse_supabase_status("Supabase is unavailable")
 
 
-def test_supabase_workdir_is_generated_from_recorded_local_ports(tmp_path: Path) -> None:
+def test_supabase_workdir_contains_generated_config_and_exact_email_template_assets(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "supabase").mkdir()
     (tmp_path / "supabase" / "config.toml").write_text(
         "\n".join(
@@ -376,10 +538,20 @@ def test_supabase_workdir_is_generated_from_recorded_local_ports(tmp_path: Path)
                 'site_url = "http://localhost:3000"',
                 'jwt_issuer = "http://127.0.0.1:54321/auth/v1"',
                 'additional_redirect_urls = ["http://localhost:3000/auth/callback"]',
+                "[auth.email.template.invite]",
+                'content_path = "./supabase/templates/invite.html"',
+                "[auth.email.template.recovery]",
+                'content_path = "./supabase/templates/recovery.html"',
             )
         )
         + "\n"
     )
+    source_templates = tmp_path / "supabase" / "templates"
+    source_templates.mkdir()
+    invite_template = b"<p>Accept this Nexus invitation.</p>\n"
+    recovery_template = b"<p>Continue this Nexus password reset.</p>\n"
+    (source_templates / "invite.html").write_bytes(invite_template)
+    (source_templates / "recovery.html").write_bytes(recovery_template)
     runtime = initialize_runtime(tmp_path, TEST_ENV, _ports())
 
     _write_supabase_config(tmp_path)
@@ -395,6 +567,9 @@ def test_supabase_workdir_is_generated_from_recorded_local_ports(tmp_path: Path)
     assert 'site_url = "http://127.0.0.1:13000"' in text
     assert 'jwt_issuer = "http://127.0.0.1:25421/auth/v1"' in text
     assert '"http://127.0.0.1:13000/auth/callback"' in text
+    generated_templates = generated.parent / "templates"
+    assert (generated_templates / "invite.html").read_bytes() == invite_template
+    assert (generated_templates / "recovery.html").read_bytes() == recovery_template
 
 
 def test_application_database_url_selects_the_installed_psycopg_driver(tmp_path: Path) -> None:

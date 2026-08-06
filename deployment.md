@@ -20,7 +20,7 @@ cutover: production does not fall back to Supabase Database or Supabase Storage.
 - Hetzner IPv4: `5.78.194.235`
 - Hetzner location/type: `hil` / `cpx11`
 - Vercel project: `niels-erik-nandals-projects/nexus-web`
-- Supabase Auth project URL: `https://jiaozhsisiphjtomoamy.supabase.co`
+- Supabase Auth project URL: `https://rpchuualftcjjbpgxlbt.supabase.co`
 
 ## Runtime Shape
 
@@ -223,7 +223,7 @@ Current frontend values should use:
 
 ```bash
 FASTAPI_BASE_URL=https://api.nexus.nielseriknandal.com
-NEXT_PUBLIC_SUPABASE_URL=https://jiaozhsisiphjtomoamy.supabase.co
+NEXT_PUBLIC_SUPABASE_URL=https://rpchuualftcjjbpgxlbt.supabase.co
 ```
 
 Frontend production deploys are GitHub-triggered. Push `main` to GitHub and let
@@ -569,13 +569,20 @@ Before switching production traffic:
    offline before traffic moves; do not configure Supabase as a live fallback.
 5. Sync VPS env and Vercel env.
 6. Deploy backend and run migrations.
-7. Verify Supabase hosted Auth redirect config:
-   `SUPABASE_MANAGEMENT_ACCESS_TOKEN=... ./deploy/supabase/verify-auth-redirects.sh`.
-8. Confirm `/health`, Supabase Auth login, object upload/download, and one job
-   in each worker lane against Hetzner Postgres/R2.
-9. Switch frontend/API traffic, keep maintenance schedules at `0`, and verify
+7. Verify the complete Supabase hosted Auth contract:
+   `SUPABASE_MANAGEMENT_ACCESS_TOKEN=... ./deploy/supabase/verify-auth-config.sh`.
+8. In the Supabase Auth dashboard, confirm **Require current password when
+   changing password** is off. The supported public Management API does not
+   expose this newer toggle; do not automate it through a private Studio API.
+9. In a private browser, sign out and sign back in with an existing owner's
+   Google or GitHub identity. Confirm `/api/me` succeeds. This interactive
+   canary is required because an OAuth-start redirect cannot prove the provider
+   callback or existing-user session.
+10. Confirm `/health`, object upload/download, and one job in each worker lane
+   against Hetzner Postgres/R2.
+11. Switch frontend/API traffic, keep maintenance schedules at `0`, and verify
    reconciliation remains at 600 seconds.
-10. Run the auth smoke checks (see Smoke Checks) against the live URLs.
+12. Run the auth smoke checks (see Smoke Checks) against the live URLs.
 
 After cutover, treat Supabase Database and Supabase Storage as legacy data
 sources only. Do not write new production data to them and do not configure them
@@ -585,17 +592,19 @@ as a fallback path.
 
 `deploy/smoke/auth-smoke.sh` is the post-deploy auth gate. Run it after every
 frontend/backend release once traffic is live; it exits nonzero on any failed
-check. It verifies the production cutover behavior end to end: anonymous
+check. It verifies the safe production HTTP boundary: anonymous
 default protected pages redirect to `/login` without redundant `next`,
 anonymous non-default protected pages preserve `next`, a valid-shaped expired
-cookie prompts a redirect with no `MIDDLEWARE_INVOCATION_TIMEOUT`, public pages
-return `200`, BFF routes return JSON `401 E_UNAUTHENTICATED`, `/docs` is not
-reachable, and the API health endpoint returns `200`.
+cookie prompts a redirect with no `MIDDLEWARE_INVOCATION_TIMEOUT`, public auth
+pages return `200`, Google/GitHub starts target the exact Supabase callback
+contract, BFF routes return JSON `401
+E_UNAUTHENTICATED`, `/docs` is not reachable, and the API health endpoint
+returns `200`.
 
 ```bash
 NEXUS_SMOKE_APP_URL=https://nexus.nielseriknandal.com \
 NEXUS_SMOKE_API_URL=https://api.nexus.nielseriknandal.com \
-NEXUS_SMOKE_SUPABASE_URL=https://jiaozhsisiphjtomoamy.supabase.co \
+NEXUS_SMOKE_SUPABASE_URL=https://rpchuualftcjjbpgxlbt.supabase.co \
   make smoke
 ```
 
@@ -649,34 +658,18 @@ with an isolated canary account, dedicated canary library, known disposable
 URLs, and available X API credits. When those prerequisites are absent, record
 the read-only evidence above and do not fake the canary with lab-only fixtures.
 
-Redirect construction has a separate explicit smoke entrypoint. Production
-defaults to read-only verification: it checks hosted Supabase Auth redirect
-configuration, verifies the smoke URLs match the same env files, then runs the
-safe auth HTTP smoke above. Auth redirect/provider releases must run this lane,
-not only `make smoke`. Mutating canary modes require dedicated smoke accounts
-and mailbox automation before they can be enabled.
+Auth releases have one read-only gate. It verifies the complete hosted
+Supabase Auth configuration, then runs the safe production HTTP and OAuth-start
+smoke above. It never creates a production user or consumes an email token, and
+does not replace the interactive existing-user OAuth canary in the cutover
+checklist.
 
 ```bash
 SUPABASE_MANAGEMENT_ACCESS_TOKEN=<operator-token> \
 NEXUS_SMOKE_APP_URL=https://nexus.nielseriknandal.com \
 NEXUS_SMOKE_API_URL=https://api.nexus.nielseriknandal.com \
-NEXUS_SMOKE_SUPABASE_URL=https://jiaozhsisiphjtomoamy.supabase.co \
-  make smoke-auth-redirects
-```
-
-Staging can run the mutating redirect-construction proof against a controlled
-mailbox domain:
-
-```bash
-SUPABASE_MANAGEMENT_ACCESS_TOKEN=<operator-token> \
-NEXUS_SMOKE_APP_URL=https://staging.example.com \
-NEXUS_SMOKE_API_URL=https://api-staging.example.com \
-NEXUS_SMOKE_SUPABASE_URL=https://<staging-ref>.supabase.co \
-NEXUS_SMOKE_MAILBOX_URL=https://mailbox.example.com \
-NEXUS_SMOKE_EMAIL_DOMAIN=smoke.example.com \
-  ./deploy/smoke/auth-redirect-construction-smoke.sh --mode staging \
-  --env-file deploy/env/env-staging \
-  --frontend-env-file deploy/env/env-staging-frontend
+NEXUS_SMOKE_SUPABASE_URL=https://rpchuualftcjjbpgxlbt.supabase.co \
+  make smoke-auth
 ```
 
 Keep legacy Supabase cleanup/export credentials in a separate local file that is
@@ -765,9 +758,8 @@ maintenance service.
 - `deploy/hetzner/sync-env.sh`: uploads backend runtime env.
 - `deploy/hetzner/deploy.sh`: builds, migrates, and starts services.
 - `deploy/vercel/sync-env.sh`: pushes Vercel env.
-- `deploy/supabase/verify-auth-redirects.sh`: read-only hosted Auth redirect allowlist verifier.
+- `deploy/supabase/verify-auth-config.sh`: read-only complete hosted Auth configuration gate.
 - `deploy/smoke/auth-smoke.sh`: post-deploy auth smoke check.
-- `deploy/smoke/auth-redirect-construction-smoke.sh`: explicit redirect-construction smoke wrapper (`make smoke-auth-redirects`).
 - `.dockerignore`: keeps VPS Docker build contexts small.
 - `deploy/cloudflare/r2-cors.example.json`: production R2 browser upload CORS policy.
 - `deploy/cloudflare/r2-lifecycle.example.json`: production R2 lifecycle policy that expires `uploads/` staging objects.

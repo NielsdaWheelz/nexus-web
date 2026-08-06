@@ -268,12 +268,6 @@ _OWNERSHIP_TOKENS: tuple[tuple[str, re.Pattern[str], frozenset[str], dict[str, i
         frozenset({".github/workflows/release.yml"}),
         {},
     ),
-    (
-        "deployment-smoke",
-        re.compile(r"--project\s+deployment-smoke\b"),
-        frozenset({"deploy/smoke/auth-redirect-construction-smoke.sh"}),
-        {"deploy/smoke/auth-redirect-construction-smoke.sh": 1},
-    ),
 )
 
 
@@ -645,22 +639,17 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
                 if not count:
                     continue
                 direct_counts[(relative, runner)] = direct_counts.get((relative, runner), 0) + count
-                allowed = runner == "playwright" and relative == (
-                    "deploy/smoke/auth-redirect-construction-smoke.sh"
-                )
-                if not allowed:
-                    violations.append(
-                        PolicyViolation(
-                            "repository-test-route-owner",
-                            relative,
-                            f"direct {runner} execution is not owned by this executable surface",
-                            line_number,
-                        )
+                violations.append(
+                    PolicyViolation(
+                        "repository-test-route-owner",
+                        relative,
+                        f"direct {runner} execution is not owned by this executable surface",
+                        line_number,
                     )
+                )
 
     required_routes = {(owner, command): 1 for command, owner in _CONTROLLER_COMMAND_OWNERS.items()}
     required_routes[("scripts/test", "control-plane")] = 1
-    required_routes[("deploy/smoke/auth-redirect-construction-smoke.sh", "playwright")] = 1
     for owner_command, expected_count in required_routes.items():
         owner, command = owner_command
         counts = controller_counts if command in _CONTROLLER_COMMAND_OWNERS else direct_counts

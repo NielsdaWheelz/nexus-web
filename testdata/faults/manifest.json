@@ -48,6 +48,24 @@
       "expected_failure": "second authenticated identity reused the first user's bootstrap cache entry"
     },
     {
+      "id": "auth-password-state-identity-leak",
+      "patch": "testdata/faults/auth-password-state-identity-leak.patch",
+      "sha256": "04e027b74c5ceb98fdbb78072e9bbbe7417aa5c36c69a2462120c23354dac1c8",
+      "proofs": [
+        "vitest:apps/web/src/lib/auth/identities.unit.test.ts"
+      ],
+      "expected_failure": "provider=email reopened password-state inference and password removal"
+    },
+    {
+      "id": "auth-confirmation-expiry-misprojection",
+      "patch": "testdata/faults/auth-confirmation-expiry-misprojection.patch",
+      "sha256": "74f9b4cfe9ce578b7f46bcd3e0a544fc2bc9ea3b616b2b7f4adefd7e890a313a",
+      "proofs": [
+        "vitest:apps/web/src/lib/auth/email-confirmation.unit.test.ts"
+      ],
+      "expected_failure": "invite/otp_expired lost invalid-or-expired confirmation guidance"
+    },
+    {
       "id": "auth-chat-run-ownership-bypass",
       "patch": "testdata/faults/auth-chat-run-ownership-bypass.patch",
       "sha256": "eba2ac65bd74ee7a9e901892be62ead4e03bf7c524830f5755b007b2a7bf3c5e",

@@ -25,7 +25,19 @@ describe("resolveCallbackRedirectOrigin", () => {
       headers: { host: "127.0.0.1:13000" },
     });
 
-    expect(resolveCallbackRedirectOrigin(request)).toBe("http://127.0.0.1:13000");
+    expect(resolveCallbackRedirectOrigin(request)).toBe(
+      "http://127.0.0.1:13000",
+    );
+  });
+
+  it("uses HTTP for the allowlisted Android emulator host", () => {
+    process.env.AUTH_ALLOWED_REDIRECT_ORIGINS = "http://10.0.2.2:3000";
+    delete process.env.AUTH_TRUSTED_PROXY_ORIGINS;
+    const request = new Request("http://localhost:3000/auth/password/sign-in", {
+      headers: { host: "10.0.2.2:3000" },
+    });
+
+    expect(resolveCallbackRedirectOrigin(request)).toBe("http://10.0.2.2:3000");
   });
 
   it("uses an allowlisted forwarded origin only behind the declared proxy", () => {
@@ -38,7 +50,9 @@ describe("resolveCallbackRedirectOrigin", () => {
       },
     });
 
-    expect(resolveCallbackRedirectOrigin(request)).toBe("https://public.example.com");
+    expect(resolveCallbackRedirectOrigin(request)).toBe(
+      "https://public.example.com",
+    );
   });
 
   it("rejects a forwarded origin supplied through an undeclared host", () => {
