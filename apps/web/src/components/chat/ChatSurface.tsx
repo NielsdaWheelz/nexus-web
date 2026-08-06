@@ -17,6 +17,10 @@ import type {
 } from "@/lib/conversations/types";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import type {
+  DeleteMessageMutation,
+  MessageActionMutationOutcome,
+} from "@/lib/chat/messageActionIntent";
 import { MessageRow } from "./MessageRow";
 import { useChatScroll, type ChatScrollHandle } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
@@ -42,10 +46,13 @@ interface ChatSurfaceProps {
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
   onReplyToAssistant?: (draft: BranchDraft) => void;
-  onRerunAssistantResponse?: (assistantMessageId: string) => void;
-  rerunningAssistantMessageIds?: Set<string>;
-  onRegenerateAssistantResponse?: (assistantMessageId: string) => void;
-  regeneratingAssistantMessageIds?: Set<string>;
+  onRerunAssistantResponse?: (
+    assistantMessageId: string,
+  ) => Promise<MessageActionMutationOutcome>;
+  onRegenerateAssistantResponse?: (
+    assistantMessageId: string,
+  ) => Promise<MessageActionMutationOutcome>;
+  onDeleteMessage?: DeleteMessageMutation;
   connectionLostAssistantIds?: Set<string>;
   onReconnectAssistant?: (assistantMessageId: string) => void;
   onReaderSourceActivate?: (
@@ -72,9 +79,8 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       onSelectFork,
       onReplyToAssistant,
       onRerunAssistantResponse,
-      rerunningAssistantMessageIds,
       onRegenerateAssistantResponse,
-      regeneratingAssistantMessageIds,
+      onDeleteMessage,
       connectionLostAssistantIds,
       onReconnectAssistant,
       onReaderSourceActivate,
@@ -200,9 +206,8 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
                 onSelectFork={onSelectFork}
                 onReplyToAssistant={onReplyToAssistant}
                 onRerunAssistantResponse={onRerunAssistantResponse}
-                rerunningAssistantMessageIds={rerunningAssistantMessageIds}
                 onRegenerateAssistantResponse={onRegenerateAssistantResponse}
-                regeneratingAssistantMessageIds={regeneratingAssistantMessageIds}
+                onDeleteMessage={onDeleteMessage}
                 connectionLostAssistantIds={connectionLostAssistantIds}
                 onReconnectAssistant={onReconnectAssistant}
                 onReaderSourceActivate={onReaderSourceActivate}

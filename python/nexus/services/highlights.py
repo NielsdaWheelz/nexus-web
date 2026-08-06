@@ -81,6 +81,58 @@ def visible_highlight_ids(db: Session, *, viewer_id: UUID, highlight_ids: list[U
 
 
 @dataclass(frozen=True, slots=True)
+class HighlightActionFacts:
+    """Closed facts needed to plan one visible Highlight's resource actions."""
+
+    is_owner: bool
+    edit_bounds_applicable: bool
+    learn_applicable: bool
+    note_block_id: UUID | None
+
+
+def highlight_action_facts(
+    db: Session, *, viewer_id: UUID, highlight_ids: list[UUID]
+) -> dict[UUID, HighlightActionFacts]:
+    """Batch action facts for readable Highlights.
+
+    Visibility is the canonical Highlight predicate. Note presence is viewer
+    scoped because each viewer may attach their own note to a shared Highlight.
+    Both reads are set based regardless of batch size.
+    """
+    ordered = list(dict.fromkeys(highlight_ids))
+    if not ordered:
+        return {}
+    rows = (
+        db.execute(
+            select(
+                Highlight.id,
+                Highlight.user_id,
+                Highlight.anchor_kind,
+                Highlight.exact,
+            ).where(
+                Highlight.id.in_(ordered),
+                highlight_readability_filter(viewer_id),
+            )
+        )
+        .mappings()
+        .all()
+    )
+    visible_ids = [UUID(str(row["id"])) for row in rows]
+    notes = linked_note_blocks_for_highlights(db, viewer_id, visible_ids)
+    return {
+        UUID(str(row["id"])): HighlightActionFacts(
+            is_owner=UUID(str(row["user_id"])) == viewer_id,
+            edit_bounds_applicable=row["anchor_kind"] == "fragment_offsets",
+            learn_applicable=bool(str(row["exact"] or "").strip()),
+            note_block_id=(
+                notes[UUID(str(row["id"]))][0].id if notes.get(UUID(str(row["id"]))) else None
+            ),
+        )
+        for row in rows
+    }
+
+
+@dataclass(frozen=True, slots=True)
 class RecentHighlightAnchorFact:
     """One media normalized from a viewer-owned highlight activity fact."""
 
@@ -247,8 +299,9 @@ def map_integrity_error(e: IntegrityError) -> ApiError:
     constraint_name = None
 
     # Try to get constraint name from psycopg diag
-    if hasattr(e.orig, "diag") and hasattr(e.orig.diag, "constraint_name"):
-        constraint_name = e.orig.diag.constraint_name
+    diag = getattr(e.orig, "diag", None)
+    if diag is not None and hasattr(diag, "constraint_name"):
+        constraint_name = diag.constraint_name
     else:
         # Fallback: search exception message
         msg = str(e.orig) if e.orig else str(e)
@@ -367,9 +420,12 @@ def project_highlight(highlight: Highlight, viewer_id: UUID) -> TypedHighlightOu
         )
     elif highlight.anchor_kind == "fragment_offsets":
         fragment_anchor = _require_fragment_highlight_or_404(highlight)
+        media_id = highlight.anchor_media_id
+        if media_id is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
         anchor = FragmentAnchorOut(
             type="fragment_offsets",
-            media_id=highlight.anchor_media_id,
+            media_id=media_id,
             fragment_id=fragment_anchor.fragment_id,
             start_offset=fragment_anchor.start_offset,
             end_offset=fragment_anchor.end_offset,
@@ -875,7 +931,11 @@ def update_highlight(
             "fragment_offsets anchor updates are not valid for PDF highlights",
         )
 
-    if anchor_update is not None and anchor_kind == "pdf_page_geometry":
+    if (
+        anchor_update is not None
+        and anchor_kind == "pdf_page_geometry"
+        and anchor_update.type == "pdf_page_geometry"
+    ):
         from nexus.services.pdf_highlights import update_pdf_highlight_bounds
 
         return update_pdf_highlight_bounds(
@@ -911,8 +971,13 @@ def update_highlight(
 
     current_start = fragment_anchor.start_offset
     current_end = fragment_anchor.end_offset
-    final_start = anchor_update.start_offset if anchor_update is not None else current_start
-    final_end = anchor_update.end_offset if anchor_update is not None else current_end
+    fragment_update = (
+        anchor_update
+        if anchor_update is not None and anchor_update.type == "fragment_offsets"
+        else None
+    )
+    final_start = fragment_update.start_offset if fragment_update is not None else current_start
+    final_end = fragment_update.end_offset if fragment_update is not None else current_end
     final_color = req.color if req.color is not None else highlight.color
 
     offsets_changed = final_start != current_start or final_end != current_end

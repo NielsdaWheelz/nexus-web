@@ -10,7 +10,7 @@ type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
 interface ResourceActionMenuProps {
   /** The one and only resource this menu acts on. */
-  readonly target: ResourceActionSubject;
+  readonly actionSubject: ResourceActionSubject;
   /** Trigger accessible label. Presentation only. */
   readonly label?: string;
   /** Menu placement relative to the trigger. Presentation only. */
@@ -24,25 +24,24 @@ interface ResourceActionMenuProps {
 /**
  * The one canonical resource dropdown. It is a thin wrapper over `ActionMenu`:
  * every surface (row, header, pane, player, Nexus) renders THIS with the same
- * `target` and gets the identical menu. It owns no policy — membership, current
+ * `actionSubject` and gets the identical menu. It owns no policy — membership, current
  * verb, ordering, danger-last, busy/blocked, and dispatch all live in the
  * resource-action runtime and the pure planner. The component accepts no
  * actions, groups, capability flags, callbacks, projection, or surface id; only
- * a target and presentation-only trigger options.
+ * a subject and presentation-only trigger options.
  *
- * The runtime prefetches the ref's snapshot the moment this mounts, so the menu
- * model is either not-ready (no trigger yet) or ready with descriptors whose
- * `onSelect` closures fire only on selection. Opening the menu therefore never
- * triggers a network request.
+ * The runtime prefetches the ref's snapshot the moment this mounts. The trigger
+ * is always present: inert with an explanation while Loading, Retry-capable on
+ * Error, and backed by descriptors whose ports fire only on selection.
  */
 export default function ResourceActionMenu({
-  target,
+  actionSubject,
   label,
   placement,
   align,
   renderTrigger,
 }: ResourceActionMenuProps) {
-  const model = useResourceActionMenuModel(target);
+  const model = useResourceActionMenuModel(actionSubject);
   // Keep the mobile bottom chrome pinned while the dropdown is open, so it does
   // not collapse under the portaled menu — the behaviour every ActionMenu-backed
   // dropdown gets, now owned once by the canonical resource menu.
@@ -60,10 +59,11 @@ export default function ResourceActionMenu({
     },
     [acquire],
   );
-  if (!model.ready) return null;
   return (
     <ActionMenu
       options={model.descriptors}
+      triggerDisabled={model.triggerDisabled}
+      triggerDisabledReason={model.triggerDisabledReason}
       label={label ?? "More actions"}
       placement={placement}
       align={align}

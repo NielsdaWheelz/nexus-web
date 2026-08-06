@@ -141,12 +141,14 @@ interface StubbedNetwork {
 }
 
 // Each lectern row now renders the canonical `ResourceActionMenu`, keyed by the
-// row's `media:{mediaId}` target. The runtime prefetches every ref's snapshot
+// row's `media:{mediaId}` subject. The runtime prefetches every ref's snapshot
 // from the resolve endpoint, so "Remove from Lectern" is a resolve-backed
 // resource capability (LecternMembership Present) rather than a merged menu item.
 const LECTERN_ITEM_BY_MEDIA_REF = new Map(
   SNAPSHOT_ITEMS.map((item) => [`media:${item.mediaId}`, item]),
 );
+const LECTERN_FACTS_REVISION = "7".repeat(64);
+const MISSING_FACTS_REVISION = "0".repeat(64);
 
 function resolveSnapshot(ref: string) {
   const item = LECTERN_ITEM_BY_MEDIA_REF.get(ref);
@@ -154,12 +156,14 @@ function resolveSnapshot(ref: string) {
     ref,
     activation: {
       resourceRef: ref,
-      kind: "route",
-      href: item ? item.href : "/",
+      kind: item ? "route" : "none",
+      href: item ? item.href : null,
       unresolvedReason: null,
     },
     missing: item === undefined,
-    factsRevision: "lectern-rev-1",
+    factsRevision: item
+      ? LECTERN_FACTS_REVISION
+      : MISSING_FACTS_REVISION,
     capabilities:
       item === undefined
         ? []
@@ -338,11 +342,11 @@ function filterInput(): HTMLElement {
 }
 
 async function openRowMenu(title: string): Promise<void> {
-  // The canonical resource menu's trigger only mounts once the runtime has
-  // resolved the row's snapshot, so await it rather than reading synchronously.
-  await userEvent.click(
-    await screen.findByRole("button", { name: `More actions for ${title}` }),
-  );
+  const trigger = await screen.findByRole("button", {
+    name: `More actions for ${title}`,
+  });
+  await waitFor(() => expect(trigger).toBeEnabled());
+  await userEvent.click(trigger);
 }
 
 async function openReorderMenu(title: string): Promise<void> {
@@ -416,7 +420,7 @@ describe("Lectern pane refinement", () => {
     await userEvent.keyboard("{Escape}");
     await openRowMenu(RUMOR);
     expect(
-      screen.getByRole("menuitem", { name: "Remove from Lectern" }),
+      screen.getByRole("menuitemcheckbox", { name: "Remove from Lectern" }),
     ).toBeVisible();
     await userEvent.keyboard("{Escape}");
 
@@ -428,7 +432,7 @@ describe("Lectern pane refinement", () => {
     ).toBeNull();
     await openRowMenu(RUMOR);
     expect(
-      screen.getByRole("menuitem", { name: "Remove from Lectern" }),
+      screen.getByRole("menuitemcheckbox", { name: "Remove from Lectern" }),
     ).toBeVisible();
     await userEvent.keyboard("{Escape}");
 
@@ -442,7 +446,7 @@ describe("Lectern pane refinement", () => {
     ).toBeNull();
     await openRowMenu(RUMOR);
     expect(
-      screen.getByRole("menuitem", { name: "Remove from Lectern" }),
+      screen.getByRole("menuitemcheckbox", { name: "Remove from Lectern" }),
     ).toBeVisible();
   });
 

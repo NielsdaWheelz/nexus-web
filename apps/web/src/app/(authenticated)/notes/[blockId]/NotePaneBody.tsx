@@ -13,7 +13,7 @@ import {
 } from "@/lib/reader/pulseEvent";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import {
   requirePaneRuntime,
@@ -23,6 +23,15 @@ import {
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { resourceSurfaceFilterFields } from "@/components/resource-surface/resourceSurfaceFilterFields";
+import {
+  notifyNoteBlockActionIntentOwnerReady,
+  useNoteBlockActionIntentOwner,
+  type NoteBlockActionIntent,
+} from "@/lib/notes/actionIntents";
+import {
+  createMountedEditorIntentController,
+  type MountedEditorIntentController,
+} from "@/lib/actions/mountedActionHandoff";
 
 export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
@@ -81,12 +90,49 @@ export default function NotePaneBody() {
     activeDomainControlCount: 0,
   });
   const [label, setLabel] = useState<string | null>(null);
+  const [focusBodySerial, setFocusBodySerial] = useState(0);
+  const editBodyIntentControllerRef = useRef<
+    MountedEditorIntentController<NoteBlockActionIntent> | null
+  >(null);
+  if (editBodyIntentControllerRef.current === null) {
+    editBodyIntentControllerRef.current = createMountedEditorIntentController(
+      notifyNoteBlockActionIntentOwnerReady,
+    );
+  }
+  const editBodyIntentController = editBodyIntentControllerRef.current;
   const [pulse, setPulse] = useState<
     (NotePulseTarget & { pulseId: number }) | null
   >(null);
   const pulseIdRef = useRef(0);
   usePaneReturnReady(ready);
   useSetPaneLabel(label);
+  const acceptEditBodyIntent = useCallback(
+    (intent: NoteBlockActionIntent) => {
+      if (!ready || !editBodyIntentController.accept(intent)) return false;
+      setFocusBodySerial((current) => current + 1);
+      return true;
+    },
+    [editBodyIntentController, ready],
+  );
+  useNoteBlockActionIntentOwner(
+    ready
+      ? canonicalResourceRef({ scheme: "note_block", id: blockId })
+      : null,
+    acceptEditBodyIntent,
+  );
+  const beginBodyIntentMutation = useCallback(
+    () => editBodyIntentController.beginMutation(),
+    [editBodyIntentController],
+  );
+  const abortBodyIntent = useCallback(() => {
+    editBodyIntentController.abortEditing();
+  }, [editBodyIntentController]);
+  useEffect(
+    () => () => {
+      editBodyIntentController.releaseOwner();
+    },
+    [editBodyIntentController],
+  );
   const setPulseTarget = useCallback((target: NotePulseTarget) => {
     const next = pulseIdRef.current + 1;
     pulseIdRef.current = next;
@@ -134,12 +180,10 @@ export default function NotePaneBody() {
   usePanePrimaryChrome({
     search,
     actions: companionAction ? [companionAction] : [],
-    resourceTarget: ready
-      ? routeResourceActionSubject({
-          scheme: "note_block",
-          id: blockId,
-          href: `/notes/${blockId}`,
-        })
+    actionSubject: ready
+      ? {
+          ref: canonicalResourceRef({ scheme: "note_block", id: blockId }),
+        }
       : undefined,
   });
   return (
@@ -148,11 +192,14 @@ export default function NotePaneBody() {
         <p role="status">No matching item found so far.</p>
       ) : null}
       <ResourceSurfaceEditor
-    sourceRef={sourceRef}
-    rowFilterQuery={filterQuery}
+        sourceRef={sourceRef}
+        rowFilterQuery={filterQuery}
         onSurfaceChange={handleSurfaceChange}
-    activateTarget={activateTarget}
-    notePulseTarget={pulse}
+        focusBodySerial={focusBodySerial}
+        onSourceBodyMutationStarted={beginBodyIntentMutation}
+        onSourceBodyEditAborted={abortBodyIntent}
+        activateTarget={activateTarget}
+        notePulseTarget={pulse}
       />
     </>
   );

@@ -96,6 +96,53 @@ def subscribed_podcast_ids(db: Session, *, viewer_id: UUID, podcast_ids: list[UU
     return {UUID(str(row[0])) for row in rows}
 
 
+def existing_podcast_ids(db: Session, *, podcast_ids: list[UUID]) -> set[UUID]:
+    """The persisted Podcast identities among the supplied ids.
+
+    Podcast detail routes admit every persisted identity, including after the
+    viewer unsubscribes. The canonical action-snapshot owner uses this set-based
+    read for route-aligned action visibility without widening personal
+    resource-graph or search visibility.
+    """
+    ordered = list(dict.fromkeys(podcast_ids))
+    if not ordered:
+        return set()
+    rows = db.execute(
+        text("SELECT id FROM podcasts WHERE id = ANY(:podcast_ids)"),
+        {"podcast_ids": ordered},
+    ).all()
+    return {UUID(str(row[0])) for row in rows}
+
+
+def failed_backfill_podcast_ids(
+    db: Session, *, viewer_id: UUID, podcast_ids: list[UUID]
+) -> set[UUID]:
+    """Subscribed Podcasts whose one current backfill is durably failed.
+
+    This is the set-based advisory twin of ``retry_subscription_backfill``. The
+    command locks and reauthorizes; callers use this read only to publish the
+    structurally applicable RetryBackfill capability.
+    """
+    ordered = list(dict.fromkeys(podcast_ids))
+    if not ordered:
+        return set()
+    rows = db.execute(
+        text(
+            """
+            SELECT ps.podcast_id
+            FROM podcast_subscriptions ps
+            JOIN podcast_subscription_backfills backfill
+              ON backfill.subscription_id = ps.id
+            WHERE ps.user_id = :viewer_id
+              AND ps.podcast_id = ANY(:podcast_ids)
+              AND backfill.failed_at IS NOT NULL
+            """
+        ),
+        {"viewer_id": viewer_id, "podcast_ids": ordered},
+    ).all()
+    return {UUID(str(row[0])) for row in rows}
+
+
 def hydrate_compact_podcast_targets(
     db: Session, *, viewer_id: UUID, podcast_ids: list[UUID]
 ) -> dict[UUID, CompactPodcastTarget]:

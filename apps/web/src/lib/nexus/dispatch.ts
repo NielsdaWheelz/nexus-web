@@ -13,9 +13,9 @@ import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import {
   executeResourceChat,
-  executeResourceOpen,
   executeResourceShare,
 } from "@/lib/resources/resourceActionExecution";
+import { activateResource } from "@/lib/resources/activation";
 import { requestSearchInputFocus } from "@/lib/search/pendingSearchFocus";
 import type {
   ShareOpenOptions,
@@ -287,35 +287,32 @@ export function dispatchNexusTarget(
       );
     }
     case "ResourceOpen": {
-      if (target.subject.activation.kind === "route") {
-        const href = target.subject.activation.href;
+      if (target.activation.kind === "route") {
+        const href = target.activation.href;
         const blocked = href === null ? null : blockedByAndroid(href);
         if (blocked) return blocked;
       }
       let outcome: NexusDispatchOutcome = { kind: "Stayed" };
-      executeResourceOpen({
-        target: target.subject,
-        resourceNavigation: {
-          labelHint: target.labelHint,
-          disposition: activation.disposition,
-          activateTarget: ({ target: workspaceTarget, disposition }) => {
-            outcome = activationOutcome(
-              {
-                kind: "InternalHref",
-                href: workspaceTarget.href,
-                labelHint: workspaceTarget.labelHint,
-              },
-              activateMeasuredWorkspaceTarget(workspaceTarget, context, {
-                originPaneId: context.activePaneId,
-                target: workspaceTarget,
-                disposition,
-                modality: activation.modality,
-              }),
-            );
-          },
+      activateResource(target.activation, {
+        labelHint: target.labelHint,
+        disposition: activation.disposition,
+        activateTarget: ({ target: workspaceTarget, disposition }) => {
+          outcome = activationOutcome(
+            {
+              kind: "InternalHref",
+              href: workspaceTarget.href,
+              labelHint: workspaceTarget.labelHint,
+            },
+            activateMeasuredWorkspaceTarget(workspaceTarget, context, {
+              originPaneId: context.activePaneId,
+              target: workspaceTarget,
+              disposition,
+              modality: activation.modality,
+            }),
+          );
         },
       });
-      return target.subject.activation.kind === "external"
+      return target.activation.kind === "external"
         ? { kind: "NavigationAccepted" }
         : outcome;
     }

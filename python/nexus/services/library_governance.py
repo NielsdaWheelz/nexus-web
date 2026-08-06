@@ -938,6 +938,8 @@ def list_writable_library_destinations(
 class LibraryManagementFacts:
     """The viewer's manage/delete authority over one library."""
 
+    settings_applicable: bool
+    delete_applicable: bool
     can_manage_settings: bool
     can_delete: bool
 
@@ -982,7 +984,10 @@ def library_management_facts(
             viewer_user_id=viewer_id,
             owner_user_id=row["owner_user_id"],
         )
+        mutable = not bool(row["is_default"]) and row["system_key"] is None
         facts[UUID(str(row["id"]))] = LibraryManagementFacts(
+            settings_applicable=mutable,
+            delete_applicable=mutable,
             can_manage_settings=capabilities["can_rename"],
             can_delete=capabilities["can_delete"],
         )

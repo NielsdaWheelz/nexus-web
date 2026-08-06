@@ -1,125 +1,245 @@
-import type { ResourceActivation } from "@/lib/resources/activation";
+import { isSameSystemApiDefect } from "@/lib/api/client";
 import type { ResourceActionSnapshot } from "@/lib/actions/resourceActionSnapshot";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 
-// The deduplicated batch snapshot cache. It is the runtime's "zero network on
-// menu open" owner: surfaces REGISTER the canonical refs they may act on, the
-// cache coalesces every not-yet-cached ref registered within one scheduling
-// tick into ONE resolve call, and distributes the snapshots back per ref. The
-// menu trigger stays unavailable until the ref's snapshot is `ready`, so opening
-// the menu never fetches.
-//
-// This module is framework-free and dependency-injected (`resolve` + `schedule`)
-// so the batch-coalescing contract is unit-testable without a DOM.
-
 export type SnapshotCacheEntry =
-  | { readonly status: "pending" }
-  | { readonly status: "ready"; readonly snapshot: ResourceActionSnapshot }
-  | { readonly status: "error"; readonly error: unknown };
+  | { readonly status: "Loading" }
+  | { readonly status: "Ready"; readonly snapshot: ResourceActionSnapshot }
+  | {
+      readonly status: "Reconciling";
+      readonly snapshot: ResourceActionSnapshot;
+    }
+  | {
+      readonly status: "Error";
+      readonly error: unknown;
+      readonly lastGoodSnapshot?: ResourceActionSnapshot;
+      /** A shared retry/reconciliation read is running against stale facts. */
+      readonly retrying?: true;
+    };
 
-/** Fetch one snapshot per requested ref (response order is not relied upon). */
+export type ResourceActionReconciliationScope =
+  | { readonly kind: "None" }
+  | {
+      readonly kind: "Subjects";
+      readonly refs: readonly CanonicalResourceRef[];
+    }
+  | { readonly kind: "AllRetained" };
+
+/** Fetch exactly one ordered snapshot for every requested ref. */
 export type ResolveSnapshots = (
   refs: readonly CanonicalResourceRef[],
 ) => Promise<readonly ResourceActionSnapshot[]>;
 
-/**
- * Defer a flush to the end of the current tick. Production passes a microtask
- * scheduler so synchronous registrations coalesce; a test passes a manual
- * scheduler to flush deterministically. The flush may return a promise so a test
- * can await the batch settling.
- */
+/** Defer the first retained-ref batch to the end of the current tick. */
 export type ScheduleFlush = (flush: () => void | Promise<void>) => void;
 
 export interface ResourceActionSnapshotCache {
-  /** Track `ref` for prefetch. A ref already known is a no-op — never refetched. */
-  register(ref: CanonicalResourceRef): void;
-  /** Current cache state for `ref` (stable object identity until it changes). */
+  /** Retain one mounted subject and return an idempotent release. */
+  retain(ref: CanonicalResourceRef): () => void;
+  /** Read the subject's public cache phase. Reading never starts transport. */
   peek(ref: CanonicalResourceRef): SnapshotCacheEntry | undefined;
-  /**
-   * Force a fresh resolve of `refs` and overwrite their entries (post-mutation
-   * reconciliation). The returned promise settles when the entries are updated.
-   */
-  reresolve(refs: readonly CanonicalResourceRef[]): Promise<void>;
-  /**
-   * Force a fresh resolve of EVERY known ref. A mutation can change a related
-   * resource's snapshot (Unsubscribe changes episode refs, DeleteLibrary changes
-   * contained media's LibraryPlacement), so post-mutation reconciliation
-   * re-resolves the whole cache in one batch — every simultaneously-mounted
-   * representation then agrees (AC7).
-   */
-  reresolveAll(): Promise<void>;
-  /** Subscribe to any entry change (for `useSyncExternalStore`). */
+  /** Retry the failed first resolve or failed reconciliation for one subject. */
+  retry(ref: CanonicalResourceRef): Promise<void>;
+  /** Apply an effect's declared, bounded reconciliation scope. */
+  reconcile(scope: ResourceActionReconciliationScope): Promise<void>;
   subscribe(listener: () => void): () => void;
 }
 
-const PENDING: SnapshotCacheEntry = { status: "pending" };
+interface RetainedEntry {
+  retainCount: number;
+  generation: number;
+  inFlightCount: number;
+  retryPromise?: Promise<void>;
+  /**
+   * The latest mutation reconciliation that includes this ref. Overlapping
+   * effects join this boundary before starting their own authoritative read,
+   * so an older caller cannot release its busy action while a newer read still
+   * exposes the shared last-good snapshot.
+   */
+  reconciliationTail?: Promise<void>;
+  state: SnapshotCacheEntry;
+}
 
-/**
- * A missing snapshot the cache synthesizes only when a requested ref is absent
- * from the resolve response. The endpoint already returns an explicit missing
- * snapshot per missing resource, so this is a defensive total-coverage fallback
- * that keeps every registered ref resolvable (the planner returns an empty plan
- * for a missing snapshot).
- */
-function missingSnapshot(ref: CanonicalResourceRef): ResourceActionSnapshot {
-  const activation: ResourceActivation = {
-    resourceRef: ref,
-    kind: "none",
-    href: null,
-    unresolvedReason: null,
-  };
-  return { ref, activation, missing: true, factsRevision: "", capabilities: [] };
+interface ResolveRequest {
+  readonly ref: CanonicalResourceRef;
+  readonly entry: RetainedEntry;
+  readonly generation: number;
+  readonly lastGoodSnapshot?: ResourceActionSnapshot;
+}
+
+class SnapshotResolveContractDefect extends TypeError {
+  constructor(message: string) {
+    // justify-defect: the authenticated server and strict client ship together;
+    // an incomplete or reordered response is same-system contract drift.
+    super(message);
+    this.name = "SnapshotResolveContractDefect";
+  }
+}
+
+function lastGoodSnapshot(
+  state: SnapshotCacheEntry,
+): ResourceActionSnapshot | undefined {
+  switch (state.status) {
+    case "Ready":
+    case "Reconciling":
+      return state.snapshot;
+    case "Error":
+      return state.lastGoodSnapshot;
+    case "Loading":
+      return undefined;
+  }
+}
+
+function resolvingState(
+  snapshot: ResourceActionSnapshot | undefined,
+): SnapshotCacheEntry {
+  return snapshot === undefined
+    ? { status: "Loading" }
+    : { status: "Reconciling", snapshot };
+}
+
+function validateOrderedResponse(
+  refs: readonly CanonicalResourceRef[],
+  snapshots: readonly ResourceActionSnapshot[],
+): void {
+  if (snapshots.length !== refs.length) {
+    throw new SnapshotResolveContractDefect(
+      `Snapshot resolve returned ${snapshots.length} snapshots for ${refs.length} refs`,
+    );
+  }
+  refs.forEach((ref, index) => {
+    if (snapshots[index]?.ref !== ref) {
+      throw new SnapshotResolveContractDefect(
+        `Snapshot resolve response is not ordered at index ${index}: expected ${ref}`,
+      );
+    }
+  });
 }
 
 export function createResourceActionSnapshotCache(deps: {
   readonly resolve: ResolveSnapshots;
   readonly schedule: ScheduleFlush;
 }): ResourceActionSnapshotCache {
-  const entries = new Map<CanonicalResourceRef, SnapshotCacheEntry>();
-  const pendingBatch = new Set<CanonicalResourceRef>();
+  const entries = new Map<CanonicalResourceRef, RetainedEntry>();
+  const pendingFirstResolve = new Set<CanonicalResourceRef>();
   const listeners = new Set<() => void>();
   let flushScheduled = false;
 
-  function notify(): void {
+  const notify = (): void => {
     for (const listener of listeners) listener();
-  }
+  };
 
-  function distribute(
+  const maybeEvict = (
+    ref: CanonicalResourceRef,
+    entry: RetainedEntry,
+  ): void => {
+    if (entry.retainCount !== 0 || entry.inFlightCount !== 0) return;
+    if (entries.get(ref) === entry) entries.delete(ref);
+  };
+
+  async function resolveRefs(
     refs: readonly CanonicalResourceRef[],
-    snapshots: readonly ResourceActionSnapshot[],
-  ): void {
-    const byRef = new Map<CanonicalResourceRef, ResourceActionSnapshot>(
-      snapshots.map((snapshot) => [snapshot.ref, snapshot]),
-    );
+  ): Promise<void> {
+    const requests: ResolveRequest[] = [];
     for (const ref of refs) {
-      const snapshot = byRef.get(ref) ?? missingSnapshot(ref);
-      entries.set(ref, { status: "ready", snapshot });
+      const entry = entries.get(ref);
+      if (!entry || entry.retainCount === 0) continue;
+      const previous = lastGoodSnapshot(entry.state);
+      const previousState = entry.state;
+      entry.generation += 1;
+      entry.inFlightCount += 1;
+      // A failed post-mutation read means `previous` may contain the stale
+      // inverse verb. Keep the public entry in Error for every retrying reader;
+      // changing it to Reconciling would briefly re-enable that stale command.
+      entry.state =
+        previousState.status === "Error"
+          ? { ...previousState, retrying: true }
+          : resolvingState(previous);
+      requests.push({
+        ref,
+        entry,
+        generation: entry.generation,
+        ...(previous === undefined ? {} : { lastGoodSnapshot: previous }),
+      });
     }
-  }
-
-  async function fetchInto(refs: readonly CanonicalResourceRef[]): Promise<void> {
-    if (refs.length === 0) return;
-    try {
-      distribute(refs, await deps.resolve(refs));
-    } catch (error) {
-      // A failed reconcile must not clobber a good snapshot; only initial loads
-      // (entries still pending / absent) fall to an error the surface can show.
-      for (const ref of refs) {
-        const current = entries.get(ref);
-        if (current === undefined || current.status === "pending") {
-          entries.set(ref, { status: "error", error });
-        }
-      }
-    }
+    if (requests.length === 0) return;
     notify();
+
+    const requestedRefs = requests.map(({ ref }) => ref);
+    const installFailure = (error: unknown): void => {
+      for (const request of requests) {
+        if (
+          entries.get(request.ref) !== request.entry ||
+          request.entry.generation !== request.generation
+        ) {
+          continue;
+        }
+        request.entry.state =
+          request.lastGoodSnapshot === undefined
+            ? { status: "Error", error }
+            : {
+                status: "Error",
+                error,
+                lastGoodSnapshot: request.lastGoodSnapshot,
+              };
+      }
+    };
+    try {
+      let snapshots: readonly ResourceActionSnapshot[];
+      try {
+        snapshots = await deps.resolve(requestedRefs);
+      } catch (error) {
+        installFailure(error);
+        // Strict decoders and normalized ApiErrors share one same-system defect
+        // taxonomy. Preserve public Error/Retry state, but also reject so the
+        // runtime raises contract drift instead of presenting an endlessly
+        // retryable transport failure.
+        if (
+          error instanceof TypeError ||
+          error instanceof SyntaxError ||
+          isSameSystemApiDefect(error)
+        ) {
+          throw error;
+        }
+        return;
+      }
+
+      try {
+        validateOrderedResponse(requestedRefs, snapshots);
+      } catch (error) {
+        // justify-defect: an ordered same-cardinality response is the cache's
+        // foundational identity contract. Preserve a retryable public state,
+        // but still reject so a malformed same-system response cannot look
+        // like an ordinary successful refresh to its caller.
+        installFailure(error);
+        throw error;
+      }
+      requests.forEach((request, index) => {
+        if (
+          entries.get(request.ref) !== request.entry ||
+          request.entry.generation !== request.generation
+        ) {
+          return;
+        }
+        request.entry.state = {
+          status: "Ready",
+          snapshot: snapshots[index]!,
+        };
+      });
+    } finally {
+      for (const request of requests) {
+        request.entry.inFlightCount -= 1;
+        maybeEvict(request.ref, request.entry);
+      }
+      notify();
+    }
   }
 
   function flush(): Promise<void> {
     flushScheduled = false;
-    if (pendingBatch.size === 0) return Promise.resolve();
-    const refs = [...pendingBatch];
-    pendingBatch.clear();
-    return fetchInto(refs);
+    const refs = [...pendingFirstResolve];
+    pendingFirstResolve.clear();
+    return resolveRefs(refs);
   }
 
   function scheduleFlush(): void {
@@ -128,23 +248,126 @@ export function createResourceActionSnapshotCache(deps: {
     deps.schedule(flush);
   }
 
+  function reconcileRefs(refs: readonly CanonicalResourceRef[]): Promise<void> {
+    const uniqueRefs = [...new Set(refs)].filter((ref) => {
+      const entry = entries.get(ref);
+      return entry !== undefined && entry.retainCount > 0;
+    });
+    if (uniqueRefs.length === 0) return Promise.resolve();
+
+    const preceding = [
+      ...new Set(
+        uniqueRefs.flatMap((ref) => {
+          const tail = entries.get(ref)?.reconciliationTail;
+          return tail === undefined ? [] : [tail];
+        }),
+      ),
+    ];
+    const operation =
+      preceding.length === 0
+        ? resolveRefs(uniqueRefs)
+        : Promise.all(
+            preceding.map((tail) => tail.catch(() => undefined)),
+          ).then(() => resolveRefs(uniqueRefs));
+
+    // Install the shared tail synchronously. A second reconciliation started
+    // in this same turn therefore waits instead of racing the first request.
+    for (const ref of uniqueRefs) {
+      const entry = entries.get(ref);
+      if (entry !== undefined && entry.retainCount > 0) {
+        entry.reconciliationTail = operation;
+      }
+    }
+    const clearTail = (): void => {
+      for (const ref of uniqueRefs) {
+        const entry = entries.get(ref);
+        if (entry?.reconciliationTail === operation) {
+          entry.reconciliationTail = undefined;
+        }
+      }
+    };
+    // Observe both terminal paths without creating an unhandled rejecting
+    // promise. The original operation remains the caller's error channel.
+    void operation.then(clearTail, clearTail);
+    return operation;
+  }
+
   return {
-    register(ref) {
-      if (entries.has(ref)) return;
-      entries.set(ref, PENDING);
-      pendingBatch.add(ref);
-      scheduleFlush();
+    retain(ref) {
+      let entry = entries.get(ref);
+      if (entry) {
+        entry.retainCount += 1;
+      } else {
+        entry = {
+          retainCount: 1,
+          generation: 0,
+          inFlightCount: 0,
+          state: { status: "Loading" },
+        };
+        entries.set(ref, entry);
+        pendingFirstResolve.add(ref);
+        scheduleFlush();
+      }
       notify();
+
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        const current = entries.get(ref);
+        if (current !== entry) return;
+        current.retainCount -= 1;
+        if (current.retainCount === 0 && current.inFlightCount === 0) {
+          pendingFirstResolve.delete(ref);
+          entries.delete(ref);
+        }
+        notify();
+      };
     },
     peek(ref) {
-      return entries.get(ref);
+      return entries.get(ref)?.state;
     },
-    reresolve(refs) {
-      const unique = [...new Set(refs)];
-      return fetchInto(unique);
+    retry(ref) {
+      const entry = entries.get(ref);
+      if (!entry || entry.retainCount === 0) {
+        return Promise.reject(
+          new Error(
+            `Cannot retry an unretained resource action subject: ${ref}`,
+          ),
+        );
+      }
+      if (entry.retryPromise) return entry.retryPromise;
+      if (entry.state.status !== "Error") {
+        return Promise.reject(
+          new Error(
+            `Cannot retry resource action snapshot in ${entry.state.status}`,
+          ),
+        );
+      }
+      const retryPromise = resolveRefs([ref]);
+      entry.retryPromise = retryPromise;
+      const clearRetryPromise = () => {
+        if (entry.retryPromise === retryPromise) {
+          entry.retryPromise = undefined;
+        }
+      };
+      // Observe both terminal paths without creating a second rejecting promise.
+      void retryPromise.then(clearRetryPromise, clearRetryPromise);
+      return retryPromise;
     },
-    reresolveAll() {
-      return fetchInto([...entries.keys()]);
+    reconcile(scope) {
+      switch (scope.kind) {
+        case "None":
+          return Promise.resolve();
+        case "Subjects":
+          return reconcileRefs(scope.refs);
+        case "AllRetained":
+          return reconcileRefs(
+            [...entries.entries()]
+              .filter(([, entry]) => entry.retainCount > 0)
+              .map(([ref]) => ref),
+          );
+      }
     },
     subscribe(listener) {
       listeners.add(listener);

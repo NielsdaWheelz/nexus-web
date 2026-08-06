@@ -19,11 +19,8 @@ import {
   CANONICAL_LIBRARIES_INDEX_VIEW,
   type LibrariesIndexView,
 } from "@/lib/libraries/libraryIndexView";
-import {
-  expectExactRecord,
-  expectString,
-  isRecord,
-} from "@/lib/validation";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
+import { expectExactRecord, expectString, isRecord } from "@/lib/validation";
 
 export class LibraryDestinationContractDefect extends Error {
   constructor(message: string) {
@@ -186,10 +183,9 @@ export async function deleteMemberLibrary(
   libraryId: string,
 ): Promise<CollectionRevision> {
   const envelope = expectExactRecord(
-    await apiFetch<unknown>(
-      `/api/libraries/${encodeURIComponent(libraryId)}`,
-      { method: "DELETE" },
-    ),
+    await apiFetch<unknown>(`/api/libraries/${encodeURIComponent(libraryId)}`, {
+      method: "DELETE",
+    }),
     ["data"],
     "delete Library response",
   );
@@ -202,9 +198,16 @@ export async function deleteMemberLibrary(
     expectString(data.libraryId, "delete Library response.data.libraryId") !==
     libraryId
   ) {
-    throw new TypeError("delete Library response identity does not match request");
+    throw new TypeError(
+      "delete Library response identity does not match request",
+    );
   }
-  return decodeCollectionRevision(data.collectionRevision);
+  const collectionRevision = decodeCollectionRevision(data.collectionRevision);
+  // Library deletion changes placement reachability for every former member.
+  // Publish only after the complete same-system response has decoded so direct
+  // canonical Delete and Settings Delete share one exact completion boundary.
+  publishLibraryPlacementChange("Unknown");
+  return collectionRevision;
 }
 
 export async function renameMemberLibrary(
@@ -215,13 +218,10 @@ export async function renameMemberLibrary(
   readonly collectionRevision: CollectionRevision;
 }> {
   const envelope = expectExactRecord(
-    await apiFetch<unknown>(
-      `/api/libraries/${encodeURIComponent(libraryId)}`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({ name }),
-      },
-    ),
+    await apiFetch<unknown>(`/api/libraries/${encodeURIComponent(libraryId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
     ["data"],
     "rename Library response",
   );
@@ -235,8 +235,14 @@ export async function renameMemberLibrary(
     "rename Library response.data.library",
   );
   if (library.id !== libraryId) {
-    throw new TypeError("rename Library response identity does not match request");
+    throw new TypeError(
+      "rename Library response identity does not match request",
+    );
   }
+  // A Library name is presented by the Libraries index and every placement
+  // editor. Reuse the domain's broad revision so all mounted projections
+  // authoritatively refresh after this committed rename.
+  publishLibraryPlacementChange("Unknown");
   return {
     library,
     collectionRevision: decodeCollectionRevision(data.collectionRevision),

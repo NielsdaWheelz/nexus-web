@@ -31,6 +31,7 @@ import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
 import { fetchConversationIndex } from "@/lib/conversations/indexApi";
+import { useConversationIndexRevision } from "@/lib/conversations/indexRevision";
 import {
   CANONICAL_CONVERSATION_INDEX_VIEW,
   CONVERSATION_SORT_OPTION_IDS,
@@ -83,36 +84,13 @@ const NEW_CHAT_ACTIONS: readonly PaneHeaderAction[] = [
   },
 ];
 
-function conversationsErrorMessage(
-  error: ApiError,
-  operation: "Load" | "Delete",
-): FeedbackContent {
-  if (operation === "Load") {
-    switch (error.code) {
-      case "E_NETWORK":
-        return {
-          tone: "Danger",
-          requestId: error.requestId,
-          title: "Chats couldn’t be loaded.",
-        };
-      default:
-        throw error;
-    }
-  }
-
+function conversationsErrorMessage(error: ApiError): FeedbackContent {
   switch (error.code) {
     case "E_NETWORK":
       return {
         tone: "Danger",
         requestId: error.requestId,
-        title: "It’s unclear whether the chat was deleted.",
-        message: "Refresh your chats before trying again.",
-      };
-    case "E_CONVERSATION_NOT_FOUND":
-      return {
-        tone: "Danger",
-        requestId: error.requestId,
-        title: "This chat couldn’t be deleted.",
+        title: "Chats couldn’t be loaded.",
       };
     default:
       throw error;
@@ -149,6 +127,8 @@ function isInvalidViewError(error: unknown): boolean {
 export default function ConversationsPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "ConversationsPaneBody");
   const isPaneActive = usePaneIsActive();
+  const indexChange = useConversationIndexRevision();
+  const observedIndexRevisionRef = useRef(indexChange.revision);
   const renderEnvironment = useRenderEnvironment();
   // The pane URL owns the chats view through a strict, total codec; `view` is
   // null only for an Invalid URL, a terminal, user-recoverable state.
@@ -188,8 +168,9 @@ export default function ConversationsPaneBody() {
   const firstPageVersionRef = useRef(0);
   const pendingConversationsRevalidationRef =
     useRef<PendingConversationsRevalidation | null>(null);
-  const completedConversationsRevalidationVersionRef =
-    useRef<number | null>(null);
+  const completedConversationsRevalidationVersionRef = useRef<number | null>(
+    null,
+  );
   const [chainEpoch, setChainEpoch] = useState(0);
   const [controller, setController] = useState<CommittedChatsView | null>(
     initialRestored,
@@ -202,7 +183,9 @@ export default function ConversationsPaneBody() {
     committedSnapshotRef.current = initialRestored;
   }
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
+    null,
+  );
   const clearAllVisitData = useClearAllPaneVisitData();
   const capturePaneScroll = usePaneScrollRetention(listRegionRef, controller);
   // Set by a refresh so the already-committed view refetches once under a new
@@ -282,7 +265,7 @@ export default function ConversationsPaneBody() {
         setViewInvalid(true);
       } else {
         try {
-          setFeedback(conversationsErrorMessage(firstPage.error, "Load"));
+          setFeedback(conversationsErrorMessage(firstPage.error));
         } catch (defect) {
           setAsyncDefect({ error: defect });
         }
@@ -348,6 +331,11 @@ export default function ConversationsPaneBody() {
     clearAllVisitData,
     rejectPendingConversationsRevalidation,
   ]);
+  useEffect(() => {
+    if (indexChange.revision === observedIndexRevisionRef.current) return;
+    observedIndexRevisionRef.current = indexChange.revision;
+    refreshIndex();
+  }, [indexChange.revision, refreshIndex]);
   const revalidateIndex = useCallback(
     (signal: AbortSignal): Promise<void> => {
       if (signal.aborted) {
@@ -631,9 +619,14 @@ export default function ConversationsPaneBody() {
         notice={
           controller !== null && feedback ? (
             <FeedbackNotice content={feedback} announcement="Assertive" />
-          ) : controller === null && status === "loading" && filterQuery.trim() ? (
+          ) : controller === null &&
+            status === "loading" &&
+            filterQuery.trim() ? (
             <FeedbackNotice
-              content={{ tone: "Neutral", title: "No matching chat found so far." }}
+              content={{
+                tone: "Neutral",
+                title: "No matching chat found so far.",
+              }}
               announcement="None"
             />
           ) : undefined

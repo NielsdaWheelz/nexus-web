@@ -52,7 +52,8 @@ export interface PaneInstrumentPublication {
 /**
  * An explicitly non-resource pane menu: the pane's own view/list controls
  * (reader settings, page date navigation, …) ejected from the resource menu
- * (AC4). Rendered as a dedicated {@link ActionMenu} beside — never merged into —
+ * by the resource-action taxonomy. Rendered as a dedicated {@link ActionMenu}
+ * beside — never merged into —
  * the canonical {@link ResourceActionMenu}.
  */
 export interface PaneViewMenuPublication {
@@ -68,11 +69,11 @@ export interface PanePrimaryChromePublication {
   readonly actions?: readonly PaneHeaderAction[];
   /**
    * The pane's resource IDENTITY. PaneShell renders the one canonical
-   * `<ResourceActionMenu target={resourceTarget}/>` for the pane dropdown — the
+   * `<ResourceActionMenu actionSubject={actionSubject}/>` for the pane dropdown — the
    * same menu every other surface renders, so Open is present in the open pane's
-   * own menu (AC6). The pane publishes identity, not menu groups.
+   * own menu (AC3). The pane publishes identity, not menu groups.
    */
-  readonly resourceTarget?: ResourceActionSubject;
+  readonly actionSubject?: ResourceActionSubject;
   readonly viewMenu?: PaneViewMenuPublication;
   readonly refresh?: PaneRefreshPublication;
 }
@@ -279,7 +280,7 @@ export function arePanePrimaryChromePublicationsEqual(
     arePaneSearchPublicationsEqual(left.search, right.search) &&
     arePaneInstrumentPublicationsEqual(left.instrument, right.instrument) &&
     areActionDescriptorListsEqual(left.actions, right.actions) &&
-    areResourceActionSubjectsEqual(left.resourceTarget, right.resourceTarget) &&
+    areResourceActionSubjectsEqual(left.actionSubject, right.actionSubject) &&
     arePaneViewMenusEqual(left.viewMenu, right.viewMenu) &&
     arePaneRefreshPublicationsEqual(left.refresh, right.refresh)
   );

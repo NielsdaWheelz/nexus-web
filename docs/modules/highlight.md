@@ -155,20 +155,21 @@ rendering follows the current reader location and active fragment/page data.
 Evidence is the Media Resource Inspector's cross-document reader surface for
 highlights. It remains a Document Map body: it renders the stored `exact` quote
 when available, shows an explicit placeholder for geometry-only PDF highlights,
-exposes note/color/delete actions according to caller capability, and shows
-linked note/chat summaries from the aggregate read model. Highlight does not
-publish the Inspector group or its Companion action.
+mounts the canonical resource menu, and shows linked note/chat summaries from
+the aggregate read model. Highlight does not publish the Inspector group or its
+Companion action.
 
 The wide reader may also project highlight-linked marginalia through
 `MarginRail`. Neither Evidence nor the margin owns highlight persistence or
 mutation behavior.
 
 A fresh reader selection has no Highlight yet. Its `SelectionPopover` renders
-the dedicated icon-only `SelectionActionDock`; `HighlightActionBar` renders only
-existing Highlights. `buildHighlightActions` is the shared descriptor owner,
-using the fixed selection names **Highlight**, **Note**, **Link**, **Ask**,
-**Learn**, **Ask in existing chat…**, and **Share** without changing existing-
-Highlight labels. `projectSelectionActionPlan`, beside that catalog, is the sole
+the dedicated icon-only `SelectionActionDock`; `buildSelectionActions` owns
+only this pre-resource gesture. Materialized Highlights mount
+`ResourceActionMenu`, whose snapshot, catalog, planner, and runtime own the same
+action list in every representation. The selection actions use the fixed names
+**Highlight**, **Note**, **Link**, **Ask**, **Learn**,
+**Ask in existing chat…**, and **Share**. `projectSelectionActionPlan` is the sole
 owner of their presentation order: the direct icon row is **Highlight**,
 **Note**, **Link**, **Ask**, and the **More** overflow menu is **Learn**,
 **Ask in existing chat…**, **Share**. Capability decides which descriptors exist

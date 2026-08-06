@@ -40,7 +40,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { OracleCreateResponse } from "../types";
 import BorderFrame from "../BorderFrame";
 import IlluminatedCapital from "../IlluminatedCapital";
@@ -693,15 +693,16 @@ export default function OracleReadingPaneBody() {
   );
 
   usePanePrimaryChrome({
-    resourceTarget:
+    actionSubject:
       (detailResource.status === "ready" &&
         detailResource.data.id === readingId) ||
       committedReadingId === readingId
-        ? routeResourceActionSubject({
-            scheme: "oracle_reading",
-            id: readingId,
-            href: `/oracle/${readingId}`,
-          })
+        ? {
+            ref: canonicalResourceRef({
+              scheme: "oracle_reading",
+              id: readingId,
+            }),
+          }
         : undefined,
   });
 

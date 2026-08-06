@@ -233,7 +233,7 @@ non-wrapping row of icon-only controls named **Highlight**, **Note**, **Link**,
 opens the shared `ActionMenu` on the text-labeled **Learn**,
 **Ask in existing chat…**, and **Share**. The row carries no visible action
 text: each control's accessible name is also its native `title`.
-`buildHighlightActions` remains the sole capability owner and
+`buildSelectionActions` owns only transient, pre-resource selection controls and
 `projectSelectionActionPlan` the sole order owner, so an ineligible action is
 absent and never promotes an overflow action into the direct row. Density
 belongs to the pointer — 32px targets, 16px glyphs, 4px gaps, and 44px targets
@@ -241,9 +241,9 @@ under `@media (pointer: coarse)` — never to viewport width or action count. Th
 dock owns toolbar focus, the overflow trigger, and color disclosure only; color
 is a parameter of **Highlight**, shown as an ink bar under its `Highlighter`
 glyph rather than as a sibling verb. Readers remain the sole
-selection-normalization and Highlight-creation owners. Existing Highlight
-surfaces continue to use `HighlightActionBar` and keep their existing labels and
-behavior.
+selection-normalization and Highlight-creation owners. Once created, every
+Highlight surface mounts `ResourceActionMenu`; canonical snapshots and the
+shared planner own membership, labels, order, state, and dispatch.
 
 ### quick-note composer
 

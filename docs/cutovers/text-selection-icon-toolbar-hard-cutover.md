@@ -55,7 +55,7 @@ The toolbar then appends an `Ellipsis` trigger named `More` iff at least one ove
 
 Rules:
 
-1. Eligibility remains owned by `buildHighlightActions` and its existing inputs.
+1. Eligibility remains owned by `buildSelectionActions` and its existing inputs.
 2. Ineligible actions are absent. A temporarily busy action remains in its canonical slot and is disabled.
 3. Surviving actions retain relative order. Missing actions do not promote overflow actions.
 4. Order never depends on history, viewport width, telemetry, model output, or usage frequency.
@@ -108,7 +108,7 @@ Native `title` is sufficient for this cut. A custom tooltip system is separate w
 ```text
 MediaPane / PdfReader
   -> SelectionPopover                 selection lifecycle and command sequencing
-    -> buildHighlightActions          canonical action identity, eligibility, semantics
+    -> buildSelectionActions          transient action identity, eligibility, semantics
       -> projectSelectionActionPlan   fixed direct/overflow projection
         -> SelectionActionDock        toolbar, roving focus, pending presentation
           -> ActionMenu               overflow interaction and labeled items
@@ -117,7 +117,9 @@ MediaPane / PdfReader
 
 Ownership laws:
 
-- `buildHighlightActions` remains the only highlight/selection action catalog.
+- `buildSelectionActions` remains the only fresh-selection action catalog.
+  Materialized Highlights use the canonical `ResourceActionMenu`; selection
+  code never supplies their standing actions.
 - Add one pure, selection-specific projection beside that catalog. Do not add prominence or tier fields to the generic action schema.
 - `SelectionActionDock` renders the supplied plan; it does not infer capability, rank actions, or synthesize domain commands.
 - `ActionMenu` is the only overflow-menu primitive. Do not use or extend the resource-action runtime; selection actions are outside its ownership.

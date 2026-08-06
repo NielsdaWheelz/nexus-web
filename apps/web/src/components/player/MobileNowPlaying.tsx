@@ -22,7 +22,7 @@ import {
   PlayerSeek,
   PlayerStatus,
   PlayerTransport,
-  playerMediaActionTarget,
+  playerMediaActionSubject,
   playerSourceHref,
   playerTitle,
   type PresentPlayerChrome,
@@ -117,13 +117,13 @@ export default function MobileNowPlaying({
     ...(model.kind === "Preview"
       ? [
           {
-            id: "Player.OpenPreview",
+            id: "OccurrenceAction.PlayerPreview.Open",
             kind: "command" as const,
             label: "Open preview",
             onSelect: onOpenTarget,
           },
           {
-            id: "Player.PreviewSource",
+            id: "OccurrenceAction.PlayerPreview.OpenSource",
             kind: "link" as const,
             label: "Open source",
             href: playerSourceHref(model),
@@ -230,7 +230,7 @@ export default function MobileNowPlaying({
                 <>
                   {model.kind === "Canonical" ? (
                     <ResourceActionMenu
-                      target={playerMediaActionTarget(model)}
+                      actionSubject={playerMediaActionSubject(model)}
                       label="Recording actions"
                       placement="above"
                       align="center"
@@ -272,7 +272,7 @@ export default function MobileNowPlaying({
                   ) : null}
                   {model.kind === "Canonical" ? (
                     <ResourceActionMenu
-                      target={playerMediaActionTarget(model)}
+                      actionSubject={playerMediaActionSubject(model)}
                       label="Recording actions"
                       placement="above"
                       align="center"

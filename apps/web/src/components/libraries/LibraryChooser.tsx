@@ -19,6 +19,7 @@ export interface LibraryChooserItem {
   id: string;
   name: string;
   color: string | null;
+  description?: string;
   selected: boolean;
   interaction: LibraryChooserItemInteraction;
 }
@@ -189,7 +190,9 @@ export default function LibraryChooser({
         <span className={styles.readOnly}>
           <Lock size={16} aria-hidden="true" />
           <span>{READ_ONLY_SHORT}</span>
-          <span className={styles.srOnly}>{item.interaction.reason}</span>
+          {item.description ? null : (
+            <span className={styles.srOnly}>{item.interaction.reason}</span>
+          )}
         </span>
       );
     }
@@ -224,7 +227,12 @@ export default function LibraryChooser({
         <span className={styles.dotSlot}>
           <LibraryColorDot color={item.color} size="sm" />
         </span>
-        <span className={styles.optionName}>{item.name}</span>
+        <span className={styles.optionText}>
+          <span className={styles.optionName}>{item.name}</span>
+          {item.description ? (
+            <span className={styles.optionDescription}>{item.description}</span>
+          ) : null}
+        </span>
         {renderTrailing(item)}
       </div>
     );

@@ -30,7 +30,7 @@ import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMap
 import MobileReaderPositionRibbon from "@/components/reader/MobileReaderPositionRibbon";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
+import { useResourceActionCompletionUndo } from "@/lib/actions/resourceActionRuntime";
 import {
   decodePresentPlayerDescriptor,
   parseMediaId,
@@ -55,6 +55,7 @@ import PdfReader, {
 } from "@/components/PdfReader";
 import SelectionPopover, { DEFAULT_COLOR } from "@/components/SelectionPopover";
 import HighlightActionPopover from "@/components/highlights/HighlightActionPopover";
+import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
 import HighlightQuickNoteComposer, {
   type QuickNoteSession,
 } from "@/components/highlights/HighlightQuickNoteComposer";
@@ -80,8 +81,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import {
   useMediaProcessingStatus,
   type MediaProcessingSnapshot,
@@ -110,6 +110,7 @@ import {
 import { useHighlightNoteChord } from "@/lib/highlights/useHighlightNoteChord";
 import MarginRail from "@/components/reader/MarginRail";
 import LinkTargetDialog from "@/components/resources/LinkTargetDialog";
+import Dialog from "@/components/ui/Dialog";
 import { buildMarginItems } from "@/lib/reader/marginItems";
 import { useEvidenceFilters } from "@/lib/reader/useEvidenceFilters";
 import { useLinkComposer } from "@/lib/reader/useLinkComposer";
@@ -118,7 +119,12 @@ import {
   useStanceComposer,
   type StanceEdgeRef,
 } from "@/lib/reader/useStanceComposer";
-import type { HighlightActionTarget } from "@/components/highlights/highlightActions";
+import {
+  notifyHighlightActionIntentOwnerReady,
+  useHighlightActionIntentOwners,
+  type HighlightActionIntent,
+} from "@/lib/highlights/actionIntent";
+import { executeDestructiveMountedMutation } from "@/lib/actions/mountedActionHandoff";
 import { createRandomId } from "@/lib/createRandomId";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useMediaReaderViewTransition } from "@/lib/ui/viewTransitions";
@@ -233,17 +239,12 @@ import {
   type ReaderNavigationFragment,
   type ReaderNavigationSection,
 } from "@/lib/media/readerNavigation";
-import {
-  canReadMediaDocument,
-  type DocumentProcessingStatus,
-} from "@/lib/media/documentReadiness";
+import { canReadMediaDocument } from "@/lib/media/documentReadiness";
 import {
   renderDocumentEmbedsInHtml,
   type DocumentEmbed,
   type DocumentEmbedSummary,
 } from "@/lib/media/documentEmbeds";
-import { useDocumentActions } from "@/lib/media/useDocumentActions";
-import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
 import ReaderContentsNav from "@/components/reader/ReaderContentsNav";
 import TextDocumentReader, {
@@ -300,12 +301,9 @@ import {
 import type { ContributorCredit } from "@/lib/contributors/types";
 import ResourceCreditsOverlay from "@/components/contributors/ResourceCreditsOverlay";
 import ResourceThumb from "@/components/ui/ResourceThumb";
-import {
-  buildMediaResourceHeader,
-  classifyCanonicalMediaRefetchFailure,
-} from "./mediaFormatting";
+import { buildMediaResourceHeader } from "./mediaFormatting";
 import { resolveEpubInternalLinkTarget } from "./epubHelpers";
-import { ChevronLeft, ChevronRight, RefreshCw, Settings } from "lucide-react";
+import { ChevronLeft, ChevronRight, Settings } from "lucide-react";
 import {
   dispatchReaderPulse,
   type ReaderPulseTarget,
@@ -383,55 +381,6 @@ export interface Media extends MediaProcessingSnapshot {
   created_at: string;
 }
 
-interface MetadataRetryBaseline {
-  mediaId: string;
-  updatedAt: string;
-  metadataEnrichedAt: string | null | undefined;
-  signature: string;
-}
-
-function metadataRetryUnconfirmedFeedbackKey(mediaId: string): string {
-  return `metadata-retry-unconfirmed:${mediaId}`;
-}
-
-function metadataRetrySignature(media: Media): string {
-  return JSON.stringify({
-    title: media.title,
-    contributors: media.contributors.map((credit) => [
-      credit.credited_name,
-      credit.role,
-    ]),
-    published_date: media.published_date ?? null,
-    publisher: media.publisher ?? null,
-    language: media.language ?? null,
-    description: media.description ?? null,
-  });
-}
-
-function metadataRetryTerminalState(
-  media: Media,
-  baseline: MetadataRetryBaseline | null,
-): "success" | "failed" | null {
-  if (!baseline || media.id !== baseline.mediaId) return null;
-  if (
-    media.metadata_enriched_at &&
-    media.metadata_enriched_at !== baseline.metadataEnrichedAt
-  ) {
-    return "success";
-  }
-  if (metadataRetrySignature(media) !== baseline.signature) {
-    return "success";
-  }
-  if (
-    media.failure_stage === "metadata" &&
-    Boolean(media.last_error_code) &&
-    media.updated_at !== baseline.updatedAt
-  ) {
-    return "failed";
-  }
-  return null;
-}
-
 interface SelectionState {
   fragmentId: string;
   startOffset: number;
@@ -501,8 +450,6 @@ interface EvidenceResolutionResponse {
 
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const READER_POSITION_BUCKET_CP = 1024;
-const METADATA_REENRICHMENT_POLL_INTERVAL_MS = 3000;
-const METADATA_REENRICHMENT_MAX_POLLS = 40;
 const READER_APPARATUS_FOCUS_CLASS = "reader-apparatus-focused";
 const READER_APPARATUS_HOVER_CLASS = "reader-apparatus-hover";
 const READER_APPARATUS_PULSE_CLASS = "reader-apparatus-pulse";
@@ -739,7 +686,8 @@ function mediaPaneErrorMessage(
       return {
         tone: "Warning",
         title,
-        message: "This item is still preparing. Wait for it to settle, then retry.",
+        message:
+          "This item is still preparing. Wait for it to settle, then retry.",
         requestId,
       };
     case "E_FORBIDDEN":
@@ -881,7 +829,9 @@ export default function MediaPaneBody() {
     target?.kind === "page" ? Number(target.value) : null;
   const requestedStartMs = target?.kind === "t" ? Number(target.value) : null;
   const feedback = useFeedback();
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
+    null,
+  );
   const publishMediaFailure = useCallback(
     (error: unknown, operation: MediaPaneOperation, key: string) => {
       try {
@@ -916,7 +866,7 @@ export default function MediaPaneBody() {
   const textRestoreSettledRef = useRef(false);
   const [readerLayoutReady, setReaderLayoutReady] = useState(false);
   const lectern = useLectern();
-  const offerCompletionUndo = useCompletionUndo();
+  const offerCompletionUndo = useResourceActionCompletionUndo();
   const lecternResource = lectern.resource;
   const lecternSnapshot = useMemo<LecternSnapshot>(
     () =>
@@ -949,7 +899,7 @@ export default function MediaPaneBody() {
   }, [id, lecternSnapshot]);
 
   // Add-to-Lectern, Mark finished / unread, and Mark episode played / unplayed
-  // are canonical resource actions now: the pane publishes its resourceTarget and
+  // are canonical resource actions now: the pane publishes its actionSubject and
   // the app runtime dispatches them (Lectern / consumption clients + reconcile).
 
   // "Done & open next" — finish this row selecting a Readable successor, open the
@@ -989,7 +939,13 @@ export default function MediaPaneBody() {
       if (handleUnauthenticatedApiError(err)) return;
       publishMediaFailure(err, "Consumption", `media-open-next:${id}`);
     }
-  }, [activateForkTarget, id, lectern, offerCompletionUndo, publishMediaFailure]);
+  }, [
+    activateForkTarget,
+    id,
+    lectern,
+    offerCompletionUndo,
+    publishMediaFailure,
+  ]);
 
   // ---- Core data state ----
   const [media, setMedia] = useState<Media | null>(null);
@@ -1014,14 +970,6 @@ export default function MediaPaneBody() {
   const [error, setError] = useState<FeedbackContent | null>(null);
   // Reset progress is a canonical resource action now: the runtime dispatches it
   // (consumption ResetProgress command + snapshot reconcile).
-  const metadataRetryBaselineRef = useRef<MetadataRetryBaseline | null>(null);
-  const metadataRetryUnconfirmedRequestIdRef = useRef<string | null>(null);
-  const [metadataRetryPollsRemaining, setMetadataRetryPollsRemaining] =
-    useState(0);
-  const [metadataRetryPollExhausted, setMetadataRetryPollExhausted] =
-    useState(false);
-  const [metadataRetryUnconfirmed, setMetadataRetryUnconfirmed] =
-    useState(false);
   useSetPaneLabel(loading ? null : media?.title.trim() || "Media");
 
   // ---- Non-EPUB fragment state ----
@@ -1122,11 +1070,7 @@ export default function MediaPaneBody() {
   const transcriptChromeScrollportRef =
     useMobileChromeReaderScrollport<HTMLDivElement>({
       sourceKey: id,
-      enabled:
-        isMobileViewport &&
-        isPaneActive &&
-        isTranscriptMedia &&
-        canRead,
+      enabled: isMobileViewport && isPaneActive && isTranscriptMedia && canRead,
     });
   const setTranscriptViewportRef = useMemo(
     () =>
@@ -1513,6 +1457,32 @@ export default function MediaPaneBody() {
   // The quick-note composer session (selection note verb, `n` chord, or the
   // click popover's Add/Edit note action). Null = composer closed.
   const [quickNote, setQuickNote] = useState<QuickNoteSession | null>(null);
+  const [highlightColorIntent, setHighlightColorIntent] = useState<{
+    readonly intent: Extract<HighlightActionIntent, { kind: "EditHighlight" }>;
+    readonly highlight: AnchoredReaderRow;
+  } | null>(null);
+  const [highlightColorSaving, setHighlightColorSaving] = useState(false);
+  const highlightColorIntentRef = useRef<Extract<
+    HighlightActionIntent,
+    { kind: "EditHighlight" }
+  > | null>(null);
+  const highlightNoteIntentRef = useRef<Extract<
+    HighlightActionIntent,
+    { kind: "AddHighlightNote" | "EditHighlightNote" }
+  > | null>(null);
+  const highlightNoteMutationInFlightRef = useRef(false);
+  const highlightLinkIntentRef = useRef<Extract<
+    HighlightActionIntent,
+    { kind: "LinkHighlight" }
+  > | null>(null);
+  const highlightBoundsIntentRef = useRef<Extract<
+    HighlightActionIntent,
+    { kind: "EditHighlightBounds" }
+  > | null>(null);
+  const highlightDeleteIntentRef = useRef<Extract<
+    HighlightActionIntent,
+    { kind: "DeleteHighlight" }
+  > | null>(null);
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
   const urlHighlightAppliedRef = useRef<string | null>(null);
   const urlPdfHighlightPreparedRef = useRef<string | null>(null);
@@ -2375,14 +2345,6 @@ export default function MediaPaneBody() {
   });
 
   useEffect(() => {
-    metadataRetryBaselineRef.current = null;
-    metadataRetryUnconfirmedRequestIdRef.current = null;
-    setMetadataRetryPollsRemaining(0);
-    setMetadataRetryPollExhausted(false);
-    setMetadataRetryUnconfirmed(false);
-  }, [id]);
-
-  useEffect(() => {
     if (initialMediaResource.status === "loading") {
       setLoading(true);
       setInitialHeaderFailure(null);
@@ -2491,136 +2453,6 @@ export default function MediaPaneBody() {
       setFragments(webFragmentsResource.data);
     }
   }, [webFragmentsResource]);
-
-  const refreshMetadataRetryState = useCallback(
-    async (options?: { decrementOnNoChange?: boolean }) => {
-      const baseline = metadataRetryBaselineRef.current;
-      if (!media?.id || !baseline) {
-        return;
-      }
-
-      let mediaResp: { data: Media };
-      try {
-        mediaResp = await apiFetch<{ data: Media }>(`/api/media/${media.id}`);
-      } catch (error) {
-        if (handleUnauthenticatedApiError(error)) return;
-        let failure: FeedbackContent;
-        try {
-          failure = mediaPaneErrorMessage(error, "CanonicalState");
-        } catch (defect) {
-          setAsyncDefect({ error: defect });
-          return;
-        }
-        if (classifyCanonicalMediaRefetchFailure(error) === "unavailable") {
-          metadataRetryBaselineRef.current = null;
-          setMetadataRetryPollsRemaining(0);
-          setMetadataRetryPollExhausted(false);
-          setMedia(null);
-          setFragments([]);
-          setInitialFragmentsFailure(null);
-          setInitialHeaderFailure("unavailable");
-          setError(failure);
-          return;
-        }
-        if (options?.decrementOnNoChange !== false) {
-          setMetadataRetryPollsRemaining((remaining) => {
-            if (remaining <= 1) {
-              metadataRetryBaselineRef.current = null;
-              setMetadataRetryPollExhausted(true);
-              return 0;
-            }
-            return remaining - 1;
-          });
-        }
-        return;
-      }
-      const nextMedia = mediaResp.data;
-      setMedia(nextMedia);
-
-      const terminalState = metadataRetryTerminalState(nextMedia, baseline);
-      if (terminalState) {
-        metadataRetryBaselineRef.current = null;
-        setMetadataRetryPollsRemaining(0);
-        setMetadataRetryPollExhausted(false);
-        setMetadataRetryUnconfirmed(false);
-        metadataRetryUnconfirmedRequestIdRef.current = null;
-        feedback.resolve(metadataRetryUnconfirmedFeedbackKey(nextMedia.id));
-        if (terminalState === "failed") {
-          try {
-            const presentation = mediaErrorMessage({
-              kind: "Source",
-              processingStatus: "failed",
-              lastErrorCode: nextMedia.last_error_code,
-              capabilities: {
-                can_retry: nextMedia.capabilities?.can_retry_metadata === true,
-                can_refresh_source: false,
-              },
-              sourceUrl: null,
-            });
-            feedback.publish({
-              kind: "Hud",
-              key: `metadata-retry:${nextMedia.id}`,
-              content: {
-                tone: "Warning",
-                title: "Metadata enrichment failed",
-                ...(presentation ? { message: presentation.explanation } : {}),
-              },
-            });
-          } catch (defect) {
-            setAsyncDefect({ error: defect });
-          }
-        }
-        return;
-      }
-
-      if (options?.decrementOnNoChange === false) {
-        return;
-      }
-
-      setMetadataRetryPollsRemaining((remaining) => {
-        if (remaining <= 1) {
-          metadataRetryBaselineRef.current = null;
-          setMetadataRetryPollExhausted(true);
-          return 0;
-        }
-        return remaining - 1;
-      });
-    },
-    [feedback, media?.id],
-  );
-
-  useEffect(() => {
-    if (!metadataRetryPollExhausted || !media?.id) return;
-    feedback.publish({
-      kind: "Persistent",
-      key: metadataRetryUnconfirmedFeedbackKey(media.id),
-      content: {
-        tone: "Warning",
-        title: "Metadata request still couldn’t be confirmed",
-        message: "Refresh or reopen this item later before trying again.",
-        ...(metadataRetryUnconfirmedRequestIdRef.current
-          ? { requestId: metadataRetryUnconfirmedRequestIdRef.current }
-          : {}),
-      },
-      announcement: "Polite",
-    });
-    setMetadataRetryPollExhausted(false);
-  }, [feedback, media?.id, metadataRetryPollExhausted]);
-
-  const pollMetadataRetryState = useCallback(
-    () => refreshMetadataRetryState(),
-    [refreshMetadataRetryState],
-  );
-
-  // justify-polling: metadata retry completion is backend async work without a
-  // stream today; the named remaining-count state terminates the schedule.
-  useIntervalPoll({
-    enabled:
-      metadataRetryPollsRemaining > 0 &&
-      Boolean(metadataRetryBaselineRef.current),
-    onPoll: pollMetadataRetryState,
-    pollIntervalMs: METADATA_REENRICHMENT_POLL_INTERVAL_MS,
-  });
 
   // ==========================================================================
   // EPUB restore — once per loaded navigation, resolve the initial section
@@ -4914,6 +4746,9 @@ export default function MediaPaneBody() {
 
         const newHighlights = await fetchHighlights(activeContent.fragmentId);
         if (requestVersion !== highlightVersionRef.current) {
+          const pending = highlightBoundsIntentRef.current;
+          highlightBoundsIntentRef.current = null;
+          if (pending) await pending.onCommitted();
           return;
         }
         setHighlights(newHighlights);
@@ -4928,6 +4763,9 @@ export default function MediaPaneBody() {
           focusHighlight(reconciledFocus);
         }
 
+        const pending = highlightBoundsIntentRef.current;
+        highlightBoundsIntentRef.current = null;
+        if (pending) await pending.onCommitted();
         cancelEditBounds();
         clearRetainedSelection(true);
       } catch (err) {
@@ -4995,17 +4833,37 @@ export default function MediaPaneBody() {
     [applyHighlightMutation],
   );
 
-  const handleDelete = useCallback(
+  const projectDeletedHighlight = useCallback(
     async (highlightId: string) => {
-      const applied = await applyHighlightMutation(() =>
-        deleteHighlight(highlightId),
+      // The DELETE is already authoritatively committed. Remove every mounted
+      // local copy first; the following read only improves the projection and
+      // cannot retroactively make the deletion a failure.
+      setHighlights((current) =>
+        current.filter((highlight) => highlight.id !== highlightId),
       );
+      setPdfDocumentHighlights((current) =>
+        current.filter((highlight) => highlight.id !== highlightId),
+      );
+      let applied = false;
+      if (isPdf) {
+        setPdfRefreshToken((version) => version + 1);
+        refreshMediaHighlights();
+        applied = true;
+      } else if (activeContent) {
+        const requestVersion = ++highlightVersionRef.current;
+        const newHighlights = await fetchHighlights(activeContent.fragmentId);
+        if (requestVersion === highlightVersionRef.current) {
+          setHighlights(newHighlights);
+          refreshMediaHighlights();
+          applied = true;
+        }
+      }
       if (applied) {
         clearFocus();
         setHighlightActionAnchor(null);
       }
     },
-    [applyHighlightMutation, clearFocus],
+    [activeContent, clearFocus, isPdf, refreshMediaHighlights],
   );
 
   const applyToAllHighlightSlots = useCallback(
@@ -5038,6 +4896,15 @@ export default function MediaPaneBody() {
         patchHighlightLinkedNoteBlock(list, highlightId, linkedNoteBlock),
       );
       refreshMediaHighlights();
+      const pending = highlightNoteIntentRef.current;
+      const matchesPending =
+        pending?.ref === `highlight:${highlightId}` &&
+        (pending.kind === "AddHighlightNote" ||
+          pending.noteBlockId === noteBlockId);
+      if (pending && matchesPending) {
+        highlightNoteIntentRef.current = null;
+        await pending.onCommitted();
+      }
       return linkedNoteBlock;
     },
     [applyToAllHighlightSlots, refreshMediaHighlights],
@@ -5057,6 +4924,15 @@ export default function MediaPaneBody() {
         );
       }
       refreshMediaHighlights();
+      const pending = highlightNoteIntentRef.current;
+      if (
+        pending?.ref === `highlight:${highlightId}` &&
+        pending.kind === "EditHighlightNote" &&
+        pending.noteBlockId === noteBlockId
+      ) {
+        highlightNoteIntentRef.current = null;
+        await pending.onCommitted();
+      }
     },
     [applyToAllHighlightSlots, refreshMediaHighlights],
   );
@@ -5071,11 +4947,7 @@ export default function MediaPaneBody() {
     keyboardChatBusyRef.current = true;
     try {
       await executeResourceChat({
-        ref: routeResourceActionSubject({
-          scheme: "media",
-          id,
-          href: `/media/${id}`,
-        }).ref,
+        ref: canonicalResourceRef({ scheme: "media", id }),
         openConversation: (conversationId) => {
           activatePaneTarget({
             target: {
@@ -5326,8 +5198,7 @@ export default function MediaPaneBody() {
     readerProfile.theme === "dark"
       ? styles.readerThemeDark
       : styles.readerThemeLight;
-  const readerSurfaceClassName =
-    `${styles.readerContentRoot} ${readerThemeClassName}`;
+  const readerSurfaceClassName = `${styles.readerContentRoot} ${readerThemeClassName}`;
   const activeReaderSecondarySurface =
     secondaryPane?.groupId === "resource-inspector" &&
     secondaryPane.visibility === "visible"
@@ -5552,97 +5423,6 @@ export default function MediaPaneBody() {
   const [videoSeekTargetMs, setVideoSeekTargetMs] = useState<number | null>(
     null,
   );
-
-  const handleProcessingRestarted = useCallback(
-    ({
-      processingStatus,
-      sourceFailed,
-      capabilityPatch,
-    }: {
-      resetRefreshSource: boolean;
-      processingStatus: DocumentProcessingStatus;
-      sourceFailed: boolean;
-      capabilityPatch: MediaActionCapabilities;
-    }) => {
-      setFragments([]);
-      setInitialFragmentsFailure(null);
-      setActiveSectionId(null);
-      setActiveEpubSection(null);
-      resetEpubRenderedSectionAuxiliaryState();
-      setEpubRenderedSectionOverride(null);
-      setAwaitingEpubFindAdoption(false);
-      epubAdoptionCaptureSuppressionRef.current = false;
-      setEpubSourceGeneration((generation) => generation + 1);
-      setActiveWebSectionId(null);
-      setEpubError(null);
-      if (!media) return;
-      const targetId = media.id;
-      setMedia((prev) =>
-        prev && prev.id === targetId
-          ? {
-              ...prev,
-              processing_status: processingStatus,
-              failure_stage: sourceFailed ? prev.failure_stage : null,
-              last_error_code: sourceFailed ? prev.last_error_code : null,
-              capabilities: prev.capabilities
-                ? {
-                    ...prev.capabilities,
-                    ...capabilityPatch,
-                  }
-                : prev.capabilities,
-            }
-          : prev,
-      );
-    },
-    [
-      media,
-      resetEpubRenderedSectionAuxiliaryState,
-      setAwaitingEpubFindAdoption,
-      setEpubRenderedSectionOverride,
-    ],
-  );
-
-  const beginMetadataRetryObservation = useCallback(() => {
-    if (!media) return;
-    metadataRetryBaselineRef.current = {
-      mediaId: media.id,
-      updatedAt: media.updated_at,
-      metadataEnrichedAt: media.metadata_enriched_at,
-      signature: metadataRetrySignature(media),
-    };
-    setMetadataRetryPollExhausted(false);
-    setMetadataRetryPollsRemaining(METADATA_REENRICHMENT_MAX_POLLS);
-    void refreshMetadataRetryState({ decrementOnNoChange: false });
-  }, [media, refreshMetadataRetryState]);
-
-  const handleMetadataRetryEnqueued = beginMetadataRetryObservation;
-
-  const handleMetadataRetryUnconfirmed = useCallback(
-    (content: FeedbackContent) => {
-      if (!media) return;
-      setMetadataRetryUnconfirmed(true);
-      metadataRetryUnconfirmedRequestIdRef.current = content.requestId ?? null;
-      feedback.publish({
-        kind: "Persistent",
-        key: metadataRetryUnconfirmedFeedbackKey(media.id),
-        content,
-        announcement: "Polite",
-      });
-      beginMetadataRetryObservation();
-    },
-    [beginMetadataRetryObservation, feedback, media],
-  );
-
-  const {
-    retryBusy: retryProcessingBusy,
-    handleRetry: handleRetryProcessing,
-  } = useDocumentActions({
-    media,
-    onProcessingRestarted: handleProcessingRestarted,
-    onMetadataRetryEnqueued: handleMetadataRetryEnqueued,
-    metadataRetryBlocked: metadataRetryUnconfirmed,
-    onMetadataRetryUnconfirmed: handleMetadataRetryUnconfirmed,
-  });
 
   // Prose mark hover → hoveredHighlightId, mirroring the click delegation above.
   // onPointerOver also fires on non-mark targets, so it clears the id when the
@@ -5902,9 +5682,7 @@ export default function MediaPaneBody() {
       return;
     }
     if (
-      mediaFindPreviewLease.consumeCaptureSuppression(
-        publication.trustedIntent,
-      )
+      mediaFindPreviewLease.consumeCaptureSuppression(publication.trustedIntent)
     ) {
       lastSavedTextAnchorOffsetRef.current = anchorOffset;
       return;
@@ -6278,10 +6056,10 @@ export default function MediaPaneBody() {
 
   // Reader view controls (Credits, Reader settings, theme quick-switch, PDF
   // source-colors status) are pane view actions, ejected from the resource menu
-  // into the pane's own dedicated "Reader settings" menu (AC4). The resource
+  // into the pane's own dedicated "Reader settings" menu. The resource
   // operations/relationships that this memo used to build are now derived by the
   // app runtime from the media snapshot and rendered by the canonical
-  // ResourceActionMenu keyed by the pane's resourceTarget.
+  // ResourceActionMenu keyed by the pane's actionSubject.
   const readerViewActions = useMemo<ActionDescriptor[]>(() => {
     if (!media) return [];
     const view: ActionDescriptor[] = [];
@@ -6833,7 +6611,7 @@ export default function MediaPaneBody() {
     return created?.id ?? null;
   }, [handleCreateHighlight]);
 
-  const refreshLinkedReaderState = useCallback(() => {
+  const refreshLinkedReaderState = useCallback(async () => {
     if (freshSelectionLinkSessionRef.current) {
       freshSelectionLinkSessionRef.current = false;
       clearRetainedSelection(true);
@@ -6844,6 +6622,9 @@ export default function MediaPaneBody() {
     // the durable source is immediately painted and can be acted on again.
     setLinkHighlightRefreshVersion((version) => version + 1);
     setPdfRefreshToken((version) => version + 1);
+    const pending = highlightLinkIntentRef.current;
+    highlightLinkIntentRef.current = null;
+    if (pending) await pending.onCommitted();
   }, [clearRetainedSelection, refreshMediaHighlights]);
 
   const openEvidenceForLink = useCallback(() => {
@@ -6863,7 +6644,11 @@ export default function MediaPaneBody() {
   // Highlight only when the Link is confirmed (invariant 6). Fresh PDF selections
   // Link through the PdfReader's own `onLink` prop (true page-space quads).
   const handleLink = useCallback(
-    (target: HighlightActionTarget) => {
+    (
+      target:
+        | { readonly kind: "existing"; readonly highlight: AnchoredReaderRow }
+        | { readonly kind: "selection"; readonly color: HighlightColor },
+    ) => {
       if (target.kind === "existing") {
         const ref = `highlight:${target.highlight.id}`;
         linkComposer.openLink({
@@ -6893,11 +6678,225 @@ export default function MediaPaneBody() {
 
   const handleCloseLinkComposer = useCallback(() => {
     linkComposer.close();
+    const pending = highlightLinkIntentRef.current;
+    highlightLinkIntentRef.current = null;
+    pending?.onAborted();
     if (!freshSelectionLinkSessionRef.current) return;
     freshSelectionLinkSessionRef.current = false;
     selectionActionInFlightRef.current = false;
     setIsCreating(false);
   }, [linkComposer]);
+
+  const mountedHighlightActionRefs = useMemo(
+    () =>
+      anchoredHighlights.map((highlight) =>
+        canonicalResourceRef({ scheme: "highlight", id: highlight.id }),
+      ),
+    [anchoredHighlights],
+  );
+  const acceptHighlightActionIntent = useCallback(
+    (intent: HighlightActionIntent) => {
+      if (
+        highlightColorIntentRef.current !== null ||
+        highlightNoteIntentRef.current !== null ||
+        highlightLinkIntentRef.current !== null ||
+        highlightBoundsIntentRef.current !== null ||
+        highlightDeleteIntentRef.current !== null ||
+        quickNote !== null ||
+        linkComposer.open ||
+        focusState.editingBounds
+      ) {
+        return false;
+      }
+      const highlight = anchoredHighlights.find(
+        (candidate) => `highlight:${candidate.id}` === intent.ref,
+      );
+      if (!highlight) return false;
+      const anchorRect =
+        document
+          .querySelector<HTMLElement>(
+            `[data-highlight-anchor="${CSS.escape(highlight.id)}"]`,
+          )
+          ?.getBoundingClientRect() ??
+        findPaneLandmarkFocusTarget(
+          paneRuntime.paneId,
+        )?.getBoundingClientRect() ??
+        new DOMRect(window.innerWidth / 2, window.innerHeight / 2, 0, 0);
+
+      switch (intent.kind) {
+        case "EditHighlight":
+          highlightColorIntentRef.current = intent;
+          setHighlightColorIntent({ intent, highlight });
+          setHighlightActionAnchor(null);
+          return true;
+        case "AddHighlightNote":
+        case "EditHighlightNote": {
+          const note =
+            intent.kind === "EditHighlightNote"
+              ? (highlight.linked_note_blocks?.find(
+                  (candidate) => candidate.note_block_id === intent.noteBlockId,
+                ) ?? null)
+              : null;
+          if (intent.kind === "EditHighlightNote" && note === null) {
+            return false;
+          }
+          highlightNoteIntentRef.current = intent;
+          setQuickNote({
+            kind: "existing",
+            highlightId: highlight.id,
+            note,
+            quote: highlight.exact,
+            anchorRect,
+          });
+          setHighlightActionAnchor(null);
+          return true;
+        }
+        case "LinkHighlight":
+          highlightLinkIntentRef.current = intent;
+          handleLink({ kind: "existing", highlight });
+          setHighlightActionAnchor(null);
+          return true;
+        case "EditHighlightBounds":
+          if (isPdf) return false;
+          highlightBoundsIntentRef.current = intent;
+          focusHighlight(highlight.id);
+          startEditBounds();
+          setHighlightActionAnchor(null);
+          return true;
+        case "DeleteHighlight":
+          highlightDeleteIntentRef.current = intent;
+          void (async () => {
+            let deleted = false;
+            try {
+              const outcome = await executeDestructiveMountedMutation(
+                intent,
+                () => deleteHighlight(highlight.id),
+                () => projectDeletedHighlight(highlight.id),
+              );
+              if (outcome.kind === "Committed") {
+                deleted = true;
+                if (outcome.projectionError !== undefined) {
+                  const error = outcome.projectionError;
+                  if (handleUnauthenticatedApiError(error)) return;
+                  if (!isApiError(error) || isSameSystemApiDefect(error)) {
+                    setAsyncDefect({ error });
+                    return;
+                  }
+                  feedback.publish({
+                    kind: "Hud",
+                    key: `highlight-refresh-after-delete:${highlight.id}`,
+                    content: {
+                      tone: "Warning",
+                      title: "Highlight deleted; reader couldn’t refresh",
+                      message:
+                        "Refresh the pane to load the latest highlights.",
+                      requestId: error.requestId,
+                    },
+                  });
+                }
+              }
+            } catch (error) {
+              if (handleUnauthenticatedApiError(error)) return;
+              publishMediaFailure(
+                error,
+                "Highlight",
+                `highlight-delete:${highlight.id}`,
+              );
+            } finally {
+              if (highlightDeleteIntentRef.current === intent) {
+                highlightDeleteIntentRef.current = null;
+              }
+              if (!deleted) {
+                notifyHighlightActionIntentOwnerReady(intent.ref);
+              }
+            }
+          })();
+          return true;
+      }
+    },
+    [
+      anchoredHighlights,
+      feedback,
+      focusHighlight,
+      focusState.editingBounds,
+      handleLink,
+      isPdf,
+      linkComposer.open,
+      paneRuntime.paneId,
+      projectDeletedHighlight,
+      publishMediaFailure,
+      quickNote,
+      startEditBounds,
+    ],
+  );
+  useHighlightActionIntentOwners(
+    mountedHighlightActionRefs,
+    acceptHighlightActionIntent,
+  );
+
+  useEffect(() => {
+    if (focusState.editingBounds) return;
+    const pending = highlightBoundsIntentRef.current;
+    highlightBoundsIntentRef.current = null;
+    pending?.onAborted();
+  }, [focusState.editingBounds]);
+
+  useEffect(
+    () => () => {
+      const pending = [
+        highlightColorIntentRef.current,
+        highlightNoteIntentRef.current,
+        highlightLinkIntentRef.current,
+        highlightBoundsIntentRef.current,
+      ];
+      highlightColorIntentRef.current = null;
+      highlightNoteIntentRef.current = null;
+      highlightLinkIntentRef.current = null;
+      highlightBoundsIntentRef.current = null;
+      for (const intent of pending) intent?.onAborted();
+    },
+    [],
+  );
+
+  const abortHighlightColorEdit = useCallback(() => {
+    const pending = highlightColorIntentRef.current;
+    highlightColorIntentRef.current = null;
+    setHighlightColorIntent(null);
+    pending?.onAborted();
+  }, []);
+  const selectHighlightColor = useCallback(
+    async (color: HighlightColor) => {
+      const session = highlightColorIntent;
+      if (!session || highlightColorSaving) return;
+      setHighlightColorSaving(true);
+      try {
+        await handleColorChange(session.highlight.id, color);
+        const pending = highlightColorIntentRef.current;
+        highlightColorIntentRef.current = null;
+        if (pending) await pending.onCommitted();
+        setHighlightColorIntent(null);
+      } catch (error) {
+        const pending = highlightColorIntentRef.current;
+        highlightColorIntentRef.current = null;
+        pending?.onAborted();
+        setHighlightColorIntent(null);
+        if (handleUnauthenticatedApiError(error)) return;
+        publishMediaFailure(
+          error,
+          "Highlight",
+          `highlight-color:${session.highlight.id}`,
+        );
+      } finally {
+        setHighlightColorSaving(false);
+      }
+    },
+    [
+      handleColorChange,
+      highlightColorIntent,
+      highlightColorSaving,
+      publishMediaFailure,
+    ],
+  );
 
   const stanceEdges = useMemo<StanceEdgeRef[]>(() => {
     const out: StanceEdgeRef[] = [];
@@ -7465,19 +7464,6 @@ export default function MediaPaneBody() {
           followGeneration={evidenceFollowGeneration}
           hoveredItemId={hoveredEvidenceItemId}
           highlightActions={{
-            canQuoteToChat: media?.capabilities?.can_quote ?? false,
-            focusedHighlightId: focusState.focusedId,
-            isEditingBounds: focusState.editingBounds,
-            isReflowable: !isPdf,
-            onFocusHighlight: focusHighlight,
-            onQuoteToNewChat: quoteHighlightToNewChat,
-            onQuoteToExistingChat: quoteHighlightToExistingChat,
-            onLearn: learnFromHighlight,
-            onLink: handleLink,
-            onColorChange: handleColorChange,
-            onDelete: handleDelete,
-            onStartEditBounds: startEditBounds,
-            onCancelEditBounds: cancelEditBounds,
             onNoteSave: handleNoteSave,
             onNoteDelete: handleNoteDelete,
             onOpenNoteLink: handleOpenNoteLink,
@@ -7496,18 +7482,11 @@ export default function MediaPaneBody() {
     [
       activeEvidenceItemId,
       activateEvidencePassage,
-      cancelEditBounds,
       evidenceProjection,
       evidenceFollowGeneration,
       evidenceFilters,
-      focusHighlight,
-      focusState.editingBounds,
-      focusState.focusedId,
       handleActivateEvidenceObject,
       handleActivateEvidenceSourceTarget,
-      handleLink,
-      handleColorChange,
-      handleDelete,
       handleDismissSynapse,
       handleRemoveReaderUserEdge,
       handleSaveReaderLinkNote,
@@ -7517,12 +7496,6 @@ export default function MediaPaneBody() {
       handleHoverEvidenceItem,
       handleOpenNoteLink,
       hoveredEvidenceItemId,
-      isPdf,
-      media?.capabilities?.can_quote,
-      quoteHighlightToNewChat,
-      quoteHighlightToExistingChat,
-      learnFromHighlight,
-      startEditBounds,
     ],
   );
   const transcriptFindAvailable = transcriptFindAdapter !== null;
@@ -7678,12 +7651,8 @@ export default function MediaPaneBody() {
       ...(mediaInstrument ? { instrument: mediaInstrument } : {}),
       search: findPublication ?? undefined,
       actions: companionAction ? [companionAction] : [],
-      resourceTarget: media
-        ? routeResourceActionSubject({
-            scheme: "media",
-            id,
-            href: `/media/${id}`,
-          })
+      actionSubject: media
+        ? { ref: canonicalResourceRef({ scheme: "media", id }) }
         : undefined,
       viewMenu:
         media && readerViewActions.length > 0
@@ -7740,9 +7709,7 @@ export default function MediaPaneBody() {
     return (
       <div
         className={styles.mobileDocumentState}
-        data-mobile-reader-interaction-root={
-          isPaneActive ? "true" : undefined
-        }
+        data-mobile-reader-interaction-root={isPaneActive ? "true" : undefined}
         data-testid="mobile-reader-interaction-root"
       >
         <PaneLoadingState label="Loading item…" announcement="Polite" />
@@ -7754,9 +7721,7 @@ export default function MediaPaneBody() {
     return (
       <div
         className={`${styles.errorContainer} ${styles.mobileDocumentState}`}
-        data-mobile-reader-interaction-root={
-          isPaneActive ? "true" : undefined
-        }
+        data-mobile-reader-interaction-root={isPaneActive ? "true" : undefined}
         data-testid="mobile-reader-interaction-root"
       >
         <FeedbackNotice
@@ -7777,9 +7742,7 @@ export default function MediaPaneBody() {
     return (
       <div
         className={`${styles.content} ${styles.mobileDocumentState}`}
-        data-mobile-reader-interaction-root={
-          isPaneActive ? "true" : undefined
-        }
+        data-mobile-reader-interaction-root={isPaneActive ? "true" : undefined}
         data-testid="mobile-reader-interaction-root"
       >
         <div className={styles.notReady}>
@@ -7970,9 +7933,7 @@ export default function MediaPaneBody() {
         data-focus-mode={focusModeForRoot}
         data-chrome-revealed={chromeRevealed ? "true" : undefined}
         data-view-transition-part="reader"
-        data-mobile-reader-interaction-root={
-          isPaneActive ? "true" : undefined
-        }
+        data-mobile-reader-interaction-root={isPaneActive ? "true" : undefined}
         data-testid="mobile-reader-interaction-root"
       >
         {mediaReaderViewTransition ? (
@@ -8042,21 +8003,7 @@ export default function MediaPaneBody() {
                   <>
                     <p>{sourceError.title}</p>
                     <p>{sourceError.explanation}</p>
-                    {sourceError.action.kind === "Retry" ? (
-                      <Button
-                        variant="primary"
-                        size="md"
-                        leadingIcon={<RefreshCw size={15} aria-hidden="true" />}
-                        onClick={() => {
-                          void handleRetryProcessing();
-                        }}
-                        disabled={retryProcessingBusy}
-                      >
-                        {retryProcessingBusy
-                          ? "Retrying..."
-                          : "Retry processing"}
-                      </Button>
-                    ) : sourceError.action.kind === "OpenSource" ? (
+                    {sourceError.action.kind === "OpenSource" ? (
                       <Button asChild variant="secondary" size="md">
                         <a
                           href={sourceError.action.href}
@@ -8200,9 +8147,7 @@ export default function MediaPaneBody() {
                   ? `${id}:epub:${renderedEpubSection.section_id}`
                   : `${id}:epub`
               }
-              mobileChromeEnabled={
-                isMobileViewport && isPaneActive && canRead
-              }
+              mobileChromeEnabled={isMobileViewport && isPaneActive && canRead}
               scrollPositioner={readerScrollPositioner}
               beforeContent={readerBanners}
               readerRootRef={readerRootRef}
@@ -8244,9 +8189,7 @@ export default function MediaPaneBody() {
               key={`${id}:${canonicalResetRevision ?? "initial"}`}
               mediaId={id}
               mobileChromeSourceKey={id}
-              mobileChromeEnabled={
-                isMobileViewport && isPaneActive && canRead
-              }
+              mobileChromeEnabled={isMobileViewport && isPaneActive && canRead}
               scrollPositioner={readerScrollPositioner}
               beforeContent={readerBanners}
               readerRootRef={readerRootRef}
@@ -8352,44 +8295,6 @@ export default function MediaPaneBody() {
         <HighlightActionPopover
           highlight={highlightActionTarget}
           anchorRect={highlightActionAnchor.rect}
-          canQuoteToChat={media?.capabilities?.can_quote ?? false}
-          canAddNote
-          isReflowable={!isPdf}
-          onSelectColor={(color) =>
-            handleColorChange(highlightActionTarget.id, color)
-          }
-          onAddNote={() => {
-            setQuickNote({
-              kind: "existing",
-              highlightId: highlightActionTarget.id,
-              note: highlightActionTarget.linked_note_blocks?.[0] ?? null,
-              quote: highlightActionTarget.exact,
-              anchorRect: highlightActionAnchor.rect,
-            });
-            dismissHighlightActions();
-          }}
-          onLink={() => {
-            handleLink({ kind: "existing", highlight: highlightActionTarget });
-            dismissHighlightActions();
-          }}
-          onLearn={() => {
-            learnFromHighlight(highlightActionTarget.id);
-            dismissHighlightActions();
-          }}
-          onDelete={() => handleDelete(highlightActionTarget.id)}
-          onQuoteToNewChat={() => {
-            quoteHighlightToNewChat(highlightActionTarget.id);
-            dismissHighlightActions();
-          }}
-          onQuoteToExistingChat={() => {
-            quoteHighlightToExistingChat(highlightActionTarget.id);
-            dismissHighlightActions();
-          }}
-          onToggleEditBounds={() => {
-            focusHighlight(highlightActionTarget.id);
-            startEditBounds();
-            dismissHighlightActions();
-          }}
           onDismiss={dismissHighlightActions}
         />
       ) : null}
@@ -8411,12 +8316,68 @@ export default function MediaPaneBody() {
         />
       ) : null}
 
+      <Dialog
+        open={highlightColorIntent !== null}
+        title="Edit highlight"
+        onClose={abortHighlightColorEdit}
+        onDismissRequest={() => (highlightColorSaving ? "blocked" : "accepted")}
+        initialFocus={(container) =>
+          container.querySelector<HTMLElement>('button[aria-pressed="false"]')
+        }
+        returnFocusFallback={() =>
+          findPaneLandmarkFocusTarget(paneRuntime.paneId)
+        }
+      >
+        {highlightColorIntent ? (
+          <HighlightColorPicker
+            selectedColor={highlightColorIntent.highlight.color}
+            disabled={highlightColorSaving}
+            disabledColors={[highlightColorIntent.highlight.color]}
+            onSelectColor={(color) => void selectHighlightColor(color)}
+          />
+        ) : null}
+      </Dialog>
+
       {/* Mount contract: always rendered, driven by `session`. */}
       <HighlightQuickNoteComposer
         session={quickNote}
-        onClose={() => setQuickNote(null)}
-        onSaveNote={handleNoteSave}
-        onDeleteNote={handleNoteDelete}
+        onClose={() => {
+          setQuickNote(null);
+          queueMicrotask(() => {
+            const pending = highlightNoteIntentRef.current;
+            if (pending === null || highlightNoteMutationInFlightRef.current) {
+              return;
+            }
+            highlightNoteIntentRef.current = null;
+            pending.onAborted();
+          });
+        }}
+        onSaveNote={async (...args) => {
+          highlightNoteMutationInFlightRef.current = true;
+          try {
+            return await handleNoteSave(...args);
+          } catch (error) {
+            const pending = highlightNoteIntentRef.current;
+            highlightNoteIntentRef.current = null;
+            pending?.onAborted();
+            throw error;
+          } finally {
+            highlightNoteMutationInFlightRef.current = false;
+          }
+        }}
+        onDeleteNote={async (...args) => {
+          highlightNoteMutationInFlightRef.current = true;
+          try {
+            await handleNoteDelete(...args);
+          } catch (error) {
+            const pending = highlightNoteIntentRef.current;
+            highlightNoteIntentRef.current = null;
+            pending?.onAborted();
+            throw error;
+          } finally {
+            highlightNoteMutationInFlightRef.current = false;
+          }
+        }}
         onOpenLink={handleOpenNoteLink}
       />
     </>

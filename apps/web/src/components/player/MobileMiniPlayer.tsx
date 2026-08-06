@@ -31,7 +31,7 @@ import {
   PlayerMiniProgress,
   PlayerStatus,
   PlayerTransport,
-  playerMediaActionTarget,
+  playerMediaActionSubject,
   playerSourceHref,
   playerTitle,
   type PresentPlayerChrome,
@@ -150,13 +150,13 @@ export default function MobileMiniPlayer({
     ...(model.kind === "Preview"
       ? [
           {
-            id: "Player.OpenPreview",
+            id: "OccurrenceAction.PlayerPreview.Open",
             kind: "command" as const,
             label: "Open preview",
             onSelect: onOpenTarget,
           },
           {
-            id: "Player.PreviewSource",
+            id: "OccurrenceAction.PlayerPreview.OpenSource",
             kind: "link" as const,
             label: "Open source",
             href: playerSourceHref(model),
@@ -220,7 +220,7 @@ export default function MobileMiniPlayer({
         <PlayerTransport model={model} compact />
         {model.kind === "Canonical" ? (
           <ResourceActionMenu
-            target={playerMediaActionTarget(model)}
+            actionSubject={playerMediaActionSubject(model)}
             label="Recording actions"
             placement="above"
             renderTrigger={(props) => (

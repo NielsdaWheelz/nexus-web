@@ -14,6 +14,7 @@ import type { Destination } from "@/lib/navigation/destinations";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { applyParsedInput, emptySearchQuery } from "@/lib/search/query";
@@ -594,6 +595,7 @@ function resourceEntry(input: {
   readonly metadata?: string;
   readonly snippetSegments?: NexusEntry["snippetSegments"];
   readonly subject: ResourceActionSubject;
+  readonly activation: ResourceActivation;
   readonly icon: NexusEntry["icon"];
   readonly historySource: NexusEntry["historySource"];
   readonly tier: NexusRankTier;
@@ -603,7 +605,7 @@ function resourceEntry(input: {
 }): NexusEntry {
   // A resource entry keeps its resource identity + primary activation (Open as
   // the row primary). Its secondary/overflow actions are the ONE canonical
-  // resource dropdown, projected from the shared planner off `resourceTarget`
+  // resource dropdown, projected from the shared planner off `actionSubject`
   // by the render site — never a private NexusAction array. Both callers only
   // build resource entries for routeable resources, so Open is always valid.
   return {
@@ -621,12 +623,12 @@ function resourceEntry(input: {
       icon: input.icon,
       target: {
         kind: "ResourceOpen",
-        subject: input.subject,
+        activation: input.activation,
         labelHint: input.label,
       },
     }),
     secondaryActions: [],
-    resourceTarget: input.subject,
+    actionSubject: input.subject,
     rank: {
       tier: input.tier,
       score: input.score,
@@ -690,11 +692,9 @@ export function projectNexusOpenableEntries(input: {
         typeLabel: item.scheme,
         metadata: item.summary || undefined,
         subject: {
-          kind: "Resource",
           ref: assumeCanonicalResourceRef(item.ref),
-          activation: item.activation,
-          missing: false,
         },
+        activation: item.activation,
         icon: getPaneRouteIcon(href),
         historySource: "Oracle",
         tier,
@@ -728,13 +728,12 @@ export function projectNexusSearchEntries(input: {
     if (row.type === "web_result") {
       throw new Error("Canonical Nexus Search returned a live Web result");
     }
-    const href = row.actionTarget.activation.href;
+    const href = row.activation.href;
     const paneParent = href
       ? openPaneParent(href, input.panes, input.query)
       : undefined;
     if (
-      row.actionTarget.missing ||
-      row.actionTarget.activation.kind !== "route" ||
+      row.activation.kind !== "route" ||
       href === null ||
       (paneParent !== undefined && row.resourceRef === row.ownerResourceRef)
     ) {
@@ -767,7 +766,8 @@ export function projectNexusSearchEntries(input: {
         typeLabel: row.typeLabel,
         metadata: row.sourceMeta ?? undefined,
         snippetSegments: row.snippetSegments,
-        subject: row.actionTarget,
+        subject: row.actionSubject,
+        activation: row.activation,
         icon: SEARCH_TYPE_ICON[row.type],
         historySource: "Search",
         tier,

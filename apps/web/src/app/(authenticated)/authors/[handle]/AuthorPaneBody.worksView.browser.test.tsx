@@ -20,6 +20,7 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import {
   ResourceActionOverlays,
   ResourceOverlaysProvider,
@@ -55,7 +56,7 @@ const MERIDIAN = {
   contentKind: "article",
   date: "2026-03-01",
   roleFacts: [{ creditedName: "Ada Lovelace", role: "author", rawRole: null }],
-  actionTarget: { kind: "External", href: "https://example.test/meridian" },
+  actionSubject: null,
 };
 const ZEBRA = {
   title: "Zebra migrations",
@@ -63,7 +64,7 @@ const ZEBRA = {
   contentKind: "article",
   date: "2010-01-01",
   roleFacts: [{ creditedName: "Ada Lovelace", role: "author", rawRole: null }],
-  actionTarget: { kind: "External", href: "https://example.test/zebra" },
+  actionSubject: null,
 };
 const AURORA = {
   title: "Aurora physics",
@@ -71,7 +72,7 @@ const AURORA = {
   contentKind: "article",
   date: "1998-06-01",
   roleFacts: [{ creditedName: "Ada Lovelace", role: "author", rawRole: null }],
-  actionTarget: { kind: "External", href: "https://example.test/aurora" },
+  actionSubject: null,
 };
 const PUBLISHED_NEWEST = [MERIDIAN, ZEBRA, AURORA];
 const TITLE_ASC = [AURORA, MERIDIAN, ZEBRA];
@@ -90,16 +91,8 @@ const AUTHOR_DETAIL = {
     displayName: "Ada Lovelace",
     otherNames: [],
     canRename: false,
-    actionTarget: {
-      kind: "Resource",
+    actionSubject: {
       ref: CONTRIBUTOR_REF,
-      activation: {
-        resourceRef: CONTRIBUTOR_REF,
-        kind: "route",
-        href: `/authors/${HANDLE}`,
-        unresolvedReason: null,
-      },
-      missing: false,
     },
   },
 };
@@ -224,57 +217,59 @@ function AuthorPane({
                     calendarTimeZone: "UTC",
                   }}
                 >
-                <KeybindingsProvider>
-                <WorkspaceStoreProvider
-                  initialState={createDefaultWorkspaceState(
-                    `/authors/${HANDLE}`,
-                    RESOURCE_ACTION_METRICS,
-                  )}
-                  workspacePrimaryMetrics={RESOURCE_ACTION_METRICS}
-                >
-                <LecternProvider>
-                <OfflineMediaProvider
-                  accountId={RESOURCE_ACTION_ACCOUNT_ID}
-                  transport={null}
-                >
-                <ResourceOverlaysProvider>
-                <ResourceActionRuntimeProvider>
-                <div data-pane-id="pane" data-active="true">
-                  <PaneShell
-                    paneId="pane"
-                    routeKey={routeKey}
-                    routeHeader={{
-                      kind: "Section",
-                      destinationId: "authors",
-                      context: "Destination",
-                    }}
-                    label="Ada Lovelace"
-                    returnMementoEnabled
-                    queryNavigation="in-place"
-                    sizing={{
-                      primaryWidthPx: 720,
-                      primaryMinWidthPx: 320,
-                      primaryMaxWidthPx: 1_400,
-                      renderedPrimarySlotWidthPx: 720,
-                      renderedPrimarySlotMinWidthPx: 320,
-                      renderedPrimarySlotMaxWidthPx: 1_400,
-                      fixedChromeWidthPx: 0,
-                      storedWidthCorrectionPx: null,
-                    }}
-                    bodyMode="standard"
-                    onResizePrimaryPane={noop}
-                    isActive
-                  >
-                    <AuthorPaneBody />
-                  </PaneShell>
-                </div>
-                <ResourceActionOverlays />
-                </ResourceActionRuntimeProvider>
-                </ResourceOverlaysProvider>
-                </OfflineMediaProvider>
-                </LecternProvider>
-                </WorkspaceStoreProvider>
-                </KeybindingsProvider>
+                  <KeybindingsProvider>
+                    <WorkspaceStoreProvider
+                      initialState={createDefaultWorkspaceState(
+                        `/authors/${HANDLE}`,
+                        RESOURCE_ACTION_METRICS,
+                      )}
+                      workspacePrimaryMetrics={RESOURCE_ACTION_METRICS}
+                    >
+                      <LecternProvider>
+                        <OfflineMediaProvider
+                          accountId={RESOURCE_ACTION_ACCOUNT_ID}
+                          transport={null}
+                        >
+                          <ResourceOverlaysProvider>
+                            <GlobalPlayerProvider>
+                              <ResourceActionRuntimeProvider>
+                                <div data-pane-id="pane" data-active="true">
+                                <PaneShell
+                                  paneId="pane"
+                                  routeKey={routeKey}
+                                  routeHeader={{
+                                    kind: "Section",
+                                    destinationId: "authors",
+                                    context: "Destination",
+                                  }}
+                                  label="Ada Lovelace"
+                                  returnMementoEnabled
+                                  queryNavigation="in-place"
+                                  sizing={{
+                                    primaryWidthPx: 720,
+                                    primaryMinWidthPx: 320,
+                                    primaryMaxWidthPx: 1_400,
+                                    renderedPrimarySlotWidthPx: 720,
+                                    renderedPrimarySlotMinWidthPx: 320,
+                                    renderedPrimarySlotMaxWidthPx: 1_400,
+                                    fixedChromeWidthPx: 0,
+                                    storedWidthCorrectionPx: null,
+                                  }}
+                                  bodyMode="standard"
+                                  onResizePrimaryPane={noop}
+                                  isActive
+                                >
+                                  <AuthorPaneBody />
+                                </PaneShell>
+                                </div>
+                                <ResourceActionOverlays />
+                              </ResourceActionRuntimeProvider>
+                            </GlobalPlayerProvider>
+                          </ResourceOverlaysProvider>
+                        </OfflineMediaProvider>
+                      </LecternProvider>
+                    </WorkspaceStoreProvider>
+                  </KeybindingsProvider>
                 </AuthenticatedAccountProvider>
               </PaneRuntimeProvider>
             </PaneReturnMementoProvider>
@@ -444,7 +439,9 @@ describe("Author works domain view", () => {
 
     await userEvent.keyboard("{Escape}");
 
-    expect(screen.queryByRole("searchbox", { name: "Filter works" })).toBeNull();
+    expect(
+      screen.queryByRole("searchbox", { name: "Filter works" }),
+    ).toBeNull();
     expect(replaced).toEqual([]);
     expect(workTitles()).toEqual(titles(TITLE_ASC));
 
@@ -455,7 +452,9 @@ describe("Author works domain view", () => {
       await screen.findByRole("searchbox", { name: "Filter works" }),
     ).toHaveValue("");
 
-    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Clear filters" }),
+    );
 
     await waitFor(() => expect(replaced).toEqual([`/authors/${HANDLE}`]));
     await waitFor(() => expect(workTitles()).toEqual(titles(PUBLISHED_NEWEST)));

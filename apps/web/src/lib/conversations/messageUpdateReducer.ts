@@ -114,7 +114,8 @@ export type MessageUpdateAction =
       type: "merge_run_pair";
       run: ChatRunData;
       idsToReplace: readonly string[];
-    };
+    }
+  | { type: "remove_subtree"; rootMessageId: string };
 
 // ---------------------------------------------------------------------------
 // Pure field helpers (ported verbatim from the prior fold handlers)
@@ -492,6 +493,24 @@ export function messageUpdateReducer(
       return finalizeDone(state, action.assistantId, action.status, action.delta);
     case "merge_run_pair":
       return selectedPathAfterRun(state, action.run, [...action.idsToReplace]);
+    case "remove_subtree": {
+      const removedIds = new Set([action.rootMessageId]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const message of state) {
+          if (
+            message.parent_message_id &&
+            removedIds.has(message.parent_message_id) &&
+            !removedIds.has(message.id)
+          ) {
+            removedIds.add(message.id);
+            changed = true;
+          }
+        }
+      }
+      return state.filter((message) => !removedIds.has(message.id));
+    }
     default: {
       const _exhaustive: never = action;
       return _exhaustive;

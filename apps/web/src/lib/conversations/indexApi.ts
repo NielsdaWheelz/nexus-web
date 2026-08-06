@@ -1,10 +1,6 @@
-import {
-  apiFetch,
-  type ApiPath,
-} from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import {
   decodeCollectionPage,
-  decodeCollectionRevisionOut,
   type CollectionCursor,
   type CollectionPage,
   type CollectionRevision,
@@ -68,18 +64,12 @@ export async function fetchConversationIndex({
   CollectionPage<ConversationListItem>
 > {
   const response = await apiFetch<unknown>(
-    conversationsInitialResource.clientPath({ view, cursor, collectionRevision }),
+    conversationsInitialResource.clientPath({
+      view,
+      cursor,
+      collectionRevision,
+    }),
     { cache: "no-store", signal },
   );
   return decodeCollectionPage(response, decodeConversationIndexItem);
-}
-
-export async function deleteConversation(
-  conversationId: string,
-): Promise<CollectionRevision> {
-  const response = await apiFetch<unknown>(
-    `/api/conversations/${encodeURIComponent(conversationId)}` as ApiPath,
-    { method: "DELETE" },
-  );
-  return decodeCollectionRevisionOut(response);
 }

@@ -1,7 +1,7 @@
 /** Pure semantic projection for one library row. */
 
 import { absent, present } from "@/lib/api/presence";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { libraryPresentation } from "@/lib/libraries/presentation";
 import type { CollectionRowView } from "@/lib/collections/types";
 
@@ -43,11 +43,9 @@ export function presentLibrary(
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    resourceTarget: routeResourceActionSubject({
-      scheme: "library",
-      id: item.id,
-      href,
-    }),
+    actionSubject: {
+      ref: canonicalResourceRef({ scheme: "library", id: item.id }),
+    },
     selected: false,
   };
 }

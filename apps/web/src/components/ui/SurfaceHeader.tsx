@@ -28,7 +28,7 @@ interface SurfaceHeaderProps {
   /** The pane's own non-resource view menu (reader settings, date navigation). */
   viewMenu?: PaneViewMenuPublication;
   /** The pane's resource identity → the canonical resource dropdown. */
-  resourceTarget?: ResourceActionSubject;
+  actionSubject?: ResourceActionSubject;
   navigation: SurfaceHeaderNavigation;
   className?: string;
 }
@@ -38,8 +38,8 @@ interface SurfaceHeaderProps {
  * the pane's own view menu, and the canonical resource dropdown are pane-runtime
  * furniture and stay here; identity is delegated to the typed
  * {@link PaneHeaderIdentity} projection. The resource dropdown is the one
- * {@link ResourceActionMenu} keyed by the pane's `resourceTarget` — the same
- * menu every surface renders — so Open stays in the open pane's own menu (AC6).
+ * {@link ResourceActionMenu} keyed by the pane's `actionSubject` — the same
+ * menu every surface renders — so Open stays in the open pane's own menu (AC3).
  */
 const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
   function SurfaceHeader(
@@ -49,7 +49,7 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
       actions,
       controls,
       viewMenu,
-      resourceTarget,
+      actionSubject,
       navigation,
       className,
     }: SurfaceHeaderProps,
@@ -116,9 +116,9 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
             />
           ) : null}
 
-          {resourceTarget ? (
+          {actionSubject ? (
             <ResourceActionMenu
-              target={resourceTarget}
+              actionSubject={actionSubject}
               label="Options"
               placement="below"
               align="end"

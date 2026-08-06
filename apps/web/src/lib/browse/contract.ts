@@ -9,6 +9,10 @@ import {
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import type { ApiError } from "@/lib/api/client";
 import {
+  decodeResourceActionSubject,
+  type ResourceActionSubject,
+} from "@/lib/resources/resourceActionTarget";
+import {
   parseMediaImageProxySrc,
   type MediaImageProxySrc,
 } from "@/lib/media/imageProxy";
@@ -27,7 +31,11 @@ export type BrowseSource =
 export type BrowseSort = "Relevance" | "Newest";
 
 export type BrowseResolution =
-  | { readonly kind: "InNexus"; readonly href: string }
+  | {
+      readonly kind: "InNexus";
+      readonly href: string;
+      readonly actionSubject: ResourceActionSubject;
+    }
   | { readonly kind: "Preview"; readonly target: DiscoveryTargetHandle }
   | { readonly kind: "ExternalOnly"; readonly sourceHref: string };
 
@@ -220,10 +228,7 @@ export function decodePreviewAudioDescriptor(
       proxiedImageHref(imageUrl, "PreviewAudioDescriptor.imageUrl.value"),
     ),
     durationMs: decodePresence(value.durationMs, (durationMs) =>
-      nonnegativeInteger(
-        durationMs,
-        "PreviewAudioDescriptor.durationMs.value",
-      ),
+      nonnegativeInteger(durationMs, "PreviewAudioDescriptor.durationMs.value"),
     ),
   };
 }
@@ -381,12 +386,19 @@ function decodeContributors(
 function decodeResolution(raw: unknown, context: string): BrowseResolution {
   const value = asRecord(raw, context);
   switch (value.kind) {
-    case "InNexus":
-      exactKeys(value, ["kind", "href"], context);
+    case "InNexus": {
+      exactKeys(value, ["kind", "href", "actionSubjectRef"], context);
+      const href = internalHref(value.href, `${context}.href`);
+      const actionSubject = decodeResourceActionSubject(
+        { ref: value.actionSubjectRef },
+        `${context}.actionSubject`,
+      );
       return {
         kind: "InNexus",
-        href: internalHref(value.href, `${context}.href`),
+        href,
+        actionSubject,
       };
+    }
     case "Preview":
       exactKeys(value, ["kind", "target"], context);
       return {

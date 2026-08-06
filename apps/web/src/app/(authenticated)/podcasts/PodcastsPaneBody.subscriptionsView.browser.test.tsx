@@ -20,6 +20,7 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import {
   ResourceActionOverlays,
   ResourceOverlaysProvider,
@@ -215,6 +216,7 @@ function PodcastsPane({
                   transport={null}
                 >
                 <ResourceOverlaysProvider>
+                <GlobalPlayerProvider>
                 <ResourceActionRuntimeProvider>
                 <div data-pane-id="pane" data-active="true">
                   <PaneShell
@@ -247,6 +249,7 @@ function PodcastsPane({
                 </div>
                 <ResourceActionOverlays />
                 </ResourceActionRuntimeProvider>
+                </GlobalPlayerProvider>
                 </ResourceOverlaysProvider>
                 </OfflineMediaProvider>
                 </LecternProvider>

@@ -14,7 +14,11 @@ import {
   isLibraryDestinationDefect,
   type LibraryDestinationSelection,
 } from "@/lib/libraries/client";
-import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
+import {
+  libraryPlacementDestinationKey,
+  type LibraryPlacementDestinationKey,
+  type LibraryPlacementOption,
+} from "@/lib/libraries/libraryPlacement";
 import {
   acceptedMediaIds,
   couldNotSubscribeCount,
@@ -94,10 +98,10 @@ type PlacementEditorIntent =
     };
 
 interface PlacementPresentation {
-  libraries: LibraryPlacementOption[];
+  placements: LibraryPlacementOption[];
   loading: boolean;
   busy: boolean;
-  pendingLibraryId: string | null;
+  pendingDestinationKey: LibraryPlacementDestinationKey | null;
   error: ReturnType<typeof feedbackForItem>;
   retryCommand: PlacementCommand | null;
 }
@@ -214,28 +218,26 @@ function projectBulkLibraries(
   placements: readonly (PlacementState | undefined)[],
   command: "Add" | "Remove",
 ): LibraryPlacementOption[] {
-  const byId = new Map<string, LibraryPlacementOption>();
+  const byKey = new Map<LibraryPlacementDestinationKey, LibraryPlacementOption>();
   for (const placement of placements) {
-    for (const library of librariesForPlacement(placement)) {
-      const current = byId.get(library.id);
+    for (const option of librariesForPlacement(placement)) {
       const eligible =
         command === "Add"
-          ? !library.isInLibrary && library.canAdd
-          : library.isInLibrary && library.canRemove;
-      byId.set(library.id, {
-        id: library.id,
-        name: library.name,
-        color: library.color,
-        isInLibrary: command === "Remove",
-        canAdd: command === "Add" && (current?.canAdd === true || eligible),
-        canRemove:
-          command === "Remove" && (current?.canRemove === true || eligible),
+          ? option.relation.kind === "Absent" &&
+            option.availability.kind === "Available"
+          : option.relation.kind === "Direct" &&
+            option.availability.kind === "Available";
+      if (!eligible) continue;
+      const key = libraryPlacementDestinationKey(option.destination);
+      if (byKey.has(key)) continue;
+      byKey.set(key, {
+        destination: option.destination,
+        relation: command === "Add" ? { kind: "Absent" } : { kind: "Direct" },
+        availability: { kind: "Available" },
       });
     }
   }
-  return [...byId.values()].filter((library) =>
-    command === "Add" ? library.canAdd : library.canRemove,
-  );
+  return [...byKey.values()];
 }
 
 function mutationLabel(session: AddContentSessionController): string {
@@ -348,10 +350,10 @@ export default function AddPanel({
   const placementPresentation = useMemo<PlacementPresentation>(() => {
     if (!placementEditor) {
       return {
-        libraries: [],
+        placements: [],
         loading: false,
         busy: false,
-        pendingLibraryId: null,
+        pendingDestinationKey: null,
         error: null,
         retryCommand: null,
       };
@@ -374,7 +376,7 @@ export default function AddPanel({
       failure?.kind === "LoadFailed" || failure?.kind === "CommandFailed"
         ? failure.feedback
         : null;
-    const libraries =
+    const presentedPlacements =
       placementEditor.kind === "Row"
         ? [...librariesForPlacement(placements[0])]
         : projectBulkLibraries(
@@ -387,16 +389,16 @@ export default function AddPanel({
       (placement) =>
         placement?.kind === "Updating" || placement?.kind === "Reconciling",
     );
-    const pendingLibraryId =
+    const pendingDestinationKey =
       activeWork &&
       (activeWork.kind === "Updating" || activeWork.kind === "Reconciling")
-        ? activeWork.command.libraryId
+        ? libraryPlacementDestinationKey(activeWork.command.destination)
         : null;
     return {
-      libraries,
+      placements: presentedPlacements,
       loading,
       busy: activeWork !== undefined,
-      pendingLibraryId,
+      pendingDestinationKey,
       error,
       retryCommand,
     };
@@ -1015,10 +1017,11 @@ export default function AddPanel({
       >
         {placementEditor ? (
           <LibraryEntryEditor
-            libraries={placementPresentation.libraries}
+            placements={placementPresentation.placements}
             loading={placementPresentation.loading}
             busy={placementPresentation.busy}
-            pendingLibraryId={placementPresentation.pendingLibraryId}
+            creating={creatingDestination}
+            pendingDestinationKey={placementPresentation.pendingDestinationKey}
             error={
               placementPresentation.error
                 ? {
@@ -1041,26 +1044,42 @@ export default function AddPanel({
                   }
                 : null
             }
-            onAddToLibrary={(libraryId) =>
+            onToggle={(destination) => {
+              const option = placementPresentation.placements.find(
+                (candidate) =>
+                  libraryPlacementDestinationKey(candidate.destination) ===
+                  libraryPlacementDestinationKey(destination),
+              );
+              if (!option || option.relation.kind === "Inherited") return;
               runSessionCommand(() =>
                 session.runPlacement({
                   mediaIds: placementEditor.mediaIds,
-                  command: { kind: "Add", libraryId },
+                  command: {
+                    kind: option.relation.kind === "Absent" ? "Add" : "Remove",
+                    destination,
+                  },
                 }),
-              )
-            }
-            onRemoveFromLibrary={(libraryId) =>
-              runSessionCommand(() =>
-                session.runPlacement({
-                  mediaIds: placementEditor.mediaIds,
-                  command: { kind: "Remove", libraryId },
-                }),
-              )
+              );
+            }}
+            onCreateLibrary={
+              placementEditor.kind === "BulkRemove"
+                ? null
+                : (name) =>
+                    runSessionCommand(async () => {
+                      const library = await session.createDestination(name);
+                      await session.runPlacement({
+                        mediaIds: placementEditor.mediaIds,
+                        command: {
+                          kind: "Add",
+                          destination: { kind: "Library", library },
+                        },
+                      });
+                    })
             }
             selectedGroupLabel="In these libraries"
             otherGroupLabel="Other libraries"
-            searchLabel="Search libraries"
-            searchPlaceholder="Search libraries"
+            searchLabel="Search or create a library"
+            searchPlaceholder="Search or create"
             listLabel="Library options"
             emptyInventory="No eligible libraries."
           />

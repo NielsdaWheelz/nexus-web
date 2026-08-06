@@ -7,7 +7,7 @@ import {
 } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import {
-  decodeStandingActionTarget,
+  decodeResourceActionSubject,
   type ResourceActionSubject,
 } from "@/lib/resources/resourceActionTarget";
 import {
@@ -70,7 +70,7 @@ export interface ConnectionEndpointOut {
 }
 
 export interface ConnectionActionEndpointOut extends ConnectionEndpointOut {
-  actionTarget: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
 }
 
 export interface ConnectionCitationOut {
@@ -236,22 +236,19 @@ function decodeActionEndpoint(
     value.activation,
     `${name}.activation`,
   );
-  const actionTarget = decodeStandingActionTarget(
-    {
-      kind: "Resource",
-      ref,
-      activation,
-      missing,
-    },
-    `${name}.actionTarget`,
+  const actionSubject = decodeResourceActionSubject(
+    { ref },
+    `${name}.actionSubject`,
   );
-  if (actionTarget.kind !== "Resource") {
-    // justify-defect: this owned endpoint constructs the Resource discriminator;
-    // an External result would contradict the shared decoder contract.
-    throw new TypeError(`${name}.actionTarget must be Resource`);
+  if (activation.resourceRef !== actionSubject.ref) {
+    // justify-defect: occurrence navigation and canonical action identity are
+    // separate facts, but an endpoint must publish both for the same resource.
+    throw new TypeError(
+      `${name}.activation.resource_ref must equal ${name}.ref`,
+    );
   }
   const href = expectNullableString(value.href, `${name}.href`);
-  if (href !== actionTarget.activation.href) {
+  if (href !== activation.href) {
     // justify-defect: the endpoint cannot publish two different activation
     // destinations for the same resource.
     throw new TypeError(`${name}.href must equal ${name}.activation.href`);
@@ -262,10 +259,10 @@ function decodeActionEndpoint(
     id,
     label: expectNullableString(value.label, `${name}.label`),
     description: expectNullableString(value.description, `${name}.description`),
-    activation: actionTarget.activation,
+    activation,
     href,
     missing,
-    actionTarget,
+    actionSubject,
   };
 }
 
@@ -292,16 +289,8 @@ function decodeConnectionActivation(
       `${name}.unresolved_reason`,
     ),
   };
-  const target = decodeStandingActionTarget(
-    { kind: "Resource", ref, activation, missing: false },
-    `${name}.subject`,
-  );
-  if (target.kind !== "Resource") {
-    // justify-defect: connection citation activations are owned resource
-    // activations, never external standing targets.
-    throw new TypeError(`${name} must identify a Resource`);
-  }
-  return target.activation;
+  decodeResourceActionSubject({ ref }, `${name}.subject`);
+  return activation;
 }
 
 function decodeConnectionReaderTarget(

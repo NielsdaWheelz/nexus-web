@@ -34,10 +34,8 @@ import {
 } from "@/lib/player/playerChromeModel";
 import Button from "@/components/ui/Button";
 import MediaImage from "@/components/ui/MediaImage";
-import {
-  routeResourceActionSubject,
-  type ResourceActionSubject,
-} from "@/lib/resources/resourceActionTarget";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 import styles from "./PlayerControls.module.css";
 
@@ -70,15 +68,11 @@ export function playerTargetHref(model: PresentPlayerChrome): string {
  * model has a stable media `ResourceRef`; the Preview model is a transient
  * resource excluded from the resource-action system (spec Scope).
  */
-export function playerMediaActionTarget(
+export function playerMediaActionSubject(
   model: Extract<PresentPlayerChrome, { readonly kind: "Canonical" }>,
 ): ResourceActionSubject {
   const mediaId = model.state.session.descriptor.mediaId;
-  return routeResourceActionSubject({
-    scheme: "media",
-    id: mediaId,
-    href: `/media/${mediaId}`,
-  });
+  return { ref: canonicalResourceRef({ scheme: "media", id: mediaId }) };
 }
 
 export function PlayerArtwork({

@@ -12,6 +12,8 @@ import type { ResourceActivation } from "@/lib/resources/activation";
 import ChatFailureCard from "./ChatFailureCard";
 import QuotedPassageCard from "./QuotedPassageCard";
 import ConversationMessageText from "./ConversationMessageText";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import styles from "./MessageRow.module.css";
 
 export default function UserMessage({
@@ -83,6 +85,15 @@ export default function UserMessage({
       {isTerminalFailure ? (
         <ChatFailureCard failure={null} supportId={{ kind: "Absent" }} />
       ) : null}
+      <div className={styles.messageActions}>
+        <ResourceActionMenu
+          actionSubject={{
+            ref: canonicalResourceRef({ scheme: "message", id: message.id }),
+          }}
+          label="Actions for this message"
+          align="start"
+        />
+      </div>
       <time className={styles.timestamp} dateTime={message.created_at}>
         {timestampLabel}
       </time>

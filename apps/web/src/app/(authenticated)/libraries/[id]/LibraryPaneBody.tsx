@@ -130,7 +130,7 @@ import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
 import {
@@ -1362,14 +1362,24 @@ export default function LibraryPaneBody() {
       if (!viewIsCommitted || committedView === null) {
         return Promise.resolve({ kind: "Abandoned" });
       }
+      if (currentLibrary === null) {
+        return Promise.resolve({ kind: "Abandoned" });
+      }
       const targetId = slateTargetId(target);
       const clientMutationId = crypto.randomUUID();
       const frozenAttempt = () =>
-        addLibraryPlacement(
-          { kind: target.kind, id: targetId },
-          id,
-          { clientMutationId },
-        );
+        addLibraryPlacement({
+          target: { kind: target.kind, id: targetId },
+          destination: {
+            kind: "Library",
+            library: {
+              id: currentLibrary.id,
+              name: currentLibrary.name,
+              color: currentLibrary.color,
+            },
+          },
+          clientMutationId,
+        });
 
       return new Promise((resolve) => {
         let observing = true;
@@ -1446,11 +1456,11 @@ export default function LibraryPaneBody() {
         runAttempt();
       });
     },
-    [committedView, id, viewIsCommitted],
+    [committedView, currentLibrary, viewIsCommitted],
   );
 
   // Delete library and Library settings are canonical resource actions now: the
-  // pane publishes its resourceTarget and the app runtime dispatches
+  // pane publishes its actionSubject and the app runtime dispatches
   // DeleteLibrary (confirm + client + reconcile) and LibrarySettings (overlay).
 
   // Continuation recovery replaces the exact committed view's first page while
@@ -1932,15 +1942,16 @@ export default function LibraryPaneBody() {
           }
         : undefined,
     actions: companionAction ? [companionAction] : [],
-    resourceTarget: currentLibrary
-      ? routeResourceActionSubject({
-          scheme: "library",
-          id: currentLibrary.id,
-          href: `/libraries/${currentLibrary.id}`,
-        })
+    actionSubject: currentLibrary
+      ? {
+          ref: canonicalResourceRef({
+            scheme: "library",
+            id: currentLibrary.id,
+          }),
+        }
       : undefined,
     // "Add content" is a pane view control, ejected from the resource menu into
-    // the pane's own dedicated menu (AC4).
+    // the pane's own dedicated menu under the resource-action taxonomy.
     viewMenu:
       addContentAction.length > 0
         ? {

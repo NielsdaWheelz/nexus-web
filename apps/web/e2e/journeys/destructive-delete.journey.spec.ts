@@ -23,9 +23,8 @@ test("confirming conversation deletion removes the exact resource and leaves no 
     createResponse.ok(),
     `Conversation setup failed: ${createResponse.status()} ${createText.slice(0, 500)}`,
   ).toBeTruthy();
-  const conversationId = (
-    JSON.parse(createText) as { data: { id: string } }
-  ).data.id;
+  const conversationId = (JSON.parse(createText) as { data: { id: string } })
+    .data.id;
   const beforeDeleteResponse = await api.get("/api/conversations?limit=100");
   const beforeDeleteText = await beforeDeleteResponse.text();
   expect(
@@ -49,24 +48,25 @@ test("confirming conversation deletion removes the exact resource and leaves no 
     `Conversation ${conversationId} was not open before destructive confirmation.`,
   ).toBeVisible();
   await page.getByRole("button", { name: "Options", exact: true }).click();
-  const deleteResponsePromise = page.waitForResponse(
-    (response) =>
-      matchesResponse(
-        response,
-        webOrigin,
-        "DELETE",
-        `/api/conversations/${conversationId}`,
-      ),
+  const deleteResponsePromise = page.waitForResponse((response) =>
+    matchesResponse(
+      response,
+      webOrigin,
+      "DELETE",
+      `/api/conversations/${conversationId}`,
+    ),
   );
   page.once("dialog", async (dialog) => {
     expect(
       dialog.message(),
       `Conversation ${conversationId} did not require irreversible-action confirmation.`,
-    ).toBe("Delete this conversation? This cannot be undone.");
+    ).toBe(
+      "Delete chat?\n\nDelete “this resource” and its messages? This can’t be undone.",
+    );
     await dialog.accept();
   });
   await page
-    .getByRole("menuitem", { name: "Delete conversation", exact: true })
+    .getByRole("menuitem", { name: "Delete chat", exact: true })
     .click();
   const deleteResponse = await deleteResponsePromise;
   const deleteText = await deleteResponse.text();
@@ -86,9 +86,7 @@ test("confirming conversation deletion removes the exact resource and leaves no 
   );
   await expect(page).toHaveURL(/\/conversations$/);
 
-  const deletedResponse = await api.get(
-    `/api/conversations/${conversationId}`,
-  );
+  const deletedResponse = await api.get(`/api/conversations/${conversationId}`);
   expect(
     deletedResponse.status(),
     `Deleted conversation ${conversationId} remained readable through its product API.`,

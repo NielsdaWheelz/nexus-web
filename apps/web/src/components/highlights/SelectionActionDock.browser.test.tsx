@@ -8,10 +8,10 @@ import FloatingActionSurface, {
   type FloatingActionDismissReason,
 } from "@/components/ui/FloatingActionSurface";
 import {
-  buildHighlightActions,
+  buildSelectionActions,
   projectSelectionActionPlan,
   type SelectionActionPlan,
-} from "./highlightActions";
+} from "./selectionActions";
 import SelectionActionDock from "./SelectionActionDock";
 
 /**
@@ -51,12 +51,11 @@ function selectionPlan({
   onLearn?: () => void;
 } = {}): SelectionActionPlan {
   return projectSelectionActionPlan(
-    buildHighlightActions({
-      target: { kind: "selection", color: "yellow" },
+    buildSelectionActions({
+      color: "yellow",
       canQuoteToChat: chat,
       canAddNote: note,
-      isReflowable: false,
-      state: { isEditingBounds: false, deleting: false, changingColor },
+      changingColor,
       handlers: {
         onSelectColor: noop,
         onAddNote: note ? noop : undefined,
@@ -65,8 +64,6 @@ function selectionPlan({
         onLearn: learn ? onLearn : undefined,
         onQuoteToNewChat: chat ? noop : undefined,
         onQuoteToExistingChat: chat ? noop : undefined,
-        onToggleEditBounds: noop,
-        onDelete: noop,
       },
     }),
   );

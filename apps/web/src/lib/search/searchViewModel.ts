@@ -211,7 +211,7 @@ export function adaptSearchResultRow(
     resourceRef: result.resource_ref,
     ownerResourceRef: result.owner_resource_ref,
     activation: result.activation,
-    actionTarget: result.actionTarget,
+    actionSubject: result.actionSubject,
     citationTarget: result.citation_target,
     paneLabelHint: primaryText,
     type: result.type,

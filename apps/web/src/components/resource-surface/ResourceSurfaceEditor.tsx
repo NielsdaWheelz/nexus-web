@@ -33,6 +33,7 @@ import {
   type DailyResourceSurfaceSession,
   type ResourceSurfaceSession,
 } from "@/lib/resourceSurface/useResourceSurfaceSession";
+import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import {
   draftNoteRef,
   provisionalDailyOccurrence,
@@ -203,6 +204,10 @@ type ResourceSurfaceEditorProps = (
   focusBodySerial?: number;
   onSurfaceChange?: (surface: ResourceSurface) => void;
   onDailyTitleChange?: (title: string | null) => void;
+  onTitleMutationStarted?: () => MountedEditorMutationLease | null;
+  onTitleEditAborted?: () => void;
+  onSourceBodyMutationStarted?: () => MountedEditorMutationLease | null;
+  onSourceBodyEditAborted?: () => void;
   activateTarget: (input: {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
@@ -219,6 +224,10 @@ export default function ResourceSurfaceEditor({
   focusBodySerial = 0,
   onSurfaceChange,
   onDailyTitleChange,
+  onTitleMutationStarted,
+  onTitleEditAborted,
+  onSourceBodyMutationStarted,
+  onSourceBodyEditAborted,
   activateTarget,
   notePulseTarget,
 }: ResourceSurfaceEditorProps) {
@@ -329,6 +338,10 @@ export default function ResourceSurfaceEditor({
         notePulseTarget={notePulseTarget}
         onSurfaceChange={onSurfaceChange}
         onDailyTitleChange={onDailyTitleChange}
+        onTitleMutationStarted={onTitleMutationStarted}
+        onTitleEditAborted={onTitleEditAborted}
+        onSourceBodyMutationStarted={onSourceBodyMutationStarted}
+        onSourceBodyEditAborted={onSourceBodyEditAborted}
       />
     );
   }
@@ -362,6 +375,10 @@ export default function ResourceSurfaceEditor({
       activateTarget={activateTarget}
       notePulseTarget={notePulseTarget}
       onSurfaceChange={onSurfaceChange}
+      onTitleMutationStarted={onTitleMutationStarted}
+      onTitleEditAborted={onTitleEditAborted}
+      onSourceBodyMutationStarted={onSourceBodyMutationStarted}
+      onSourceBodyEditAborted={onSourceBodyEditAborted}
     />
   );
 }
@@ -383,6 +400,10 @@ function LoadedResourceSurfaceEditor({
   notePulseTarget,
   onSurfaceChange,
   onDailyTitleChange,
+  onTitleMutationStarted,
+  onTitleEditAborted,
+  onSourceBodyMutationStarted,
+  onSourceBodyEditAborted,
 }: {
   sourceRef?: string;
   daily?: DailyResourceSurfaceEditorSource;
@@ -405,6 +426,10 @@ function LoadedResourceSurfaceEditor({
   notePulseTarget?: NotePulseEditorTarget | null;
   onSurfaceChange?: (surface: ResourceSurface) => void;
   onDailyTitleChange?: (title: string | null) => void;
+  onTitleMutationStarted?: () => MountedEditorMutationLease | null;
+  onTitleEditAborted?: () => void;
+  onSourceBodyMutationStarted?: () => MountedEditorMutationLease | null;
+  onSourceBodyEditAborted?: () => void;
 }) {
   const editorSessionKey = daily
     ? `daily:${daily.accountId}:${daily.localDate}`
@@ -422,6 +447,8 @@ function LoadedResourceSurfaceEditor({
   const sessionRef = useRef<
     ResourceSurfaceSession | DailyResourceSurfaceSession | null
   >(null);
+  const titleChangedSinceFocusRef = useRef(false);
+  const sourceBodyChangedSinceFocusRef = useRef(false);
   const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
   const [recoveryCopyFeedback, setRecoveryCopyFeedback] =
     useState<FeedbackContent | null>(null);
@@ -493,11 +520,15 @@ function LoadedResourceSurfaceEditor({
           onDeliveryClaimed: claimDelivery,
           beforePrepend,
           onError: reportError,
+          onTitleMutationStarted,
+          onSourceBodyMutationStarted,
         }
       : {
           sourceRef: sourceRef!,
           initialSurface: initialSurface!,
           onError: reportError,
+          onTitleMutationStarted,
+          onSourceBodyMutationStarted,
       },
   );
   const copyRecovery = useCallback(() => {
@@ -541,12 +572,14 @@ function LoadedResourceSurfaceEditor({
 
   useEffect(() => {
     if (!focusMastheadSerial) return;
+    titleChangedSinceFocusRef.current = false;
     titleRef.current?.focus();
     titleRef.current?.select();
   }, [focusMastheadSerial, titleRef]);
 
   useEffect(() => {
     if (!focusBodySerial) return;
+    sourceBodyChangedSinceFocusRef.current = false;
     const first = surface?.orderedItems[0];
     setBodyFocus({
       occurrenceId: first?.occurrenceId ?? null,
@@ -678,9 +711,15 @@ function LoadedResourceSurfaceEditor({
         ref={titleRef}
         className={styles.title}
         value={source.content.title}
-        onChange={(event) => session.updateTitle(event.currentTarget.value)}
+        onChange={(event) => {
+          titleChangedSinceFocusRef.current = true;
+          session.updateTitle(event.currentTarget.value);
+        }}
         onKeyDown={onTitleKeyDown}
-        onBlur={session.flush}
+        onBlur={() => {
+          session.flush();
+          if (!titleChangedSinceFocusRef.current) onTitleEditAborted?.();
+        }}
         aria-label="Page title"
         readOnly={!editable}
       />
@@ -693,9 +732,16 @@ function LoadedResourceSurfaceEditor({
         editable={editable}
         ariaLabel="Note content"
         notePulseTarget={notePulseTarget}
-        onBodyChange={(change: NoteBodyChange) =>
-          session.updateSourceNoteBody(change)
-        }
+        focusRequest={focusBodySerial}
+        onBodyChange={(change: NoteBodyChange) => {
+          sourceBodyChangedSinceFocusRef.current = true;
+          session.updateSourceNoteBody(change);
+        }}
+        onFocusChange={(focused) => {
+          if (!focused && !sourceBodyChangedSinceFocusRef.current) {
+            onSourceBodyEditAborted?.();
+          }
+        }}
         onBlurFlush={(change: NoteBodyChange) =>
           session.updateSourceNoteBody({ ...change, flush: true })
         }

@@ -82,10 +82,10 @@ function ContextRefRow({
         <>
           {/* Canonical resource dropdown — Open/Share/Chat/… only. */}
           <ResourceActionMenu
-            target={contextRef.actionTarget}
+            actionSubject={contextRef.actionSubject}
             label={`Actions for ${contextRef.label}`}
           />
-          {/* Separate context-edge control (AC4): the remove-from-context edge
+          {/* Separate context-edge control: the remove-from-context edge
               command is not a resource action and publishes on its own trigger. */}
           <ContextEdgeMenu
             action="RemoveFromContext"

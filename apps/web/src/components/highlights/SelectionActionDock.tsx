@@ -14,7 +14,7 @@ import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
-import type { SelectionActionPlan } from "./highlightActions";
+import type { SelectionActionPlan } from "./selectionActions";
 import styles from "./SelectionActionDock.module.css";
 
 export type SelectionPendingActionId =
@@ -306,7 +306,7 @@ function actionIsPending(
     case "color":
       return actionId === "color";
     case "share":
-      return actionId === "ResourceAction.Share";
+      return actionId === "share";
     case "learn":
     case "quote-new":
     case "quote-existing":

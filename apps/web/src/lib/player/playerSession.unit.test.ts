@@ -20,7 +20,7 @@ import {
   type PlayerOrigin,
   type PlayerSessionState,
 } from "@/lib/player/playerSession";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 const ids = new Map<string, string>();
 
@@ -37,7 +37,10 @@ function mediaId(key: string): MediaId {
 }
 
 function origin(key: string): PlayerOrigin {
-  return { kind: "Lectern", itemId: assumeLecternItemId(stableUuid(`item:${key}`)) };
+  return {
+    kind: "Lectern",
+    itemId: assumeLecternItemId(stableUuid(`item:${key}`)),
+  };
 }
 
 function activation(): FooterAudioActivation {
@@ -86,11 +89,9 @@ function item(key: string): LecternItem {
       progressResettable: false,
     },
     activation: activation(),
-    actionTarget: routeResourceActionSubject({
-      scheme: "media",
-      id,
-      href: `/media/${id}`,
-    }),
+    actionSubject: {
+      ref: canonicalResourceRef({ scheme: "media", id }),
+    },
   };
 }
 
@@ -113,7 +114,12 @@ describe("player session boundary", () => {
       forward: [descriptor("stale-forward")],
     };
 
-    const result = playExplicit(active("current"), history, descriptor("next"), snapshot("next"));
+    const result = playExplicit(
+      active("current"),
+      history,
+      descriptor("next"),
+      snapshot("next"),
+    );
 
     expect(result).toEqual({
       state: {
@@ -130,15 +136,23 @@ describe("player session boundary", () => {
   });
 
   it("uses the exact 3-second boundary for back versus restart", () => {
-    const history: PlayerHistory = { back: [descriptor("previous")], forward: [] };
+    const history: PlayerHistory = {
+      back: [descriptor("previous")],
+      forward: [],
+    };
 
-    expect(previous(active("current"), history, 3_001, snapshot()).effect).toEqual({
+    expect(
+      previous(active("current"), history, 3_001, snapshot()).effect,
+    ).toEqual({
       kind: "RestartCurrent",
     });
     const boundary = previous(active("current"), history, 3_000, snapshot());
     expect(boundary.state).toMatchObject({
       kind: "Active",
-      session: { descriptor: descriptor("previous"), origin: { kind: "Direct" } },
+      session: {
+        descriptor: descriptor("previous"),
+        origin: { kind: "Direct" },
+      },
     });
     expect(boundary.history).toEqual({
       back: [],

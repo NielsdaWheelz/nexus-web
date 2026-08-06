@@ -185,7 +185,7 @@ export function useLinkComposer({
   onViewConnection,
 }: {
   /** Refresh the reader-connections read model so the new Link appears. */
-  onLinked: () => void;
+  onLinked: () => void | Promise<void>;
   /** Open the Link-note composer for the just-created Link (toast action). */
   onAddLinkNote?: (linkId: string) => void;
   /** Reveal the Connection for an already-linked target (toast action). */
@@ -223,7 +223,7 @@ export function useLinkComposer({
       try {
         await deleteLink(linkId);
         feedback.resolve(feedbackKey);
-        onLinked();
+        await onLinked();
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
         if (
@@ -232,7 +232,7 @@ export function useLinkComposer({
           error.code === "E_NOT_FOUND"
         ) {
           feedback.resolve(feedbackKey);
-          onLinked();
+          await onLinked();
           return;
         }
         try {
@@ -295,7 +295,7 @@ export function useLinkComposer({
             source: intent.source,
             target: intent.target,
           });
-          onLinked();
+          await onLinked();
           setOpen(false);
           setSource(null);
           setSourceRef(undefined);

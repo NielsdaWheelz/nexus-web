@@ -9,7 +9,8 @@ import type {
   UploadFileKind,
 } from "@/lib/media/ingestionClient";
 import {
-  patchLibraryPlacement,
+  projectLibraryPlacement,
+  type LibraryPlacementDestination,
   type LibraryPlacementOption,
 } from "@/lib/libraries/libraryPlacement";
 import type { PodcastOpmlImportResult } from "@/lib/podcasts/opmlImport";
@@ -76,8 +77,8 @@ export type AddItem =
     };
 
 export type PlacementCommand =
-  | { kind: "Add"; libraryId: string }
-  | { kind: "Remove"; libraryId: string };
+  | { kind: "Add"; destination: LibraryPlacementDestination }
+  | { kind: "Remove"; destination: LibraryPlacementDestination };
 
 export type PlacementWork = {
   libraries: readonly LibraryPlacementOption[];
@@ -473,10 +474,12 @@ export function reduceAddSession(
                   mediaId,
                   {
                     kind: "Ready" as const,
-                    libraries: patchLibraryPlacement(
+                    libraries: projectLibraryPlacement(
                       [...progress.libraries],
-                      progress.command.libraryId,
-                      progress.command.kind === "Add",
+                      progress.command.destination,
+                      progress.command.kind === "Add"
+                        ? { kind: "Direct" }
+                        : { kind: "Absent" },
                     ),
                   },
                 ];

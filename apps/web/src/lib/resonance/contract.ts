@@ -32,7 +32,9 @@ const RESONANCE_EDGE_ORIGINS = [
 
 export type SlateMediaKind = (typeof MEDIA_KINDS)[number];
 export type ResonanceEdgeOrigin = (typeof RESONANCE_EDGE_ORIGINS)[number];
-export type ResourceRefUri = string & { readonly __resourceRefUri: unique symbol };
+export type ResourceRefUri = string & {
+  readonly __resourceRefUri: unique symbol;
+};
 
 export interface SlateAnchor {
   ref: ResourceRefUri;
@@ -45,7 +47,7 @@ interface SlateTargetBase {
   subtitle: Presence<string>;
   imageUrl: Presence<string>;
   href: AppHref;
-  actionTarget: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
 }
 
 export type SlateTarget =
@@ -94,7 +96,10 @@ function asLiteral<T extends string>(
   allowed: readonly T[],
   context: string,
 ): T {
-  if (typeof raw !== "string" || !(allowed as readonly string[]).includes(raw)) {
+  if (
+    typeof raw !== "string" ||
+    !(allowed as readonly string[]).includes(raw)
+  ) {
     throw new Error(
       `Invalid ${context}: expected one of [${allowed.join(", ")}], got ${JSON.stringify(raw)}`,
     );
@@ -103,12 +108,7 @@ function asLiteral<T extends string>(
 }
 
 function asFraction(raw: unknown, context: string): number {
-  if (
-    typeof raw !== "number" ||
-    !Number.isFinite(raw) ||
-    raw < 0 ||
-    raw > 1
-  ) {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0 || raw > 1) {
     throw new Error(`Invalid ${context}: expected a finite number in 0..1`);
   }
   return raw;
@@ -121,28 +121,17 @@ function decodeResourceRefUri(
 ): ResourceRefUri {
   const value = asString(raw, context);
   const parsed = parseResourceRef(value);
-  if (!parsed || (expectedScheme !== undefined && parsed.scheme !== expectedScheme)) {
+  if (
+    !parsed ||
+    (expectedScheme !== undefined && parsed.scheme !== expectedScheme)
+  ) {
     throw new Error(`Invalid ${context}: expected a canonical ResourceRef URI`);
   }
   return value as ResourceRefUri;
 }
 
-function slateActionTarget(
-  ref: ResourceRefUri,
-  href: AppHref,
-): ResourceActionSubject {
-  const canonicalRef = assumeCanonicalResourceRef(ref);
-  return {
-    kind: "Resource",
-    ref: canonicalRef,
-    activation: {
-      resourceRef: canonicalRef,
-      kind: "route",
-      href,
-      unresolvedReason: null,
-    },
-    missing: false,
-  };
+function slateActionSubject(ref: ResourceRefUri): ResourceActionSubject {
+  return { ref: assumeCanonicalResourceRef(ref) };
 }
 
 function decodeAnchor(raw: unknown): SlateAnchor {
@@ -156,7 +145,11 @@ function decodeAnchor(raw: unknown): SlateAnchor {
 
 function decodeTarget(raw: unknown): SlateTarget {
   const value = asRecord(raw, "SlateTargetOut");
-  const kind = asLiteral(value.kind, ["Media", "Podcast"] as const, "SlateTargetOut.kind");
+  const kind = asLiteral(
+    value.kind,
+    ["Media", "Podcast"] as const,
+    "SlateTargetOut.kind",
+  );
   if (kind === "Media") {
     exactKeys(
       value,
@@ -187,7 +180,7 @@ function decodeTarget(raw: unknown): SlateTarget {
         asString(imageUrl, "SlateTargetOut.Media.imageUrl"),
       ),
       href,
-      actionTarget: slateActionTarget(ref, href),
+      actionSubject: slateActionSubject(ref),
     };
   }
   exactKeys(
@@ -214,7 +207,7 @@ function decodeTarget(raw: unknown): SlateTarget {
       asString(imageUrl, "SlateTargetOut.Podcast.imageUrl"),
     ),
     href,
-    actionTarget: slateActionTarget(ref, href),
+    actionSubject: slateActionSubject(ref),
   };
 }
 
@@ -235,14 +228,16 @@ function decodeReason(raw: unknown): SlateReason {
   );
   switch (kind) {
     case "Continue":
-      exactKeys(value, ["kind", "progress", "lastEngagedAt"], "SlateReasonOut.Continue");
+      exactKeys(
+        value,
+        ["kind", "progress", "lastEngagedAt"],
+        "SlateReasonOut.Continue",
+      );
       return {
         kind,
-        progress: decodePresence(value.progress, (progress) =>
-          ({
-            value: asFraction(progress, "SlateReasonOut.Continue.progress"),
-          }),
-        ),
+        progress: decodePresence(value.progress, (progress) => ({
+          value: asFraction(progress, "SlateReasonOut.Continue.progress"),
+        })),
         lastEngagedAt: expectIsoInstant(
           value.lastEngagedAt,
           "SlateReasonOut.Continue.lastEngagedAt",
@@ -252,7 +247,10 @@ function decodeReason(raw: unknown): SlateReason {
       exactKeys(value, ["kind", "addedAt"], "SlateReasonOut.AddedToNexus");
       return {
         kind,
-        addedAt: expectIsoInstant(value.addedAt, "SlateReasonOut.AddedToNexus.addedAt"),
+        addedAt: expectIsoInstant(
+          value.addedAt,
+          "SlateReasonOut.AddedToNexus.addedAt",
+        ),
       };
     case "Published":
       exactKeys(value, ["kind", "publishedOn"], "SlateReasonOut.Published");
@@ -310,7 +308,10 @@ function decodeReason(raw: unknown): SlateReason {
 function decodeSlateItem(raw: unknown): SlateItem {
   const value = asRecord(raw, "SlateItemOut");
   exactKeys(value, ["target", "reason"], "SlateItemOut");
-  return { target: decodeTarget(value.target), reason: decodeReason(value.reason) };
+  return {
+    target: decodeTarget(value.target),
+    reason: decodeReason(value.reason),
+  };
 }
 
 export function decodeSlateSnapshot(raw: unknown): SlateSnapshot {
@@ -326,7 +327,9 @@ export function decodeSlateSnapshot(raw: unknown): SlateSnapshot {
   const refs = new Set<ResourceRefUri>();
   for (const item of items) {
     if (refs.has(item.target.ref)) {
-      throw new Error(`Invalid SlateOut.items: duplicate ref ${item.target.ref}`);
+      throw new Error(
+        `Invalid SlateOut.items: duplicate ref ${item.target.ref}`,
+      );
     }
     refs.add(item.target.ref);
   }

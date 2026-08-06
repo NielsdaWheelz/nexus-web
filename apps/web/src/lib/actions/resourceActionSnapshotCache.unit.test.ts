@@ -1,21 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
+import { ApiError } from "@/lib/api/client";
 import {
   createResourceActionSnapshotCache,
   type ResolveSnapshots,
+  type ResourceActionSnapshotCache,
 } from "@/lib/actions/resourceActionSnapshotCache";
 import type { ResourceActionSnapshot } from "@/lib/actions/resourceActionSnapshot";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 
-// Independent oracle: the spec's "Opening a menu performs no network request.
-// Standing surfaces prefetch their snapshots in a deduplicated batch" contract
-// (canonical-resource-action-menu-hard-cutover.md) + DESIGN_CONTRACT.md "Wave 3
-// runtime design": register a ref -> coalesce every pending ref within one tick
-// into ONE resolve call carrying the unique refs, distribute by ref, and never
-// refetch an already-cached ref. Each expectation restates that contract by hand
-// against an injected resolver + a manual scheduler; nothing reads the cache's
-// internal batching machinery.
+// Product oracle: canonical-resource-action-menu-hard-cutover.md, "Runtime and
+// UI Rules". The cache is a retained public state machine; these tests exercise
+// that public contract without inspecting cache internals.
 
 function refOf(n: number): CanonicalResourceRef {
   return assumeCanonicalResourceRef(
@@ -23,222 +20,440 @@ function refOf(n: number): CanonicalResourceRef {
   );
 }
 
-function readySnapshotOf(ref: CanonicalResourceRef): ResourceActionSnapshot {
+function snapshotOf(
+  ref: CanonicalResourceRef,
+  revision: string,
+  capabilities: ResourceActionSnapshot["capabilities"] = [],
+): ResourceActionSnapshot {
   return {
     ref,
     activation: {
       resourceRef: ref,
       kind: "route",
-      href: `/media/${ref}`,
+      href: `/media/${ref.slice("media:".length)}`,
       unresolvedReason: null,
     },
     missing: false,
-    factsRevision: `rev:${ref}`,
-    capabilities: [],
+    factsRevision: revision,
+    capabilities,
   };
 }
 
-/**
- * A manual scheduler: it captures the pending flush so a test can run it after
- * registering N refs (mirroring a microtask that fires once at end-of-tick), and
- * returns the flush's promise so the async resolve settles deterministically.
- */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function manualScheduler() {
-  let pending: (() => void | Promise<void>) | null = null;
+  const pending: Array<() => void | Promise<void>> = [];
   return {
     schedule: (flush: () => void | Promise<void>) => {
-      pending = flush;
+      pending.push(flush);
     },
-    isScheduled: () => pending !== null,
-    async runTick(): Promise<void> {
-      const flush = pending;
-      pending = null;
-      if (flush) await flush();
+    pendingCount: () => pending.length,
+    runNext(): Promise<void> {
+      const flush = pending.shift();
+      if (!flush) throw new Error("No scheduled cache flush");
+      return Promise.resolve(flush());
     },
   };
 }
 
-describe("createResourceActionSnapshotCache batch coalescing", () => {
-  it("coalesces every ref registered within one tick into ONE deduplicated resolve call", async () => {
-    const a = refOf(1);
-    const b = refOf(2);
-    const resolve = vi.fn<ResolveSnapshots>((refs) =>
-      Promise.resolve(refs.map(readySnapshotOf)),
-    );
-    const scheduler = manualScheduler();
-    const cache = createResourceActionSnapshotCache({
+function createRecordedCache(implementation: ResolveSnapshots): {
+  readonly cache: ResourceActionSnapshotCache;
+  readonly scheduler: ReturnType<typeof manualScheduler>;
+  readonly calls: CanonicalResourceRef[][];
+} {
+  const calls: CanonicalResourceRef[][] = [];
+  const scheduler = manualScheduler();
+  const resolve: ResolveSnapshots = (refs) => {
+    calls.push([...refs]);
+    return implementation(refs);
+  };
+  return {
+    cache: createResourceActionSnapshotCache({
       resolve,
       schedule: scheduler.schedule,
-    });
+    }),
+    scheduler,
+    calls,
+  };
+}
 
-    cache.register(a);
-    cache.register(b);
-    cache.register(a); // duplicate registration within the same tick
+describe("resource action snapshot cache retention and batching", () => {
+  it("deduplicates retained refs in one tick and reading a ready entry performs no request", async () => {
+    const a = refOf(1);
+    const b = refOf(2);
+    const { cache, scheduler, calls } = createRecordedCache((refs) =>
+      Promise.resolve(refs.map((ref) => snapshotOf(ref, "rev:initial"))),
+    );
 
-    // Zero network before the tick flushes: opening a menu never fetches.
-    expect(resolve).not.toHaveBeenCalled();
-    expect(cache.peek(a)).toEqual({ status: "pending" });
+    const releaseAFirst = cache.retain(a);
+    const releaseB = cache.retain(b);
+    const releaseASecond = cache.retain(a);
 
-    await scheduler.runTick();
+    expect(cache.peek(a)).toEqual({ status: "Loading" });
+    expect(cache.peek(b)).toEqual({ status: "Loading" });
+    expect(calls).toEqual([]);
+    expect(scheduler.pendingCount()).toBe(1);
 
-    // Exactly one batch call carrying both unique refs, `a` deduplicated.
-    expect(resolve).toHaveBeenCalledTimes(1);
-    expect(resolve.mock.calls[0]?.[0]).toEqual([a, b]);
+    await scheduler.runNext();
 
-    // Snapshots distributed back per ref.
+    expect(calls).toEqual([[a, b]]);
     expect(cache.peek(a)).toEqual({
-      status: "ready",
-      snapshot: readySnapshotOf(a),
+      status: "Ready",
+      snapshot: snapshotOf(a, "rev:initial"),
     });
-    expect(cache.peek(b)).toEqual({
-      status: "ready",
-      snapshot: readySnapshotOf(b),
-    });
+
+    // A menu/model read consumes the already-retained snapshot. Only retaining
+    // a previously absent subject may schedule transport work.
+    cache.peek(a);
+    cache.peek(a);
+    expect(calls).toEqual([[a, b]]);
+
+    releaseAFirst();
+    expect(cache.peek(a)?.status).toBe("Ready");
+    releaseASecond();
+    expect(cache.peek(a)).toBeUndefined();
+    releaseB();
+    expect(cache.peek(b)).toBeUndefined();
   });
 
-  it("never refetches an already-cached ref; only newly-registered refs form the next batch", async () => {
+  it("evicts an unretained ref only after its in-flight first resolve settles", async () => {
     const a = refOf(1);
-    const c = refOf(3);
-    const resolve = vi.fn<ResolveSnapshots>((refs) =>
-      Promise.resolve(refs.map(readySnapshotOf)),
-    );
-    const scheduler = manualScheduler();
-    const cache = createResourceActionSnapshotCache({
-      resolve,
-      schedule: scheduler.schedule,
-    });
+    const first = deferred<readonly ResourceActionSnapshot[]>();
+    const { cache, scheduler } = createRecordedCache(() => first.promise);
 
-    cache.register(a);
-    await scheduler.runTick();
-    expect(resolve).toHaveBeenCalledTimes(1);
+    const release = cache.retain(a);
+    const settling = scheduler.runNext();
+    release();
 
-    // Re-registering the cached ref schedules nothing and issues no fetch.
-    cache.register(a);
-    expect(scheduler.isScheduled()).toBe(false);
+    expect(cache.peek(a)).toEqual({ status: "Loading" });
 
-    // A brand-new ref forms the next batch, excluding the cached one.
-    cache.register(c);
-    expect(scheduler.isScheduled()).toBe(true);
-    await scheduler.runTick();
+    first.resolve([snapshotOf(a, "rev:settled")]);
+    await settling;
 
-    expect(resolve).toHaveBeenCalledTimes(2);
-    expect(resolve.mock.calls[1]?.[0]).toEqual([c]);
+    expect(cache.peek(a)).toBeUndefined();
   });
+});
 
-  it("synthesizes a missing snapshot for a requested ref absent from the response", async () => {
+describe("resource action snapshot cache strict resolve contract", () => {
+  it("defects instead of reordering a response or synthesizing a missing snapshot", async () => {
     const a = refOf(1);
     const b = refOf(2);
-    // The resolver omits `b` entirely.
-    const resolve = vi.fn<ResolveSnapshots>(() =>
-      Promise.resolve([readySnapshotOf(a)]),
-    );
-    const scheduler = manualScheduler();
-    const cache = createResourceActionSnapshotCache({
-      resolve,
-      schedule: scheduler.schedule,
-    });
 
-    cache.register(a);
-    cache.register(b);
-    await scheduler.runTick();
+    for (const response of [
+      [snapshotOf(b, "rev:b"), snapshotOf(a, "rev:a")],
+      [snapshotOf(a, "rev:a")],
+    ]) {
+      const { cache, scheduler } = createRecordedCache(() =>
+        Promise.resolve(response),
+      );
+      cache.retain(a);
+      cache.retain(b);
 
-    const entryB = cache.peek(b);
-    expect(entryB?.status).toBe("ready");
-    if (entryB?.status === "ready") {
-      expect(entryB.snapshot.missing).toBe(true);
-      expect(entryB.snapshot.capabilities).toEqual([]);
-      expect(entryB.snapshot.ref).toBe(b);
+      await expect(scheduler.runNext()).rejects.toThrow();
+
+      expect(cache.peek(a)).toEqual({
+        status: "Error",
+        error: expect.any(Error),
+      });
+      expect(cache.peek(b)).toEqual({
+        status: "Error",
+        error: expect.any(Error),
+      });
     }
   });
 
-  it("reresolve refetches given refs and overwrites their entries", async () => {
+  it("surfaces strict decoder defects while retaining an explicit Error state", async () => {
     const a = refOf(1);
-    let revision = 0;
-    const resolve = vi.fn<ResolveSnapshots>((refs) =>
-      Promise.resolve(
-        refs.map((ref) => ({ ...readySnapshotOf(ref), factsRevision: `rev:${revision}` })),
-      ),
+    const defect = new TypeError("snapshot wire drift");
+    const { cache, scheduler } = createRecordedCache(() =>
+      Promise.reject(defect),
     );
-    const scheduler = manualScheduler();
-    const cache = createResourceActionSnapshotCache({
-      resolve,
-      schedule: scheduler.schedule,
-    });
+    cache.retain(a);
 
-    cache.register(a);
-    await scheduler.runTick();
-    const before = cache.peek(a);
-    expect(before?.status === "ready" && before.snapshot.factsRevision).toBe("rev:0");
-
-    revision = 1;
-    await cache.reresolve([a, a]); // duplicates coalesced
-    expect(resolve).toHaveBeenCalledTimes(2);
-    expect(resolve.mock.calls[1]?.[0]).toEqual([a]);
-    const after = cache.peek(a);
-    expect(after?.status === "ready" && after.snapshot.factsRevision).toBe("rev:1");
+    await expect(scheduler.runNext()).rejects.toBe(defect);
+    expect(cache.peek(a)).toEqual({ status: "Error", error: defect });
   });
 
-  it("reresolveAll refetches every known ref in one batch (cross-representation AC7 reconcile)", async () => {
+  it.each(["E_INVALID_RESPONSE", "E_UNKNOWN", "E_INTERNAL"])(
+    "surfaces the %s same-system API defect while retaining Error state",
+    async (code) => {
+      const a = refOf(1);
+      const defect = new ApiError(500, code, "snapshot boundary defect");
+      const { cache, scheduler } = createRecordedCache(() =>
+        Promise.reject(defect),
+      );
+      cache.retain(a);
+
+      await expect(scheduler.runNext()).rejects.toBe(defect);
+      expect(cache.peek(a)).toEqual({ status: "Error", error: defect });
+    },
+  );
+
+  it("keeps a modeled API transport failure retryable", async () => {
     const a = refOf(1);
-    const b = refOf(2);
-    let revision = 0;
-    const resolve = vi.fn<ResolveSnapshots>((refs) =>
-      Promise.resolve(
-        refs.map((ref) => ({ ...readySnapshotOf(ref), factsRevision: `rev:${revision}` })),
-      ),
+    const failure = new ApiError(503, "E_NETWORK", "snapshot unavailable");
+    const { cache, scheduler } = createRecordedCache(() =>
+      Promise.reject(failure),
     );
-    const scheduler = manualScheduler();
-    const cache = createResourceActionSnapshotCache({
-      resolve,
-      schedule: scheduler.schedule,
-    });
+    cache.retain(a);
 
-    cache.register(a);
-    cache.register(b);
-    await scheduler.runTick();
-    expect(resolve).toHaveBeenCalledTimes(1);
-
-    // A mutation elsewhere can change a related ref; reresolveAll re-fetches the
-    // whole cache in one batch so every mounted representation reconciles.
-    revision = 1;
-    await cache.reresolveAll();
-    expect(resolve).toHaveBeenCalledTimes(2);
-    expect(new Set(resolve.mock.calls[1]?.[0])).toEqual(new Set([a, b]));
-    for (const ref of [a, b]) {
-      const entry = cache.peek(ref);
-      expect(entry?.status === "ready" && entry.snapshot.factsRevision).toBe("rev:1");
-    }
+    await expect(scheduler.runNext()).resolves.toBeUndefined();
+    expect(cache.peek(a)).toEqual({ status: "Error", error: failure });
   });
+});
 
-  it("errors an initial load but preserves a ready snapshot across a failed reconcile", async () => {
+describe("resource action snapshot cache failure and Retry", () => {
+  it("models an initial resolve failure and retries the same retained subject", async () => {
     const a = refOf(1);
-    const b = refOf(2);
-    const failure = new Error("resolve failed");
-    let mode: "ok" | "fail" = "fail";
-    const resolve = vi.fn<ResolveSnapshots>((refs) =>
-      mode === "fail"
+    const failure = new Error("snapshot transport failed");
+    let attempt = 0;
+    const { cache, scheduler, calls } = createRecordedCache((refs) => {
+      attempt += 1;
+      return attempt === 1
         ? Promise.reject(failure)
-        : Promise.resolve(refs.map(readySnapshotOf)),
-    );
-    const scheduler = manualScheduler();
-    const cache = createResourceActionSnapshotCache({
-      resolve,
-      schedule: scheduler.schedule,
+        : Promise.resolve(refs.map((ref) => snapshotOf(ref, "rev:retry")));
     });
 
-    // Initial load fails -> error entry (trigger stays unavailable).
-    cache.register(a);
-    await scheduler.runTick();
-    expect(cache.peek(a)).toEqual({ status: "error", error: failure });
+    cache.retain(a);
+    await scheduler.runNext();
 
-    // A ready ref then a failing reconcile keeps the good snapshot.
-    mode = "ok";
-    cache.register(b);
-    await scheduler.runTick();
-    expect(cache.peek(b)?.status).toBe("ready");
+    expect(cache.peek(a)).toEqual({ status: "Error", error: failure });
 
-    mode = "fail";
-    await cache.reresolve([b]);
-    expect(cache.peek(b)?.status).toBe("ready");
+    const retrying = cache.retry(a);
+    expect(cache.peek(a)).toEqual({
+      status: "Error",
+      error: failure,
+      retrying: true,
+    });
+    await retrying;
+
+    expect(calls).toEqual([[a], [a]]);
+    expect(cache.peek(a)).toEqual({
+      status: "Ready",
+      snapshot: snapshotOf(a, "rev:retry"),
+    });
+  });
+});
+
+describe("resource action snapshot cache typed reconciliation", () => {
+  it("awaits Subjects, treats None as request-free, and bounds AllRetained to live refs", async () => {
+    const a = refOf(1);
+    const b = refOf(2);
+    const reconciliation = deferred<readonly ResourceActionSnapshot[]>();
+    let requestNumber = 0;
+    const { cache, scheduler, calls } = createRecordedCache((refs) => {
+      requestNumber += 1;
+      if (requestNumber === 1) {
+        return Promise.resolve(refs.map((ref) => snapshotOf(ref, "rev:0")));
+      }
+      if (requestNumber === 2) return reconciliation.promise;
+      return Promise.resolve(refs.map((ref) => snapshotOf(ref, "rev:2")));
+    });
+
+    const releaseA = cache.retain(a);
+    const releaseB = cache.retain(b);
+    await scheduler.runNext();
+
+    await cache.reconcile({ kind: "None" });
+    expect(calls).toEqual([[a, b]]);
+
+    let settled = false;
+    const reconciling = cache
+      .reconcile({ kind: "Subjects", refs: [a, a] })
+      .then(() => {
+        settled = true;
+      });
+
+    expect(cache.peek(a)).toEqual({
+      status: "Reconciling",
+      snapshot: snapshotOf(a, "rev:0"),
+    });
+    expect(cache.peek(b)?.status).toBe("Ready");
+    expect(settled).toBe(false);
+
+    reconciliation.resolve([snapshotOf(a, "rev:1")]);
+    await reconciling;
+
+    expect(settled).toBe(true);
+    expect(calls[1]).toEqual([a]);
+    expect(cache.peek(a)).toEqual({
+      status: "Ready",
+      snapshot: snapshotOf(a, "rev:1"),
+    });
+
+    releaseB();
+    await cache.reconcile({ kind: "AllRetained" });
+    expect(calls[2]).toEqual([a]);
+    expect(cache.peek(b)).toBeUndefined();
+
+    releaseA();
+  });
+
+  it("keeps a failed reconciliation out of Ready until Retry installs authoritative facts", async () => {
+    const a = refOf(1);
+    const failure = new Error("reconciliation failed");
+    let requestNumber = 0;
+    const retried = deferred<readonly ResourceActionSnapshot[]>();
+    const absent = snapshotOf(a, "rev:absent", [
+      {
+        kind: "LecternMembership",
+        availability: { kind: "Available" },
+        state: "Absent",
+      },
+    ]);
+    const present = snapshotOf(a, "rev:present", [
+      {
+        kind: "LecternMembership",
+        availability: { kind: "Available" },
+        state: "Present",
+        lecternItemId: "33333333-3333-4333-8333-333333333333",
+      },
+    ]);
+    const { cache, scheduler } = createRecordedCache(() => {
+      requestNumber += 1;
+      if (requestNumber === 1) return Promise.resolve([absent]);
+      if (requestNumber === 2) return Promise.reject(failure);
+      return retried.promise;
+    });
+
+    cache.retain(a);
+    await scheduler.runNext();
+    await cache.reconcile({ kind: "Subjects", refs: [a] });
+
+    expect(cache.peek(a)).toEqual({
+      status: "Error",
+      error: failure,
+      lastGoodSnapshot: absent,
+    });
+
+    const retrying = cache.retry(a);
+    const sameRetry = cache.retry(a);
+    expect(sameRetry).toBe(retrying);
+    expect(cache.peek(a)).toEqual({
+      status: "Error",
+      error: failure,
+      lastGoodSnapshot: absent,
+      retrying: true,
+    });
+
+    retried.resolve([present]);
+    await retrying;
+
+    expect(cache.peek(a)).toEqual({ status: "Ready", snapshot: present });
+  });
+
+  it("keeps Retry available after another retryable resolve failure", async () => {
+    const a = refOf(1);
+    const firstFailure = new Error("initial snapshot failure");
+    const retryFailure = new Error("retry snapshot failure");
+    let requestNumber = 0;
+    const { cache, scheduler, calls } = createRecordedCache((refs) => {
+      requestNumber += 1;
+      if (requestNumber === 1) return Promise.reject(firstFailure);
+      if (requestNumber === 2) return Promise.reject(retryFailure);
+      return Promise.resolve(
+        refs.map((ref) => snapshotOf(ref, "rev:recovered")),
+      );
+    });
+
+    cache.retain(a);
+    await scheduler.runNext();
+    await cache.retry(a);
+
+    expect(cache.peek(a)).toEqual({
+      status: "Error",
+      error: retryFailure,
+    });
+
+    await cache.retry(a);
+    expect(calls).toEqual([[a], [a], [a]]);
+    expect(cache.peek(a)).toEqual({
+      status: "Ready",
+      snapshot: snapshotOf(a, "rev:recovered"),
+    });
+  });
+});
+
+describe("resource action snapshot cache reconciliation ordering", () => {
+  it("serializes overlapping refs so every caller installs an authoritative read before settling", async () => {
+    const a = refOf(1);
+    const slow = deferred<readonly ResourceActionSnapshot[]>();
+    const fast = deferred<readonly ResourceActionSnapshot[]>();
+    let requestNumber = 0;
+    const { cache, scheduler } = createRecordedCache(() => {
+      requestNumber += 1;
+      if (requestNumber === 1) {
+        return Promise.resolve([snapshotOf(a, "rev:0")]);
+      }
+      return requestNumber === 2 ? slow.promise : fast.promise;
+    });
+
+    cache.retain(a);
+    await scheduler.runNext();
+
+    const older = cache.reconcile({ kind: "Subjects", refs: [a] });
+    const newer = cache.reconcile({ kind: "Subjects", refs: [a] });
+
+    // The second request does not start while the same ref's first mutation
+    // barrier is unresolved. This keeps the first action busy until rev:1 is
+    // authoritative instead of ignoring its response as stale.
+    expect(requestNumber).toBe(2);
+    slow.resolve([snapshotOf(a, "rev:1")]);
+    await older;
+    expect(cache.peek(a)).toEqual({
+      status: "Ready",
+      snapshot: snapshotOf(a, "rev:1"),
+    });
+
+    fast.resolve([snapshotOf(a, "rev:2")]);
+    await newer;
+    expect(requestNumber).toBe(3);
+    expect(cache.peek(a)).toEqual({
+      status: "Ready",
+      snapshot: snapshotOf(a, "rev:2"),
+    });
+  });
+
+  it("does not serialize reconciliations for unrelated retained refs", async () => {
+    const a = refOf(1);
+    const b = refOf(2);
+    const aRead = deferred<readonly ResourceActionSnapshot[]>();
+    const bRead = deferred<readonly ResourceActionSnapshot[]>();
+    let requestNumber = 0;
+    const { cache, scheduler } = createRecordedCache((refs) => {
+      requestNumber += 1;
+      if (requestNumber === 1) {
+        return Promise.resolve(refs.map((ref) => snapshotOf(ref, "rev:0")));
+      }
+      return refs[0] === a ? aRead.promise : bRead.promise;
+    });
+
+    cache.retain(a);
+    cache.retain(b);
+    await scheduler.runNext();
+
+    const reconcilingA = cache.reconcile({ kind: "Subjects", refs: [a] });
+    const reconcilingB = cache.reconcile({ kind: "Subjects", refs: [b] });
+    await Promise.resolve();
+    expect(requestNumber).toBe(3);
+
+    bRead.resolve([snapshotOf(b, "rev:b")]);
+    await reconcilingB;
+    expect(cache.peek(b)).toEqual({
+      status: "Ready",
+      snapshot: snapshotOf(b, "rev:b"),
+    });
+    expect(cache.peek(a)?.status).toBe("Reconciling");
+
+    aRead.resolve([snapshotOf(a, "rev:a")]);
+    await reconcilingA;
   });
 });

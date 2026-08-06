@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useRef, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
+import Button from "@/components/ui/Button";
 import CollectionRow from "@/components/collections/CollectionRow";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView, {
@@ -22,7 +23,6 @@ import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import type { EpisodeStateFilter } from "@/lib/podcasts/episodeView";
 import { useOfflineMediaItem } from "@/lib/offlineMedia/OfflineMediaProvider";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import EpisodeControls from "./EpisodeControls";
 import {
@@ -30,16 +30,10 @@ import {
   deriveEpisodeState,
   decodeEpisodeTimingFacts,
   decodeEpisodePublicationDate,
-  episodePlayerDescriptor,
-  canRequestTranscriptForEpisode,
   shouldPollTranscriptProvisioningForEpisode,
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
 import type { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";
-import {
-  EPISODE_PLAY_NEXT_ACTION_ID,
-  episodeActionBusyKey,
-} from "./episodeActionBusy";
 import styles from "./page.module.css";
 
 type EpisodeTranscriptController = ReturnType<
@@ -89,18 +83,13 @@ interface PodcastEpisodeListProps {
   episodeStateFilter: EpisodeStateFilter;
   transcript: EpisodeTranscriptController;
   transcriptionAllowed: boolean;
-  busyEpisodeActionKeys: StringIdSet;
   expandedShowNotesMediaIds: StringIdSet;
-  playNextDisabledMediaId: string | null;
-  /** Whether the Lectern snapshot is Ready; its mutations defect until then. */
-  lecternReady: boolean;
   matchingEpisodeCount: number;
   markAllAsPlayedBusy: boolean;
   collectionBusy: boolean;
   exhaustion: ExhaustionState;
   onMarkAllAsPlayed: () => void;
   onToggleShowNotes: (mediaId: string) => void;
-  onPlayNext: (mediaId: string) => Promise<void>;
 }
 
 export default function PodcastEpisodeList({
@@ -111,36 +100,17 @@ export default function PodcastEpisodeList({
   episodeStateFilter,
   transcript,
   transcriptionAllowed,
-  busyEpisodeActionKeys,
   expandedShowNotesMediaIds,
-  playNextDisabledMediaId,
-  lecternReady,
   matchingEpisodeCount,
   markAllAsPlayedBusy,
   collectionBusy,
   exhaustion,
   onMarkAllAsPlayed,
   onToggleShowNotes,
-  onPlayNext,
 }: PodcastEpisodeListProps) {
   const localFilterActive = filterQuery.trim().length > 0;
   const commandLabels = EPISODE_WIDE_COMMAND_LABELS[episodeStateFilter];
   const localFilterDisabledReason = "Clear Filter to use episode-wide actions";
-  // Playback presence gates playback-only view actions. Lectern relationship
-  // applicability comes exclusively from the ready membership snapshot, just
-  // as it does in the opened media pane.
-  const audioEpisodeIds = useMemo(
-    () =>
-      new Set(
-        episodes
-          .filter(
-            (episode) => episodePlayerDescriptor(episode).kind === "Present",
-          )
-          .map((episode) => episode.id),
-      ),
-    [episodes],
-  );
-
   const rowPresentations: EpisodePresentation[] = episodes.map((episode) => ({
     item: {
       id: episode.id,
@@ -170,97 +140,23 @@ export default function PodcastEpisodeList({
     }),
   );
 
-  // Episode view + playback-session controls live in a SEPARATE per-row menu, not
-  // the canonical resource dropdown (AC4): Show notes / Request transcript are
-  // view-disclosure controls; Play next is a playback-queue control.
+  // Show notes changes only this occurrence's disclosure. Every standing
+  // episode action lives in CollectionRow's canonical ResourceActionMenu.
   const episodeViewControls = episodes.reduce<Record<string, ReactNode>>(
     (controls, episode) => {
       const panelId = `episode-panel-${episode.id}`;
       const showNotesExpanded = expandedShowNotesMediaIds.ids.has(episode.id);
-      const transcriptPanelExpanded =
-        transcript.expandedTranscriptMediaIds.ids.has(episode.id);
-      const options: ActionDescriptor[] = [];
       if (episode.has_show_notes) {
-        options.push({
-          kind: "command",
-          id: "ViewAction.Episode.ShowNotes",
-          label: showNotesExpanded ? "Hide notes" : "Show notes",
-          state: showNotesExpanded
-            ? {
-                kind: "disclosure",
-                expanded: true,
-                controls: panelId,
-                menuLabels: { collapsed: "Show notes", expanded: "Hide notes" },
-              }
-            : {
-                kind: "disclosure",
-                expanded: false,
-                menuLabels: { collapsed: "Show notes", expanded: "Hide notes" },
-              },
-          onSelect: () => onToggleShowNotes(episode.id),
-        });
-      }
-      if (audioEpisodeIds.has(episode.id)) {
-        const playNextBusy = busyEpisodeActionKeys.has(
-          episodeActionBusyKey(episode.id, EPISODE_PLAY_NEXT_ACTION_ID),
-        );
-        options.push({
-          kind: "command",
-          id: "ViewAction.Episode.PlayNext",
-          label: "Play next",
-          disabled:
-            !lecternReady ||
-            episode.id === playNextDisabledMediaId ||
-            playNextBusy,
-          disabledReason: !lecternReady
-            ? "Lectern is still loading"
-            : episode.id === playNextDisabledMediaId
-              ? "This episode is already next"
-              : playNextBusy
-                ? "Placing episode next"
-                : undefined,
-          onSelect: () => {
-            void onPlayNext(episode.id);
-          },
-        });
-      }
-      if (transcriptionAllowed && canRequestTranscriptForEpisode(episode)) {
-        options.push({
-          kind: "command",
-          id: "ViewAction.Episode.Transcript",
-          label: transcriptPanelExpanded
-            ? "Hide transcript request"
-            : "Request transcript...",
-          state: transcriptPanelExpanded
-            ? {
-                kind: "disclosure",
-                expanded: true,
-                controls: panelId,
-                menuLabels: {
-                  collapsed: "Request transcript...",
-                  expanded: "Hide transcript request",
-                },
-              }
-            : {
-                kind: "disclosure",
-                expanded: false,
-                menuLabels: {
-                  collapsed: "Request transcript...",
-                  expanded: "Hide transcript request",
-                },
-              },
-          onSelect: () => {
-            if (transcriptPanelExpanded) {
-              transcript.expandedTranscriptMediaIds.remove(episode.id);
-            } else {
-              transcript.expandedTranscriptMediaIds.add(episode.id);
-            }
-          },
-        });
-      }
-      if (options.length > 0) {
         controls[episode.id] = (
-          <ActionMenu label={`Options for ${episode.title}`} options={options} />
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={showNotesExpanded}
+            aria-controls={panelId}
+            onClick={() => onToggleShowNotes(episode.id)}
+          >
+            {showNotesExpanded ? "Hide notes" : "Show notes"}
+          </Button>
         );
       }
       return controls;

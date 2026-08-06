@@ -193,7 +193,7 @@ const READER_SCROLL_MUTATION_BANS = [
   },
 ];
 
-// docs/cutovers/canonical-resource-action-menu-hard-cutover.md (AC13 — strict
+// docs/cutovers/canonical-resource-action-menu-hard-cutover.md (AC12 — strict
 // residue). Resource-action membership, presentation, execution, and state have
 // exactly one owner: the pure resolveResourceActionPlan over
 // RESOURCE_ACTION_CATALOG, rendered by ResourceActionMenu and executed by the
@@ -244,10 +244,43 @@ const RETIRED_CONTEXT_EDGE_RESOURCE_ID_BANS = [
   },
 ];
 
+const RETIRED_CANONICAL_RESOURCE_ACTION_PATH_MESSAGE =
+  "Retired canonical resource-action path. Use the retained subject cache, pure planner, typed runtime, and ResourceActionMenu; do not restore duplicate projection, invalidation, surface execution, busy, or Highlight builders (docs/cutovers/canonical-resource-action-menu-hard-cutover.md).";
+const RETIRED_CANONICAL_RESOURCE_ACTION_PATH_BAN = {
+  selector:
+    "Identifier[name=/^(?:useResourceActionCatalogProjection|publishResourceActionSnapshotInvalidation|useDocumentActions|episodeActionBusyKey|buildHighlightActions)$/]",
+  message: RETIRED_CANONICAL_RESOURCE_ACTION_PATH_MESSAGE,
+};
+
+const RETIRED_SURFACE_LOCAL_RESOURCE_ACTION_ID_MESSAGE =
+  "Retired surface-local resource-action id. Publish the canonical action subject and let RESOURCE_ACTION_CATALOG own the stable ID (docs/cutovers/canonical-resource-action-menu-hard-cutover.md).";
+const RETIRED_SURFACE_LOCAL_RESOURCE_ACTION_ID_BANS = [
+  {
+    selector:
+      "Literal[value=/^(?:ViewAction\\.Episode\\.(?:PlayNext|Transcript)|Author\\.Rename|Player\\.(?:OpenPreview|PreviewSource))$/]",
+    message: RETIRED_SURFACE_LOCAL_RESOURCE_ACTION_ID_MESSAGE,
+  },
+  {
+    selector:
+      "TemplateLiteral[expressions.length=0][quasis.0.value.cooked=/^(?:ViewAction\\.Episode\\.(?:PlayNext|Transcript)|Author\\.Rename|Player\\.(?:OpenPreview|PreviewSource))$/]",
+    message: RETIRED_SURFACE_LOCAL_RESOURCE_ACTION_ID_MESSAGE,
+  },
+];
+
+const RETIRED_RESOURCE_ACTION_MENU_TARGET_PROP_BAN = {
+  selector:
+    "JSXOpeningElement[name.name='ResourceActionMenu'] > JSXAttribute[name.name='target']",
+  message:
+    "ResourceActionMenu accepts actionSubject only. Activation and surface policy belong to the canonical snapshot (docs/cutovers/canonical-resource-action-menu-hard-cutover.md).",
+};
+
 const RETIRED_RESOURCE_ACTION_BANS = [
   RETIRED_RESOURCE_ACTION_SYMBOL_BAN,
   ...RETIRED_PLAYER_RESOURCE_ID_BANS,
   ...RETIRED_CONTEXT_EDGE_RESOURCE_ID_BANS,
+  RETIRED_CANONICAL_RESOURCE_ACTION_PATH_BAN,
+  ...RETIRED_SURFACE_LOCAL_RESOURCE_ACTION_ID_BANS,
+  RETIRED_RESOURCE_ACTION_MENU_TARGET_PROP_BAN,
 ];
 
 const eslintConfig = [
@@ -267,7 +300,7 @@ const eslintConfig = [
     },
   },
   {
-    // docs/cutovers/canonical-resource-action-menu-hard-cutover.md (AC13). The
+    // docs/cutovers/canonical-resource-action-menu-hard-cutover.md (AC12). The
     // retired resource-action symbols and ids are banned across product source.
     // Tests are excluded because residue proofs legitimately name the deleted
     // ids in negative assertions. no-restricted-syntax replaces (not merges),

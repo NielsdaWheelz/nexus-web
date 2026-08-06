@@ -49,9 +49,11 @@ test("regenerating a completed answer creates a navigable sibling that survives 
       async () => {
         const response = await api.get(`/api/media/${mediaId}`);
         if (!response.ok()) return `http-${response.status()}`;
-        return ((await response.json()) as {
-          data: { retrieval_status: string | null };
-        }).data.retrieval_status;
+        return (
+          (await response.json()) as {
+            data: { retrieval_status: string | null };
+          }
+        ).data.retrieval_status;
       },
       {
         message: `Expected source ${mediaId} to publish searchable evidence.`,
@@ -83,9 +85,7 @@ test("regenerating a completed answer creates a navigable sibling that survives 
   const firstRunPromise = page.waitForResponse((response) =>
     matchesResponse(response, webOrigin, "POST", "/api/chat-runs"),
   );
-  await page
-    .getByRole("button", { name: "Send message", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
   const firstRun = await firstRunPromise;
   expect(
     firstRun.ok(),
@@ -101,15 +101,24 @@ test("regenerating a completed answer creates a navigable sibling that survives 
     `Conversation ${conversationId} did not complete its first grounded answer.`,
   ).toBeVisible({ timeout: 25_000 });
 
-  // AC-9: an eligible completed answer exposes Regenerate; a completed answer is
-  // never a failed-turn Run again card (AC-10 distinctness).
-  const regenerate = page.getByRole("button", {
-    name: "Regenerate this answer",
+  // The completed Message's canonical menu exposes Regenerate and never the
+  // failed-turn-only Rerun capability.
+  const originalAnswer = page.locator(
+    `[data-message-id="${originalAssistantId}"]`,
+  );
+  const originalActions = originalAnswer.getByRole("button", {
+    name: "Actions for this answer",
+  });
+  await expect(originalActions).not.toHaveAttribute("aria-disabled", "true");
+  await originalActions.click();
+  const regenerate = page.getByRole("menuitem", {
+    name: "Regenerate",
+    exact: true,
   });
   await expect(regenerate).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Run again" }),
-    "A completed answer must not offer failed-turn Run again.",
+    page.getByRole("menuitem", { name: "Rerun", exact: true }),
+    "A completed answer must not offer failed-turn Rerun.",
   ).toHaveCount(0);
 
   const regenPromise = page.waitForResponse((response) =>
@@ -142,7 +151,9 @@ test("regenerating a completed answer creates a navigable sibling that survives 
       async () => {
         const tree = await loadTree(api, conversationId);
         const leaf = tree.selected_path[tree.selected_path.length - 1];
-        return leaf?.id === regeneratedAssistantId ? leaf.status : "not-selected";
+        return leaf?.id === regeneratedAssistantId
+          ? leaf.status
+          : "not-selected";
       },
       {
         message: `Regenerated answer for conversation ${conversationId} never completed as the active leaf.`,
@@ -153,17 +164,35 @@ test("regenerating a completed answer creates a navigable sibling that survives 
 
   // AC-9 durability: reload; the regenerated answer holds, it stays the active
   // leaf, and BOTH the original and regenerated siblings remain navigable.
+  // The current address can carry an explicit `?message=<old sibling>` deep-link
+  // from the source row. A fresh canonical conversation visit removes that
+  // one-shot target before the reload; otherwise the deep-link is correctly
+  // interpreted as an instruction to switch back to the old sibling.
+  await gotoWithStrictCsp(page, `/conversations/${conversationId}`);
   await page.reload();
   await expect(
     page.getByText(/SOFIA helped confirm water on the Moon/i).first(),
     `Conversation ${conversationId} lost its regenerated answer after reload.`,
   ).toBeVisible({ timeout: 25_000 });
-  await expect(
-    page.getByRole("button", { name: "Regenerate this answer" }),
-    `Conversation ${conversationId} lost its regenerate capability after reload.`,
-  ).toBeVisible();
+
+  // The persisted branch tree is the identity oracle after a reload. The
+  // selected assistant row is intentionally located by its stable semantic
+  // role because sibling answers can render the same text while the branch
+  // graph, not DOM ordering, owns their identity.
   const reloaded = await loadTree(api, conversationId);
   expect(reloaded.active_leaf_message_id).toBe(regeneratedAssistantId);
+  const regeneratedAnswer = page
+    .getByRole("group", { name: "Assistant response" })
+    .last();
+  const regeneratedActions = regeneratedAnswer.getByRole("button", {
+    name: "Actions for this answer",
+  });
+  await expect(regeneratedActions).not.toHaveAttribute("aria-disabled", "true");
+  await regeneratedActions.click();
+  await expect(
+    page.getByRole("menuitem", { name: "Regenerate", exact: true }),
+    `Conversation ${conversationId} lost its regenerate capability after reload.`,
+  ).toBeVisible();
   const navigableIds = new Set(
     reloaded.branch_graph.nodes.map((node) => node.message_id),
   );

@@ -1,11 +1,3 @@
-.dot {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border-radius: var(--radius-full);
-  border: var(--stroke-hairline) solid var(--edge);
-}
-
 /* Fresh-selection Highlight glyph: marker plus the ink it will lay down. */
 .highlighterGlyph {
   position: relative;

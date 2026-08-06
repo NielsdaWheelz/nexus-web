@@ -10,7 +10,6 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { PenLine } from "lucide-react";
 import Button from "@/components/ui/Button";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
@@ -47,6 +46,16 @@ import {
   patchContributorDisplayName,
 } from "@/lib/contributors/api";
 import { createMutationIntent } from "@/lib/contributors/mutationIntent";
+import {
+  notifyContributorActionIntentOwnerReady,
+  useContributorActionIntentOwner,
+  type ContributorActionIntent,
+} from "@/lib/contributors/actionIntent";
+import {
+  createMountedEditorIntentController,
+  type MountedEditorIntentController,
+  type MountedEditorMutationLease,
+} from "@/lib/actions/mountedActionHandoff";
 import type {
   ContributorDetail,
   ContributorWorkItem,
@@ -87,12 +96,9 @@ import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import SelectField from "@/components/ui/SelectField";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { isAbortError } from "@/lib/errors";
 import styles from "./page.module.css";
-
-const RENAME_AUTHOR_ICON = <PenLine size={16} aria-hidden="true" />;
 
 type AuthorConnectionsResource =
   | { kind: "Ready"; ref: { scheme: "contributor"; id: string } }
@@ -272,7 +278,47 @@ export default function AuthorPaneBody() {
   }
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameIntent, setRenameIntent] =
+    useState<ContributorActionIntent | null>(null);
+  const renameIntentControllerRef = useRef<
+    MountedEditorIntentController<ContributorActionIntent> | null
+  >(null);
+  if (renameIntentControllerRef.current === null) {
+    renameIntentControllerRef.current = createMountedEditorIntentController(
+      notifyContributorActionIntentOwnerReady,
+    );
+  }
+  const renameIntentController = renameIntentControllerRef.current;
+  const acceptRenameIntent = useCallback(
+    (intent: ContributorActionIntent) => {
+      if (!data?.detail.canRename || !renameIntentController.accept(intent)) {
+        return false;
+      }
+      setRenameIntent(intent);
+      return true;
+    },
+    [data?.detail.canRename, renameIntentController],
+  );
+  useContributorActionIntentOwner(
+    data?.detail.actionSubject.ref ?? null,
+    acceptRenameIntent,
+  );
+  const abortRename = useCallback(() => {
+    if (renameIntentController.abortEditing()) setRenameIntent(null);
+  }, [renameIntentController]);
+  const beginRenameMutation = useCallback(
+    () => renameIntentController.beginMutation(),
+    [renameIntentController],
+  );
+  const closeCommittedRename = useCallback(() => {
+    setRenameIntent(null);
+  }, []);
+  useEffect(
+    () => () => {
+      renameIntentController.releaseOwner();
+    },
+    [renameIntentController],
+  );
   const capturePaneScroll = usePaneScrollRetention(worksRegionRef, data);
   // Set by a refresh so the already-committed view refetches once under a new
   // request identity; cleared by the commit that answers it. A view change needs
@@ -297,12 +343,6 @@ export default function AuthorPaneBody() {
     },
     [capturePaneScroll, setDecodedView],
   );
-  const renameTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const openRename = useCallback(({ triggerEl }: ActionSelectDetail) => {
-    renameTriggerRef.current = triggerEl;
-    setRenameOpen(true);
-  }, []);
-
   // The route seed composes the detail with the canonical first works page. Its
   // works are adopted only for the canonical view; every other view takes just
   // the detail and loads its own exact page.
@@ -724,28 +764,7 @@ export default function AuthorPaneBody() {
       execute: executeRefresh,
     },
     actions: companionAction ? [companionAction] : [],
-    resourceTarget: data ? data.detail.actionTarget : undefined,
-    // Renaming the author is not a canonical resource action (no per-scheme
-    // capability), so it rides the pane's own non-resource menu beside the
-    // identity — which now lives in chrome — never the canonical resource menu.
-    viewMenu: data?.detail.canRename
-      ? {
-          label: "Author name",
-          icon: RENAME_AUTHOR_ICON,
-          actions: [
-            {
-              kind: "command",
-              id: "Author.Rename",
-              label: "Edit name…",
-              icon: RENAME_AUTHOR_ICON,
-              // The dialog owns focus return to this exact trigger, so the
-              // menu must not claim it back as it closes.
-              restoreFocusOnClose: false,
-              onSelect: openRename,
-            },
-          ],
-        }
-      : undefined,
+    actionSubject: data ? data.detail.actionSubject : undefined,
     header: {
       kind: "Section",
       meta: invalidView
@@ -876,13 +895,15 @@ export default function AuthorPaneBody() {
             />
           </section>
 
-          {renameOpen ? (
+          {renameIntent ? (
             <RenameAuthorDialog
               handle={data.detail.handle}
               currentName={data.detail.displayName}
-              onClose={() => setRenameOpen(false)}
+              onAbort={abortRename}
+              onMutationStarted={beginRenameMutation}
+              onCommittedClose={closeCommittedRename}
               onRenamed={handleRenamed}
-              returnFocusTo={() => renameTriggerRef.current}
+              returnFocusTo={() => null}
               returnFocusFallback={() =>
                 findPaneLandmarkFocusTarget(runtime.paneId)
               }
@@ -897,14 +918,18 @@ export default function AuthorPaneBody() {
 function RenameAuthorDialog({
   handle,
   currentName,
-  onClose,
+  onAbort,
+  onMutationStarted,
+  onCommittedClose,
   onRenamed,
   returnFocusTo,
   returnFocusFallback,
 }: {
   handle: string;
   currentName: string;
-  onClose: () => void;
+  onAbort: () => void;
+  onMutationStarted: () => MountedEditorMutationLease | null;
+  onCommittedClose: () => void;
   onRenamed: (detail: ContributorDetail) => void;
   returnFocusTo: () => HTMLElement | null;
   returnFocusFallback: () => HTMLElement | null;
@@ -929,6 +954,13 @@ function RenameAuthorDialog({
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!canSave) return;
+    const mutation = onMutationStarted();
+    if (mutation === null) {
+      // justify-defect: this dialog exists only as the owner of one accepted
+      // canonical RenameContributor interaction.
+      setDefect({ error: new Error("Rename action has no accepted mutation") });
+      return;
+    }
     setSaving(true);
     setNotice(null);
     const clientMutationId = intentRef.current.clientMutationId(trimmed);
@@ -939,8 +971,10 @@ function RenameAuthorDialog({
       });
       intentRef.current.discard();
       onRenamed(detail);
-      onClose();
+      await mutation.committed();
+      onCommittedClose();
     } catch (renameError) {
+      mutation.failed();
       if (handleUnauthenticatedApiError(renameError)) return;
       if (isApiError(renameError)) {
         // A proven 409 replay mismatch rotates the mutation id — the reused key is
@@ -969,7 +1003,9 @@ function RenameAuthorDialog({
     <Dialog
       open
       title="Edit name"
-      onClose={onClose}
+      onClose={() => {
+        if (!saving) onAbort();
+      }}
       returnFocusTo={returnFocusTo}
       returnFocusFallback={returnFocusFallback}
     >
@@ -993,7 +1029,13 @@ function RenameAuthorDialog({
           <FeedbackNotice content={notice} announcement="Assertive" />
         ) : null}
         <div className={styles.renameActions}>
-          <Button type="button" variant="secondary" size="md" onClick={onClose}>
+          <Button
+            type="button"
+            variant="secondary"
+            size="md"
+            disabled={saving}
+            onClick={onAbort}
+          >
             Cancel
           </Button>
           <Button

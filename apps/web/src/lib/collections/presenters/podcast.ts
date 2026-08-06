@@ -2,7 +2,7 @@
 
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type {
   CollectionActivity,
   CollectionRowView,
@@ -91,11 +91,9 @@ export function presentPodcast(
     localAvailability: absent(),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: absent(),
-    resourceTarget: routeResourceActionSubject({
-      scheme: "podcast",
-      id: item.id,
-      href,
-    }),
+    actionSubject: {
+      ref: canonicalResourceRef({ scheme: "podcast", id: item.id }),
+    },
     selected: false,
   };
 }

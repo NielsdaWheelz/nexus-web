@@ -53,7 +53,9 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
     (response) =>
       matchesResponse(response, webOrigin, "POST", "/api/podcasts/refresh-runs"),
   );
-  await page.getByRole("menuitem", { name: "Refresh", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Check for new episodes", exact: true })
+    .click();
   const refreshAdmission = await refreshAdmissionPromise;
   const refreshText = await refreshAdmission.text();
   expect(

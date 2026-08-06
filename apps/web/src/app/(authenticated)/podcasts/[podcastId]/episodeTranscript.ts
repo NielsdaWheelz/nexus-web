@@ -308,16 +308,6 @@ export function deriveEpisodeState(episode: PodcastEpisodeMedia): EpisodeState {
   }
 }
 
-/**
- * Return the already-decoded list playback fact. The transport boundary
- * requires strict `Presence`; `Absent` hides play/Lectern affordances.
- */
-export function episodePlayerDescriptor(
-  episode: PodcastEpisodeMedia,
-): Presence<PodcastEpisodeListPlayerDescriptor> {
-  return episode.playerDescriptor;
-}
-
 export function episodeMatchesFilter(
   episodeState: EpisodeState,
   filter: EpisodeStateFilter,

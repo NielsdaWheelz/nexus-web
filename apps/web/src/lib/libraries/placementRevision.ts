@@ -2,9 +2,10 @@
 
 import { useSyncExternalStore } from "react";
 
-// Process-local, monotonic Library placement revision. Every definitive browser
-// placement writer publishes here after authoritative success; consumers (panes)
-// coalesce reconciliation. See
+// Process-local, monotonic Library relationship/presentation revision. Every
+// definitive placement writer and every Library rename/delete publishes here
+// after authoritative success; consumers (panes/indexes) coalesce
+// reconciliation. See
 // docs/cutovers/library-all-and-smart-views-hard-cutover.md ("Mutation
 // Composition"). No `targets` field: no consumer reads it (simplicity.md).
 
@@ -58,8 +59,7 @@ export function libraryPlacementAffectedSince(
   libraryId: string,
 ): boolean {
   if (current.revision <= sinceRevision) return false;
-  const oldestLogged =
-    log.length > 0 ? log[0]!.revision : current.revision + 1;
+  const oldestLogged = log.length > 0 ? log[0]!.revision : current.revision + 1;
   if (oldestLogged > sinceRevision + 1) return true;
   for (const change of log) {
     if (change.revision <= sinceRevision) continue;
@@ -67,6 +67,22 @@ export function libraryPlacementAffectedSince(
     if (change.affectedLibraryIds.includes(libraryId)) return true;
   }
   return false;
+}
+
+/**
+ * True when a broad placement mutation occurred after `sinceRevision`.
+ * Libraries-index metadata (delete/rename) publishes Unknown because every
+ * mounted index must re-read; the bounded-log gap rule stays conservative.
+ */
+export function libraryPlacementUnknownSince(sinceRevision: number): boolean {
+  if (current.revision <= sinceRevision) return false;
+  const oldestLogged = log.length > 0 ? log[0]!.revision : current.revision + 1;
+  if (oldestLogged > sinceRevision + 1) return true;
+  return log.some(
+    (change) =>
+      change.revision > sinceRevision &&
+      change.affectedLibraryIds === "Unknown",
+  );
 }
 
 export function useLibraryPlacementRevision(): LibraryPlacementChange {

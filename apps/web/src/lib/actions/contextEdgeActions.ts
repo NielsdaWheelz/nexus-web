@@ -26,7 +26,8 @@ interface ContextEdgeActionCatalogEntry {
 /**
  * The one owner of context-edge command identity and presentation. These
  * commands act on a conversation-context / connection / synapse EDGE — not on
- * the canonical resource — so they are NOT resource actions (AC4). They left
+ * the canonical resource — so they are NOT resource actions under the canonical
+ * taxonomy. They left
  * `RESOURCE_ACTION_CATALOG` for this separate, typed publication contract and
  * are rendered only through the dedicated {@link "@/components/resources/ContextEdgeMenu"}
  * control, never merged into `ResourceActionMenu`.

@@ -132,7 +132,7 @@ const cases = [
     `,
     expected: "Journey files cannot intercept routes",
   },
-  // AC13 residue: every retired resource-action symbol re-introduced anywhere in
+  // AC12 residue: every retired resource-action symbol re-introduced anywhere in
   // product source must fail lint (docs/cutovers/canonical-resource-action-menu-hard-cutover.md).
   {
     filename: "src/residue-composeResourceMenu.ts",
@@ -214,7 +214,7 @@ const cases = [
     source: `export const conversationResourceOptions = null;\n`,
     expected: "Retired resource-action symbol",
   },
-  // AC13 residue: retired player/queue string-literal ids and their template
+  // AC12 residue: retired player/queue string-literal ids and their template
   // escape variant must fail lint.
   {
     filename: "src/residue-id-queue-add.ts",
@@ -236,7 +236,7 @@ const cases = [
     source: "export const id = `queue-add`;\n",
     expected: "queue-add and the player-local",
   },
-  // AC13 residue: retired context-edge/connection ids belong to ContextEdgeMenu,
+  // AC12 residue: retired context-edge/connection ids belong to ContextEdgeMenu,
   // not the resource menu — literal and template forms must fail lint.
   {
     filename: "src/residue-id-context-remove.ts",
@@ -257,6 +257,64 @@ const cases = [
     filename: "src/residue-id-context-remove-template.ts",
     source: "export const id = `RelationshipAction.Context.Remove`;\n",
     expected: "publish through the separate ContextEdgeMenu contract",
+  },
+  // Canonical-resource-action hard cut: old cache invalidation, duplicate
+  // projections, surface-local executors/busy stores, and neighboring resource
+  // action builders must be impossible to reintroduce.
+  {
+    filename: "src/residue-useResourceActionCatalogProjection.ts",
+    source: `export const useResourceActionCatalogProjection = null;\n`,
+    expected: "Retired canonical resource-action path",
+  },
+  {
+    filename: "src/residue-publishResourceActionSnapshotInvalidation.ts",
+    source: `export const publishResourceActionSnapshotInvalidation = null;\n`,
+    expected: "Retired canonical resource-action path",
+  },
+  {
+    filename: "src/residue-useDocumentActions.ts",
+    source: `export const useDocumentActions = null;\n`,
+    expected: "Retired canonical resource-action path",
+  },
+  {
+    filename: "src/residue-episodeActionBusyKey.ts",
+    source: `export const episodeActionBusyKey = null;\n`,
+    expected: "Retired canonical resource-action path",
+  },
+  {
+    filename: "src/residue-buildHighlightActions.ts",
+    source: `export const buildHighlightActions = null;\n`,
+    expected: "Retired canonical resource-action path",
+  },
+  {
+    filename: "src/residue-id-episode-play-next.ts",
+    source: `export const id = "ViewAction.Episode.PlayNext";\n`,
+    expected: "Retired surface-local resource-action id",
+  },
+  {
+    filename: "src/residue-id-episode-transcript.ts",
+    source: `export const id = "ViewAction.Episode.Transcript";\n`,
+    expected: "Retired surface-local resource-action id",
+  },
+  {
+    filename: "src/residue-id-author-rename.ts",
+    source: `export const id = "Author.Rename";\n`,
+    expected: "Retired surface-local resource-action id",
+  },
+  {
+    filename: "src/residue-id-player-open-preview.ts",
+    source: `export const id = "Player.OpenPreview";\n`,
+    expected: "Retired surface-local resource-action id",
+  },
+  {
+    filename: "src/residue-id-player-preview-source.ts",
+    source: `export const id = "Player.PreviewSource";\n`,
+    expected: "Retired surface-local resource-action id",
+  },
+  {
+    filename: "src/residue-resource-action-menu-target.tsx",
+    source: `const menu = <ResourceActionMenu target={subject} />;\n`,
+    expected: "ResourceActionMenu accepts actionSubject",
   },
 ];
 
@@ -283,3 +341,8 @@ for (const fixture of cases) {
 }
 
 console.log(`eslint-policy: ${cases.length} adversarial fixtures rejected`);
+
+// The architectural hard-cut proof is deliberately part of the stable policy
+// gate: its hand-authored surface ledger must stay exhaustive as the product
+// oracle evolves, and retired local action islands may never return.
+await import("./test-resource-action-surface-policy.mjs");

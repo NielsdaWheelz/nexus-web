@@ -138,6 +138,7 @@ def parse_browse_preview_query(
 class InNexusResolution(BaseModel):
     kind: Literal["InNexus"] = "InNexus"
     href: str
+    action_subject_ref: str = Field(serialization_alias="actionSubjectRef")
 
     model_config = _OUT
 

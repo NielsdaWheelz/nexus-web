@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
-import { GitBranch, RefreshCw, Search } from "lucide-react";
-import Button from "@/components/ui/Button";
+import { useMemo } from "react";
+import { Search } from "lucide-react";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import { absent } from "@/lib/api/presence";
 import type {
   BranchDraft,
@@ -10,12 +10,11 @@ import type {
   ForkOption,
   MessageToolCall,
 } from "@/lib/conversations/types";
-import { conversationMessageText } from "@/lib/conversations/types";
 import { isAssistantPrimaryBodyVisible } from "@/lib/conversations/conversationPresentation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import { toReaderCitationData } from "@/lib/conversations/citations";
-import type { CitationOut } from "@/lib/conversations/citationOut";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
 import AssistantAnswer from "./AssistantAnswer";
 import AssistantDetails from "./AssistantDetails";
@@ -36,13 +35,8 @@ export default function AssistantMessage({
   onSelectFork,
   onReplyToAssistant,
   onCitationActivate,
-  onRerunAssistantResponse,
-  rerunning,
-  onRegenerateAssistantResponse,
-  regenerating,
   connectionLost,
   onReconnectAssistant,
-  onStartWalk,
   timestampLabel,
 }: {
   message: ConversationMessage;
@@ -56,16 +50,10 @@ export default function AssistantMessage({
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
-  onRerunAssistantResponse?: (assistantMessageId: string) => void;
-  rerunning?: boolean;
-  onRegenerateAssistantResponse?: (assistantMessageId: string) => void;
-  regenerating?: boolean;
   connectionLost?: boolean;
   onReconnectAssistant?: (assistantMessageId: string) => void;
-  onStartWalk?: (citations: CitationOut[], text: string) => void;
   timestampLabel: string;
 }) {
-  const assistantText = conversationMessageText(message);
   const toolCalls = message.trust_trail?.tool_calls ?? [];
   // Citations are memoized once and shared by the answer and source disclosure.
   const citations = useMemo(
@@ -74,15 +62,6 @@ export default function AssistantMessage({
   );
   const canBranchFromAssistant =
     message.status === "complete" && Boolean(onReplyToAssistant);
-  const canWalk =
-    !!onStartWalk &&
-    message.status === "complete" &&
-    (message.citations?.length ?? 0) >= 2;
-  // Regeneration is a completed-answer action, distinct from failed-turn Run
-  // again. The projected capability gates the control; the mutation re-checks.
-  const canRegenerate =
-    message.can_regenerate && Boolean(onRegenerateAssistantResponse);
-
   // The one card-bearing failure read: the failure folds onto the run inside the
   // trust trail (null for a DEFECT → the generic card). A terminal message status
   // is what shows the card; a Fable `refused` failure SUPPRESSES all partial text
@@ -118,18 +97,10 @@ export default function AssistantMessage({
     onReplyToAssistant,
   });
   const renderAssistantBody = isAssistantPrimaryBodyVisible(message);
-  const createBranchDraft = useCallback(
-    (): BranchDraft => ({
-      parentMessageId: message.id,
-      parentMessageSeq: message.seq,
-      parentMessagePreview: assistantText,
-      anchor: {
-        kind: "assistant_message",
-        message_id: message.id,
-      },
-    }),
-    [assistantText, message.id, message.seq],
-  );
+  const actionRef = canonicalResourceRef({
+    scheme: "message",
+    id: message.id,
+  });
 
   return (
     <div
@@ -186,17 +157,7 @@ export default function AssistantMessage({
         />
       ) : null}
       {showFailureCard ? (
-        <ChatFailureCard
-          failure={failure}
-          supportId={supportId}
-          canRerun={message.can_rerun}
-          rerunning={rerunning}
-          onRerun={
-            onRerunAssistantResponse
-              ? () => onRerunAssistantResponse(message.id)
-              : undefined
-          }
-        />
+        <ChatFailureCard failure={failure} supportId={supportId} />
       ) : showSuspendedCard ? (
         <ChatFailureCard mode="suspended" />
       ) : showReconnectCard ? (
@@ -205,46 +166,13 @@ export default function AssistantMessage({
           onReconnect={() => onReconnectAssistant?.(message.id)}
         />
       ) : null}
-      {canRegenerate || canBranchFromAssistant || canWalk ? (
+      {message.status !== "pending" ? (
         <div className={styles.messageActions}>
-          {canRegenerate ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              leadingIcon={<RefreshCw size={14} aria-hidden="true" />}
-              loading={regenerating}
-              onClick={() => onRegenerateAssistantResponse?.(message.id)}
-              aria-label="Regenerate this answer"
-            >
-              Regenerate
-            </Button>
-          ) : null}
-          {canBranchFromAssistant ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              leadingIcon={<GitBranch size={14} aria-hidden="true" />}
-              onClick={() => onReplyToAssistant?.(createBranchDraft())}
-              aria-label="Fork from this answer"
-            >
-              Fork
-            </Button>
-          ) : null}
-          {canWalk ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() =>
-                onStartWalk!(
-                  message.citations!,
-                  conversationMessageText(message),
-                )
-              }
-              aria-label="Walk the sources"
-            >
-              Walk
-            </Button>
-          ) : null}
+          <ResourceActionMenu
+            actionSubject={{ ref: actionRef }}
+            label="Actions for this answer"
+            align="start"
+          />
         </div>
       ) : null}
       {onSelectFork ? (

@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import type { ResourceActionReconciliationScope } from "@/lib/actions/resourceActionSnapshotCache";
 import {
   useFeedback,
   type FeedbackContent,
@@ -32,6 +33,7 @@ import type {
   CompletionHandle,
 } from "@/lib/lectern/contract";
 import type { Presence } from "@/lib/api/presence";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 type CompletionUndoFailureStage = "MarkUnread" | "Restore";
 
@@ -167,7 +169,39 @@ export interface CompletionUndoInput {
   completionHandle: Presence<CompletionHandle>;
 }
 
-export function useCompletionUndo(): (input: CompletionUndoInput) => void {
+export type CompletionUndoReconcile = (
+  scope: ResourceActionReconciliationScope,
+) => Promise<void>;
+
+export type CompletionUndoCommitBarrierOutcome =
+  | { readonly kind: "Ready" }
+  | { readonly kind: "MutationFailed"; readonly error: unknown }
+  | { readonly kind: "ReconciliationFailed"; readonly error: unknown };
+
+/**
+ * One authoritative mutation barrier. A later command may run only after both
+ * the domain mutation and its canonical action-snapshot reconciliation settle.
+ */
+export async function commitCompletionUndoStep(input: {
+  readonly mutate: () => Promise<unknown>;
+  readonly reconcile: () => Promise<void>;
+}): Promise<CompletionUndoCommitBarrierOutcome> {
+  try {
+    await input.mutate();
+  } catch (error) {
+    return { kind: "MutationFailed", error };
+  }
+  try {
+    await input.reconcile();
+  } catch (error) {
+    return { kind: "ReconciliationFailed", error };
+  }
+  return { kind: "Ready" };
+}
+
+export function useCompletionUndo(
+  reconcileResourceActions: CompletionUndoReconcile,
+): (input: CompletionUndoInput) => void {
   const { setUnread, undoCompletion, placeItems, getCanonicalSnapshot } = useLectern();
   const { publish, resolve } = useFeedback();
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -180,13 +214,32 @@ export function useCompletionUndo(): (input: CompletionUndoInput) => void {
     [getCanonicalSnapshot],
   );
 
+  const reconcileMediaActions = useCallback(
+    (mediaId: MediaId) =>
+      reconcileResourceActions({
+        kind: "Subjects",
+        refs: [canonicalResourceRef({ scheme: "media", id: mediaId })],
+      }),
+    [reconcileResourceActions],
+  );
+
   const runRestore = useCallback(
     async (input: CompletionUndoInput, placement: Placement) => {
       const feedbackKey = completionUndoRestoreFeedbackKey(input.mediaId);
-      try {
-        await placeItems({ mediaIds: [input.mediaId], placement });
+      const outcome = await commitCompletionUndoStep({
+        mutate: () => placeItems({ mediaIds: [input.mediaId], placement }),
+        reconcile: () => reconcileMediaActions(input.mediaId),
+      });
+      if (outcome.kind === "Ready") {
         resolve(feedbackKey);
-      } catch (error) {
+        return;
+      }
+      if (outcome.kind === "ReconciliationFailed") {
+        setDefect({ error: outcome.error });
+        return;
+      }
+      const error = outcome.error;
+      try {
         if (handleUnauthenticatedApiError(error)) return;
         let content: FeedbackContent;
         try {
@@ -219,22 +272,30 @@ export function useCompletionUndo(): (input: CompletionUndoInput) => void {
             },
           ],
         });
+      } catch (caughtDefect) {
+        setDefect({ error: caughtDefect });
       }
     },
-    [currentSnapshot, placeItems, publish, resolve],
+    [currentSnapshot, placeItems, publish, reconcileMediaActions, resolve],
   );
 
   const runUndo = useCallback(
     async (input: CompletionUndoInput) => {
-      try {
-        if (input.completionHandle.kind === "Present") {
-          await undoCompletion(input.completionHandle.value, {
-            unreadMediaId: input.mediaId,
-          });
-        } else {
-          await setUnread(input.mediaId);
-        }
-      } catch (error) {
+      const outcome = await commitCompletionUndoStep({
+        mutate: () =>
+          input.completionHandle.kind === "Present"
+            ? undoCompletion(input.completionHandle.value, {
+                unreadMediaId: input.mediaId,
+              })
+            : setUnread(input.mediaId),
+        reconcile: () => reconcileMediaActions(input.mediaId),
+      });
+      if (outcome.kind === "ReconciliationFailed") {
+        setDefect({ error: outcome.error });
+        return;
+      }
+      if (outcome.kind === "MutationFailed") {
+        const error = outcome.error;
         if (handleUnauthenticatedApiError(error)) return;
         let content: FeedbackContent;
         try {
@@ -257,7 +318,14 @@ export function useCompletionUndo(): (input: CompletionUndoInput) => void {
       );
       await runRestore(input, placement);
     },
-    [currentSnapshot, publish, runRestore, setUnread, undoCompletion],
+    [
+      currentSnapshot,
+      publish,
+      reconcileMediaActions,
+      runRestore,
+      setUnread,
+      undoCompletion,
+    ],
   );
 
   const offerUndo = useCallback(

@@ -127,7 +127,10 @@ def search(
 
 def _candidate(row, *, contributors) -> BrowseCandidate:
     media_id = UUID(str(row["id"]))
-    resolution = InNexusResolution(href=f"/media/{media_id}")
+    resolution = InNexusResolution(
+        href=f"/media/{media_id}",
+        action_subject_ref=f"media:{media_id}",
+    )
     description = absent() if row["description"] is None else present(str(row["description"]))
     common = {
         "source": BrowseSource.Nexus,

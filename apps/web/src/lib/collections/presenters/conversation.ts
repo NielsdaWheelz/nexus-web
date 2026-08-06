@@ -1,7 +1,7 @@
 /** Pure semantic projections for conversation rows. */
 
 import { absent, present } from "@/lib/api/presence";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { presentConversationListItem } from "@/lib/conversations/presentation";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type {
@@ -31,11 +31,9 @@ export function presentConversation(
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    resourceTarget: routeResourceActionSubject({
-      scheme: "conversation",
-      id: item.id,
-      href,
-    }),
+    actionSubject: {
+      ref: canonicalResourceRef({ scheme: "conversation", id: item.id }),
+    },
     selected: false,
   };
 }

@@ -38,7 +38,7 @@ export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowVi
     relatedMediaId: absent(),
     // Settings rows are not resources: they carry an explicit, non-resource flat
     // menu (no snapshot, no canonical resource dropdown).
-    resourceTarget: null,
+    actionSubject: null,
     flatActions: item.actions,
     selected: false,
   };

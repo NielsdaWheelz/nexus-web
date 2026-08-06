@@ -71,6 +71,15 @@ import type {
 // The scroll owner (useChatScroll) owns ChatScrollHandle; we import the type
 // only — the engine never implements scroll, it just passes the ref through.
 import type { ChatScrollHandle } from "./useChatScroll";
+import type {
+  DeleteMessageMutation,
+  MessageActionMutationOutcome,
+} from "@/lib/chat/messageActionIntent";
+import {
+  deleteConversationMessage,
+  type MessageDeleteReceipt,
+} from "@/lib/chat/messageDeletion";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 type ChatRunData = ChatRunResponse["data"];
 type ConversationHistorySnapshot =
@@ -91,10 +100,12 @@ const MESSAGE_PAGE_SIZE = 30;
 
 function conversationOperationErrorMessage(
   error: ApiError,
-  operation: "RefreshForks" | "Load" | "Rerun" | "Regenerate" | "SwitchFork",
+  operation:
+    "RefreshForks" | "Load" | "Rerun" | "Regenerate" | "Delete" | "SwitchFork",
 ): FeedbackContent {
   switch (error.code) {
     case "E_NOT_FOUND":
+    case "E_MESSAGE_NOT_FOUND":
       return {
         tone: "Danger",
         requestId: error.requestId,
@@ -112,6 +123,7 @@ function conversationOperationErrorMessage(
     case "E_BAD_REQUEST":
     case "E_BRANCH_PATH_INVALID":
     case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
     case "E_NETWORK":
     case "E_TREE_REFRESH_FAILED":
     case "E_REGENERATION_NOT_ALLOWED":
@@ -123,11 +135,13 @@ function conversationOperationErrorMessage(
             ? "This response couldn’t be run again."
             : operation === "Regenerate"
               ? "This response couldn’t be regenerated."
-              : operation === "SwitchFork"
-                ? "This fork couldn’t be opened."
-                : operation === "RefreshForks"
-                  ? "Forks couldn’t be refreshed."
-                  : "This chat couldn’t be loaded.",
+              : operation === "Delete"
+                ? "This message couldn’t be deleted."
+                : operation === "SwitchFork"
+                  ? "This fork couldn’t be opened."
+                  : operation === "RefreshForks"
+                    ? "Forks couldn’t be refreshed."
+                    : "This chat couldn’t be loaded.",
       };
     default:
       throw error;
@@ -194,12 +208,15 @@ interface UseConversation {
   cancelActiveRun: () => Promise<void>;
 
   // rerun (a new sibling candidate from an eligible failed/cancelled turn)
-  rerunningAssistantMessageIds: StringIdSet;
-  rerunAssistantResponse: (assistantMessageId: string) => Promise<void>;
+  rerunAssistantResponse: (
+    assistantMessageId: string,
+  ) => Promise<MessageActionMutationOutcome>;
 
   // regenerate (a new sibling candidate from an eligible completed answer)
-  regeneratingAssistantMessageIds: StringIdSet;
-  regenerateAssistantResponse: (assistantMessageId: string) => Promise<void>;
+  regenerateAssistantResponse: (
+    assistantMessageId: string,
+  ) => Promise<MessageActionMutationOutcome>;
+  deleteMessage: DeleteMessageMutation;
 
   // client-only connection-lost recovery (ConnectionLostStatusUnknown, §10)
   connectionLostAssistantIds: Set<string>;
@@ -242,14 +259,22 @@ export function useConversation(
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(initialConversationId));
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
+    null,
+  );
   const reportAsyncDefect = useCallback((error: unknown) => {
     setAsyncDefect({ error });
   }, []);
   const reportOperationError = useCallback(
     (
       operationError: ApiError,
-      operation: "RefreshForks" | "Load" | "Rerun" | "Regenerate" | "SwitchFork",
+      operation:
+        | "RefreshForks"
+        | "Load"
+        | "Rerun"
+        | "Regenerate"
+        | "Delete"
+        | "SwitchFork",
     ) => {
       try {
         setError(conversationOperationErrorMessage(operationError, operation));
@@ -785,8 +810,8 @@ export function useConversation(
       busy: StringIdSet,
       keysRef: MutableRefObject<Map<string, string>>,
       operation: "Rerun" | "Regenerate",
-    ) => {
-      if (busy.has(assistantMessageId)) return;
+    ): Promise<MessageActionMutationOutcome> => {
+      if (busy.has(assistantMessageId)) return "Failed";
       const idempotencyKey =
         keysRef.current.get(assistantMessageId) ?? createRandomId();
       keysRef.current.set(assistantMessageId, idempotencyKey);
@@ -799,11 +824,12 @@ export function useConversation(
         });
         keysRef.current.delete(assistantMessageId);
         onChatRunCreated(decodeChatRunData(response.data));
+        return "Committed";
       } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
+        if (handleUnauthenticatedApiError(err)) return "Failed";
         if (!isApiError(err) || isSameSystemApiDefect(err)) {
           reportAsyncDefect(err);
-          return;
+          return "Failed";
         }
         // A network loss is ambiguous: retain the key so a re-invocation replays
         // the same command. Every other rejection is definite and consumes it.
@@ -811,6 +837,7 @@ export function useConversation(
           keysRef.current.delete(assistantMessageId);
         }
         reportOperationError(err, operation);
+        return "Failed";
       } finally {
         busy.remove(assistantMessageId);
       }
@@ -840,6 +867,115 @@ export function useConversation(
         "Regenerate",
       ),
     [regeneratingAssistantMessageIds, runCandidateAction],
+  );
+
+  const deleteMessage = useCallback(
+    async (
+      messageId: string,
+      execute: Parameters<DeleteMessageMutation>[1],
+      settleConversation: Parameters<DeleteMessageMutation>[2],
+    ): Promise<void> => {
+      try {
+        const currentConversationId = conversationIdRef.current;
+        if (currentConversationId === null) {
+          throw new Error(
+            "Mounted Message deletion has no Conversation identity",
+          );
+        }
+        let receipt: MessageDeleteReceipt | null = null;
+        const outcome = await execute(
+          async () => {
+            receipt = await deleteConversationMessage({
+              messageId,
+              conversationId: currentConversationId,
+            });
+          },
+          async (evidence) => {
+            let localProjectionError: unknown;
+            try {
+              const remainingMessages = messageUpdateReducer(messages, {
+                type: "remove_subtree",
+                rootMessageId: messageId,
+              });
+              dispatchMessages({
+                type: "remove_subtree",
+                rootMessageId: messageId,
+              });
+              rerunningAssistantMessageIds.remove(messageId);
+              regeneratingAssistantMessageIds.remove(messageId);
+              rerunKeysRef.current.delete(messageId);
+              regenerateKeysRef.current.delete(messageId);
+
+              if (branching) {
+                if (remainingMessages.length === 0) {
+                  setForkOptionsByParentId({});
+                  setPathCacheByLeafId({});
+                  setBranchGraph(EMPTY_BRANCH_GRAPH);
+                  setActiveLeafMessageId(null);
+                  selectedPathIdsRef.current = new Set();
+                } else {
+                  await refreshTreeForConversation(
+                    currentConversationId,
+                    false,
+                  );
+                }
+              }
+            } catch (error) {
+              localProjectionError = error;
+            }
+
+            const receiptConversationDeleted =
+              evidence === "ObservedMissing"
+                ? "Unknown"
+                : receipt?.conversationDeleted;
+            if (receiptConversationDeleted === undefined) {
+              throw new Error(
+                "Acknowledged Message deletion is missing its receipt",
+              );
+            }
+            await settleConversation({
+              conversationRef: canonicalResourceRef({
+                scheme: "conversation",
+                id: currentConversationId,
+              }),
+              messageEvidence: evidence,
+              receiptConversationDeleted,
+            });
+            if (localProjectionError !== undefined) {
+              throw localProjectionError;
+            }
+          },
+        );
+        if (
+          outcome.kind === "Committed" &&
+          outcome.projectionError !== undefined
+        ) {
+          const error = outcome.projectionError;
+          if (handleUnauthenticatedApiError(error)) return;
+          if (!isApiError(error) || isSameSystemApiDefect(error)) {
+            reportAsyncDefect(error);
+            return;
+          }
+          reportOperationError(error, "RefreshForks");
+        }
+      } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
+        if (!isApiError(err) || isSameSystemApiDefect(err)) {
+          reportAsyncDefect(err);
+          return;
+        }
+        reportOperationError(err, "Delete");
+      }
+    },
+    [
+      branching,
+      messages,
+      refreshTreeForConversation,
+      regeneratingAssistantMessageIds,
+      reportAsyncDefect,
+      reportOperationError,
+      rerunningAssistantMessageIds,
+    ],
   );
 
   const connectionLostAssistantIds = useMemo(
@@ -1061,9 +1197,7 @@ export function useConversation(
 
   const inheritedProfileSelection = useMemo(() => {
     const assistant = branchDraft
-      ? messages.find(
-          (message) => message.id === branchDraft.parentMessageId,
-        )
+      ? messages.find((message) => message.id === branchDraft.parentMessageId)
       : messages[messages.length - 1];
     if (!assistant || assistant.role !== "assistant") {
       if (branchDraft) {
@@ -1076,7 +1210,8 @@ export function useConversation(
 
     const run = assistant.trust_trail?.run;
     if (!run) return null;
-    if (run.profile_id === null && run.reasoning_option_id === null) return null;
+    if (run.profile_id === null && run.reasoning_option_id === null)
+      return null;
     if (run.profile_id === null || run.reasoning_option_id === null) {
       // justify-defect: a ChatRun writes its product profile and reasoning
       // selection together, so a same-system trust trail cannot contain half.
@@ -1136,10 +1271,9 @@ export function useConversation(
     onChatRunCreated,
     activeRunId,
     cancelActiveRun,
-    rerunningAssistantMessageIds,
     rerunAssistantResponse,
-    regeneratingAssistantMessageIds,
     regenerateAssistantResponse,
+    deleteMessage,
     connectionLostAssistantIds,
     reconnectAssistantResponse,
     branch,

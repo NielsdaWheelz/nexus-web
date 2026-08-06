@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
@@ -246,6 +247,10 @@ class CollectionMediaCapabilities:
     can_retry_metadata: bool
     can_edit_authors: bool
     can_delete: bool
+    retry_applicable: bool
+    refresh_source_applicable: bool
+    retry_metadata_applicable: bool
+    edit_authors_applicable: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +273,7 @@ class CollectionMedia:
     progress_fraction: float | None
     progress_resettable: bool
     audio_playable: bool
+    has_original_file: bool
     capabilities: CollectionMediaCapabilities
     created_at: datetime
 
@@ -410,6 +416,7 @@ def list_collection_media_for_viewer_by_ids(
     *,
     viewer_id: UUID,
     media_ids: list[UUID],
+    is_admin: bool = False,
 ) -> list[CollectionMedia]:
     """Hydrate the exact media facts consumed by finite collection rows.
 
@@ -448,9 +455,7 @@ def list_collection_media_for_viewer_by_ids(
     if not media_rows:
         return []
 
-    row_by_media_id: dict[UUID, Mapping[str, object]] = {
-        UUID(str(row["id"])): dict(row) for row in media_rows
-    }
+    row_by_media_id: dict[UUID, RowMapping] = {UUID(str(row["id"])): row for row in media_rows}
     visible_ids = [media_id for media_id in ordered_media_ids if media_id in row_by_media_id]
     pdf_ids = [
         media_id
@@ -502,6 +507,23 @@ def list_collection_media_for_viewer_by_ids(
             transcript_coverage=transcript_coverage,
             can_delete=bool(row["can_delete"]),
             is_creator=bool(row["is_creator"]),
+            is_admin=is_admin,
+            source_retry_available=bool(row["source_retry_available"]),
+            source_refresh_available=bool(row["source_refresh_available"]),
+            source_suspended=bool(row["source_job_suspended"]),
+        )
+        applicable_capabilities = derive_capabilities(
+            kind=kind_value,
+            processing_status=_status_to_str(row["persisted_processing_status"]),
+            last_error_code=cast(str | None, row["last_error_code"]),
+            media_file_exists=bool(row["has_file"]),
+            external_playback_url_exists=False,
+            pdf_quote_text_ready=pdf_readiness.get(media_id, False),
+            transcript_state=transcript_state,
+            transcript_coverage=transcript_coverage,
+            can_delete=bool(row["can_delete"]),
+            is_creator=True,
+            is_admin=True,
             source_retry_available=bool(row["source_retry_available"]),
             source_refresh_available=bool(row["source_refresh_available"]),
             source_suspended=bool(row["source_job_suspended"]),
@@ -547,6 +569,7 @@ def list_collection_media_for_viewer_by_ids(
                     and playback_source is not None
                     and bool(playback_source.stream_url)
                 ),
+                has_original_file=bool(row["has_file"]),
                 capabilities=CollectionMediaCapabilities(
                     can_quote=derived_capabilities.can_quote,
                     can_retry=derived_capabilities.can_retry,
@@ -554,6 +577,10 @@ def list_collection_media_for_viewer_by_ids(
                     can_retry_metadata=derived_capabilities.can_retry_metadata,
                     can_edit_authors=derived_capabilities.can_edit_authors,
                     can_delete=derived_capabilities.can_delete,
+                    retry_applicable=applicable_capabilities.can_retry,
+                    refresh_source_applicable=applicable_capabilities.can_refresh_source,
+                    retry_metadata_applicable=applicable_capabilities.can_retry_metadata,
+                    edit_authors_applicable=applicable_capabilities.can_edit_authors,
                 ),
                 created_at=cast(datetime, row["created_at"]),
             )
@@ -674,7 +701,7 @@ def list_media_for_viewer_by_ids(
     if not media_rows:
         return []
 
-    row_by_media_id: dict[UUID, Mapping[str, object]] = {}
+    row_by_media_id: dict[UUID, RowMapping] = {}
     pdf_media_ids: list[UUID] = []
     for row in media_rows:
         media_id = UUID(str(row["id"]))
@@ -749,7 +776,7 @@ def _load_podcast_episode_chapters_by_ids(
 
 
 def _media_listening_state_from_row(
-    row: Mapping[str, object],
+    row: RowMapping,
 ) -> ListeningStateOut | None:
     position_ms = row.get("listening_position_ms")
     if position_ms is None:
@@ -765,13 +792,13 @@ def _media_listening_state_from_row(
 
 def _media_out_from_row(
     *,
-    row: Mapping[str, object],
+    row: RowMapping,
     contributors: list[ContributorCreditOut],
     chapters: list[PodcastEpisodeChapterOut] | None = None,
     pdf_quote_ready: bool = False,
     is_admin: bool = False,
 ) -> MediaOut:
-    processing_status = _status_to_str(row["processing_status"])
+    processing_status = _media_processing_status(row["processing_status"])
     persisted_processing_status = _status_to_str(row["persisted_processing_status"])
     source_job_suspended = bool(row["source_job_suspended"])
     capabilities = derive_capabilities(
@@ -834,7 +861,7 @@ def _media_out_from_row(
         progress_resettable=False,
         # Overwritten by `_apply_consumption_state` for a qualifying podcast
         # episode; every other media stays Absent.
-        player_descriptor=absent(),
+        playerDescriptor=absent(),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -990,6 +1017,25 @@ def _status_to_str(value: object) -> str:
     if isinstance(enum_value, str):
         return enum_value
     return str(value)
+
+
+def _media_processing_status(value: object) -> MediaProcessingStatus:
+    """Narrow a storage-owned media processing status to its response contract."""
+    match _status_to_str(value):
+        case "pending":
+            return "pending"
+        case "extracting":
+            return "extracting"
+        case "ready_for_reading":
+            return "ready_for_reading"
+        case "failed":
+            return "failed"
+        case "suspended":
+            return "suspended"
+        case unknown:
+            # justify-defect: the SQL projection derives this field from the
+            # constrained media processing status plus the closed suspended state.
+            raise AssertionError(f"unknown media processing status: {unknown!r}")
 
 
 def list_visible_media(

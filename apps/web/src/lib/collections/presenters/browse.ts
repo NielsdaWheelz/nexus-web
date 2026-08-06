@@ -87,7 +87,10 @@ export function presentBrowseCandidate(
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    resourceTarget: null,
+    actionSubject:
+      candidate.resolution.kind === "InNexus"
+        ? candidate.resolution.actionSubject
+        : null,
     selected: false,
   };
 }
@@ -115,7 +118,7 @@ export function presentPreviewEpisode(
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    resourceTarget: null,
+    actionSubject: null,
     selected: false,
   };
 }

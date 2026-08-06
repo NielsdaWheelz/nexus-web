@@ -85,7 +85,7 @@ export function presentSlateItem(item: SlateItem): CollectionRowView {
     localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    resourceTarget: target.actionTarget,
+    actionSubject: target.actionSubject,
     selected: false,
   };
 }

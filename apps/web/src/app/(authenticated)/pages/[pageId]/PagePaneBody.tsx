@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays } from "lucide-react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
@@ -8,9 +8,10 @@ import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurface
 import DawnWriteBlock from "@/components/notes/DawnWriteBlock";
 import {
   FeedbackNotice,
+  useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
@@ -38,12 +39,22 @@ import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import { resourceSurfaceFilterFields } from "@/components/resource-surface/resourceSurfaceFilterFields";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type {
   WorkspaceTarget,
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
 import type { PaneSearchPublication } from "@/lib/panes/paneSearch";
+import {
+  notifyPageActionIntentOwnerReady,
+  usePageActionIntentOwner,
+  type PageActionIntent,
+} from "@/lib/notes/actionIntents";
+import {
+  createMountedEditorIntentController,
+  executeDestructiveMountedMutation,
+  type MountedEditorIntentController,
+} from "@/lib/actions/mountedActionHandoff";
 
 export type PagePaneSource =
   | { kind: "PageRef"; pageId: string }
@@ -74,6 +85,30 @@ function pageLoadErrorMessage(error: unknown): FeedbackContent {
   }
 }
 
+function pageDeleteErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  switch (error.code) {
+    case "E_NETWORK":
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+      return {
+        tone: "Danger",
+        title: "Page wasn’t deleted",
+        message:
+          "The page is still available. Check your connection and retry.",
+        requestId: error.requestId,
+      };
+    case "E_NOT_FOUND":
+      return {
+        tone: "Danger",
+        title: "This page is no longer available",
+        requestId: error.requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
 function isExpectedDawnWriteAbsence(error: unknown): boolean {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
   switch (error.code) {
@@ -95,7 +130,7 @@ export default function PagePaneBody({
   const routeLocalDate = usePaneParam("localDate");
   const account = useOptionalAuthenticatedAccount();
   const source: PagePaneSource =
-    pageIdOverride ?? routePageId
+    (pageIdOverride ?? routePageId)
       ? { kind: "PageRef", pageId: (pageIdOverride ?? routePageId)! }
       : routeLocalDate && account
         ? {
@@ -172,6 +207,7 @@ export default function PagePaneBody({
   );
   const [dailyTitle, setDailyTitle] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const feedbackController = useFeedback();
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [focusMastheadSerial, setFocusMastheadSerial] = useState(0);
   const [focusBodySerial, setFocusBodySerial] = useState(0);
@@ -207,10 +243,88 @@ export default function PagePaneBody({
     else if (pending) setFocusBodySerial((current) => current + 1);
   }, [page, ready]);
 
-  const dailyLocalDate =
-    dailySourceDate ?? page?.dailyPage?.localDate ?? null;
-  const pageId =
-    page?.id ?? (source.kind === "PageRef" ? source.pageId : null);
+  const dailyLocalDate = dailySourceDate ?? page?.dailyPage?.localDate ?? null;
+  const pageId = page?.id ?? (source.kind === "PageRef" ? source.pageId : null);
+  type TitleIntent = Extract<PageActionIntent, { kind: "EditPageTitle" }>;
+  const titleIntentControllerRef =
+    useRef<MountedEditorIntentController<TitleIntent> | null>(null);
+  if (titleIntentControllerRef.current === null) {
+    titleIntentControllerRef.current = createMountedEditorIntentController(
+      notifyPageActionIntentOwnerReady,
+    );
+  }
+  const titleIntentController = titleIntentControllerRef.current;
+  const deleteIntentRef = useRef<Extract<
+    PageActionIntent,
+    { kind: "DeletePage" }
+  > | null>(null);
+  const acceptPageActionIntent = useCallback(
+    (intent: PageActionIntent) => {
+      if (
+        !page ||
+        titleIntentController.occupied() ||
+        deleteIntentRef.current
+      ) {
+        return false;
+      }
+      if (intent.kind === "EditPageTitle") {
+        if (!titleIntentController.accept(intent)) return false;
+        setFocusMastheadSerial((current) => current + 1);
+        return true;
+      }
+      deleteIntentRef.current = intent;
+      void (async () => {
+        let deleted = false;
+        try {
+          const outcome = await executeDestructiveMountedMutation(
+            intent,
+            () => apiFetch(`/api/notes/pages/${page.id}`, { method: "DELETE" }),
+            () => setPage(null),
+          );
+          if (outcome.kind !== "Committed") return;
+          deleted = true;
+          activateTarget({
+            target: { href: "/notes", labelHint: "Notes" },
+            disposition: { kind: "Adopt" },
+          });
+        } catch (error: unknown) {
+          if (handleUnauthenticatedApiError(error)) return;
+          try {
+            feedbackController.publish({
+              kind: "Hud",
+              content: pageDeleteErrorMessage(error),
+            });
+          } catch (caughtDefect) {
+            setDefect({ error: caughtDefect });
+          }
+        } finally {
+          if (deleteIntentRef.current === intent) {
+            deleteIntentRef.current = null;
+          }
+          if (!deleted) notifyPageActionIntentOwnerReady(intent.ref);
+        }
+      })();
+      return true;
+    },
+    [activateTarget, feedbackController, page, titleIntentController],
+  );
+  usePageActionIntentOwner(
+    page?.actionSubject.ref ?? null,
+    acceptPageActionIntent,
+  );
+  const beginTitleIntentMutation = useCallback(
+    () => titleIntentController.beginMutation(),
+    [titleIntentController],
+  );
+  const abortTitleIntent = useCallback(() => {
+    titleIntentController.abortEditing();
+  }, [titleIntentController]);
+  useEffect(
+    () => () => {
+      titleIntentController.releaseOwner();
+    },
+    [titleIntentController],
+  );
   useSetPaneAliases([
     ...(dailyLocalDate ? [`daily:${dailyLocalDate}`] : []),
     ...(pageId ? [`page:${pageId}`] : []),
@@ -262,11 +376,12 @@ export default function PagePaneBody({
             ? {
                 id: surface.source.item.id,
                 title,
-                actionTarget: routeResourceActionSubject({
-                  scheme: "page",
-                  id: surface.source.item.id,
-                  href: `/pages/${surface.source.item.id}`,
-                }),
+                actionSubject: {
+                  ref: canonicalResourceRef({
+                    scheme: "page",
+                    id: surface.source.item.id,
+                  }),
+                },
                 dailyPage: { localDate: dailySourceDate },
               }
             : current,
@@ -274,16 +389,19 @@ export default function PagePaneBody({
     },
     [dailySourceDate, sourceKey],
   );
-  const handleDailyTitleChange = useCallback((title: string | null) => {
-    setDailyTitle(title);
-    if (title !== null) {
-      setFilterRowsState((current) =>
-        current.sourceRef === sourceKey
-          ? { ...current, ready: true }
-          : current,
-      );
-    }
-  }, [sourceKey]);
+  const handleDailyTitleChange = useCallback(
+    (title: string | null) => {
+      setDailyTitle(title);
+      if (title !== null) {
+        setFilterRowsState((current) =>
+          current.sourceRef === sourceKey
+            ? { ...current, ready: true }
+            : current,
+        );
+      }
+    },
+    [sourceKey],
+  );
   const [dawnWrite, setDawnWrite] = useState<DawnWrite | null>(null);
   useEffect(() => {
     if (!dailyLocalDate) {
@@ -369,6 +487,8 @@ export default function PagePaneBody({
         onDailyTitleChange={
           source.kind === "DailyDate" ? handleDailyTitleChange : undefined
         }
+        onTitleMutationStarted={beginTitleIntentMutation}
+        onTitleEditAborted={abortTitleIntent}
         activateTarget={activateTarget}
       />
     </>
@@ -442,9 +562,9 @@ function MaterializedPageChrome({
   usePanePrimaryChrome({
     search,
     actions: companionAction ? [companionAction] : [],
-    resourceTarget: page.actionTarget,
+    actionSubject: page.actionSubject,
     // Yesterday / tomorrow date navigation is a pane view control, ejected from
-    // the resource menu into the pane's own dedicated menu (AC4).
+    // the resource menu into the pane's own dedicated menu.
     viewMenu:
       viewActions.length > 0
         ? {

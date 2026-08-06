@@ -5,6 +5,12 @@
 **Type:** Hard cutover — one final contract; no legacy path, fallback, compatibility
 shim, dual write, or mixed-version support.
 
+**Resource-action supersession:**
+[`canonical-resource-action-menu-hard-cutover.md`](canonical-resource-action-menu-hard-cutover.md)
+owns where Share appears, its stable action identity, ordering, planner, and
+runtime. This document remains authoritative for Share targets, grants, public
+reads, copy/native-share behavior, and domain authorization only.
+
 ## One-line
 
 One Share surface copies private Nexus links, activates closed-library
@@ -1063,12 +1069,13 @@ Rules:
   fallback when an opener unmounts. Close, Escape, backdrop, mobile drag, and
   browser Back all use the same retained return-focus contract.
 - Row/dropdown Share actions are added only through central action builders.
-- Media and podcast library placement is published only by the universal
-  `RelationshipAction.LibraryPlacement.Edit` action.
+- Media and podcast library placement is published only by the canonical
+  `RelationshipAction.LibraryPlacement` action.
 - `libraryResourceOptions` always offers Share for a visible library. “Edit
   library” becomes Settings.
-- `buildHighlightActions` is the sole highlight Share action owner across the
-  sidecar, clicked-highlight popover, and selection popover.
+- Materialized Highlights receive Share only through `ResourceActionMenu`;
+  fresh-selection Share remains owned by `buildSelectionActions` until the
+  Highlight is materialized.
 - Nexus launcher resource and canonical-route targets use the same Share
   controller. Its old Nexus `copy-link` target/dispatch is deleted. A genuinely
   external href may retain an explicitly named “Copy external link” action.

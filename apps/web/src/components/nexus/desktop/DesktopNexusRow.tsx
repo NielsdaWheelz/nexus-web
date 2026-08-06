@@ -13,7 +13,7 @@ import {
 import { MoreHorizontal } from "lucide-react";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import ActionMenu from "@/components/ui/ActionMenu";
-import { useResourceActionCatalogProjection } from "@/lib/actions/resourceActionRuntime";
+import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import {
   nexusEntryHasSecondaryActions,
   nexusEntryKeyValue,
@@ -56,31 +56,36 @@ type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
 /**
  * The overflow menu for a canonical resource Nexus row. It renders the SAME
- * catalog projection every other surface shows for `target`, over the row's own
+ * catalog projection every other surface shows for `actionSubject`, over the row's own
  * `ActionMenu` trigger wiring — so the resource secondary actions come from the
- * shared planner, never a private NexusAction array. The trigger stays withheld
- * until the ref's snapshot is ready, so opening the menu performs no request.
+ * shared planner, never a private NexusAction array. The standing trigger is
+ * inert until the ref's snapshot is ready, so opening performs no request.
  */
 function DesktopNexusRowResourceMenu({
-  target,
+  actionSubject,
   menuProps,
   onPresenceChange,
 }: {
-  target: ResourceActionSubject;
+  actionSubject: ResourceActionSubject;
   menuProps: Omit<ActionMenuProps, "options">;
   onPresenceChange(present: boolean): void;
 }) {
-  const model = useResourceActionCatalogProjection(target);
-  // Present only once the snapshot resolved AND the plan is non-empty; a
-  // missing/ineligible resource yields no descriptors, so the row must not
-  // advertise an actions trigger (or its shortcut) that renders nothing.
-  const present = model.ready && model.descriptors.length > 0;
+  const model = useResourceActionMenuModel(actionSubject);
+  // A standing resource always has a standing trigger, including Loading and
+  // Error. The canonical model owns whether that trigger is inert or Retryable.
+  const present = true;
   useEffect(() => {
     onPresenceChange(present);
     return () => onPresenceChange(false);
   }, [present, onPresenceChange]);
-  if (!present) return null;
-  return <ActionMenu options={model.descriptors} {...menuProps} />;
+  return (
+    <ActionMenu
+      options={model.descriptors}
+      triggerDisabled={model.triggerDisabled}
+      triggerDisabledReason={model.triggerDisabledReason}
+      {...menuProps}
+    />
+  );
 }
 
 export default function DesktopNexusRow({
@@ -111,11 +116,11 @@ export default function DesktopNexusRow({
   const menuModalityRef = useRef<DesktopNexusModality>("Pointer");
   const [menuSnapshot, setMenuSnapshot] = useState<NexusEntry | null>(null);
   // A resource entry's overflow is the shared canonical dropdown for
-  // `resourceTarget`; it never reads a local NexusAction snapshot, so the
+  // `actionSubject`; it never reads a local NexusAction snapshot, so the
   // snapshot bookkeeping below is skipped for it (FIX 4). Its readiness is
   // reported up from the resource menu so the cell announces its shortcut only
   // when the menu is actually present (FIX 3).
-  const isResource = entry.resourceTarget !== undefined;
+  const isResource = entry.actionSubject !== undefined;
   const [resourceMenuReady, setResourceMenuReady] = useState(false);
   const key = nexusEntryKeyValue(entry.key);
   const primaryCellId = desktopNexusCellId(entry.key, "Primary");
@@ -328,9 +333,9 @@ export default function DesktopNexusRow({
         }
       >
         {hasSecondaryActions ? (
-          entry.resourceTarget ? (
+          entry.actionSubject ? (
             <DesktopNexusRowResourceMenu
-              target={entry.resourceTarget}
+              actionSubject={entry.actionSubject}
               menuProps={actionsMenuProps}
               onPresenceChange={setResourceMenuReady}
             />

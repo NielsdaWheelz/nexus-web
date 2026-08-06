@@ -44,7 +44,7 @@ import {
 } from "@/lib/panes/usePaneFind";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { activateResource } from "@/lib/resources/activation";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { createArtifactPaneFindAdapter } from "./artifactPaneFind";
 import styles from "./ArtifactPaneBody.module.css";
 
@@ -297,14 +297,14 @@ export default function ArtifactPaneBody() {
     [canonicalHref, router, title],
   );
 
-  const actionTarget = useMemo(
-    () =>
-      routeResourceActionSubject({
+  const actionSubject = useMemo(
+    () => ({
+      ref: canonicalResourceRef({
         scheme: "artifact",
         id: parsedArtifactRef.id,
-        href: canonicalHref,
       }),
-    [canonicalHref, parsedArtifactRef.id],
+    }),
+    [parsedArtifactRef.id],
   );
   const primaryChrome = useMemo<PanePrimaryChromePublication>(
     () => ({
@@ -323,9 +323,9 @@ export default function ArtifactPaneBody() {
               },
             }
           : {}),
-      resourceTarget: state.head.kind === "Ready" ? actionTarget : undefined,
+      actionSubject: state.head.kind === "Ready" ? actionSubject : undefined,
     }),
-    [actionTarget, identity, state.head.kind],
+    [actionSubject, identity, state.head.kind],
   );
 
   const activateCitation = useCallback<DossierCitationActivate>(

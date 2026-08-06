@@ -5,7 +5,7 @@ import {
   assumeMediaId,
   type LecternItem,
 } from "@/lib/lectern/contract";
-import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import {
   CANONICAL_LECTERN_VIEW,
   LECTERN_SORT_OPTION_IDS,
@@ -33,7 +33,9 @@ const MEDIA_ID = "3f1a2b4c-5d6e-4f80-9a1b-2c3d4e5f6071";
 function item(idSuffix: string, title: string, addedAt: string): LecternItem {
   const href = `/media/${MEDIA_ID}`;
   return {
-    itemId: assumeLecternItemId(`00000000-0000-4000-8000-00000000000${idSuffix}`),
+    itemId: assumeLecternItemId(
+      `00000000-0000-4000-8000-00000000000${idSuffix}`,
+    ),
     mediaId: assumeMediaId(MEDIA_ID),
     kind: "web_article",
     title,
@@ -46,11 +48,9 @@ function item(idSuffix: string, title: string, addedAt: string): LecternItem {
       progressResettable: false,
     },
     activation: { kind: "Readable" },
-    actionTarget: routeResourceActionSubject({
-      scheme: "media",
-      id: MEDIA_ID,
-      href,
-    }),
+    actionSubject: {
+      ref: canonicalResourceRef({ scheme: "media", id: MEDIA_ID }),
+    },
   };
 }
 
@@ -116,7 +116,10 @@ describe("Lectern view codec", () => {
   it("replaces owned keys and preserves unrelated pane keys", () => {
     const current = new URLSearchParams("expanded=1&sort=title&direction=desc");
     expect(
-      encodeLecternView({ kind: "Added", direction: "asc" }, current).toString(),
+      encodeLecternView(
+        { kind: "Added", direction: "asc" },
+        current,
+      ).toString(),
     ).toBe("expanded=1&sort=added&direction=asc");
     expect(encodeLecternView(CANONICAL_LECTERN_VIEW, current).toString()).toBe(
       "expanded=1",
