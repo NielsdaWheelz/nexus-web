@@ -71,7 +71,7 @@ test("the production MV3 popup acquires a scoped token, captures the active arti
     await app.goto(`${webOrigin}/login`);
     await app.getByLabel("Email", { exact: true }).fill(user.email);
     await app.getByLabel("Password", { exact: true }).fill(user.password);
-    await app.getByRole("button", { name: "Continue", exact: true }).click();
+    await app.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(app).toHaveURL(/\/lectern$/);
 
     // Drive the real connect endpoint with the signed-in session, exactly as the popup's
