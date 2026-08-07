@@ -56,7 +56,9 @@ EMAIL_INGEST_DOMAIN=<mail.example.com>
 EMAIL_INGEST_OWNER_USER_ID=<prod-user-uuid>
 ```
 
-Run `deploy/hetzner/sync-env.sh` to push the env.
+Production config is release-bearing. Follow the ordered
+[config publication protocol](../../../deployment.md#explicit-config-publication); there is
+no standalone push from this component runbook.
 
 ### 5. Deploy the worker
 

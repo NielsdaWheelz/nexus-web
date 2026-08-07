@@ -1,767 +1,427 @@
-# Deployment Notes
+# Production deployment
 
-Nexus production is intended to run with:
+This is the sole production runbook. Nexus uses a planned no-use window and one
+human-triggered release protocol. Do not mutate production Compose services,
+release state, or Vercel aliases outside the owners named here.
 
-- Vercel for the Next.js frontend/BFF.
-- Supabase Auth only.
-- One Hetzner Cloud VPS for Postgres, the FastAPI API, and two worker lanes.
-- Cloudflare R2 for object storage.
-- Caddy on the VPS for HTTPS at the API domain.
+## Production shape
 
-The goal is to keep the operational surface small while avoiding background
-workers or APIs running in more than one production location. This is a hard
-cutover: production does not fall back to Supabase Database or Supabase Storage.
+| Capability | Production owner |
+|---|---|
+| Frontend and BFF | Vercel project `nexus-web` |
+| API, interactive worker, background worker | Hetzner Compose project `nexus` |
+| Product database | Hetzner Postgres with pgvector |
+| Object storage | Cloudflare R2 |
+| Authentication | Supabase Auth only |
+| API TLS | Caddy on the Hetzner host |
 
-## Current Production
+Current public hosts are `nexus.nielseriknandal.com` and
+`api.nexus.nielseriknandal.com`. The VPS is `nexus-api-worker` at
+`5.78.194.235`.
 
-- Frontend: `https://nexus.nielseriknandal.com`
-- API: `https://api.nexus.nielseriknandal.com`
-- Hetzner server: `nexus-api-worker`
-- Hetzner IPv4: `5.78.194.235`
-- Hetzner location/type: `hil` / `cpx11`
-- Vercel project: `niels-erik-nandals-projects/nexus-web`
-- Supabase Auth project URL: `https://rpchuualftcjjbpgxlbt.supabase.co`
+The release identity is one full lowercase Git `source_sha`. It binds the web
+deployment, API image digest, worker image digest, expected Alembic revision,
+expected Oracle manifest digest, task contract, and captured VPS config.
 
-## Runtime Shape
+## Non-negotiable rules
 
-On the Hetzner VPS:
+- `deploy/hetzner/deploy.sh <source-sha>` is the only application release
+  entrypoint. Rerun it unchanged to resume.
+- Release only a clean checkout where `HEAD == origin/main == source-sha` and
+  exact `main` CI succeeded.
+- CI builds each backend target once. Production pulls manifest-selected GHCR
+  digests and never builds an application image.
+- Vercel produces an unaliased `READY` production-target candidate. Backend
+  activation and proof precede promotion of that exact deployment ID.
+- Application release changes only `api`, `worker-interactive`, and
+  `worker-background`. It does not recreate Postgres or Caddy.
+- Config publication and Oracle reconcile are explicit operations. Application
+  release neither performs nor waits for them.
+- Never edit an attempt, record, pointer, backup, bundle, or content-addressed
+  config. Never manually select another Vercel candidate during resume.
+- There is no automatic database downgrade or post-commitment rollback. After
+  database mutation or backend activation begins, recovery moves forward.
+- Secrets belong only in provider settings and unpublished env inputs. They
+  never belong in release state, command arguments, or logs.
 
-- `postgres`: Postgres with pgvector, backed by the Compose `postgres_data`
-  volume.
-- `caddy`: public HTTPS reverse proxy.
-- `api`: FastAPI service built from `docker/Dockerfile.api`.
-- `worker-interactive`: user-waiting jobs from `docker/Dockerfile.worker`.
-- `worker-background`: indexing, repair, teardown, and periodic jobs from the
-  same image.
+## Operator prerequisites
 
-The workers have no public ports. Browser requests go through Vercel except
-direct SSE streaming, which uses the public API domain.
+Install the repository's locked dependencies and authenticate `gh`, SSH, and
+Vercel. The release protocol requires `awk`, `cmp`, `curl`, `find`, `gh`, `git`,
+`grep`, `jq`, `python3`, `scp`, `sort`, `ssh`, `timeout`, and the locked Vercel
+CLI under `apps/web/node_modules`.
 
-The API and both fixed production lanes are always on. The interactive and
-background sets are declared once in `python/nexus/config.py`; normal workers
-do not accept raw allowlists. Reconciliation runs every 600 seconds in the
-background lane. Podcast due admission runs every 900 seconds and refresh-run
-retention runs daily in that same production lane. The three maintenance kinds
-are absent from both services and
-run only in a gated one-off process.
-
-Supabase is only an identity provider in production. Use it for hosted Auth,
-JWKS, OAuth providers, and browser anon-key auth flows. Do not configure
-production services to read/write Supabase Database or Supabase Storage.
-
-Cloudflare R2 is the production object store. Keep bucket credentials scoped to
-the production bucket and rotate them independently from Supabase Auth keys.
-
-## Env Files
-
-Tracked examples live in `deploy/env/*.example`.
-
-Ignored local files to fill with real values:
-
-- `deploy/env/env-prod`: shared production values.
-- `deploy/env/env-prod-frontend`: Vercel-only values.
-- `deploy/env/env-prod-backend`: FastAPI/Caddy values and backend-only provider
-  secrets, including `X_API_BEARER_TOKEN`.
-- `deploy/env/env-prod-worker`: worker-only values.
-
-Create them from examples:
+Set only provider credentials:
 
 ```bash
-cp deploy/env/env-prod.example deploy/env/env-prod
-cp deploy/env/env-prod-frontend.example deploy/env/env-prod-frontend
-cp deploy/env/env-prod-backend.example deploy/env/env-prod-backend
-cp deploy/env/env-prod-worker.example deploy/env/env-prod-worker
+export GH_TOKEN=<github-token>
+export VERCEL_TOKEN=<vercel-token>
 ```
 
-Important: `NEXUS_INTERNAL_SECRET` must match between Vercel and the VPS. The
-sync scripts fail before uploading if required production env values are empty
-or still contain placeholders.
+Production coordinates are committed, not ambient: SSH
+`nexus@5.78.194.235`, web `nexus.nielseriknandal.com`, Vercel project
+`nexus-web` / `prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs`, and team
+`niels-erik-nandals-projects` / `team_fKVvTyTsMBQ7qFjccFO17BJL`. Changing any
+coordinate is a reviewed infrastructure change, not a release flag.
 
-Use Hetzner Postgres for production data. `deploy/hetzner/sync-env.sh`
-validates that `DATABASE_URL` points at the private Compose service
-`postgres:5432` and matches `POSTGRES_USER`, `POSTGRES_PASSWORD`, and
-`POSTGRES_DB`, then the Compose `env_file` supplies that value to API, both
-workers, and one-off commands.
+Vercel custom-domain auto-assignment must be disabled. A new commit may build a
+production-target deployment, but it must remain staged and unaliased until the
+release controller promotes it. The committed Vercel project must also keep
+system environment variables exposed (`autoExposeSystemEnvs=true`) so the
+deployment's source identity is available to the public `/version` proof.
+`deploy/vercel/sync-env.sh`, local adoption admission, and application deploy
+all re-prove the project ID, team, name, `autoAssignCustomDomains=false`, and
+`autoExposeSystemEnvs=true`. The controller rejects an already promoted new
+candidate.
 
-The backend DB pool is bounded by `DATABASE_POOL_SIZE`,
-`DATABASE_MAX_OVERFLOW`, and `DATABASE_POOL_TIMEOUT_SECONDS`. Keep the default
-`5/5/30` unless VPS Postgres metrics show sustained saturation.
+## Provisioning and first adoption
 
-X/Twitter thread ingestion uses the official X API from the backend only.
-`X_API_BEARER_TOKEN`, `X_API_TIMEOUT_SECONDS`, and
-`X_API_AUTHOR_THREAD_MAX_POSTS` are VPS runtime settings, not Vercel settings.
-Provider credits are not env; if X capture fails with
-`E_X_PROVIDER_CREDITS_DEPLETED`, add credits in the X developer account and then
-run a direct provider probe or the gated live-provider test with
-`X_LIVE_TEST_POST_URL` and `X_LIVE_TEST_EXPECTED_TEXT`.
-
-## Hetzner Provisioning
-
-Install and authenticate the Hetzner CLI:
+Provision a new host only with the owned bootstrap:
 
 ```bash
-brew install hcloud
-hcloud context create nexus
-```
-
-Provision a cheap US server:
-
-```bash
-HCLOUD_SSH_KEY=<hetzner-ssh-key-name> \
-HCLOUD_SSH_ALLOWED_IPS="$(curl -fsS4 https://api.ipify.org)/32" \
+HCLOUD_SSH_KEY=<key-name> \
+HCLOUD_SSH_ALLOWED_IPS=<operator-ip>/32 \
 HCLOUD_LOCATION=hil \
 HCLOUD_SERVER_TYPE=cpx11 \
 ./deploy/hetzner/provision.sh
+
+ssh nexus@<server-ip> cloud-init status --wait
 ```
 
-Use the Hetzner location closest to users and Cloudflare R2. Use a larger server
-type if Docker builds or media jobs run out of memory.
+Before the first immutable release, prove the supported Alembic lineage and
+completed migration audits, pin the exact running Postgres and Caddy digests in
+the private production config, and publish that config for the never-published
+source SHA. Then run the sole infrastructure-adoption owner from that exact
+clean `HEAD == origin/main` checkout. The `adopt` command first performs
+mutation-free local admission: it resolves the exact backend artifact/CI/
+publisher lineage, proves both digest images are anonymously fetchable, and
+proves one unaliased READY Vercel candidate for the exact SHA plus its no-store
+`/version` identity. Only after those checks pass does it make the one host SSH
+adoption call:
 
-## DNS
+```bash
+NEXUS_SHARED_ENV=/absolute/path/to/env-prod \
+NEXUS_BACKEND_ENV=/absolute/path/to/env-prod-backend \
+NEXUS_WORKER_ENV=/absolute/path/to/env-prod-worker \
+./deploy/hetzner/sync-env.sh <source-sha>
 
-Point the API domain at the Hetzner server IPv4 address with an `A` record.
-Caddy will request and renew TLS automatically.
+python3 -B deploy/hetzner/adopt-infrastructure.py adopt <source-sha>
+```
 
-Current Cloudflare record:
+The adoption owner fixes the production SSH coordinate and, under the shared
+host lock, binds immutable Git bytes plus the exact five live containers,
+images, configs, named volumes, config snapshot, and database identity. It
+stops only the three writers; creates, validates, and restore-rehearses a
+custom-format Postgres dump; installs the root-owned Caddyfile; recreates only
+Postgres and Caddy with the same image IDs and volumes; then restores and proves
+the exact captured writers and all five healthy services.
+
+Its durable path is:
 
 ```text
-Type: A
-Name: api.nexus
-Value: 5.78.194.235
-Proxy: DNS only
+Prepared -> WritersStopped -> DatabaseCaptured -> BackupVerified
+         -> FilesInstalled -> InfrastructureMutationStarted
+         -> InfrastructureRecreated -> WritersRestored -> Succeeded
 ```
 
-## Backend Deploy
+After interruption, rerun only the exact same command and SHA. Every phase is
+replay-safe. Before `InfrastructureMutationStarted`, failure restores the exact
+captured writers; at or after that boundary it retains the no-use window and
+replays forward. Never substitute manual Docker, database, file-copy, or state
+editing commands.
 
-Upload the merged VPS env:
+Success creates the canonical, create-only
+`/var/lib/nexus/infra-adoption/completed.json` bound to its terminal attempt
+and retained verified dump. A nonterminal adoption blocks every other host
+mutator. Its source SHA is provenance, not a requirement that the first app
+candidate use the same SHA. Before `current` exists, the first candidate must
+re-prove the exact adopted bundle, config, infrastructure, volumes, database
+identity, and stable writer/schema vector; a bound forward-fix successor may
+advance writers/schema only while proving them stopped. Do not republish config
+between adoption and that first release. Only after `Succeeded` run
+`deploy/hetzner/deploy.sh <source-sha>`; that command separately captures the
+authoritative READY Vercel deployment as the immutable genesis predecessor.
 
-```bash
-./deploy/hetzner/sync-env.sh
-```
+## Immutable artifact lineage
 
-Deploy API and both workers:
+Successful exact-`main` `CI` triggers `.github/workflows/backend-images.yml`.
+It builds `docker/Dockerfile.backend` targets `api` and `worker`, verifies their
+baked identity is equal, pushes public GHCR digests, and uploads
+`nexus-backend-release-<source-sha>`.
 
-```bash
-./deploy/hetzner/deploy.sh
-```
+The strict bundle contains the candidate manifest, production Compose file,
+Caddy comparison input, host controller, and its manifest decoder. The manifest
+binds source CI run/workflow IDs and attempt `1`, publisher run ID and attempt
+`1`, repository, source SHA, both image digests, one expected database revision,
+and one expected Oracle manifest digest. The shared resolver requires one and
+only one exact-name repository artifact, proves its immutable first-attempt
+publisher owner, then independently proves the exact first-attempt source CI.
+The publisher workflow's outer `head_sha` is not source identity. Publisher
+reruns only prove the original artifact still exists; they never rebuild or
+upload. If the first source CI, publisher, or artifact fails, is duplicated, or
+is deleted before host installation, use a new SHA. GHCR creates new packages as
+private: if the first publisher run fails only because anonymous digest proof
+cannot read a newly created package, never adopt that SHA; make both
+`nexus-api` and `nexus-worker` packages public in the provider, then use a fresh
+successful SHA. Once installed, the root-owned immutable bundle is the resume
+and verification authority after the 90-day Actions retention window.
 
-`deploy.sh` runs `deploy/hetzner/sync-env.sh` first by default, so normal
-deploys validate and upload env before rebuilding. Skip that only when the
-remote env was already verified for the same deploy:
+## Explicit config publication
 
-```bash
-NEXUS_SYNC_ENV=0 ./deploy/hetzner/deploy.sh
-```
-
-`sync-env.sh` rejects stored `WORKER_LANE`, `WORKER_ALLOWED_JOB_KINDS`, or
-`NEXUS_ALLOW_WORKER_MAINTENANCE` values. It also requires reconciliation at 600
-seconds, Podcast due admission at 900 seconds with a positive bounded limit,
-and maintenance-only schedules at zero.
-
-The Hetzner scripts default to the current production IPv4 listed above. Set
-`NEXUS_HOST` to target another host, or `NEXUS_SSH_TARGET` to override the full
-SSH target. The deploy script syncs the repo to `/opt/nexus-web`, builds Docker
-images on the VPS, runs Alembic migrations, and starts the Compose stack.
-
-Deploy recreates both fixed lanes. Maintenance authorization belongs only on
-the bounded one-off invocation; never sync it into production runtime env.
-Before replacing image tags, it retains the exact API and worker images reported
-by the existing containers as `release-<CUTOVER_SHA>` rollback images; each
-service keeps one prior release. It also fails rather than crossing an
-operator-owned migration. Complete every reported stopped-world workflow until
-production reaches a normal deployable revision, then rerun the ordinary
-deploy.
-
-## Frontend Env
-
-Install/link Vercel CLI if needed:
-
-```bash
-cd apps/web
-vercel link
-cd ../..
-```
-
-Push production frontend env:
+Tracked contracts live in `deploy/env/*.example`; real files beside them remain
+untracked. A config-bearing release uses a new, never-published commit SHA.
+Publish Vercel config before that SHA triggers its staged build:
 
 ```bash
 ./deploy/vercel/sync-env.sh
 ```
 
-The Vercel sync script validates required production keys locally, writes the
-configured production env to Vercel, keeps `NEXUS_INTERNAL_SECRET` sensitive,
-then pulls the Vercel production env into a temporary file and verifies readable
-required keys without printing secret values.
-
-Key Vercel values:
+After the exact clean SHA is `origin/main`, publish the VPS config before
+application release:
 
 ```bash
-APP_PUBLIC_URL=https://nexus.nielseriknandal.com
-FASTAPI_BASE_URL=https://api.example.com
-R2_S3_API_ORIGIN=https://<cloudflare-account-id>.r2.cloudflarestorage.com
-NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<supabase-anon-key>
-AUTH_ALLOWED_REDIRECT_ORIGINS=https://nexus.nielseriknandal.com
-AUTH_TRUSTED_PROXY_ORIGINS=
-SERVER_ACTION_ALLOWED_ORIGINS=
-NEXUS_EXTENSION_REDIRECT_ORIGINS=
-NEXUS_INTERNAL_SECRET=<same value as VPS>
+SOURCE_SHA="$(git rev-parse HEAD)"
+./deploy/hetzner/sync-env.sh "$SOURCE_SHA"
 ```
 
-`R2_S3_API_ORIGIN` is a public shared origin used by backend signing and
-frontend CSP. `NEXT_PUBLIC_SUPABASE_*` is for Auth only. Do not add Supabase
-database, storage service-role keys, `SUPABASE_AUTH_ADMIN_KEY`, R2 credentials,
-or bucket names to Vercel. `SUPABASE_AUTH_ADMIN_KEY` is local E2E bootstrap-only.
-`AUTH_ALLOWED_REDIRECT_ORIGINS` is a full URL origin allowlist for app-generated
-Supabase redirect URLs. `AUTH_TRUSTED_PROXY_ORIGINS` is only for trusted
-host-rewriting proxy hops. `SERVER_ACTION_ALLOWED_ORIGINS` is a Next.js domain
-pattern list for host-rewriting frontend proxies; leave it empty for direct
-Vercel custom-domain deploys. `NEXUS_EXTENSION_REDIRECT_ORIGINS` is the separate
-browser-extension callback origin allowlist.
+The VPS publisher rejects duplicate keys across its three input files, missing
+or forbidden production keys, mutable Postgres/Caddy image references, and any
+active application or Oracle attempt. Under the shared release lock it writes
+one canonical `/etc/nexus/config/<sha256>.env`, then atomically moves
+`/etc/nexus/current.env`. This prepares config; it does not restart a service.
+The config snapshot is root:root `0440`, the live Caddyfile is root:root
+`0444`, and release-state directories are root:root `0750`; adoption rejects
+any existing state that does not satisfy those exact ownership and mode
+contracts.
+For first adoption, it transfers the host controller and decoder from the exact
+clean `origin/main` checkout into a validated temporary directory; it neither
+requires nor installs an application bundle.
 
-Current frontend values should use:
+The Vercel deployment ID is its durable build-config snapshot. Keep this sequence
+serialized so no other production build captures the prepared values. A
+code-only release may reuse the current configs. A config change never reuses a
+previously published source SHA.
+
+## Release
+
+After exact `main` CI, backend publication, and the staged Vercel build are
+green, announce the no-use window and close clients. Then run:
 
 ```bash
-FASTAPI_BASE_URL=https://api.nexus.nielseriknandal.com
-NEXT_PUBLIC_SUPABASE_URL=https://rpchuualftcjjbpgxlbt.supabase.co
+SOURCE_SHA="$(git rev-parse HEAD)"
+./deploy/hetzner/deploy.sh "$SOURCE_SHA"
 ```
 
-Frontend production deploys are GitHub-triggered. Push `main` to GitHub and let
-the Vercel Git integration build and promote the production deployment for
-`niels-erik-nandals-projects/nexus-web`.
-
-Use the CLI only for exceptional manual recovery or an explicitly requested
-force deploy, not for the normal publish path:
-
-```bash
-vercel deploy --prod --scope niels-erik-nandals-projects
-```
-
-### Pane-visit workspace-session hard cut
-
-The pane-visit release is an explicit maintenance window because Vercel and
-Hetzner do not deploy atomically. Do not run these steps out of order.
-
-1. Before pushing `main`, stop every workspace-session writer on Hetzner and
-   keep it stopped:
-
-   ```bash
-   ssh nexus@5.78.194.235 \
-     'cd /opt/nexus-web && NEXUS_ENV_FILE=/etc/nexus/nexus.env docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml stop worker-interactive worker-background api'
-   ```
-
-2. Push the hard-cut branch and wait until the corresponding Vercel production
-   deployment is Ready. Verify its commit identity.
-3. While the API remains stopped, send an href-only workspace-session PUT to
-   the production BFF. It must return HTTP `400` with
-   `E_INVALID_WORKSPACE_STATE`; this response is produced before proxying.
-4. Run `./deploy/hetzner/deploy.sh`. Its migration phase runs with API and
-   workers stopped, purges `workspace_sessions`, and restarts services only
-   after the purge succeeds.
-5. Smoke the production BFF: an absent session creates fresh visit-shaped
-   state; exact visit-shaped PUT then GET round-trips; malformed PUT still
-   returns the exact `400` error.
-
-End maintenance only after all five checks pass. Never purge while an old
-writer can run, restart the opaque backend before the strict BFF is live, or
-deploy the strict frontend against unpurged sessions.
-
-### EPUB navigation offsets revision 0208 hard cut
-
-Revision `0208` expands the exact-offset projection but deliberately defers any
-legacy EPUB whose navigation references an anchor removed by historical
-sanitization. Revision `0209` enforces the final non-null contract. The ordinary
-deploy gate refuses to cross `0208`; complete this stopped-world repair first.
-
-1. Wait for the exact `main` revision to pass CI and for its Vercel production
-   deployment to report Ready. Run `./deploy/hetzner/deploy.sh` once from a clean
-   checkout at that revision. It builds the exact backend images, then exits at
-   the `EpubNavigationOffsets` manual gate without stopping the current release.
-2. Stop `api`, `worker-interactive`, and `worker-background`. Prove there are no
-   active `ingest_media_source` or `media_content_reindex_job` rows, then take a
-   stopped-writer custom-format Postgres backup. Write through a `.partial`
-   path, require non-zero bytes, validate it with `pg_restore --list`, record its
-   SHA-256 and byte count, and atomically rename it into
-   `/var/backups/nexus/epub-navigation-offsets-<CUTOVER_SHA>.dump`.
-3. With the exact staged API image, run `alembic upgrade 0208`, then inspect the
-   bounded census:
-
-   ```bash
-   cd /opt/nexus-web
-   export CUTOVER_SHA=<full-exact-main-sha>
-
-   docker compose --env-file /etc/nexus/nexus.env \
-     -f deploy/hetzner/docker-compose.yml run -T --rm api \
-     sh -c 'cd /app/migrations && /app/.venv/bin/alembic upgrade 0208'
-
-   docker compose --env-file /etc/nexus/nexus.env \
-     -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps api \
-     /app/.venv/bin/python -m nexus.ops.epub_navigation_offsets_cutover census
-   ```
-
-4. Keep all normal writers stopped and run the owned repair. It refreshes only
-   census-selected EPUBs from their durable original files, creates audited
-   source attempts, and drains only the canonical ingest/reindex job kinds.
-   It is resumable for already queued/running cutover attempts and fails closed
-   on foreign claimable jobs, unresolved current dead source/index operations
-   for the selected EPUBs, failed source state, or any remaining nullable row.
-
-   ```bash
-   docker compose --env-file /etc/nexus/nexus.env \
-     -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps api \
-     /app/.venv/bin/python -m nexus.ops.epub_navigation_offsets_cutover repair
-   ```
-
-   Rerun `census`; it must report revision `0208`, `deferred_rows: 0`, no media,
-   and no active jobs. Do not manufacture offsets or advance the migration by
-   hand if the repair does not converge.
-5. From the same exact clean checkout, run the ordinary deploy again. Because
-   the database is now at `0208`, the manual gate is satisfied; the deploy
-   validates and applies `0209`, seeds/checks the Oracle Corpus, starts the exact
-   API and worker images, and verifies their `CUTOVER_SHA`. Finish with the
-   standard unauthenticated and auth-redirect production smokes.
-
-On any failure, keep writers stopped and preserve the backup plus command
-output. The old application is schema-compatible with the additive `0208`
-columns, but restarting it is an explicit recovery decision; never bypass
-`0209`, drop the nullable rows, or substitute guessed offsets.
-
-### Podcast freshness revision 0203 hard cut
-
-Revision `0203` requires one maintenance window. Do not mix an old API or
-worker with the new schema.
-
-1. On the deployed `0202` release, set
-   `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS=0`, sync the production env, and
-   force-recreate `worker-background`. Stop `api` so Subscribe and manual sync
-   cannot admit more old jobs; leave both workers running until the queue
-   drains.
-2. On the VPS, run both preflight queries below. Continue only when both return
-   zero rows. Then stop `worker-interactive` and `worker-background` and run the
-   queries again. Migration `0203` repeats the queue preflight and aborts before
-   changing schema if an old poll or sync job is still active.
-
-   ```bash
-   docker compose --env-file /etc/nexus/nexus.env \
-     -f deploy/hetzner/docker-compose.yml exec -T postgres \
-     sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-   SELECT kind, status, count(*)
-   FROM background_jobs
-   WHERE kind IN (
-       'podcast_active_subscription_poll_job',
-       'podcast_sync_subscription_job'
-   )
-     AND status IN ('pending', 'running', 'failed')
-   GROUP BY kind, status;
-
-   SELECT sync_status, count(*)
-   FROM podcast_subscriptions
-   WHERE sync_status IN ('pending', 'running')
-   GROUP BY sync_status;
-   SQL
-   ```
-
-3. Push the hard-cut revision and wait for its Vercel deployment to report
-   Ready while the old API remains stopped. Put the new worker env in place
-   with `PODCAST_REFRESH_DUE_SCHEDULE_SECONDS=900` and no
-   `PODCAST_ACTIVE_POLL_*` keys, then run `./deploy/hetzner/deploy.sh` for that
-   exact `CUTOVER_SHA`. The script migrates while API/workers are stopped and
-   starts the new API and both new worker lanes only after migration succeeds.
-4. Invoke **Refresh** once in Podcasts. Record the refresh-run handle, its
-   terminal SSE `done`, and the newly rendered result. Run the postflight below;
-   it must show revision `0203`, no legacy poll work or old sync payload, healthy
-   queue state, and terminal subscriptions with ordered due timestamps.
-
-   ```bash
-   docker compose --env-file /etc/nexus/nexus.env \
-     -f deploy/hetzner/docker-compose.yml exec -T postgres \
-     sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-   SELECT version_num FROM alembic_version;
-
-   SELECT count(*) AS active_legacy_jobs
-   FROM background_jobs
-   WHERE status IN ('pending', 'running', 'failed')
-     AND (
-         kind = 'podcast_active_subscription_poll_job'
-         OR (
-             kind = 'podcast_sync_subscription_job'
-             AND (
-                 NOT (
-                     payload ?& ARRAY[
-                         'subscription_id', 'user_id', 'podcast_id', 'sync_generation'
-                     ]
-                 )
-                 OR payload - ARRAY[
-                     'subscription_id', 'user_id', 'podcast_id', 'sync_generation'
-                 ] <> '{}'::jsonb
-             )
-         )
-     );
-
-   SELECT kind, status, count(*)
-   FROM background_jobs
-   GROUP BY kind, status
-   ORDER BY kind, status;
-
-   SELECT sync_status, last_checked_at, next_sync_at
-   FROM podcast_subscriptions
-   ORDER BY last_checked_at DESC NULLS LAST
-   LIMIT 10;
-
-   SELECT id, status, requested_count, finished_count, new_episode_count
-   FROM podcast_refresh_runs
-   ORDER BY created_at DESC
-   LIMIT 10;
-   SQL
-
-5. Within one due cadence, retain one terminal scheduled run
-   (`idempotency_key IS NULL`) as the scheduler proof. Do not end the release
-   gate until the manual run, scheduled run, SSE completion, subscription
-   timestamps, queue health, deployed commit identities, and absence of
-   `PODCAST_ACTIVE_POLL_*` in `/etc/nexus/nexus.env` are recorded.
-
-## Operations
-
-SSH into the VPS:
-
-```bash
-ssh nexus@5.78.194.235
-cd /opt/nexus-web
-export CUTOVER_SHA="$(git rev-parse HEAD)"
-```
-
-Check services:
-
-```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml ps
-```
-
-Tail logs:
-
-```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f api
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f worker-interactive
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f worker-background
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f caddy
-```
-
-Containers log through the `journald` driver tagged with the container name,
-so the `docker compose ... logs` recipes above keep working and log history
-survives deploys (`deploy.sh` force-recreates all containers, which destroys
-`json-file` logs). Logs from replaced containers are in the host journal under
-the stable container-name tag; this is also the manual check that retention
-works — after a deploy, pre-deploy lines must still appear:
-
-```bash
-journalctl CONTAINER_TAG=nexus-worker-interactive-1 --since "24 hours ago"
-journalctl CONTAINER_TAG=nexus-worker-background-1 --since "24 hours ago"
-```
-
-One-time step for a VPS provisioned before the journald cutover (new servers
-get this from `cloud-init.yml`); the logging driver applies on container
-recreate, so the `--force-recreate` is required once after switching drivers:
-
-```bash
-sudo install -d /etc/systemd/journald.conf.d
-printf '[Journal]\nStorage=persistent\nSystemMaxUse=2G\n' \
-  | sudo tee /etc/systemd/journald.conf.d/10-nexus.conf
-sudo systemctl restart systemd-journald
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml up -d --force-recreate
-```
-
-Stop both workers:
-
-```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml stop worker-interactive worker-background
-```
-
-Recreate the workers after env changes. `docker compose restart` does not reload
-`env_file` values:
-
-```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml up -d --no-deps --force-recreate worker-interactive worker-background
-```
-
-Check non-secret worker safety env:
-
-```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec worker-interactive env | sort | rg 'WORKER_|DATABASE_STATEMENT_TIMEOUT'
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec worker-background env | sort | rg 'WORKER_|DATABASE_STATEMENT_TIMEOUT|PODCAST_REFRESH|INGEST_RECONCILE|GUTENBERG|BACKGROUND_JOB_PRUNE'
-```
-
-Health check:
-
-```bash
-curl https://api.nexus.nielseriknandal.com/health
-```
-
-Check recent X provider failures by request ID after an ingest failure:
-
-```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec postgres \
-  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-  -c "select created_at, request_id, status, api_error_code, provider_status_code, provider_error_title from external_provider_events where provider = '\''x'\'' order by created_at desc limit 20"'
-```
-
-Check recent LLM provider calls in the `llm_calls` ledger (table lands with
-migration 0145). `provider_attempts` may contain `safe_body_snippet` values for
-structured provider errors; these are bounded, secret-redacted summaries, not
-raw body fallbacks. Treat them as operator-only diagnostics and do not paste raw
-provider bodies into product logs or user copy:
-
-```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec -T postgres \
-  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-SELECT created_at, owner_kind, owner_id, call_seq, provider, provider_route,
-       model_name, llm_operation, streaming, error_class,
-       left(error_detail, 240) AS error_detail, provider_request_id,
-       attempt_count, retry_count, terminal_attempt_status, provider_attempts
-FROM llm_calls
-ORDER BY created_at DESC
-LIMIT 20;
-SQL
-```
-
-For chat send failures, join the run parent to the ledger. This distinguishes a
-retryable transient failure from a terminal nonretryable provider rejection or
-`cancelled` run; after a code/schema fix, recover terminal failed/cancelled
-assistant messages with `/messages/{assistant_message_id}/resend`, not by
-manually requeueing the original job:
-
-```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec -T postgres \
-  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-SELECT cr.created_at, cr.id AS run_id, cr.assistant_message_id, cr.status,
-       cr.error_code, left(cr.error_detail, 240) AS run_error_detail,
-       lc.call_seq, lc.provider, lc.provider_route, lc.model_name,
-       lc.error_class, lc.terminal_attempt_status, lc.provider_attempts
-FROM chat_runs cr
-LEFT JOIN llm_calls lc
-  ON lc.owner_kind = 'chat_run' AND lc.owner_id = cr.id
-WHERE cr.created_at >= now() - interval '6 hours'
-  AND (cr.status IN ('error', 'cancelled') OR lc.error_class IS NOT NULL)
-ORDER BY cr.created_at DESC, lc.call_seq DESC NULLS LAST
-LIMIT 40;
-SQL
-```
-
-Production logs are useful for run ids, request ids, and lifecycle events; any
-structured provider error summary lives in `llm_calls.provider_attempts`:
-
-```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs --since=2h api worker-interactive worker-background \
-  | grep -E 'llm\.request\.(failed|finished)|chat_run\.|resend|retry'
-```
-
-## Cutover
-
-Before switching production traffic:
-
-1. Provision Hetzner and DNS.
-2. Create the production R2 bucket, shared S3 API origin, access keys, and
-   browser CORS policy.
-   Apply the CORS policy as code with
-   `CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... R2_BUCKET=... ./deploy/cloudflare/apply-r2-cors.sh`.
-3. Stop or disable old backend writers and workers before starting the Hetzner
-   workers.
-4. Use a fresh cutover by default: run migrations on empty Hetzner Postgres and
-   start with an empty R2 bucket. If preserving old data, export/import it
-   offline before traffic moves; do not configure Supabase as a live fallback.
-5. Sync VPS env and Vercel env.
-6. Deploy backend and run migrations.
-7. Verify the complete Supabase hosted Auth contract:
-   `SUPABASE_MANAGEMENT_ACCESS_TOKEN=... ./deploy/supabase/verify-auth-config.sh`.
-8. In the Supabase Auth dashboard, confirm **Require current password when
-   changing password** is off. The supported public Management API does not
-   expose this newer toggle; do not automate it through a private Studio API.
-9. In a private browser, sign out and sign back in with an existing owner's
-   Google or GitHub identity. Confirm `/api/me` succeeds. This interactive
-   canary is required because an OAuth-start redirect cannot prove the provider
-   callback or existing-user session.
-10. Confirm `/health`, object upload/download, and one job in each worker lane
-   against Hetzner Postgres/R2.
-11. Switch frontend/API traffic, keep maintenance schedules at `0`, and verify
-   reconciliation remains at 600 seconds.
-12. Run the auth smoke checks (see Smoke Checks) against the live URLs.
-
-After cutover, treat Supabase Database and Supabase Storage as legacy data
-sources only. Do not write new production data to them and do not configure them
-as a fallback path.
-
-## Smoke Checks
-
-`deploy/smoke/auth-smoke.sh` is the post-deploy auth gate. Run it after every
-frontend/backend release once traffic is live; it exits nonzero on any failed
-check. It verifies the safe production HTTP boundary: anonymous
-default protected pages redirect to `/login` without redundant `next`,
-anonymous non-default protected pages preserve `next`, a valid-shaped expired
-cookie prompts a redirect with no `MIDDLEWARE_INVOCATION_TIMEOUT`, public auth
-pages return `200`, Google/GitHub starts target the exact Supabase callback
-contract, BFF routes return JSON `401
-E_UNAUTHENTICATED`, `/docs` is not reachable, and the API health endpoint
-returns `200`.
-
-```bash
-NEXUS_SMOKE_APP_URL=https://nexus.nielseriknandal.com \
-NEXUS_SMOKE_API_URL=https://api.nexus.nielseriknandal.com \
-NEXUS_SMOKE_SUPABASE_URL=https://rpchuualftcjjbpgxlbt.supabase.co \
-  make smoke
-```
-
-The same values can be passed as `--app-url`, `--api-url`, and `--supabase-url`
-flags. `--supabase-url` is the deployed `NEXT_PUBLIC_SUPABASE_URL`; its project
-ref names the auth cookie the boundary parser reads, so the crafted expired
-cookie is one the deployed app interprets. The script makes only safe `GET`
-requests and never prints cookie or token values.
-
-Durable source ingest has a separate production check because the important
-contract lives in Postgres, worker logs, and provider events. After a backend or
-worker deploy, SSH to the host and run read-only checks from `/opt/nexus-web`:
-
-```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml ps
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs worker-interactive \
-  | grep -E "ingest_media_source|source_attempt|x_provider|provider_event" \
-  | tail -100
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec -T postgres \
-  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-SELECT status, source_type, COUNT(*)
-FROM media_source_attempts
-WHERE created_at > now() - interval '24 hours'
-GROUP BY status, source_type
-ORDER BY source_type, status;
-SQL
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec -T postgres \
-  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-SELECT kind, status, COUNT(*)
-FROM background_jobs
-WHERE kind = 'ingest_media_source'
-  AND created_at > now() - interval '24 hours'
-GROUP BY kind, status
-ORDER BY status;
-SQL
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec -T postgres \
-  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-SELECT provider, capability, status, api_error_code, COUNT(*)
-FROM external_provider_events
-WHERE created_at > now() - interval '24 hours'
-GROUP BY provider, capability, status, api_error_code
-ORDER BY provider, capability, status, api_error_code;
-SQL
-```
-
-These checks prove the deployed interactive lane is using the single
-`ingest_media_source` job kind, source attempts are durable and queryable, and X
-provider failures are recorded in the provider ledger. Mutating production
-canaries for forced X failures or forced remote-file failures are allowed only
-with an isolated canary account, dedicated canary library, known disposable
-URLs, and available X API credits. When those prerequisites are absent, record
-the read-only evidence above and do not fake the canary with lab-only fixtures.
-
-Auth releases have one read-only gate. It verifies the complete hosted
-Supabase Auth configuration, then runs the safe production HTTP and OAuth-start
-smoke above. It never creates a production user or consumes an email token, and
-does not replace the interactive existing-user OAuth canary in the cutover
-checklist.
-
-```bash
-SUPABASE_MANAGEMENT_ACCESS_TOKEN=<operator-token> \
-NEXUS_SMOKE_APP_URL=https://nexus.nielseriknandal.com \
-NEXUS_SMOKE_API_URL=https://api.nexus.nielseriknandal.com \
-NEXUS_SMOKE_SUPABASE_URL=https://rpchuualftcjjbpgxlbt.supabase.co \
-  make smoke-auth
-```
-
-Keep legacy Supabase cleanup/export credentials in a separate local file that is
-never synced as runtime env. These values feed the one-off Supabase-exit cleanup
-scripts only; none of them is a required production runtime variable (`SUPABASE_URL`
-in particular is not — FastAPI verifies tokens with `SUPABASE_ISSUER`,
-`SUPABASE_JWKS_URL`, and `SUPABASE_AUDIENCES`):
-
-```bash
-SUPABASE_DATABASE_URL=<old-supabase-postgres-url>
-SUPABASE_URL=<auth-project-url>
-SUPABASE_SERVICE_KEY=<legacy-cleanup-only-service-role-key>
-STORAGE_BUCKET=media
-```
-
-## Rollback
-
-Rollback is revision plus data restore, not provider fallback:
-
-1. Stop `worker-interactive` and `worker-background`.
-2. Restore the last known-good Hetzner Postgres backup or server snapshot.
-3. Restore or reconcile the matching R2 object state.
-4. Redeploy the previous app revision with the matching env.
-5. Force-recreate `api`, confirm health/login/read paths, then recreate both
-   workers.
-
-Do not point production back to Supabase Database or Supabase Storage. If the
-legacy data needs to be consulted, export from it offline and import into
-Hetzner Postgres/R2.
-
-## Failure Recovery
-
-- Supabase Auth failure: keep Postgres/R2 unchanged, stop workers only if jobs
-  are repeatedly failing on auth-dependent work, and wait for Auth/JWKS recovery
-  or rotate Supabase Auth keys if compromised.
-- Hetzner Postgres failure: stop both workers, keep `caddy` up, restore from the
-  latest verified database backup/snapshot, run migrations for the deployed
-  revision, then force-recreate `api`, `worker-interactive`, and
-  `worker-background`.
-- R2 failure: stop write-heavy jobs, verify Cloudflare status/credentials, retry
-  failed object operations after recovery, and reconcile DB object metadata
-  against R2 inventory if writes partially completed.
-- Bad deploy/env: redeploy the previous revision with the previous env, recreate
-  services, and verify `/health`, auth, DB query, object read/write, and worker
-  logs.
-- Worker runaway: stop the affected lane, restore the declared schedules, sync
-  env, force-recreate that lane, and watch DB/R2 metrics before any
-  maintenance window.
-
-## Maintenance Windows
-
-Maintenance is opt-in per job kind:
+Freeze `main` from this first invocation until the attempt is durably
+`Succeeded`, `RolledBack`, or `ForwardFixRequired`. Every ordinary replay
+requires clean `HEAD == origin/main == source_sha`; settle the active SHA before
+landing its successor. The only code-level exception is provider-free settlement
+of an already durable `RollbackRequired` or `ForwardFixPending` attempt from its
+installed bundle; this is recovery authority, not permission to unfreeze main.
+
+The command performs the complete protocol:
+
+1. validates Git, CI, bundle, manifest, and staged Vercel identity;
+2. installs the immutable bundle and inspects durable host state;
+3. preflights config, Compose, Caddy equality, image identity, live infra,
+   database ancestry, capacity, and predecessor evidence without mutation;
+4. stops and proves stopped only the three app writers;
+5. when migration is pending, creates and verifies one durable custom-format
+   Postgres backup before recording `DataMutationStarted` and upgrading;
+6. records `BackendActivationStarted`, activates app images by digest, and
+   waits boundedly for Compose health before proving exact API/readiness bodies,
+   workers, shared task-contract digest, schema, config, images, and unchanged
+   infra;
+7. promotes only the bound Vercel deployment, proves the public web/API vector,
+   writes one immutable record, and atomically publishes current SHA.
+
+Success ends the no-use window. No separate migration, Compose, smoke, or
+promotion command is part of the normal path.
+
+## Durable state and replay
+
+Host state lives under `/var/lib/nexus/releases`:
 
 ```text
-sync_gutenberg_catalog_job -> SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS
-prune_background_jobs_job -> BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS
-purge_expired_auth_handoff_codes -> registry-owned hourly schedule
+attempts/<source-sha>.json
+oracle-attempts/<source-sha>-<manifest-digest-hex>.json
+oracle-repairs/<source-sha>-<manifest-digest-hex>.json
+records/<source-sha>.json
+current
+forward-fix
+genesis-vercel-deployment
 ```
 
-Run maintenance as a one-off worker-image process. Pass the maintenance lane,
-authorization gate, and exact non-empty maintenance-only allowlist on that
-invocation. For scheduler-driven kinds, pass only that kind's positive schedule.
-For example:
+Bundles live at `/opt/nexus/releases/<source-sha>`, configs at
+`/etc/nexus/config/<sha256>.env`, and migration backups at
+`/var/backups/nexus`. Durable JSON and pointers are canonical, fsynced, and
+atomically published. Records and bundles are immutable.
+
+Application phases are:
+
+```text
+Prepared -> WritersStopped
+WritersStopped -> BackupVerified -> DataMutationStarted  # migration pending
+WritersStopped -> BackendActivationStarted               # no migration
+DataMutationStarted -> BackendActivationStarted
+BackendActivationStarted -> AwaitingFrontendPromotion
+AwaitingFrontendPromotion -> FrontendPromoted -> Succeeded
+Prepared/WritersStopped/BackupVerified -> RollbackRequired -> RolledBack
+DataMutationStarted/BackendActivationStarted/AwaitingFrontendPromotion/
+FrontendPromoted -> ForwardFixPending -> ForwardFixRequired
+any failed phase of a forward-fix successor -> ForwardFixPending
+                                            -> ForwardFixRequired
+```
+
+`RolledBack` and `Succeeded` are nonblocking terminal phases;
+`ForwardFixRequired` is blocking. The two pending phases make settlement intent
+durable before external restart/stop work. Every mutator takes the same host
+lock for its invocation and rejects a conflicting nonterminal attempt. The
+rollback branch applies only to an ordinary attempt that did not bind a
+`forward_fix_of` pointer; a failed forward-fix successor never restarts its
+failed predecessor.
+
+## Verification
+
+The release controller already requires these facts. The operator may repeat
+the public read-only checks:
 
 ```bash
-CUTOVER_SHA="$(git rev-parse HEAD)" timeout --foreground 15m docker compose \
-  --env-file /etc/nexus/nexus.env \
-  -f deploy/hetzner/docker-compose.yml \
-  run -T --rm --no-deps \
-  -e WORKER_LANE=maintenance \
-  -e NEXUS_ALLOW_WORKER_MAINTENANCE=1 \
-  -e WORKER_ALLOWED_JOB_KINDS=prune_background_jobs_job \
-  -e BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS=3600 \
-  worker-background
+curl --fail --silent --show-error https://api.nexus.nielseriknandal.com/livez | jq
+curl --fail --silent --show-error https://api.nexus.nielseriknandal.com/readyz | jq
+curl --fail --silent --show-error https://api.nexus.nielseriknandal.com/version | jq
+curl --fail --silent --show-error https://nexus.nielseriknandal.com/version | jq
 ```
 
-Observe the exact job to terminal state and stop the process. Do not edit or
-sync the normal production env, and do not create a continuously running
-maintenance service.
+`/livez` proves only the API process. `/readyz` is `200` only when Postgres is
+reachable and its sole revision equals the image's baked revision. API
+`/version` returns the baked SHA, expected schema, expected Oracle digest, and
+task-contract digest. Web `/version` returns the Vercel source SHA. All are
+no-store.
 
-## Files To Remember
+Each worker advances a lane-owned heartbeat only after a successful polling and
+scheduling cycle. Container health rejects a dead PID, a heartbeat older than
+20 seconds, the wrong lane or kinds, identity/task-contract drift, database
+failure, or schema drift.
 
-- `deploy/hetzner/README.md`: detailed VPS deploy instructions.
-- `deploy/hetzner/cloud-init.yml`: server bootstrap.
-- `deploy/hetzner/provision.sh`: Hetzner server/firewall creation.
-- `deploy/hetzner/sync-env.sh`: uploads backend runtime env.
-- `deploy/hetzner/deploy.sh`: builds, migrates, and starts services.
-- `deploy/vercel/sync-env.sh`: pushes Vercel env.
-- `deploy/supabase/verify-auth-config.sh`: read-only complete hosted Auth configuration gate.
-- `deploy/smoke/auth-smoke.sh`: post-deploy auth smoke check.
-- `.dockerignore`: keeps VPS Docker build contexts small.
-- `deploy/cloudflare/r2-cors.example.json`: production R2 browser upload CORS policy.
-- `deploy/cloudflare/r2-lifecycle.example.json`: production R2 lifecycle policy that expires `uploads/` staging objects.
-- `deploy/cloudflare/apply-r2-cors.sh`: applies the R2 browser CORS policy through the Cloudflare API.
-- `deploy/cloudflare/apply-r2-lifecycle.sh`: applies the R2 lifecycle policy through the Cloudflare API.
+## Failure and recovery
+
+Do not improvise. Diagnose the external cause, preserve state, and use this
+matrix:
+
+| Observation | Required action |
+|---|---|
+| Failure before `Prepared` | Fix the preflight input; rerun the same SHA. |
+| Nonterminal attempt | Rerun `deploy.sh` with the same SHA. |
+| `RollbackRequired` or `ForwardFixPending` | Rerun the same SHA; settlement resumes before any Vercel dependency. |
+| `AwaitingFrontendPromotion` | Rerun the same SHA; it reuses only the bound Vercel ID. |
+| Vercel candidate promoted but no record/current | Rerun the same SHA; public proof finalizes the durable prefix. |
+| Current SHA already equals requested SHA | Rerun the same SHA; it re-proves the recorded vector and exits. |
+| `RolledBack` or succeeded-but-superseded SHA | Create a new successful `main` SHA. |
+| `ForwardFixRequired` or failure after a commitment boundary | Fix forward in a new successful `main` SHA and release it. |
+| Any failure of a successor whose `forward_fix_of` is set, including before a commitment boundary | Settle it to `ForwardFixRequired`; release another fresh successful `main` SHA. Never restart the failed predecessor. |
+| Bound Vercel deployment is authoritatively deleted or terminally failed | Rerun the same SHA; direct ID inspection settles rollback or forward-fix without candidate reselection. |
+
+That settlement first proves the committed project/team identity, then decodes
+the stored deployment ID before reading the mutable production alias. Only a
+recognized 404 in that fixed scope or an identity-matching `ERROR`/`CANCELED`
+response is terminal evidence. Transport errors, unknown states, malformed JSON,
+or identity disagreement fail closed without changing host state.
+
+A crash is replay input, not permission to delete an attempt or restart a
+predecessor. After either commitment boundary, predecessor code never runs.
+The `forward-fix` pointer admits only the next never-published successor and is
+captured immutably as that attempt's `forward_fix_of`. It is cleared only after
+that exact bound successor is fully verified; verifying an older current SHA
+cannot clear it.
+
+80/20 boundary: if an installed application release controller/bundle is itself
+defective while its attempt is active, stop and preserve all state for reviewed
+manual disaster recovery. There is no generic controller swap, override, or
+fallback. The narrow two-SHA repair authority below exists only for Oracle
+reconciliation and cannot activate application code or configuration.
+
+## Oracle publication
+
+Application release records the expected Oracle manifest digest but never reads
+Oracle state. After the application SHA is current, reconcile explicitly:
+
+```bash
+./deploy/hetzner/reconcile-oracle.sh <current-source-sha>
+```
+
+The command binds only the current immutable release record, its captured config,
+and its reviewed manifest. Exact published readiness is a read-only no-op. A
+mutating run creates durable state before stopping all app writers, rejects
+unsupported work/anchor/plate removals, deletes the current publication marker,
+reconciles only declared support and exact jobs, proves DB/selector/R2 identity,
+publishes the marker last, and restores the exact current runtime.
+
+Oracle phases are:
+
+```text
+Prepared -> WritersStopped -> Unpublished -> SupportReconciled
+         -> Published -> RuntimeRestored -> Succeeded
+```
+
+If interrupted, rerun the same command and SHA. After `Unpublished`, writers
+normally remain stopped until the attempt succeeds. One allowed late crash
+prefix exists: the exact publication marker may be committed and the captured
+runtime started before `RuntimeRestored` is durably written. Replay loads the
+attempt, re-stops those exact writer IDs, converges and re-proves the same
+target, then restores the exact runtime. Do not run an application release or
+publish config around it; the shared lock and attempt state reject both.
+
+If the current target A has a nonterminal attempt and A's Oracle controller or
+domain code is defective, land exact clean-main/CI repair SHA B with the same
+expected database revision and Oracle digest, then run:
+
+```bash
+./deploy/hetzner/reconcile-oracle.sh A --repair-source-sha B
+```
+
+This is the sole repair authority. It installs B as an immutable controller
+bundle without creating application release state or activating B, proves B's
+API/worker image identities, and create-only binds A's target/schema/digest to
+B's manifest, images, and image IDs under `oracle-repairs/`. B executes the
+exact durable A attempt with A's captured config and Compose input; completion
+restores and proves A's exact runtime and public vector. A different repair SHA,
+implicit A replay after binding, state deletion/editing, config activation, and
+generic override/fallback paths are invalid. After a crash, rerun the exact A+B
+command; retain the binding as immutable provenance.
+
+A `Succeeded` Oracle attempt is immutable evidence and is never reopened or
+deleted. If later readiness drifts, land and application-release a fresh SHA
+with corrected manifest/runtime, then reconcile that new current SHA. An
+unsupported-removal preflight likewise requires an additive replacement
+manifest on a new SHA, or a separate reviewed retirement operation; never edit
+the attempt or manifest in place.
+
+## Infrastructure operations
+
+Postgres or Caddy image upgrades, Caddy policy changes, host replacement, R2
+policy changes, and provider configuration changes are separate reviewed
+operations. They are not application-release flags. Permanent R2 policy owners
+are under `deploy/cloudflare/`; the Supabase Auth verifier is
+`deploy/supabase/verify-auth-config.sh`.
+
+Retain verified migration backups and immutable release records according to an
+explicit operator retention decision. Garbage collection is not part of the
+release controller.
+
+## Owned files
+
+| Concern | Owner |
+|---|---|
+| CI proof | `.github/workflows/ci.yml` |
+| Backend publication | `.github/workflows/backend-images.yml` |
+| Backend artifact | `docker/Dockerfile.backend` |
+| Immutable bundle resolution | `deploy/hetzner/fetch-release-bundle.sh` |
+| First-production adoption | `deploy/hetzner/adopt-infrastructure.py` |
+| External orchestration | `deploy/hetzner/deploy.sh` |
+| Durable host protocol | `deploy/hetzner/release.py` |
+| Production topology | `deploy/hetzner/docker-compose.yml` |
+| VPS config publication | `deploy/hetzner/sync-env.sh` |
+| Vercel config publication | `deploy/vercel/sync-env.sh` |
+| Oracle operation | `deploy/hetzner/reconcile-oracle.sh` |
+| Environment contract | `deploy/env/README.md` and `deploy/env/*.example` |

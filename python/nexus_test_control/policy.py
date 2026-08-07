@@ -132,11 +132,31 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ".github/workflows/ci.yml": (
         (
             "workflow_dispatch:",
+            "pull_request_number:",
+            "expected_head_sha:",
+            "expected_base_sha:",
+            "permissions: {}",
+            "pull-requests: read",
+            "refs/pull/{0}/head",
+            "jq -e --slurp",
+            'and .[0].state == "open"',
+            'and .[0].base.ref == "main"',
+            "and .[0].base.repo.full_name == $repository",
+            "and .[0].head.repo.full_name == $repository",
+            'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"',
+            'GIT_COMMITTER_DATE="$merge_timestamp"',
+            "git rev-list --parents -n 1 HEAD",
             "run: ./scripts/test pr",
+            "if: github.event_name == 'push'",
             "run: ./scripts/test full",
             "if: always()",
         ),
-        ("make test", "pytest", "playwright test"),
+        (
+            "github.event_name != 'workflow_dispatch'",
+            "make test",
+            "pytest",
+            "playwright test",
+        ),
     ),
     ".github/workflows/nightly.yml": (
         (
@@ -1087,20 +1107,28 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     if schema:
         return _sorted(schema)
     data = json.loads((repo_root / "testdata/proofs.json").read_text(encoding="utf-8"))
-    from nexus_test_control.model import PRIORITY_SOURCE_OWNERSHIP_SHA256
+    from nexus_test_control.model import (
+        PRIORITY_RISK_DIRECT_CAPABILITY_OWNERS,
+        PRIORITY_RISK_OWNERSHIP_SHA256,
+    )
     from nexus_test_control.selection import proof_target
 
     violations: list[PolicyViolation] = []
-    source_ownership = {risk["id"]: sorted(risk["source_globs"]) for risk in data["priority_risks"]}
-    source_digest = hashlib.sha256(
-        json.dumps(source_ownership, sort_keys=True, separators=(",", ":")).encode()
+    risk_ownership = {
+        risk["id"]: {
+            field: sorted(risk[field]) for field in ("source_globs", "proofs", "capabilities")
+        }
+        for risk in data["priority_risks"]
+    }
+    ownership_digest = hashlib.sha256(
+        json.dumps(risk_ownership, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    if source_digest != PRIORITY_SOURCE_OWNERSHIP_SHA256:
+    if ownership_digest != PRIORITY_RISK_OWNERSHIP_SHA256:
         violations.append(
             PolicyViolation(
-                "proof-source-floor",
+                "proof-ownership-floor",
                 "testdata/proofs.json",
-                "priority source ownership differs from the independently frozen floor",
+                "priority risk ownership differs from the independently frozen floor",
             )
         )
     proof_owners: dict[str, str] = {}
@@ -1136,12 +1164,16 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                         "proof-unique-owner", location, f"proof is already owned by {previous}"
                     )
                 )
-        if set(risk["capabilities"]) != proof_capabilities:
+        declared_capabilities = set(risk["capabilities"])
+        direct_capabilities = declared_capabilities.intersection(
+            capability.value for capability in PRIORITY_RISK_DIRECT_CAPABILITY_OWNERS
+        )
+        if declared_capabilities != proof_capabilities.union(direct_capabilities):
             violations.append(
                 PolicyViolation(
                     "proof-capability-owner",
                     location,
-                    "declared capabilities must exactly equal the executable proof owners",
+                    "declared capabilities require an executable proof or direct static gate owner",
                 )
             )
     if not 10 <= len(data["journeys"]) <= 15:

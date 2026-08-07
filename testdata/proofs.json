@@ -85,7 +85,6 @@
       "id": "migration-compatibility",
       "source_globs": [
         "migrations/alembic/**/*.py",
-        "python/nexus/ops/deployment_migrations.py",
         "python/nexus/ops/epub_navigation_offsets_cutover.py"
       ],
       "proofs": [
@@ -232,6 +231,123 @@
       ]
     },
     {
+      "id": "immutable-production-release",
+      "source_globs": [
+        ".github/actions/setup-test/action.yml",
+        ".github/workflows/backend-images.yml",
+        "apps/web/src/app/version/route.ts",
+        "apps/web/src/lib/env.ts",
+        "docker/Dockerfile.backend",
+        "deploy/env/env-prod-backend.example",
+        "deploy/env/env-prod-frontend.example",
+        "deploy/env/env-prod-worker.example",
+        "deploy/env/env-prod.example",
+        "deploy/hetzner/Caddyfile",
+        "deploy/hetzner/adopt-infrastructure.py",
+        "deploy/hetzner/cloud-init.yml",
+        "deploy/hetzner/deploy.sh",
+        "deploy/hetzner/docker-compose.yml",
+        "deploy/hetzner/fetch-release-bundle.sh",
+        "deploy/hetzner/provision.sh",
+        "deploy/hetzner/release.py",
+        "deploy/hetzner/sync-env.sh",
+        "deploy/smoke/auth-smoke.sh",
+        "deploy/vercel/firewall/resource-sharing.json",
+        "deploy/vercel/sync-env.sh",
+        "deploy/vercel/sync-resource-sharing-firewall.sh",
+        "python/nexus/release_artifact.py",
+        "python/tests/testkit/host_infrastructure_adoption.py",
+        "python/tests/testkit/host_release.py",
+        "python/tests/testkit/production_deploy.py",
+        "python/tests/testkit/release_bundle.py"
+      ],
+      "proofs": [
+        "pytest:python/tests/kernel/test_backend_artifact.py",
+        "pytest:python/tests/kernel/test_release_bundle_fetch.py",
+        "pytest:python/tests/kernel/test_production_delivery_contract.py",
+        "pytest:python/tests/kernel/test_production_deploy_behavior.py",
+        "pytest:python/tests/kernel/test_infrastructure_adoption.py",
+        "pytest:python/tests/kernel/test_production_release.py",
+        "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts"
+      ],
+      "capabilities": [
+        "kernel-python",
+        "static-platform",
+        "journeys-all"
+      ]
+    },
+    {
+      "id": "production-runtime-health",
+      "source_globs": [
+        "apps/api/main.py",
+        "apps/worker/health.py",
+        "apps/worker/main.py",
+        "python/nexus/__init__.py",
+        "python/nexus/api/routes/__init__.py",
+        "python/nexus/api/routes/operational.py",
+        "python/nexus/app.py",
+        "python/nexus/auth/middleware.py",
+        "python/nexus/config.py",
+        "python/nexus/jobs/registry.py",
+        "python/nexus/jobs/worker.py",
+        "python/nexus/release_artifact.py",
+        "python/nexus/runtime_health.py",
+        "python/tests/testkit/external_server.py"
+      ],
+      "proofs": [
+        "pytest:python/tests/kernel/test_runtime_health.py",
+        "pytest:python/tests/kernel/test_worker_runtime_health.py",
+        "pytest:python/tests/service/test_runtime_health.py"
+      ],
+      "capabilities": [
+        "kernel-python",
+        "service"
+      ]
+    },
+    {
+      "id": "oracle-publication",
+      "source_globs": [
+        "deploy/hetzner/reconcile-oracle.sh",
+        "migrations/alembic/versions/0211_oracle_corpus_publication.py",
+        "python/nexus/db/models.py",
+        "python/nexus/oracle/manifest.py",
+        "python/nexus/ops/oracle_reconcile.py",
+        "python/nexus/services/oracle_corpus.py",
+        "python/nexus/services/oracle_plates.py",
+        "python/tests/testkit/host_oracle_reconcile.py",
+        "scripts/oracle/manifest_*.json"
+      ],
+      "proofs": [
+        "pytest:python/tests/kernel/test_oracle_manifest.py",
+        "pytest:python/tests/kernel/test_oracle_reconcile_contract.py",
+        "pytest:python/tests/kernel/test_oracle_host_release.py",
+        "pytest:python/tests/service/test_oracle_publication.py",
+        "pytest:python/tests/migrations/test_oracle_publication_migration.py"
+      ],
+      "capabilities": [
+        "kernel-python",
+        "static-platform",
+        "service",
+        "migrations"
+      ]
+    },
+    {
+      "id": "production-release-test-control",
+      "source_globs": [
+        ".github/workflows/ci.yml",
+        "python/nexus_test_control/**/*.py",
+        "testdata/proofs.json"
+      ],
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
+        "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
+        "pytest:python/tests/kernel/test_ci_pr_recovery.py"
+      ],
+      "capabilities": [
+        "kernel-python"
+      ]
+    },
+    {
       "id": "native-release-auth-handoff",
       "source_globs": [
         "apps/android/app/src/main/java/app/nexus/android/GoogleSignInController.kt",
@@ -286,12 +402,15 @@
         "apps/web/src/components/auth/**/*",
         "apps/web/src/lib/auth/**/*",
         "apps/web/src/lib/supabase/**/*",
+        "apps/web/src/lib/env.ts",
         "apps/web/src/middleware.ts",
+        "apps/web/src/app/version/route.ts",
         "supabase/config.toml",
         "supabase/templates/**/*"
       ],
       "risks": [
-        "auth-privacy-secrets"
+        "auth-privacy-secrets",
+        "immutable-production-release"
       ]
     },
     {

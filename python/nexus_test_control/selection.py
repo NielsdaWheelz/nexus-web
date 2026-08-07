@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 
-from nexus_test_control.model import Capability, Selection, SelectionReason
+from nexus_test_control.model import (
+    PRIORITY_RISK_DIRECT_CAPABILITY_OWNERS,
+    Capability,
+    Selection,
+    SelectionReason,
+)
 
 
 class GitChangeKind(StrEnum):
@@ -100,13 +105,26 @@ def load_selection_index(repo_root: Path) -> SelectionIndex:
                 if not isinstance(source_glob, str) or not source_glob:
                     raise ValueError("priority source glob must be a non-empty string")
                 routes.append(IndexedRoute(source_glob, target, SelectionReason.PRIORITY_RISK))
-        proof_capabilities = {target.capability.value for target in proof_targets}
-        if (
-            any(not isinstance(capability, str) for capability in capabilities)
-            or len(capabilities) != len(set(capabilities))
-            or set(capabilities) != proof_capabilities
-        ):
-            raise ValueError("priority capabilities must exactly equal their proof owners")
+        if any(not isinstance(capability, str) for capability in capabilities) or len(
+            capabilities
+        ) != len(set(capabilities)):
+            raise ValueError("priority capabilities must be unique typed capability names")
+        try:
+            declared_capabilities = {Capability(capability) for capability in capabilities}
+        except ValueError as error:
+            raise ValueError("priority capability is unknown") from error
+        proof_capabilities = {target.capability for target in proof_targets}
+        direct_capabilities = declared_capabilities.intersection(
+            PRIORITY_RISK_DIRECT_CAPABILITY_OWNERS
+        )
+        if declared_capabilities != proof_capabilities.union(direct_capabilities):
+            raise ValueError(
+                "priority capabilities require an executable proof or direct static gate owner"
+            )
+        for capability in sorted(direct_capabilities, key=lambda item: item.value):
+            target = SelectionTarget(capability)
+            for source_glob in source_globs:
+                routes.append(IndexedRoute(source_glob, target, SelectionReason.PRIORITY_RISK))
     for journey in journeys:
         if not isinstance(journey, dict):
             raise ValueError("journey proof manifest entry must be an object")

@@ -16,6 +16,8 @@ from nexus_test_control.selection import (
     select_explicit_focus,
 )
 
+REPO_ROOT = Path(__file__).parents[4]
+
 
 def test_pure_rename_routes_new_path_and_deletion_routes_owner_not_missing_test() -> None:
     changes = parse_git_name_status(
@@ -230,6 +232,84 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
     assert {selection.reason for selection in selections} == {SelectionReason.PRIORITY_RISK}
 
 
+@pytest.mark.parametrize(
+    ("path", "expected_capabilities", "expected_proofs"),
+    [
+        (
+            "deploy/hetzner/release.py",
+            {
+                Capability.JOURNEYS_ALL,
+                Capability.KERNEL_PYTHON,
+                Capability.STATIC_PLATFORM,
+            },
+            {
+                "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
+                "pytest:python/tests/kernel/test_backend_artifact.py",
+                "pytest:python/tests/kernel/test_infrastructure_adoption.py",
+                "pytest:python/tests/kernel/test_production_delivery_contract.py",
+                "pytest:python/tests/kernel/test_production_deploy_behavior.py",
+                "pytest:python/tests/kernel/test_production_release.py",
+                "pytest:python/tests/kernel/test_release_bundle_fetch.py",
+            },
+        ),
+        (
+            "python/nexus/runtime_health.py",
+            {
+                Capability.KERNEL_PYTHON,
+                Capability.SERVICE,
+            },
+            {
+                "pytest:python/tests/kernel/test_runtime_health.py",
+                "pytest:python/tests/kernel/test_worker_runtime_health.py",
+                "pytest:python/tests/service/test_runtime_health.py",
+            },
+        ),
+        (
+            "python/nexus/ops/oracle_reconcile.py",
+            {
+                Capability.KERNEL_PYTHON,
+                Capability.MIGRATIONS,
+                Capability.SERVICE,
+                Capability.STATIC_PLATFORM,
+            },
+            {
+                "pytest:python/tests/kernel/test_oracle_host_release.py",
+                "pytest:python/tests/kernel/test_oracle_manifest.py",
+                "pytest:python/tests/kernel/test_oracle_reconcile_contract.py",
+                "pytest:python/tests/migrations/test_oracle_publication_migration.py",
+                "pytest:python/tests/service/test_oracle_publication.py",
+            },
+        ),
+        (
+            "python/nexus_test_control/runner.py",
+            {Capability.KERNEL_PYTHON},
+            {
+                "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
+                "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
+                "pytest:python/tests/kernel/test_ci_pr_recovery.py",
+            },
+        ),
+    ],
+)
+def test_production_risks_route_only_their_owned_proof_partition(
+    path: str,
+    expected_capabilities: set[Capability],
+    expected_proofs: set[str],
+) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+    owned = [
+        selection for selection in selections if selection.reason is SelectionReason.PRIORITY_RISK
+    ]
+
+    assert {selection.capability for selection in owned} == expected_capabilities
+    assert {
+        selection.proof for selection in owned if selection.proof is not None
+    } == expected_proofs
+
+
 def test_journey_manifest_routes_lazy_pane_source_to_its_exact_browser_proof(
     tmp_path: Path,
 ) -> None:
@@ -298,7 +378,9 @@ def test_priority_manifest_rejects_a_missing_exact_pytest_node(tmp_path: Path) -
         load_selection_index(tmp_path)
 
 
-def test_priority_manifest_capabilities_must_equal_executable_owners(tmp_path: Path) -> None:
+def test_priority_manifest_rejects_nonstatic_capability_without_a_proof_owner(
+    tmp_path: Path,
+) -> None:
     proof = tmp_path / "python/tests/service/test_auth_privacy.py"
     proof.parent.mkdir(parents=True)
     proof.write_text("def test_privacy():\n    pass\n")
@@ -322,5 +404,43 @@ def test_priority_manifest_capabilities_must_equal_executable_owners(tmp_path: P
         )
     )
 
-    with pytest.raises(ValueError, match="exactly equal"):
+    with pytest.raises(ValueError, match="proof or direct static gate owner"):
         load_selection_index(tmp_path)
+
+
+def test_priority_manifest_routes_declared_static_platform_with_proof_owners(
+    tmp_path: Path,
+) -> None:
+    proof = tmp_path / "python/tests/service/test_release.py"
+    proof.parent.mkdir(parents=True)
+    proof.write_text("def test_release():\n    pass\n")
+    manifest = tmp_path / "testdata/proofs.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "priority_risks": [
+                    {
+                        "id": "immutable-production-release",
+                        "source_globs": ["deploy/hetzner/**/*"],
+                        "proofs": ["pytest:python/tests/service/test_release.py::test_release"],
+                        "capabilities": ["service", "static-platform"],
+                    }
+                ],
+                "journeys": [],
+            }
+        )
+    )
+
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, "deploy/hetzner/deploy.sh"),),
+        load_selection_index(tmp_path),
+    )
+
+    assert {(item.capability, item.proof) for item in selections} == {
+        (
+            Capability.SERVICE,
+            "pytest:python/tests/service/test_release.py::test_release",
+        ),
+        (Capability.STATIC_PLATFORM, None),
+    }

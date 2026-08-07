@@ -113,7 +113,8 @@ drift from the code that writes the staging prefix.
 ## Deployment
 
 Object-storage preconditions that migrations depend on are established by deploy
-or operator code, not app startup. Backend deploy migrates schema first, then runs
-`python /app/scripts/ensure_oracle_seed_objects.py` and the Oracle corpus
-seed/readiness commands as worker-image one-offs so runtime surfaces only see
-storage-backed Oracle assets.
+or operator code, not app startup. Application release records the expected
+Oracle manifest digest but does not read or mutate Oracle. The independent
+Oracle reconciler writes plate objects before their DB metadata, proves the
+exact DB/selector/R2 set, and publishes the current marker last. Runtime surfaces
+accept only that published identity.

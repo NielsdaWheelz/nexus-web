@@ -20,6 +20,16 @@ export { isDevBuild, isProdBuild } from "./build-mode";
 import { parseWebOrigin, parseWebOriginList } from "./security/origin";
 
 type NexusEnv = "local" | "test" | "staging" | "prod";
+const SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/;
+
+/** Exact immutable identity of the Vercel deployment serving this process. */
+export function vercelSourceSha(): string {
+  const sourceSha = process.env.VERCEL_GIT_COMMIT_SHA ?? "";
+  if (!SOURCE_SHA_PATTERN.test(sourceSha)) {
+    throw new Error("VERCEL_GIT_COMMIT_SHA must be exactly 40 lowercase hex characters");
+  }
+  return sourceSha;
+}
 
 /** The deployment env from NEXUS_ENV. Unset → "local" (backend default). Unknown → throws. */
 export function nexusEnv(): NexusEnv {

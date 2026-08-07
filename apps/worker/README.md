@@ -27,9 +27,11 @@ make worker-background
 Manual run:
 
 ```bash
+make local-runtime-identity
 cd python
 PYTHONPATH=$PWD:$PWD/.. \
   DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54320/postgres \
+  NEXUS_RUNTIME_IDENTITY_FILE=$PWD/../.nexus-local/runtime-identity.json \
   DATABASE_STATEMENT_TIMEOUT_MS=300000 \
   WORKER_LANE=interactive \
   uv run python -m apps.worker.main
@@ -40,7 +42,9 @@ Run the same command with `WORKER_LANE=background` for the background lane.
 ## Docker
 
 ```bash
-docker build -f docker/Dockerfile.worker -t nexus-worker .
+make local-runtime-identity
+export NEXUS_LOCAL_SOURCE_SHA="$(git rev-parse HEAD)"
+export NEXUS_LOCAL_RUNTIME_IDENTITY_FILE="$PWD/.nexus-local/runtime-identity.json"
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml \
   up -d worker-interactive worker-background
 ```
@@ -48,6 +52,8 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml 
 ## Environment
 
 - `DATABASE_URL` (required)
+- `NEXUS_RUNTIME_IDENTITY_FILE` (explicit checkout identity in local/test only;
+  production uses the baked `/app/runtime-identity.json`)
 - `WORKER_LANE` (required by the worker entrypoint)
 - `WORKER_POLL_INTERVAL_SECONDS`
 - `WORKER_IDLE_BACKOFF_MAX_SECONDS`
@@ -82,4 +88,6 @@ bounded maintenance operation is complete.
 
 `python/nexus/jobs/registry.py` owns job policy. `python/nexus/config.py` owns
 the production and maintenance topology. Only the background lane schedules
-production periodic jobs.
+production periodic jobs. Each lane atomically publishes successful-cycle
+progress; `python -m apps.worker.health --lane <lane>` rejects stale/dead
+progress, lane/kind/task identity drift, database failure, and schema drift.

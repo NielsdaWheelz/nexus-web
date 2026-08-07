@@ -8,7 +8,10 @@ services:
   worker-interactive:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.worker
+      dockerfile: docker/Dockerfile.backend
+      target: worker
+      args:
+        SOURCE_SHA: ${NEXUS_LOCAL_SOURCE_SHA:?set the exact local Git SHA}
     environment:
       - DATABASE_URL=${WORKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/postgres}
       - SUPABASE_JWKS_URL=${WORKER_SUPABASE_JWKS_URL:-http://host.docker.internal:54321/auth/v1/.well-known/jwks.json}
@@ -20,6 +23,7 @@ services:
       - R2_BUCKET=${R2_BUCKET:-media}
       - R2_REGION=${R2_REGION:-us-east-1}
       - NEXUS_ENV=${NEXUS_ENV:-local}
+      - NEXUS_RUNTIME_IDENTITY_FILE=/app/local-runtime-identity.json
       - WORKER_LANE=interactive
       - DATABASE_STATEMENT_TIMEOUT_MS=300000
     depends_on:
@@ -29,6 +33,8 @@ services:
         condition: service_completed_successfully
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ${NEXUS_LOCAL_RUNTIME_IDENTITY_FILE:?generate a local runtime identity}:/app/local-runtime-identity.json:ro
     # Optional resource bounds for worker stability
     deploy:
       resources:
@@ -37,7 +43,7 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
+      test: ["CMD", "python", "-m", "apps.worker.health", "--lane", "interactive"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -46,7 +52,10 @@ services:
   worker-background:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.worker
+      dockerfile: docker/Dockerfile.backend
+      target: worker
+      args:
+        SOURCE_SHA: ${NEXUS_LOCAL_SOURCE_SHA:?set the exact local Git SHA}
     environment:
       - DATABASE_URL=${WORKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/postgres}
       - SUPABASE_JWKS_URL=${WORKER_SUPABASE_JWKS_URL:-http://host.docker.internal:54321/auth/v1/.well-known/jwks.json}
@@ -58,6 +67,7 @@ services:
       - R2_BUCKET=${R2_BUCKET:-media}
       - R2_REGION=${R2_REGION:-us-east-1}
       - NEXUS_ENV=${NEXUS_ENV:-local}
+      - NEXUS_RUNTIME_IDENTITY_FILE=/app/local-runtime-identity.json
       - WORKER_LANE=background
       - DATABASE_STATEMENT_TIMEOUT_MS=300000
     depends_on:
@@ -67,6 +77,8 @@ services:
         condition: service_completed_successfully
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ${NEXUS_LOCAL_RUNTIME_IDENTITY_FILE:?generate a local runtime identity}:/app/local-runtime-identity.json:ro
     deploy:
       resources:
         limits:
@@ -74,7 +86,7 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
+      test: ["CMD", "python", "-m", "apps.worker.health", "--lane", "background"]
       interval: 30s
       timeout: 5s
       retries: 3

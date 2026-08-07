@@ -157,6 +157,9 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
                 return
             if target.host != "127.0.0.1":
                 raise RequestRejected(400, "host_not_owned")
+            if target.path == "/livez" and not target.query:
+                self._send_json(200, {"status": "alive"})
+                return
             if target.path == NASA_AUDIO_PATH:
                 self._serve_audio(target, head_only=False)
                 return

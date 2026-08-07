@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -17,7 +18,9 @@ from sqlalchemy.orm import Session
 from nexus.db.retries import retry_serializable
 from nexus.jobs.queue import (
     JobExecutionContext,
+    JobRow,
     RescheduleRequested,
+    claim_job,
     claim_next_job,
     complete_job,
     dead_letter_expired_job,
@@ -55,6 +58,8 @@ class JobWorker:
         db_failure_backoff_seconds: float = 60.0,
         db_failure_backoff_max_seconds: float = 900.0,
         allowed_kinds: tuple[str, ...] | None = None,
+        successful_cycle_callback: Callable[[], None] | None = None,
+        successful_cycle_interval_seconds: float | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.worker_id = worker_id
@@ -71,6 +76,18 @@ class JobWorker:
             max(db_failure_backoff_max_seconds, self.db_failure_backoff_seconds)
         )
         self.allowed_kinds = allowed_kinds
+        if (successful_cycle_callback is None) != (successful_cycle_interval_seconds is None):
+            raise ValueError("successful cycle callback and interval must be configured together")
+        if successful_cycle_callback is not None and allowed_kinds == ():
+            raise ValueError("successful cycle health requires a database-backed lane")
+        self._successful_cycle_callback = successful_cycle_callback
+        if successful_cycle_interval_seconds is None:
+            self._successful_cycle_interval_seconds = None
+        else:
+            interval = float(successful_cycle_interval_seconds)
+            if not math.isfinite(interval) or interval <= 0:
+                raise ValueError("successful cycle interval must be finite and positive")
+            self._successful_cycle_interval_seconds = interval
 
     def run_once(self) -> bool:
         """Claim and execute exactly one due job row."""
@@ -101,6 +118,24 @@ class JobWorker:
         if claimed is None:
             return False
 
+        return self._execute_claimed(claimed)
+
+    def run_exact(self, job_id: UUID) -> bool | None:
+        """Claim and execute only one exact due job, with no scan or scheduling."""
+        with self.session_factory() as db:
+            claimed = claim_job(
+                db,
+                job_id=job_id,
+                worker_id=self.worker_id,
+                lease_seconds=self.default_lease_seconds,
+                allowed_kinds=self.allowed_kinds,
+            )
+            db.commit()
+        if claimed is None:
+            return None
+        return self._execute_claimed(claimed)
+
+    def _execute_claimed(self, claimed: JobRow) -> bool:
         definition = self.registry.get(claimed.kind)
         if definition is None:
             logger.error(
@@ -137,6 +172,8 @@ class JobWorker:
                 kind=claimed.kind,
             )
             return True
+
+        self._advance_successful_cycle()
 
         stop_event, heartbeat_thread = self._start_heartbeat_thread(
             job_id=claimed.id,
@@ -381,6 +418,7 @@ class JobWorker:
 
             try:
                 processed = self.run_once()
+                self._advance_successful_cycle()
                 db_failure_wait_seconds = self.db_failure_backoff_seconds
             except SQLAlchemyError:
                 logger.exception(
@@ -400,12 +438,15 @@ class JobWorker:
                 idle_wait_seconds = self.poll_interval_seconds
                 continue
 
+            wait_timeout = min(
+                idle_wait_seconds,
+                max(next_scheduler_at - time.monotonic(), 0.0),
+            )
+            if self._successful_cycle_interval_seconds is not None:
+                wait_timeout = min(wait_timeout, self._successful_cycle_interval_seconds)
             self._wait_for_job_notification(
                 stop_event=stop,
-                timeout=min(
-                    idle_wait_seconds,
-                    max(next_scheduler_at - time.monotonic(), 0.0),
-                ),
+                timeout=wait_timeout,
             )
             idle_wait_seconds = min(idle_wait_seconds * 2, self.idle_backoff_max_seconds)
 
@@ -590,6 +631,8 @@ class JobWorker:
     ) -> tuple[threading.Event, threading.Thread]:
         stop_event = threading.Event()
         heartbeat_every = min(self.heartbeat_interval_seconds, max(float(lease_seconds) / 2.0, 1.0))
+        if self._successful_cycle_interval_seconds is not None:
+            heartbeat_every = min(heartbeat_every, self._successful_cycle_interval_seconds)
 
         def _loop() -> None:
             while not stop_event.wait(heartbeat_every):
@@ -604,6 +647,7 @@ class JobWorker:
                         db.commit()
                         if not updated:
                             return
+                        self._advance_successful_cycle()
                 except SQLAlchemyError:
                     logger.exception(
                         "worker_heartbeat_failed",
@@ -614,6 +658,20 @@ class JobWorker:
         thread = threading.Thread(target=_loop, daemon=True, name=f"job-heartbeat-{job_id}")
         thread.start()
         return stop_event, thread
+
+    def _advance_successful_cycle(self) -> None:
+        callback = self._successful_cycle_callback
+        if callback is None:
+            return
+        try:
+            callback()
+        except OSError:
+            # justify-ignore-error: health remains stale/unready, but an
+            # ephemeral telemetry-file failure must not alter queue transitions.
+            logger.exception(
+                "worker_runtime_heartbeat_publish_failed",
+                worker_id=self.worker_id,
+            )
 
 
 def _derive_error_code(exc: Exception) -> str:

@@ -1062,9 +1062,8 @@ Delete this command in Phase B after its zero-remaining verification passes.
 - `python/nexus/schemas/media.py`;
 - `python/nexus/api/routes/internal_ingest.py`;
 - `deploy/hetzner/docker-compose.yml`;
-- `deploy/hetzner/deploy.sh`;
-- `deploy/hetzner/sync-env.sh`;
-- `deploy/hetzner/README.md`;
+- `deploy/hetzner/docker-compose.yml` topology only; release and config
+  publication remain owned by [deployment.md](../../deployment.md);
 - `deploy/env/env-prod-worker.example`;
 - `deploy/env/README.md`;
 - `Makefile`;
@@ -1130,18 +1129,19 @@ work, or the Oracle seed cannot drain the jobs it creates.
 
 ### Phase C: repair and verify
 
-1. Deploy Phase B through the normal immutable-image path.
-2. Verify both services report the expected `CUTOVER_SHA`, lane, and their
-   exact share of the 17-kind production-enabled set; verify all four
-   maintenance kinds are absent.
+1. Release Phase B only through [deployment.md](../../deployment.md).
+2. Verify API `/version` and both worker health contracts report the bound
+   source SHA and task-contract digest; verify each worker's lane and exact
+   share of the 17-kind production-enabled set, with all four maintenance kinds
+   absent.
 3. Trigger reconciliation once.
 4. Observe the historical pending backlog drain in bounded batches.
 5. Re-run the known EPUB and XML-declaration cases through normal source APIs.
 6. Re-add the Gutenberg URL through corrected classification.
 7. Leave access-denied, invalid-file, and provider-credit cases untouched until
    their source conditions change.
-8. Verify public health, internal ingest health, queue ages, domain states, and
-   teardown latency.
+8. Verify public `/livez`, `/readyz`, and `/version`, internal ingest health,
+   queue ages, domain states, and teardown latency.
 
 Once Phase B has accepted new job payloads/revisions, application recovery is
 roll-forward. Do not restore inline indexing or the undifferentiated worker.

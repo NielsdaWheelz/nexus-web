@@ -101,6 +101,7 @@ apps/android/**/*.keystore
 # Local development
 .turbo/
 .dev-ports
+.nexus-local/
 
 # Database
 *.db

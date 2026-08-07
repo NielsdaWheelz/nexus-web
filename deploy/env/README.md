@@ -1,18 +1,11 @@
-# Production Env Files
+# Production environment contract
 
-The tracked `*.example` files define the env contract. The untracked files next
-to them hold real values:
+Operational order and recovery live only in [`deployment.md`](../../deployment.md).
+This document owns the production variable boundaries.
 
-- `env-prod`: shared values used by frontend and backend/runtime, including
-  public deployment coordinates such as `APP_PUBLIC_URL` and
-  `R2_S3_API_ORIGIN`
-- `env-prod-frontend`: Vercel-only values, including app-side auth redirect
-  origins and Server Action admission patterns
-- `env-prod-backend`: FastAPI/Caddy values and backend-only provider secrets
-  such as `X_API_BEARER_TOKEN`
-- `env-prod-worker`: worker-only values
+## Inputs
 
-Create the editable local files:
+Copy the tracked contracts to the ignored files beside them:
 
 ```bash
 cp deploy/env/env-prod.example deploy/env/env-prod
@@ -21,78 +14,91 @@ cp deploy/env/env-prod-backend.example deploy/env/env-prod-backend
 cp deploy/env/env-prod-worker.example deploy/env/env-prod-worker
 ```
 
-`deploy/hetzner/sync-env.sh` uploads and merges `env-prod`,
-`env-prod-backend`, and `env-prod-worker` into `/etc/nexus/nexus.env` on the
-VPS. `deploy/vercel/sync-env.sh` merges `env-prod` and `env-prod-frontend` into
-Vercel's production environment, removes forbidden backend/runtime keys that may
-still exist in Vercel, and verifies the required frontend keys after pulling the
-remote env back down.
+| File | Owner |
+|---|---|
+| `env-prod` | Values genuinely shared by web and VPS |
+| `env-prod-frontend` | Vercel/Next.js only |
+| `env-prod-backend` | API, Caddy, Postgres, R2 credentials, provider secrets |
+| `env-prod-worker` | Worker timing and schedule values only |
 
-Production is a hard cutover:
+The three VPS inputs must partition their keys: a key may occur in exactly one
+file. Blank, placeholder, malformed, forbidden, and duplicate values fail before
+publication. Compose, not env files, owns worker lane/kind selection and the
+candidate API/worker image digests.
 
-- Supabase is Auth only: URL, issuer, JWKS, audiences, and frontend anon key.
-- Hetzner Postgres is the only production database.
-- Cloudflare R2 is the only production object store.
-- Do not keep Supabase Database or Supabase Storage fallback secrets in prod env.
-- `SUPABASE_AUTH_ADMIN_KEY` is local E2E bootstrap-only; never sync it to
-  Vercel, the VPS, workers, or production env files.
-- Keep `SUPABASE_DATABASE_URL` and Supabase service-role cleanup keys in a
-  separate one-off legacy file only.
-- `AUTH_ALLOWED_REDIRECT_ORIGINS`, `AUTH_TRUSTED_PROXY_ORIGINS`,
-  `NEXUS_EXTENSION_REDIRECT_ORIGINS`, and `SERVER_ACTION_ALLOWED_ORIGINS` are
-  Vercel/frontend-only. The VPS runtime does not construct Supabase browser
-  redirects. Leave `SERVER_ACTION_ALLOWED_ORIGINS` empty for direct Vercel
-  custom-domain deploys; set only minimal Next.js domain patterns for a
-  host-rewriting frontend proxy. `NEXUS_EXTENSION_REDIRECT_ORIGINS` is the
-  browser-extension callback origin allowlist and uses full HTTPS origins.
-- `SUPABASE_MANAGEMENT_ACCESS_TOKEN` is operator/CI-only for read-only Auth
-  config verification. Never put it in Vercel, VPS, or worker runtime env.
-- `X_API_BEARER_TOKEN` is backend-only. It belongs in
-  `env-prod-backend`/the VPS runtime, never in Vercel or browser-visible env.
-  X API credits are provider account state, not env; validate depleted credits
-  with a provider probe or the gated live-provider test after adding credits.
+`POSTGRES_IMAGE` and `CADDY_IMAGE` are exact digest references to the established
+production images. Changing either is an infrastructure operation, not an
+application release. API and worker digests come only from the CI candidate
+manifest.
 
-Worker topology is invocation-owned. Hetzner Compose assigns the fixed
-`interactive` and `background` lanes; `env-prod-worker` contains no lane or raw
-allowlist. Reconciliation runs every 600 seconds in the background lane.
-Maintenance-only schedules remain zero in the normal production env.
-`deploy/hetzner/sync-env.sh` rejects stored lane, maintenance-gate, or raw
-allowlist values. The production background lane instead requires
-`PODCAST_REFRESH_DUE_SCHEDULE_SECONDS=900` and a positive
-`PODCAST_REFRESH_DUE_LIMIT`; refresh-run pruning uses its registry-owned daily
-schedule.
+## Publication
 
-A bounded maintenance process must set `WORKER_LANE=maintenance`,
-`NEXUS_ALLOW_WORKER_MAINTENANCE=1`, and a non-empty
-`WORKER_ALLOWED_JOB_KINDS` subset of the three declared maintenance kinds on the
-one-off invocation itself. There is no continuously deployed maintenance
-service.
+For a never-published source SHA, the VPS publisher validates and canonicalizes
+the three VPS inputs, writes `/etc/nexus/config/<sha256>.env`, then atomically
+moves `/etc/nexus/current.env`:
 
-Cutover checks before syncing env:
+```bash
+./deploy/hetzner/sync-env.sh <never-published-source-sha>
+```
 
-- `POSTGRES_PASSWORD` is set and backed up in the password manager.
-- R2 bucket, backend access key, shared S3 API origin, and browser upload CORS
-  policy are created.
-- X API credits are available for the official API token if X thread capture is
-  expected to work in production.
-- `deploy/supabase/verify-auth-config.sh` passes: hosted Supabase Auth has
-  signup and anonymous users closed; phone disabled; email, Google, and GitHub
-  sign-in enabled; custom OAuth, SAML, passkeys, CAPTCHA, compromised-password
-  policy, Auth hooks, third-party Auth integrations, unverified-email sign-in,
-  and reauthentication disabled; Google/GitHub identity linking enabled;
-  confirmation and a 15-character minimum password configured; production
-  SMTP, Nexus invite and recovery templates, and password-change notification
-  enabled; `site_url` equals `APP_PUBLIC_URL`; and the callback allowlist is
-  exact and wildcard-free.
-- In the Supabase dashboard, **Require current password when changing password**
-  is off. The supported public Management API does not expose this newer
-  setting, so it remains an explicit operator check rather than a private-API
-  dependency.
-- `NEXUS_INTERNAL_SECRET` matches between Vercel and the VPS.
-- Old backend writers and workers are stopped before the two Hetzner worker
-  lanes start.
+This is prepare-only. It does not restart a service. The application release
+captures the exact path and digest in its attempt and immutable release record.
+The command runs the host Python owner transferred from the exact clean
+`origin/main` checkout, so first publication does not require or install a
+current application bundle.
 
-Rollback means restoring the last known-good Hetzner Postgres backup/snapshot and
-R2 object state, then redeploying the previous app revision with matching env.
-There is no supported rollback path that points production back to Supabase
-Database or Supabase Storage.
+Vercel config is a separate provider snapshot:
+
+```bash
+./deploy/vercel/sync-env.sh
+```
+
+For a config-bearing release, publish Vercel config before the SHA triggers its
+staged build; publish VPS config after that SHA is exact `origin/main` and before
+application release. Keep the sequence serialized. A code-only release may reuse
+current config. Any config change requires a new source SHA; one SHA may become
+current only once.
+
+## Boundary rules
+
+- Supabase owns authentication only: issuer, JWKS, audiences, frontend URL, and
+  frontend anonymous key. Product data never uses Supabase Database or Storage.
+- Hetzner Postgres is the only product database. `DATABASE_URL` uses
+  `postgresql+psycopg`, host `postgres`, port `5432`, and credentials equal to
+  the Compose Postgres values.
+- Cloudflare R2 is the only object store. `R2_S3_API_ORIGIN` is the shared public
+  S3 origin; access key, secret, and bucket are VPS-only.
+- `NEXUS_INTERNAL_SECRET` is identical in Vercel and VPS config.
+- Browser auth/extension redirect origins and Server Action admission patterns
+  are frontend-only. Direct Vercel custom-domain hosting leaves
+  `SERVER_ACTION_ALLOWED_ORIGINS` empty.
+- `SUPABASE_MANAGEMENT_ACCESS_TOKEN` is operator-only. It is never application
+  config.
+- `SUPABASE_AUTH_ADMIN_KEY` is local test-control bootstrap state. It is never
+  production config.
+- `X_API_BEARER_TOKEN`, platform LLM keys, stream signing material, R2
+  credentials, database credentials, and billing credentials are VPS-only.
+- Real env files, temporary merged files, provider tokens, and canonical
+  published config contain secrets. Never commit, print, or copy them into
+  release state.
+
+## Worker contract
+
+Production has exactly `interactive` and `background` workers. Their normal env
+contains no `WORKER_LANE`, raw job-kind allowlist, or maintenance authorization.
+Compose assigns lanes; the registry assigns kinds.
+
+The background lane owns ordinary periodic work. Maintenance kinds run only in
+a bounded explicitly authorized one-off process; there is no deployed
+maintenance worker.
+
+## Provider checks
+
+Before a config-bearing release, prove:
+
+- `deploy/supabase/verify-auth-config.sh` accepts hosted Auth settings;
+- Supabase's dashboard-only current-password requirement is disabled;
+- R2 bucket policy, browser upload CORS, lifecycle, and scoped credentials are
+  current;
+- paid provider accounts have the capacity implied by enabled feature flags;
+- Vercel and VPS hold the same internal secret without displaying it.

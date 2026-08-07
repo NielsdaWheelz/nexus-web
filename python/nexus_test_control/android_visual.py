@@ -515,7 +515,7 @@ def _visual_run(
     }
     build = ensure_standalone_build(root, environment, supabase.anon_key)
     api = start_python_process(root, environment, run, "api", overrides=device_overrides)
-    wait_process_ready(root, environment, api, EndpointKind.API, "/health")
+    wait_process_ready(root, environment, api, EndpointKind.API, "/readyz")
     web = start_web_process(root, environment, run, build, overrides=device_overrides)
     wait_process_ready(root, environment, web, EndpointKind.WEB, "/")
 

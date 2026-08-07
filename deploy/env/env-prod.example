@@ -10,8 +10,7 @@ APP_PUBLIC_URL=https://your-vercel-app.example.com
 
 # Supabase Auth only. Production does not use Supabase Database or Storage.
 # Token verification reads the issuer, JWKS, and audiences; there is no runtime
-# SUPABASE_URL. Keep the legacy Supabase project URL in the one-off
-# Supabase-exit env file, never here.
+# SUPABASE_URL. Keep provider-management URLs in operator tooling, never here.
 SUPABASE_ISSUER=https://<project-ref>.supabase.co/auth/v1
 SUPABASE_JWKS_URL=https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json
 SUPABASE_AUDIENCES=authenticated

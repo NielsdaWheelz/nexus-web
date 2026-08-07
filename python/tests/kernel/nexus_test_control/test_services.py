@@ -271,6 +271,42 @@ def test_readiness_rejects_listener_outside_owned_process_group(tmp_path: Path) 
             stale.wait()
 
 
+def test_readiness_rejects_an_owned_listener_that_returns_unauthorized(tmp_path: Path) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as allocator:
+        allocator.bind(("127.0.0.1", 0))
+        port = int(allocator.getsockname()[1])
+    initialize_runtime(tmp_path, TEST_ENV, replace(_ports(), web=port))
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    server = (
+        "import http.server,sys; "
+        "handler=type('Unauthorized',(http.server.BaseHTTPRequestHandler,),{"
+        "'do_GET':lambda self:(self.send_response(401),self.end_headers()),"
+        "'log_message':lambda *args:None}); "
+        "http.server.ThreadingHTTPServer(('127.0.0.1',int(sys.argv[1])),handler).serve_forever()"
+    )
+    owned = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "web",
+        (sys.executable, "-c", server, str(port)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        with pytest.raises(RuntimeContractError, match="did not become ready"):
+            wait_process_ready(
+                tmp_path,
+                TEST_ENV,
+                owned,
+                endpoint=EndpointKind.WEB,
+                path="/",
+                timeout_seconds=0.2,
+            )
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+
 def test_readiness_grace_requires_immutable_birth_identity_and_time() -> None:
     assert _startup_identity_pending(birth_matches=True, now=1, deadline=2)
     assert not _startup_identity_pending(birth_matches=False, now=1, deadline=2)
@@ -594,6 +630,9 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
     assert environment["NEXT_PUBLIC_SUPABASE_ANON_KEY"] == "public-anon-key"
     assert environment["OPENAI_API_BASE_URL"] == "http://127.0.0.1:19091/v1"
     assert environment["OPENAI_API_KEY"] == "nexus-test-fixture-openai-key"
+    assert environment["NEXUS_RUNTIME_IDENTITY_FILE"] == str(
+        tmp_path / ".nexus-test/runtime-identity.json"
+    )
     assert environment["NEXUS_EXTENSION_REDIRECT_ORIGINS"] == (
         f"https://{TEST_EXTENSION_ID}.chromiumapp.org"
     )

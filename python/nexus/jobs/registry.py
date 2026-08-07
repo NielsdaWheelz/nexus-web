@@ -48,8 +48,8 @@ def get_default_registry() -> dict[str, JobDefinition]:
 
 
 @lru_cache(maxsize=1)
-def get_task_contract_version() -> str:
-    """Stable fingerprint used for health/deploy contract checks."""
+def get_task_contract_digest() -> str:
+    """Stable digest used for runtime and release contract checks."""
     definitions = get_default_registry()
     payload = [
         {

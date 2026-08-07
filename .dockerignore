@@ -8,8 +8,7 @@
 !apps/worker/**
 
 !docker/
-!docker/Dockerfile.api
-!docker/Dockerfile.worker
+!docker/Dockerfile.backend
 
 !migrations/
 !migrations/**

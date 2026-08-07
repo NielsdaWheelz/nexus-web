@@ -37,6 +37,7 @@ class Capability(StrEnum):
     STATIC_PYTHON = "static-python"
     STATIC_WEB = "static-web"
     STATIC_WORKFLOWS = "static-workflows"
+    STATIC_PLATFORM = "static-platform"
     KERNEL_PYTHON = "kernel-python"
     KERNEL_WEB = "kernel-web"
     SENSITIVITY = "sensitivity"
@@ -61,6 +62,9 @@ class Capability(StrEnum):
     ANDROID_VISUAL = "android-visual"
 
 
+PRIORITY_RISK_DIRECT_CAPABILITY_OWNERS = frozenset({Capability.STATIC_PLATFORM})
+
+
 class PriorityRiskId(StrEnum):
     TEST_ENVIRONMENT_ISOLATION = "test-environment-isolation"
     AUTH_PRIVACY_SECRETS = "auth-privacy-secrets"
@@ -72,14 +76,16 @@ class PriorityRiskId(StrEnum):
     DURABLE_JOB_REPLAY = "durable-job-replay"
     DATABASE_OBJECT_CONVERGENCE = "database-object-convergence"
     LLM_TOOL_SAFETY = "llm-tool-safety"
+    IMMUTABLE_PRODUCTION_RELEASE = "immutable-production-release"
+    PRODUCTION_RUNTIME_HEALTH = "production-runtime-health"
+    ORACLE_PUBLICATION = "oracle-publication"
+    PRODUCTION_RELEASE_TEST_CONTROL = "production-release-test-control"
     NATIVE_RELEASE_AUTH_HANDOFF = "native-release-auth-handoff"
     NATIVE_SYSTEM_INSETS = "native-system-insets"
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_SOURCE_OWNERSHIP_SHA256 = (
-    "9ecb52b7b66f548a43c03645bd975e8b81a318f43b5d466b45466d5e03a213e4"
-)
+PRIORITY_RISK_OWNERSHIP_SHA256 = "a273a7e78d609c804a263408f449b234c31b6f80bbf679f9dc862a6d1240c241"
 
 
 class ResourceKind(StrEnum):
@@ -309,6 +315,7 @@ _FAST_COMPLETE = (
     Capability.STATIC_PYTHON,
     Capability.STATIC_WEB,
     Capability.STATIC_WORKFLOWS,
+    Capability.STATIC_PLATFORM,
     Capability.KERNEL_PYTHON,
     Capability.KERNEL_WEB,
 )
@@ -359,6 +366,7 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                         Capability.STATIC_PYTHON,
                         Capability.STATIC_WEB,
                         Capability.STATIC_WORKFLOWS,
+                        Capability.STATIC_PLATFORM,
                     ),
                 ),
                 *_requirements(

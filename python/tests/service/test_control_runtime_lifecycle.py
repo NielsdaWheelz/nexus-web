@@ -77,7 +77,7 @@ if mode == "journey":
         run.supabase,
     )
     api = start_python_process(root, environment, run, "api")
-    wait_process_ready(root, environment, api, EndpointKind.API, "/health")
+    wait_process_ready(root, environment, api, EndpointKind.API, "/readyz")
     payload.update(api_pid=api.process_group_id, user_id=user.id, user_email=user.email)
 os.write(ready_fd, json.dumps(payload, sort_keys=True).encode())
 os.close(ready_fd)

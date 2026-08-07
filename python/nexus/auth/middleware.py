@@ -36,7 +36,9 @@ BOOTSTRAP_CACHE_MAX_USERS = 1024
 
 # Paths that don't require authentication
 PUBLIC_PATHS = {
-    "/health",
+    "/livez",
+    "/readyz",
+    "/version",
     "/docs",
     "/redoc",
     "/openapi.json",
