@@ -121,7 +121,7 @@ export default function ActionMenu({
     ref: menuRef,
     style: menuStyle,
     anchorRect,
-  } = useAnchoredPosition<HTMLUListElement>(toggleRef.current, {
+  } = useAnchoredPosition<HTMLUListElement>(toggleRef, {
     enabled: menuOpen,
     placement,
     align,
