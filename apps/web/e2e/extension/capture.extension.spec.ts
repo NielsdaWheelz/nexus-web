@@ -69,8 +69,8 @@ test("the production MV3 popup acquires a scoped token, captures the active arti
     const user = extensionUser();
     const app = await context.newPage();
     await app.goto(`${webOrigin}/login`);
-    await app.getByLabel("Email").fill(user.email);
-    await app.getByLabel("Password").fill(user.password);
+    await app.getByLabel("Email", { exact: true }).fill(user.email);
+    await app.getByLabel("Password", { exact: true }).fill(user.password);
     await app.getByRole("button", { name: "Continue", exact: true }).click();
     await expect(app).toHaveURL(/\/lectern$/);
 
