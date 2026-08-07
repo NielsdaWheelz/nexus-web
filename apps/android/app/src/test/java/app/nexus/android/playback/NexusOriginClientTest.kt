@@ -1,10 +1,14 @@
 package app.nexus.android.playback
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.UUID
 
@@ -57,6 +61,43 @@ class NexusOriginClientTest {
         assertNull(cookies.cookies)
     }
 
+    @Test
+    fun `response does not complete or flush until every WebView cookie acknowledgement arrives`() =
+        runBlocking {
+            val server = MockWebServer()
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Set-Cookie", "session=first; Path=/; HttpOnly")
+                    .addHeader("Set-Cookie", "refresh=second; Path=/; HttpOnly")
+                    .setBody("{}")
+            )
+            server.start()
+            val cookies = AwaitingCookieStore()
+            try {
+                val request = async(Dispatchers.IO) {
+                    NexusOriginClient(server.url("/").toString(), cookies)
+                        .getListeningState(MEDIA_ID)
+                }
+                server.takeRequest()
+                cookies.awaitFirstInstall()
+
+                assertTrue("native request completed before CookieManager acknowledged writes", !request.isCompleted)
+                assertEquals(0, cookies.flushes)
+
+                cookies.acknowledgeNext()
+                cookies.awaitSecondInstall()
+                assertTrue("native request completed before every cookie acknowledgement", !request.isCompleted)
+                assertEquals(0, cookies.flushes)
+
+                cookies.acknowledgeNext()
+                assertEquals(200, request.await().status)
+                assertEquals(1, cookies.flushes)
+            } finally {
+                server.shutdown()
+            }
+        }
+
     private class FakeCookieStore(
         val cookies: String?,
     ) : NexusCookieStore {
@@ -65,8 +106,41 @@ class NexusOriginClientTest {
 
         override fun cookiesFor(url: String): String? = cookies
 
-        override fun install(url: String, setCookie: String) {
+        override suspend fun install(url: String, setCookie: String) {
             installed += setCookie
+        }
+
+        override fun flush() {
+            flushes += 1
+        }
+    }
+
+    private class AwaitingCookieStore : NexusCookieStore {
+        private val installs = mutableListOf<kotlinx.coroutines.CompletableDeferred<Unit>>()
+        private val installCount = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var flushes = 0
+
+        override fun cookiesFor(url: String): String? = null
+
+        override suspend fun install(url: String, setCookie: String) {
+            val acknowledgement = kotlinx.coroutines.CompletableDeferred<Unit>()
+            installs += acknowledgement
+            installCount.complete(Unit)
+            acknowledgement.await()
+        }
+
+        suspend fun awaitFirstInstall() {
+            installCount.await()
+        }
+
+        suspend fun awaitSecondInstall() {
+            while (installs.size < 2) {
+                delay(1)
+            }
+        }
+
+        fun acknowledgeNext() {
+            installs.firstOrNull { !it.isCompleted }?.complete(Unit)
         }
 
         override fun flush() {

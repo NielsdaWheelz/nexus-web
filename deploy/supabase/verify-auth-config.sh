@@ -259,6 +259,7 @@ require_bool("saml_enabled", False)
 require_bool("security_captcha_enabled", False)
 require_bool("security_manual_linking_enabled", True)
 require_bool("security_update_password_require_reauthentication", False)
+require_bool("refresh_token_rotation_enabled", True)
 require_bool("hook_after_user_created_enabled", False)
 require_bool("hook_before_user_created_enabled", False)
 require_bool("hook_custom_access_token_enabled", False)
@@ -299,6 +300,8 @@ if config.get("password_min_length") != 15:
     fail("Supabase Auth password_min_length must be exactly 15")
 if config.get("password_required_characters") not in (None, ""):
     fail("Supabase Auth password_required_characters must be empty")
+if config.get("refresh_token_reuse_interval") != 10:
+    fail("Supabase Auth refresh_token_reuse_interval must be exactly 10")
 
 require_nonempty("smtp_admin_email")
 require_nonempty("smtp_host")

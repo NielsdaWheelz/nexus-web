@@ -30,6 +30,8 @@ def _provider_config(**overrides: object) -> dict[str, object]:
         "security_captcha_enabled": False,
         "security_manual_linking_enabled": True,
         "security_update_password_require_reauthentication": False,
+        "refresh_token_rotation_enabled": True,
+        "refresh_token_reuse_interval": 10,
         "hook_after_user_created_enabled": False,
         "hook_before_user_created_enabled": False,
         "hook_custom_access_token_enabled": False,
@@ -168,6 +170,24 @@ def test_auth_config_verifier_accepts_the_closed_membership_contract(tmp_path: P
     assert result.stdout.strip() == (
         "PASS Supabase Auth configuration matches the closed-membership contract"
     )
+
+
+@pytest.mark.parametrize(
+    ("override", "field"),
+    [
+        ({"refresh_token_rotation_enabled": False}, "refresh_token_rotation_enabled"),
+        ({"refresh_token_reuse_interval": 9}, "refresh_token_reuse_interval"),
+    ],
+)
+def test_auth_config_verifier_requires_the_session_recovery_rotation_contract(
+    tmp_path: Path,
+    override: dict[str, object],
+    field: str,
+) -> None:
+    result = _run_verifier(tmp_path, _provider_config(**override))
+
+    assert result.returncode != 0
+    assert field in result.stderr
 
 
 def test_auth_config_verifier_rejects_third_party_auth_integrations(

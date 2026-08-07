@@ -2,6 +2,11 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import {
+  finalizeSessionResponse,
+  type NonEmptyCookieSet,
+  type SessionEffect,
+} from "@/lib/auth/session-response";
+import {
   SUPABASE_AUTH_COOKIE_OPTIONS,
   createSupabaseDeadlineFetch,
 } from "./client-config";
@@ -11,7 +16,9 @@ function isNextResponse(response: Response): response is NextResponse {
   return "cookies" in response;
 }
 
-export async function createRouteHandlerClient() {
+export async function createRouteHandlerClient(
+  initialCookies: readonly CookieToSet[] = [],
+) {
   const cookieStore = await cookies();
 
   // Force Next to materialize incoming cookies before PKCE code exchange.
@@ -20,6 +27,12 @@ export async function createRouteHandlerClient() {
   const cookiesToApply: CookieToSet[] = [];
   const headersToApply: Record<string, string> = {};
   let cookieWriteCount = 0;
+  const effectiveCookies = new Map(
+    cookieStore.getAll().map(({ name, value }) => [name, value]),
+  );
+  for (const { name, value } of initialCookies) {
+    effectiveCookies.set(name, value);
+  }
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -28,7 +41,10 @@ export async function createRouteHandlerClient() {
       cookieOptions: SUPABASE_AUTH_COOKIE_OPTIONS,
       cookies: {
         getAll() {
-          return cookieStore.getAll();
+          return Array.from(effectiveCookies, ([name, value]) => ({
+            name,
+            value,
+          }));
         },
         setAll(
           nextCookiesToSet: CookieToSet[],
@@ -36,6 +52,7 @@ export async function createRouteHandlerClient() {
         ) {
           nextCookiesToSet.forEach(({ name, value, options }) => {
             cookieStore.set(name, value, options);
+            effectiveCookies.set(name, value);
             cookiesToApply.push({ name, value, options });
             cookieWriteCount += 1;
           });
@@ -67,21 +84,45 @@ export async function createRouteHandlerClient() {
         previousWriteCount = cookieWriteCount;
       }
     },
-    applyCookies<T extends Response>(response: T): T {
+    applyCookies<T extends Response>(
+      response: T,
+      effect: SessionEffect = { kind: "Preserve" },
+    ): T {
       if (!isNextResponse(response)) {
         return response;
       }
 
-      cookiesToApply.forEach(({ name, value, options }) => {
-        response.cookies.set(name, value, options);
-      });
-      // Forward cache-busting headers so CDNs/proxies don't cache
-      // responses that carry auth cookies.
       Object.entries(headersToApply).forEach(([key, value]) => {
         response.headers.set(key, value);
       });
 
-      return response;
+      if (effect.kind === "Clear") {
+        return finalizeSessionResponse(response, effect) as T;
+      }
+
+      if (cookiesToApply.length === 0) {
+        return finalizeSessionResponse(response, effect) as T;
+      }
+
+      const [firstCookie, ...remainingCookies] = cookiesToApply;
+      if (!firstCookie) {
+        return finalizeSessionResponse(response, effect) as T;
+      }
+      const providerCookies: NonEmptyCookieSet = [
+        firstCookie,
+        ...remainingCookies,
+      ];
+      const combinedEffect: SessionEffect =
+        effect.kind === "Rotate"
+          ? {
+              kind: "Rotate",
+              cookiesToSet: [
+                ...effect.cookiesToSet,
+                ...providerCookies,
+              ] as NonEmptyCookieSet,
+            }
+          : { kind: "Rotate", cookiesToSet: providerCookies };
+      return finalizeSessionResponse(response, combinedEffect) as T;
     },
   };
 }

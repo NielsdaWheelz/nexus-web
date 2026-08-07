@@ -1,7 +1,7 @@
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
+import { finalizeSessionResponse } from "@/lib/auth/session-response";
 import {
-  clearSupabaseAuthCookies,
   getSupabaseAuthCookieNames,
   readSupabaseSessionCookie,
 } from "@/lib/auth/session-cookie";
@@ -48,7 +48,9 @@ export async function POST(request: Request) {
   const response = NextResponse.redirect(`${redirectOrigin}/login`, {
     status: 302,
   });
-  clearSupabaseAuthCookies(response, cookieNames);
-
-  return response;
+  return finalizeSessionResponse(response, {
+    kind: "Clear",
+    cookieNames,
+    feedback: false,
+  });
 }

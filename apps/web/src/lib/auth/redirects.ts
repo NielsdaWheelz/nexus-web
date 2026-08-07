@@ -9,6 +9,7 @@ export const DEFAULT_AUTH_RETURN_TARGET =
   APP_AUTHENTICATED_HOME_HREF as AuthReturnTarget;
 
 const LOGIN_PATH = "/login";
+const AUTH_SESSION_RECOVERY_PATH = "/auth/session/recover";
 const AUTH_PATH = "/auth";
 const AUTH_PATH_PREFIX = "/auth/";
 const AUTH_RETURN_TARGET_BASE = "http://localhost";
@@ -106,13 +107,13 @@ export function buildLoginUrl(
   return loginUrl;
 }
 
-export function buildAuthRefreshUrl(
+export function buildAuthSessionRecoveryUrl(
   origin: string,
   target: AuthReturnTarget,
 ): URL {
-  const refreshUrl = new URL("/auth/refresh", origin);
-  setNonDefaultNext(refreshUrl, target);
-  return refreshUrl;
+  const recoveryUrl = new URL(AUTH_SESSION_RECOVERY_PATH, origin);
+  setNonDefaultNext(recoveryUrl, target);
+  return recoveryUrl;
 }
 
 export function buildAuthCallbackUrl(

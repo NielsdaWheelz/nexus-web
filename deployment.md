@@ -15,6 +15,14 @@ release state, or Vercel aliases outside the owners named here.
 | Authentication | Supabase Auth only |
 | API TLS | Caddy on the Hetzner host |
 
+Authentication is released as one hard contract. Before any release mutation,
+`deploy/supabase/verify-auth-config.sh` proves hosted refresh rotation is
+enabled with a ten-second reuse interval. After the exact production alias is
+bound, `deploy/smoke/auth-smoke.sh` proves recovery, terminal clearing, BFF
+unauthenticated behavior, OAuth callback identity, stale-cookie rejection, and
+private no-store headers. Durable `finalize` is unreachable until that smoke
+passes; failure settles the bound frontend for a forward fix.
+
 Current public hosts are `nexus.nielseriknandal.com` and
 `api.nexus.nielseriknandal.com`. The VPS is `nexus-api-worker` at
 `5.78.194.235`.

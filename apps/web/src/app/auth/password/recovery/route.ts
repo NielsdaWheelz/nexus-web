@@ -4,7 +4,6 @@ import {
   readSameOriginAuthForm,
 } from "@/lib/auth/form-response";
 import { parsePasswordRecoveryForm } from "@/lib/auth/form-fields";
-import { noStore } from "@/lib/auth/no-store";
 import { requestPasswordRecoveryFlow } from "@/lib/auth/password-flow";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 
@@ -34,12 +33,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     case "Requested": {
       await auth.settlePendingCookieWrites();
       return auth.applyCookies(
-        noStore(
-          NextResponse.redirect(
-            new URL("/forgot-password?sent=1", requestForm.origin),
-            { status: 303 },
-          ),
-        ),
+        NextResponse.redirect(new URL("/forgot-password?sent=1", requestForm.origin), {
+          status: 303,
+        }),
       );
     }
     case "RateLimited":

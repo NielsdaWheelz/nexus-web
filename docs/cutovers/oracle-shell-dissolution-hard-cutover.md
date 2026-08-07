@@ -25,7 +25,11 @@ The Oracle lives at `app/(oracle)/` — a route group that owns its own `layout.
 
 ### 1.2 The shell does nothing the workspace doesn't already do
 
-`OracleShell.tsx` renders: a sticky top bar with a back link, a `UnauthenticatedApiBoundary`, and a `SessionRefresher`. After the cutover every oracle pane body is a child of `AuthenticatedShell` — which already owns `UnauthenticatedApiBoundary` (line 43) and `SessionRefresher` (line 44). The back link is a dead affordance: in-pane navigation is handled by `requestOpenInAppPane`.
+`OracleShell.tsx` renders: a sticky top bar with a back link and its own
+`UnauthenticatedApiBoundary`. After the cutover every oracle pane body is a
+child of `AuthenticatedShell`, which owns the shared API boundary and the
+request-time session recovery contract. The back link is a dead affordance:
+in-pane navigation is handled by `requestOpenInAppPane`.
 
 ### 1.3 The shell also steals the sticky headline
 
@@ -83,7 +87,7 @@ The Oracle lives at `app/(oracle)/` — a route group that owns its own `layout.
 | data-theme oracle scope | `(oracle)/layout.tsx` wrapper div | `OracleThemeWrapper` in each pane body |
 | Oracle fonts | `next/font` in `(oracle)/layout.tsx` | `next/font` in root `app/layout.tsx`, `preload: false` |
 | UnauthenticatedApiBoundary | OracleShell | AuthenticatedShell (already present) |
-| SessionRefresher | OracleShell | AuthenticatedShell (already present) |
+| Session recovery | OracleShell | request-time auth boundary |
 | Oracle nav action | `window.location.assign('/oracle')` | `requestOpenInAppPane('/oracle')` |
 
 ### 4.2 OracleThemeWrapper

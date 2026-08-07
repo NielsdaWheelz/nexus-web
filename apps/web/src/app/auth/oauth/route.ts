@@ -6,6 +6,7 @@ import {
   buildLoginUrl,
   parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
+import { finalizeSessionResponse } from "@/lib/auth/session-response";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 import { NextResponse } from "next/server";
 
@@ -40,11 +41,14 @@ export async function GET(request: Request): Promise<NextResponse> {
   const redirectOrigin = resolveCallbackRedirectOrigin(request);
 
   if (!isSupportedProvider(provider)) {
-    return NextResponse.redirect(
-      buildLoginUrl(redirectOrigin, target, {
-        errorDescription: OAUTH_START_FAILURE_MESSAGE,
-      }),
-      { status: TEMPORARY_REDIRECT }
+    return finalizeSessionResponse(
+      NextResponse.redirect(
+        buildLoginUrl(redirectOrigin, target, {
+          errorDescription: OAUTH_START_FAILURE_MESSAGE,
+        }),
+        { status: TEMPORARY_REDIRECT },
+      ),
+      { kind: "Preserve" },
     );
   }
 

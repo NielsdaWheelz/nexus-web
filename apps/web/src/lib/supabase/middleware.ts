@@ -1,18 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server";
 import {
-  buildAuthRefreshUrl,
-  buildAuthReturnTargetUrl,
+  buildAuthSessionRecoveryUrl,
   buildLoginUrl,
   parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
-import {
-  AUTH_ENDED_FEEDBACK_COOKIE,
-  SESSION_ENDED_MESSAGE,
-} from "@/lib/auth/messages";
-import {
-  clearSupabaseAuthCookies,
-  readSupabaseSessionCookie,
-} from "@/lib/auth/session-cookie";
+import { noStore } from "@/lib/auth/no-store";
+import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
 import {
   DEVICE_COOKIE_NAME,
@@ -22,7 +15,6 @@ import {
 
 const NONCE_HEADER = "x-nonce";
 const CSP_REQUEST_HEADER = "content-security-policy";
-const PREFETCH_HEADER = "Next-Router-Prefetch";
 const TEMPORARY_REDIRECT = 307;
 
 /**
@@ -47,50 +39,13 @@ const PUBLIC_ROUTES = new Set([
   "/auth/password/sign-in",
   "/auth/password/update",
   "/auth/recovery",
-  "/auth/refresh",
+  "/auth/session/recover",
+  "/auth/session/resolve",
   "/auth/signout",
   "/extension/connect/start",
   "/share",
   "/s",
 ]);
-
-// Clear the auth cookie chunks and redirect to /login — the involuntary-logout
-// path for `ended` and `anonymous`.
-function clearAndRedirectToLogin(
-  request: NextRequest,
-  cookieNames: string[],
-  options?: { sessionEndedFeedback?: boolean },
-): NextResponse {
-  const target = parseAuthReturnTarget(
-    `${request.nextUrl.pathname}${request.nextUrl.search}`,
-  );
-  const response = NextResponse.redirect(
-    buildLoginUrl(request.nextUrl.origin, target, {
-      errorDescription: options?.sessionEndedFeedback
-        ? SESSION_ENDED_MESSAGE
-        : undefined,
-    }),
-  );
-  clearSupabaseAuthCookies(response, cookieNames);
-  if (options?.sessionEndedFeedback) {
-    response.cookies.set(AUTH_ENDED_FEEDBACK_COOKIE, "1", {
-      httpOnly: true,
-      maxAge: 60,
-      path: "/",
-      sameSite: "lax",
-    });
-  }
-  return response;
-}
-
-function isSessionEndedLoginRequest(request: NextRequest): boolean {
-  return (
-    request.cookies.get(AUTH_ENDED_FEEDBACK_COOKIE)?.value === "1" ||
-    request.nextUrl.searchParams.get("error_description") ===
-      SESSION_ENDED_MESSAGE ||
-    request.nextUrl.searchParams.get("error") === SESSION_ENDED_MESSAGE
-  );
-}
 
 export function updateSession(
   request: NextRequest,
@@ -111,13 +66,11 @@ export function updateSession(
   }
   const passThrough = () =>
     NextResponse.next({ request: { headers: requestHeaders } });
+  const privatePassThrough = () => noStore(passThrough());
 
-  // Mint the server-owned device cookie when absent, on an authenticated passthrough.
-  // The value is appended to the forwarded request cookies so THIS request's SSR
-  // restores the right workspace, and set on the response so future requests carry it.
   const passThroughWithDeviceCookie = () => {
     if (readDeviceId(request.cookies)) {
-      return passThrough();
+      return privatePassThrough();
     }
     const { value, options } = mintDeviceId();
     const cookie = requestHeaders.get("cookie");
@@ -131,22 +84,10 @@ export function updateSession(
       request: { headers: requestHeaders },
     });
     response.cookies.set(DEVICE_COOKIE_NAME, value, options);
-    return response;
+    return noStore(response);
   };
 
   if (pathname === "/login") {
-    const session = readSupabaseSessionCookie(request.cookies.getAll());
-    if (
-      (session.state === "active" || session.state === "refreshable") &&
-      !isSessionEndedLoginRequest(request)
-    ) {
-      return NextResponse.redirect(
-        buildAuthReturnTargetUrl(
-          request.nextUrl.origin,
-          parseAuthReturnTarget(request.nextUrl.searchParams.get("next")),
-        ),
-      );
-    }
     return passThrough();
   }
 
@@ -160,56 +101,64 @@ export function updateSession(
     return passThrough();
   }
 
+  if (request.method !== "GET") {
+    return privatePassThrough();
+  }
+
   // Protected page request.
   requestHeaders.set(
     REQUEST_PATH_HEADER,
     `${request.nextUrl.pathname}${request.nextUrl.search}`,
   );
-  const hasSessionEndedFeedback =
-    request.cookies.get(AUTH_ENDED_FEEDBACK_COOKIE)?.value === "1";
 
   const session = readSupabaseSessionCookie(request.cookies.getAll());
   switch (session.state) {
     case "active":
       return passThroughWithDeviceCookie();
-    case "refreshable": {
-      if (hasSessionEndedFeedback) {
-        return clearAndRedirectToLogin(request, session.cookieNames, {
-          sessionEndedFeedback: true,
-        });
-      }
-      // A prefetch must never drive a token refresh: let a hovered link's
-      // prefetch pass and the page gate handles the real navigation.
-      if (request.headers.has(PREFETCH_HEADER)) {
-        return passThrough();
-      }
-      // Silent refresh. Do not clear the cookie — the refresh route needs the
-      // refresh token it carries.
-      return NextResponse.redirect(
-        buildAuthRefreshUrl(
-          request.nextUrl.origin,
-          parseAuthReturnTarget(
-            `${request.nextUrl.pathname}${request.nextUrl.search}`,
-          ),
-        ),
-        { status: TEMPORARY_REDIRECT },
-      );
-    }
+    case "refreshable":
+      return privatePassThrough();
     case "ended":
+      return noStore(
+        NextResponse.redirect(
+          buildAuthSessionRecoveryUrl(
+            request.nextUrl.origin,
+            parseAuthReturnTarget(
+              `${request.nextUrl.pathname}${request.nextUrl.search}`,
+            ),
+          ),
+          { status: TEMPORARY_REDIRECT },
+        ),
+      );
     case "anonymous":
-      // An involuntary logout — an `ended` transition that did not pass
-      // through explicit signout, or a request with no recoverable cookie.
-      console.warn("auth_involuntary_logout", {
-        state: session.state,
-        reason: session.reason,
-        path: pathname,
-      });
-      return clearAndRedirectToLogin(request, session.cookieNames, {
-        sessionEndedFeedback:
-          hasSessionEndedFeedback ||
-          session.state === "ended" ||
-          (session.state === "anonymous" && session.cookieNames.length > 0),
-      });
+      switch (session.reason) {
+        case "missing":
+          return noStore(
+            NextResponse.redirect(
+              buildLoginUrl(
+                request.nextUrl.origin,
+                parseAuthReturnTarget(
+                  `${request.nextUrl.pathname}${request.nextUrl.search}`,
+                ),
+              ),
+              { status: TEMPORARY_REDIRECT },
+            ),
+          );
+        case "malformed":
+        case "non_bearer":
+          return noStore(
+            NextResponse.redirect(
+              buildAuthSessionRecoveryUrl(
+                request.nextUrl.origin,
+                parseAuthReturnTarget(
+                  `${request.nextUrl.pathname}${request.nextUrl.search}`,
+                ),
+              ),
+              { status: TEMPORARY_REDIRECT },
+            ),
+          );
+        case "bad_config":
+          throw new Error("Supabase auth cookie configuration is invalid.");
+      }
   }
 
   const exhaustive: never = session;

@@ -16,18 +16,19 @@ Usage: deploy/smoke/auth-smoke.sh --app-url <url> --api-url <url> \
          --supabase-url <url>
 
 Post-release auth smoke check. Exits nonzero on the
-first failed check. It makes only safe GET requests and never logs cookie or
-token values.
+first failed check. It makes bounded read-only checks plus the one explicit
+session-resolver POST and never logs cookie or token values.
 
 Checks:
   - Anonymous default protected page redirects 307 to /login without next.
   - Anonymous non-default protected page redirects 307 to /login with preserved next.
-  - A valid-shaped expired auth cookie on a protected page prompts a redirect
-    with no timeout (the MIDDLEWARE_INVOCATION_TIMEOUT incident reproduction).
+  - A future-expiry invalid auth cookie enters the canonical recovery surface
+    once, then terminally clears through POST /auth/session/resolve.
   - Closed-membership public pages return 200.
   - Google and GitHub OAuth initiation target the exact Supabase authorize
     endpoint and app callback.
-  - Anonymous and expired-cookie BFF routes return JSON 401 E_UNAUTHENTICATED.
+  - Anonymous and terminal-cookie BFF routes return JSON 401 E_UNAUTHENTICATED.
+  - Every session-dependent response is private no-store.
   - /docs is not reachable in production.
   - The API readiness endpoint returns 200.
 
@@ -81,6 +82,18 @@ command -v python3 >/dev/null 2>&1 || die "python3 is not installed"
 
 APP_URL="${APP_URL%/}"
 API_URL="${API_URL%/}"
+SUPABASE_PROJECT_REF="$(python3 - "$SUPABASE_URL" <<'PY'
+import sys
+from urllib.parse import urlparse
+
+host = urlparse(sys.argv[1]).hostname or ""
+project_ref = host.removesuffix(".supabase.co")
+if not project_ref or "." in project_ref or "/" in project_ref:
+    raise SystemExit(1)
+print(project_ref)
+PY
+)" || die "--supabase-url must be a Supabase project origin"
+AUTH_COOKIE_PREFIX="sb-${SUPABASE_PROJECT_REF}-auth-token"
 
 # A protected page that exists in apps/web/src/app/(authenticated).
 PROTECTED_PATH="/browse"
@@ -93,6 +106,9 @@ BFF_PATH="/api/me"
 # decision is local and well under this.
 REQUEST_TIMEOUT_SECONDS=15
 
+temporary="$(mktemp -d)"
+trap 'rm -rf "$temporary"' EXIT
+
 failed=0
 
 fail() {
@@ -104,31 +120,152 @@ pass() {
   echo "PASS $*"
 }
 
-# A valid-shaped Supabase SSR auth cookie whose access token is long expired.
-# The cookie name is derived from the production Supabase project ref so the
-# deployed boundary parser actually interprets it; it carries a refresh_token
-# so the parser classifies it `refreshable` — the worst-case path that drove
-# the original MIDDLEWARE_INVOCATION_TIMEOUT.
-build_expired_cookie() {
-  python3 - "$SUPABASE_URL" <<'PY'
+# A future-expiry cookie with an invalid access token exercises the exact
+# active-shaped corruption path without exposing a real credential.
+build_invalid_cookie() {
+  python3 - "$SUPABASE_PROJECT_REF" <<'PY'
 import base64
 import json
 import sys
-from urllib.parse import urlparse
 
-host = urlparse(sys.argv[1]).hostname or ""
-project_ref = host.split(".")[0]
-if not project_ref:
-    sys.stderr.write("error: --supabase-url has no project ref host\n")
-    sys.exit(1)
 session = {
-    "access_token": "smoke.expired.token",
+    "access_token": "smoke.invalid.token",
     "token_type": "bearer",
-    "expires_at": 1000000000,  # 2001 — far in the past
-    "refresh_token": "smoke-expired-refresh-token",
+    "expires_at": 4102444800,
+    "refresh_token": "smoke-invalid-refresh-token",
 }
 payload = base64.urlsafe_b64encode(json.dumps(session).encode()).decode().rstrip("=")
-print(f"sb-{project_ref}-auth-token=base64-{payload}")
+print(f"sb-{sys.argv[1]}-auth-token=base64-{payload}")
+PY
+}
+
+# Build the wrong-project cookie at runtime so the smoke script contains no
+# encoded credential-shaped fixture for secret scanners to mistake for a key.
+build_stale_project_cookie() {
+  python3 - <<'PY'
+import base64
+import json
+
+payload = base64.urlsafe_b64encode(
+    json.dumps({"access_token": "stale"}, separators=(",", ":")).encode()
+).decode().rstrip("=")
+print(f"sb-stale-project-auth-token=base64-{payload}")
+PY
+}
+
+assert_session_cache_headers() {
+  local label="$1"
+  local headers="$2"
+  if ! python3 - "$headers" <<'PY'
+import sys
+
+headers: dict[str, list[str]] = {}
+for line in open(sys.argv[1], encoding="iso-8859-1"):
+    if ":" not in line:
+        continue
+    key, value = line.split(":", 1)
+    headers.setdefault(key.lower(), []).append(value.strip())
+
+valid = (
+    headers.get("cache-control") == ["private, no-store"]
+    and headers.get("pragma") == ["no-cache"]
+    and headers.get("expires") == ["0"]
+    and "cookie" in ",".join(headers.get("vary", [])).lower().split(",")
+)
+raise SystemExit(0 if valid else 1)
+PY
+  then
+    fail "${label}: session response is missing canonical private no-store headers"
+    return
+  fi
+  pass "${label}: canonical private no-store headers"
+}
+
+request_with_capture() {
+  local method="$1"
+  local url="$2"
+  local cookie="${3:-}"
+  local headers="$4"
+  local body="$5"
+  local status
+  local -a arguments=(
+    -sS
+    -o "$body"
+    -D "$headers"
+    -w '%{http_code}'
+    --max-time "$REQUEST_TIMEOUT_SECONDS"
+    -X "$method"
+  )
+  if [ -n "$cookie" ]; then
+    arguments+=(-H "Cookie: ${cookie}")
+  fi
+  if [ "$method" = "POST" ]; then
+    arguments+=(-H "Origin: ${APP_URL}" -H 'X-Nexus-Session: Resolve')
+  fi
+  status="$(curl "${arguments[@]}" "$url")"
+  printf '%s' "$status"
+}
+
+header_value() {
+  local headers="$1"
+  local name="$2"
+  python3 - "$headers" "$name" <<'PY'
+import sys
+
+name = sys.argv[2].lower()
+for line in open(sys.argv[1], encoding="iso-8859-1"):
+    if ":" not in line:
+        continue
+    key, value = line.split(":", 1)
+    if key.lower() == name:
+        print(value.strip())
+        break
+PY
+}
+
+assert_exact_recovery_redirect() {
+  local label="$1"
+  local status="$2"
+  local location="$3"
+  local expected_next="$4"
+  if [ "$status" != "307" ] || ! LOCATION="$location" EXPECTED_NEXT="$expected_next" APP_URL="$APP_URL" python3 - <<'PY'
+import os
+from urllib.parse import parse_qs, urlparse
+
+parsed = urlparse(os.environ["LOCATION"])
+app = urlparse(os.environ["APP_URL"])
+valid = (
+    parsed.scheme == app.scheme
+    and parsed.netloc == app.netloc
+    and parsed.path == "/auth/session/recover"
+    and parse_qs(parsed.query) == {"next": [os.environ["EXPECTED_NEXT"]]}
+)
+raise SystemExit(0 if valid else 1)
+PY
+  then
+    fail "${label}: expected exact /auth/session/recover location (${location})"
+    return
+  fi
+  pass "$label"
+}
+
+resolve_app_location() {
+  local location="$1"
+  APP_URL="$APP_URL" LOCATION="$location" python3 - <<'PY'
+import os
+from urllib.parse import urlparse
+
+app = urlparse(os.environ["APP_URL"])
+location = urlparse(os.environ["LOCATION"])
+if location.scheme in {"http", "https"} and location.netloc:
+    if (location.scheme, location.netloc) != (app.scheme, app.netloc):
+        raise SystemExit("redirect left the application origin")
+    print(os.environ["LOCATION"])
+elif location.path.startswith("/"):
+    print(f"{app.scheme}://{app.netloc}{location.path}"
+          + (f"?{location.query}" if location.query else ""))
+else:
+    raise SystemExit("redirect location is not an absolute or root-relative URL")
 PY
 }
 
@@ -275,7 +412,7 @@ echo "  app: ${APP_URL}"
 echo "  api: ${API_URL}"
 echo
 
-expired_cookie="$(build_expired_cookie)"
+invalid_cookie="$(build_invalid_cookie)"
 
 # Anonymous default protected page: prompt 307 to /login without default next.
 IFS=$'\t' read -r status location < <(http_status_and_location "${APP_URL}${DEFAULT_PROTECTED_PATH}")
@@ -289,19 +426,48 @@ assert_login_redirect_with_next \
   "anonymous non-default protected page redirects to /login" \
   "$status" "$location" "$PROTECTED_PATH"
 
-# Valid-shaped expired cookie on a protected page: prompt redirect, no timeout.
-# curl --max-time fails the request on a hang, so reaching a 3xx is the check.
-IFS=$'\t' read -r status location < <(
-  http_status_and_location "${APP_URL}${PROTECTED_PATH}" "$expired_cookie"
-)
-case "$status" in
-  301|302|303|307|308)
-    pass "expired-cookie protected page redirects without timeout (${status})"
-    ;;
-  *)
-    fail "expired-cookie protected page did not redirect (${status})"
-    ;;
-esac
+# A future-expiry invalid cookie must converge through one canonical recovery
+# entry and one resolver POST. No generic redirect/401 can satisfy this proof.
+invalid_page_headers="${temporary}/invalid-page.headers"
+invalid_page_body="${temporary}/invalid-page.body"
+status="$(request_with_capture GET "${APP_URL}${PROTECTED_PATH}" "$invalid_cookie" "$invalid_page_headers" "$invalid_page_body")"
+location="$(header_value "$invalid_page_headers" Location)"
+assert_exact_recovery_redirect "invalid cookie enters canonical recovery" "$status" "$location" "$PROTECTED_PATH"
+assert_session_cache_headers "invalid-cookie protected page" "$invalid_page_headers"
+
+recovery_headers="${temporary}/recovery.headers"
+recovery_body="${temporary}/recovery.body"
+recovery_url="$(resolve_app_location "$location")"
+status="$(request_with_capture GET "$recovery_url" "$invalid_cookie" "$recovery_headers" "$recovery_body")"
+if [ "$status" != "200" ] || [ -n "$(header_value "$recovery_headers" Set-Cookie)" ]; then
+  fail "recovery surface must be a non-mutating 200"
+else
+  pass "recovery surface is non-mutating"
+fi
+assert_session_cache_headers "recovery surface" "$recovery_headers"
+
+resolve_headers="${temporary}/resolve.headers"
+resolve_body="${temporary}/resolve.body"
+status="$(request_with_capture POST "${APP_URL}/auth/session/resolve" "$invalid_cookie" "$resolve_headers" "$resolve_body")"
+if [ "$status" != "401" ] || [ -n "$(header_value "$resolve_headers" Location)" ]; then
+  fail "invalid cookie resolver must terminally return 401 without redirect"
+elif ! python3 - "$resolve_headers" "$AUTH_COOKIE_PREFIX" <<'PY'
+import sys
+
+prefix = "set-cookie: " + sys.argv[2].lower()
+cookies = [
+    line.lower()
+    for line in open(sys.argv[1], encoding="iso-8859-1")
+    if line.lower().startswith(prefix)
+]
+raise SystemExit(0 if cookies and all("max-age=0" in cookie for cookie in cookies) else 1)
+PY
+then
+  fail "terminal resolver did not expire every emitted auth cookie"
+else
+  pass "invalid cookie resolves once and terminally clears cookies"
+fi
+assert_session_cache_headers "terminal resolver" "$resolve_headers"
 
 # Public pages return 200.
 for path in $PUBLIC_PATHS; do
@@ -327,12 +493,29 @@ assert_bff_unauthenticated \
   "anonymous BFF route ${BFF_PATH} returns 401 E_UNAUTHENTICATED" \
   "$status" "$body"
 
-# Expired-cookie BFF route returns JSON 401 E_UNAUTHENTICATED.
-status="$(http_status_and_location "${APP_URL}${BFF_PATH}" "$expired_cookie" | cut -f1)"
-body="$(http_body "${APP_URL}${BFF_PATH}" "$expired_cookie")"
+# Terminal-cookie BFF route returns JSON 401 E_UNAUTHENTICATED and is private.
+bff_headers="${temporary}/bff.headers"
+bff_body="${temporary}/bff.body"
+status="$(request_with_capture GET "${APP_URL}${BFF_PATH}" "$invalid_cookie" "$bff_headers" "$bff_body")"
+body="$(<"$bff_body")"
 assert_bff_unauthenticated \
-  "expired-cookie BFF route ${BFF_PATH} returns 401 E_UNAUTHENTICATED" \
+  "terminal-cookie BFF route ${BFF_PATH} returns 401 E_UNAUTHENTICATED" \
   "$status" "$body"
+assert_session_cache_headers "terminal-cookie BFF route" "$bff_headers"
+
+# A stale cookie for another Supabase project is not a session and must neither
+# enter recovery nor mutate the current project's cookies.
+stale_cookie="$(build_stale_project_cookie)"
+stale_headers="${temporary}/stale.headers"
+stale_body="${temporary}/stale.body"
+status="$(request_with_capture GET "${APP_URL}${PROTECTED_PATH}" "$stale_cookie" "$stale_headers" "$stale_body")"
+location="$(header_value "$stale_headers" Location)"
+assert_login_redirect_with_next "stale project cookie is rejected as anonymous" "$status" "$location" "$PROTECTED_PATH"
+if [ -n "$(header_value "$stale_headers" Set-Cookie)" ]; then
+  fail "stale project cookie must not mutate current-project auth cookies"
+else
+  pass "stale project cookie does not mutate current-project auth cookies"
+fi
 
 # /docs is not reachable in production.
 status="$(http_status "${API_URL}/docs")"

@@ -17,16 +17,18 @@ import { NextResponse } from "next/server";
 import { getEnv, isDeployed } from "@/lib/env";
 import { createRandomId } from "@/lib/createRandomId";
 import {
-  clearSupabaseAuthCookies,
   parseCookieHeader,
   readSupabaseSessionCookie,
   type SessionState,
 } from "@/lib/auth/session-cookie";
 import { refreshSession } from "@/lib/auth/refresh";
-import { applyRotatedCookies } from "@/lib/auth/rotated-cookies";
+import {
+  AuthDependencyError,
+  finalizeSessionResponse,
+  type SessionEffect,
+} from "@/lib/auth/session-response";
 import { isAbortError } from "@/lib/errors";
 import { PUBLIC_API_CONTENT_SECURITY_POLICY } from "@/lib/security/csp";
-import { type CookieToSet } from "@/lib/supabase/types";
 
 const REQUEST_ID_HEADER = "x-request-id";
 const FASTAPI_FETCH_TIMEOUT_MS = 30_000;
@@ -140,6 +142,7 @@ const PUBLIC_RESOURCE_SHARE_SECURITY_HEADERS = {
 
 interface ProxyDeps {
   readSession: (request: Request) => SessionState;
+  refreshSession: typeof refreshSession;
   fetch: typeof fetch;
   generateRequestId: () => string;
   appPublicOrigin: string;
@@ -282,6 +285,7 @@ async function createDefaultDeps(): Promise<ProxyDeps> {
       readSupabaseSessionCookie(
         parseCookieHeader(request.headers.get("cookie"))
       ),
+    refreshSession,
     fetch: globalThis.fetch,
     generateRequestId: createRandomId,
     appPublicOrigin: env.appPublicOrigin,
@@ -305,23 +309,37 @@ async function proxyAuthenticatedToFastAPIWithDeps(
 
   const requestId = getOrGenerateRequestId(request, deps.generateRequestId);
 
+  const finalize = (response: NextResponse, effect: SessionEffect) =>
+    finalizeSessionResponse(response, effect);
+
+  const errorResponse = (
+    status: number,
+    code: string,
+    message: string,
+    effect: SessionEffect,
+  ): NextResponse =>
+    finalize(
+      NextResponse.json(
+        {
+          error: {
+            code,
+            message,
+            request_id: requestId,
+          },
+        },
+        { status, headers: { [REQUEST_ID_HEADER]: requestId } },
+      ),
+      effect,
+    );
+
   // Validate the injected config (the DI seam), not getEnv(): a base URL is required, and a
   // missing internal secret is tolerated only outside deployed envs.
   if (!deps.config.fastApiBaseUrl || (isDeployed() && !deps.config.internalSecret)) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "E_INTERNAL",
-          message: "Backend service is not configured",
-          request_id: requestId,
-        },
-      },
-      {
-        status: 500,
-        headers: {
-          [REQUEST_ID_HEADER]: requestId,
-        },
-      }
+    return errorResponse(
+      500,
+      "E_INTERNAL",
+      "Backend service is not configured",
+      { kind: "Preserve" },
     );
   }
 
@@ -336,93 +354,116 @@ async function proxyAuthenticatedToFastAPIWithDeps(
     STATE_CHANGING_METHODS.has(request.method) &&
     request.headers.get("origin") !== deps.appPublicOrigin
   ) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "E_FORBIDDEN",
-          message: "Cross-origin request rejected",
-          request_id: requestId,
-        },
-      },
-      {
-        status: 403,
-        headers: {
-          [REQUEST_ID_HEADER]: requestId,
-        },
-      }
+    return errorResponse(
+      403,
+      "E_FORBIDDEN",
+      "Cross-origin request rejected",
+      { kind: "Preserve" },
     );
   }
 
   const session = deps.readSession(request);
 
-  // Resolve the bearer token to forward, refreshing inline when the session is
-  // within the access-token expiry margin. `refreshable` is the only state that
-  // produces rotated cookies for the proxied response.
   let accessToken: string;
-  let rotatedCookies: CookieToSet[] = [];
+  let sessionEffect: SessionEffect = { kind: "Preserve" };
   switch (session.state) {
     case "active":
       accessToken = session.accessToken;
       break;
     case "refreshable": {
-      const refreshed = await refreshSession();
-      if (refreshed.status === "failed") {
-        return NextResponse.json(
-          {
-            error: {
-              code: "E_UNAUTHENTICATED",
-              message: "Authentication required",
-              request_id: requestId,
-            },
-          },
-          { status: 401, headers: { [REQUEST_ID_HEADER]: requestId } }
+      let refreshed;
+      try {
+        refreshed = await deps.refreshSession();
+      } catch (error) {
+        if (error instanceof AuthDependencyError) {
+          return errorResponse(
+            503,
+            "E_AUTH_UNAVAILABLE",
+            "Authentication service unavailable",
+            { kind: "Preserve" },
+          );
+        }
+        return errorResponse(
+          500,
+          "E_INTERNAL",
+          "Session resolution failed",
+          { kind: "Preserve" },
         );
       }
-      refreshed.status satisfies "refreshed";
-      // The rotated access token is inside the freshly written cookie; the
-      // boundary parser is the one interpreter of that cookie shape.
-      const rotated = readSupabaseSessionCookie(refreshed.cookiesToSet);
-      if (rotated.state !== "active") {
-        // justify-defect: a successful refresh must write a live access token;
-        // a rotated cookie that does not parse as `active` is internal
-        // corruption, not a recoverable auth outcome.
-        console.error("auth_refresh_rotated_cookie_not_active", {
-          state: rotated.state,
-        });
-        return NextResponse.json(
-          {
-            error: {
-              code: "E_INTERNAL",
-              message: "Session refresh failed",
-              request_id: requestId,
+      switch (refreshed.kind) {
+        case "SessionEnded":
+          return errorResponse(
+            401,
+            "E_UNAUTHENTICATED",
+            "Authentication required",
+            {
+              kind: "Clear",
+              cookieNames: [...new Set([...session.cookieNames, ...refreshed.cookieNames])],
+              feedback: true,
             },
-          },
-          { status: 500, headers: { [REQUEST_ID_HEADER]: requestId } }
-        );
+          );
+        case "Refreshed": {
+          const rotated = readSupabaseSessionCookie(refreshed.cookiesToSet);
+          if (rotated.state !== "active") {
+            return errorResponse(
+              500,
+              "E_INTERNAL",
+              "Session resolution failed",
+              { kind: "Preserve" },
+            );
+          }
+          accessToken = rotated.accessToken;
+          sessionEffect = {
+            kind: "Rotate",
+            cookiesToSet: refreshed.cookiesToSet,
+          };
+          break;
+        }
       }
-      accessToken = rotated.accessToken;
-      rotatedCookies = refreshed.cookiesToSet;
       break;
     }
     case "ended":
-    case "anonymous": {
-      const response = NextResponse.json(
+      return errorResponse(
+        401,
+        "E_UNAUTHENTICATED",
+        "Authentication required",
         {
-          error: {
-            code: "E_UNAUTHENTICATED",
-            message: "Authentication required",
-            request_id: requestId,
-          },
+          kind: "Clear",
+          cookieNames: session.cookieNames,
+          feedback: true,
         },
-        { status: 401, headers: { [REQUEST_ID_HEADER]: requestId } }
       );
-      clearSupabaseAuthCookies(response, session.cookieNames);
-      return response;
+    case "anonymous":
+      switch (session.reason) {
+        case "missing":
+          return errorResponse(
+            401,
+            "E_UNAUTHENTICATED",
+            "Authentication required",
+            { kind: "Preserve" },
+          );
+        case "malformed":
+        case "non_bearer":
+          return errorResponse(
+            401,
+            "E_UNAUTHENTICATED",
+            "Authentication required",
+            {
+              kind: "Clear",
+              cookieNames: session.cookieNames,
+              feedback: true,
+            },
+          );
+        case "bad_config":
+          return errorResponse(
+            500,
+            "E_INTERNAL",
+            "Session configuration is invalid",
+            { kind: "Preserve" },
+          );
+      }
+      throw new Error("unreachable session reason");
     }
-    default:
-      session satisfies never;
-      throw new Error(`Unhandled session state: ${JSON.stringify(session)}`);
-  }
 
   // Build the FastAPI URL with query string
   const url = `${deps.config.fastApiBaseUrl}${path}${queryString}`;
@@ -452,18 +493,20 @@ async function proxyAuthenticatedToFastAPIWithDeps(
     headers.set("Accept-Encoding", "identity");
   }
 
-  // Forward request body for non-GET/HEAD methods as raw bytes.
-  let body: ArrayBuffer | undefined;
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    body = await request.arrayBuffer();
-  }
-
   const ctl = createTimedFetchController(
     request.signal,
     FASTAPI_FETCH_TIMEOUT_MS
   );
 
   try {
+    // Read the body only after session resolution, and keep the read inside the
+    // same response-owning boundary so a client abort or stream defect cannot
+    // drop a successor cookie set produced above.
+    let body: ArrayBuffer | undefined;
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      body = await request.arrayBuffer();
+    }
+
     const response = await deps.fetch(url, {
       method: request.method,
       headers,
@@ -492,10 +535,21 @@ async function proxyAuthenticatedToFastAPIWithDeps(
       `nexus_bff;dur=${(performance.now() - proxyStartedAt).toFixed(2)}`
     );
 
-    // A response carrying rotated auth cookies must never be cached: a cached
-    // Set-Cookie would hand one user another user's session.
-    if (rotatedCookies.length > 0) {
-      responseHeaders.set("cache-control", "no-store");
+    if (response.status === 401) {
+      const cookieNames = [
+        ...new Set([
+          ...session.cookieNames,
+          ...(sessionEffect.kind === "Rotate"
+            ? sessionEffect.cookiesToSet.map(({ name }) => name)
+            : []),
+        ]),
+      ];
+      return errorResponse(
+        401,
+        "E_UNAUTHENTICATED",
+        "Authentication required",
+        { kind: "Clear", cookieNames, feedback: true },
+      );
     }
 
     const responseBody =
@@ -511,18 +565,22 @@ async function proxyAuthenticatedToFastAPIWithDeps(
       headers: responseHeaders,
     });
 
-    applyRotatedCookies(proxied, rotatedCookies);
-    return proxied;
+    return finalize(proxied, sessionEffect);
   } catch (error) {
     if (isAbortError(error)) {
       if (ctl.timedOut()) {
-        return upstreamTimeoutResponse(requestId);
+        return finalize(upstreamTimeoutResponse(requestId), sessionEffect);
       }
-      return new Response(null, { status: 499 });
+      return finalize(
+        new NextResponse(null, {
+          status: 499,
+          headers: { [REQUEST_ID_HEADER]: requestId },
+        }),
+        sessionEffect,
+      );
     }
 
-    console.error("FastAPI proxy error:", error);
-    return upstreamUnavailableResponse(requestId);
+    return finalize(upstreamUnavailableResponse(requestId), sessionEffect);
   } finally {
     ctl.cleanup();
   }

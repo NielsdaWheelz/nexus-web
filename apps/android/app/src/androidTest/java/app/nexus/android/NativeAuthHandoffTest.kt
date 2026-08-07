@@ -14,6 +14,7 @@ import org.hamcrest.Description
 import org.hamcrest.Matcher
 import org.hamcrest.Matchers.allOf
 import org.hamcrest.TypeSafeMatcher
+import org.junit.Assert.assertEquals
 import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -57,6 +58,31 @@ class NativeAuthHandoffTest {
             }
 
             intended(handoff)
+        }
+    }
+
+    @Test
+    fun resumingTheShellDoesNotNavigateTheWebView() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            var beforeResume: String? = null
+            scenario.onActivity { activity ->
+                activity.webView.stopLoading()
+                activity.webView.loadDataWithBaseURL(
+                    BuildConfig.NEXUS_BASE_URL,
+                    "<main>Nexus</main>",
+                    "text/html",
+                    "utf-8",
+                    null,
+                )
+                beforeResume = activity.webView.url
+            }
+
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+
+            scenario.onActivity { activity ->
+                assertEquals(beforeResume, activity.webView.url)
+            }
         }
     }
 

@@ -1,39 +1,48 @@
 import { NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
 import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
+import { getSessionVerification } from "@/lib/auth/dal";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { internalAuthHeaders } from "@/lib/auth/internal-auth-headers";
 import {
-  buildAuthRefreshUrl,
+  buildAuthSessionRecoveryUrl,
   buildLoginUrl,
   parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
 import { createRandomId } from "@/lib/createRandomId";
+import {
+  AuthDependencyError,
+  finalizeSessionResponse,
+} from "@/lib/auth/session-response";
 import { parseWebOriginList } from "@/lib/security/origin";
 import {
   parseCookieHeader,
   readSupabaseSessionCookie,
 } from "@/lib/auth/session-cookie";
 
+function preserve(response: NextResponse): NextResponse {
+  return finalizeSessionResponse(response, { kind: "Preserve" });
+}
+
 export async function GET(req: Request) {
   const requestUrl = new URL(req.url);
   const redirectOrigin = resolveCallbackRedirectOrigin(req);
   const redirectUri = requestUrl.searchParams.get("redirect_uri");
   if (!redirectUri) {
-    return NextResponse.json(
+    return preserve(NextResponse.json(
       { error: { code: "E_INVALID_REQUEST", message: "redirect_uri is required" } },
       { status: 400 }
-    );
+    ));
   }
 
   let redirectUrl: URL;
   try {
     redirectUrl = new URL(redirectUri);
   } catch {
-    return NextResponse.json(
+    return preserve(NextResponse.json(
       { error: { code: "E_INVALID_REQUEST", message: "redirect_uri is invalid" } },
       { status: 400 }
-    );
+    ));
   }
 
   const parsedAllowedOrigins = parseWebOriginList(
@@ -45,32 +54,56 @@ export async function GET(req: Request) {
     redirectUrl.protocol !== "https:" ||
     !allowedOrigins.includes(redirectUrl.origin)
   ) {
-    return NextResponse.json(
+    return preserve(NextResponse.json(
       { error: { code: "E_FORBIDDEN", message: "Extension redirect origin is not allowed" } },
       { status: 403 }
-    );
+    ));
   }
+
+  const returnTarget = parseAuthReturnTarget(
+    `${requestUrl.pathname}${requestUrl.search}`,
+  );
 
   const session = readSupabaseSessionCookie(
     parseCookieHeader(req.headers.get("cookie"))
   );
   if (session.state === "refreshable") {
-    return NextResponse.redirect(
-      buildAuthRefreshUrl(
-        redirectOrigin,
-        parseAuthReturnTarget(`${requestUrl.pathname}${requestUrl.search}`)
-      )
-    );
+    return preserve(NextResponse.redirect(
+      buildAuthSessionRecoveryUrl(redirectOrigin, returnTarget)
+    ));
   }
   if (session.state === "ended" || session.state === "anonymous") {
-    return NextResponse.redirect(
-      buildLoginUrl(
-        redirectOrigin,
-        parseAuthReturnTarget(`${requestUrl.pathname}${requestUrl.search}`)
-      )
-    );
+    return preserve(NextResponse.redirect(
+      buildLoginUrl(redirectOrigin, returnTarget)
+    ));
   }
+
   session.state satisfies "active";
+  let verification: Awaited<ReturnType<typeof getSessionVerification>>;
+  try {
+    verification = await getSessionVerification();
+  } catch (error) {
+    if (!(error instanceof AuthDependencyError)) {
+      throw error;
+    }
+    return preserve(NextResponse.redirect(
+      buildAuthSessionRecoveryUrl(redirectOrigin, returnTarget),
+    ));
+  }
+
+  switch (verification.kind) {
+    case "Verified":
+      break;
+    case "RefreshRequired":
+      return preserve(NextResponse.redirect(
+        buildAuthSessionRecoveryUrl(redirectOrigin, returnTarget),
+      ));
+    case "SessionEnded":
+    case "Anonymous":
+      return preserve(NextResponse.redirect(
+        buildLoginUrl(redirectOrigin, returnTarget),
+      ));
+  }
 
   const requestId = createRandomId();
   const { fastApiBaseUrl } = getEnv().internalApi;
@@ -80,7 +113,7 @@ export async function GET(req: Request) {
       error: "session_failed",
       request_id: requestId,
     }).toString();
-    return NextResponse.redirect(redirectUrl);
+    return preserve(NextResponse.redirect(redirectUrl));
   };
 
   let response: Response;
@@ -116,5 +149,5 @@ export async function GET(req: Request) {
   }
 
   redirectUrl.hash = new URLSearchParams({ token }).toString();
-  return NextResponse.redirect(redirectUrl);
+  return preserve(NextResponse.redirect(redirectUrl));
 }

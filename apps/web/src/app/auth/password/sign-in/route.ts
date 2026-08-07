@@ -4,7 +4,6 @@ import {
   readSameOriginAuthForm,
 } from "@/lib/auth/form-response";
 import { parsePasswordSignInForm } from "@/lib/auth/form-fields";
-import { noStore } from "@/lib/auth/no-store";
 import { signInWithPasswordFlow } from "@/lib/auth/password-flow";
 import {
   buildAuthReturnTargetUrl,
@@ -40,12 +39,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     case "SignedIn": {
       await auth.settlePendingCookieWrites();
       return auth.applyCookies(
-        noStore(
-          NextResponse.redirect(
-            buildAuthReturnTargetUrl(requestForm.origin, target),
-            { status: 303 },
-          ),
-        ),
+        NextResponse.redirect(buildAuthReturnTargetUrl(requestForm.origin, target), {
+          status: 303,
+        }),
       );
     }
     case "InvalidCredentials":

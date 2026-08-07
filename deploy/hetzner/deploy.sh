@@ -514,6 +514,8 @@ jq -e --arg sha "$SOURCE_SHA" 'keys == ["source_sha"] and .source_sha == $sha' \
   "$candidate_version" >/dev/null || die "staged frontend version differs from the candidate SHA"
 require_exact_public_headers "$candidate_headers" "staged frontend version"
 
+timeout --foreground 2m "$ROOT_DIR/deploy/supabase/verify-auth-config.sh"
+
 if [ "$status" = "new" ] || [ "$phase" != "FrontendPromoted" ]; then
   timeout --foreground 66m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
     timeout --foreground 65m sudo env PYTHONDONTWRITEBYTECODE=1 \
@@ -609,6 +611,23 @@ require_exact_public_headers "$production_headers" "authoritative frontend versi
 jq -e --arg sha "$SOURCE_SHA" 'keys == ["source_sha"] and .source_sha == $sha' \
   "$production_version" >/dev/null || \
   die "authoritative frontend does not serve the exact candidate SHA"
+
+auth_api_url="$(awk -F= '$1 == "FASTAPI_BASE_URL" {print $2; exit}' "${ROOT_DIR}/deploy/env/env-prod-frontend")"
+auth_supabase_url="$(awk -F= '$1 == "NEXT_PUBLIC_SUPABASE_URL" {print $2; exit}' "${ROOT_DIR}/deploy/env/env-prod-frontend")"
+[ -n "$auth_api_url" ] || die "FASTAPI_BASE_URL is required for post-alias auth smoke"
+[ -n "$auth_supabase_url" ] || die "NEXT_PUBLIC_SUPABASE_URL is required for post-alias auth smoke"
+if ! timeout --foreground 4m "$ROOT_DIR/deploy/smoke/auth-smoke.sh" \
+  --app-url "https://${PRODUCTION_HOST}" \
+  --api-url "$auth_api_url" \
+  --supabase-url "$auth_supabase_url"; then
+  timeout --foreground 16m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    timeout --foreground 15m sudo env PYTHONDONTWRITEBYTECODE=1 \
+    "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+    python3 -B "$REMOTE_CONTROLLER" fail-bound-frontend \
+      --source-sha "$SOURCE_SHA" \
+      --deployment-id "$bound_deployment_id"
+  die "post-alias auth smoke failed; release was settled for forward fix"
+fi
 
 timeout --foreground 16m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
   timeout --foreground 15m sudo env PYTHONDONTWRITEBYTECODE=1 \

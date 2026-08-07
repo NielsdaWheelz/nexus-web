@@ -255,16 +255,21 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
 2. **Next middleware** (`middleware.ts` → `lib/supabase/middleware.ts`) attaches a
    per-request CSP nonce and classifies the Supabase session cookie _without any
    network I/O_ into `active | refreshable | ended | anonymous`. `/api/*` is
-   passed straight through — the proxy owns its own auth.
+   passed straight through — the proxy owns its own auth. Protected page and
+   mutation responses are private and uncacheable; middleware never performs a
+   refresh or redirects a non-GET request.
 3. The `/api/*` **route handler** is a one-liner: `return proxyToFastAPI(req, "<path>")`.
 4. **`proxyToFastAPI`** (`lib/api/proxy.ts`) does the real work: enforces a CSRF
-   Origin check on mutations; reads the session cookie and turns it into a bearer
-   (inline-refreshing a `refreshable` cookie); forwards an allow-listed set of
+   Origin check on mutations; resolves a refreshable session before consuming a
+   request body and turns it into a bearer; forwards an allow-listed set of
    headers plus `Authorization: Bearer <supabase access token>`,
    `X-Nexus-Internal: <secret>`, and `X-Request-ID`; applies a 30s timeout;
    strips internal/`set-cookie`/auth headers off the response; and streams an
    authenticated upstream body without first materializing it in the BFF. The
-   browser never sees the bearer or the internal secret.
+   browser never sees the bearer or the internal secret. Session resolution
+   returns terminal `401`, dependency `503`, or defect `500`; only terminal
+   outcomes clear cookies. The shared response finalizer owns all cookie effects
+   and canonical `private, no-store` headers, including downstream failures.
 5. **FastAPI** receives the request through its middleware stack — executed in this
    order (`python/nexus/app.py`): RequestID → StreamCORS → RequestDbSession →
    **Auth** → route. `AuthMiddleware` (`auth/middleware.py`) verifies the JWT via
@@ -1732,7 +1737,11 @@ WebView. App Links are backed by
 signing cert at build time). The web app detects the shell via a `NexusAndroidShell`
 UA token for presentation adaptation only. Each exact capability handshake,
 never the UA, is capability truth and the UA never authorizes browser-player
-fallback.
+fallback. Native BFF requests install every `Set-Cookie` value with an
+acknowledged `CookieManager.setCookie` callback and flush only after all
+acknowledgements. A main-frame redirect loop enters
+`/auth/session/recover` once; a second loop shows one native Retry surface and
+never clears WebView data or cookies. `onResume()` is lifecycle-only.
 
 **Browser extension** (`apps/extension`): a Manifest V3 capture tool. It connects
 via `launchWebAuthFlow` against `/extension/connect/start`, obtains a revocable

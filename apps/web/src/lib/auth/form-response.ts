@@ -2,7 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
-import { noStore } from "@/lib/auth/no-store";
+import { finalizeSessionResponse } from "@/lib/auth/session-response";
 import type {
   PasswordRecoveryOutcome,
   PasswordSignInOutcome,
@@ -26,7 +26,10 @@ export function authFormFailure(input: {
   body: AuthFormFailure;
   status: 400 | 401 | 403 | 429 | 503;
 }): NextResponse {
-  return noStore(NextResponse.json(input.body, { status: input.status }));
+  return finalizeSessionResponse(
+    NextResponse.json(input.body, { status: input.status }),
+    { kind: "Preserve" },
+  );
 }
 
 export async function readSameOriginAuthForm(

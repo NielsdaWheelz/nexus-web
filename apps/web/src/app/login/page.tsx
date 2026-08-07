@@ -1,5 +1,4 @@
 import { cookies, headers } from "next/headers";
-import { redirect } from "next/navigation";
 import { type FeedbackContent } from "@/components/feedback/Feedback";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
 import {
@@ -11,7 +10,6 @@ import {
   readPublicAuthFeedback,
   SESSION_ENDED_MESSAGE,
 } from "@/lib/auth/messages";
-import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
 import LoginPageClient from "./LoginPageClient";
 
 interface LoginPageProps {
@@ -48,12 +46,6 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const nextPath = parseAuthReturnTarget(getFirstSearchParamValue(params.next));
 
   const cookieStore = await cookies();
-  const requestCookies = cookieStore.getAll();
-  const session = readSupabaseSessionCookie(requestCookies);
-  if (session.state === "active") {
-    redirect(nextPath);
-  }
-
   const sessionEndedFeedbackCookie =
     cookieStore.get(AUTH_ENDED_FEEDBACK_COOKIE)?.value === "1";
   const initialFeedback = toInitialFeedback(
