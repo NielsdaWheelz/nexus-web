@@ -21,7 +21,7 @@
 
 Status: IMPLEMENTED — 2026-07-27 (source cutover complete and focus-verified;
 the production preflight, production-fixture query-plan comparison, and the
-backend-first Hetzner/Vercel release in §Production Release remain release-time
+immutable production release in §Production Release remain release-time
 operational steps)
 
 Verification record — 2026-07-27:
@@ -54,7 +54,6 @@ Governing contracts:
 - `docs/modules/library.md`
 - `docs/cutovers/{default-library-virtualization-and-transient-state-pruning,library-sorting,library-entry-view-continuity,library-placement-resource-action}-hard-cutover.md`
 - `deployment.md`
-- `deploy/hetzner/README.md`
 
 Normative copy superseded here:
 
@@ -109,7 +108,7 @@ In scope:
   constellation labels. This is an identity-alias correction, not a subsystem
   redesign.
 - Removal of superseded product copy and old Library view/cursor shapes.
-- Query-plan evidence and backend-first production release/rollback gates.
+- Query-plan evidence and feature smokes consumed by the immutable release.
 
 Out of scope:
 
@@ -656,30 +655,11 @@ No migration, schema DTO, new route, generic component, or dependency is added.
 
 ## Production Release
 
-This is one source cutover with an explicit backend-first rollout:
-
-1. Record the previous Hetzner SHA and READY Vercel deployment; build the release
-   SHA and open a short Library maintenance window. No old Library pane may
-   paginate during the incompatible backend/web interval.
-2. Run reserved-name preflight and the query-plan gate. Stop on either failure.
-3. Publish the release SHA on a non-production ref and deploy that exact SHA to
-   Hetzner while the old Vercel web remains otherwise live.
-4. Require `/health`, cursor-free canonical listing, all three new projections,
-   authenticated v2 continuation, invalid-cursor, and mutation-readback smokes.
-5. Fast-forward `main` to the same SHA; wait for its Vercel production deployment
-   to report READY and the exact revision.
-6. Hard-reload the browser, then smoke All → Unfiled → placement reconciliation
-   and All/named In Progress. End the maintenance window.
-
-An already-loaded old bundle cannot render the new recovery and must not be used
-during the window. After the hard reload, any invalid or deployment-era cursor
-gets the explicit recovery above. The backend has no v1 decoder.
-
-If Hetzner fails before step 5, restore only the previous Hetzner SHA. After the
-web release, rollback Vercel to the recorded deployment **first**, smoke initial
-Library reads, then restore the previous Hetzner SHA, hard-reload to discard v2
-cursors, and smoke again. Never roll back the backend first while the new web can
-emit projections.
+Release only through the immutable protocol in [deployment.md](../../deployment.md).
+The reserved-name, query-plan, canonical-listing, projection, continuation,
+invalid-cursor, mutation-readback, and browser checks defined here are
+feature-specific verification only. They never stage, order, promote, roll back,
+or otherwise orchestrate production.
 
 ## Implementation Order
 
@@ -693,7 +673,7 @@ emit projections.
    bind first-page adoption to exact view plus both revisions.
 7. Close accessibility, focus, stale-cursor recovery, E2E, docs, plan, residue,
    and release gates.
-8. Land one coherent source cutover and execute the backend-first release.
+8. Land one coherent source cutover through [deployment.md](../../deployment.md).
 
 ## Acceptance Criteria
 
@@ -740,8 +720,8 @@ emit projections.
     worker, new endpoint, fallback, compatibility shim, or speculative index
     exists.
 17. Focused backend integration, frontend codec/component/browser, one
-    authenticated real-stack Library journey, and the backend-first
-    release/rollback smokes pass.
+    authenticated real-stack Library journey, and immutable-release
+    feature smokes pass.
 
 ## Focused Verification
 

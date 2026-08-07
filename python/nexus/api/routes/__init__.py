@@ -21,7 +21,6 @@ from nexus.api.routes.conversation_shares import router as conversation_shares_r
 from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.dossiers import router as dossiers_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
-from nexus.api.routes.health import router as health_router
 from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.internal_ingest import router as internal_ingest_router
 from nexus.api.routes.lectern import router as lectern_router
@@ -34,6 +33,7 @@ from nexus.api.routes.media_assets import router as media_assets_router
 from nexus.api.routes.media_ingest import router as media_ingest_router
 from nexus.api.routes.messages import router as messages_router
 from nexus.api.routes.notes import router as notes_router
+from nexus.api.routes.operational import router as operational_router
 from nexus.api.routes.oracle import router as oracle_router
 from nexus.api.routes.podcast_transcripts import router as podcast_transcripts_router
 from nexus.api.routes.podcasts import router as podcasts_router
@@ -60,7 +60,7 @@ def create_api_router() -> APIRouter:
         Configured APIRouter with all routes registered.
     """
     api_router = APIRouter()
-    api_router.include_router(health_router)
+    api_router.include_router(operational_router)
     api_router.include_router(me_router)
     api_router.include_router(telemetry_router)
     api_router.include_router(extension_sessions_router)

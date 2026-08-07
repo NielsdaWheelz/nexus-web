@@ -29,6 +29,10 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         "durable-job-replay",
         "database-object-convergence",
         "llm-tool-safety",
+        "immutable-production-release",
+        "production-runtime-health",
+        "oracle-publication",
+        "production-release-test-control",
         "native-release-auth-handoff",
         "native-system-insets",
     }
@@ -51,6 +55,24 @@ def test_confidence_keeps_real_stack_affected_and_skips_build_and_journeys() -> 
     assert Capability.BUNDLE not in by_capability
     assert Capability.JOURNEYS_CRITICAL not in by_capability
     assert Capability.JOURNEYS_ALL not in by_capability
+
+
+def test_static_platform_is_changed_scoped_then_complete_in_every_fast_gate() -> None:
+    assert {
+        requirement.capability: requirement.scope
+        for requirement in WORKFLOW_REGISTRY[Workflow.CHANGED].requirements
+    }[Capability.STATIC_PLATFORM] is SelectionScope.CHANGED
+    for workflow in (
+        Workflow.CONFIDENCE,
+        Workflow.PR,
+        Workflow.FULL,
+        Workflow.NIGHTLY,
+        Workflow.RELEASE,
+    ):
+        assert {
+            requirement.capability: requirement.scope
+            for requirement in WORKFLOW_REGISTRY[workflow].requirements
+        }[Capability.STATIC_PLATFORM] is SelectionScope.COMPLETE
 
 
 def test_changed_owns_only_directly_affected_edit_loop_proofs() -> None:

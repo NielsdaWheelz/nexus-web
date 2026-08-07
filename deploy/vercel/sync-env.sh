@@ -2,9 +2,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ROOT_DIR
 
-VERCEL_PROJECT_DIR="${VERCEL_PROJECT_DIR:-${ROOT_DIR}/apps/web}"
-VERCEL_ENVIRONMENT="${VERCEL_ENVIRONMENT:-production}"
+readonly VERCEL_PROJECT_DIR="${ROOT_DIR}/apps/web"
+readonly VERCEL_PROJECT_FILE="${VERCEL_PROJECT_DIR}/.vercel/project.json"
+readonly VERCEL_CLI="${VERCEL_PROJECT_DIR}/node_modules/.bin/vercel"
+readonly VERCEL_ENVIRONMENT="production"
+readonly VERCEL_PROJECT_NAME="nexus-web"
+readonly VERCEL_PROJECT_ID="prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs"
+readonly VERCEL_TEAM_ID="team_fKVvTyTsMBQ7qFjccFO17BJL"
+readonly VERCEL_SCOPE="niels-erik-nandals-projects"
 SHARED_ENV="${NEXUS_SHARED_ENV:-${ROOT_DIR}/deploy/env/env-prod}"
 FRONTEND_ENV="${NEXUS_FRONTEND_ENV:-${ROOT_DIR}/deploy/env/env-prod-frontend}"
 
@@ -77,6 +84,11 @@ die() {
   exit 1
 }
 
+vercel_cmd() {
+  timeout --foreground 2m "$VERCEL_CLI" "$@" \
+    --cwd "$VERCEL_PROJECT_DIR" --scope "$VERCEL_SCOPE" --non-interactive
+}
+
 env_value() {
   awk -v wanted="$1" '
     /^[[:space:]]*(#|$)/ { next }
@@ -97,6 +109,20 @@ env_value() {
       exit 1
     }
   ' "$2"
+}
+
+require_duplicate_free_env() {
+  local file="$1"
+
+  awk '
+    /^[[:space:]]*(#|$)/ { next }
+    index($0, "=") == 0 { exit 2 }
+    {
+      key = substr($0, 1, index($0, "=") - 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+      if (key !~ /^[A-Z][A-Z0-9_]*$/ || seen[key]++) { exit 3 }
+    }
+  ' "$file" || die "production env must contain only valid, globally unique keys"
 }
 
 normalize_env_value() {
@@ -285,7 +311,7 @@ remove_forbidden_vercel_keys() {
   local key
 
   for key in $FORBIDDEN_VERCEL_ENV_KEYS; do
-    if vercel env rm "$key" "$VERCEL_ENVIRONMENT" --yes >/dev/null 2>&1; then
+    if vercel_cmd env rm "$key" "$VERCEL_ENVIRONMENT" --yes >/dev/null 2>&1; then
       echo "removed forbidden ${key} from Vercel ${VERCEL_ENVIRONMENT}"
     else
       echo "confirmed forbidden ${key} is absent from Vercel ${VERCEL_ENVIRONMENT}"
@@ -315,6 +341,10 @@ verify_pulled_vercel_env() {
   for key in $OPTIONAL_READABLE_VERCEL_ENV_KEYS; do
     expected="$(normalize_env_value "$(env_value "$key" "$expected_file" || true)")"
     if is_blank "$expected"; then
+      if actual="$(env_value "$key" "$pulled_file")" && \
+        ! is_blank "$(normalize_env_value "$actual")"; then
+        die "Vercel ${VERCEL_ENVIRONMENT} env verification failed: stale optional ${key} remains"
+      fi
       continue
     fi
     if ! actual="$(env_value "$key" "$pulled_file")" || is_blank "$(normalize_env_value "$actual")"; then
@@ -335,8 +365,55 @@ verify_pulled_vercel_env() {
   echo "verified required Vercel ${VERCEL_ENVIRONMENT} env keys after pull"
 }
 
-command -v vercel >/dev/null 2>&1 || die "vercel CLI is not installed"
+require_vercel_project_policy() {
+  local api_config="$1"
+  local response="$2"
+  local status
+
+  if ! status="$(curl \
+    --silent \
+    --show-error \
+    --max-time 15 \
+    --max-filesize 1048576 \
+    --proto '=https' \
+    --tlsv1.2 \
+    --config "$api_config" \
+    --output "$response" \
+    --write-out '%{http_code}' \
+    "https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}?teamId=${VERCEL_TEAM_ID}")"; then
+    die "Vercel project policy inspection failed"
+  fi
+  [ "$status" = 200 ] || die "Vercel project policy inspection returned HTTP ${status}"
+  jq -e \
+    --arg id "$VERCEL_PROJECT_ID" \
+    --arg name "$VERCEL_PROJECT_NAME" \
+    --arg team "$VERCEL_TEAM_ID" '
+    .id == $id
+    and .name == $name
+    and .accountId == $team
+    and .autoAssignCustomDomains == false
+    and .autoExposeSystemEnvs == true
+  ' "$response" >/dev/null || die "Vercel project identity or build policy disagrees"
+}
+
+command -v jq >/dev/null 2>&1 || die "jq is not installed locally"
 command -v python3 >/dev/null 2>&1 || die "python3 is not installed locally"
+command -v timeout >/dev/null 2>&1 || die "timeout is not installed locally"
+command -v curl >/dev/null 2>&1 || die "curl is not installed locally"
+[ -x "$VERCEL_CLI" ] || die "run the locked apps/web dependency install first"
+[ -n "${VERCEL_TOKEN:-}" ] || die "VERCEL_TOKEN is required"
+[[ "$VERCEL_TOKEN" =~ ^[A-Za-z0-9._-]+$ ]] || die "VERCEL_TOKEN is malformed"
+[ -f "$VERCEL_PROJECT_FILE" ] || die "the exact production Vercel project is not linked"
+jq -e \
+  --arg id "$VERCEL_PROJECT_ID" \
+  --arg org "$VERCEL_TEAM_ID" \
+  --arg name "$VERCEL_PROJECT_NAME" '
+  keys == ["orgId", "projectId", "projectName"]
+  and .projectId == $id
+  and .orgId == $org
+  and .projectName == $name
+' "$VERCEL_PROJECT_FILE" >/dev/null || \
+  die "linked Vercel project disagrees with committed production identity"
 for file in "$SHARED_ENV" "$FRONTEND_ENV"; do
   [ -f "$file" ] || die "missing env file: $file"
 done
@@ -345,7 +422,10 @@ reject_frontend_only_keys_from_shared_env "$SHARED_ENV"
 
 tmp_file="$(mktemp)"
 verify_file="$(mktemp)"
-trap 'rm -f "$tmp_file" "$verify_file"' EXIT
+project_file="$(mktemp)"
+vercel_api_config="$(mktemp)"
+trap 'rm -f "$tmp_file" "$verify_file" "$project_file" "$vercel_api_config"' EXIT
+printf 'header = "Authorization: Bearer %s"\n' "$VERCEL_TOKEN" >"$vercel_api_config"
 
 {
   cat "$SHARED_ENV"
@@ -357,12 +437,14 @@ if grep -Ev '^[[:space:]]*#' "$tmp_file" | grep -Eq '[<>]|example\.com|=changeme
   die "env files still contain placeholder values"
 fi
 
+require_duplicate_free_env "$tmp_file"
 require_non_empty_keys "$tmp_file"
 require_prod_env "$tmp_file"
 require_cloudflare_r2_s3_api_origin "$tmp_file"
 require_auth_origin_contract "$tmp_file"
 require_server_action_allowed_origins "$tmp_file"
 reject_backend_runtime_keys "$tmp_file"
+require_vercel_project_policy "$vercel_api_config" "$project_file"
 
 cd "$VERCEL_PROJECT_DIR"
 
@@ -380,19 +462,21 @@ while IFS= read -r line || [ -n "$line" ]; do
     continue
   fi
 
-  vercel env rm "$key" "$VERCEL_ENVIRONMENT" --yes >/dev/null 2>&1 || true
+  vercel_cmd env rm "$key" "$VERCEL_ENVIRONMENT" --yes >/dev/null 2>&1 || true
   if [ -z "$value" ]; then
     echo "removed ${key} from Vercel ${VERCEL_ENVIRONMENT}"
     continue
   fi
 
   if is_sensitive_vercel_key "$key"; then
-    printf "%s\n" "$value" | vercel env add "$key" "$VERCEL_ENVIRONMENT" --yes >/dev/null
+    printf "%s\n" "$value" | \
+      vercel_cmd env add "$key" "$VERCEL_ENVIRONMENT" --yes >/dev/null
   else
-    printf "%s\n" "$value" | vercel env add "$key" "$VERCEL_ENVIRONMENT" --no-sensitive --yes >/dev/null
+    printf "%s\n" "$value" | \
+      vercel_cmd env add "$key" "$VERCEL_ENVIRONMENT" --no-sensitive --yes >/dev/null
   fi
   echo "synced ${key} -> Vercel ${VERCEL_ENVIRONMENT}"
 done <"$tmp_file"
 
-vercel env pull "$verify_file" --environment "$VERCEL_ENVIRONMENT" --yes >/dev/null
+vercel_cmd env pull "$verify_file" --environment "$VERCEL_ENVIRONMENT" --yes >/dev/null
 verify_pulled_vercel_env "$tmp_file" "$verify_file"

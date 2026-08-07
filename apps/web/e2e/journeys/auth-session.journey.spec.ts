@@ -132,6 +132,15 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
   );
   expect(uninvitedEmail).not.toBe(journeyInvite.email);
   const app = pageRequest(page, webOrigin);
+  const version = await app.get("/version");
+  expect(version.status()).toBe(200);
+  expect(version.url()).toBe(`${webOrigin}/version`);
+  expect(version.headers()["cache-control"]).toContain("no-store");
+  expect(version.headers()).not.toHaveProperty("location");
+  expect(version.headers()).not.toHaveProperty("set-cookie");
+  const versionBody = (await version.json()) as Record<string, unknown>;
+  expect(Object.keys(versionBody)).toEqual(["source_sha"]);
+  expect(versionBody.source_sha).toMatch(/^[0-9a-f]{40}$/);
   const supabase = pageRequest(page, supabaseOrigin);
   const deniedSignup = await supabase.post("/auth/v1/signup", {
     data: {

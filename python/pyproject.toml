@@ -82,6 +82,7 @@ quote-style = "double"
 [tool.pyright]
 typeCheckingMode = "standard"
 pythonVersion = "3.12"
+extraPaths = [".."]
 include = [
     "nexus/api",
     "nexus/db",

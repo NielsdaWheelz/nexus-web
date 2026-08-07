@@ -1,7 +1,7 @@
 # Nexus Development Makefile
 # Run `make help` for available commands.
 
-.PHONY: help setup dev down logs clean api web worker-interactive worker-background \
+.PHONY: help setup dev down logs clean api web worker-interactive worker-background local-runtime-identity \
 	migrate migrate-down seed format format-back fix-front build build-android \
 	build-android-release build-icons generate-resource-capabilities \
 	smoke smoke-auth
@@ -24,6 +24,7 @@ STREAM_CORS_ORIGINS ?= http://localhost:$(WEB_PORT),http://localhost:3000,http:/
 POSTGRES_PORT ?= 54320
 MINIO_PORT ?= 9000
 LOCAL_COMPOSE_PROJECT ?= nexus-local
+LOCAL_RUNTIME_IDENTITY := $(abspath .nexus-local/runtime-identity.json)
 
 DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:$(POSTGRES_PORT)/postgres
 R2_S3_API_ORIGIN ?= http://127.0.0.1:$(MINIO_PORT)
@@ -147,8 +148,16 @@ logs:
 clean:
 	./scripts/agency_archive.sh
 
-api:
+local-runtime-identity:
+	@mkdir -p $(dir $(LOCAL_RUNTIME_IDENTITY))
+	@temporary="$(LOCAL_RUNTIME_IDENTITY).partial"; \
+		PYTHONPATH=python uv run --project python --frozen --no-sync python -m nexus.release_artifact \
+			write-runtime-identity --repo-root . --source-sha "$$(git rev-parse HEAD)" --output "$$temporary"; \
+		mv "$$temporary" "$(LOCAL_RUNTIME_IDENTITY)"
+
+api: local-runtime-identity
 	cd apps/api && PYTHONPATH=$$PWD/../../python DATABASE_URL=$(DATABASE_URL) \
+		NEXUS_RUNTIME_IDENTITY_FILE=$(LOCAL_RUNTIME_IDENTITY) \
 		SUPABASE_AUTH_ADMIN_KEY= \
 		STREAM_BASE_URL=$(STREAM_BASE_URL) \
 		STREAM_CORS_ORIGINS=$(STREAM_CORS_ORIGINS) \
@@ -156,6 +165,7 @@ api:
 
 web:
 	cd apps/web && \
+		VERCEL_GIT_COMMIT_SHA="$$(git -C ../.. rev-parse HEAD)" \
 		FASTAPI_BASE_URL=http://localhost:$(API_PORT) \
 		NEXUS_ENV=$${NEXUS_ENV:-local} \
 		NEXT_PUBLIC_SUPABASE_URL=$${NEXT_PUBLIC_SUPABASE_URL:-$(SUPABASE_URL)} \
@@ -163,14 +173,16 @@ web:
 		AUTH_ALLOWED_REDIRECT_ORIGINS=$${AUTH_ALLOWED_REDIRECT_ORIGINS:-$(AUTH_ALLOWED_REDIRECT_ORIGINS)} \
 		bun run dev
 
-worker-interactive:
+worker-interactive: local-runtime-identity
 	cd python && PYTHONPATH=$$PWD:$$PWD/.. DATABASE_URL=$(DATABASE_URL) \
+		NEXUS_RUNTIME_IDENTITY_FILE=$(LOCAL_RUNTIME_IDENTITY) \
 		WORKER_LANE=interactive DATABASE_STATEMENT_TIMEOUT_MS=300000 \
 		SUPABASE_AUTH_ADMIN_KEY= \
 		uv run python -m apps.worker.main
 
-worker-background:
+worker-background: local-runtime-identity
 	cd python && PYTHONPATH=$$PWD:$$PWD/.. DATABASE_URL=$(DATABASE_URL) \
+		NEXUS_RUNTIME_IDENTITY_FILE=$(LOCAL_RUNTIME_IDENTITY) \
 		WORKER_LANE=background DATABASE_STATEMENT_TIMEOUT_MS=300000 \
 		SUPABASE_AUTH_ADMIN_KEY= \
 		uv run python -m apps.worker.main

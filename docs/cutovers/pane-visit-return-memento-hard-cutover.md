@@ -534,23 +534,10 @@ The web BFF exact-decodes PUT before proxying:
 
 ## Production Release Gate
 
-Vercel and Hetzner are not atomic. This hard cut uses one explicit maintenance
-window:
-
-1. Stop the Hetzner API before merging/pushing `main`; keep it stopped so no
-   workspace GET/PUT writer can race the cutover.
-2. Land the branch and wait for the strict Vercel deployment to be Ready.
-3. With the API still stopped, verify the deployment identity and verify an old
-   href-only PUT is rejected by the BFF with exact `400
-   E_INVALID_WORKSPACE_STATE` before proxying.
-4. Deploy Hetzner, run the one-way session purge while API/worker are stopped,
-   then start the services.
-5. Smoke: absent session creates a fresh visit-shaped workspace; exact PUT then
-   GET round-trips it; malformed PUT remains `400`.
-6. End maintenance only after those checks pass.
-
-Do not purge before writer quiescence, restart the opaque backend before the
-strict BFF is live, or rely on “one branch” as deployment ordering.
+Release only through the immutable protocol in [deployment.md](../../deployment.md).
+The old-state rejection, session-purge, fresh-bootstrap, and exact PUT/GET checks
+defined here are feature-specific verification only. They never stage, order,
+promote, roll back, or otherwise orchestrate production.
 
 ## Files
 
@@ -610,7 +597,8 @@ Docs and tests:
 - `docs/modules/workspace.md`
 - `docs/architecture.md`
 - `deployment.md`
-- `deploy/hetzner/deploy.sh` only if needed to expose the stopped-service gate;
+- immutable release verification consumes the feature checks; this cutover does
+  not modify release orchestration;
 - adjacent schema, restore, store, runtime, route-model, PaneShell,
   WorkspaceHost, PaneRouteBoundary, paneRenderRegistry, CollectionView,
   web-BFF PUT, and seven route-controller tests;

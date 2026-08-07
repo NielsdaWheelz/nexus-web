@@ -1,11 +1,13 @@
-# FastAPI/Caddy env for the Hetzner VPS.
-# Merged after env-prod, so values here can override shared defaults.
+# FastAPI/Caddy env for the Hetzner VPS. Keys must be globally unique across
+# the shared, backend, and worker files; production config has no override order.
 
 # Caddy
+CADDY_IMAGE=<current-production-caddy-image>@sha256:<64-lowercase-hex>
 CADDY_SITE=api.example.com
 CADDY_ACME_EMAIL=you@example.com
 
 # Hetzner Postgres. The Compose stack injects this same host/DB into API and worker.
+POSTGRES_IMAGE=<current-production-postgres-image>@sha256:<64-lowercase-hex>
 POSTGRES_USER=nexus
 POSTGRES_PASSWORD=<generate-a-long-random-password>
 POSTGRES_DB=nexus
@@ -14,14 +16,14 @@ DATABASE_POOL_SIZE=5
 DATABASE_MAX_OVERFLOW=5
 DATABASE_POOL_TIMEOUT_SECONDS=30
 
-# Cloudflare R2. No Supabase Storage fallback exists after cutover.
+# Cloudflare R2 is the sole production object store.
 R2_ACCESS_KEY_ID=<r2-access-key-id>
 R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
 R2_BUCKET=media
 # R2_REGION=auto
 
-# Production Oracle Corpus system library owner. The deploy script fails closed
-# if this is unset because corpus media must be seeded before API/worker start.
+# Production Oracle Corpus system library owner. Independent Oracle reconcile
+# binds this owner to the current release; application deploy never seeds Oracle.
 NEXUS_ORACLE_CORPUS_OWNER_USER_ID=<prod-user-uuid>
 
 # Generate with:

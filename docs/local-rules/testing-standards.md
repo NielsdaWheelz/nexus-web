@@ -428,7 +428,7 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
-<!-- nexus-test-routing-sha256: 7a693675984885346af3f7e43755a733ba060b7c3ab161b83d590420f86f2705 -->
+<!-- nexus-test-routing-sha256: 5109c55f6ea0aeb9ce49d501cd530255edd76bfc1ffd421a7a4795a61ee85822 -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and

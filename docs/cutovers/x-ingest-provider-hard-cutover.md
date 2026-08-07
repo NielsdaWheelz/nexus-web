@@ -570,7 +570,6 @@ Database and deploy:
 - `deploy/env/env-prod-worker.example`
 - `deploy/hetzner/sync-env.sh`
 - `deploy/vercel/sync-env.sh`
-- `deploy/hetzner/README.md`
 - `deployment.md`
 
 Frontend:

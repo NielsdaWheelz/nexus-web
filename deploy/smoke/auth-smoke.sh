@@ -343,7 +343,7 @@ else
 fi
 
 # The API health endpoint returns 200.
-status="$(http_status "${API_URL}/health")"
+status="$(http_status "${API_URL}/readyz")"
 if [ "$status" = "200" ]; then
   pass "API health endpoint returns 200"
 else

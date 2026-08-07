@@ -61,6 +61,7 @@ from nexus.auth.verifier import SupabaseJwksVerifier
 from nexus.config import Environment, get_settings
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.jobs.registry import get_task_contract_digest
 from nexus.logging import get_logger
 from nexus.middleware.db_session import RequestDbSessionMiddleware
 from nexus.middleware.request_id import RequestIDMiddleware
@@ -75,6 +76,7 @@ from nexus.responses import (
     http_exception_handler,
     unhandled_exception_handler,
 )
+from nexus.runtime_health import get_runtime_identity
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.llm_profiles import validate_profiles
 from nexus.services.provider_http import provider_request_event_hooks
@@ -176,6 +178,8 @@ async def lifespan(app: FastAPI):
     - Cleans up on shutdown
     """
     settings = get_settings()
+    get_runtime_identity()
+    get_task_contract_digest()
 
     validate_profiles()
 

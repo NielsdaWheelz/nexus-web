@@ -59,7 +59,7 @@ MAINTENANCE_JOB_KINDS: tuple[str, ...] = (
     "prune_background_jobs_job",
     "purge_expired_auth_handoff_codes",
 )
-ORACLE_SEED_WORKER_JOB_KINDS: tuple[str, ...] = (
+ORACLE_RECONCILE_JOB_KINDS: tuple[str, ...] = (
     "ingest_media_source",
     "media_content_reindex_job",
 )

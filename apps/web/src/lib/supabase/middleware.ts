@@ -35,6 +35,7 @@ const PUBLIC_ROUTES = new Set([
   "/.well-known/assetlinks.json",
   "/privacy",
   "/terms",
+  "/version",
   "/auth/callback",
   "/auth/confirm/invite",
   "/auth/confirm/recovery",

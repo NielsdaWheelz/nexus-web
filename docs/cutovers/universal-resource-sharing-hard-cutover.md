@@ -1256,7 +1256,6 @@ Threat model and honest limits:
   EPUB, PDF, and transcript wrappers
 - `deploy/vercel/firewall/resource-sharing.json`
 - `deploy/vercel/sync-resource-sharing-firewall.sh`
-- `deploy/smoke/resource-sharing-cutover.sh`
 - one real-stack multi-user/public-link Playwright flow
 
 ### Modify / centralize
@@ -1264,7 +1263,7 @@ Threat model and honest limits:
 - `python/nexus/db/models.py`
 - `python/nexus/auth/{middleware,permissions}.py`
 - `python/nexus/api/routes/__init__.py`
-- `python/nexus/api/routes/health.py` for the deployed revision
+- `python/nexus/api/routes/operational.py` for deployed identity/readiness
 - `python/nexus/api/routes/{highlights,libraries,media,users}.py`
 - `python/nexus/schemas/{highlights,library,user}.py`
 - `python/nexus/services/{users,highlights,highlight_access,library_entries,library_governance,library_invitations,media_deletion}.py`
@@ -1302,8 +1301,8 @@ Threat model and honest limits:
   `PodcastsPaneBody.tsx`
 - `apps/web/src/lib/libraries/governance.ts` and touched
   `/app/api/{users,libraries}/**` BFF routes
-- `deploy/hetzner/{deploy.sh,docker-compose.yml,README.md}` for pinned revision
-  reporting and gated choreography
+- `deploy/hetzner/docker-compose.yml` for topology; release choreography remains
+  solely owned by [deployment.md](../../deployment.md)
 - `docs/architecture.md`, new `docs/modules/resource-sharing.md`, and
   `docs/modules/library.md`; keep `docs/modules/sharing.md` narrowly owned by
   inbound Android/browser capture
@@ -1348,52 +1347,11 @@ No slice ships independently.
 
 ### 12.1 Production hard-cut choreography
 
-“No mixed versions” means no mixed contract is reachable by user traffic; it
-does not pretend independently hosted processes switch atomically. The release
-pins one clean Git commit as `CUTOVER_SHA`.
-
-Before pushing/deploying that commit, the operator:
-
-1. applies the temporary checked-in Vercel maintenance rule to the production
-   app, with only the release-smoke source excluded from that maintenance rule;
-2. verifies ordinary production requests are gated;
-3. stops the Hetzner API and worker so no old writer remains;
-4. takes and verifies a PostgreSQL backup after writers have stopped; and
-5. applies/read-backs the permanent public rate-limit desired state in §10.
-
-While the gate is closed:
-
-1. push `CUTOVER_SHA` and wait for the Git-triggered Vercel production
-   deployment metadata to report that exact commit;
-2. run `deploy/hetzner/deploy.sh` from a clean checkout whose
-   `HEAD == CUTOVER_SHA`; the deploy records that revision, migrates through
-   the sharing migration `0191` and final repository head `0192`, then starts
-   API and worker from the same revision;
-3. combine two evidence tiers: local real-stack E2E proves authenticated
-   API/BFF share contracts and sealed identities; the deployed typed operator
-   fixture proves entitlement, authority, projection readiness, public-BFF
-   ambient-authority independence, anonymous projection/range reads, and
-   revocation without requiring a production user session. Also verify
-   API/worker/Vercel revision and the 121-request WAF smoke from the release
-   source; the maintenance exception never bypasses the permanent rate-limit
-   rule; and
-4. keep the gate closed until that source enters a fresh, verified 60-second
-   WAF window and an anonymous probe reaches the app; and
-5. record `CUTOVER_SHA`, migration head, Vercel deployment ID, backend image
-   revision, firewall configuration version, smoke results, and opening time.
-
-Only then is the temporary maintenance rule removed. The operator immediately
-repeats the deployed typed-fixture create/public-read/revoke smoke through the
-ordinary production path and verifies the unique test token is absent from
-Nexus-controlled request targets/logs.
-
-If any check fails before opening, keep the gate closed, stop new services,
-restore the verified backup if schema/data rollback is required, redeploy the
-previous matching web/API/worker revision, and verify it before opening. After
-opening, reapply the gate and stop writers, then forward-fix. Restoring the
-pre-cutover database after user writes is disaster recovery requiring an
-explicit data-loss decision, not the routine rollback path. Never run previous
-code against an unknown `0192` database state.
+Release only through the immutable protocol in [deployment.md](../../deployment.md).
+The permanent rate-limit, entitlement, authority, projection, anonymous-read,
+revocation, and token-absence checks defined here are feature-specific
+verification only. They never gate traffic, stage, order, promote, roll back, or
+otherwise orchestrate production.
 
 ## 13. Verification contract
 
@@ -1454,7 +1412,7 @@ Expected focused command shape after the named tests exist:
 ```bash
 (cd python && uv run ruff check \
   nexus/auth/middleware.py nexus/auth/permissions.py \
-  nexus/api/routes/health.py nexus/api/routes/highlights.py nexus/api/routes/libraries.py \
+  nexus/api/routes/operational.py nexus/api/routes/highlights.py nexus/api/routes/libraries.py \
   nexus/api/routes/media.py nexus/api/routes/resource_shares.py nexus/api/routes/users.py \
   nexus/schemas/highlights.py nexus/schemas/library.py nexus/schemas/resource_items.py \
   nexus/schemas/resource_sharing.py nexus/schemas/user.py \
@@ -1468,7 +1426,7 @@ Expected focused command shape after the named tests exist:
   nexus/storage/client.py nexus/tasks/media_teardown.py \
   tests/test_resource_grants.py tests/test_resource_sharing_routes.py tests/test_sealed_handles.py)
 (cd python && uv run ruff format --check \
-  nexus/auth/middleware.py nexus/auth/permissions.py nexus/api/routes/health.py \
+  nexus/auth/middleware.py nexus/auth/permissions.py nexus/api/routes/operational.py \
   nexus/api/routes/highlights.py nexus/api/routes/libraries.py nexus/api/routes/media.py \
   nexus/api/routes/resource_shares.py nexus/api/routes/users.py nexus/schemas/highlights.py \
   nexus/schemas/library.py nexus/schemas/resource_items.py nexus/schemas/resource_sharing.py \
@@ -1487,7 +1445,7 @@ make test-migrations
 (cd apps/web && bunx eslint src/components/sharing src/lib/sharing src/app/s src/app/api/public/resource-share --max-warnings 0)
 (cd apps/web && bun run typecheck)
 (cd apps/web && bun run test:browser -- src/components/sharing src/lib/sharing src/lib/reader/readerTargetHash.test.ts src/lib/security/headers.test.ts src/app/api/proxy-routes.test.ts)
-bash -n deploy/vercel/sync-resource-sharing-firewall.sh deploy/smoke/resource-sharing-cutover.sh deploy/hetzner/deploy.sh
+bash -n deploy/vercel/sync-resource-sharing-firewall.sh
 deploy/vercel/sync-resource-sharing-firewall.sh --check
 make test-e2e PLAYWRIGHT_ARGS="tests/resource-sharing.spec.ts"
 ```
@@ -1580,8 +1538,8 @@ not accepted from mocks or unit tests alone.
   typed and ordered; pending/unsupported public projection can disable Link
   without disabling User; POST rechecks only its selected audience; invalid
   token authorization precedes public pagination/key/Range validation.
-- **AC18 — Release:** the maintenance gate prevents a reachable mixed contract;
-  Vercel, API, and worker report one `CUTOVER_SHA`; migration/firewall/smoke
-  evidence is recorded; local real-stack authenticated API/BFF evidence and
-  deployed typed-fixture public evidence jointly cover §12.1; pre-open rollback
-  and post-open forward-fix follow §12.1.
+- **AC18 — Release:** release only through
+  [deployment.md](../../deployment.md); web/API `/version`, API
+  `/livez`/`/readyz`, and both worker health contracts report the exact bound
+  source SHA and task contract; local real-stack and deployed typed-fixture
+  evidence cover the feature checks in §12.1 without owning release control.

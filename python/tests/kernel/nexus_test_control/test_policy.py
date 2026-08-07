@@ -153,7 +153,25 @@ def _minimal_repository(root: Path) -> None:
     _write(
         root,
         ".github/workflows/ci.yml",
-        "workflow_dispatch:\nrun: ./scripts/test pr\nrun: ./scripts/test full\nif: always()\n",
+        "workflow_dispatch:\n"
+        "pull_request_number:\n"
+        "expected_head_sha:\n"
+        "expected_base_sha:\n"
+        "permissions: {}\n"
+        "pull-requests: read\n"
+        "refs/pull/{0}/head\n"
+        "jq -e --slurp\n"
+        'and .[0].state == "open"\n'
+        'and .[0].base.ref == "main"\n'
+        "and .[0].base.repo.full_name == $repository\n"
+        "and .[0].head.repo.full_name == $repository\n"
+        'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"\n'
+        'GIT_COMMITTER_DATE="$merge_timestamp"\n'
+        "git rev-list --parents -n 1 HEAD\n"
+        "run: ./scripts/test pr\n"
+        "if: github.event_name == 'push'\n"
+        "run: ./scripts/test full\n"
+        "if: always()\n",
     )
     _write(
         root,
@@ -487,30 +505,38 @@ def test_repository_guard_rejects_broken_normative_link(tmp_path: Path) -> None:
     )
 
 
+def _copy_proof_owners(root: Path, proofs: list[str]) -> None:
+    paths = {proof.split(":", 1)[1].split("::", 1)[0] for proof in proofs}
+    for path in paths:
+        _write(root, path, (REPO_ROOT / path).read_text(encoding="utf-8"))
+
+
 def _complete_proof_repository(root: Path) -> dict[str, Any]:
-    source_floor = {
-        risk["id"]: risk["source_globs"]
+    ownership_floor = {
+        risk["id"]: risk
         for risk in json.loads((REPO_ROOT / "testdata/proofs.json").read_text(encoding="utf-8"))[
             "priority_risks"
         ]
     }
     risks: list[dict[str, Any]] = []
     risk_ids = sorted(risk.value for risk in PRIORITY_RISK_FLOOR)
-    for index, risk_id in enumerate(risk_ids):
-        source_globs = source_floor[risk_id]
-        proof_path = f"python/tests/kernel/test_risk_{index}.py"
+    all_proofs: list[str] = []
+    for risk_id in risk_ids:
+        owner = ownership_floor[risk_id]
+        source_globs = owner["source_globs"]
         for source_glob in source_globs:
             source = source_glob.replace("**/", "").replace("*", "owner").replace("?", "q")
             _write(root, source, "OWNER = True\n")
-        _write(root, proof_path, "def test_risk():\n    assert owner_behavior()\n")
+        all_proofs.extend(owner["proofs"])
         risks.append(
             {
                 "id": risk_id,
                 "source_globs": source_globs,
-                "proofs": [f"pytest:{proof_path}::test_risk"],
-                "capabilities": ["kernel-python"],
+                "proofs": owner["proofs"],
+                "capabilities": owner["capabilities"],
             }
         )
+    _copy_proof_owners(root, all_proofs)
     journey_ids = (
         "auth-session",
         "durable-ingest-reader-open",
@@ -566,13 +592,27 @@ def test_proof_schema_rejects_unknown_capability(tmp_path: Path) -> None:
     assert "proof-schema" in _rules(proof_manifest_schema_violations(tmp_path))
 
 
-def test_proof_contract_rejects_priority_source_self_routing(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mutation", ["source", "proof", "proof-and-capability"])
+def test_proof_contract_rejects_priority_ownership_self_routing(
+    tmp_path: Path, mutation: str
+) -> None:
     manifest = _complete_proof_repository(tmp_path)
-    manifest["priority_risks"][0]["source_globs"] = ["README.md"]
-    _write(tmp_path, "README.md", "# harmless owner\n")
+    risk = manifest["priority_risks"][0]
+    if mutation == "source":
+        risk["source_globs"] = ["README.md"]
+        _write(tmp_path, "README.md", "# harmless owner\n")
+    elif mutation == "proof":
+        proof = "pytest:python/tests/kernel/test_rerouted.py::test_rerouted"
+        _write(tmp_path, "python/tests/kernel/test_rerouted.py", "def test_rerouted(): pass\n")
+        risk["proofs"][0] = proof
+    else:
+        proof = "pytest:python/tests/service/test_rerouted.py::test_rerouted"
+        _write(tmp_path, "python/tests/service/test_rerouted.py", "def test_rerouted(): pass\n")
+        risk["proofs"] = [proof]
+        risk["capabilities"] = ["service"]
     _dump(tmp_path, "testdata/proofs.json", manifest)
 
-    assert "proof-source-floor" in _rules(proof_contract_violations(tmp_path))
+    assert "proof-ownership-floor" in _rules(proof_contract_violations(tmp_path))
 
 
 def test_proof_contract_rejects_a_nonexistent_exact_node(tmp_path: Path) -> None:

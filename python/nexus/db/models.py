@@ -6692,6 +6692,17 @@ class OraclePlate(Base):
     )
 
 
+class OracleCorpusPublication(Base):
+    """Singleton marker whose presence publishes one exact Oracle corpus."""
+
+    __tablename__ = "oracle_corpus_publications"
+
+    corpus_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    manifest_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_provider: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class OracleReading(Base):
     """One oracle reading: a question, retrieved sources, generated interpretation."""
 

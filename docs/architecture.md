@@ -132,7 +132,7 @@ There are **five runtime processes** plus managed dependencies.
 
 | Process                | Code                                                  | Hosted                           | Role                                      |
 | ---------------------- | ----------------------------------------------------- | -------------------------------- | ----------------------------------------- |
-| Next.js frontend + BFF | `apps/web`                                            | **Vercel** (Git-triggered)       | React UI + `/api/*` proxy to FastAPI      |
+| Next.js frontend + BFF | `apps/web`                                            | **Vercel** (staged, then promoted) | React UI + `/api/*` proxy to FastAPI    |
 | FastAPI API            | `apps/api/main.py` → `python/nexus`                   | **Hetzner VPS** (Docker Compose) | product API, SSE streaming                |
 | Interactive worker     | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | user-waiting queue work                    |
 | Background worker      | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | indexing, repair, teardown, periodic work |
@@ -148,9 +148,18 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
 
 - Default request path is **Browser → Next.js BFF → FastAPI → Postgres**.
   SSE is the documented exception (**Browser → FastAPI `/stream/*`**).
-- Production is a **hard cutover**: there is no Supabase DB/Storage fallback. The
-  env-sync scripts (`deploy/*/sync-env.sh`) actively reject legacy Supabase
-  service-role keys, `STORAGE_*`, and a Supabase-pointed `DATABASE_URL`.
+- One full Git SHA identifies a release vector. Successful exact-`main` CI
+  publishes one strict manifest containing immutable API/worker image digests,
+  expected schema, and expected Oracle manifest. The host pulls those digests;
+  it never builds application images.
+- `deploy/hetzner/deploy.sh <source-sha>` is the sole application release
+  entrypoint. It activates only API/workers, proves them, promotes the exact
+  staged Vercel deployment, then publishes one immutable release record/current
+  pointer. Postgres and Caddy retain identity.
+- VPS and Vercel config publication are explicit prepare-only operations. Oracle
+  reconcile is a separate current-release operation; application release never
+  reads or mutates Oracle.
+- Supabase owns Auth only. Hetzner Postgres and Cloudflare R2 own product data.
 - Both worker lanes use a bounded 300-second database statement timeout. The
   API keeps its tighter role-scoped timeout.
 - `NEXUS_INTERNAL_SECRET` must be **identical** on Vercel and the VPS — it is the
@@ -506,7 +515,9 @@ fails closed when the mapped media is the wrong source or lacks the target text.
 (public owned plate object metadata; **no embeddings** — selection is
 deterministic over tags/phase hints), `oracle_readings`, `oracle_reading_folios`
 (the per-phase generated folio, referencing its citation `resource_edge`),
-`oracle_reading_events`.
+`oracle_reading_events`. `oracle_corpus_publications` is the singleton `current`
+publication marker: it binds the reviewed manifest digest and active embedding
+provider/model after exact DB/selector/R2 support proof.
 
 > Two things to know when reasoning about the schema: (1) `background_jobs` is
 > invisible if you only read `models.py` — it's raw SQL. (2) Because migrations
@@ -585,8 +596,8 @@ The **registry** (`jobs/registry.py`) is the source of truth mapping job kind �
 handler + policy. `config.py` owns the disjoint/exhaustive 20-kind production
 topology and separate three-kind maintenance declaration. The entrypoint rejects
 missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
-`get_task_contract_version()` fingerprints the registry's per-kind
-attempt/lease policy for `/health` deploy checks. See
+`get_task_contract_digest()` fingerprints the registry's per-kind
+attempt/lease policy for API `/version` and worker release-health proof. See
 [modules/jobs.md](modules/jobs.md).
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
@@ -1086,10 +1097,12 @@ both lanes) feeds `search/content_chunk_candidates.retrieve_content_chunk_candid
 scoped to the Oracle Corpus library for public-domain candidates (mapped to
 resolved `oracle_passage_anchors`, cited as `oracle_passage_anchor:<id>`) and to
 the viewer's visible media/notes — excluding the corpus — for personal candidates
-(cited `evidence_span`/`content_chunk`). Corpus readiness derives from
-`media.processing_status` + `content_index_states` + anchor resolution
-(`services/oracle_corpus.py`); the generation worker fails typed
-`E_ORACLE_CORPUS_NOT_READY` rather than falling back. Anchor identity is stable
+(cited `evidence_span`/`content_chunk`). The quiesced Oracle operator proves
+exact manifest metadata, `media.processing_status`, `content_index_states`,
+anchor resolution, plate metadata, and R2 objects before publishing. Bounded
+runtime DB readiness also requires the sole `current` marker to match the baked
+manifest digest and active embedding provider/model; the generation worker
+otherwise fails typed `E_ORACLE_CORPUS_NOT_READY`. Anchor identity is stable
 across reindex; opening an anchor citation routes to its current evidence/media
 target.
 
@@ -1746,30 +1759,27 @@ one separate typed entrypoint, `./scripts/test`.
 - **Build**: `make build` (Next.js), `make build-android[-release]`.
 - **Smoke**: `make smoke`, `make smoke-auth`.
 
-**Deploy** (`deployment.md`, `deploy/`): the frontend deploys to **Vercel on push
-to `main`** (Git integration). The backend deploys via `deploy/hetzner/deploy.sh`:
-sync env → rsync repo to the VPS → `compose build` → stop both workers + API → **run
-`alembic upgrade head`** via API-image one-off `compose run` commands → run
-Oracle preconditions via the background worker image:
-`python /app/scripts/ensure_oracle_seed_objects.py` →
-`python /app/scripts/oracle/seed_corpus_library.py --owner-user $NEXUS_ORACLE_CORPUS_OWNER_USER_ID --drain` →
-`python /app/scripts/oracle/check_corpus_readiness.py` → `compose up -d
---force-recreate`. Env contracts live in `deploy/env/*` (real values untracked,
-`.example` tracked); the sync scripts strongly validate them and reject legacy
-Supabase/`STORAGE_*` keys. R2 CORS/lifecycle are applied as code via
-`deploy/cloudflare/*`. Supabase hosted Auth configuration exposed by the public
-Management API is verified as provider state with
-`deploy/supabase/verify-auth-config.sh`. The gate covers membership closure,
-enabled sign-in providers and hooks, absence of third-party Auth integrations,
-password/update policy, SMTP, notification and email templates, site URL, and
-the exact redirect allowlist. The newer
-dashboard-only current-password toggle is the one documented manual check; no
-private Studio API is a deployment dependency.
+**Deploy** ([`deployment.md`](../deployment.md), sole runbook): successful exact
+`main` CI triggers one backend publisher. It builds API/worker targets once,
+publishes their GHCR digests and strict manifest, and supplies the immutable host
+bundle. Vercel builds the exact SHA as an unaliased production-target candidate.
+`deploy/hetzner/deploy.sh <source-sha>` validates both lineages, captures current
+config, stops app writers, verifies a migration backup when needed, upgrades the
+linear Alembic head, activates only app services by digest, proves the complete
+backend vector, promotes only the bound frontend deployment, then atomically
+publishes the immutable release record/current pointer. Durable phases make the
+same command the sole resume path. Config publication and Oracle reconcile are
+separate explicit operations. Env contracts live in `deploy/env/*` (real values
+untracked, `.example` tracked). Permanent R2 policy is applied via
+`deploy/cloudflare/*`; Supabase hosted Auth state is verified through
+`deploy/supabase/verify-auth-config.sh`.
 
 **Migrations** are hand-written Alembic files (`migrations/alembic/versions/`,
 linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. Test: the
 controller creates a disposable `nexus_migration_<run-id>` database when that
-capability is selected. Prod: run on every deploy before services start.
+capability is selected. Production applies the candidate's one baked head only
+inside the release controller, after stopped-writer backup proof and before app
+activation.
 
 **Environment**: `.env.example` is the source of truth for every variable
 ([`rules/codebase.md`](rules/codebase.md)); `make setup` generates local

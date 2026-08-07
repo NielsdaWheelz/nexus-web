@@ -2,11 +2,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERCEL_CWD="${VERCEL_CWD:-${ROOT_DIR}/apps/web}"
-RATE_FILE="${NEXUS_FIREWALL_DESIRED_FILE:-${ROOT_DIR}/deploy/vercel/firewall/resource-sharing.json}"
-MAINTENANCE_FILE="${NEXUS_MAINTENANCE_FIREWALL_DESIRED_FILE:-${ROOT_DIR}/deploy/vercel/firewall/resource-sharing-maintenance.json}"
-PROJECT_FILE="${VERCEL_CWD}/.vercel/project.json"
-MODE="apply"
+readonly ROOT_DIR
+readonly VERCEL_CWD="${ROOT_DIR}/apps/web"
+readonly VERCEL_CLI="${VERCEL_CWD}/node_modules/.bin/vercel"
+readonly DESIRED_FILE="${ROOT_DIR}/deploy/vercel/firewall/resource-sharing.json"
+readonly PROJECT_FILE="${VERCEL_CWD}/.vercel/project.json"
+readonly VERCEL_PROJECT_NAME="nexus-web"
+readonly VERCEL_PROJECT_ID="prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs"
+readonly VERCEL_TEAM_ID="team_fKVvTyTsMBQ7qFjccFO17BJL"
+readonly VERCEL_SCOPE="niels-erik-nandals-projects"
+MODE="${1:---apply}"
 STAGED_BY_SCRIPT=0
 
 die() {
@@ -14,42 +19,24 @@ die() {
   exit 1
 }
 
-usage() {
-  cat <<'EOF'
-Usage: deploy/vercel/sync-resource-sharing-firewall.sh [mode]
-
-Modes:
-  --check                Validate both checked-in rules without network access.
-  --apply                Apply/publish/read back the permanent rate-limit rule.
-  --remote-check         Read back the active permanent rule without mutation.
-  --maintenance-apply    Apply/publish the temporary maintenance gate first.
-  --maintenance-check    Verify the active maintenance gate and permanent limit.
-  --maintenance-remove   Remove/publish the temporary maintenance gate.
-  --maintenance-absent   Verify the maintenance gate is not active.
-
-Remote modes require an authenticated Vercel CLI and a linked VERCEL_CWD.
-Maintenance apply/check require NEXUS_RELEASE_SMOKE_IP as one exact public IP.
-EOF
-}
-
-case "${1:---apply}" in
-  --check) MODE="local-check" ;;
-  --apply) MODE="apply" ;;
-  --remote-check) MODE="remote-check" ;;
-  --maintenance-apply) MODE="maintenance-apply" ;;
-  --maintenance-check) MODE="maintenance-check" ;;
-  --maintenance-remove) MODE="maintenance-remove" ;;
-  --maintenance-absent) MODE="maintenance-absent" ;;
+case "$MODE" in
+  --check|--apply|--remote-check) ;;
   -h|--help)
-    usage
+    echo "usage: deploy/vercel/sync-resource-sharing-firewall.sh [--check|--apply|--remote-check]"
     exit 0
     ;;
-  *) die "unknown argument: ${1:-}" ;;
+  *) die "unknown argument: ${MODE}" ;;
 esac
+[ "$#" -le 1 ] || die "expected at most one mode"
 
 command -v jq >/dev/null 2>&1 || die "jq is required"
-[ -f "$RATE_FILE" ] || die "desired state not found: ${RATE_FILE}"
-[ -f "$MAINTENANCE_FILE" ] || die "desired state not found: ${MAINTENANCE_FILE}"
+command -v timeout >/dev/null 2>&1 || die "timeout is required"
+[ -x "$VERCEL_CLI" ] || die "run the locked apps/web dependency install first"
+[ -f "$DESIRED_FILE" ] || die "desired state is missing"
+if [ "$MODE" != "--check" ]; then
+  [ -n "${VERCEL_TOKEN:-}" ] || die "VERCEL_TOKEN is required"
+  [[ "$VERCEL_TOKEN" =~ ^[A-Za-z0-9._-]+$ ]] || die "VERCEL_TOKEN is malformed"
+fi
 
 jq -e '
   keys == ["action", "active", "conditionGroup", "description", "name"]
@@ -76,48 +63,31 @@ jq -e '
       "actionDuration": null
     }
   }
-' "$RATE_FILE" >/dev/null || die "permanent desired state violates the sharing WAF contract"
+' "$DESIRED_FILE" >/dev/null || die "desired state violates the sharing WAF contract"
 
-jq -e '
-  keys == ["action", "active", "conditionGroup", "description", "name"]
-  and .name == "Nexus cutover maintenance gate"
-  and .active == true
-  and .conditionGroup == [{
-    "conditions": [
-      {"type":"path","op":"re","value":"^/.*$"},
-      {
-        "type":"ip_address",
-        "op":"neq",
-        "value":"__NEXUS_RELEASE_SMOKE_IP__"
-      }
-    ]
-  }]
-  and .action == {
-    "mitigate": {
-      "action": "deny",
-      "rateLimit": null,
-      "redirect": null,
-      "actionDuration": null
-    }
-  }
-' "$MAINTENANCE_FILE" >/dev/null || die "maintenance desired state violates the cutover gate contract"
-
-if [ "$MODE" = "local-check" ]; then
-  echo "resource-sharing firewall desired states are locally valid; no network requests were made"
+if [ "$MODE" = "--check" ]; then
+  echo "resource-sharing firewall desired state is valid; no network request was made"
   exit 0
 fi
 
-command -v vercel >/dev/null 2>&1 || die "vercel CLI is required"
-[ -f "$PROJECT_FILE" ] || die "VERCEL_CWD is not linked: ${VERCEL_CWD}"
-project_id="$(jq -er '.projectId' "$PROJECT_FILE")"
-team_id="$(jq -er '.orgId' "$PROJECT_FILE")"
+[ -f "$PROJECT_FILE" ] || die "Vercel project is not linked"
+jq -e \
+  --arg id "$VERCEL_PROJECT_ID" \
+  --arg org "$VERCEL_TEAM_ID" \
+  --arg name "$VERCEL_PROJECT_NAME" '
+  .projectId == $id and .orgId == $org and .projectName == $name
+' "$PROJECT_FILE" >/dev/null || \
+  die "linked Vercel project disagrees with committed production identity"
+project_id="$VERCEL_PROJECT_ID"
+team_id="$VERCEL_TEAM_ID"
 
 vercel_cmd() {
-  vercel "$@" --cwd "$VERCEL_CWD" --non-interactive
+  timeout --foreground 2m "$VERCEL_CLI" "$@" \
+    --cwd "$VERCEL_CWD" --scope "$VERCEL_SCOPE" --non-interactive
 }
 
 discard_owned_draft_on_failure() {
-  status=$?
+  local status=$?
   if [ "$status" -ne 0 ] && [ "$STAGED_BY_SCRIPT" = "1" ]; then
     echo "discarding unpublished firewall draft created by failed sync" >&2
     vercel_cmd firewall discard --yes >/dev/null || true
@@ -132,20 +102,13 @@ list_rules() {
 
 require_clean_draft() {
   local listing="$1"
-  [ "$(jq -r '.hasDraft' <<<"$listing")" = "false" ] || \
-    die "unpublished Vercel firewall changes already exist; inspect or discard them first"
-  [ "$(jq -r '.pendingChanges' <<<"$listing")" = "0" ] || \
-    die "unpublished Vercel firewall changes already exist"
+  jq -e '.hasDraft == false and .pendingChanges == 0 and (.rules | type == "array")' \
+    <<<"$listing" >/dev/null || \
+    die "Vercel has unpublished or malformed firewall state"
 }
 
 normalize_rule() {
-  jq -cS '{
-    name,
-    description,
-    active,
-    conditionGroup,
-    action
-  }'
+  jq -cS '{name,description,active,conditionGroup,action}'
 }
 
 active_config() {
@@ -154,152 +117,55 @@ active_config() {
     --raw
 }
 
-active_rules() {
-  local config="$1"
-  jq -c '.active.rules // []' <<<"$config"
-}
-
-active_named_rule() {
-  local config="$1"
-  local name="$2"
-  local count
-  count="$(
-    active_rules "$config" |
-      jq --arg name "$name" '[.[] | select(.name == $name)] | length'
-  )"
-  [ "$count" -le 1 ] || die "multiple active firewall rules named ${name}"
-  active_rules "$config" | jq -c --arg name "$name" '.[] | select(.name == $name)'
-}
-
 require_exact_active_rule() {
   local config="$1"
   local desired="$2"
-  local name
-  local remote
-  name="$(jq -r '.name' <<<"$desired")"
-  remote="$(active_named_rule "$config" "$name")"
-  [ -n "$remote" ] || die "active firewall rule is missing: ${name}"
+  local matches remote
+  matches="$(
+    jq -c --arg name "$(jq -r .name <<<"$desired")" \
+      '[.active.rules[]? | select(.name == $name)]' <<<"$config"
+  )"
+  [ "$(jq -r length <<<"$matches")" = "1" ] || \
+    die "active permanent firewall rule is absent or duplicated"
+  remote="$(jq -c '.[0]' <<<"$matches")"
   [ "$(normalize_rule <<<"$remote")" = "$(normalize_rule <<<"$desired")" ] || \
-    die "active firewall rule differs from desired state: ${name}"
+    die "active permanent firewall rule differs from desired state"
 }
 
-release_ip=""
-maintenance_desired=""
-if [ "$MODE" = "maintenance-apply" ] || [ "$MODE" = "maintenance-check" ]; then
-  command -v python3 >/dev/null 2>&1 || die "python3 is required to validate release IP"
-  release_ip="${NEXUS_RELEASE_SMOKE_IP:-}"
-  [ -n "$release_ip" ] || die "NEXUS_RELEASE_SMOKE_IP is required"
-  python3 -c \
-    'import ipaddress,sys; ip=ipaddress.ip_address(sys.argv[1]); assert ip.is_global' \
-    "$release_ip" 2>/dev/null || die "NEXUS_RELEASE_SMOKE_IP must be one public IP literal"
-  maintenance_desired="$(
-    jq -c --arg ip "$release_ip" '
-      (.conditionGroup[0].conditions[1].value) = $ip
-    ' "$MAINTENANCE_FILE"
-  )"
-fi
-rate_desired="$(jq -c '.' "$RATE_FILE")"
-
-if [ "$MODE" = "remote-check" ]; then
+desired="$(jq -c . "$DESIRED_FILE")"
+if [ "$MODE" = "--remote-check" ]; then
   config="$(active_config)"
-  require_exact_active_rule "$config" "$rate_desired"
-  echo "permanent resource-sharing firewall is active (configuration version $(jq -r '.active.version // \"unknown\"' <<<"$config"))"
-  exit 0
-fi
-
-if [ "$MODE" = "maintenance-check" ]; then
-  config="$(active_config)"
-  require_exact_active_rule "$config" "$maintenance_desired"
-  first_name="$(active_rules "$config" | jq -r '.[0].name // empty')"
-  [ "$first_name" = "Nexus cutover maintenance gate" ] || \
-    die "maintenance gate is not the first active custom rule"
-  echo "maintenance gate is active and first (configuration version $(jq -r '.active.version // \"unknown\"' <<<"$config"))"
-  exit 0
-fi
-
-if [ "$MODE" = "maintenance-absent" ]; then
-  config="$(active_config)"
-  require_exact_active_rule "$config" "$rate_desired"
-  [ -z "$(active_named_rule "$config" "Nexus cutover maintenance gate")" ] || \
-    die "maintenance gate is still active"
-  echo "maintenance gate is absent and permanent rate limit is active"
+  require_exact_active_rule "$config" "$desired"
+  echo "permanent resource-sharing firewall is active"
   exit 0
 fi
 
 listing="$(list_rules)"
 require_clean_draft "$listing"
-
-stage_rule() {
-  local desired="$1"
-  local name
-  local matches
-  local count
-  local rule_id
-  name="$(jq -r '.name' <<<"$desired")"
-  matches="$(jq -c --arg name "$name" '[.rules[] | select(.name == $name)]' <<<"$listing")"
-  count="$(jq -r 'length' <<<"$matches")"
-  [ "$count" -le 1 ] || die "multiple firewall rules named ${name}"
-  if [ "$count" = "0" ]; then
-    vercel_cmd firewall rules add --json "$desired" --yes >/dev/null
-  else
-    rule_id="$(jq -r '.[0].id' <<<"$matches")"
-    [ -n "$rule_id" ] && [ "$rule_id" != "null" ] || die "rule ${name} has no id"
-    if [ "$(normalize_rule <<<"$(jq -c '.[0]' <<<"$matches")")" = \
-      "$(normalize_rule <<<"$desired")" ]; then
-      return
-    fi
-    vercel_cmd firewall rules edit "$rule_id" --json "$desired" --yes >/dev/null
-  fi
+matches="$(
+  jq -c --arg name "$(jq -r .name <<<"$desired")" \
+    '[.rules[] | select(.name == $name)]' <<<"$listing"
+)"
+count="$(jq -r length <<<"$matches")"
+[ "$count" -le 1 ] || die "permanent firewall rule is duplicated"
+if [ "$count" = "0" ]; then
+  vercel_cmd firewall rules add --json "$desired" --yes >/dev/null
   STAGED_BY_SCRIPT=1
-  listing="$(list_rules)"
-}
-
-publish_and_read_back() {
-  if [ "$STAGED_BY_SCRIPT" = "1" ]; then
-    vercel_cmd firewall publish --yes >/dev/null
-    STAGED_BY_SCRIPT=0
-  fi
-  listing="$(list_rules)"
-  require_clean_draft "$listing"
-}
-
-if [ "$MODE" = "maintenance-remove" ]; then
-  matches="$(
-    jq -c '[.rules[] | select(.name == "Nexus cutover maintenance gate")]' <<<"$listing"
-  )"
-  count="$(jq -r 'length' <<<"$matches")"
-  [ "$count" -le 1 ] || die "multiple maintenance gate rules exist"
-  if [ "$count" = "1" ]; then
-    rule_id="$(jq -r '.[0].id' <<<"$matches")"
-    vercel_cmd firewall rules remove "$rule_id" --yes >/dev/null
+else
+  rule="$(jq -c '.[0]' <<<"$matches")"
+  rule_id="$(jq -er '.id | select(type == "string" and length > 0)' <<<"$rule")"
+  if [ "$(normalize_rule <<<"$rule")" != "$(normalize_rule <<<"$desired")" ]; then
+    vercel_cmd firewall rules edit "$rule_id" --json "$desired" --yes >/dev/null
     STAGED_BY_SCRIPT=1
   fi
-  publish_and_read_back
-  config="$(active_config)"
-  [ -z "$(active_named_rule "$config" "Nexus cutover maintenance gate")" ] || \
-    die "maintenance gate remained active after removal"
-  echo "maintenance gate removed (configuration version $(jq -r '.active.version // \"unknown\"' <<<"$config"))"
-  exit 0
 fi
 
-if [ "$MODE" = "apply" ]; then
-  stage_rule "$rate_desired"
-  publish_and_read_back
-  config="$(active_config)"
-  require_exact_active_rule "$config" "$rate_desired"
-  echo "permanent resource-sharing firewall applied (configuration version $(jq -r '.active.version // \"unknown\"' <<<"$config"))"
-  exit 0
+if [ "$STAGED_BY_SCRIPT" = "1" ]; then
+  vercel_cmd firewall publish --yes >/dev/null
+  STAGED_BY_SCRIPT=0
 fi
-
-stage_rule "$maintenance_desired"
-maintenance_id="$(
-  jq -er '.rules[] | select(.name == "Nexus cutover maintenance gate") | .id' <<<"$listing"
-)"
-vercel_cmd firewall rules reorder "$maintenance_id" --first --yes >/dev/null
-STAGED_BY_SCRIPT=1
-publish_and_read_back
+listing="$(list_rules)"
+require_clean_draft "$listing"
 config="$(active_config)"
-require_exact_active_rule "$config" "$maintenance_desired"
-[ "$(active_rules "$config" | jq -r '.[0].name // empty')" = \
-  "Nexus cutover maintenance gate" ] || die "maintenance gate is not first"
-echo "maintenance gate applied (configuration version $(jq -r '.active.version // \"unknown\"' <<<"$config"))"
+require_exact_active_rule "$config" "$desired"
+echo "permanent resource-sharing firewall applied and verified"

@@ -1,17 +1,21 @@
 # Oracle
 
-Oracle has three service owners.
+Oracle has three runtime service owners and one operator boundary.
 
 `python/nexus/services/oracle.py` owns readings: question validation, corpus and
 personal retrieval, plate selection, LLM prompt/call/parse, persisted folios, and
 SSE event emission.
 
-`python/nexus/services/oracle_corpus.py` owns the corpus: idempotent seed
-orchestration (library, media, source mappings, anchors) and the readiness
-derivation that gates reading generation.
+`python/nexus/services/oracle_corpus.py` owns corpus support mutation, exact
+DB/R2 inspection, the publication marker, and the readiness derivation that
+gates reading generation.
 
 `python/nexus/services/oracle_plates.py` owns plate assets: URL construction,
 metadata lookup, ETag metadata, and byte-size-checked storage reads.
+
+`python/nexus/oracle/manifest.py` parses the reviewed desired state.
+`python/nexus/ops/oracle_reconcile.py` is the sole container-internal operator
+boundary; the host state machine invokes its narrow phase commands.
 
 ## Corpus
 
@@ -20,7 +24,7 @@ text/vector store. The library is identified by `libraries.system_key =
 'oracle_corpus'` (never by name); its works are ordinary `media` rows ingested and
 indexed through the shared media/content-index substrate, so corpus text lives in
 `content_chunks`/`content_embeddings` and membership in `library_entries` like any
-other media. Two small Oracle-owned tables sit above that substrate:
+other media. Three small Oracle-owned table families sit above that substrate:
 
 - `oracle_corpus_sources` maps each curated `(corpus_key, work_key)` to its
   authoritative `media_id` (provenance + display order; no text or vectors).
@@ -42,6 +46,10 @@ other media. Two small Oracle-owned tables sit above that substrate:
   differences do not make otherwise identical passages unavailable, but a
   selector still fails closed if the mapped media is a version page,
   table-of-contents-only extraction, or the wrong book.
+- `oracle_corpus_publications` contains either no row or the sole key `current`.
+  Its manifest digest and embedding provider/model are the publication boundary,
+  not a cache of support readiness. Code rejects every other key or malformed
+  value.
 
 Some Wikisource works use proofread-page HTML where the poem body and reference
 sections share similar page wrappers. The shared web article extractor recognizes
@@ -50,13 +58,15 @@ Readability can prefer notes. Corpus entries may pin a Wikisource revision URL a
 `source_download_url` when deterministic re-ingest is required; the user-facing
 `source_url` remains the canonical readable page.
 
-Corpus **readiness** is derived state, not a stored flag:
-`get_oracle_corpus_readiness` reports the library id, work/ready-media counts,
-anchor/resolved-anchor counts, and plate count, with `status` `ready` only when
-every required media is indexed (via `media.processing_status` +
-`content_index_states`) and every anchor resolved. Runtime code does not select
-among corpus releases, persist provider request hashes, or store DB-only passage
-provenance objects.
+Operator publication readiness proves the system library, exact manifest
+works/metadata, shared media/index state, resolved anchors, plate metadata, and
+R2 object size/type sets. Request-time `get_oracle_corpus_readiness` performs the
+bounded DB support derivation and reports `ready` only when it is ready and the
+sole publication marker exactly matches the baked manifest digest and active
+embedding provider/model. It does not contact R2 on each request; the marker
+records that the quiesced operator proof published successfully. Marker absence
+or drift is not ready. Runtime code does not select among corpus releases,
+persist provider request hashes, or store DB-only passage provenance objects.
 
 ## Retrieval
 
@@ -77,8 +87,7 @@ Plate selection is deterministic over `oracle_plates` tags vs. question tokens a
 selected-candidate tags (no embeddings; tie-broken by `source_url`).
 
 The generation worker calls `get_oracle_corpus_readiness` before generating and
-fails typed `E_ORACLE_CORPUS_NOT_READY` when the corpus is not ready. It never
-falls back to old tables, fixture files, or stale embeddings.
+fails typed `E_ORACLE_CORPUS_NOT_READY` when the exact publication is not ready.
 
 ## Folios, Citation Edges, And Concordance
 
@@ -118,22 +127,29 @@ without touching storage. The ETag is route metadata, not a content hash.
 
 ## Operational Rule
 
-Oracle seed objects and corpus readiness are deployment preconditions after schema
-migrations. Runtime request handlers do not seed, repair, or fall back to fixture
-files when an owned plate object is missing.
+Application release only records the expected manifest digest. Oracle publication
+is the independent host operation
+`deploy/hetzner/reconcile-oracle.sh <current-source-sha>`; runtime requests never
+create, repair, or publish support.
 
-The corpus is seeded and verified by worker-image operator commands, not requests:
-`scripts/ensure_oracle_seed_objects.py`, `scripts/oracle/seed_corpus_library.py`
-(idempotent — ensures the system library, accepts/reuses each work's media through
-the shared source-ingest path, hard-replaces changed manifest sources, attaches
-entries via `library_entries`, repairs reused failed/stale media through the
-source-ingest owner, upserts source mappings and anchors, and resolves anchors),
-and `scripts/oracle/check_corpus_readiness.py` (exits non-zero unless the corpus is
-ready). The manifest describes media ingestion (a direct ingestable source URL per
-work) plus passage anchors, not raw passage text or embeddings. Manifest source
-URLs must point at pages/files containing the target text itself; Wikisource
-version/disambiguation pages and Gutenberg collections that omit the selected work
-are production readiness failures, not runtime fallbacks.
-`GET /oracle/corpus` exposes the same readiness as a read-only status report
-(library ref/id, work/ready-media counts, anchor/resolved-anchor counts, plate
-count); it never seeds or repairs on read.
+The operator binds the current immutable release record, its captured config,
+and the manifest baked into its worker image. With no active attempt it may no-op
+only when exact DB/selector/R2 state and the current marker agree. Before mutation
+it rejects removal of any active work, anchor, or plate key. It then durably
+records its target, stops all app writers, unpublishes first, reconciles ordinary
+library/media/index and plate support through their owners, runs only its exact
+declared jobs, proves exact readiness, and inserts the marker last in one short
+transaction. R2 objects precede DB metadata; no DB transaction spans HTTP, R2,
+or job execution.
+
+The operation is replayable by the same SHA and inputs. After unpublish, writers
+normally remain stopped until replay succeeds. One allowed late crash prefix can
+leave the exact publication committed and the captured runtime running before
+`RuntimeRestored` is durable; replay re-stops those exact writer IDs, converges
+and re-proves the same target, then restores the exact recorded runtime.
+Physical garbage collection and destructive manifest removals are out of scope.
+
+The manifest describes direct ingestable media sources, passage selectors, and
+plate inputs, not corpus text or embeddings. Source URLs must contain the target
+text itself. `GET /oracle/corpus` is a pure marker-gated status report and never
+mutates on read.

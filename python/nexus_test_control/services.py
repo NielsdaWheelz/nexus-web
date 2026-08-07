@@ -26,6 +26,12 @@ from botocore.client import BaseClient, Config
 from botocore.exceptions import ClientError
 from psycopg import sql
 
+from nexus.release_artifact import (
+    BackendArtifactDefect,
+    build_runtime_identity,
+    load_runtime_identity,
+    write_runtime_identity_value,
+)
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.process import run_command, unblock_and_exec_command
@@ -225,6 +231,7 @@ def run_environment(
         "NEXUS_EXTENSION_REDIRECT_ORIGINS": f"https://{TEST_EXTENSION_ID}.chromiumapp.org",
         "NEXUS_ENV": "test",
         "NEXUS_INTERNAL_SECRET": "nexus-test-internal-secret",
+        "NEXUS_RUNTIME_IDENTITY_FILE": str(_runtime_identity_path(root)),
         "NEXUS_TEST_RUN_ID": run.run_id,
         "OPENAI_API_BASE_URL": (f"{runtime_endpoint(root, environment, EndpointKind.EXTERNAL)}/v1"),
         "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
@@ -360,7 +367,36 @@ def ensure_services(repo_root: Path, environment: Mapping[str, str]) -> Supabase
                 _start_services(root)
         else:
             _start_services(root)
+        _publish_runtime_identity(root)
     return read_supabase_credentials(root, environment)
+
+
+def _runtime_identity_path(root: Path) -> Path:
+    return runtime_state_dir(root) / "runtime-identity.json"
+
+
+def _publish_runtime_identity(root: Path) -> None:
+    completed = _run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=root,
+        capture_output=True,
+    )
+    source_sha = completed.stdout.strip()
+    identity = build_runtime_identity(root, source_sha)
+    path = _runtime_identity_path(root)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.partial")
+    try:
+        write_runtime_identity_value(identity, temporary)
+        with temporary.open("rb") as stream:
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _start_services(root: Path) -> None:
@@ -707,6 +743,11 @@ def start_web_process(
         raise RuntimeContractError("web process requires a runtime-owned standalone artifact")
     runtime = read_runtime(root)
     _require_loopback_port_available(runtime.ports.web, "web")
+    owned_environment = run_environment(root, environment, run)
+    try:
+        source_sha = load_runtime_identity(_runtime_identity_path(root)).source_sha
+    except BackendArtifactDefect as exc:
+        raise RuntimeContractError("web process requires the exact runtime identity") from exc
     return _start_owned_process(
         root,
         environment,
@@ -715,11 +756,12 @@ def start_web_process(
         ("node", str(server)),
         cwd=server.parent,
         process_environment={
-            **run_environment(root, environment, run),
+            **owned_environment,
             "HOSTNAME": "127.0.0.1",
             "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
             "NODE_ENV": "production",
             "PORT": str(runtime.ports.web),
+            "VERCEL_GIT_COMMIT_SHA": source_sha,
             **(overrides or {}),
         },
     )
@@ -769,7 +811,7 @@ def wait_process_ready(
             try:
                 response = client.get(url)
                 if (
-                    200 <= response.status_code < 500
+                    response.status_code == 200
                     and _process_group_owns_listener(process.process_group_id, port)
                     and _owned_process_identity_matches(
                         process.process_group_id,

@@ -123,6 +123,7 @@ workflow uploads stable assets for `/android` plus versioned assets such as
 - `python/` -> backend package + tests: see `python/README.md`
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
 - `docs/architecture.md` -> system architecture & orientation guide: start here to learn how everything fits together
+- `deployment.md` -> sole production release and recovery runbook
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
 - `docs/modules/reader-implementation.md` -> current reader behavior contract
 - `docs/modules/reader-design-rationale.md` -> current reader behavior rationale and reader-to-chat quote contract

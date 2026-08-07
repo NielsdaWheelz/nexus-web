@@ -91,7 +91,7 @@ def test_0210_restarts_an_invalid_exact_index_and_plans_substring_search_at_head
                 )
             )
 
-        assert actual_head == expected_head == "0210", (
+        assert actual_head == expected_head, (
             f"0210 restart stopped at revision {actual_head!r}, catalog head {expected_head!r}"
         )
         assert extension == "pg_trgm", "0210 reached head without its required pg_trgm extension"

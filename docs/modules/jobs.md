@@ -44,9 +44,9 @@ kind is a frozen `JobDefinition`:
   a hook may finalize domain state, project suspension, or only record safe
   diagnostics according to that kind's contract.
 
-`get_task_contract_version()` is a stable SHA-256 fingerprint over the registry's
-kind/attempts/delays/lease policy, surfaced on `/health` for deploy contract
-checks. It changes only when a policy changes (e.g. the oracle lease bump).
+`get_task_contract_digest()` is a stable SHA-256 fingerprint over the registry's
+kind/attempts/delays/lease policy. API `/version` and each worker heartbeat expose
+it for exact release proof. It changes only when that contract changes.
 
 ### Lease policy by kind
 
@@ -123,10 +123,10 @@ a raw allowlist. A bounded maintenance process requires
 non-empty `WORKER_ALLOWED_JOB_KINDS` subset of the maintenance declaration.
 There is no deployed maintenance service.
 
-The Oracle corpus seed drainer is a bounded shared-image invocation, not a
-third lane. Its `ORACLE_SEED_WORKER_JOB_KINDS` contract contains exactly
-`ingest_media_source` and `media_content_reindex_job`, so source success cannot
-strand the reindex successor before the readiness assertion.
+Oracle reconcile is a bounded shared-image invocation, not a third lane. Its
+`ORACLE_RECONCILE_JOB_KINDS` contract contains exactly `ingest_media_source` and
+`media_content_reindex_job`. The operator reconciler claims only the job IDs it
+created or resolved; it never scans or drains unrelated work.
 
 There is no `contributor_reconciliation` job (or any other author-dedupe job):
 author identity is resolved inline, synchronously, inside the ingest/enrichment

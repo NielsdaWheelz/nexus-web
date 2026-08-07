@@ -224,7 +224,7 @@ class _ReadyExternalPorts(runner._RunnerPorts):
     ) -> None:
         assert process.role == "external"
         assert endpoint is runner.EndpointKind.EXTERNAL
-        assert path == "/health"
+        assert path == "/livez"
 
 
 def test_doctor_is_not_run_when_its_locked_tool_owners_are_absent(tmp_path: Path) -> None:
@@ -465,6 +465,304 @@ def test_changed_python_static_and_kernel_use_only_the_selected_file_and_node(
     )
 
 
+@pytest.mark.parametrize(
+    ("owner", "source"),
+    (
+        ("apps/api/main.py", "app = object()\n"),
+        ("apps/worker/health.py", "def health():\n    return None\n"),
+        ("apps/worker/main.py", "def main():\n    return None\n"),
+        ("deploy/hetzner/adopt-infrastructure.py", "def adopt():\n    return None\n"),
+        ("deploy/hetzner/release.py", "def release():\n    return None\n"),
+    ),
+)
+def test_changed_python_static_owns_entrypoints_outside_python(
+    tmp_path: Path,
+    owner: str,
+    source: str,
+) -> None:
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    (tmp_path / "python/.venv").mkdir()
+    _write(tmp_path / owner, source)
+    environment = _stub_tools(tmp_path, "uv")
+    context = _changed_context(
+        tmp_path,
+        Selection(
+            owner,
+            Capability.KERNEL_PYTHON,
+            SelectionReason.PRIORITY_RISK,
+        ),
+    )
+
+    result = run_capability(context, Capability.STATIC_PYTHON, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    relative = f"../{owner}"
+    assert [command["argv"] for command in _commands(tmp_path)] == [
+        ["run", "--frozen", "--no-sync", "ruff", "check", relative],
+        [
+            "run",
+            "--frozen",
+            "--no-sync",
+            "ruff",
+            "format",
+            "--check",
+            relative,
+        ],
+        ["run", "--frozen", "--no-sync", "pyright", relative],
+    ]
+
+
+def test_changed_static_platform_runs_only_selected_shell_checks(tmp_path: Path) -> None:
+    _write(tmp_path / "deploy/hetzner/deploy.sh", "#!/usr/bin/env bash\nset -eu\n")
+    environment = _stub_tools(tmp_path, "bash", "cloud-init", "docker", "env", "shellcheck")
+    context = _changed_context(
+        tmp_path,
+        Selection(
+            "deploy/hetzner/deploy.sh",
+            Capability.STATIC_PLATFORM,
+            SelectionReason.PRIORITY_RISK,
+        ),
+    )
+
+    result = run_capability(context, Capability.STATIC_PLATFORM, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    assert [command["argv"] for command in _commands(tmp_path)] == [
+        ["-n", "./deploy/hetzner/deploy.sh"],
+        ["./deploy/hetzner/deploy.sh"],
+    ]
+
+
+def test_changed_static_platform_owns_the_release_bundle_resolver(tmp_path: Path) -> None:
+    owner = "deploy/hetzner/fetch-release-bundle.sh"
+    _write(tmp_path / owner, "#!/usr/bin/env bash\nset -eu\n")
+    environment = _stub_tools(tmp_path, "bash", "shellcheck")
+    context = _changed_context(
+        tmp_path,
+        Selection(owner, Capability.STATIC_PLATFORM, SelectionReason.PRIORITY_RISK),
+    )
+
+    result = run_capability(context, Capability.STATIC_PLATFORM, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    assert [command["argv"] for command in _commands(tmp_path)] == [
+        ["-n", f"./{owner}"],
+        [f"./{owner}"],
+    ]
+
+
+def test_changed_static_platform_runs_only_selected_compose_check(tmp_path: Path) -> None:
+    _write(tmp_path / "docker/docker-compose.yml", "services: {}\n")
+    _write(tmp_path / "docker/docker-compose.worker.yml", "services: {}\n")
+    environment = _stub_tools(tmp_path, "bash", "cloud-init", "docker", "env", "shellcheck")
+    context = _changed_context(
+        tmp_path,
+        Selection(
+            "docker/docker-compose.worker.yml",
+            Capability.STATIC_PLATFORM,
+            SelectionReason.PRIORITY_RISK,
+        ),
+    )
+
+    result = run_capability(context, Capability.STATIC_PLATFORM, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    commands = _commands(tmp_path)
+    assert len(commands) == 1
+    assert commands[0]["tool"] == "env"
+    assert commands[0]["argv"][-10:] == [
+        "docker",
+        "compose",
+        "--project-name",
+        "nexus-static-local-worker",
+        "--file",
+        "./docker/docker-compose.yml",
+        "--file",
+        "./docker/docker-compose.worker.yml",
+        "config",
+        "--quiet",
+    ]
+    assert "NEXUS_LOCAL_SOURCE_SHA=" + "0" * 40 in commands[0]["argv"]
+    assert "NEXUS_LOCAL_RUNTIME_IDENTITY_FILE=/dev/null" in commands[0]["argv"]
+
+
+def test_changed_static_platform_validates_production_compose_with_placeholders(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "deploy/hetzner/docker-compose.yml", "services: {}\n")
+    environment = _stub_tools(tmp_path, "bash", "cloud-init", "docker", "env", "shellcheck")
+    context = _changed_context(
+        tmp_path,
+        Selection(
+            "deploy/hetzner/docker-compose.yml",
+            Capability.STATIC_PLATFORM,
+            SelectionReason.PRIORITY_RISK,
+        ),
+    )
+
+    result = run_capability(context, Capability.STATIC_PLATFORM, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    commands = _commands(tmp_path)
+    assert len(commands) == 1
+    assert commands[0]["tool"] == "env"
+    assert commands[0]["argv"][-8:] == [
+        "docker",
+        "compose",
+        "--project-name",
+        "nexus-static-production",
+        "--file",
+        "./deploy/hetzner/docker-compose.yml",
+        "config",
+        "--quiet",
+    ]
+    for placeholder in (
+        "POSTGRES_PASSWORD=not-a-secret",
+        "NEXUS_CONFIG_FILE=/dev/null",
+        "CADDY_SITE=nexus.example.invalid",
+        "CADDY_ACME_EMAIL=nexus@example.invalid",
+    ):
+        assert placeholder in commands[0]["argv"]
+
+
+def test_changed_static_platform_runs_only_selected_cloud_init_check(tmp_path: Path) -> None:
+    _write(tmp_path / "deploy/hetzner/cloud-init.yml", "#cloud-config\nusers: []\n")
+    environment = _stub_tools(tmp_path, "bash", "cloud-init", "docker", "env", "shellcheck")
+    context = _changed_context(
+        tmp_path,
+        Selection(
+            "deploy/hetzner/cloud-init.yml",
+            Capability.STATIC_PLATFORM,
+            SelectionReason.PRIORITY_RISK,
+        ),
+    )
+
+    result = run_capability(context, Capability.STATIC_PLATFORM, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    assert [command["argv"] for command in _commands(tmp_path)] == [
+        ["schema", "--config-file", "./deploy/hetzner/cloud-init.yml"]
+    ]
+
+
+def test_changed_static_platform_checks_both_backend_targets(tmp_path: Path) -> None:
+    _write(tmp_path / "docker/Dockerfile.backend", "FROM scratch AS api\nFROM scratch AS worker\n")
+    environment = _stub_tools(tmp_path, "bash", "cloud-init", "docker", "env", "shellcheck")
+    context = _changed_context(
+        tmp_path,
+        Selection(
+            "docker/Dockerfile.backend",
+            Capability.STATIC_PLATFORM,
+            SelectionReason.PRIORITY_RISK,
+        ),
+    )
+
+    result = run_capability(context, Capability.STATIC_PLATFORM, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    assert [command["argv"] for command in _commands(tmp_path)] == [
+        [
+            "buildx",
+            "build",
+            "--check",
+            "--file",
+            "./docker/Dockerfile.backend",
+            "--target",
+            target,
+            "--build-arg",
+            "SOURCE_SHA=" + "0" * 40,
+            ".",
+        ]
+        for target in ("api", "worker")
+    ]
+
+
+def test_static_platform_fails_closed_when_a_selected_owner_is_missing(tmp_path: Path) -> None:
+    context = _changed_context(
+        tmp_path,
+        Selection(
+            "deploy/hetzner/deploy.sh",
+            Capability.STATIC_PLATFORM,
+            SelectionReason.PRIORITY_RISK,
+        ),
+    )
+
+    result = run_capability(context, Capability.STATIC_PLATFORM)
+
+    assert result.evidence.status is RunStatus.NOT_RUN
+    assert result.detail == "selected platform static owner is absent: deploy/hetzner/deploy.sh"
+
+
+def test_complete_static_platform_runs_every_owned_check(tmp_path: Path) -> None:
+    shell_paths = (
+        "deploy/cloudflare/apply-r2-cors.sh",
+        "deploy/cloudflare/apply-r2-lifecycle.sh",
+        "deploy/hetzner/deploy.sh",
+        "deploy/hetzner/fetch-release-bundle.sh",
+        "deploy/hetzner/provision.sh",
+        "deploy/hetzner/reconcile-oracle.sh",
+        "deploy/hetzner/sync-env.sh",
+        "deploy/smoke/auth-smoke.sh",
+        "deploy/supabase/verify-auth-config.sh",
+        "deploy/vercel/sync-env.sh",
+        "deploy/vercel/sync-resource-sharing-firewall.sh",
+    )
+    for path in shell_paths:
+        _write(tmp_path / path, "#!/usr/bin/env bash\nset -eu\n")
+    _write(tmp_path / "deploy/hetzner/docker-compose.yml", "services: {}\n")
+    _write(tmp_path / "docker/docker-compose.yml", "services: {}\n")
+    _write(tmp_path / "docker/docker-compose.worker.yml", "services: {}\n")
+    _write(tmp_path / "deploy/hetzner/cloud-init.yml", "#cloud-config\nusers: []\n")
+    _write(tmp_path / "docker/Dockerfile.backend", "FROM scratch AS api\nFROM scratch AS worker\n")
+    environment = _stub_tools(tmp_path, "bash", "cloud-init", "docker", "env", "shellcheck")
+    context = CapabilityContext(tmp_path, Workflow.CONFIDENCE, ())
+
+    result = run_capability(context, Capability.STATIC_PLATFORM, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    commands = _commands(tmp_path)
+    root_shell_paths = [f"./{path}" for path in shell_paths]
+    assert [command["tool"] for command in commands] == [
+        "bash",
+        "shellcheck",
+        "env",
+        "env",
+        "cloud-init",
+        "docker",
+        "docker",
+    ]
+    assert commands[0]["argv"] == ["-n", *root_shell_paths]
+    assert commands[1]["argv"] == root_shell_paths
+    assert commands[2]["argv"][-8:] == [
+        "docker",
+        "compose",
+        "--project-name",
+        "nexus-static-production",
+        "--file",
+        "./deploy/hetzner/docker-compose.yml",
+        "config",
+        "--quiet",
+    ]
+    assert commands[3]["argv"][-10:] == [
+        "docker",
+        "compose",
+        "--project-name",
+        "nexus-static-local-worker",
+        "--file",
+        "./docker/docker-compose.yml",
+        "--file",
+        "./docker/docker-compose.worker.yml",
+        "config",
+        "--quiet",
+    ]
+    assert commands[4]["argv"] == [
+        "schema",
+        "--config-file",
+        "./deploy/hetzner/cloud-init.yml",
+    ]
+    assert [command["argv"][6] for command in commands[5:]] == ["api", "worker"]
+
+
 def test_changed_web_static_and_kernel_use_final_suffix_owner(tmp_path: Path) -> None:
     _write(tmp_path / "apps/web/package.json", '{"scripts":{"test:unit":"vitest"}}\n')
     (tmp_path / "apps/web/node_modules").mkdir()
@@ -563,12 +861,52 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         "def test_policy():\n    assert True\n",
     )
     (tmp_path / "python/.venv").mkdir()
+    _write(tmp_path / "apps/api/main.py", "app = object()\n")
+    _write(tmp_path / "apps/worker/health.py", "def health():\n    return None\n")
+    _write(tmp_path / "apps/worker/main.py", "def main():\n    return None\n")
     _write(tmp_path / "apps/web/package.json", "{}\n")
     _write(tmp_path / "apps/web/scripts/test-eslint-policy.mjs", "export {};\n")
     (tmp_path / "apps/web/node_modules").mkdir()
     _write(tmp_path / "apps/web/src/example.unit.test.ts", "export {};\n")
     _write(tmp_path / ".github/workflows/ci.yml", "name: CI\n")
-    environment = _stub_tools(tmp_path, "actionlint", "bun", "uv")
+    _write(
+        tmp_path / "deploy/hetzner/adopt-infrastructure.py",
+        "def adopt():\n    return None\n",
+    )
+    _write(tmp_path / "deploy/hetzner/release.py", "def release():\n    return None\n")
+    for path in (
+        "deploy/cloudflare/apply-r2-cors.sh",
+        "deploy/cloudflare/apply-r2-lifecycle.sh",
+        "deploy/hetzner/deploy.sh",
+        "deploy/hetzner/fetch-release-bundle.sh",
+        "deploy/hetzner/provision.sh",
+        "deploy/hetzner/reconcile-oracle.sh",
+        "deploy/hetzner/sync-env.sh",
+        "deploy/smoke/auth-smoke.sh",
+        "deploy/supabase/verify-auth-config.sh",
+        "deploy/vercel/sync-env.sh",
+        "deploy/vercel/sync-resource-sharing-firewall.sh",
+    ):
+        _write(tmp_path / path, "#!/usr/bin/env bash\nset -eu\n")
+    _write(tmp_path / "deploy/hetzner/docker-compose.yml", "services: {}\n")
+    _write(tmp_path / "docker/docker-compose.yml", "services: {}\n")
+    _write(tmp_path / "docker/docker-compose.worker.yml", "services: {}\n")
+    _write(tmp_path / "deploy/hetzner/cloud-init.yml", "#cloud-config\nusers: []\n")
+    _write(
+        tmp_path / "docker/Dockerfile.backend",
+        "FROM scratch AS api\nFROM scratch AS worker\n",
+    )
+    environment = _stub_tools(
+        tmp_path,
+        "actionlint",
+        "bash",
+        "bun",
+        "cloud-init",
+        "docker",
+        "env",
+        "shellcheck",
+        "uv",
+    )
     run_context = RunContextRecorder()
     context = CapabilityContext(
         tmp_path,
@@ -582,6 +920,7 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         Capability.STATIC_PYTHON,
         Capability.STATIC_WEB,
         Capability.STATIC_WORKFLOWS,
+        Capability.STATIC_PLATFORM,
         Capability.KERNEL_PYTHON,
         Capability.KERNEL_WEB,
     )
@@ -597,19 +936,55 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         "uv",
         "uv",
         "uv",
+        "uv",
         "bun",
         "bun",
         "bun",
         "actionlint",
         "uv",
+        "bash",
+        "shellcheck",
+        "env",
+        "env",
+        "cloud-init",
+        "docker",
+        "docker",
         "uv",
         "bun",
     ]
     assert commands[0]["argv"][-1] == "tests/kernel/nexus_test_control/test_policy.py"
     assert commands[1]["argv"] == ["run", "test:eslint-policy"]
-    assert commands[9]["argv"][-1] == "../.github/workflows/ci.yml"
-    assert commands[10]["argv"][-1] == "./tests/kernel/nexus_test_control/test_policy.py"
-    assert commands[11]["argv"] == [
+    assert commands[2]["argv"][-6:] == [
+        ".",
+        "../apps/api/main.py",
+        "../apps/worker/health.py",
+        "../apps/worker/main.py",
+        "../deploy/hetzner/adopt-infrastructure.py",
+        "../deploy/hetzner/release.py",
+    ]
+    assert commands[3]["argv"][-6:] == [
+        ".",
+        "../apps/api/main.py",
+        "../apps/worker/health.py",
+        "../apps/worker/main.py",
+        "../deploy/hetzner/adopt-infrastructure.py",
+        "../deploy/hetzner/release.py",
+    ]
+    assert commands[4]["argv"] == ["run", "--frozen", "--no-sync", "pyright"]
+    assert commands[5]["argv"] == [
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pyright",
+        "../apps/api/main.py",
+        "../apps/worker/health.py",
+        "../apps/worker/main.py",
+        "../deploy/hetzner/adopt-infrastructure.py",
+        "../deploy/hetzner/release.py",
+    ]
+    assert commands[10]["argv"][-1] == "../.github/workflows/ci.yml"
+    assert commands[18]["argv"][-1] == "./tests/kernel/nexus_test_control/test_policy.py"
+    assert commands[19]["argv"] == [
         "run",
         "test:unit",
         "--",

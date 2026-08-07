@@ -13,4 +13,3 @@ AUTH_TRUSTED_PROXY_ORIGINS=
 # Values are domain patterns, not URL origins. Empty is correct for direct Vercel.
 SERVER_ACTION_ALLOWED_ORIGINS=
 NEXUS_EXTENSION_REDIRECT_ORIGINS=
-NEXUS_INTERNAL_SECRET=<same-value-as-env-prod>

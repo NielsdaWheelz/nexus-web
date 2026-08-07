@@ -2,199 +2,615 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-
-DEFAULT_NEXUS_HOST="5.78.194.235"
-HOST="${NEXUS_HOST:-$DEFAULT_NEXUS_HOST}"
-DEPLOY_USER="${NEXUS_DEPLOY_USER:-nexus}"
-DEPLOY_PATH="${NEXUS_DEPLOY_PATH:-/opt/nexus-web}"
-ENV_FILE="${NEXUS_REMOTE_ENV_FILE:-${NEXUS_ENV_FILE:-/etc/nexus/nexus.env}}"
-SSH_TARGET="${NEXUS_SSH_TARGET:-${DEPLOY_USER}@${HOST}}"
-SYNC_ENV="${NEXUS_SYNC_ENV:-1}"
+readonly ROOT_DIR
+readonly SSH_TARGET="nexus@5.78.194.235"
+readonly PRODUCTION_HOST="nexus.nielseriknandal.com"
+readonly VERCEL_PROJECT_NAME="nexus-web"
+readonly VERCEL_PROJECT_ID="prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs"
+readonly VERCEL_TEAM_ID="team_fKVvTyTsMBQ7qFjccFO17BJL"
+readonly VERCEL_SCOPE="niels-erik-nandals-projects"
+readonly VERCEL_CLI="${ROOT_DIR}/apps/web/node_modules/.bin/vercel"
+# justify-retry-schedule: provider reads get one immediate replay for a transport
+# or explicitly transient HTTP failure; durable operation replay owns later attempts.
+readonly VERCEL_READ_ATTEMPTS=2
+# justify-polling: Vercel promotion has no completion stream in the locked CLI;
+# twelve two-second observations bound alias convergence to 24 seconds.
+readonly VERCEL_ALIAS_POLL_ATTEMPTS=12
+readonly VERCEL_ALIAS_POLL_INTERVAL_SECONDS=2
+readonly -a SSH_OPTIONS=(
+  -o BatchMode=yes
+  -o ConnectTimeout=10
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=4
+)
+export PYTHONDONTWRITEBYTECODE=1
 
 die() {
   echo "error: $*" >&2
   exit 1
 }
 
-command -v rsync >/dev/null 2>&1 || die "rsync is not installed locally"
-command -v ssh >/dev/null 2>&1 || die "ssh is not installed locally"
-command -v git >/dev/null 2>&1 || die "git is not installed locally"
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "$1 is not installed"
+}
 
-HEAD_SHA="$(git -C "$ROOT_DIR" rev-parse HEAD)"
-CUTOVER_SHA="${CUTOVER_SHA:-$HEAD_SHA}"
-case "$CUTOVER_SHA" in
-  *[!0-9a-f]*|"") die "CUTOVER_SHA must be a lowercase Git commit SHA" ;;
+require_exact_public_headers() {
+  local headers="$1"
+  local label="$2"
+  local cache_control
+
+  cache_control="$(awk '
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      separator = index(line, ":")
+      if (separator == 0) next
+      name = tolower(substr(line, 1, separator - 1))
+      value = substr(line, separator + 1)
+      gsub(/^[ \t]+|[ \t]+$/, "", value)
+      if (name == "cache-control") print value
+    }
+  ' "$headers")"
+  [ "$cache_control" = "no-store" ] || die "$label must return one exact Cache-Control: no-store"
+  if grep -Eiq '^(location|set-cookie):' "$headers"; then
+    die "$label redirected or mutated authentication state"
+  fi
+}
+
+vercel_get() {
+  local url="$1"
+  local output="$2"
+  local status=""
+  local attempt
+
+  for ((attempt = 1; attempt <= VERCEL_READ_ATTEMPTS; attempt++)); do
+    if status="$(
+      curl --silent --show-error --max-time 15 --max-filesize 1048576 \
+        --proto '=https' --tlsv1.2 \
+        --config "$VERCEL_API_CONFIG" \
+        --output "$output" \
+        --write-out '%{http_code}' \
+        "$url"
+    )"; then
+      case "$status" in
+        408|429|5??)
+          if [ "$attempt" -lt "$VERCEL_READ_ATTEMPTS" ]; then
+            continue
+          fi
+          ;;
+      esac
+      printf '%s' "$status"
+      return 0
+    fi
+  done
+  return 1
+}
+
+settle_bound_frontend_failure() {
+  local deployment_id="$1"
+  timeout --foreground 4m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    timeout --foreground 3m sudo env PYTHONDONTWRITEBYTECODE=1 \
+    "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+    python3 -B "$REMOTE_CONTROLLER" fail-bound-frontend \
+      --source-sha "$SOURCE_SHA" \
+      --deployment-id "$deployment_id"
+  die "the immutable bound Vercel deployment is permanently unavailable; host settlement completed"
+}
+
+case "$PRODUCTION_HOST" in
+  *[!a-z0-9.-]*|.*|*..*|*.) die "committed production host is malformed" ;;
 esac
-[ "${#CUTOVER_SHA}" = "40" ] || die "CUTOVER_SHA must be a full 40-character Git SHA"
-[ "$CUTOVER_SHA" = "$HEAD_SHA" ] || die "CUTOVER_SHA must equal the checked-out HEAD"
+[[ "$PRODUCTION_HOST" == *.* ]] || die "committed production host is malformed"
+[ "$#" = 1 ] || die "usage: deploy/hetzner/deploy.sh <source-sha>"
+readonly SOURCE_SHA="$1"
+[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "source SHA must be 40 lowercase hex characters"
+
+for command in git jq ssh timeout; do
+  require_command "$command"
+done
+
 [ -z "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=normal)" ] || \
-  die "production deploy requires a clean checkout"
+  die "production release requires a clean checkout"
+[ "$(git -C "$ROOT_DIR" rev-parse HEAD)" = "$SOURCE_SHA" ] || \
+  die "requested source SHA must equal checked-out HEAD"
+origin_main_proven=false
 
-case "$SYNC_ENV" in
-  0|1) ;;
-  *) die "NEXUS_SYNC_ENV must be 0 or 1" ;;
-esac
+TEMPORARY="$(mktemp -d)"
+readonly TEMPORARY
+readonly BUNDLE="${TEMPORARY}/bundle"
+readonly REMOTE_BUNDLE="/opt/nexus/releases/${SOURCE_SHA}"
+readonly REMOTE_CONTROLLER="${REMOTE_BUNDLE}/release.py"
+REMOTE_TEMPORARY=""
 
-if [ "$SYNC_ENV" = "1" ]; then
-  NEXUS_REMOTE_ENV_FILE="$ENV_FILE" "${ROOT_DIR}/deploy/hetzner/sync-env.sh"
+cleanup() {
+  if [[ "$REMOTE_TEMPORARY" =~ ^/tmp/nexus-release\.[A-Za-z0-9]{8}$ ]]; then
+    timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+      rm -r -- "$REMOTE_TEMPORARY" >/dev/null 2>&1 || true
+  fi
+  rm -r -- "$TEMPORARY"
+}
+trap cleanup EXIT
+
+bundle_installed=false
+if timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+  sudo test -x "$REMOTE_CONTROLLER"; then
+  bundle_installed=true
+else
+  installed_probe_status="$?"
+  [ "$installed_probe_status" = 1 ] || \
+    die "could not determine whether the immutable host bundle is installed"
 fi
 
-# shellcheck disable=SC2029
-ssh "$SSH_TARGET" "sudo install -d -o ${DEPLOY_USER} -g ${DEPLOY_USER} '${DEPLOY_PATH}' && test -f '${ENV_FILE}'"
+if [ "$bundle_installed" = false ]; then
+  require_command scp
+  [ -x "${ROOT_DIR}/deploy/hetzner/fetch-release-bundle.sh" ] || \
+    die "immutable release bundle resolver is not executable"
+  mkdir "$BUNDLE"
+  "${ROOT_DIR}/deploy/hetzner/fetch-release-bundle.sh" \
+    "$SOURCE_SHA" "$BUNDLE" >/dev/null
+  origin_main_proven=true
 
-rsync -az --delete \
-  --exclude ".git" \
-  --exclude ".agency/" \
-  --exclude ".claude/" \
-  --exclude ".env" \
-  --exclude ".env.*" \
-  --exclude "deploy/env/env-prod" \
-  --exclude "deploy/env/env-prod-backend" \
-  --exclude "deploy/env/env-prod-frontend" \
-  --exclude "deploy/env/env-prod-worker" \
-  --exclude ".dev-ports" \
-  --exclude ".DS_Store" \
-  --exclude "node_modules/" \
-  --exclude "apps/web/.next/" \
-  --exclude "apps/web/node_modules/" \
-  --exclude "python/.venv/" \
-  --exclude "**/__pycache__/" \
-  --exclude "**/.ruff_cache/" \
-  --exclude "test-results/" \
-  "${ROOT_DIR}/" "${SSH_TARGET}:${DEPLOY_PATH}/"
+  REMOTE_TEMPORARY="$(timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    mktemp -d /tmp/nexus-release.XXXXXXXX)"
+  [[ "$REMOTE_TEMPORARY" =~ ^/tmp/nexus-release\.[A-Za-z0-9]{8}$ ]] || \
+    die "host returned an invalid transfer directory"
+  timeout --foreground 5m scp "${SSH_OPTIONS[@]}" -r \
+    "${BUNDLE}/." "${SSH_TARGET}:${REMOTE_TEMPORARY}/"
+  timeout --foreground 3m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    timeout --foreground 2m sudo env PYTHONDONTWRITEBYTECODE=1 \
+    "PYTHONPATH=${REMOTE_TEMPORARY}/python" \
+    python3 -B "${REMOTE_TEMPORARY}/release.py" install-bundle \
+      --source "$REMOTE_TEMPORARY" >/dev/null
+fi
 
-# shellcheck disable=SC2029
-ssh "$SSH_TARGET" \
-  "DEPLOY_PATH='${DEPLOY_PATH}' ENV_FILE='${ENV_FILE}' CUTOVER_SHA='${CUTOVER_SHA}' bash -s" <<'REMOTE'
-set -euo pipefail
-
-cd "$DEPLOY_PATH"
-
-compose() {
-  NEXUS_ENV_FILE="$ENV_FILE" docker compose --env-file "$ENV_FILE" -f deploy/hetzner/docker-compose.yml "$@"
-}
-
-retain_release_image() {
-  local service="$1"
-  local repository="$2"
-  local container_id revision image_id retained_tag prior_tag
-
-  container_id="$(compose ps --all -q "$service")"
-  [ -n "$container_id" ] || return 0
-  revision="$(
-    docker inspect "$container_id" --format '{{range .Config.Env}}{{println .}}{{end}}' |
-      sed -n 's/^CUTOVER_SHA=//p'
-  )"
-  case "$revision" in
-    *[!0-9a-f]*|"")
-      echo "error: ${service} container has no valid CUTOVER_SHA" >&2
-      return 1
-      ;;
-  esac
-  if [ "${#revision}" != "40" ]; then
-    echo "error: ${service} container CUTOVER_SHA must be a full Git revision" >&2
-    return 1
-  fi
-  image_id="$(docker inspect "$container_id" --format '{{.Image}}')"
-  retained_tag="${repository}:release-${revision}"
-  docker image tag "$image_id" "$retained_tag"
-  while IFS= read -r prior_tag; do
-    [ "$prior_tag" = "$retained_tag" ] || docker image rm "$prior_tag" >/dev/null
-  done < <(
-    docker image ls \
-      --filter "reference=${repository}:release-*" \
-      --format '{{.Repository}}:{{.Tag}}'
+host_inspect="$(
+  timeout --foreground 1m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    sudo env PYTHONDONTWRITEBYTECODE=1 "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+    python3 -B "$REMOTE_CONTROLLER" inspect --source-sha "$SOURCE_SHA"
+)"
+jq -e --arg sha "$SOURCE_SHA" '
+  keys == [
+    "current_sha",
+    "current_vercel_deployment_id",
+    "failed_vercel_deployment_ids",
+    "forward_fix_sha",
+    "genesis_vercel_deployment_id",
+    "phase",
+    "predecessor_sha",
+    "status",
+    "vercel_deployment_id"
+  ]
+  and (
+    (.current_sha == null and .current_vercel_deployment_id == null)
+    or
+    ((.current_sha | type == "string")
+      and (.current_vercel_deployment_id | type == "string"))
   )
-  echo "retained_release_image=${retained_tag}"
-}
+  and (
+    (.genesis_vercel_deployment_id | type == "string"
+      and test("^dpl_[A-Za-z0-9]+$"))
+    or
+    (.genesis_vercel_deployment_id == null
+      and .status == "new"
+      and .current_sha == null
+      and .phase == null)
+  )
+  and ((.failed_vercel_deployment_ids | type) == "array")
+  and ([.failed_vercel_deployment_ids[]
+    | type == "string" and test("^dpl_[A-Za-z0-9]+$")]
+    | all)
+  and ((.failed_vercel_deployment_ids | unique | length)
+    == (.failed_vercel_deployment_ids | length))
+  and (
+    (.forward_fix_sha == null and (.failed_vercel_deployment_ids | length) == 0)
+    or
+    ((.forward_fix_sha | type == "string")
+      and (.failed_vercel_deployment_ids | length) > 0)
+  )
+  and (
+    (.status == "new"
+      and .phase == null
+      and .predecessor_sha == null
+      and .vercel_deployment_id == null)
+    or
+    (.status == "resume"
+      and (.phase | IN(
+        "Prepared",
+        "WritersStopped",
+        "BackupVerified",
+        "DataMutationStarted",
+        "BackendActivationStarted",
+        "AwaitingFrontendPromotion",
+        "FrontendPromoted",
+        "RollbackRequired",
+        "ForwardFixPending"
+      ))
+      and (.vercel_deployment_id | type == "string"))
+    or
+    (.status == "current"
+      and .current_sha == $sha
+      and .phase == "Succeeded"
+      and (.vercel_deployment_id | type == "string"))
+  )
+' <<<"$host_inspect" >/dev/null || die "host inspect response is malformed"
+status="$(jq -r .status <<<"$host_inspect")"
+phase="$(jq -r '.phase // empty' <<<"$host_inspect")"
+if [ "$phase" = "RollbackRequired" ] || [ "$phase" = "ForwardFixPending" ]; then
+  settlement_deployment_id="$(jq -r .vercel_deployment_id <<<"$host_inspect")"
+  [[ "$settlement_deployment_id" =~ ^dpl_[A-Za-z0-9]+$ ]] || \
+    die "durable failure settlement has no bound Vercel deployment"
+  timeout --foreground 16m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    timeout --foreground 15m sudo env PYTHONDONTWRITEBYTECODE=1 \
+    "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+    python3 -B "$REMOTE_CONTROLLER" apply \
+      --source-sha "$SOURCE_SHA" \
+      --deployment-id "$settlement_deployment_id" \
+      --production-host "$PRODUCTION_HOST"
+  die "durable failure settlement unexpectedly returned success"
+fi
 
-retain_release_image api nexus-api
-retain_release_image worker-interactive nexus-worker-interactive
-retain_release_image worker-background nexus-worker-background
-compose build --pull
-compose up -d postgres
-for i in $(seq 1 30); do
-  if compose exec -T postgres sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' </dev/null >/dev/null 2>&1; then
+if [ "$origin_main_proven" = false ]; then
+  timeout --foreground 2m git -C "$ROOT_DIR" fetch --quiet origin main
+  [ "$(git -C "$ROOT_DIR" rev-parse origin/main)" = "$SOURCE_SHA" ] || \
+    die "requested source SHA must equal origin/main"
+fi
+
+for command in awk curl grep; do
+  require_command "$command"
+done
+[ -x "$VERCEL_CLI" ] || die "run the locked apps/web dependency install first"
+[ -n "${VERCEL_TOKEN:-}" ] || die "VERCEL_TOKEN is required"
+[[ "$VERCEL_TOKEN" =~ ^[A-Za-z0-9._-]+$ ]] || die "VERCEL_TOKEN is malformed"
+readonly VERCEL_API_CONFIG="${TEMPORARY}/vercel-api.conf"
+(
+  umask 077
+  printf 'header = "Authorization: Bearer %s"\n' "$VERCEL_TOKEN" >"$VERCEL_API_CONFIG"
+)
+
+vercel_project_body="${TEMPORARY}/vercel-project.json"
+vercel_project_status="$(vercel_get \
+  "https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}?teamId=${VERCEL_TEAM_ID}" \
+  "$vercel_project_body")" || die "Vercel project inspection failed transiently"
+[ "$vercel_project_status" = 200 ] || \
+  die "Vercel project inspection returned HTTP ${vercel_project_status}"
+jq -e \
+  --arg id "$VERCEL_PROJECT_ID" \
+  --arg name "$VERCEL_PROJECT_NAME" \
+  --arg team "$VERCEL_TEAM_ID" '
+  .id == $id
+  and .name == $name
+  and .accountId == $team
+  and .autoAssignCustomDomains == false
+  and .autoExposeSystemEnvs == true
+' "$vercel_project_body" >/dev/null || \
+  die "committed Vercel project/team identity or build policy disagrees"
+
+current_id="$(jq -r '.current_vercel_deployment_id // empty' <<<"$host_inspect")"
+current_sha="$(jq -r '.current_sha // empty' <<<"$host_inspect")"
+genesis_id="$(jq -r '.genesis_vercel_deployment_id // empty' <<<"$host_inspect")"
+bound_deployment_id="$(jq -r '.vercel_deployment_id // empty' <<<"$host_inspect")"
+deployment=""
+
+# Resume resolves and, if necessary, terminally settles only its durable exact
+# deployment ID before inspecting the mutable production alias.
+if [ "$status" = "resume" ]; then
+  [[ "$bound_deployment_id" =~ ^dpl_[A-Za-z0-9]+$ ]] || \
+    die "resume has no bound Vercel deployment"
+  bound_api_body="${TEMPORARY}/bound-deployment.json"
+  bound_api_status="$(vercel_get \
+    "https://api.vercel.com/v13/deployments/${bound_deployment_id}?teamId=${VERCEL_TEAM_ID}" \
+    "$bound_api_body")" || die "direct bound Vercel inspection failed transiently"
+  if [ "$bound_api_status" = 404 ]; then
+    jq -e '
+      type == "object"
+      and (.error | type) == "object"
+      and (.error.code | type) == "string"
+      and ((.error.code | ascii_downcase) | IN("not_found", "deployment_not_found"))
+    ' "$bound_api_body" >/dev/null || \
+      die "bound Vercel inspection returned an unrecognized HTTP 404 contract"
+    settle_bound_frontend_failure "$bound_deployment_id"
+  fi
+  [ "$bound_api_status" = 200 ] || \
+    die "direct bound Vercel inspection returned transient/operator HTTP ${bound_api_status}"
+  jq -e '
+    type == "object"
+    and (.id | type == "string" and test("^dpl_[A-Za-z0-9]+$"))
+    and (.name | type) == "string"
+    and (.projectId | type) == "string"
+    and (.ownerId | type) == "string"
+    and (.readyState | type) == "string"
+    and (.target | type) == "string"
+    and (.url | type) == "string"
+    and (.meta | type) == "object"
+    and (.meta.githubCommitSha | type) == "string"
+    and (.alias | type) == "array"
+  ' "$bound_api_body" >/dev/null || \
+    die "bound Vercel deployment response is malformed"
+  if ! jq -e \
+    --arg id "$bound_deployment_id" \
+    --arg project_id "$VERCEL_PROJECT_ID" \
+    --arg project "$VERCEL_PROJECT_NAME" \
+    --arg team "$VERCEL_TEAM_ID" \
+    --arg sha "$SOURCE_SHA" '
+    .id == $id
+    and .projectId == $project_id
+    and .name == $project
+    and .ownerId == $team
+    and .target == "production"
+    and .meta.githubCommitSha == $sha
+  ' "$bound_api_body" >/dev/null; then
+    die "bound Vercel deployment identity disagrees with durable release state"
+  fi
+  bound_ready_state="$(jq -r .readyState "$bound_api_body")"
+  case "$bound_ready_state" in
+    ERROR|CANCELED)
+      settle_bound_frontend_failure "$bound_deployment_id"
+      ;;
+    BUILDING|QUEUED|INITIALIZING)
+      die "bound Vercel deployment is not terminally ready; retry the same SHA"
+      ;;
+    READY) ;;
+    *) die "bound Vercel deployment has an unknown state" ;;
+  esac
+  deployment="$(jq -cer '{id, name, state: .readyState, target, meta, url}' \
+    "$bound_api_body")"
+fi
+
+authoritative_body="${TEMPORARY}/authoritative-deployment.json"
+authoritative_status="$(vercel_get \
+  "https://api.vercel.com/v13/deployments/${PRODUCTION_HOST}?teamId=${VERCEL_TEAM_ID}" \
+  "$authoritative_body")" || die "authoritative Vercel inspection failed transiently"
+[ "$authoritative_status" = 200 ] || \
+  die "authoritative Vercel inspection returned HTTP ${authoritative_status}"
+jq -e \
+  --arg host "$PRODUCTION_HOST" \
+  --arg project_id "$VERCEL_PROJECT_ID" \
+  --arg project "$VERCEL_PROJECT_NAME" \
+  --arg team "$VERCEL_TEAM_ID" '
+  (.id | type == "string" and test("^dpl_[A-Za-z0-9]+$"))
+  and .projectId == $project_id
+  and .name == $project
+  and .ownerId == $team
+  and .target == "production"
+  and .readyState == "READY"
+  and (.alias | type == "array" and index($host) != null)
+' "$authoritative_body" >/dev/null || \
+  die "authoritative Vercel domain has no exact READY production deployment"
+authoritative_id="$(jq -r .id "$authoritative_body")"
+
+if [ -z "$genesis_id" ]; then
+  if [ "$status" != "new" ] || [ -n "$current_sha" ]; then
+    die "only an empty first release may adopt the genesis Vercel deployment"
+  fi
+  timeout --foreground 1m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    timeout --foreground 30s sudo env PYTHONDONTWRITEBYTECODE=1 \
+    "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+    python3 -B "$REMOTE_CONTROLLER" adopt-genesis-vercel-deployment \
+      --source-sha "$SOURCE_SHA" \
+      --deployment-id "$authoritative_id" >/dev/null
+  host_inspect="$(
+    timeout --foreground 1m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+      sudo env PYTHONDONTWRITEBYTECODE=1 "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+      python3 -B "$REMOTE_CONTROLLER" inspect --source-sha "$SOURCE_SHA"
+  )"
+  genesis_id="$(jq -er \
+    --arg deployment_id "$authoritative_id" \
+    'select(.genesis_vercel_deployment_id == $deployment_id) |
+      .genesis_vercel_deployment_id' <<<"$host_inspect")" || \
+    die "host did not durably adopt the exact genesis Vercel deployment"
+fi
+
+if [ "$status" = "new" ] && [ -z "$current_sha" ] \
+  && [ "$authoritative_id" != "$genesis_id" ]; then
+  die "first release authoritative deployment differs from adopted genesis"
+fi
+if [ "$status" = "current" ]; then
+  [ "$authoritative_id" = "$current_id" ] || \
+    die "authoritative Vercel deployment differs from the current release record"
+  timeout --foreground 4m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    timeout --foreground 3m sudo env PYTHONDONTWRITEBYTECODE=1 \
+    "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+    python3 -B "$REMOTE_CONTROLLER" verify-current --source-sha "$SOURCE_SHA"
+  exit 0
+fi
+
+prior_authoritative_id="$genesis_id"
+if [ -n "$current_sha" ]; then
+  prior_authoritative_id="$current_id"
+fi
+resume_bound_id="$bound_deployment_id"
+if [ "$authoritative_id" != "$prior_authoritative_id" ] \
+  && { [ -z "$resume_bound_id" ] || [ "$authoritative_id" != "$resume_bound_id" ]; } \
+  && ! jq -e --arg id "$authoritative_id" \
+    '.failed_vercel_deployment_ids | index($id) != null' \
+    <<<"$host_inspect" >/dev/null; then
+  die "authoritative Vercel deployment is unknown before host mutation"
+fi
+
+if [ "$status" = "new" ]; then
+  vercel_list_body="${TEMPORARY}/vercel-deployments.json"
+  vercel_list_status="$(vercel_get \
+    "https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID}&teamId=${VERCEL_TEAM_ID}&target=production&limit=100&meta-githubCommitSha=${SOURCE_SHA}" \
+    "$vercel_list_body")" || die "Vercel candidate listing failed transiently"
+  [ "$vercel_list_status" = 200 ] || \
+    die "Vercel candidate listing returned HTTP ${vercel_list_status}"
+  deployment="$(
+    jq -cer \
+      --arg sha "$SOURCE_SHA" \
+      --arg project_id "$VERCEL_PROJECT_ID" \
+      --arg project "$VERCEL_PROJECT_NAME" '
+      select(
+        (.deployments | type) == "array"
+        and (.pagination | type) == "object"
+        and .pagination.next == null
+      )
+      | [.deployments[]
+          | select(
+              .readyState == "READY"
+              and .name == $project
+              and .projectId == $project_id
+              and .target == "production"
+              and .meta.githubCommitSha == $sha
+              and (.uid | type == "string" and test("^dpl_[A-Za-z0-9]+$"))
+              and (.url | type == "string")
+              and (.createdAt | type == "number")
+            )] as $matches
+      | if ($matches | length) == 0 then error("no staged candidate") else . end
+      | ($matches | max_by(.createdAt)) as $newest
+      | if ([$matches[] | select(.createdAt == $newest.createdAt)] | length) != 1
+        then error("ambiguous newest staged candidate")
+        else {
+          id: $newest.uid,
+          name: $newest.name,
+          state: $newest.readyState,
+          target: $newest.target,
+          meta: $newest.meta,
+          url: $newest.url
+        }
+        end
+    ' "$vercel_list_body"
+  )" || die "no READY production-target Vercel deployment exists for the exact SHA"
+  bound_deployment_id="$(jq -r .id <<<"$deployment")"
+fi
+deployment_url="$(jq -r .url <<<"$deployment")"
+[[ "$deployment_url" =~ ^[a-z0-9][a-z0-9.-]*\.vercel\.app$ ]] || \
+  die "Vercel candidate URL is malformed"
+if [ "$status" = "resume" ]; then
+  candidate_detail="$bound_api_body"
+else
+  candidate_detail="${TEMPORARY}/candidate-deployment.json"
+  candidate_detail_status="$(vercel_get \
+    "https://api.vercel.com/v13/deployments/${bound_deployment_id}?teamId=${VERCEL_TEAM_ID}" \
+    "$candidate_detail")" || die "exact Vercel candidate inspection failed transiently"
+  [ "$candidate_detail_status" = 200 ] || \
+    die "exact Vercel candidate inspection returned HTTP ${candidate_detail_status}"
+fi
+jq -e \
+  --arg id "$bound_deployment_id" \
+  --arg url "$deployment_url" \
+  --arg sha "$SOURCE_SHA" \
+  --arg project_id "$VERCEL_PROJECT_ID" \
+  --arg project "$VERCEL_PROJECT_NAME" \
+  --arg team "$VERCEL_TEAM_ID" '
+  .id == $id
+  and .name == $project
+  and .projectId == $project_id
+  and .ownerId == $team
+  and .url == $url
+  and .target == "production"
+  and .readyState == "READY"
+  and .meta.githubCommitSha == $sha
+  and (.alias | type) == "array"
+' "$candidate_detail" >/dev/null || die "Vercel candidate inspection disagrees with selection"
+if [ "$status" = "new" ]; then
+  jq -e '.alias | length == 0' "$candidate_detail" >/dev/null || \
+    die "new Vercel candidate is already aliased"
+fi
+
+candidate_headers="${TEMPORARY}/candidate.headers"
+candidate_version="${TEMPORARY}/candidate.json"
+candidate_status="$(curl --fail --silent --show-error --max-time 10 --max-filesize 65536 \
+  --dump-header "$candidate_headers" \
+  --output "$candidate_version" \
+  --write-out '%{http_code}' \
+  "https://${deployment_url}/version")"
+[ "$candidate_status" = "200" ] || die "staged frontend version did not return HTTP 200"
+jq -e --arg sha "$SOURCE_SHA" 'keys == ["source_sha"] and .source_sha == $sha' \
+  "$candidate_version" >/dev/null || die "staged frontend version differs from the candidate SHA"
+require_exact_public_headers "$candidate_headers" "staged frontend version"
+
+if [ "$status" = "new" ] || [ "$phase" != "FrontendPromoted" ]; then
+  timeout --foreground 66m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    timeout --foreground 65m sudo env PYTHONDONTWRITEBYTECODE=1 \
+    "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+    python3 -B "$REMOTE_CONTROLLER" apply \
+      --source-sha "$SOURCE_SHA" \
+      --deployment-id "$bound_deployment_id" \
+      --production-host "$PRODUCTION_HOST"
+fi
+
+authoritative_status="$(vercel_get \
+  "https://api.vercel.com/v13/deployments/${PRODUCTION_HOST}?teamId=${VERCEL_TEAM_ID}" \
+  "$authoritative_body")" || die "authoritative Vercel inspection failed transiently"
+[ "$authoritative_status" = 200 ] || \
+  die "authoritative Vercel inspection returned HTTP ${authoritative_status}"
+jq -e \
+  --arg host "$PRODUCTION_HOST" \
+  --arg project_id "$VERCEL_PROJECT_ID" \
+  --arg project "$VERCEL_PROJECT_NAME" \
+  --arg team "$VERCEL_TEAM_ID" '
+  (.id | type == "string" and test("^dpl_[A-Za-z0-9]+$"))
+  and .projectId == $project_id
+  and .name == $project
+  and .ownerId == $team
+  and .target == "production"
+  and .readyState == "READY"
+  and (.alias | type == "array" and index($host) != null)
+' "$authoritative_body" >/dev/null || \
+  die "authoritative Vercel domain has no exact READY production deployment"
+authoritative_id="$(jq -r .id "$authoritative_body")"
+current_id="$(jq -r '.current_vercel_deployment_id // empty' <<<"$host_inspect")"
+current_sha="$(jq -r '.current_sha // empty' <<<"$host_inspect")"
+genesis_id="$(jq -r '.genesis_vercel_deployment_id // empty' <<<"$host_inspect")"
+if [ "$authoritative_id" != "$bound_deployment_id" ]; then
+  if { [ -n "$current_sha" ] && [ "$authoritative_id" != "$current_id" ]; \
+    } || { [ -z "$current_sha" ] && [ "$authoritative_id" != "$genesis_id" ]; \
+    }; then
+    if ! jq -e --arg id "$authoritative_id" \
+      '.failed_vercel_deployment_ids | index($id) != null' \
+      <<<"$host_inspect" >/dev/null; then
+      die "authoritative Vercel deployment is neither exact prior, failed-public, nor bound"
+    fi
+  fi
+  timeout --foreground 4m "$VERCEL_CLI" promote "$bound_deployment_id" \
+    --yes --timeout 3m --scope "$VERCEL_SCOPE" --non-interactive
+fi
+
+alias_bound=false
+alias_body="${TEMPORARY}/bound-alias.json"
+for ((alias_attempt = 1; alias_attempt <= VERCEL_ALIAS_POLL_ATTEMPTS; alias_attempt++)); do
+  if alias_status="$(vercel_get \
+    "https://api.vercel.com/v13/deployments/${bound_deployment_id}?teamId=${VERCEL_TEAM_ID}" \
+    "$alias_body")" \
+    && [ "$alias_status" = 200 ] \
+    && jq -e \
+    --arg host "$PRODUCTION_HOST" \
+    --arg id "$bound_deployment_id" \
+    --arg project_id "$VERCEL_PROJECT_ID" \
+    --arg project "$VERCEL_PROJECT_NAME" \
+    --arg team "$VERCEL_TEAM_ID" '
+      .id == $id
+      and .projectId == $project_id
+      and .name == $project
+      and .ownerId == $team
+      and .target == "production"
+      and .readyState == "READY"
+      and (.alias | type == "array" and index($host) != null)
+    ' "$alias_body" >/dev/null; then
+    alias_bound=true
     break
   fi
-  if [ "$i" = "30" ]; then
-    echo "error: postgres did not become healthy before migrations" >&2
-    exit 1
-  fi
-  sleep 2
+  sleep "$VERCEL_ALIAS_POLL_INTERVAL_SECONDS"
 done
-MIGRATION_TABLE="$(
-  compose exec -T postgres sh -c \
-    'psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT to_regclass('\''public.alembic_version'\'')"' \
-    </dev/null
-)"
-if [ -z "$MIGRATION_TABLE" ]; then
-  MIGRATION_CURRENT="base"
-else
-  MIGRATION_CURRENT="$(
-    compose exec -T postgres sh -c \
-      'psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT version_num FROM alembic_version"' \
-      </dev/null
-  )"
-  [ -n "$MIGRATION_CURRENT" ] || {
-    echo "error: alembic_version exists without a current revision" >&2
-    exit 1
-  }
-fi
-compose run -T --rm api /app/.venv/bin/python -m nexus.ops.deployment_migrations \
-  --current "$MIGRATION_CURRENT" \
-  --script-location /app/migrations/alembic \
-  </dev/null
-compose stop worker-interactive worker-background api
-compose run -T --rm api sh -c 'cd /app/migrations && /app/.venv/bin/alembic upgrade head' </dev/null
-compose run -T --rm --no-deps worker-background /app/.venv/bin/python /app/scripts/ensure_oracle_seed_objects.py </dev/null
-ORACLE_CORPUS_OWNER_USER_ID="$(
-  compose run -T --rm --no-deps worker-background /app/.venv/bin/python -c 'import os; print(os.environ.get("NEXUS_ORACLE_CORPUS_OWNER_USER_ID", "").strip())' </dev/null
-)"
-if [ -z "$ORACLE_CORPUS_OWNER_USER_ID" ]; then
-  echo "error: set NEXUS_ORACLE_CORPUS_OWNER_USER_ID in ${ENV_FILE} for Oracle Corpus seeding" >&2
-  exit 1
-fi
-compose run -T --rm --no-deps worker-background /app/.venv/bin/python /app/scripts/oracle/seed_corpus_library.py --owner-user "$ORACLE_CORPUS_OWNER_USER_ID" --drain </dev/null
-compose run -T --rm --no-deps worker-background /app/.venv/bin/python /app/scripts/oracle/check_corpus_readiness.py </dev/null
-compose up -d --remove-orphans --force-recreate --wait --wait-timeout 180
-compose ps
+[ "$alias_bound" = true ] || die "authoritative domain did not bind the exact candidate"
 
-API_HEALTH="$(compose exec -T api /app/.venv/bin/python -c \
-  'import json, urllib.request; print(json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5))["data"]["cutover_sha"])')"
-INTERACTIVE_WORKER_CONTRACT="$(compose exec -T worker-interactive /app/.venv/bin/python -c \
-  'import os; from apps.worker.main import create_worker; from nexus.config import INTERACTIVE_WORKER_JOB_KINDS, get_settings; worker = create_worker(); assert worker.allowed_kinds == tuple(sorted(INTERACTIVE_WORKER_JOB_KINDS)); print("|".join((os.environ.get("CUTOVER_SHA", ""), str(get_settings().worker_lane), ",".join(worker.allowed_kinds))))')"
-BACKGROUND_WORKER_CONTRACT="$(compose exec -T worker-background /app/.venv/bin/python -c \
-  'import os; from apps.worker.main import create_worker; from nexus.config import BACKGROUND_WORKER_JOB_KINDS, get_settings; worker = create_worker(); assert worker.allowed_kinds == tuple(sorted(BACKGROUND_WORKER_JOB_KINDS)); print("|".join((os.environ.get("CUTOVER_SHA", ""), str(get_settings().worker_lane), ",".join(worker.allowed_kinds))))')"
-IFS='|' read -r INTERACTIVE_WORKER_REVISION INTERACTIVE_WORKER_LANE INTERACTIVE_WORKER_KINDS <<<"$INTERACTIVE_WORKER_CONTRACT"
-IFS='|' read -r BACKGROUND_WORKER_REVISION BACKGROUND_WORKER_LANE BACKGROUND_WORKER_KINDS <<<"$BACKGROUND_WORKER_CONTRACT"
-[ "$API_HEALTH" = "$CUTOVER_SHA" ] || {
-  echo "error: API reports ${API_HEALTH}, expected ${CUTOVER_SHA}" >&2
-  exit 1
-}
-[ "$INTERACTIVE_WORKER_REVISION" = "$CUTOVER_SHA" ] || {
-  echo "error: interactive worker reports ${INTERACTIVE_WORKER_REVISION}, expected ${CUTOVER_SHA}" >&2
-  exit 1
-}
-[ "$BACKGROUND_WORKER_REVISION" = "$CUTOVER_SHA" ] || {
-  echo "error: background worker reports ${BACKGROUND_WORKER_REVISION}, expected ${CUTOVER_SHA}" >&2
-  exit 1
-}
-[ "$INTERACTIVE_WORKER_LANE" = "interactive" ] || {
-  echo "error: interactive worker reports lane ${INTERACTIVE_WORKER_LANE}" >&2
-  exit 1
-}
-[ "$BACKGROUND_WORKER_LANE" = "background" ] || {
-  echo "error: background worker reports lane ${BACKGROUND_WORKER_LANE}" >&2
-  exit 1
-}
-MIGRATION_HEAD="$(compose exec -T api sh -c \
-  'cd /app/migrations && /app/.venv/bin/alembic current')"
-echo "cutover_sha=${CUTOVER_SHA}"
-echo "api_revision=${API_HEALTH}"
-echo "worker_interactive_revision=${INTERACTIVE_WORKER_REVISION}"
-echo "worker_interactive_kinds=${INTERACTIVE_WORKER_KINDS}"
-echo "worker_background_revision=${BACKGROUND_WORKER_REVISION}"
-echo "worker_background_kinds=${BACKGROUND_WORKER_KINDS}"
-echo "migration_head=${MIGRATION_HEAD}"
-REMOTE
+production_version="${TEMPORARY}/production.json"
+production_headers="${TEMPORARY}/production.headers"
+production_status="$(curl --fail --silent --show-error --max-time 10 --max-filesize 65536 \
+  --dump-header "$production_headers" \
+  --output "$production_version" \
+  --write-out '%{http_code}' \
+  "https://${PRODUCTION_HOST}/version")"
+[ "$production_status" = "200" ] || \
+  die "authoritative frontend version did not return HTTP 200"
+require_exact_public_headers "$production_headers" "authoritative frontend version"
+jq -e --arg sha "$SOURCE_SHA" 'keys == ["source_sha"] and .source_sha == $sha' \
+  "$production_version" >/dev/null || \
+  die "authoritative frontend does not serve the exact candidate SHA"
+
+timeout --foreground 16m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+  timeout --foreground 15m sudo env PYTHONDONTWRITEBYTECODE=1 \
+  "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+  python3 -B "$REMOTE_CONTROLLER" finalize \
+    --source-sha "$SOURCE_SHA" \
+    --deployment-id "$bound_deployment_id"

@@ -177,6 +177,13 @@ _POLICY_INFRASTRUCTURE = frozenset(
     }
 )
 _PYTHON_STATIC_PROMOTERS = frozenset({"python/pyproject.toml", "python/uv.lock"})
+_EXTERNAL_PYTHON_OWNERS = (
+    "apps/api/main.py",
+    "apps/worker/health.py",
+    "apps/worker/main.py",
+    "deploy/hetzner/adopt-infrastructure.py",
+    "deploy/hetzner/release.py",
+)
 _WEB_STATIC_PROMOTERS = frozenset(
     {
         "apps/web/package.json",
@@ -186,6 +193,65 @@ _WEB_STATIC_PROMOTERS = frozenset(
     }
 )
 _WEB_STATIC_SUFFIXES = (".cjs", ".css", ".js", ".jsx", ".mjs", ".ts", ".tsx")
+_PLATFORM_SHELL_OWNERS = (
+    "deploy/cloudflare/apply-r2-cors.sh",
+    "deploy/cloudflare/apply-r2-lifecycle.sh",
+    "deploy/hetzner/deploy.sh",
+    "deploy/hetzner/fetch-release-bundle.sh",
+    "deploy/hetzner/provision.sh",
+    "deploy/hetzner/reconcile-oracle.sh",
+    "deploy/hetzner/sync-env.sh",
+    "deploy/smoke/auth-smoke.sh",
+    "deploy/supabase/verify-auth-config.sh",
+    "deploy/vercel/sync-env.sh",
+    "deploy/vercel/sync-resource-sharing-firewall.sh",
+)
+_PLATFORM_PRODUCTION_COMPOSE_OWNER = "deploy/hetzner/docker-compose.yml"
+_PLATFORM_LOCAL_COMPOSE_OWNERS = (
+    "docker/docker-compose.yml",
+    "docker/docker-compose.worker.yml",
+)
+_PLATFORM_CLOUD_INIT_OWNER = "deploy/hetzner/cloud-init.yml"
+_PLATFORM_BACKEND_DOCKERFILE_OWNER = "docker/Dockerfile.backend"
+_PLATFORM_STATIC_OWNERS = frozenset(
+    (
+        *_PLATFORM_SHELL_OWNERS,
+        _PLATFORM_PRODUCTION_COMPOSE_OWNER,
+        *_PLATFORM_LOCAL_COMPOSE_OWNERS,
+        _PLATFORM_CLOUD_INIT_OWNER,
+        _PLATFORM_BACKEND_DOCKERFILE_OWNER,
+    )
+)
+_PLATFORM_PRODUCTION_COMPOSE_ENV = (
+    "COMPOSE_DISABLE_ENV_FILE=1",
+    "POSTGRES_IMAGE=docker.io/library/postgres@sha256:" + "1" * 64,
+    "CADDY_IMAGE=docker.io/library/caddy@sha256:" + "2" * 64,
+    "POSTGRES_USER=nexus",
+    "POSTGRES_PASSWORD=not-a-secret",
+    "POSTGRES_DB=nexus",
+    "CADDY_SITE=nexus.example.invalid",
+    "CADDY_ACME_EMAIL=nexus@example.invalid",
+    "API_IMAGE=example.invalid/nexus-api@sha256:" + "3" * 64,
+    "WORKER_IMAGE=example.invalid/nexus-worker@sha256:" + "4" * 64,
+    "NEXUS_CONFIG_FILE=/dev/null",
+)
+_PLATFORM_LOCAL_COMPOSE_ENV = (
+    "COMPOSE_DISABLE_ENV_FILE=1",
+    "NEXUS_LOCAL_SOURCE_SHA=" + "0" * 40,
+    "NEXUS_LOCAL_RUNTIME_IDENTITY_FILE=/dev/null",
+    "POSTGRES_PORT=54320",
+    "MINIO_PORT=9000",
+    "WORKER_DATABASE_URL=postgresql+psycopg://postgres:postgres@postgres:5432/postgres",
+    "WORKER_SUPABASE_JWKS_URL=https://auth.example.invalid/.well-known/jwks.json",
+    "SUPABASE_ISSUER=https://auth.example.invalid",
+    "SUPABASE_AUDIENCES=authenticated",
+    "WORKER_R2_S3_API_ORIGIN=http://minio:9000",
+    "R2_ACCESS_KEY_ID=static-platform-access",
+    "R2_SECRET_ACCESS_KEY=not-a-secret",
+    "R2_BUCKET=static-platform",
+    "R2_REGION=us-east-1",
+    "NEXUS_ENV=test",
+)
 _ANDROID_HOST_PREFIX = "apps/android/app/src/test/"
 _DETERMINISTIC_PYTEST = ("-p", "no:randomly")
 _MIN_AVAILABLE_HEAVY_MIB = 2048
@@ -543,7 +609,7 @@ class _WorkflowExecution:
                 {"NEXUS_ENV": "test"},
                 external,
                 EndpointKind.EXTERNAL,
-                "/health",
+                "/livez",
             )
         except OSError as error:
             return _not_run(
@@ -1083,6 +1149,8 @@ def _run_capability_unlocked(
             return _run_static_web(context, caller_environment)
         case Capability.STATIC_WORKFLOWS:
             return _run_static_workflows(context, caller_environment)
+        case Capability.STATIC_PLATFORM:
+            return _run_static_platform(context, caller_environment)
         case Capability.KERNEL_PYTHON:
             return _run_kernel_python(context, caller_environment)
         case Capability.KERNEL_WEB:
@@ -1314,20 +1382,56 @@ def _run_static_python(
     complete = _scope(context, Capability.STATIC_PYTHON) is SelectionScope.COMPLETE or any(
         selection.path in _PYTHON_STATIC_PROMOTERS for selection in context.selection
     )
+    external_arguments = tuple(f"../{path}" for path in _EXTERNAL_PYTHON_OWNERS)
     if complete:
         commands: tuple[FixedCommand, ...] = (
-            (("uv", "run", "--frozen", "--no-sync", "ruff", "check", "."), python_root),
             (
-                ("uv", "run", "--frozen", "--no-sync", "ruff", "format", "--check", "."),
+                (
+                    "uv",
+                    "run",
+                    "--frozen",
+                    "--no-sync",
+                    "ruff",
+                    "check",
+                    ".",
+                    *external_arguments,
+                ),
+                python_root,
+            ),
+            (
+                (
+                    "uv",
+                    "run",
+                    "--frozen",
+                    "--no-sync",
+                    "ruff",
+                    "format",
+                    "--check",
+                    ".",
+                    *external_arguments,
+                ),
                 python_root,
             ),
             (("uv", "run", "--frozen", "--no-sync", "pyright"), python_root),
+            (
+                ("uv", "run", "--frozen", "--no-sync", "pyright", *external_arguments),
+                python_root,
+            ),
         )
     else:
-        paths = _selected_files(context, "python/", (".py",))
+        paths = set(_selected_files(context, "python/", (".py",)))
+        for owner in _EXTERNAL_PYTHON_OWNERS:
+            if (
+                any(selection.path == owner for selection in context.selection)
+                and (context.repo_root / owner).is_file()
+            ):
+                paths.add(owner)
         if not paths:
             return _pass(Capability.STATIC_PYTHON, "no selected Python static input")
-        relative = tuple(f"./{path.removeprefix('python/')}" for path in paths)
+        relative = tuple(
+            f"../{path}" if path in _EXTERNAL_PYTHON_OWNERS else f"./{path.removeprefix('python/')}"
+            for path in sorted(paths)
+        )
         commands = (
             (
                 ("uv", "run", "--frozen", "--no-sync", "ruff", "check", *relative),
@@ -1430,6 +1534,131 @@ def _run_static_workflows(
         ),
         environment,
         ("actionlint", "uv"),
+        context=context,
+    )
+
+
+def _run_static_platform(
+    context: CapabilityContext, environment: Mapping[str, str]
+) -> CapabilityResult:
+    complete = _scope(context, Capability.STATIC_PLATFORM) is SelectionScope.COMPLETE
+    selected = (
+        set(_PLATFORM_STATIC_OWNERS)
+        if complete
+        else {
+            selection.path
+            for selection in context.selection
+            if selection.path in _PLATFORM_STATIC_OWNERS
+        }
+    )
+    if not selected:
+        return _pass(Capability.STATIC_PLATFORM, "no selected platform static input")
+
+    required_owners = set(selected)
+    if required_owners.intersection(_PLATFORM_LOCAL_COMPOSE_OWNERS):
+        required_owners.update(_PLATFORM_LOCAL_COMPOSE_OWNERS)
+    missing = tuple(
+        path for path in sorted(required_owners) if not (context.repo_root / path).is_file()
+    )
+    if missing:
+        prefix = "platform static owner" if complete else "selected platform static owner"
+        return _not_run(Capability.STATIC_PLATFORM, f"{prefix} is absent: {', '.join(missing)}")
+
+    commands: list[FixedCommand] = []
+    required_tools: set[str] = set()
+    shell_paths = tuple(f"./{path}" for path in _PLATFORM_SHELL_OWNERS if path in selected)
+    if shell_paths:
+        commands.extend(
+            (
+                (("bash", "-n", *shell_paths), context.repo_root),
+                (("shellcheck", *shell_paths), context.repo_root),
+            )
+        )
+        required_tools.update(("bash", "shellcheck"))
+
+    if _PLATFORM_PRODUCTION_COMPOSE_OWNER in selected:
+        commands.append(
+            (
+                (
+                    "env",
+                    *_PLATFORM_PRODUCTION_COMPOSE_ENV,
+                    "docker",
+                    "compose",
+                    "--project-name",
+                    "nexus-static-production",
+                    "--file",
+                    f"./{_PLATFORM_PRODUCTION_COMPOSE_OWNER}",
+                    "config",
+                    "--quiet",
+                ),
+                context.repo_root,
+            )
+        )
+        required_tools.update(("docker", "env"))
+
+    if selected.intersection(_PLATFORM_LOCAL_COMPOSE_OWNERS):
+        commands.append(
+            (
+                (
+                    "env",
+                    *_PLATFORM_LOCAL_COMPOSE_ENV,
+                    "docker",
+                    "compose",
+                    "--project-name",
+                    "nexus-static-local-worker",
+                    "--file",
+                    f"./{_PLATFORM_LOCAL_COMPOSE_OWNERS[0]}",
+                    "--file",
+                    f"./{_PLATFORM_LOCAL_COMPOSE_OWNERS[1]}",
+                    "config",
+                    "--quiet",
+                ),
+                context.repo_root,
+            )
+        )
+        required_tools.update(("docker", "env"))
+
+    if _PLATFORM_CLOUD_INIT_OWNER in selected:
+        commands.append(
+            (
+                (
+                    "cloud-init",
+                    "schema",
+                    "--config-file",
+                    f"./{_PLATFORM_CLOUD_INIT_OWNER}",
+                ),
+                context.repo_root,
+            )
+        )
+        required_tools.add("cloud-init")
+
+    if _PLATFORM_BACKEND_DOCKERFILE_OWNER in selected:
+        commands.extend(
+            (
+                (
+                    "docker",
+                    "buildx",
+                    "build",
+                    "--check",
+                    "--file",
+                    f"./{_PLATFORM_BACKEND_DOCKERFILE_OWNER}",
+                    "--target",
+                    target,
+                    "--build-arg",
+                    "SOURCE_SHA=" + "0" * 40,
+                    ".",
+                ),
+                context.repo_root,
+            )
+            for target in ("api", "worker")
+        )
+        required_tools.add("docker")
+
+    return _run_fixed_commands(
+        Capability.STATIC_PLATFORM,
+        tuple(commands),
+        environment,
+        tuple(sorted(required_tools)),
         context=context,
     )
 
@@ -2062,7 +2291,7 @@ def _ensure_browser_processes(
             {"NEXUS_ENV": "test"},
             api,
             EndpointKind.API,
-            "/health",
+            "/readyz",
         )
         execution.ports.start_python_process(
             context.repo_root,

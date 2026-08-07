@@ -13,23 +13,32 @@ import hashlib
 import re
 import unicodedata
 from collections import Counter
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, replace
 from uuid import UUID
 
-from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    Library,
+    LibraryEntry,
     Media,
+    Membership,
+    OracleCorpusPublication,
     OracleCorpusSource,
     OraclePassageAnchor,
     OraclePlate,
     ProcessingStatus,
 )
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.services import library_entries, library_governance
+from nexus.oracle.manifest import (
+    OracleCorpusManifestAnchor,
+    OracleCorpusManifestWork,
+    OracleManifest,
+    OraclePlateManifestEntry,
+    oracle_plate_storage_slug,
+)
+from nexus.services import library_entries, library_governance, oracle_plates
 from nexus.services.content_indexing import request_media_content_reindex
 from nexus.services.image_validation import MAX_IMAGE_BYTES, MAX_IMAGE_DIMENSION
 from nexus.services.media_source_ingest import (
@@ -40,10 +49,14 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
 )
+from nexus.storage.client import StorageClientBase
+from nexus.storage.paths import build_oracle_plate_storage_path, ext_for_content_type
 
 ORACLE_CORPUS_KEY = "oracle"
 ORACLE_CORPUS_SYSTEM_KEY = "oracle_corpus"
 ORACLE_CORPUS_LIBRARY_NAME = "Oracle Corpus"
+ORACLE_PUBLICATION_KEY = "current"
+_ORACLE_MANIFEST_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 # Length of the text-quote prefix used to locate a passage's chunk during anchor resolution.
 _ANCHOR_NEEDLE_CHARS = 80
 _ANCHOR_TOKEN_PREFIX_TOKENS = 18
@@ -51,7 +64,7 @@ _ANCHOR_MIN_TOKEN_WINDOW_TOKENS = 6
 _ANCHOR_TOKEN_WINDOW_MATCH_RATIO = 0.78
 _ANCHOR_TOKEN_WINDOW_EXTRA_TOKENS = 4
 _ANCHOR_TOKEN_WINDOW_MISSING_TOKENS = 2
-_ANCHOR_TOKEN_ALIASES = {
+_ANCHOR_TOKEN_ALIASES: dict[str, str] = {
     "thro": "through",
     "tho": "though",
     "neer": "never",
@@ -64,30 +77,6 @@ _ANCHOR_TOKEN_ALIASES = {
 class AnchorNeedle:
     normalized_prefix: str
     token_prefix: tuple[str, ...]
-
-
-class OracleCorpusManifestAnchor(BaseModel):
-    """One curated passage anchor in the corpus manifest (Oracle metadata, not graph tags)."""
-
-    passage_key: str = Field(min_length=1, max_length=160)
-    display_label: str = Field(min_length=1)
-    selector: dict[str, object]
-    tags: list[str] = Field(default_factory=list)
-    phase_hints: list[str] = Field(default_factory=list)
-
-
-class OracleCorpusManifestWork(BaseModel):
-    """One corpus work: a directly-ingestable source plus its curated anchors (§9.1)."""
-
-    work_key: str = Field(min_length=1, max_length=160)
-    title: str
-    author_text: str
-    source_repository: str
-    source_url: str
-    source_download_url: str
-    source_media_kind: Literal["epub", "web_article", "pdf"]
-    display_order: int
-    passage_anchors: list[OracleCorpusManifestAnchor]
 
 
 @dataclass(frozen=True)
@@ -115,6 +104,62 @@ class OracleCorpusReadiness:
     resolved_anchor_count: int
     plate_count: int
     ready_plate_count: int
+
+
+@dataclass(frozen=True)
+class OracleCorpusRemovalPlan:
+    """Unsupported destructive differences between published support and a manifest."""
+
+    work_keys: tuple[str, ...]
+    anchor_keys: tuple[tuple[str, str], ...]
+    plate_source_urls: tuple[str, ...]
+
+    @property
+    def has_removals(self) -> bool:
+        return bool(self.work_keys or self.anchor_keys or self.plate_source_urls)
+
+
+@dataclass(frozen=True)
+class OraclePublicationMarker:
+    corpus_key: str
+    manifest_digest: str
+    embedding_provider: str
+    embedding_model: str
+
+
+@dataclass(frozen=True)
+class OracleCorpusDatabaseInspection:
+    """Closed PostgreSQL proof safe to carry across the R2 read boundary."""
+
+    manifest_digest: str
+    embedding_provider: str
+    embedding_model: str
+    readiness: OracleCorpusReadiness
+    removals: OracleCorpusRemovalPlan
+    errors: tuple[str, ...]
+    published: bool
+    publication: OraclePublicationMarker | None
+    plate_storage_metadata: tuple[oracle_plates.OraclePlateMetadata, ...]
+
+
+@dataclass(frozen=True)
+class OracleCorpusInspection:
+    """Exact PostgreSQL/R2 proof consumed by the short publication transaction."""
+
+    manifest_digest: str
+    embedding_provider: str
+    embedding_model: str
+    readiness: OracleCorpusReadiness
+    removals: OracleCorpusRemovalPlan
+    errors: tuple[str, ...]
+    published: bool
+    publication: OraclePublicationMarker | None
+
+    @property
+    def support_ready(self) -> bool:
+        return (
+            self.readiness.status == "ready" and not self.removals.has_removals and not self.errors
+        )
 
 
 def oracle_corpus_library_id(db: Session) -> UUID | None:
@@ -181,7 +226,7 @@ def ensure_oracle_corpus_media(
         source.source_download_url = work.source_download_url
         source.source_media_kind = work.source_media_kind
         source.display_order = work.display_order
-        source.updated_at = db.scalar(select(func.now()))
+        source.updated_at = db.execute(select(func.now())).scalar_one()
         if source_changed and previous_media_id != source.media_id:
             media_ids = sorted({previous_media_id, source.media_id})
             if library_entries.lock_media_rows_in_order(db, media_ids) != media_ids:
@@ -224,7 +269,7 @@ def ensure_oracle_corpus_media(
         )
         db.add(source)
         db.flush()
-        created = True
+        created = accepted.idempotency_outcome == "created"
 
     # System attach: corpus media live only in the corpus library (not the user's
     # default). Routed through the narrow trusted system command (spec S4.3) rather
@@ -235,8 +280,8 @@ def ensure_oracle_corpus_media(
     if not created:
         _repair_reused_corpus_media(db, owner_user_id=owner_user_id, source=source)
 
-    intended_anchor_keys = {manifest_anchor.passage_key for manifest_anchor in work.passage_anchors}
     for manifest_anchor in work.passage_anchors:
+        desired_selector = _manifest_anchor_selector(manifest_anchor)
         anchor = db.execute(
             select(OraclePassageAnchor).where(
                 OraclePassageAnchor.corpus_source_id == source.id,
@@ -244,35 +289,28 @@ def ensure_oracle_corpus_media(
             )
         ).scalar_one_or_none()
         if anchor is not None:
-            if anchor.selector != manifest_anchor.selector:
-                raise ApiError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    f"Oracle anchor {manifest_anchor.passage_key!r} already maps to a "
-                    "different selector",
-                )
+            if anchor.selector != desired_selector:
+                anchor.selector = desired_selector
+                anchor.current_evidence_span_id = None
+                anchor.current_content_chunk_id = None
+                anchor.resolution_status = "pending"
+                anchor.resolution_error = None
+                anchor.resolved_at = None
             anchor.display_label = manifest_anchor.display_label
-            anchor.tags = manifest_anchor.tags
-            anchor.phase_hints = manifest_anchor.phase_hints
-            anchor.updated_at = db.scalar(select(func.now()))
+            anchor.tags = list(manifest_anchor.tags)
+            anchor.phase_hints = list(manifest_anchor.phase_hints)
+            anchor.updated_at = db.execute(select(func.now())).scalar_one()
         else:
             db.add(
                 OraclePassageAnchor(
                     corpus_source_id=source.id,
                     passage_key=manifest_anchor.passage_key,
                     display_label=manifest_anchor.display_label,
-                    selector=manifest_anchor.selector,
-                    tags=manifest_anchor.tags,
-                    phase_hints=manifest_anchor.phase_hints,
+                    selector=desired_selector,
+                    tags=list(manifest_anchor.tags),
+                    phase_hints=list(manifest_anchor.phase_hints),
                 )
             )
-    stale_anchors = db.execute(
-        select(OraclePassageAnchor).where(
-            OraclePassageAnchor.corpus_source_id == source.id,
-            OraclePassageAnchor.passage_key.not_in(intended_anchor_keys),
-        )
-    ).scalars()
-    for stale_anchor in stale_anchors:
-        db.delete(stale_anchor)
     db.flush()
     return OracleCorpusSeedResult(
         work_key=work.work_key,
@@ -280,6 +318,10 @@ def ensure_oracle_corpus_media(
         created_media=created,
         anchor_count=len(work.passage_anchors),
     )
+
+
+def _manifest_anchor_selector(anchor: OracleCorpusManifestAnchor) -> dict[str, object]:
+    return anchor.selector.model_dump(mode="json")
 
 
 def _source_accept_idempotency_key(work: OracleCorpusManifestWork) -> str:
@@ -386,8 +428,8 @@ def resolve_oracle_passage_anchors(
     return AnchorResolutionResult(total=len(rows), resolved=resolved, failed=failed)
 
 
-def get_oracle_corpus_readiness(db: Session) -> OracleCorpusReadiness:
-    """Derive corpus readiness from library/media/index/anchor/plate state (no old tables).
+def _get_oracle_corpus_support_readiness(db: Session) -> OracleCorpusReadiness:
+    """Derive unpublished support readiness from the shared corpus substrate.
 
     Ready iff the library exists, every source's media is readable with a ready content index
     on the active embedding model, every anchor is resolved to a ready chunk in its mapped
@@ -507,6 +549,413 @@ def get_oracle_corpus_readiness(db: Session) -> OracleCorpusReadiness:
     )
 
 
+def inspect_oracle_corpus_database(
+    db: Session,
+    *,
+    manifest: OracleManifest,
+    owner_user_id: UUID,
+) -> OracleCorpusDatabaseInspection:
+    """Read exact desired PostgreSQL state without touching HTTP or R2."""
+    provider = current_transcript_embedding_provider()
+    model = current_transcript_embedding_model()
+    readiness = _get_oracle_corpus_support_readiness(db)
+    removals = plan_oracle_manifest_removals(db, manifest=manifest)
+    errors: list[str] = []
+
+    library = db.execute(
+        select(Library).where(Library.system_key == ORACLE_CORPUS_SYSTEM_KEY)
+    ).scalar_one_or_none()
+    if library is None:
+        errors.append("Oracle system library is missing")
+    else:
+        if (
+            library.owner_user_id != owner_user_id
+            or library.name != ORACLE_CORPUS_LIBRARY_NAME
+            or library.is_default
+        ):
+            errors.append("Oracle system library identity does not match")
+        memberships = list(
+            db.execute(
+                select(Membership.user_id, Membership.role)
+                .where(Membership.library_id == library.id)
+                .order_by(Membership.user_id.asc())
+            ).tuples()
+        )
+        if memberships != [(owner_user_id, "admin")]:
+            errors.append("Oracle system library membership does not match")
+
+    sources = list(
+        db.execute(
+            select(OracleCorpusSource)
+            .where(OracleCorpusSource.corpus_key == ORACLE_CORPUS_KEY)
+            .order_by(OracleCorpusSource.work_key.asc())
+        ).scalars()
+    )
+    sources_by_key = {source.work_key: source for source in sources}
+    for work in manifest.works:
+        source = sources_by_key.get(work.work_key)
+        if source is None:
+            errors.append(f"Oracle work {work.work_key!r} is missing")
+            continue
+        media = db.get(Media, source.media_id)
+        if not _oracle_source_matches_manifest(
+            source,
+            media,
+            work,
+            library_id=readiness.library_id,
+            owner_user_id=owner_user_id,
+        ):
+            errors.append(f"Oracle work {work.work_key!r} metadata does not match")
+
+    desired_media_ids = {
+        source.media_id
+        for work in manifest.works
+        if (source := sources_by_key.get(work.work_key)) is not None
+    }
+    if library is not None:
+        entries = list(
+            db.execute(
+                select(LibraryEntry.media_id, LibraryEntry.podcast_id)
+                .where(LibraryEntry.library_id == library.id)
+                .order_by(LibraryEntry.position.asc(), LibraryEntry.id.asc())
+            ).tuples()
+        )
+        actual_media_ids = {media_id for media_id, _podcast_id in entries if media_id is not None}
+        if (
+            actual_media_ids != desired_media_ids
+            or len(entries) != len(desired_media_ids)
+            or any(podcast_id is not None for _media_id, podcast_id in entries)
+        ):
+            errors.append("Oracle system library entries do not match")
+
+    anchors = list(
+        db.execute(
+            select(OracleCorpusSource.work_key, OraclePassageAnchor)
+            .join(
+                OraclePassageAnchor,
+                OraclePassageAnchor.corpus_source_id == OracleCorpusSource.id,
+            )
+            .where(OracleCorpusSource.corpus_key == ORACLE_CORPUS_KEY)
+            .order_by(OracleCorpusSource.work_key.asc(), OraclePassageAnchor.passage_key.asc())
+        ).all()
+    )
+    anchors_by_key = {(work_key, anchor.passage_key): anchor for work_key, anchor in anchors}
+    for work in manifest.works:
+        for desired_anchor in work.passage_anchors:
+            anchor_key = (work.work_key, desired_anchor.passage_key)
+            anchor = anchors_by_key.get(anchor_key)
+            if anchor is None:
+                errors.append(
+                    f"Oracle anchor {work.work_key!r}/{desired_anchor.passage_key!r} is missing"
+                )
+                continue
+            if not _oracle_anchor_matches_manifest(anchor, desired_anchor):
+                errors.append(
+                    f"Oracle anchor {work.work_key!r}/{desired_anchor.passage_key!r} "
+                    "metadata does not match"
+                )
+
+    plates = list(db.execute(select(OraclePlate).order_by(OraclePlate.source_url.asc())).scalars())
+    plates_by_source_url = {plate.source_url: plate for plate in plates}
+    for desired_plate in manifest.plates:
+        plate = plates_by_source_url.get(desired_plate.resolved_source_url)
+        if plate is None:
+            errors.append(f"Oracle plate {desired_plate.resolved_source_url!r} is missing")
+            continue
+        if not _oracle_plate_matches_manifest(plate, desired_plate):
+            errors.append(
+                f"Oracle plate {desired_plate.resolved_source_url!r} metadata does not match"
+            )
+
+    publication = read_oracle_publication(db)
+    return OracleCorpusDatabaseInspection(
+        manifest_digest=manifest.manifest_digest,
+        embedding_provider=provider,
+        embedding_model=model,
+        readiness=readiness,
+        removals=removals,
+        errors=tuple(errors),
+        published=_publication_marker_matches(
+            publication,
+            expected_manifest_digest=manifest.manifest_digest,
+            embedding_provider=provider,
+            embedding_model=model,
+        ),
+        publication=publication,
+        plate_storage_metadata=oracle_plates.oracle_plate_storage_metadata(db),
+    )
+
+
+def complete_oracle_corpus_inspection(
+    database: OracleCorpusDatabaseInspection,
+    *,
+    storage_client: StorageClientBase,
+) -> OracleCorpusInspection:
+    """Add pure R2 proof only after the caller has closed the PostgreSQL transaction."""
+    plate_storage = oracle_plates.validate_oracle_plate_storage_metadata(
+        database.plate_storage_metadata,
+        storage_client=storage_client,
+    )
+    return OracleCorpusInspection(
+        manifest_digest=database.manifest_digest,
+        embedding_provider=database.embedding_provider,
+        embedding_model=database.embedding_model,
+        readiness=database.readiness,
+        removals=database.removals,
+        errors=database.errors
+        + tuple(f"Oracle plate object is invalid: {reason}" for reason in plate_storage.invalid),
+        published=database.published,
+        publication=database.publication,
+    )
+
+
+def plan_oracle_manifest_removals(
+    db: Session, *, manifest: OracleManifest
+) -> OracleCorpusRemovalPlan:
+    """Compute unsupported removals by stable business key; never mutate."""
+    desired_work_keys = {work.work_key for work in manifest.works}
+    actual_work_keys = set(
+        db.execute(
+            select(OracleCorpusSource.work_key).where(
+                OracleCorpusSource.corpus_key == ORACLE_CORPUS_KEY
+            )
+        ).scalars()
+    )
+    desired_anchor_keys = {
+        (work.work_key, anchor.passage_key)
+        for work in manifest.works
+        for anchor in work.passage_anchors
+    }
+    actual_anchor_keys = set(
+        db.execute(
+            select(OracleCorpusSource.work_key, OraclePassageAnchor.passage_key)
+            .join(
+                OraclePassageAnchor,
+                OraclePassageAnchor.corpus_source_id == OracleCorpusSource.id,
+            )
+            .where(OracleCorpusSource.corpus_key == ORACLE_CORPUS_KEY)
+        ).tuples()
+    )
+    desired_plate_urls = {plate.resolved_source_url for plate in manifest.plates}
+    actual_plate_urls = set(db.execute(select(OraclePlate.source_url)).scalars())
+    return OracleCorpusRemovalPlan(
+        work_keys=tuple(sorted(actual_work_keys - desired_work_keys)),
+        anchor_keys=tuple(sorted(actual_anchor_keys - desired_anchor_keys)),
+        plate_source_urls=tuple(sorted(actual_plate_urls - desired_plate_urls)),
+    )
+
+
+def reject_oracle_manifest_removals(
+    db: Session, *, manifest: OracleManifest
+) -> OracleCorpusRemovalPlan:
+    """Reject the 80/20 boundary before any support or publication mutation."""
+    plan = plan_oracle_manifest_removals(db, manifest=manifest)
+    if plan.has_removals:
+        raise ValueError(
+            "Oracle manifest would remove active support: "
+            f"works={list(plan.work_keys)!r}, anchors={list(plan.anchor_keys)!r}, "
+            f"plates={list(plan.plate_source_urls)!r}"
+        )
+    return plan
+
+
+def oracle_publication_matches(
+    db: Session,
+    *,
+    expected_manifest_digest: str,
+    embedding_provider: str,
+    embedding_model: str,
+) -> bool:
+    """Fail closed unless the sole marker is valid and exactly matches runtime identity."""
+    if not _valid_publication_values(expected_manifest_digest, embedding_provider, embedding_model):
+        return False
+    try:
+        marker = read_oracle_publication(db)
+    except ValueError:
+        return False
+    return _publication_marker_matches(
+        marker,
+        expected_manifest_digest=expected_manifest_digest,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+    )
+
+
+def read_oracle_publication(db: Session) -> OraclePublicationMarker | None:
+    """Read and validate the only publication domain value accepted by code."""
+    rows = list(db.execute(select(OracleCorpusPublication)).scalars())
+    if not rows:
+        return None
+    if len(rows) != 1 or rows[0].corpus_key != ORACLE_PUBLICATION_KEY:
+        raise ValueError("Oracle publication table contains unsupported marker keys")
+    row = rows[0]
+    if not _valid_publication_values(
+        row.manifest_digest,
+        row.embedding_provider,
+        row.embedding_model,
+    ):
+        raise ValueError("Oracle publication marker contains malformed values")
+    return OraclePublicationMarker(
+        corpus_key=row.corpus_key,
+        manifest_digest=row.manifest_digest,
+        embedding_provider=row.embedding_provider,
+        embedding_model=row.embedding_model,
+    )
+
+
+def publish_oracle_corpus(db: Session, *, inspection: OracleCorpusInspection) -> None:
+    """Insert the singleton marker last; caller owns the short commit."""
+    if inspection.removals.has_removals:
+        raise ValueError("Oracle corpus cannot publish because the manifest would remove support")
+    if not inspection.support_ready:
+        raise ValueError("Oracle corpus support is not ready")
+    if not _valid_publication_values(
+        inspection.manifest_digest,
+        inspection.embedding_provider,
+        inspection.embedding_model,
+    ):
+        raise ValueError("Oracle publication values are malformed")
+    marker = read_oracle_publication(db)
+    if marker is not None:
+        if _publication_marker_matches(
+            marker,
+            expected_manifest_digest=inspection.manifest_digest,
+            embedding_provider=inspection.embedding_provider,
+            embedding_model=inspection.embedding_model,
+        ):
+            return
+        raise ValueError("Existing Oracle publication must be explicitly unpublished first")
+    db.add(
+        OracleCorpusPublication(
+            corpus_key=ORACLE_PUBLICATION_KEY,
+            manifest_digest=inspection.manifest_digest,
+            embedding_provider=inspection.embedding_provider,
+            embedding_model=inspection.embedding_model,
+        )
+    )
+    db.flush()
+
+
+def unpublish_oracle_corpus(db: Session) -> bool:
+    """Delete only the valid current marker; caller owns the short commit."""
+    marker = read_oracle_publication(db)
+    if marker is None:
+        return False
+    row = db.get(OracleCorpusPublication, marker.corpus_key)
+    if row is None:
+        raise AssertionError("Oracle publication marker disappeared while unpublishing")
+    db.delete(row)
+    db.flush()
+    return True
+
+
+def require_oracle_corpus_unpublished(db: Session) -> None:
+    """Guard every support mutator behind the host's committed unpublish phase."""
+    if read_oracle_publication(db) is not None:
+        raise ValueError("Oracle corpus must be unpublished before support reconciliation")
+
+
+def get_oracle_corpus_readiness(
+    db: Session, *, expected_manifest_digest: str | None = None
+) -> OracleCorpusReadiness:
+    """Fail closed unless support and the baked current publication marker are ready."""
+    support = _get_oracle_corpus_support_readiness(db)
+    if expected_manifest_digest is None:
+        from nexus.runtime_health import get_runtime_identity
+
+        expected_manifest_digest = get_runtime_identity().expected_oracle_manifest_digest
+    published = oracle_publication_matches(
+        db,
+        expected_manifest_digest=expected_manifest_digest,
+        embedding_provider=current_transcript_embedding_provider(),
+        embedding_model=current_transcript_embedding_model(),
+    )
+    if support.status == "ready" and published:
+        return support
+    return replace(support, status="not_ready")
+
+
+def _oracle_source_matches_manifest(
+    source: OracleCorpusSource,
+    media: Media | None,
+    work: OracleCorpusManifestWork,
+    *,
+    library_id: UUID | None,
+    owner_user_id: UUID,
+) -> bool:
+    return (
+        media is not None
+        and media.kind == work.source_media_kind
+        and media.created_by_user_id == owner_user_id
+        and source.library_id == library_id
+        and source.title == work.title
+        and source.author_text == work.author_text
+        and source.source_repository == work.source_repository
+        and source.source_url == work.source_url
+        and source.source_download_url == work.source_download_url
+        and source.source_media_kind == work.source_media_kind
+        and source.display_order == work.display_order
+    )
+
+
+def _oracle_anchor_matches_manifest(
+    anchor: OraclePassageAnchor, desired: OracleCorpusManifestAnchor
+) -> bool:
+    return (
+        anchor.display_label == desired.display_label
+        and anchor.selector == _manifest_anchor_selector(desired)
+        and anchor.tags == list(desired.tags)
+        and anchor.phase_hints == list(desired.phase_hints)
+    )
+
+
+def _oracle_plate_matches_manifest(plate: OraclePlate, desired: OraclePlateManifestEntry) -> bool:
+    try:
+        expected_storage_key = build_oracle_plate_storage_path(
+            oracle_plate_storage_slug(desired),
+            ext_for_content_type(plate.content_type),
+        )
+    except ValueError:
+        return False
+    return (
+        plate.source_repository == desired.source_repository
+        and plate.source_page_url == desired.source_url
+        and plate.source_url == desired.resolved_source_url
+        and plate.license_text == desired.license_text
+        and plate.artist == desired.artist
+        and plate.work_title == desired.work_title
+        and plate.year == desired.year
+        and plate.attribution_text == desired.attribution_text
+        and plate.storage_key == expected_storage_key
+        and plate.tags == list(desired.tags)
+    )
+
+
+def _valid_publication_values(
+    manifest_digest: str, embedding_provider: str, embedding_model: str
+) -> bool:
+    return (
+        _ORACLE_MANIFEST_DIGEST.fullmatch(manifest_digest) is not None
+        and bool(embedding_provider.strip())
+        and bool(embedding_model.strip())
+    )
+
+
+def _publication_marker_matches(
+    marker: OraclePublicationMarker | None,
+    *,
+    expected_manifest_digest: str,
+    embedding_provider: str,
+    embedding_model: str,
+) -> bool:
+    return (
+        marker is not None
+        and marker.manifest_digest == expected_manifest_digest
+        and marker.embedding_provider == embedding_provider
+        and marker.embedding_model == embedding_model
+    )
+
+
 def _find_anchor_chunk_match(
     db: Session,
     *,
@@ -593,7 +1042,7 @@ def _anchor_match_tokens(value: str) -> list[str]:
     value = _normalize_anchor_source_text(value)
     value = unicodedata.normalize("NFKD", value).lower()
     tokens = re.findall(r"[a-z0-9]+", value)
-    return [_ANCHOR_TOKEN_ALIASES.get(token, token) for token in tokens if not token.isdigit()]
+    return [(_ANCHOR_TOKEN_ALIASES.get(token) or token) for token in tokens if not token.isdigit()]
 
 
 def _normalize_anchor_source_text(value: str) -> str:
