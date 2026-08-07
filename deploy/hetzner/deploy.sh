@@ -282,6 +282,7 @@ jq -e \
   and .accountId == $team
   and .autoAssignCustomDomains == false
   and .autoExposeSystemEnvs == true
+  and .ssoProtection.deploymentType == "preview"
 ' "$vercel_project_body" >/dev/null || \
   die "committed Vercel project/team identity or build policy disagrees"
 
@@ -502,9 +503,25 @@ jq -e \
   and .meta.githubCommitSha == $sha
   and (.alias | type) == "array"
 ' "$candidate_detail" >/dev/null || die "Vercel candidate inspection disagrees with selection"
+production_aliases_json="$(jq -c '.targets.production.alias // []' "$vercel_project_body")"
+automatic_aliases_json="$(jq -c '.targets.production.automaticAliases // []' "$vercel_project_body")"
 if [ "$status" = "new" ]; then
-  jq -e '.alias | length == 0' "$candidate_detail" >/dev/null || \
-    die "new Vercel candidate is already aliased"
+  jq -e \
+    --arg production_host "$PRODUCTION_HOST" \
+    --argjson production_aliases "$production_aliases_json" \
+    --argjson automatic_aliases "$automatic_aliases_json" '
+    .alias as $aliases
+    | all($aliases[];
+        . as $alias
+        | ($alias | test("^[a-z0-9][a-z0-9.-]*\\.vercel\\.app$"))
+        and $alias != $production_host
+        and (
+          (any($production_aliases[]; . == $alias) | not)
+          or any($automatic_aliases[]; . == $alias)
+        )
+      )
+  ' "$candidate_detail" >/dev/null || \
+    die "Vercel candidate has a production or non-generated alias"
 fi
 
 candidate_headers="${TEMPORARY}/candidate.headers"

@@ -31,8 +31,9 @@ expected Oracle manifest digest, task contract, and captured VPS config.
   exact `main` CI succeeded.
 - CI builds each backend target once. Production pulls manifest-selected GHCR
   digests and never builds an application image.
-- Vercel produces an unaliased `READY` production-target candidate. Backend
-  activation and proof precede promotion of that exact deployment ID.
+- Vercel produces a `READY` production-target candidate with no production or
+  custom-domain alias. Vercel-generated `.vercel.app` aliases are expected;
+  backend activation and proof precede promotion of that exact deployment ID.
 - Application release changes only `api`, `worker-interactive`, and
   `worker-background`. It does not recreate Postgres or Caddy.
 - Config publication and Oracle reconcile are explicit operations. Application
@@ -64,14 +65,18 @@ Production coordinates are committed, not ambient: SSH
 `niels-erik-nandals-projects` / `team_fKVvTyTsMBQ7qFjccFO17BJL`. Changing any
 coordinate is a reviewed infrastructure change, not a release flag.
 
-Vercel custom-domain auto-assignment must be disabled. A new commit may build a
-production-target deployment, but it must remain staged and unaliased until the
-release controller promotes it. The committed Vercel project must also keep
-system environment variables exposed (`autoExposeSystemEnvs=true`) so the
-deployment's source identity is available to the public `/version` proof.
+Vercel custom-domain auto-assignment must be disabled. Vercel Authentication must
+protect previews only (`ssoProtection.deploymentType=preview`) so the staged
+production-target deployment URL is publicly probeable without exposing preview
+deployments. A new commit may build a production-target deployment, but it must
+remain staged and free of production/custom-domain aliases until the release
+controller promotes it. The committed Vercel project must also keep system
+environment variables exposed (`autoExposeSystemEnvs=true`) so the deployment's
+source identity is available to the public `/version` proof.
 `deploy/vercel/sync-env.sh`, local adoption admission, and application deploy
-all re-prove the project ID, team, name, `autoAssignCustomDomains=false`, and
-`autoExposeSystemEnvs=true`. The controller rejects an already promoted new
+all re-prove the project ID, team, name, `autoAssignCustomDomains=false`,
+`autoExposeSystemEnvs=true`, and `ssoProtection.deploymentType=preview`. The
+controller rejects an already promoted new
 candidate.
 
 ## Provisioning and first adoption
@@ -95,7 +100,7 @@ source SHA. Then run the sole infrastructure-adoption owner from that exact
 clean `HEAD == origin/main` checkout. The `adopt` command first performs
 mutation-free local admission: it resolves the exact backend artifact/CI/
 publisher lineage, proves both digest images are anonymously fetchable, and
-proves one unaliased READY Vercel candidate for the exact SHA plus its no-store
+proves one staged READY Vercel candidate for the exact SHA plus its no-store
 `/version` identity. Only after those checks pass does it make the one host SSH
 adoption call:
 

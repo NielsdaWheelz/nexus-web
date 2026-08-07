@@ -352,7 +352,7 @@ class LocalInfrastructureAdoptionHarness:
             {
                 "calls": [],
                 "image_fetch_failure": False,
-                "vercel_aliases": [],
+                "vercel_aliases": ["nexus-adoption-nielsdawheelz-team.vercel.app"],
                 "vercel_cache_control": "no-store",
                 "vercel_duplicate_project_id": False,
                 "vercel_match_count": 1,
@@ -465,6 +465,13 @@ def fake_local_boundary_main() -> int:
                 "autoExposeSystemEnvs": state["vercel_system_envs"],
                 "id": "prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs",
                 "name": "nexus-web",
+                "ssoProtection": {"deploymentType": "preview"},
+                "targets": {
+                    "production": {
+                        "alias": ["nexus.nielseriknandal.com"],
+                        "automaticAliases": [],
+                    }
+                },
             }
             if state["vercel_duplicate_project_id"]:
                 raw_response = (

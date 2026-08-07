@@ -245,6 +245,13 @@ def _fake_curl(state: dict[str, Any], arguments: list[str]) -> None:
                     "autoExposeSystemEnvs": state["project_identity_mode"] != "system-env-disabled",
                     "id": project_id,
                     "name": PROJECT_NAME,
+                    "ssoProtection": {"deploymentType": "preview"},
+                    "targets": {
+                        "production": {
+                            "alias": [],
+                            "automaticAliases": [],
+                        }
+                    },
                 }
             ),
             encoding="utf-8",
