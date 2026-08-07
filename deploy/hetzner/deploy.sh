@@ -181,27 +181,14 @@ jq -e --arg sha "$SOURCE_SHA" '
     "current_vercel_deployment_id",
     "failed_vercel_deployment_ids",
     "forward_fix_sha",
-    "genesis_vercel_deployment_id",
     "phase",
     "predecessor_sha",
     "status",
     "vercel_deployment_id"
   ]
-  and (
-    (.current_sha == null and .current_vercel_deployment_id == null)
-    or
-    ((.current_sha | type == "string")
-      and (.current_vercel_deployment_id | type == "string"))
-  )
-  and (
-    (.genesis_vercel_deployment_id | type == "string"
-      and test("^dpl_[A-Za-z0-9]+$"))
-    or
-    (.genesis_vercel_deployment_id == null
-      and .status == "new"
-      and .current_sha == null
-      and .phase == null)
-  )
+  and (.current_sha | type == "string" and test("^[0-9a-f]{40}$"))
+  and (.current_vercel_deployment_id | type == "string"
+    and test("^dpl_[A-Za-z0-9]+$"))
   and ((.failed_vercel_deployment_ids | type) == "array")
   and ([.failed_vercel_deployment_ids[]
     | type == "string" and test("^dpl_[A-Za-z0-9]+$")]
@@ -217,7 +204,7 @@ jq -e --arg sha "$SOURCE_SHA" '
   and (
     (.status == "new"
       and .phase == null
-      and .predecessor_sha == null
+      and (.predecessor_sha | type == "string" and test("^[0-9a-f]{40}$"))
       and .vercel_deployment_id == null)
     or
     (.status == "resume"
@@ -294,8 +281,6 @@ jq -e \
   die "committed Vercel project/team identity or build policy disagrees"
 
 current_id="$(jq -r '.current_vercel_deployment_id // empty' <<<"$host_inspect")"
-current_sha="$(jq -r '.current_sha // empty' <<<"$host_inspect")"
-genesis_id="$(jq -r '.genesis_vercel_deployment_id // empty' <<<"$host_inspect")"
 bound_deployment_id="$(jq -r '.vercel_deployment_id // empty' <<<"$host_inspect")"
 deployment=""
 
@@ -401,32 +386,6 @@ jq -e \
 ' "$authoritative_body" >/dev/null || \
   die "authoritative Vercel deployment is not exact READY production"
 
-if [ -z "$genesis_id" ]; then
-  if [ "$status" != "new" ] || [ -n "$current_sha" ]; then
-    die "only an empty first release may adopt the genesis Vercel deployment"
-  fi
-  timeout --foreground 1m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
-    timeout --foreground 30s sudo env PYTHONDONTWRITEBYTECODE=1 \
-    "PYTHONPATH=${REMOTE_BUNDLE}/python" \
-    python3 -B "$REMOTE_CONTROLLER" adopt-genesis-vercel-deployment \
-      --source-sha "$SOURCE_SHA" \
-      --deployment-id "$authoritative_id" >/dev/null
-  host_inspect="$(
-    timeout --foreground 1m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
-      sudo env PYTHONDONTWRITEBYTECODE=1 "PYTHONPATH=${REMOTE_BUNDLE}/python" \
-      python3 -B "$REMOTE_CONTROLLER" inspect --source-sha "$SOURCE_SHA"
-  )"
-  genesis_id="$(jq -er \
-    --arg deployment_id "$authoritative_id" \
-    'select(.genesis_vercel_deployment_id == $deployment_id) |
-      .genesis_vercel_deployment_id' <<<"$host_inspect")" || \
-    die "host did not durably adopt the exact genesis Vercel deployment"
-fi
-
-if [ "$status" = "new" ] && [ -z "$current_sha" ] \
-  && [ "$authoritative_id" != "$genesis_id" ]; then
-  die "first release authoritative deployment differs from adopted genesis"
-fi
 if [ "$status" = "current" ]; then
   [ "$authoritative_id" = "$current_id" ] || \
     die "authoritative Vercel deployment differs from the current release record"
@@ -437,10 +396,7 @@ if [ "$status" = "current" ]; then
   exit 0
 fi
 
-prior_authoritative_id="$genesis_id"
-if [ -n "$current_sha" ]; then
-  prior_authoritative_id="$current_id"
-fi
+prior_authoritative_id="$current_id"
 resume_bound_id="$bound_deployment_id"
 if [ "$authoritative_id" != "$prior_authoritative_id" ] \
   && { [ -z "$resume_bound_id" ] || [ "$authoritative_id" != "$resume_bound_id" ]; } \
@@ -603,12 +559,8 @@ jq -e \
 ' "$authoritative_body" >/dev/null || \
   die "authoritative Vercel deployment is not exact READY production"
 current_id="$(jq -r '.current_vercel_deployment_id // empty' <<<"$host_inspect")"
-current_sha="$(jq -r '.current_sha // empty' <<<"$host_inspect")"
-genesis_id="$(jq -r '.genesis_vercel_deployment_id // empty' <<<"$host_inspect")"
 if [ "$authoritative_id" != "$bound_deployment_id" ]; then
-  if { [ -n "$current_sha" ] && [ "$authoritative_id" != "$current_id" ]; \
-    } || { [ -z "$current_sha" ] && [ "$authoritative_id" != "$genesis_id" ]; \
-    }; then
+  if [ "$authoritative_id" != "$current_id" ]; then
     if ! jq -e --arg id "$authoritative_id" \
       '.failed_vercel_deployment_ids | index($id) != null' \
       <<<"$host_inspect" >/dev/null; then

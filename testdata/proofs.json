@@ -243,7 +243,6 @@
         "deploy/env/env-prod-worker.example",
         "deploy/env/env-prod.example",
         "deploy/hetzner/Caddyfile",
-        "deploy/hetzner/adopt-infrastructure.py",
         "deploy/hetzner/cloud-init.yml",
         "deploy/hetzner/deploy.sh",
         "deploy/hetzner/docker-compose.yml",
@@ -256,7 +255,6 @@
         "deploy/vercel/sync-env.sh",
         "deploy/vercel/sync-resource-sharing-firewall.sh",
         "python/nexus/release_artifact.py",
-        "python/tests/testkit/host_infrastructure_adoption.py",
         "python/tests/testkit/host_release.py",
         "python/tests/testkit/production_deploy.py",
         "python/tests/testkit/release_bundle.py"
@@ -266,8 +264,8 @@
         "pytest:python/tests/kernel/test_release_bundle_fetch.py",
         "pytest:python/tests/kernel/test_production_delivery_contract.py",
         "pytest:python/tests/kernel/test_production_deploy_behavior.py",
-        "pytest:python/tests/kernel/test_infrastructure_adoption.py",
         "pytest:python/tests/kernel/test_production_release.py",
+        "pytest:python/tests/kernel/test_successor_release_contract.py",
         "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts"
       ],
       "capabilities": [

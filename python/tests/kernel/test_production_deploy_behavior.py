@@ -9,7 +9,6 @@ from tests.testkit.production_deploy import (
     BOUND_DEPLOYMENT_ID,
     CURRENT_DEPLOYMENT_ID,
     EARLIEST_PUBLISHER_RUN_ID,
-    GENESIS_DEPLOYMENT_ID,
     ProductionDeployHarness,
 )
 
@@ -24,7 +23,6 @@ def _inspect(
     status: str,
     current_sha: str | None,
     current_deployment_id: str | None,
-    genesis_deployment_id: str | None,
     authoritative_bound_id: str | None = None,
     failed_deployment_ids: list[str] | None = None,
     forward_fix_sha: str | None = None,
@@ -35,9 +33,8 @@ def _inspect(
         "current_vercel_deployment_id": current_deployment_id,
         "failed_vercel_deployment_ids": failed_deployment_ids or [],
         "forward_fix_sha": forward_fix_sha,
-        "genesis_vercel_deployment_id": genesis_deployment_id,
         "phase": phase,
-        "predecessor_sha": current_sha if phase is not None else None,
+        "predecessor_sha": current_sha if (phase is not None or status == "new") else None,
         "status": status,
         "vercel_deployment_id": authoritative_bound_id,
     }
@@ -78,18 +75,17 @@ def _assert_only_bound_candidate_mutates(state: dict[str, Any]) -> None:
     assert all(BOUND_DEPLOYMENT_ID in arguments for arguments in promotions)
 
 
-def test_deploy_adopts_exact_genesis_and_uses_artifact_owner_publisher(
+def test_deploy_uses_existing_current_record_and_artifact_owner_publisher(
     tmp_path: Path,
 ) -> None:
     harness = _harness(
         tmp_path,
         inspect=_inspect(
             status="new",
-            current_sha=None,
-            current_deployment_id=None,
-            genesis_deployment_id=None,
+            current_sha=CURRENT_SHA,
+            current_deployment_id=CURRENT_DEPLOYMENT_ID,
         ),
-        authoritative_id=GENESIS_DEPLOYMENT_ID,
+        authoritative_id=CURRENT_DEPLOYMENT_ID,
     )
 
     completed = harness.run()
@@ -101,15 +97,7 @@ def test_deploy_adopts_exact_genesis_and_uses_artifact_owner_publisher(
     ]
     assert len(downloads) == 1
     assert downloads[0][2] == str(EARLIEST_PUBLISHER_RUN_ID)
-    adoption = [
-        command
-        for command in _joined_events(state, "ssh")
-        if "adopt-genesis-vercel-deployment" in command
-    ]
-    assert len(adoption) == 1
-    assert f"--source-sha {SOURCE_SHA}" in adoption[0]
-    assert f"--deployment-id {GENESIS_DEPLOYMENT_ID}" in adoption[0]
-    assert state["host_inspect"]["genesis_vercel_deployment_id"] == GENESIS_DEPLOYMENT_ID
+    assert not any("adopt" in command.lower() for command in _joined_events(state, "ssh"))
     provider_urls = [arguments[-1] for arguments in _events(state, "curl")]
     assert any("projectId=prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs" in url for url in provider_urls)
     assert all(
@@ -143,7 +131,6 @@ def test_deploy_accepts_only_resume_bound_or_active_epoch_failed_authority(
             status="resume",
             current_sha=CURRENT_SHA,
             current_deployment_id=CURRENT_DEPLOYMENT_ID,
-            genesis_deployment_id=GENESIS_DEPLOYMENT_ID,
             authoritative_bound_id=BOUND_DEPLOYMENT_ID,
             failed_deployment_ids=failed_deployment_ids,
             forward_fix_sha=forward_fix_sha,
@@ -170,7 +157,6 @@ def test_deploy_accepts_only_resume_bound_or_active_epoch_failed_authority(
                 status="current",
                 current_sha=SOURCE_SHA,
                 current_deployment_id=CURRENT_DEPLOYMENT_ID,
-                genesis_deployment_id=GENESIS_DEPLOYMENT_ID,
                 authoritative_bound_id=CURRENT_DEPLOYMENT_ID,
                 phase="Succeeded",
             ),
@@ -182,7 +168,6 @@ def test_deploy_accepts_only_resume_bound_or_active_epoch_failed_authority(
                 status="new",
                 current_sha=CURRENT_SHA,
                 current_deployment_id=CURRENT_DEPLOYMENT_ID,
-                genesis_deployment_id=GENESIS_DEPLOYMENT_ID,
             ),
             "dpl_OrdinaryUnknown",
             "unknown before host mutation",
@@ -192,7 +177,6 @@ def test_deploy_accepts_only_resume_bound_or_active_epoch_failed_authority(
                 status="new",
                 current_sha=CURRENT_SHA,
                 current_deployment_id=CURRENT_DEPLOYMENT_ID,
-                genesis_deployment_id=GENESIS_DEPLOYMENT_ID,
                 failed_deployment_ids=["dpl_ActiveFailed"],
                 forward_fix_sha=FAILED_SHA,
             ),
@@ -254,7 +238,6 @@ def test_missing_or_terminal_bound_frontend_settles_without_reselection(
             status="resume",
             current_sha=CURRENT_SHA,
             current_deployment_id=CURRENT_DEPLOYMENT_ID,
-            genesis_deployment_id=GENESIS_DEPLOYMENT_ID,
             authoritative_bound_id=BOUND_DEPLOYMENT_ID,
             phase=phase,
         ),
@@ -287,7 +270,6 @@ def test_transient_bound_frontend_inspection_does_not_terminalize(
             status="resume",
             current_sha=CURRENT_SHA,
             current_deployment_id=CURRENT_DEPLOYMENT_ID,
-            genesis_deployment_id=GENESIS_DEPLOYMENT_ID,
             authoritative_bound_id=BOUND_DEPLOYMENT_ID,
             phase="AwaitingFrontendPromotion",
         ),
@@ -328,7 +310,6 @@ def test_untrustworthy_bound_frontend_response_fails_without_settlement(
             status="resume",
             current_sha=CURRENT_SHA,
             current_deployment_id=CURRENT_DEPLOYMENT_ID,
-            genesis_deployment_id=GENESIS_DEPLOYMENT_ID,
             authoritative_bound_id=BOUND_DEPLOYMENT_ID,
             phase="AwaitingFrontendPromotion",
         ),
@@ -363,7 +344,6 @@ def test_bound_404_cannot_settle_under_unproven_provider_scope(
             status="resume",
             current_sha=CURRENT_SHA,
             current_deployment_id=CURRENT_DEPLOYMENT_ID,
-            genesis_deployment_id=GENESIS_DEPLOYMENT_ID,
             authoritative_bound_id=BOUND_DEPLOYMENT_ID,
             phase="AwaitingFrontendPromotion",
         ),
@@ -394,7 +374,6 @@ def test_pending_settlement_uses_installed_bundle_without_provider_dependencies(
             status="resume",
             current_sha=CURRENT_SHA,
             current_deployment_id=CURRENT_DEPLOYMENT_ID,
-            genesis_deployment_id=GENESIS_DEPLOYMENT_ID,
             authoritative_bound_id=BOUND_DEPLOYMENT_ID,
             phase=phase,
         ),

@@ -12,7 +12,6 @@ import ssl
 import subprocess
 import sys
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -27,7 +26,8 @@ _SERVICES = (
     "worker-background",
 )
 _WRITERS = ("api", "worker-interactive", "worker-background")
-GENESIS_DEPLOYMENT_ID = "dpl_Genesis123"
+CURRENT_SHA = "a" * 40
+CURRENT_DEPLOYMENT_ID = "dpl_Current123"
 _PUBLIC_HOSTS = frozenset({"api.example.test:443", "web.example.test:443"})
 
 
@@ -62,132 +62,6 @@ def _root_own(paths: tuple[Path, ...]) -> None:
     )
 
 
-def record_completed_infrastructure_adoption(
-    root: Path,
-    source_sha: str,
-    *,
-    compose_bytes: bytes = b"name: nexus\n",
-    docker_state_path: Path | None = None,
-    mutate_attempt: Callable[[dict[str, Any]], None] | None = None,
-) -> None:
-    """Write the exact terminal sentinel consumed by the application release owner."""
-    docker_state = _load_state(docker_state_path or root / "fake-docker-state.json")
-    live_containers = docker_state["containers"]
-    if not isinstance(live_containers, dict):
-        raise AssertionError("fake adoption containers must be an object")
-    config_path = (root / "etc/nexus/current.env").resolve(strict=True)
-    config_sha256 = hashlib.sha256(config_path.read_bytes()).hexdigest()
-    backup_bytes = b"x"
-    backup_sha256 = hashlib.sha256(backup_bytes).hexdigest()
-    backup_path = root / "var/backups/nexus/infra-adoption" / f"{source_sha}.dump"
-    retained_inputs = {
-        "docker-compose.yml": compose_bytes,
-        "Caddyfile": b"test-caddy\n",
-        "adopt-infrastructure.py": b"# immutable test adoption owner\n",
-    }
-    captured_containers = {
-        service: {
-            "container_id": (
-                {"postgres": "a" * 64, "caddy": "b" * 64}.get(service)
-                or str(live_containers[service]["id"])
-            ),
-            "image_id": str(live_containers[service]["image_id"]),
-            "config_sha256": hashlib.sha256(
-                _canonical_json(live_containers[service]["config"])
-            ).hexdigest(),
-        }
-        for service in _SERVICES
-    }
-    attempt = {
-        "schema_version": 1,
-        "source_sha": source_sha,
-        "phase": "Succeeded",
-        "input_sha256": {
-            "compose": hashlib.sha256(retained_inputs["docker-compose.yml"]).hexdigest(),
-            "caddy": hashlib.sha256(retained_inputs["Caddyfile"]).hexdigest(),
-            "owner": hashlib.sha256(retained_inputs["adopt-infrastructure.py"]).hexdigest(),
-        },
-        "config_path": str(config_path),
-        "config_sha256": config_sha256,
-        "database_name": "nexus",
-        "database_user": "nexus",
-        "infra_image_references": {
-            service: str(live_containers[service]["config"]["Image"])
-            for service in ("postgres", "caddy")
-        },
-        "containers": captured_containers,
-        "named_mounts": {
-            "postgres": [
-                {"destination": "/var/lib/postgresql/data", "name": "nexus_postgres_data"}
-            ],
-            "caddy": [
-                {"destination": "/config", "name": "nexus_caddy_config"},
-                {"destination": "/data", "name": "nexus_caddy_data"},
-            ],
-        },
-        "database": {
-            "identity": str(docker_state.get("database_identity", "nexus:test-system-id")),
-            "revision": str(docker_state["database_revision"]),
-            "table_counts": {"alembic_version": 1},
-        },
-        "backup": {
-            "path": str(backup_path),
-            "sha256": backup_sha256,
-            "byte_count": len(backup_bytes),
-        },
-        "replacement_containers": {
-            service: {
-                "container_id": str(live_containers[service]["id"]),
-                "image_id": str(live_containers[service]["image_id"]),
-                "config_sha256": hashlib.sha256(
-                    _canonical_json(live_containers[service]["config"])
-                ).hexdigest(),
-            }
-            for service in ("postgres", "caddy")
-        },
-    }
-    if mutate_attempt is not None:
-        mutate_attempt(attempt)
-    adoption_root = root / "var/lib/nexus/infra-adoption"
-    attempt_path = adoption_root / source_sha / "attempt.json"
-    completion_path = adoption_root / "completed.json"
-    inputs_root = attempt_path.parent / "inputs"
-    retained_paths = []
-    for name, content in retained_inputs.items():
-        path = inputs_root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
-        path.chmod(0o444)
-        retained_paths.append(path)
-    attempt_path.parent.mkdir(parents=True, exist_ok=True)
-    attempt_bytes = _canonical_json(attempt)
-    attempt_path.write_bytes(attempt_bytes)
-    attempt_path.chmod(0o440)
-    backup_path.parent.mkdir(parents=True, exist_ok=True)
-    backup_path.write_bytes(backup_bytes)
-    backup_path.chmod(0o400)
-    completion_path.write_bytes(
-        _canonical_json(
-            {
-                "schema_version": 1,
-                "source_sha": source_sha,
-                "attempt_sha256": hashlib.sha256(attempt_bytes).hexdigest(),
-                "backup_sha256": backup_sha256,
-            }
-        )
-    )
-    completion_path.chmod(0o440)
-    _root_own((attempt_path, completion_path, backup_path, *retained_paths))
-
-
-def record_genesis_vercel_deployment(root: Path, deployment_id: str) -> None:
-    path = root / "var/lib/nexus/releases/genesis-vercel-deployment"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{deployment_id}\n", encoding="utf-8")
-    path.chmod(0o444)
-    _root_own((path,))
-
-
 def _load_release(path: Path, module_name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
@@ -196,6 +70,26 @@ def _load_release(path: Path, module_name: str) -> ModuleType:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _write_bundle(root: Path, source_sha: str, manifest: dict[str, object]) -> tuple[Path, ...]:
+    bundle = root / "opt/nexus/releases" / source_sha
+    files = {
+        "Caddyfile": b"test-caddy\n",
+        "candidate-manifest.json": _canonical_json(manifest),
+        "docker-compose.yml": b"name: nexus\n",
+        "release.py": b"# immutable release controller\n",
+        "python/nexus/__init__.py": b"",
+        "python/nexus/release_artifact.py": b"# immutable artifact decoder\n",
+    }
+    paths: list[Path] = []
+    for relative, data in files.items():
+        path = bundle / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        path.chmod(0o444)
+        paths.append(path)
+    return tuple(paths)
 
 
 def _read_http_headers(stream: Any) -> bytes:
@@ -229,17 +123,27 @@ class _PublicTLSProxy(socketserver.ThreadingTCPServer):
         state["public_requests"].append({"host": host, "path": path})
         _save_state(self.state_path, state)
         headers = {"Cache-Control": "no-store"}
+        candidate_active = bool(state["candidate_active"])
+        served_source_sha = (
+            str(state["candidate_source_sha"]) if candidate_active else str(state["source_sha"])
+        )
+        served_revision = (
+            str(state["candidate_revision"]) if candidate_active else str(state["current_revision"])
+        )
+        served_oracle_digest = (
+            str(state["oracle_digest"]) if candidate_active else str(state["current_oracle_digest"])
+        )
         if host == "web.example.test" and path == "/version":
-            return 200, {"source_sha": state["source_sha"]}, headers
+            return 200, {"source_sha": served_source_sha}, headers
         if host == "api.example.test" and path == "/readyz":
             return 200, {"data": {"status": "ready"}}, headers
         if host != "api.example.test" or path != "/version":
             return 404, {"error": "unknown-test-public-target"}, headers
 
         data: dict[str, object] = {
-            "expected_database_revision": state["candidate_revision"],
-            "expected_oracle_manifest_digest": state["oracle_digest"],
-            "source_sha": state["source_sha"],
+            "expected_database_revision": served_revision,
+            "expected_oracle_manifest_digest": served_oracle_digest,
+            "source_sha": served_source_sha,
             "task_contract_digest": state["task_contract_digest"],
         }
         mode = state["public_api_mode"]
@@ -356,10 +260,6 @@ class HostReleaseHarness:
         *,
         repo_root: Path,
         candidate: dict[str, object],
-        adoption_compose_bytes: bytes = b"name: nexus\n",
-        adoption_mutation: Callable[[dict[str, Any]], None] | None = None,
-        adoption_source_sha: str | None = None,
-        infrastructure_adoption_complete: bool = True,
     ) -> HostReleaseHarness:
         source_sha = str(candidate["source_sha"])
         images = candidate["images"]
@@ -367,6 +267,17 @@ class HostReleaseHarness:
             raise AssertionError("candidate images must be an object")
         api_image = str(images["api"])
         worker_image = str(images["worker"])
+
+        current_api_image = "ghcr.io/nielsdawheelz/nexus-api@sha256:" + "1" * 64
+        current_worker_image = "ghcr.io/nielsdawheelz/nexus-worker@sha256:" + "2" * 64
+        current_candidate = dict(candidate)
+        current_candidate["source_sha"] = CURRENT_SHA
+        current_candidate["images"] = {
+            "api": current_api_image,
+            "worker": current_worker_image,
+        }
+        current_candidate["expected_database_revision"] = "0210"
+        current_candidate["expected_oracle_manifest_digest"] = "sha256:" + "d" * 64
 
         config = (
             "CADDY_ACME_EMAIL=operator@example.test\n"
@@ -390,26 +301,14 @@ class HostReleaseHarness:
         caddy_path.write_text("test-caddy\n", encoding="utf-8")
         caddy_path.chmod(0o444)
 
-        bundle = root / "opt/nexus/releases" / source_sha
-        for relative, data in {
-            "Caddyfile": b"test-caddy\n",
-            "candidate-manifest.json": _canonical_json(candidate),
-            "docker-compose.yml": b"name: nexus\n",
-            "release.py": b"# immutable release controller\n",
-            "python/nexus/__init__.py": b"",
-            "python/nexus/release_artifact.py": b"# immutable artifact decoder\n",
-        }.items():
-            path = bundle / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
-            path.chmod(0o444)
+        candidate_bundle = _write_bundle(root, source_sha, candidate)
+        current_bundle = _write_bundle(root, CURRENT_SHA, current_candidate)
 
         (root / "var/backups").mkdir(parents=True)
-        immutable_inputs = tuple(path for path in bundle.rglob("*") if path.is_file()) + (
-            config_path,
-            caddy_path,
-        )
+        immutable_inputs = (*candidate_bundle, *current_bundle, config_path, caddy_path)
 
+        current_api_image_id = "sha256:" + "5" * 64
+        current_worker_image_id = "sha256:" + "6" * 64
         api_image_id = "sha256:" + "8" * 64
         worker_image_id = "sha256:" + "9" * 64
         containers: dict[str, dict[str, object]] = {}
@@ -420,21 +319,25 @@ class HostReleaseHarness:
                 "docker.io/library/postgres@sha256:" + "d" * 64,
             ),
             ("caddy", "4", "docker.io/library/caddy@sha256:" + "e" * 64),
-            ("api", "5", "example.invalid/api@sha256:" + "5" * 64),
+            ("api", "5", current_api_image),
             (
                 "worker-interactive",
                 "6",
-                "example.invalid/worker@sha256:" + "6" * 64,
+                current_worker_image,
             ),
             (
                 "worker-background",
                 "7",
-                "example.invalid/worker@sha256:" + "7" * 64,
+                current_worker_image,
             ),
         ):
             containers[service] = {
                 "id": character * 64,
-                "image_id": "sha256:" + character * 64,
+                "image_id": (
+                    current_worker_image_id
+                    if service.startswith("worker-")
+                    else "sha256:" + character * 64
+                ),
                 "config": {"Env": [], "Image": image},
                 "running": True,
             }
@@ -443,8 +346,16 @@ class HostReleaseHarness:
         _save_state(
             state_path,
             {
-                "api_image": api_image,
-                "api_image_id": api_image_id,
+                "api_image": current_api_image,
+                "api_image_id": current_api_image_id,
+                "candidate_api_image": api_image,
+                "candidate_api_image_id": api_image_id,
+                "candidate_worker_image": worker_image,
+                "candidate_worker_image_id": worker_image_id,
+                "current_api_image": current_api_image,
+                "current_api_image_id": current_api_image_id,
+                "current_worker_image": current_worker_image,
+                "current_worker_image_id": current_worker_image_id,
                 "activation_api_image_id": api_image_id,
                 "activation_worker_image_id": worker_image_id,
                 "alembic_table_exists": True,
@@ -456,6 +367,7 @@ class HostReleaseHarness:
                 "candidate_health_probe_count": 0,
                 "candidate_health_wait_seconds": 0.0,
                 "candidate_revision": str(candidate["expected_database_revision"]),
+                "current_revision": "0210",
                 "commands": [],
                 "containers": containers,
                 "database_identity": "nexus:fake-system-id",
@@ -470,36 +382,87 @@ class HostReleaseHarness:
                 "operation_failure_count": {},
                 "operation_failures_remaining": {},
                 "oracle_digest": str(candidate["expected_oracle_manifest_digest"]),
+                "current_oracle_digest": str(current_candidate["expected_oracle_manifest_digest"]),
+                "candidate_active": False,
                 "public_api_mode": "valid",
                 "public_requests": [],
                 "return_interrupt_fired": False,
                 "service_mutations": [],
-                "source_sha": source_sha,
+                "source_sha": CURRENT_SHA,
+                "candidate_source_sha": source_sha,
                 "task_contract_digest": "f" * 64,
-                "worker_image": worker_image,
-                "worker_image_id": worker_image_id,
+                "worker_image": current_worker_image,
+                "worker_image_id": current_worker_image_id,
             },
         )
 
-        _load_release(
+        release = _load_release(
             repo_root / "deploy/hetzner/release.py",
             "nexus_host_release_behavior_setup",
         )
-        if infrastructure_adoption_complete:
-            record_completed_infrastructure_adoption(
-                root,
-                source_sha if adoption_source_sha is None else adoption_source_sha,
-                compose_bytes=adoption_compose_bytes,
-                mutate_attempt=adoption_mutation,
+        current_manifest_path = (
+            root / "opt/nexus/releases" / CURRENT_SHA / "candidate-manifest.json"
+        )
+        current_container_evidence = {
+            service: release.ContainerEvidence(
+                container_id=str(containers[service]["id"]),
+                image=str(containers[service]["image_id"]),
+                config_sha256=hashlib.sha256(
+                    _canonical_json(containers[service]["config"])
+                ).hexdigest(),
             )
-        else:
-            active = root / "var/lib/nexus/infra-adoption" / source_sha / "attempt.json"
-            active.parent.mkdir(parents=True)
-            active.write_text("{}\n", encoding="utf-8")
-            active.chmod(0o440)
-            _root_own((active,))
-        _root_own(immutable_inputs)
-        record_genesis_vercel_deployment(root, GENESIS_DEPLOYMENT_ID)
+            for service in _SERVICES
+        }
+        current_attempt = release.ReleaseAttempt(
+            schema_version=1,
+            source_sha=CURRENT_SHA,
+            manifest_sha256=hashlib.sha256(current_manifest_path.read_bytes()).hexdigest(),
+            candidate_api_image_id=current_api_image_id,
+            candidate_worker_image_id=current_worker_image_id,
+            predecessor_sha=None,
+            forward_fix_of=None,
+            containers=current_container_evidence,
+            config_path=str(config_path),
+            config_sha256=config_digest,
+            vercel_deployment_id=CURRENT_DEPLOYMENT_ID,
+            production_host="web.example.test",
+            phase=release.ReleasePhase.Succeeded,
+            backup=None,
+            failure_code=None,
+            created_at="2026-08-06T10:00:00Z",
+            updated_at="2026-08-06T10:00:00Z",
+        )
+        current_record = release.ReleaseRecord(
+            schema_version=1,
+            source_sha=CURRENT_SHA,
+            manifest_sha256=current_attempt.manifest_sha256,
+            api_image=current_api_image,
+            worker_image=current_worker_image,
+            api_image_id=current_api_image_id,
+            worker_image_id=current_worker_image_id,
+            predecessor_sha=None,
+            config_path=str(config_path),
+            config_sha256=config_digest,
+            database_revision="0210",
+            expected_oracle_manifest_digest="sha256:" + "d" * 64,
+            vercel_deployment_id=CURRENT_DEPLOYMENT_ID,
+            production_host="web.example.test",
+            verified_at="2026-08-06T10:00:00Z",
+        )
+        state_root = root / "var/lib/nexus/releases"
+        attempt_path = state_root / "attempts" / f"{CURRENT_SHA}.json"
+        record_path = state_root / "records" / f"{CURRENT_SHA}.json"
+        current_pointer = state_root / "current"
+        for path, value in (
+            (attempt_path, current_attempt.as_json()),
+            (record_path, current_record.as_json()),
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(_canonical_json(value))
+            path.chmod(0o440)
+        current_pointer.write_text(f"{CURRENT_SHA}\n", encoding="utf-8")
+        current_pointer.chmod(0o440)
+        _root_own((*candidate_bundle, *current_bundle, *immutable_inputs))
 
         fake_bin = root / "fake-bin"
         fake_bin.mkdir()
@@ -671,10 +634,13 @@ class HostReleaseHarness:
             raise AssertionError("candidate images must be an object")
         self.update_state(
             api_image=str(images["api"]),
+            candidate_api_image=str(images["api"]),
             candidate_revision=str(candidate["expected_database_revision"]),
             oracle_digest=str(candidate["expected_oracle_manifest_digest"]),
-            source_sha=source_sha,
+            candidate_source_sha=source_sha,
             worker_image=str(images["worker"]),
+            candidate_worker_image=str(images["worker"]),
+            candidate_active=False,
         )
         return source_sha
 
@@ -785,14 +751,14 @@ def _compose_operation(arguments: list[str]) -> list[str]:
     return arguments[file_index + 2 :]
 
 
-def _semantic_operation(arguments: list[str]) -> str | None:
+def _semantic_operation(arguments: list[str], *, candidate_active: bool) -> str | None:
     if not arguments or arguments[0] != "compose":
         return None
     operation = _compose_operation(arguments)
     if operation[:3] == ["up", "--detach", "--no-deps"]:
         return "backend-compose-up"
     if operation[:3] == ["exec", "-T", "api"] and "/version" in " ".join(operation[3:]):
-        return "backend-api-version"
+        return "backend-api-version" if candidate_active else "current-api-version"
     return None
 
 
@@ -836,15 +802,16 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
         "90",
     ]:
         services = operation[6:]
+        state["candidate_active"] = True
         for service in services:
             container = state["containers"][service]
             container["running"] = True
             if service == "api":
                 container["image_id"] = state["activation_api_image_id"]
-                container["config"]["Image"] = state["api_image"]
+                container["config"]["Image"] = state["candidate_api_image"]
             else:
                 container["image_id"] = state["activation_worker_image_id"]
-                container["config"]["Image"] = state["worker_image"]
+                container["config"]["Image"] = state["candidate_worker_image"]
         state["service_mutations"].append({"operation": "up", "services": services})
         remaining = state["candidate_health_failures_remaining"]
         if remaining < 0:
@@ -887,17 +854,26 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
     if operation[:3] == ["exec", "-T", "api"]:
         command = " ".join(operation[3:])
         if "127.0.0.1:8000/version" in command:
+            active = bool(state["candidate_active"])
             _write_json(
                 {
                     "data": {
-                        "expected_database_revision": state["candidate_revision"],
-                        "expected_oracle_manifest_digest": state["oracle_digest"],
-                        "source_sha": state["source_sha"],
+                        "expected_database_revision": (
+                            state["candidate_revision"] if active else state["current_revision"]
+                        ),
+                        "expected_oracle_manifest_digest": (
+                            state["oracle_digest"] if active else state["current_oracle_digest"]
+                        ),
+                        "source_sha": (
+                            state["candidate_source_sha"] if active else state["source_sha"]
+                        ),
                         "task_contract_digest": state["task_contract_digest"],
                     }
                 }
             )
         elif "127.0.0.1:8000/readyz" in command:
+            if not state["candidate_active"]:
+                return
             state["candidate_health_probe_count"] += 1
             remaining = state["candidate_health_failures_remaining"]
             if remaining != 0:
@@ -912,24 +888,34 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
             raise AssertionError(f"unsupported fake API command: {command}")
         return
     if operation[:3] == ["exec", "-T", "worker-interactive"]:
+        active = bool(state["candidate_active"])
         _write_json(
             {
-                "expected_database_revision": state["candidate_revision"],
-                "expected_oracle_manifest_digest": state["oracle_digest"],
+                "expected_database_revision": (
+                    state["candidate_revision"] if active else state["current_revision"]
+                ),
+                "expected_oracle_manifest_digest": (
+                    state["oracle_digest"] if active else state["current_oracle_digest"]
+                ),
                 "lane": "interactive",
-                "source_sha": state["source_sha"],
+                "source_sha": state["candidate_source_sha"] if active else state["source_sha"],
                 "status": "ready",
                 "task_contract_digest": state["task_contract_digest"],
             }
         )
         return
     if operation[:3] == ["exec", "-T", "worker-background"]:
+        active = bool(state["candidate_active"])
         _write_json(
             {
-                "expected_database_revision": state["candidate_revision"],
-                "expected_oracle_manifest_digest": state["oracle_digest"],
+                "expected_database_revision": (
+                    state["candidate_revision"] if active else state["current_revision"]
+                ),
+                "expected_oracle_manifest_digest": (
+                    state["oracle_digest"] if active else state["current_oracle_digest"]
+                ),
                 "lane": "background",
-                "source_sha": state["source_sha"],
+                "source_sha": state["candidate_source_sha"] if active else state["source_sha"],
                 "status": "ready",
                 "task_contract_digest": state["task_contract_digest"],
             }
@@ -973,7 +959,10 @@ def fake_docker_main() -> int:
         state["failure_count"] += 1
         _save_state(state_path, state)
         return 72
-    semantic_operation = _semantic_operation(arguments)
+    semantic_operation = _semantic_operation(
+        arguments,
+        candidate_active=bool(state["candidate_active"]),
+    )
     remaining = state["operation_failures_remaining"].get(semantic_operation, 0)
     if remaining > 0:
         state["operation_failures_remaining"][semantic_operation] = remaining - 1
@@ -986,15 +975,28 @@ def fake_docker_main() -> int:
         _handle_compose(state, _compose_operation(arguments))
     elif arguments[:2] == ["image", "inspect"]:
         image = arguments[2]
-        image_id = (
-            state["api_image_id"] if image == state["api_image"] else state["worker_image_id"]
+        image_map = {
+            state["current_api_image"]: state["current_api_image_id"],
+            state["current_worker_image"]: state["current_worker_image_id"],
+            state["candidate_api_image"]: state["candidate_api_image_id"],
+            state["candidate_worker_image"]: state["candidate_worker_image_id"],
+        }
+        image_id = image_map.get(image)
+        if image_id is None:
+            raise AssertionError(f"unknown fake image {image!r}")
+        source_sha = (
+            state["candidate_source_sha"]
+            if image
+            in {
+                state["candidate_api_image"],
+                state["candidate_worker_image"],
+            }
+            else state["source_sha"]
         )
         _write_json(
             [
                 {
-                    "Config": {
-                        "Labels": {"org.opencontainers.image.revision": state["source_sha"]}
-                    },
+                    "Config": {"Labels": {"org.opencontainers.image.revision": source_sha}},
                     "Id": image_id,
                 }
             ]
@@ -1003,11 +1005,22 @@ def fake_docker_main() -> int:
         pass
     elif arguments[0] == "run":
         if "cat" in arguments and "/app/runtime-identity.json" in arguments:
+            image = arguments[-2]
+            active = image in {
+                state["candidate_api_image"],
+                state["candidate_worker_image"],
+            }
             _write_json(
                 {
-                    "expected_database_revision": state["candidate_revision"],
-                    "expected_oracle_manifest_digest": state["oracle_digest"],
-                    "source_sha": state["source_sha"],
+                    "expected_database_revision": (
+                        state["candidate_revision"] if active else state["current_revision"]
+                    ),
+                    "expected_oracle_manifest_digest": (
+                        state["oracle_digest"] if active else state["current_oracle_digest"]
+                    ),
+                    "source_sha": (
+                        state["candidate_source_sha"] if active else state["source_sha"]
+                    ),
                 }
             )
         elif "-c" in arguments:

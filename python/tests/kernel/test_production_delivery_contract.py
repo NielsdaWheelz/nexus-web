@@ -33,7 +33,6 @@ def test_deploy_is_one_exact_immutable_staged_release_path() -> None:
         '"https://${PRODUCTION_HOST}/version"',
         'promote "$bound_deployment_id"',
         'alias set "$deployment_url" "$PRODUCTION_HOST"',
-        "adopt-genesis-vercel-deployment",
         "authoritative Vercel deployment is unknown before host mutation",
         "apply",
         "finalize",
@@ -62,6 +61,9 @@ def test_deploy_is_one_exact_immutable_staged_release_path() -> None:
         "git checkout",
         "sync-env.sh",
         "reconcile-oracle.sh",
+        "adopt-genesis-vercel-deployment",
+        "genesis_vercel_deployment",
+        "adopt-infrastructure.py",
     ):
         assert forbidden not in script
 

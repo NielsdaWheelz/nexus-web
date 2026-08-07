@@ -62,7 +62,8 @@ finally earns its keep.
   (intrinsic membership, no closure edges). This is the sole "file it where a
   normal add goes" helper.
 - **P-7.** The auth middleware (`python/nexus/auth/middleware.py`) has a
-  first-checked `PUBLIC_PATHS` set (`{"/health", "/docs", "/redoc",
+  first-checked `PUBLIC_PATHS` set (`{"/livez", "/readyz", "/version",
+  "/docs", "/redoc",
   "/openapi.json", "/billing/stripe/webhook"}`) evaluated *before* the
   internal-header check and the bearer check. `/billing/stripe/webhook`
   (`python/nexus/api/routes/billing.py:51`) is the exact precedent: an external

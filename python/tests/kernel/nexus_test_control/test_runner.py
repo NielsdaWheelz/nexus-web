@@ -471,7 +471,6 @@ def test_changed_python_static_and_kernel_use_only_the_selected_file_and_node(
         ("apps/api/main.py", "app = object()\n"),
         ("apps/worker/health.py", "def health():\n    return None\n"),
         ("apps/worker/main.py", "def main():\n    return None\n"),
-        ("deploy/hetzner/adopt-infrastructure.py", "def adopt():\n    return None\n"),
         ("deploy/hetzner/release.py", "def release():\n    return None\n"),
     ),
 )
@@ -869,10 +868,6 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
     (tmp_path / "apps/web/node_modules").mkdir()
     _write(tmp_path / "apps/web/src/example.unit.test.ts", "export {};\n")
     _write(tmp_path / ".github/workflows/ci.yml", "name: CI\n")
-    _write(
-        tmp_path / "deploy/hetzner/adopt-infrastructure.py",
-        "def adopt():\n    return None\n",
-    )
     _write(tmp_path / "deploy/hetzner/release.py", "def release():\n    return None\n")
     for path in (
         "deploy/cloudflare/apply-r2-cors.sh",
@@ -954,20 +949,18 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
     ]
     assert commands[0]["argv"][-1] == "tests/kernel/nexus_test_control/test_policy.py"
     assert commands[1]["argv"] == ["run", "test:eslint-policy"]
-    assert commands[2]["argv"][-6:] == [
+    assert commands[2]["argv"][-5:] == [
         ".",
         "../apps/api/main.py",
         "../apps/worker/health.py",
         "../apps/worker/main.py",
-        "../deploy/hetzner/adopt-infrastructure.py",
         "../deploy/hetzner/release.py",
     ]
-    assert commands[3]["argv"][-6:] == [
+    assert commands[3]["argv"][-5:] == [
         ".",
         "../apps/api/main.py",
         "../apps/worker/health.py",
         "../apps/worker/main.py",
-        "../deploy/hetzner/adopt-infrastructure.py",
         "../deploy/hetzner/release.py",
     ]
     assert commands[4]["argv"] == ["run", "--frozen", "--no-sync", "pyright"]
@@ -979,7 +972,6 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         "../apps/api/main.py",
         "../apps/worker/health.py",
         "../apps/worker/main.py",
-        "../deploy/hetzner/adopt-infrastructure.py",
         "../deploy/hetzner/release.py",
     ]
     assert commands[10]["argv"][-1] == "../.github/workflows/ci.yml"

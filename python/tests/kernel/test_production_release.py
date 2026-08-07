@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import os
 import signal
 import stat
 import subprocess
@@ -11,14 +10,12 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
-from typing import Any
 
 import pytest
 
 from tests.testkit.host_release import (
-    GENESIS_DEPLOYMENT_ID,
+    CURRENT_SHA,
     HostReleaseHarness,
-    record_genesis_vercel_deployment,
 )
 
 REPO_ROOT = Path(__file__).parents[3]
@@ -27,33 +24,6 @@ NEXT_SHA = "2" * 40
 IMAGE_DIGEST = "a" * 64
 WORKER_DIGEST = "b" * 64
 ORACLE_DIGEST = "c" * 64
-
-
-def _decode_infrastructure_adoption_as_root(root: Path) -> subprocess.CompletedProcess[str]:
-    release_path = str(REPO_ROOT / "deploy/hetzner/release.py")
-    code = (
-        "import importlib.util, sys; "
-        "from pathlib import Path; "
-        "spec = importlib.util.spec_from_file_location('nexus_release_decoder', "
-        f"{release_path!r}); "
-        "module = importlib.util.module_from_spec(spec); "
-        "sys.modules[spec.name] = module; "
-        "spec.loader.exec_module(module); "
-        "module.ReleaseStore(module.ReleasePaths.under(Path(sys.argv[1])))."
-        "completed_infrastructure_adoption(verify_backup=True)"
-    )
-    command = ("python3", "-B", "-c", code, str(root))
-    environment = {"PYTHONPATH": str(REPO_ROOT / "python")}
-    if os.geteuid() != 0:
-        command = (
-            "sudo",
-            "--non-interactive",
-            "env",
-            *[f"{key}={value}" for key, value in environment.items()],
-            *command,
-        )
-        return subprocess.run(command, capture_output=True, text=True)
-    return subprocess.run(command, env=environment, capture_output=True, text=True)
 
 
 def _release_module() -> ModuleType:
@@ -101,7 +71,7 @@ def _prepared(
     deployment_id: str = "dpl_1234567890",
     forward_fix_of: str | None = None,
     now: str = "2026-08-06T12:00:00Z",
-    predecessor_sha: str | None = None,
+    predecessor_sha: str | None = CURRENT_SHA,
 ):
     return module.ReleaseAttempt.prepared(
         source_sha=source_sha,
@@ -214,57 +184,7 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
     assert not tuple(release.ReleasePaths.under(tmp_path).state_root.rglob("*.partial"))
 
 
-def test_host_apply_treats_the_adoption_source_as_provenance(
-    tmp_path: Path,
-) -> None:
-    with HostReleaseHarness.create(
-        tmp_path,
-        repo_root=REPO_ROOT,
-        candidate=_candidate(),
-        adoption_source_sha=NEXT_SHA,
-    ) as harness:
-        completed = harness.run_apply()
-
-        assert completed.returncode == 0, completed.stderr
-        release = _release_module()
-        attempt = _stored_attempt(release, tmp_path)
-        assert attempt is not None
-        assert attempt.phase is release.ReleasePhase.AwaitingFrontendPromotion
-
-
-def test_host_apply_rejects_different_adopted_inputs(tmp_path: Path) -> None:
-    with HostReleaseHarness.create(
-        tmp_path,
-        repo_root=REPO_ROOT,
-        candidate=_candidate(),
-        adoption_compose_bytes=b"name: different\n",
-    ) as harness:
-        failed = harness.run_apply()
-
-        assert failed.returncode != 0
-        assert "differs from the adopted infrastructure" in failed.stderr
-        assert not harness.attempt_path.exists()
-        assert harness.state()["service_mutations"] == []
-
-
-def test_host_apply_rejects_a_nonterminal_infrastructure_adoption(
-    tmp_path: Path,
-) -> None:
-    with HostReleaseHarness.create(
-        tmp_path,
-        repo_root=REPO_ROOT,
-        candidate=_candidate(),
-        infrastructure_adoption_complete=False,
-    ) as harness:
-        failed = harness.run_apply()
-
-        assert failed.returncode != 0
-        assert "infrastructure adoption is nonterminal" in failed.stderr
-        assert not harness.attempt_path.exists()
-        assert harness.state()["service_mutations"] == []
-
-
-def test_host_apply_rejects_writable_adopted_caddy_input(tmp_path: Path) -> None:
+def test_host_apply_rejects_writable_caddy_input(tmp_path: Path) -> None:
     with _host_harness(tmp_path) as harness:
         caddy = harness.root / "etc/nexus/Caddyfile"
         subprocess.run(
@@ -300,7 +220,7 @@ def test_host_apply_rejects_unversioned_database_before_creating_an_attempt(
     failed = harness.run_apply()
 
     assert failed.returncode != 0
-    assert "database must expose one Alembic revision" in failed.stderr
+    assert "database revision is ()" in failed.stderr
     assert not harness.attempt_path.exists()
     state = harness.state()
     assert state["ancestry_proofs"] == []
@@ -432,7 +352,7 @@ def test_host_finalize_proves_public_tls_and_publishes_record_and_current(
     assert record.vercel_deployment_id == "dpl_Test123"
     assert harness.state()["public_requests"] == [
         {"host": host, "path": path}
-        for _proof in range(2)
+        for _proof in range(3)
         for host, path in (
             ("web.example.test", "/version"),
             ("api.example.test", "/version"),
@@ -621,47 +541,7 @@ def test_host_apply_exhausted_external_failure_rolls_back_only_before_commitment
         assert state["containers"][service]["running"] is writers_running
 
 
-def test_first_release_successor_after_rollback_reproves_adoption_invariants(
-    host_release_harness: HostReleaseHarness,
-) -> None:
-    release = _release_module()
-    harness = host_release_harness
-    failed = harness.run_apply(failure_phase="BackupVerified")
-    assert failed.returncode != 0
-    first = _stored_attempt(release, harness.root)
-    assert first is not None and first.phase is release.ReleasePhase.RolledBack
-
-    successor_sha = harness.install_candidate(_candidate(NEXT_SHA))
-    state = harness.state()
-    containers = state["containers"]
-    assert isinstance(containers, dict)
-    api = containers["api"]
-    assert isinstance(api, dict)
-    adopted_container_id = api["id"]
-    api["id"] = "f" * 64
-    harness.update_state(containers=containers)
-
-    rejected = harness.run_apply(source_sha=successor_sha)
-
-    assert rejected.returncode != 0
-    assert "differs from infrastructure adoption" in rejected.stderr
-    successor_attempt = release.ReleasePaths.under(harness.root).attempts / f"{successor_sha}.json"
-    assert not successor_attempt.exists()
-
-    api["id"] = adopted_container_id
-    harness.update_state(containers=containers)
-    completed = harness.run_apply(source_sha=successor_sha)
-
-    assert completed.returncode == 0, completed.stderr
-    successor = release.ReleaseStore(release.ReleasePaths.under(harness.root)).load_attempt(
-        successor_sha
-    )
-    assert successor is not None
-    assert successor.phase is release.ReleasePhase.AwaitingFrontendPromotion
-    assert successor.forward_fix_of is None
-
-
-def test_first_release_forward_fix_accepts_advanced_schema_and_stopped_writers(
+def test_forward_fix_accepts_advanced_schema_and_stopped_writers(
     host_release_harness: HostReleaseHarness,
 ) -> None:
     release = _release_module()
@@ -866,6 +746,27 @@ def test_store_serializes_active_attempts_and_recovers_publication_prefix(tmp_pa
     release = _release_module()
     paths = release.ReleasePaths.under(tmp_path)
     store = release.ReleaseStore(paths)
+    baseline = release.ReleaseRecord(
+        schema_version=1,
+        source_sha=CURRENT_SHA,
+        manifest_sha256="b" * 64,
+        api_image="ghcr.io/nielsdawheelz/nexus-api@sha256:" + "1" * 64,
+        worker_image="ghcr.io/nielsdawheelz/nexus-worker@sha256:" + "2" * 64,
+        api_image_id="sha256:" + "3" * 64,
+        worker_image_id="sha256:" + "4" * 64,
+        predecessor_sha=None,
+        config_path="/etc/nexus/config/" + "5" * 64 + ".env",
+        config_sha256="5" * 64,
+        database_revision="0210",
+        expected_oracle_manifest_digest="sha256:" + "6" * 64,
+        vercel_deployment_id="dpl_Baseline123",
+        production_host="nexus.example.test",
+        verified_at="2026-08-06T12:04:00Z",
+    )
+    store.create_record(baseline)
+    paths.current.parent.mkdir(parents=True, exist_ok=True)
+    paths.current.write_text(f"{CURRENT_SHA}\n", encoding="utf-8")
+    paths.current.chmod(0o440)
     prepared = _prepared(release)
     store.create_attempt(prepared)
 
@@ -891,7 +792,7 @@ def test_store_serializes_active_attempts_and_recovers_publication_prefix(tmp_pa
     )
     store.create_record(record)
     store = release.ReleaseStore(paths)
-    assert store.current_sha() is None
+    assert store.current_sha() == CURRENT_SHA
     assert store.load_record(SOURCE_SHA) == record
     store.create_record(record)
     store.set_current(SOURCE_SHA)
@@ -908,135 +809,28 @@ def test_store_serializes_active_attempts_and_recovers_publication_prefix(tmp_pa
     assert not tuple(store.paths.state_root.rglob("*.partial"))
 
 
-def test_first_release_requires_completed_infrastructure_adoption(
-    tmp_path: Path,
-) -> None:
-    release = _release_module()
-    store = release.ReleaseStore(release.ReleasePaths.under(tmp_path))
-
-    with pytest.raises(release.ReleaseBlocked, match="infrastructure adoption is not complete"):
-        store.require_infrastructure_adoption()
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    (
-        "unknown-field",
-        "missing-writer-evidence",
-        "missing-replacement",
-        "mutable-infrastructure-image",
-        "unordered-mounts",
-        "noninteger-table-count",
-        "different-backup-hash",
-    ),
-)
-def test_infrastructure_adoption_decoder_rejects_closed_schema_drift(
-    tmp_path: Path,
-    mutation: str,
-) -> None:
-    def mutate(attempt: dict[str, Any]) -> None:
-        if mutation == "unknown-field":
-            attempt["unsupported"] = True
-        elif mutation == "missing-writer-evidence":
-            del attempt["containers"]["api"]["image_id"]
-        elif mutation == "missing-replacement":
-            del attempt["replacement_containers"]["caddy"]
-        elif mutation == "mutable-infrastructure-image":
-            attempt["infra_image_references"]["postgres"] = "postgres:latest"
-        elif mutation == "unordered-mounts":
-            attempt["named_mounts"]["caddy"].reverse()
-        elif mutation == "noninteger-table-count":
-            attempt["database"]["table_counts"]["users"] = True
-        else:
-            attempt["backup"]["sha256"] = "0" * 64
-
-    with HostReleaseHarness.create(
-        tmp_path,
-        repo_root=REPO_ROOT,
-        candidate=_candidate(),
-        adoption_mutation=mutate,
-    ) as harness:
-        completed = _decode_infrastructure_adoption_as_root(harness.root)
-
-        assert completed.returncode != 0
-        assert "infrastructure adoption" in completed.stderr
-
-
-@pytest.mark.parametrize(
-    ("relative", "mode"),
-    (
-        (
-            f"var/lib/nexus/infra-adoption/{SOURCE_SHA}/inputs/docker-compose.yml",
-            "0644",
-        ),
-        (f"var/backups/nexus/infra-adoption/{SOURCE_SHA}.dump", "0440"),
-    ),
-)
-def test_infrastructure_adoption_decoder_rejects_mutable_retained_evidence(
-    tmp_path: Path,
-    relative: str,
-    mode: str,
-) -> None:
-    with _host_harness(tmp_path) as harness:
-        subprocess.run(
-            ("sudo", "--non-interactive", "chmod", mode, str(harness.root / relative)),
-            check=True,
-            capture_output=True,
-        )
-        completed = _decode_infrastructure_adoption_as_root(harness.root)
-
-        assert completed.returncode != 0
-        assert "infrastructure adoption" in completed.stderr
-
-
-def test_nonterminal_infrastructure_adoption_blocks_config_publication(
-    tmp_path: Path,
-) -> None:
-    release = _release_module()
-    paths = release.ReleasePaths.under(tmp_path)
-    attempt = paths.infrastructure_adoption_root / SOURCE_SHA / "attempt.json"
-    attempt.parent.mkdir(parents=True)
-    attempt.write_text("{}\n", encoding="utf-8")
-    source = tmp_path / "source.env"
-    source.write_text("NEXUS_ENV=prod\n", encoding="utf-8")
-
-    with pytest.raises(release.ReleaseBlocked, match="infrastructure adoption is nonterminal"):
-        release.publish_config(source, release.ReleaseStore(paths), next_source_sha=SOURCE_SHA)
-
-    assert not paths.current_config.exists()
-
-
 def test_config_publication_creates_an_immutable_content_addressed_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     release = _release_module()
-    paths = release.ReleasePaths.under(tmp_path)
-    source = tmp_path / "source.env"
-    source.write_text("ZETA=last\nALPHA=first\n", encoding="utf-8")
+    with _host_harness(tmp_path) as harness:
+        paths = release.ReleasePaths.under(harness.root)
+        source = tmp_path / "source.env"
+        source.write_text("ZETA=last\nALPHA=first\n", encoding="utf-8")
 
-    digest = release.publish_config(
-        source,
-        release.ReleaseStore(paths),
-        next_source_sha=SOURCE_SHA,
-    )
-
-    snapshot = paths.config_root / f"{digest}.env"
-    assert snapshot.read_bytes() == b"ALPHA=first\nZETA=last\n"
-    assert stat.S_IMODE(snapshot.stat().st_mode) == 0o440
-    assert paths.current_config.resolve(strict=True) == snapshot.resolve(strict=True)
-
-    snapshot.chmod(0o640)
-    with pytest.raises(release.ReleaseDefect, match="not exact immutable input"):
-        release.publish_config(
+        digest = release.publish_config(
             source,
             release.ReleaseStore(paths),
             next_source_sha=SOURCE_SHA,
         )
 
-    snapshot.chmod(0o440)
-    with monkeypatch.context() as context:
-        context.setattr(release.os, "geteuid", lambda: snapshot.stat().st_uid + 1)
+        snapshot = paths.config_root / f"{digest}.env"
+        assert snapshot.read_bytes() == b"ALPHA=first\nZETA=last\n"
+        assert stat.S_IMODE(snapshot.stat().st_mode) == 0o440
+        assert paths.current_config.resolve(strict=True) == snapshot.resolve(strict=True)
+
+        snapshot.chmod(0o640)
         with pytest.raises(release.ReleaseDefect, match="not exact immutable input"):
             release.publish_config(
                 source,
@@ -1044,37 +838,15 @@ def test_config_publication_creates_an_immutable_content_addressed_snapshot(
                 next_source_sha=SOURCE_SHA,
             )
 
-
-def test_completed_adoption_freezes_config_until_the_first_release(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    release = _release_module()
-    paths = release.ReleasePaths.under(tmp_path)
-    store = release.ReleaseStore(paths)
-    source = tmp_path / "source.env"
-    source.write_text("NEXUS_ENV=prod\n", encoding="utf-8")
-    monkeypatch.setattr(store, "infrastructure_adoption_source", lambda: SOURCE_SHA)
-    monkeypatch.setattr(store, "current_sha", lambda: None)
-
-    with pytest.raises(release.ReleaseBlocked, match="first-release config is immutable"):
-        release.publish_config(source, store, next_source_sha=SOURCE_SHA)
-
-    assert not paths.current_config.exists()
-
-
-def test_missing_adoption_blocks_config_when_release_history_exists(tmp_path: Path) -> None:
-    release = _release_module()
-    paths = release.ReleasePaths.under(tmp_path)
-    paths.records.mkdir(parents=True)
-    (paths.records / f"{SOURCE_SHA}.json").write_text("{}\n", encoding="utf-8")
-    source = tmp_path / "source.env"
-    source.write_text("NEXUS_ENV=prod\n", encoding="utf-8")
-
-    with pytest.raises(release.ReleaseBlocked, match="adoption evidence is missing"):
-        release.publish_config(source, release.ReleaseStore(paths), next_source_sha=NEXT_SHA)
-
-    assert not paths.current_config.exists()
+        snapshot.chmod(0o440)
+        with monkeypatch.context() as context:
+            context.setattr(release.os, "geteuid", lambda: snapshot.stat().st_uid + 1)
+            with pytest.raises(release.ReleaseDefect, match="not exact immutable input"):
+                release.publish_config(
+                    source,
+                    release.ReleaseStore(paths),
+                    next_source_sha=SOURCE_SHA,
+                )
 
 
 def test_inspect_resumes_when_current_publication_prefix_is_not_terminal(
@@ -1085,7 +857,6 @@ def test_inspect_resumes_when_current_publication_prefix_is_not_terminal(
     release = _release_module()
     paths = release.ReleasePaths.under(tmp_path)
     store = release.ReleaseStore(paths)
-    record_genesis_vercel_deployment(tmp_path, GENESIS_DEPLOYMENT_ID)
     attempt = _prepared(release)
     store.create_attempt(attempt)
     for phase in (
@@ -1104,24 +875,20 @@ def test_inspect_resumes_when_current_publication_prefix_is_not_terminal(
         verified_at="2026-08-06T12:06:00Z",
     )
     store.create_record(record)
-    store.set_current(SOURCE_SHA)
+    paths.current.parent.mkdir(parents=True, exist_ok=True)
+    paths.current.write_text(f"{SOURCE_SHA}\n", encoding="utf-8")
+    paths.current.chmod(0o440)
     monkeypatch.setattr(release, "ReleasePaths", lambda: paths)
-    monkeypatch.setattr(
-        release.ReleaseStore,
-        "require_infrastructure_adoption",
-        lambda _store: {},
-    )
 
     assert release.main(["inspect", "--source-sha", SOURCE_SHA]) == 0
 
     assert json.loads(capfd.readouterr().out) == {
         "current_sha": SOURCE_SHA,
         "current_vercel_deployment_id": "dpl_1234567890",
-        "genesis_vercel_deployment_id": GENESIS_DEPLOYMENT_ID,
         "forward_fix_sha": None,
         "failed_vercel_deployment_ids": [],
         "phase": "FrontendPromoted",
-        "predecessor_sha": None,
+        "predecessor_sha": CURRENT_SHA,
         "status": "resume",
         "vercel_deployment_id": "dpl_1234567890",
     }
@@ -1147,13 +914,6 @@ def test_forward_fix_pointer_survives_failed_successor_and_clears_only_on_succes
     release = _release_module()
     paths = release.ReleasePaths.under(tmp_path)
     store = release.ReleaseStore(paths)
-    record_genesis_vercel_deployment(tmp_path, GENESIS_DEPLOYMENT_ID)
-    monkeypatch.setattr(
-        release.ReleaseStore,
-        "require_infrastructure_adoption",
-        lambda _store: {},
-    )
-
     historical_sha = "0" * 40
     historical = _prepared(
         release,
@@ -1214,7 +974,9 @@ def test_forward_fix_pointer_survives_failed_successor_and_clears_only_on_succes
         verified_at="2026-08-06T11:03:01Z",
     )
     store.create_record(historical_repair_record)
-    store.set_current(historical_repair_sha)
+    paths.current.parent.mkdir(parents=True, exist_ok=True)
+    paths.current.write_text(f"{historical_repair_sha}\n", encoding="utf-8")
+    paths.current.chmod(0o440)
     store.clear_forward_fix_after_success(historical_repair_sha)
 
     failed_deployment_id = "dpl_BBBBBBBBBB"
@@ -1284,14 +1046,13 @@ def test_forward_fix_pointer_survives_failed_successor_and_clears_only_on_succes
     assert json.loads(capfd.readouterr().out) == {
         "current_sha": historical_repair_sha,
         "current_vercel_deployment_id": historical_repair.vercel_deployment_id,
-        "genesis_vercel_deployment_id": GENESIS_DEPLOYMENT_ID,
         "failed_vercel_deployment_ids": [
             failed_deployment_id,
             successor_deployment_id,
         ],
         "forward_fix_sha": SOURCE_SHA,
         "phase": None,
-        "predecessor_sha": None,
+        "predecessor_sha": historical_repair_sha,
         "status": "new",
         "vercel_deployment_id": None,
     }

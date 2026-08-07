@@ -14,8 +14,6 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from tests.testkit.host_release import record_completed_infrastructure_adoption
-
 _SERVICES = (
     "postgres",
     "caddy",
@@ -278,12 +276,6 @@ class HostOracleReconcileHarness:
                 },
             },
         )
-        record_completed_infrastructure_adoption(
-            root,
-            source_sha,
-            docker_state_path=state_path,
-        )
-
         release = _load_release(
             repo_root / "deploy/hetzner/release.py",
             "nexus_host_oracle_reconcile_setup",
@@ -298,7 +290,8 @@ class HostOracleReconcileHarness:
             )
             for service, item in containers.items()
         }
-        release_attempt = release.ReleaseAttempt.prepared(
+        release_attempt = release.ReleaseAttempt(
+            schema_version=1,
             source_sha=source_sha,
             manifest_sha256=hashlib.sha256(
                 (bundle / "candidate-manifest.json").read_bytes()
@@ -312,35 +305,35 @@ class HostOracleReconcileHarness:
             config_sha256=config_digest,
             vercel_deployment_id="dpl_Oracle123",
             production_host="web.example.test",
-            now="2026-08-06T12:00:00Z",
+            phase=release.ReleasePhase.Succeeded,
+            backup=None,
+            failure_code=None,
+            created_at="2026-08-06T12:00:00Z",
+            updated_at="2026-08-06T12:00:00Z",
         )
         store.create_attempt(release_attempt)
-        for index, phase in enumerate(
-            (
-                release.ReleasePhase.WritersStopped,
-                release.ReleasePhase.BackendActivationStarted,
-                release.ReleasePhase.AwaitingFrontendPromotion,
-                release.ReleasePhase.FrontendPromoted,
-                release.ReleasePhase.Succeeded,
-            ),
-            start=1,
-        ):
-            release_attempt = release_attempt.advance(
-                phase,
-                now=f"2026-08-06T12:0{index}:00Z",
-            )
-            store.replace_attempt(release_attempt)
-        loaded_candidate = release.load_candidate_manifest(bundle / "candidate-manifest.json")
         store.create_record(
-            release.ReleaseRecord.from_attempt(
-                attempt=release_attempt,
-                candidate=loaded_candidate,
+            release.ReleaseRecord(
+                schema_version=1,
+                source_sha=source_sha,
+                manifest_sha256=release_attempt.manifest_sha256,
+                api_image=api_image,
+                worker_image=worker_image,
                 api_image_id=api_image_id,
                 worker_image_id=worker_image_id,
+                predecessor_sha=None,
+                config_path=str(config_path),
+                config_sha256=config_digest,
+                database_revision="0211",
+                expected_oracle_manifest_digest=oracle_digest,
+                vercel_deployment_id="dpl_Oracle123",
+                production_host="web.example.test",
                 verified_at="2026-08-06T12:06:00Z",
             )
         )
-        store.set_current(source_sha)
+        paths.current.parent.mkdir(parents=True, exist_ok=True)
+        paths.current.write_text(f"{source_sha}\n", encoding="utf-8")
+        paths.current.chmod(0o440)
 
         immutable_inputs = tuple(path for path in bundle.rglob("*") if path.is_file()) + (
             config_path,

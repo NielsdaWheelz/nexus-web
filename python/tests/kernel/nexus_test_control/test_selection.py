@@ -245,7 +245,7 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
             {
                 "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
                 "pytest:python/tests/kernel/test_backend_artifact.py",
-                "pytest:python/tests/kernel/test_infrastructure_adoption.py",
+                "pytest:python/tests/kernel/test_successor_release_contract.py",
                 "pytest:python/tests/kernel/test_production_delivery_contract.py",
                 "pytest:python/tests/kernel/test_production_deploy_behavior.py",
                 "pytest:python/tests/kernel/test_production_release.py",

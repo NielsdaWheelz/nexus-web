@@ -181,7 +181,6 @@ _EXTERNAL_PYTHON_OWNERS = (
     "apps/api/main.py",
     "apps/worker/health.py",
     "apps/worker/main.py",
-    "deploy/hetzner/adopt-infrastructure.py",
     "deploy/hetzner/release.py",
 )
 _WEB_STATIC_PROMOTERS = frozenset(
