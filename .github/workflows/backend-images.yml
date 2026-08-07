@@ -37,6 +37,10 @@ jobs:
       PUBLISHER_RUN_ATTEMPT: ${{ github.run_attempt }}
       API_REPOSITORY: ghcr.io/nielsdawheelz/nexus-api
       WORKER_REPOSITORY: ghcr.io/nielsdawheelz/nexus-worker
+      # build-push-action emits auxiliary *.dockerbuild artifacts by default.
+      # The immutable release bundle is the publisher's sole artifact and the
+      # rerun proof rejects any additional artifact set.
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
 
     steps:
       - name: Claim the first exact source CI run

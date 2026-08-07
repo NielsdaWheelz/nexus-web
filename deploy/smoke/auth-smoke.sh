@@ -15,7 +15,7 @@ usage() {
 Usage: deploy/smoke/auth-smoke.sh --app-url <url> --api-url <url> \
          --supabase-url <url>
 
-Post-deploy auth smoke check for the production cutover. Exits nonzero on the
+Post-release auth smoke check. Exits nonzero on the
 first failed check. It makes only safe GET requests and never logs cookie or
 token values.
 
@@ -29,7 +29,7 @@ Checks:
     endpoint and app callback.
   - Anonymous and expired-cookie BFF routes return JSON 401 E_UNAUTHENTICATED.
   - /docs is not reachable in production.
-  - The API health endpoint returns 200.
+  - The API readiness endpoint returns 200.
 
 Required (flag or env):
   --app-url        NEXUS_SMOKE_APP_URL        Production frontend/BFF base URL
@@ -342,12 +342,12 @@ else
   fail "/docs is reachable in production (${status})"
 fi
 
-# The API health endpoint returns 200.
+# The API readiness endpoint returns 200.
 status="$(http_status "${API_URL}/readyz")"
 if [ "$status" = "200" ]; then
-  pass "API health endpoint returns 200"
+  pass "API readiness endpoint returns 200"
 else
-  fail "API health endpoint: expected 200, got ${status}"
+  fail "API readiness endpoint: expected 200, got ${status}"
 fi
 
 echo

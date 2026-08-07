@@ -39,7 +39,6 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _IMAGE_REFERENCE = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}\Z")
 _CONTAINER_ID = re.compile(r"[0-9a-f]{12,64}\Z")
-_ADOPTION_CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 _DATABASE_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 _DATABASE_REVISION = re.compile(r"[0-9a-z][0-9a-z_]{0,63}\Z")
 _DEPLOYMENT_ID = re.compile(r"dpl_[A-Za-z0-9]+\Z")
@@ -143,32 +142,6 @@ _ORACLE_REMOVAL_FIELDS = frozenset({"work_keys", "anchor_keys", "plate_source_ur
 _ORACLE_COUNT_FIELDS = frozenset(
     {"works", "ready_media", "anchors", "resolved_anchors", "plates", "ready_plates"}
 )
-_INFRASTRUCTURE_ADOPTION_FIELDS = frozenset(
-    {
-        "schema_version",
-        "source_sha",
-        "phase",
-        "input_sha256",
-        "config_path",
-        "config_sha256",
-        "database_name",
-        "database_user",
-        "infra_image_references",
-        "containers",
-        "named_mounts",
-        "database",
-        "backup",
-        "replacement_containers",
-    }
-)
-_INFRASTRUCTURE_ADOPTION_COMPLETION_FIELDS = frozenset(
-    {"schema_version", "source_sha", "attempt_sha256", "backup_sha256"}
-)
-_INFRASTRUCTURE_ADOPTION_INPUT_FIELDS = frozenset({"compose", "caddy", "owner"})
-_INFRASTRUCTURE_ADOPTION_BACKUP_FIELDS = frozenset({"path", "sha256", "byte_count"})
-_INFRASTRUCTURE_ADOPTION_CONTAINER_FIELDS = frozenset({"container_id", "image_id", "config_sha256"})
-_INFRASTRUCTURE_ADOPTION_MOUNT_FIELDS = frozenset({"destination", "name"})
-_INFRASTRUCTURE_ADOPTION_DATABASE_FIELDS = frozenset({"identity", "revision", "table_counts"})
 _RECORD_FIELDS = frozenset(
     {
         "schema_version",
@@ -355,7 +328,6 @@ _ORACLE_TRANSITIONS: dict[OraclePhase, frozenset[OraclePhase]] = {
 @dataclass(frozen=True, slots=True)
 class ReleasePaths:
     state_root: Path = Path("/var/lib/nexus/releases")
-    infrastructure_adoption_root: Path = Path("/var/lib/nexus/infra-adoption")
     bundle_root: Path = Path("/opt/nexus/releases")
     config_root: Path = Path("/etc/nexus/config")
     current_config: Path = Path("/etc/nexus/current.env")
@@ -367,7 +339,6 @@ class ReleasePaths:
     def under(cls, root: Path) -> ReleasePaths:
         return cls(
             state_root=root / "var/lib/nexus/releases",
-            infrastructure_adoption_root=root / "var/lib/nexus/infra-adoption",
             bundle_root=root / "opt/nexus/releases",
             config_root=root / "etc/nexus/config",
             current_config=root / "etc/nexus/current.env",
@@ -399,14 +370,6 @@ class ReleasePaths:
     @property
     def forward_fix(self) -> Path:
         return self.state_root / "forward-fix"
-
-    @property
-    def genesis_vercel_deployment(self) -> Path:
-        return self.state_root / "genesis-vercel-deployment"
-
-    @property
-    def infrastructure_adoption_completion(self) -> Path:
-        return self.infrastructure_adoption_root / "completed.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -943,7 +906,10 @@ class ReleaseAttempt:
         _require_match("manifest SHA-256", self.manifest_sha256, _SHA256)
         _require_match("candidate API image id", self.candidate_api_image_id, _IMAGE_ID)
         _require_match("candidate worker image id", self.candidate_worker_image_id, _IMAGE_ID)
-        if self.predecessor_sha is not None:
+        if self.predecessor_sha is None:
+            if self.phase is not ReleasePhase.Succeeded:
+                raise ReleaseDefect("successor release attempt requires a predecessor")
+        else:
             _require_match("predecessor SHA", self.predecessor_sha, _SHA)
             if self.predecessor_sha == self.source_sha:
                 raise ReleaseDefect("release predecessor must differ from candidate")
@@ -992,7 +958,7 @@ class ReleaseAttempt:
         manifest_sha256: str,
         candidate_api_image_id: str,
         candidate_worker_image_id: str,
-        predecessor_sha: str | None,
+        predecessor_sha: str,
         forward_fix_of: str | None,
         containers: dict[str, ContainerEvidence],
         config_path: str,
@@ -1181,6 +1147,8 @@ class ReleaseRecord:
             ReleasePhase.Succeeded,
         }:
             raise ReleaseDefect("release record requires a promoted frontend")
+        if attempt.predecessor_sha is None and attempt.phase is not ReleasePhase.Succeeded:
+            raise ReleaseDefect("successor release record requires a predecessor")
         return cls(
             schema_version=1,
             source_sha=attempt.source_sha,
@@ -1257,280 +1225,6 @@ def permanent_failure_phase(
 class ReleaseStore:
     def __init__(self, paths: ReleasePaths) -> None:
         self.paths = paths
-
-    def completed_infrastructure_adoption(
-        self,
-        *,
-        verify_backup: bool = False,
-    ) -> dict[str, Any] | None:
-        completion_path = self.paths.infrastructure_adoption_completion
-        if not completion_path.exists():
-            root = self.paths.infrastructure_adoption_root
-            if root.exists() and any(root.iterdir()):
-                raise ReleaseBlocked("infrastructure adoption is nonterminal")
-            return None
-
-        completion_metadata = completion_path.lstat()
-        if (
-            not stat.S_ISREG(completion_metadata.st_mode)
-            or completion_metadata.st_uid != 0
-            or completion_metadata.st_gid != 0
-            or stat.S_IMODE(completion_metadata.st_mode) != 0o440
-        ):
-            raise ReleaseDefect("infrastructure adoption completion ownership is invalid")
-        completion = _closed_mapping(
-            _read_canonical_json(completion_path, "infrastructure adoption completion"),
-            _INFRASTRUCTURE_ADOPTION_COMPLETION_FIELDS,
-            "infrastructure adoption completion",
-        )
-        if _integer(completion, "schema_version") != 1:
-            raise ReleaseDefect("infrastructure adoption completion schema is unsupported")
-        source_sha = _require_match(
-            "infrastructure adoption source SHA",
-            _string(completion, "source_sha"),
-            _SHA,
-        )
-        attempt_sha256 = _require_match(
-            "infrastructure adoption attempt SHA-256",
-            _string(completion, "attempt_sha256"),
-            _SHA256,
-        )
-        backup_sha256 = _require_match(
-            "infrastructure adoption backup SHA-256",
-            _string(completion, "backup_sha256"),
-            _SHA256,
-        )
-        attempt_path = self.paths.infrastructure_adoption_root / source_sha / "attempt.json"
-        try:
-            attempt_metadata = attempt_path.lstat()
-            attempt_bytes = attempt_path.read_bytes()
-        except OSError as exc:
-            raise ReleaseDefect(
-                "completed infrastructure adoption has no terminal attempt"
-            ) from exc
-        if (
-            not stat.S_ISREG(attempt_metadata.st_mode)
-            or attempt_metadata.st_uid != 0
-            or attempt_metadata.st_gid != 0
-            or stat.S_IMODE(attempt_metadata.st_mode) != 0o440
-        ):
-            raise ReleaseDefect("infrastructure adoption attempt ownership is invalid")
-        if hashlib.sha256(attempt_bytes).hexdigest() != attempt_sha256:
-            raise ReleaseDefect("infrastructure adoption attempt differs from completion")
-        attempt = _closed_mapping(
-            _read_canonical_json(attempt_path, "infrastructure adoption attempt"),
-            _INFRASTRUCTURE_ADOPTION_FIELDS,
-            "infrastructure adoption attempt",
-        )
-        if (
-            _integer(attempt, "schema_version") != 1
-            or _string(attempt, "source_sha") != source_sha
-            or _string(attempt, "phase") != "Succeeded"
-        ):
-            raise ReleaseDefect("infrastructure adoption attempt is not the exact terminal source")
-        config_sha256 = _require_match(
-            "infrastructure adoption config SHA-256",
-            _string(attempt, "config_sha256"),
-            _SHA256,
-        )
-        if Path(_string(attempt, "config_path")) != self.paths.config_root / (
-            f"{config_sha256}.env"
-        ):
-            raise ReleaseDefect("infrastructure adoption config path is not content-addressed")
-        _require_match(
-            "infrastructure adoption database name",
-            _string(attempt, "database_name"),
-            _DATABASE_IDENTIFIER,
-        )
-        _require_match(
-            "infrastructure adoption database user",
-            _string(attempt, "database_user"),
-            _DATABASE_IDENTIFIER,
-        )
-        inputs = _closed_mapping(
-            attempt.get("input_sha256"),
-            _INFRASTRUCTURE_ADOPTION_INPUT_FIELDS,
-            "infrastructure adoption input hashes",
-        )
-        for digest in inputs.values():
-            _require_match("infrastructure adoption input SHA-256", digest, _SHA256)
-        for field, filename in (
-            ("compose", "docker-compose.yml"),
-            ("caddy", "Caddyfile"),
-            ("owner", "adopt-infrastructure.py"),
-        ):
-            retained = attempt_path.parent / "inputs" / filename
-            try:
-                metadata = retained.lstat()
-            except OSError as exc:
-                raise ReleaseDefect("retained infrastructure adoption input is missing") from exc
-            if (
-                not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_uid != 0
-                or metadata.st_gid != 0
-                or stat.S_IMODE(metadata.st_mode) != 0o444
-                or _sha256(retained) != _string(inputs, field)
-            ):
-                raise ReleaseDefect("retained infrastructure adoption input changed")
-
-        references = _closed_mapping(
-            attempt.get("infra_image_references"),
-            frozenset(_INFRASTRUCTURE_SERVICES),
-            "infrastructure adoption image references",
-        )
-        for reference in references.values():
-            _require_match(
-                "infrastructure adoption image reference",
-                reference,
-                _IMAGE_REFERENCE,
-            )
-
-        containers = _closed_mapping(
-            attempt.get("containers"),
-            frozenset(_SERVICES),
-            "infrastructure adoption containers",
-        )
-        decoded_containers: dict[str, dict[str, Any]] = {}
-        for service, raw in containers.items():
-            evidence = _closed_mapping(
-                raw,
-                _INFRASTRUCTURE_ADOPTION_CONTAINER_FIELDS,
-                f"infrastructure adoption {service}",
-            )
-            _require_match(
-                "infrastructure adoption container id",
-                _string(evidence, "container_id"),
-                _ADOPTION_CONTAINER_ID,
-            )
-            _require_match(
-                "infrastructure adoption image id",
-                _string(evidence, "image_id"),
-                _IMAGE_ID,
-            )
-            _require_match(
-                "infrastructure adoption config SHA-256",
-                _string(evidence, "config_sha256"),
-                _SHA256,
-            )
-            decoded_containers[service] = evidence
-
-        mounts = _closed_mapping(
-            attempt.get("named_mounts"),
-            frozenset(_INFRASTRUCTURE_SERVICES),
-            "infrastructure adoption named mounts",
-        )
-        for service, raw_entries in mounts.items():
-            if not isinstance(raw_entries, list):
-                raise ReleaseDefect("infrastructure adoption named mounts must be an array")
-            entries = [
-                _closed_mapping(
-                    raw,
-                    _INFRASTRUCTURE_ADOPTION_MOUNT_FIELDS,
-                    "infrastructure adoption named mount",
-                )
-                for raw in raw_entries
-            ]
-            parsed = {_string(entry, "destination"): _string(entry, "name") for entry in entries}
-            if (
-                entries != sorted(entries, key=lambda entry: _string(entry, "destination"))
-                or len(entries) != len(parsed)
-                or parsed != _INFRASTRUCTURE_VOLUME_TARGETS[service]
-            ):
-                raise ReleaseDefect("infrastructure adoption named mounts are malformed")
-
-        database = _closed_mapping(
-            attempt.get("database"),
-            _INFRASTRUCTURE_ADOPTION_DATABASE_FIELDS,
-            "infrastructure adoption database",
-        )
-        if not _string(database, "identity"):
-            raise ReleaseDefect("infrastructure adoption database identity is empty")
-        _require_match(
-            "infrastructure adoption database revision",
-            _string(database, "revision"),
-            _DATABASE_REVISION,
-        )
-        table_counts = _mapping(
-            database.get("table_counts"),
-            "infrastructure adoption database table counts",
-        )
-        for table, count in table_counts.items():
-            _require_match("infrastructure adoption database table", table, _DATABASE_IDENTIFIER)
-            if type(count) is not int or count < 0:
-                raise ReleaseDefect("infrastructure adoption database table count is malformed")
-
-        replacements = _closed_mapping(
-            attempt.get("replacement_containers"),
-            frozenset(_INFRASTRUCTURE_SERVICES),
-            "infrastructure adoption replacement containers",
-        )
-        for service, raw in replacements.items():
-            evidence = _closed_mapping(
-                raw,
-                _INFRASTRUCTURE_ADOPTION_CONTAINER_FIELDS,
-                f"infrastructure adoption replacement {service}",
-            )
-            replacement_id = _require_match(
-                "infrastructure adoption replacement container id",
-                _string(evidence, "container_id"),
-                _ADOPTION_CONTAINER_ID,
-            )
-            replacement_image = _require_match(
-                "infrastructure adoption replacement image id",
-                _string(evidence, "image_id"),
-                _IMAGE_ID,
-            )
-            _require_match(
-                "infrastructure adoption replacement config SHA-256",
-                _string(evidence, "config_sha256"),
-                _SHA256,
-            )
-            captured = decoded_containers[service]
-            if replacement_id == _string(captured, "container_id") or replacement_image != _string(
-                captured, "image_id"
-            ):
-                raise ReleaseDefect("infrastructure adoption replacement identity is invalid")
-        backup = _closed_mapping(
-            attempt.get("backup"),
-            _INFRASTRUCTURE_ADOPTION_BACKUP_FIELDS,
-            "infrastructure adoption backup",
-        )
-        backup_path = Path(_string(backup, "path"))
-        expected_backup_path = self.paths.backup_root / "infra-adoption" / f"{source_sha}.dump"
-        if (
-            backup_path != expected_backup_path
-            or _string(backup, "sha256") != backup_sha256
-            or _integer(backup, "byte_count") <= 0
-        ):
-            raise ReleaseDefect("infrastructure adoption backup evidence is invalid")
-        try:
-            backup_metadata = backup_path.lstat()
-        except OSError as exc:
-            raise ReleaseDefect("infrastructure adoption backup is missing") from exc
-        if (
-            not stat.S_ISREG(backup_metadata.st_mode)
-            or backup_metadata.st_uid != 0
-            or backup_metadata.st_gid != 0
-            or stat.S_IMODE(backup_metadata.st_mode) != 0o400
-            or backup_metadata.st_size != _integer(backup, "byte_count")
-            or (verify_backup and _sha256(backup_path) != backup_sha256)
-        ):
-            raise ReleaseDefect("infrastructure adoption backup changed")
-        return attempt
-
-    def infrastructure_adoption_source(self) -> str | None:
-        attempt = self.completed_infrastructure_adoption()
-        return None if attempt is None else _string(attempt, "source_sha")
-
-    def require_infrastructure_adoption(
-        self,
-        *,
-        verify_backup: bool = False,
-    ) -> dict[str, Any]:
-        adoption = self.completed_infrastructure_adoption(verify_backup=verify_backup)
-        if adoption is None:
-            raise ReleaseBlocked("infrastructure adoption is not complete")
-        return adoption
 
     def create_attempt(self, attempt: ReleaseAttempt) -> None:
         self._prepare_state_directories()
@@ -1647,7 +1341,9 @@ class ReleaseStore:
         record = self.load_record(source_sha)
         if record is None:
             raise ReleaseDefect("current source SHA requires an immutable release record")
-        previous = self.current_sha() if self.paths.current.exists() else None
+        previous = self.current_sha()
+        if previous is None:
+            raise ReleaseBlocked("application release requires an existing current record")
         if previous != source_sha and record.predecessor_sha != previous:
             raise ReleaseDefect("release record predecessor differs from prior current SHA")
         _atomic_bytes(self.paths.current, f"{source_sha}\n".encode())
@@ -1661,37 +1357,14 @@ class ReleaseStore:
             raise ReleaseDefect("current source SHA has no immutable release record")
         return value
 
-    def genesis_vercel_deployment_id(self) -> str | None:
-        if not self.paths.genesis_vercel_deployment.exists():
-            return None
-        value = _read_pointer(
-            self.paths.genesis_vercel_deployment,
-            "genesis Vercel deployment",
-        )
-        _require_match("genesis Vercel deployment id", value, _DEPLOYMENT_ID)
-        return value
-
-    def adopt_genesis_vercel_deployment(self, deployment_id: str, *, source_sha: str) -> None:
-        _require_match("genesis Vercel deployment id", deployment_id, _DEPLOYMENT_ID)
-        _require_match("candidate source SHA", source_sha, _SHA)
-        self.assert_no_oracle_attempt()
-        self.require_infrastructure_adoption()
-        existing = self.genesis_vercel_deployment_id()
-        if existing is not None:
-            if existing != deployment_id:
-                raise ReleaseDefect("genesis Vercel deployment is immutable")
-            return
-        if (
-            self.current_sha() is not None
-            or self.attempts()
-            or self.oracle_attempts()
-            or self.forward_fix_sha() is not None
-        ):
-            raise ReleaseBlocked("genesis Vercel adoption requires empty release history")
-        if self.paths.records.exists() and any(self.paths.records.iterdir()):
-            raise ReleaseBlocked("genesis Vercel adoption requires no release records")
-        self._prepare_state_directories()
-        _create_bytes(self.paths.genesis_vercel_deployment, f"{deployment_id}\n".encode())
+    def require_current_record(self) -> ReleaseRecord:
+        current = self.current_sha()
+        if current is None:
+            raise ReleaseBlocked("application release requires an existing current record")
+        record = self.load_record(current)
+        if record is None:
+            raise ReleaseDefect("current source SHA has no immutable release record")
+        return record
 
     def complete_published_attempt(self, source_sha: str, *, now: str) -> ReleaseAttempt:
         attempt = self.load_attempt(source_sha)
@@ -2224,25 +1897,13 @@ def _install_immutable_bundle(
     return destination
 
 
-def _prove_infrastructure_adoption_bundle(
-    bundle: Path,
-    adoption: dict[str, Any],
-) -> None:
-    inputs = _mapping(adoption.get("input_sha256"), "infrastructure adoption input hashes")
-    for field, filename in (("compose", "docker-compose.yml"), ("caddy", "Caddyfile")):
-        if _sha256(bundle / filename) != _string(inputs, field):
-            raise ReleaseDefect(f"release {filename} differs from the adopted infrastructure")
-
-
 def install_bundle(source: Path, paths: ReleasePaths) -> str:
     if _bundle_files(source) != _BUNDLE_FILES:
         raise ReleaseDefect("release bundle has unsupported or missing files")
     candidate = load_candidate_manifest(source / "candidate-manifest.json")
     store = ReleaseStore(paths)
     store.assert_no_oracle_attempt()
-    adoption = store.require_infrastructure_adoption()
-    if store.current_sha() is None:
-        _prove_infrastructure_adoption_bundle(source, adoption)
+    store.require_current_record()
     destination = paths.bundle_root / candidate.source_sha
     if not destination.exists():
         active = store.active_attempt()
@@ -2282,20 +1943,7 @@ def _unquote_env(value: str) -> str:
 
 def publish_config(source: Path, store: ReleaseStore, *, next_source_sha: str) -> str:
     store.assert_no_oracle_attempt()
-    adopted_source = store.infrastructure_adoption_source()
-    current_sha = store.current_sha()
-    if adopted_source is None and (
-        current_sha is not None
-        or store.attempts()
-        or store.oracle_attempts()
-        or store.oracle_repairs()
-        or store.forward_fix_sha() is not None
-        or store.genesis_vercel_deployment_id() is not None
-        or (store.paths.records.exists() and any(store.paths.records.iterdir()))
-    ):
-        raise ReleaseBlocked("infrastructure adoption evidence is missing from release history")
-    if adopted_source is not None and current_sha is None:
-        raise ReleaseBlocked("first-release config is immutable after infrastructure adoption")
+    store.require_current_record()
     store.assert_fresh_candidate(next_source_sha)
     values = _read_env(source)
     canonical = "".join(f"{key}={values[key]}\n" for key in sorted(values)).encode()
@@ -2603,111 +2251,6 @@ class HostRelease:
             )
         return evidence
 
-    def _prove_first_release_adoption(
-        self,
-        *,
-        adoption: dict[str, Any],
-        bundle: Path,
-        config: ConfigSnapshot,
-        containers: dict[str, ContainerEvidence],
-        database_identity: str,
-        database_revision: str,
-        forward_fix: bool,
-    ) -> None:
-        _prove_infrastructure_adoption_bundle(bundle, adoption)
-        if (
-            _string(adoption, "config_path") != str(config.path)
-            or _string(adoption, "config_sha256") != config.sha256
-        ):
-            raise PermanentReleaseFailure(
-                "first-release config differs from infrastructure adoption"
-            )
-        captured = _closed_mapping(
-            adoption.get("containers"),
-            frozenset(_SERVICES),
-            "infrastructure adoption containers",
-        )
-        replacements = _closed_mapping(
-            adoption.get("replacement_containers"),
-            frozenset(_INFRASTRUCTURE_SERVICES),
-            "infrastructure adoption replacements",
-        )
-        proven_services = _INFRASTRUCTURE_SERVICES if forward_fix else _SERVICES
-        for service in proven_services:
-            captured_evidence = _closed_mapping(
-                captured.get(service),
-                _INFRASTRUCTURE_ADOPTION_CONTAINER_FIELDS,
-                f"infrastructure adoption {service}",
-            )
-            expected = (
-                _closed_mapping(
-                    replacements.get(service),
-                    _INFRASTRUCTURE_ADOPTION_CONTAINER_FIELDS,
-                    f"infrastructure adoption replacement {service}",
-                )
-                if service in _INFRASTRUCTURE_SERVICES
-                else captured_evidence
-            )
-            live = containers[service]
-            if (
-                live.container_id != _string(expected, "container_id")
-                or live.image != _string(expected, "image_id")
-                or live.config_sha256 != _string(expected, "config_sha256")
-            ):
-                raise PermanentReleaseFailure(
-                    f"first-release {service} evidence differs from infrastructure adoption"
-                )
-
-        adopted_references = _closed_mapping(
-            adoption.get("infra_image_references"),
-            frozenset(("postgres", "caddy")),
-            "infrastructure adoption image references",
-        )
-        for service, key in (("postgres", "POSTGRES_IMAGE"), ("caddy", "CADDY_IMAGE")):
-            if _string(adopted_references, service) != _unquote_env(config.values.get(key, "")):
-                raise PermanentReleaseFailure(
-                    f"first-release {service} reference differs from infrastructure adoption"
-                )
-
-        adopted_mounts = _closed_mapping(
-            adoption.get("named_mounts"),
-            frozenset(("postgres", "caddy")),
-            "infrastructure adoption named mounts",
-        )
-        for service in ("postgres", "caddy"):
-            raw = _read_json_output(
-                _run(("docker", "inspect", containers[service].container_id)).stdout,
-                f"first-release {service} mount inspection",
-            )
-            if not isinstance(raw, list) or len(raw) != 1 or not isinstance(raw[0], dict):
-                raise ReleaseDefect(f"first-release {service} mount inspection is malformed")
-            mounts = raw[0].get("Mounts")
-            if not isinstance(mounts, list):
-                raise ReleaseDefect(f"first-release {service} mounts are malformed")
-            live_mounts = sorted(
-                (
-                    {
-                        "destination": _string(_mapping(item, "named volume"), "Destination"),
-                        "name": _string(_mapping(item, "named volume"), "Name"),
-                    }
-                    for item in mounts
-                    if isinstance(item, dict) and item.get("Type") == "volume"
-                ),
-                key=lambda item: item["destination"],
-            )
-            if live_mounts != adopted_mounts.get(service):
-                raise PermanentReleaseFailure(
-                    f"first-release {service} volumes differ from infrastructure adoption"
-                )
-
-        database = _mapping(adoption.get("database"), "infrastructure adoption database")
-        if _string(database, "identity") != database_identity or (
-            not forward_fix and _string(database, "revision") != database_revision
-        ):
-            raise PermanentReleaseFailure(
-                "first-release database identity differs from infrastructure adoption"
-            )
-
     def _image_identity(self, image: str, candidate: CandidateManifest) -> str:
         _run(("docker", "pull", image), timeout_seconds=600)
         inspected = _read_json_output(
@@ -2853,15 +2396,11 @@ class HostRelease:
 
     def preflight(self, source_sha: str) -> PreflightEvidence:
         self.store.assert_no_oracle_attempt()
-        current_sha = self.store.current_sha()
-        adoption = self.store.require_infrastructure_adoption(
-            verify_backup=current_sha is None,
-        )
+        current_record = self.store.require_current_record()
+        current_sha = current_record.source_sha
         self.store.assert_candidate_admissible(source_sha)
         forward_fix_sha = self.store.forward_fix_sha()
-        if self.store.genesis_vercel_deployment_id() is None:
-            raise ReleaseDefect("genesis Vercel deployment has not been adopted")
-        if current_sha is not None and forward_fix_sha is None:
+        if forward_fix_sha is None:
             self.verify_current(current_sha)
         bundle = self.bundle(source_sha)
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
@@ -2896,9 +2435,8 @@ class HostRelease:
             config_path=config.path,
             writers_running=forward_fix_sha is None,
         )
-        if current_sha is not None and forward_fix_sha is None:
-            current_record = self.store.load_record(current_sha)
-            if current_record is None or (
+        if forward_fix_sha is None:
+            if (
                 containers["api"].image != current_record.api_image_id
                 or containers["worker-interactive"].image != current_record.worker_image_id
                 or containers["worker-background"].image != current_record.worker_image_id
@@ -2925,16 +2463,6 @@ class HostRelease:
             config_path=config.path,
             sql="SELECT current_database() || ':' || system_identifier FROM pg_control_system()",
         )
-        if current_sha is None:
-            self._prove_first_release_adoption(
-                adoption=adoption,
-                bundle=bundle,
-                config=config,
-                containers=containers,
-                database_identity=identity,
-                database_revision=current_revision,
-                forward_fix=forward_fix_sha is not None,
-            )
         byte_count = int(
             self._database_scalar(
                 bundle=bundle,
@@ -3548,7 +3076,7 @@ class HostRelease:
         production_host: str,
     ) -> ReleaseAttempt:
         self.store.assert_no_oracle_attempt()
-        self.store.require_infrastructure_adoption()
+        self.store.require_current_record()
         failures: dict[str, int] = {}
         while True:
             try:
@@ -3588,7 +3116,7 @@ class HostRelease:
         existing = self.store.load_attempt(source_sha)
         if existing is None:
             preflight = self.preflight(source_sha)
-            current = self.store.current_sha()
+            current = self.store.require_current_record().source_sha
             attempt = ReleaseAttempt.prepared(
                 source_sha=source_sha,
                 manifest_sha256=preflight.manifest_sha256,
@@ -3813,7 +3341,7 @@ class HostRelease:
     ) -> ReleaseAttempt:
         """Settle an attempt whose immutable frontend deployment is permanently gone."""
         self.store.assert_no_oracle_attempt()
-        self.store.require_infrastructure_adoption()
+        self.store.require_current_record()
         _require_match("Vercel deployment id", deployment_id, _DEPLOYMENT_ID)
         attempt = self.store.load_attempt(source_sha)
         if attempt is None:
@@ -3994,7 +3522,7 @@ class HostRelease:
 
     def finalize(self, *, source_sha: str, deployment_id: str) -> ReleaseAttempt:
         self.store.assert_no_oracle_attempt()
-        self.store.require_infrastructure_adoption()
+        self.store.require_current_record()
         failures: dict[str, int] = {}
         while True:
             try:
@@ -4083,7 +3611,7 @@ class HostRelease:
 
     def verify_current(self, source_sha: str) -> None:
         self.store.assert_no_oracle_attempt()
-        self.store.require_infrastructure_adoption()
+        self.store.require_current_record()
         if self.store.current_sha() != source_sha:
             raise ReleaseBlocked(f"release {source_sha} is not current")
         attempt = self.store.load_attempt(source_sha)
@@ -4156,7 +3684,7 @@ class HostOracleReconcile:
         execution_source_sha: str | None = None,
     ) -> OracleReconcileResult:
         _require_match("Oracle target source SHA", source_sha, _SHA)
-        self.store.require_infrastructure_adoption()
+        self.store.require_current_record()
         if execution_source_sha is not None:
             _require_match("Oracle execution source SHA", execution_source_sha, _SHA)
 
@@ -4213,7 +3741,7 @@ class HostOracleReconcile:
         return OracleReconcileResult.Succeeded
 
     def _bind_current_target(self, source_sha: str) -> OracleReleaseTarget:
-        self.store.require_infrastructure_adoption()
+        self.store.require_current_record()
         active_release = self.store.active_attempt()
         if active_release is not None:
             raise ReleaseBlocked(
@@ -4784,10 +4312,6 @@ def _parser() -> argparse.ArgumentParser:
     config.add_argument("--source", type=Path, required=True)
     config.add_argument("--next-source-sha", required=True)
 
-    adopt_vercel = commands.add_parser("adopt-genesis-vercel-deployment")
-    adopt_vercel.add_argument("--source-sha", required=True)
-    adopt_vercel.add_argument("--deployment-id", required=True)
-
     oracle = commands.add_parser("reconcile-oracle")
     oracle.add_argument("--source-sha", required=True)
     oracle.add_argument("--execution-source-sha")
@@ -4825,13 +4349,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "inspect":
         store = ReleaseStore(paths)
-        store.require_infrastructure_adoption()
+        current_record = store.require_current_record()
         store.assert_candidate_admissible(args.source_sha)
         attempt = store.load_attempt(args.source_sha)
-        current = store.current_sha()
-        current_record = None if current is None else store.load_record(current)
+        current = current_record.source_sha
         forward_fix = store.forward_fix_sha()
-        genesis_vercel_deployment_id = store.genesis_vercel_deployment_id()
         forward_fix_attempt = None if forward_fix is None else store.load_attempt(forward_fix)
         if forward_fix is not None and forward_fix_attempt is None:
             raise ReleaseDefect("forward-fix pointer has no attempt")
@@ -4866,30 +4388,16 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "status": status,
                     "current_sha": current,
-                    "current_vercel_deployment_id": (
-                        None if current_record is None else current_record.vercel_deployment_id
-                    ),
-                    "genesis_vercel_deployment_id": genesis_vercel_deployment_id,
+                    "current_vercel_deployment_id": current_record.vercel_deployment_id,
                     "forward_fix_sha": forward_fix,
                     "failed_vercel_deployment_ids": failed_vercel_deployment_ids,
                     "phase": None if attempt is None else attempt.phase.value,
-                    "predecessor_sha": (None if attempt is None else attempt.predecessor_sha),
+                    "predecessor_sha": (current if attempt is None else attempt.predecessor_sha),
                     "vercel_deployment_id": (
                         None if attempt is None else attempt.vercel_deployment_id
                     ),
                 }
             )
-        )
-        return 0
-    if args.command == "adopt-genesis-vercel-deployment":
-        store = ReleaseStore(paths)
-        with release_lock(paths.lock_path):
-            store.adopt_genesis_vercel_deployment(
-                args.deployment_id,
-                source_sha=args.source_sha,
-            )
-        sys.stdout.buffer.write(
-            _canonical_json({"genesis_vercel_deployment_id": args.deployment_id})
         )
         return 0
     controller = HostRelease(paths)

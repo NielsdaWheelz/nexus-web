@@ -153,12 +153,13 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
   expected schema, and expected Oracle manifest. The host pulls those digests;
   it never builds application images.
 - `deploy/hetzner/deploy.sh <source-sha>` is the sole application release
-  entrypoint. It activates only API/workers, proves them, promotes the exact
-  staged Vercel deployment, then publishes one immutable release record/current
-  pointer. Postgres and Caddy retain identity.
-- VPS and Vercel config publication are explicit prepare-only operations. Oracle
-  reconcile is a separate current-release operation; application release never
-  reads or mutates Oracle.
+  and resume entrypoint. It captures the exact current content-addressed VPS
+  config path and digest, activates only API/workers, proves them, promotes the
+  exact staged Vercel deployment, then publishes one immutable release record
+  and current pointer. Postgres and Caddy retain identity.
+- VPS and Vercel config publication are explicit prepare-only operations, never
+  implicit release steps. Oracle reconcile is a separate current-release
+  operation; application release never reads or mutates Oracle.
 - Supabase owns Auth only. Hetzner Postgres and Cloudflare R2 own product data.
 - Both worker lanes use a bounded 300-second database statement timeout. The
   API keeps its tighter role-scoped timeout.
@@ -1764,12 +1765,13 @@ one separate typed entrypoint, `./scripts/test`.
 publishes their GHCR digests and strict manifest, and supplies the immutable host
 bundle. Vercel builds the exact SHA as an unaliased production-target candidate.
 `deploy/hetzner/deploy.sh <source-sha>` validates both lineages, captures current
-config, stops app writers, verifies a migration backup when needed, upgrades the
-linear Alembic head, activates only app services by digest, proves the complete
-backend vector, promotes only the bound frontend deployment, then atomically
-publishes the immutable release record/current pointer. Durable phases make the
-same command the sole resume path. Config publication and Oracle reconcile are
-separate explicit operations. Env contracts live in `deploy/env/*` (real values
+content-addressed VPS config by exact path and digest, stops app writers,
+verifies a migration backup when needed, upgrades the linear Alembic head,
+activates only app services by digest, proves the complete backend vector,
+promotes only the bound frontend deployment, then atomically publishes the
+immutable release record/current pointer. Durable phases make the same command
+the sole resume path. Config publication and Oracle reconcile are separate
+explicit operations. Env contracts live in `deploy/env/*` (real values
 untracked, `.example` tracked). Permanent R2 policy is applied via
 `deploy/cloudflare/*`; Supabase hosted Auth state is verified through
 `deploy/supabase/verify-auth-config.sh`.

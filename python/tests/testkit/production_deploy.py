@@ -17,7 +17,6 @@ SOURCE_CI_RUN_ID = 6001
 SOURCE_CI_WORKFLOW_ID = 5001
 ARTIFACT_ID = 8001
 BOUND_DEPLOYMENT_ID = "dpl_BoundCandidate"
-GENESIS_DEPLOYMENT_ID = "dpl_Genesis"
 CURRENT_DEPLOYMENT_ID = "dpl_Current"
 PRODUCTION_HOST = "nexus.nielseriknandal.com"
 PROJECT_NAME = "nexus-web"
@@ -177,10 +176,6 @@ def _fake_ssh(state: dict[str, Any], arguments: list[str]) -> None:
         print("/tmp/nexus-release.ABC12345")
     elif " inspect --source-sha " in f" {command} ":
         print(_canonical_json(state["host_inspect"]), end="")
-    elif "adopt-genesis-vercel-deployment" in command:
-        deployment_id = arguments[arguments.index("--deployment-id") + 1]
-        state["host_inspect"]["genesis_vercel_deployment_id"] = deployment_id
-        print(_canonical_json({"genesis_vercel_deployment_id": deployment_id}), end="")
     elif "install-bundle" in command:
         state["bundle_installed"] = True
     elif "fail-bound-frontend" in command:

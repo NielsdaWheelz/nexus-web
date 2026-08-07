@@ -76,79 +76,10 @@ remain staged and free of production/custom-domain aliases until the release
 controller promotes it. The committed Vercel project must also keep system
 environment variables exposed (`autoExposeSystemEnvs=true`) so the deployment's
 source identity is available to the public `/version` proof.
-`deploy/vercel/sync-env.sh`, local adoption admission, and application deploy
-all re-prove the project ID, team, name, `autoAssignCustomDomains=false`,
+`deploy/vercel/sync-env.sh` and application deploy both re-prove the project ID,
+team, name, `autoAssignCustomDomains=false`,
 `autoExposeSystemEnvs=true`, and `ssoProtection.deploymentType=preview`. The
-controller rejects an already promoted new
-candidate.
-
-## Provisioning and first adoption
-
-Provision a new host only with the owned bootstrap:
-
-```bash
-HCLOUD_SSH_KEY=<key-name> \
-HCLOUD_SSH_ALLOWED_IPS=<operator-ip>/32 \
-HCLOUD_LOCATION=hil \
-HCLOUD_SERVER_TYPE=cpx11 \
-./deploy/hetzner/provision.sh
-
-ssh nexus@<server-ip> cloud-init status --wait
-```
-
-Before the first immutable release, prove the supported Alembic lineage and
-completed migration audits, pin the exact running Postgres and Caddy digests in
-the private production config, and publish that config for the never-published
-source SHA. Then run the sole infrastructure-adoption owner from that exact
-clean `HEAD == origin/main` checkout. The `adopt` command first performs
-mutation-free local admission: it resolves the exact backend artifact/CI/
-publisher lineage, proves both digest images are anonymously fetchable, and
-proves one staged READY Vercel candidate for the exact SHA plus its no-store
-`/version` identity. Only after those checks pass does it make the one host SSH
-adoption call:
-
-```bash
-NEXUS_SHARED_ENV=/absolute/path/to/env-prod \
-NEXUS_BACKEND_ENV=/absolute/path/to/env-prod-backend \
-NEXUS_WORKER_ENV=/absolute/path/to/env-prod-worker \
-./deploy/hetzner/sync-env.sh <source-sha>
-
-python3 -B deploy/hetzner/adopt-infrastructure.py adopt <source-sha>
-```
-
-The adoption owner fixes the production SSH coordinate and, under the shared
-host lock, binds immutable Git bytes plus the exact five live containers,
-images, configs, named volumes, config snapshot, and database identity. It
-stops only the three writers; creates, validates, and restore-rehearses a
-custom-format Postgres dump; installs the root-owned Caddyfile; recreates only
-Postgres and Caddy with the same image IDs and volumes; then restores and proves
-the exact captured writers and all five healthy services.
-
-Its durable path is:
-
-```text
-Prepared -> WritersStopped -> DatabaseCaptured -> BackupVerified
-         -> FilesInstalled -> InfrastructureMutationStarted
-         -> InfrastructureRecreated -> WritersRestored -> Succeeded
-```
-
-After interruption, rerun only the exact same command and SHA. Every phase is
-replay-safe. Before `InfrastructureMutationStarted`, failure restores the exact
-captured writers; at or after that boundary it retains the no-use window and
-replays forward. Never substitute manual Docker, database, file-copy, or state
-editing commands.
-
-Success creates the canonical, create-only
-`/var/lib/nexus/infra-adoption/completed.json` bound to its terminal attempt
-and retained verified dump. A nonterminal adoption blocks every other host
-mutator. Its source SHA is provenance, not a requirement that the first app
-candidate use the same SHA. Before `current` exists, the first candidate must
-re-prove the exact adopted bundle, config, infrastructure, volumes, database
-identity, and stable writer/schema vector; a bound forward-fix successor may
-advance writers/schema only while proving them stopped. Do not republish config
-between adoption and that first release. Only after `Succeeded` run
-`deploy/hetzner/deploy.sh <source-sha>`; that command separately captures the
-authoritative READY Vercel deployment as the immutable genesis predecessor.
+controller rejects an already promoted new candidate.
 
 ## Immutable artifact lineage
 
@@ -169,7 +100,7 @@ reruns only prove the original artifact still exists; they never rebuild or
 upload. If the first source CI, publisher, or artifact fails, is duplicated, or
 is deleted before host installation, use a new SHA. GHCR creates new packages as
 private: if the first publisher run fails only because anonymous digest proof
-cannot read a newly created package, never adopt that SHA; make both
+cannot read a newly created package, never release that SHA; make both
 `nexus-api` and `nexus-worker` packages public in the provider, then use a fresh
 successful SHA. Once installed, the root-owned immutable bundle is the resume
 and verification authority after the 90-day Actions retention window.
@@ -181,7 +112,9 @@ untracked. A config-bearing release uses a new, never-published commit SHA.
 Publish Vercel config before that SHA triggers its staged build:
 
 ```bash
-./deploy/vercel/sync-env.sh
+NEXUS_SHARED_ENV=/absolute/path/to/env-prod \
+NEXUS_FRONTEND_ENV=/absolute/path/to/env-prod-frontend \
+  ./deploy/vercel/sync-env.sh
 ```
 
 After the exact clean SHA is `origin/main`, publish the VPS config before
@@ -189,7 +122,10 @@ application release:
 
 ```bash
 SOURCE_SHA="$(git rev-parse HEAD)"
-./deploy/hetzner/sync-env.sh "$SOURCE_SHA"
+NEXUS_SHARED_ENV=/absolute/path/to/env-prod \
+NEXUS_BACKEND_ENV=/absolute/path/to/env-prod-backend \
+NEXUS_WORKER_ENV=/absolute/path/to/env-prod-worker \
+  ./deploy/hetzner/sync-env.sh "$SOURCE_SHA"
 ```
 
 The VPS publisher rejects duplicate keys across its three input files, missing
@@ -198,17 +134,13 @@ active application or Oracle attempt. Under the shared release lock it writes
 one canonical `/etc/nexus/config/<sha256>.env`, then atomically moves
 `/etc/nexus/current.env`. This prepares config; it does not restart a service.
 The config snapshot is root:root `0440`, the live Caddyfile is root:root
-`0444`, and release-state directories are root:root `0750`; adoption rejects
-any existing state that does not satisfy those exact ownership and mode
-contracts.
-For first adoption, it transfers the host controller and decoder from the exact
-clean `origin/main` checkout into a validated temporary directory; it neither
-requires nor installs an application bundle.
+`0444`, and release-state directories are root:root `0750`.
 
 The Vercel deployment ID is its durable build-config snapshot. Keep this sequence
 serialized so no other production build captures the prepared values. A
-code-only release may reuse the current configs. A config change never reuses a
-previously published source SHA.
+code-only release may reuse the current Vercel snapshot and current
+content-addressed VPS config. A config change never reuses a previously
+published source SHA.
 
 ## Release
 
@@ -231,8 +163,9 @@ The command performs the complete protocol:
 
 1. validates Git, CI, bundle, manifest, and staged Vercel identity;
 2. installs the immutable bundle and inspects durable host state;
-3. preflights config, Compose, Caddy equality, image identity, live infra,
-   database ancestry, capacity, and predecessor evidence without mutation;
+3. preflights the exact content-addressed config path and digest, Compose, Caddy
+   equality, image identity, live infra, database ancestry, capacity, and
+   predecessor evidence without mutation;
 4. stops and proves stopped only the three app writers;
 5. when migration is pending, creates and verifies one durable custom-format
    Postgres backup before recording `DataMutationStarted` and upgrading;
@@ -258,7 +191,6 @@ oracle-repairs/<source-sha>-<manifest-digest-hex>.json
 records/<source-sha>.json
 current
 forward-fix
-genesis-vercel-deployment
 ```
 
 Bundles live at `/opt/nexus/releases/<source-sha>`, configs at
@@ -427,7 +359,6 @@ release controller.
 | Backend publication | `.github/workflows/backend-images.yml` |
 | Backend artifact | `docker/Dockerfile.backend` |
 | Immutable bundle resolution | `deploy/hetzner/fetch-release-bundle.sh` |
-| First-production adoption | `deploy/hetzner/adopt-infrastructure.py` |
 | External orchestration | `deploy/hetzner/deploy.sh` |
 | Durable host protocol | `deploy/hetzner/release.py` |
 | Production topology | `deploy/hetzner/docker-compose.yml` |

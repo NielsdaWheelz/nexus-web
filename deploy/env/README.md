@@ -43,9 +43,7 @@ moves `/etc/nexus/current.env`:
 
 This is prepare-only. It does not restart a service. The application release
 captures the exact path and digest in its attempt and immutable release record.
-The command runs the host Python owner transferred from the exact clean
-`origin/main` checkout, so first publication does not require or install a
-current application bundle.
+It is never invoked implicitly by the application release.
 
 Vercel config is a separate provider snapshot:
 
@@ -56,8 +54,11 @@ Vercel config is a separate provider snapshot:
 For a config-bearing release, publish Vercel config before the SHA triggers its
 staged build; publish VPS config after that SHA is exact `origin/main` and before
 application release. Keep the sequence serialized. A code-only release may reuse
-current config. Any config change requires a new source SHA; one SHA may become
-current only once.
+the current content-addressed VPS config and existing Vercel snapshot. Any config
+change requires a new source SHA; one SHA may become current only once.
+
+Neither publisher is a release entrypoint. The sole application release and
+resume command is `deploy/hetzner/deploy.sh <source-sha>`.
 
 ## Boundary rules
 
