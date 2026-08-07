@@ -34,6 +34,9 @@ expected Oracle manifest digest, task contract, and captured VPS config.
 - Vercel produces a `READY` production-target candidate with no production or
   custom-domain alias. Vercel-generated `.vercel.app` aliases are expected;
   backend activation and proof precede promotion of that exact deployment ID.
+  The controller explicitly assigns the committed custom domain to that exact
+  deployment and proves the binding through Vercel's alias resource plus the
+  public no-store `/version` contract.
 - Application release changes only `api`, `worker-interactive`, and
   `worker-background`. It does not recreate Postgres or Caddy.
 - Config publication and Oracle reconcile are explicit operations. Application
@@ -237,7 +240,8 @@ The command performs the complete protocol:
    waits boundedly for Compose health before proving exact API/readiness bodies,
    workers, shared task-contract digest, schema, config, images, and unchanged
    infra;
-7. promotes only the bound Vercel deployment, proves the public web/API vector,
+7. promotes only the bound Vercel deployment, explicitly binds the committed
+   custom domain to it, proves the provider alias and public web/API vector,
    writes one immutable record, and atomically publishes current SHA.
 
 Success ends the no-use window. No separate migration, Compose, smoke, or
@@ -328,10 +332,11 @@ matrix:
 | Bound Vercel deployment is authoritatively deleted or terminally failed | Rerun the same SHA; direct ID inspection settles rollback or forward-fix without candidate reselection. |
 
 That settlement first proves the committed project/team identity, then decodes
-the stored deployment ID before reading the mutable production alias. Only a
-recognized 404 in that fixed scope or an identity-matching `ERROR`/`CANCELED`
-response is terminal evidence. Transport errors, unknown states, malformed JSON,
-or identity disagreement fail closed without changing host state.
+the stored deployment ID before reading the canonical Vercel alias resource.
+Only a recognized 404 in that fixed scope or an identity-matching
+`ERROR`/`CANCELED` response is terminal evidence. Transport errors, unknown
+states, malformed JSON, or identity disagreement fail closed without changing
+host state.
 
 A crash is replay input, not permission to delete an attempt or restart a
 predecessor. After either commitment boundary, predecessor code never runs.
