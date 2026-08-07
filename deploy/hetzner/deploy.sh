@@ -86,6 +86,13 @@ vercel_get() {
   return 1
 }
 
+bind_production_alias() {
+  local deployment_url="$1"
+
+  timeout --foreground 4m "$VERCEL_CLI" alias set "$deployment_url" "$PRODUCTION_HOST" \
+    --scope "$VERCEL_SCOPE" --non-interactive >/dev/null
+}
+
 settle_bound_frontend_failure() {
   local deployment_id="$1"
   timeout --foreground 4m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
@@ -357,27 +364,42 @@ if [ "$status" = "resume" ]; then
     "$bound_api_body")"
 fi
 
+authoritative_alias_body="${TEMPORARY}/authoritative-alias.json"
+authoritative_alias_status="$(vercel_get \
+  "https://api.vercel.com/v2/aliases/${PRODUCTION_HOST}?teamId=${VERCEL_TEAM_ID}" \
+  "$authoritative_alias_body")" || die "authoritative Vercel alias inspection failed transiently"
+[ "$authoritative_alias_status" = 200 ] || \
+  die "authoritative Vercel alias inspection returned HTTP ${authoritative_alias_status}"
+jq -e \
+  --arg host "$PRODUCTION_HOST" \
+  --arg project_id "$VERCEL_PROJECT_ID" '
+  .alias == $host
+  and (.deploymentId | type == "string" and test("^dpl_[A-Za-z0-9]+$"))
+  and .deployment.id == .deploymentId
+  and .projectId == $project_id
+' "$authoritative_alias_body" >/dev/null || \
+  die "authoritative Vercel alias has no exact production deployment binding"
+authoritative_id="$(jq -r .deploymentId "$authoritative_alias_body")"
 authoritative_body="${TEMPORARY}/authoritative-deployment.json"
 authoritative_status="$(vercel_get \
-  "https://api.vercel.com/v13/deployments/${PRODUCTION_HOST}?teamId=${VERCEL_TEAM_ID}" \
+  "https://api.vercel.com/v13/deployments/${authoritative_id}?teamId=${VERCEL_TEAM_ID}" \
   "$authoritative_body")" || die "authoritative Vercel inspection failed transiently"
 [ "$authoritative_status" = 200 ] || \
   die "authoritative Vercel inspection returned HTTP ${authoritative_status}"
 jq -e \
-  --arg host "$PRODUCTION_HOST" \
+  --arg id "$authoritative_id" \
   --arg project_id "$VERCEL_PROJECT_ID" \
   --arg project "$VERCEL_PROJECT_NAME" \
   --arg team "$VERCEL_TEAM_ID" '
   (.id | type == "string" and test("^dpl_[A-Za-z0-9]+$"))
+  and .id == $id
   and .projectId == $project_id
   and .name == $project
   and .ownerId == $team
   and .target == "production"
   and .readyState == "READY"
-  and (.alias | type == "array" and index($host) != null)
 ' "$authoritative_body" >/dev/null || \
-  die "authoritative Vercel domain has no exact READY production deployment"
-authoritative_id="$(jq -r .id "$authoritative_body")"
+  die "authoritative Vercel deployment is not exact READY production"
 
 if [ -z "$genesis_id" ]; then
   if [ "$status" != "new" ] || [ -n "$current_sha" ]; then
@@ -546,26 +568,40 @@ if [ "$status" = "new" ] || [ "$phase" != "FrontendPromoted" ]; then
       --production-host "$PRODUCTION_HOST"
 fi
 
+authoritative_alias_status="$(vercel_get \
+  "https://api.vercel.com/v2/aliases/${PRODUCTION_HOST}?teamId=${VERCEL_TEAM_ID}" \
+  "$authoritative_alias_body")" || die "authoritative Vercel alias inspection failed transiently"
+[ "$authoritative_alias_status" = 200 ] || \
+  die "authoritative Vercel alias inspection returned HTTP ${authoritative_alias_status}"
+jq -e \
+  --arg host "$PRODUCTION_HOST" \
+  --arg project_id "$VERCEL_PROJECT_ID" '
+  .alias == $host
+  and (.deploymentId | type == "string" and test("^dpl_[A-Za-z0-9]+$"))
+  and .deployment.id == .deploymentId
+  and .projectId == $project_id
+' "$authoritative_alias_body" >/dev/null || \
+  die "authoritative Vercel alias has no exact production deployment binding"
+authoritative_id="$(jq -r .deploymentId "$authoritative_alias_body")"
 authoritative_status="$(vercel_get \
-  "https://api.vercel.com/v13/deployments/${PRODUCTION_HOST}?teamId=${VERCEL_TEAM_ID}" \
+  "https://api.vercel.com/v13/deployments/${authoritative_id}?teamId=${VERCEL_TEAM_ID}" \
   "$authoritative_body")" || die "authoritative Vercel inspection failed transiently"
 [ "$authoritative_status" = 200 ] || \
   die "authoritative Vercel inspection returned HTTP ${authoritative_status}"
 jq -e \
-  --arg host "$PRODUCTION_HOST" \
+  --arg id "$authoritative_id" \
   --arg project_id "$VERCEL_PROJECT_ID" \
   --arg project "$VERCEL_PROJECT_NAME" \
   --arg team "$VERCEL_TEAM_ID" '
   (.id | type == "string" and test("^dpl_[A-Za-z0-9]+$"))
+  and .id == $id
   and .projectId == $project_id
   and .name == $project
   and .ownerId == $team
   and .target == "production"
   and .readyState == "READY"
-  and (.alias | type == "array" and index($host) != null)
 ' "$authoritative_body" >/dev/null || \
-  die "authoritative Vercel domain has no exact READY production deployment"
-authoritative_id="$(jq -r .id "$authoritative_body")"
+  die "authoritative Vercel deployment is not exact READY production"
 current_id="$(jq -r '.current_vercel_deployment_id // empty' <<<"$host_inspect")"
 current_sha="$(jq -r '.current_sha // empty' <<<"$host_inspect")"
 genesis_id="$(jq -r '.genesis_vercel_deployment_id // empty' <<<"$host_inspect")"
@@ -585,24 +621,21 @@ fi
 
 alias_bound=false
 alias_body="${TEMPORARY}/bound-alias.json"
+bind_production_alias "$deployment_url"
 for ((alias_attempt = 1; alias_attempt <= VERCEL_ALIAS_POLL_ATTEMPTS; alias_attempt++)); do
   if alias_status="$(vercel_get \
-    "https://api.vercel.com/v13/deployments/${bound_deployment_id}?teamId=${VERCEL_TEAM_ID}" \
+    "https://api.vercel.com/v2/aliases/${PRODUCTION_HOST}?teamId=${VERCEL_TEAM_ID}" \
     "$alias_body")" \
     && [ "$alias_status" = 200 ] \
     && jq -e \
     --arg host "$PRODUCTION_HOST" \
     --arg id "$bound_deployment_id" \
     --arg project_id "$VERCEL_PROJECT_ID" \
-    --arg project "$VERCEL_PROJECT_NAME" \
-    --arg team "$VERCEL_TEAM_ID" '
-      .id == $id
+    '
+      .alias == $host
+      and .deploymentId == $id
+      and .deployment.id == $id
       and .projectId == $project_id
-      and .name == $project
-      and .ownerId == $team
-      and .target == "production"
-      and .readyState == "READY"
-      and (.alias | type == "array" and index($host) != null)
     ' "$alias_body" >/dev/null; then
     alias_bound=true
     break

@@ -227,6 +227,11 @@ def _fake_vercel(state: dict[str, Any], arguments: list[str]) -> None:
     if arguments[:2] == ["promote", BOUND_DEPLOYMENT_ID]:
         state["authoritative_id"] = BOUND_DEPLOYMENT_ID
         return
+    if arguments[:2] == ["alias", "set"]:
+        if arguments[3] != PRODUCTION_HOST:
+            raise AssertionError(f"unsupported fake alias target: {arguments!r}")
+        state["authoritative_id"] = BOUND_DEPLOYMENT_ID
+        return
     raise AssertionError(f"unsupported fake Vercel call: {arguments!r}")
 
 
@@ -273,6 +278,24 @@ def _fake_curl(state: dict[str, Any], arguments: list[str]) -> None:
         )
         print("200", end="")
         return
+    if url.startswith(f"https://api.vercel.com/v2/aliases/{PRODUCTION_HOST}"):
+        deployment_id = state["authoritative_id"]
+        output.write_text(
+            _canonical_json(
+                {
+                    "alias": PRODUCTION_HOST,
+                    "deployment": {
+                        "id": deployment_id,
+                        "url": "bound-candidate.vercel.app",
+                    },
+                    "deploymentId": deployment_id,
+                    "projectId": PROJECT_ID,
+                }
+            ),
+            encoding="utf-8",
+        )
+        print("200", end="")
+        return
     if url.startswith(f"https://api.vercel.com/v13/deployments/{PRODUCTION_HOST}"):
         output.write_text(
             _canonical_json(
@@ -309,6 +332,18 @@ def _fake_curl(state: dict[str, Any], arguments: list[str]) -> None:
             )
         output.write_text(_canonical_json(body), encoding="utf-8")
         print(status, end="")
+        return
+    if url.startswith("https://api.vercel.com/v13/deployments/"):
+        output.write_text(
+            _canonical_json(
+                _deployment(
+                    state,
+                    deployment_id=state["authoritative_id"],
+                )
+            ),
+            encoding="utf-8",
+        )
+        print("200", end="")
         return
     headers = Path(_argument(arguments, "--dump-header"))
     headers.write_text("HTTP/1.1 200 OK\r\nCache-Control: no-store\r\n\r\n", encoding="ascii")
