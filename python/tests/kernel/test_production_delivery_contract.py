@@ -176,7 +176,7 @@ def test_vercel_config_rejects_stale_optional_values_after_pull(
         '  if [ "$1" = --output ]; then output=$2; shift 2; continue; fi\n'
         "  shift\n"
         "done\n"
-        'printf \'%s\\n\' \'{"id":"prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs","name":"nexus-web","accountId":"team_fKVvTyTsMBQ7qFjccFO17BJL","autoAssignCustomDomains":false,"autoExposeSystemEnvs":true}\' >"$output"\n'
+        'printf \'%s\\n\' \'{"id":"prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs","name":"nexus-web","accountId":"team_fKVvTyTsMBQ7qFjccFO17BJL","autoAssignCustomDomains":false,"autoExposeSystemEnvs":true,"ssoProtection":{"deploymentType":"preview"}}\' >"$output"\n'
         "printf '200'\n",
         encoding="utf-8",
     )

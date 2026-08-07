@@ -393,6 +393,7 @@ require_vercel_project_policy() {
     and .accountId == $team
     and .autoAssignCustomDomains == false
     and .autoExposeSystemEnvs == true
+    and .ssoProtection.deploymentType == "preview"
   ' "$response" >/dev/null || die "Vercel project identity or build policy disagrees"
 }
 

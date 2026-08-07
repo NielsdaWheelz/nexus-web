@@ -33,8 +33,10 @@ _VOLUME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,254}\Z")
 _VERCEL_TOKEN = re.compile(r"[A-Za-z0-9._-]+\Z")
 _VERCEL_DEPLOYMENT_ID = re.compile(r"dpl_[A-Za-z0-9]+\Z")
 _VERCEL_DEPLOYMENT_URL = re.compile(r"[a-z0-9][a-z0-9.-]*\.vercel\.app\Z")
+_VERCEL_ALIAS = re.compile(r"[a-z0-9][a-z0-9.-]*\.vercel\.app\Z")
 
 _SSH_TARGET = "nexus@5.78.194.235"
+_PRODUCTION_HOST = "nexus.nielseriknandal.com"
 _VERCEL_PROJECT_NAME = "nexus-web"
 _VERCEL_PROJECT_ID = "prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs"
 _VERCEL_TEAM_ID = "team_fKVvTyTsMBQ7qFjccFO17BJL"
@@ -1804,6 +1806,7 @@ def _prove_vercel_candidate(source_sha: str, staging: Path) -> None:
         and project.get("accountId") == _VERCEL_TEAM_ID
         and project.get("autoAssignCustomDomains") is False
         and project.get("autoExposeSystemEnvs") is True
+        and project.get("ssoProtection") == {"deploymentType": "preview"}
     ):
         raise AdoptionDefect("committed Vercel project/team or build policy disagrees")
 
@@ -1860,6 +1863,28 @@ def _prove_vercel_candidate(source_sha: str, staging: Path) -> None:
         raise AdoptionDefect("exact Vercel candidate inspection did not return HTTP 200")
     detail = _local_json(detail_path, "Vercel deployment detail")
     detail_meta = detail.get("meta")
+    targets = project.get("targets")
+    production_target = targets.get("production", {}) if isinstance(targets, Mapping) else {}
+    production_aliases = (
+        production_target.get("alias", []) if isinstance(production_target, Mapping) else []
+    )
+    automatic_aliases = (
+        production_target.get("automaticAliases", [])
+        if isinstance(production_target, Mapping)
+        else []
+    )
+    aliases = detail.get("alias")
+    staged_aliases = (
+        isinstance(aliases, list)
+        and isinstance(production_aliases, list)
+        and isinstance(automatic_aliases, list)
+        and all(
+            isinstance(alias, str)
+            and _VERCEL_ALIAS.fullmatch(alias) is not None
+            and (alias not in production_aliases or alias in automatic_aliases)
+            for alias in aliases
+        )
+    )
     if not (
         detail.get("id") == deployment_id
         and detail.get("name") == _VERCEL_PROJECT_NAME
@@ -1870,9 +1895,10 @@ def _prove_vercel_candidate(source_sha: str, staging: Path) -> None:
         and detail.get("readyState") == "READY"
         and isinstance(detail_meta, dict)
         and detail_meta.get("githubCommitSha") == source_sha
-        and detail.get("alias") == []
+        and _PRODUCTION_HOST not in (aliases or [])
+        and staged_aliases
     ):
-        raise AdoptionDefect("exact Vercel candidate is not READY, unaliased, and production-bound")
+        raise AdoptionDefect("exact Vercel candidate is not READY, staged, and production-bound")
 
     version_path = staging / "vercel-version.json"
     headers_path = staging / "vercel-version.headers"
