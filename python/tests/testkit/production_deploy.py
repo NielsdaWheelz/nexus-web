@@ -10,6 +10,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse
+
+from tests.testkit.auth_config import provider_config
 
 EARLIEST_PUBLISHER_RUN_ID = 7001
 LATEST_PUBLISHER_RUN_ID = 7002
@@ -217,6 +220,87 @@ def _deployment(
     }
 
 
+def _fake_auth_smoke_curl(arguments: list[str], url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.netloc not in {PRODUCTION_HOST, "api.nexus.example"}:
+        return False
+    if parsed.path == "/version":
+        return False
+    output_flag = "--output" if "--output" in arguments else "-o"
+    output = Path(_argument(arguments, output_flag)) if output_flag in arguments else None
+    header_flag = "--dump-header" if "--dump-header" in arguments else "-D"
+    headers = Path(_argument(arguments, header_flag)) if header_flag in arguments else None
+    write_out = _argument(arguments, "-w") if "-w" in arguments else None
+    cookie_values = [
+        arguments[index + 1]
+        for index, argument in enumerate(arguments[:-1])
+        if argument == "-H" and arguments[index + 1].lower().startswith("cookie:")
+    ]
+    cookie = " ".join(cookie_values).lower()
+
+    status = 200
+    location = ""
+    body = ""
+    if parsed.netloc == "api.nexus.example":
+        if parsed.path == "/docs":
+            status = 404
+    elif parsed.path == "/lectern":
+        status = 307
+        location = f"https://{PRODUCTION_HOST}/login"
+    elif parsed.path == "/browse":
+        status = 307
+        if "stale-project" in cookie:
+            location = f"https://{PRODUCTION_HOST}/login?next=%2Fbrowse"
+        elif "fixture-auth-token" in cookie:
+            location = f"https://{PRODUCTION_HOST}/auth/session/recover?next=%2Fbrowse"
+        else:
+            location = f"https://{PRODUCTION_HOST}/login?next=%2Fbrowse"
+    elif parsed.path == "/auth/session/recover":
+        status = 200
+    elif parsed.path == "/auth/session/resolve":
+        status = 401
+        body = '{"error":{"code":"E_UNAUTHENTICATED"}}'
+    elif parsed.path == "/api/me":
+        status = 401
+        body = '{"error":{"code":"E_UNAUTHENTICATED"}}'
+    elif parsed.path == "/auth/oauth":
+        provider = (parse_qs(parsed.query).get("provider") or [""])[0]
+        status = 307
+        location = "https://fixture.supabase.co/auth/v1/authorize?" + urlencode(
+            {
+                "provider": provider,
+                "redirect_to": f"https://{PRODUCTION_HOST}/auth/callback",
+            }
+        )
+
+    if headers is not None:
+        response_headers = [
+            f"HTTP/1.1 {status}\r\n",
+            "Cache-Control: private, no-store\r\n",
+            "Pragma: no-cache\r\n",
+            "Expires: 0\r\n",
+            "Vary: Cookie\r\n",
+        ]
+        if location:
+            response_headers.append(f"Location: {location}\r\n")
+        if parsed.path == "/auth/session/resolve":
+            response_headers.append(
+                "Set-Cookie: sb-fixture-auth-token=; Max-Age=0; Path=/; HttpOnly\r\n"
+            )
+        response_headers.append("\r\n")
+        headers.write_text("".join(response_headers), encoding="ascii")
+    if output is not None and str(output) != "/dev/null":
+        output.write_text(body, encoding="utf-8")
+    if write_out is not None:
+        if "%{redirect_url}" in write_out:
+            print(f"{status}\t{location}")
+        else:
+            print(status)
+    elif output is None:
+        print(body, end="")
+    return True
+
+
 def _fake_vercel(state: dict[str, Any], arguments: list[str]) -> None:
     arguments = arguments[1:]
     if arguments[:2] == ["promote", BOUND_DEPLOYMENT_ID]:
@@ -231,8 +315,23 @@ def _fake_vercel(state: dict[str, Any], arguments: list[str]) -> None:
 
 
 def _fake_curl(state: dict[str, Any], arguments: list[str]) -> None:
-    output = Path(_argument(arguments, "--output"))
-    url = arguments[-1]
+    output_flag = "--output" if "--output" in arguments else "-o"
+    output = Path(_argument(arguments, output_flag)) if output_flag in arguments else None
+    url = next(argument for argument in arguments if argument.startswith("https://"))
+    if _fake_auth_smoke_curl(arguments, url):
+        return
+    assert output is not None
+    if url == "https://api.supabase.com/v1/projects/fixture/config/auth":
+        output.write_text(
+            Path(state["auth_config_fixture"]).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        print("200", end="")
+        return
+    if url == "https://api.supabase.com/v1/projects/fixture/config/auth/third-party-auth":
+        output.write_text("[]\n", encoding="utf-8")
+        print("200", end="")
+        return
     if url.startswith(f"https://api.vercel.com/v9/projects/{PROJECT_ID}"):
         project_id = (
             "prj_WrongScope" if state["project_identity_mode"] == "mismatch" else PROJECT_ID
@@ -387,9 +486,30 @@ class ProductionDeployHarness:
         authoritative_id: str,
     ) -> ProductionDeployHarness:
         state_path = root / "deploy-state.json"
+        shared_env = root / "env-prod"
+        shared_env.write_text(
+            "APP_PUBLIC_URL=https://app.nexus.example\n"
+            "SUPABASE_ISSUER=https://fixture.supabase.co/auth/v1\n"
+            "SUPABASE_JWKS_URL=https://fixture.supabase.co/auth/v1/.well-known/jwks.json\n"
+            "SUPABASE_AUDIENCES=authenticated\n",
+            encoding="utf-8",
+        )
+        frontend_env = root / "env-prod-frontend"
+        frontend_env.write_text(
+            "FASTAPI_BASE_URL=https://api.nexus.example\n"
+            "NEXT_PUBLIC_SUPABASE_URL=https://fixture.supabase.co\n"
+            "AUTH_ALLOWED_REDIRECT_ORIGINS=https://app.nexus.example\n",
+            encoding="utf-8",
+        )
+        auth_config_fixture = root / "auth-config.json"
+        auth_config_fixture.write_text(
+            _canonical_json(provider_config(repo_root)),
+            encoding="utf-8",
+        )
         _save_state(
             state_path,
             {
+                "auth_config_fixture": str(auth_config_fixture),
                 "authoritative_id": authoritative_id,
                 "bound_api_status": 200,
                 "bound_payload_mode": "normal",
@@ -427,17 +547,24 @@ class ProductionDeployHarness:
             **os.environ,
             "NEXUS_DEPLOY_FAKE_STATE": str(self.state_path),
             "NEXUS_DEPLOY_REPO_ROOT": str(self.repo_root),
+            "NEXUS_FRONTEND_ENV": str(self.root / "env-prod-frontend"),
+            "NEXUS_SHARED_ENV": str(self.root / "env-prod"),
             "PATH": f"{self.fake_bin}{os.pathsep}{os.environ['PATH']}",
         }
         if include_provider_credentials:
             environment.update(
                 {
                     "GH_TOKEN": "test-gh-token",
+                    "SUPABASE_MANAGEMENT_ACCESS_TOKEN": "test-operator-token",
                     "VERCEL_TOKEN": "test-vercel-token",
                 }
             )
         else:
-            for name in ("GH_TOKEN", "VERCEL_TOKEN"):
+            for name in (
+                "GH_TOKEN",
+                "SUPABASE_MANAGEMENT_ACCESS_TOKEN",
+                "VERCEL_TOKEN",
+            ):
                 environment.pop(name, None)
         return subprocess.run(
             ("bash", str(self.repo_root / "deploy/hetzner/deploy.sh"), self.source_sha),

@@ -10,6 +10,8 @@ readonly VERCEL_PROJECT_ID="prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs"
 readonly VERCEL_TEAM_ID="team_fKVvTyTsMBQ7qFjccFO17BJL"
 readonly VERCEL_SCOPE="niels-erik-nandals-projects"
 readonly VERCEL_CLI="${ROOT_DIR}/apps/web/node_modules/.bin/vercel"
+readonly SHARED_ENV_FILE="${NEXUS_SHARED_ENV:-${ROOT_DIR}/deploy/env/env-prod}"
+readonly FRONTEND_ENV_FILE="${NEXUS_FRONTEND_ENV:-${ROOT_DIR}/deploy/env/env-prod-frontend}"
 # justify-retry-schedule: provider reads get one immediate replay for a transport
 # or explicitly transient HTTP failure; durable operation replay owns later attempts.
 readonly VERCEL_READ_ATTEMPTS=2
@@ -514,7 +516,9 @@ jq -e --arg sha "$SOURCE_SHA" 'keys == ["source_sha"] and .source_sha == $sha' \
   "$candidate_version" >/dev/null || die "staged frontend version differs from the candidate SHA"
 require_exact_public_headers "$candidate_headers" "staged frontend version"
 
-timeout --foreground 2m "$ROOT_DIR/deploy/supabase/verify-auth-config.sh"
+timeout --foreground 2m "$ROOT_DIR/deploy/supabase/verify-auth-config.sh" \
+  --env-file "$SHARED_ENV_FILE" \
+  --frontend-env-file "$FRONTEND_ENV_FILE"
 
 if [ "$status" = "new" ] || [ "$phase" != "FrontendPromoted" ]; then
   timeout --foreground 66m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
@@ -612,8 +616,8 @@ jq -e --arg sha "$SOURCE_SHA" 'keys == ["source_sha"] and .source_sha == $sha' \
   "$production_version" >/dev/null || \
   die "authoritative frontend does not serve the exact candidate SHA"
 
-auth_api_url="$(awk -F= '$1 == "FASTAPI_BASE_URL" {print $2; exit}' "${ROOT_DIR}/deploy/env/env-prod-frontend")"
-auth_supabase_url="$(awk -F= '$1 == "NEXT_PUBLIC_SUPABASE_URL" {print $2; exit}' "${ROOT_DIR}/deploy/env/env-prod-frontend")"
+auth_api_url="$(awk -F= '$1 == "FASTAPI_BASE_URL" {print $2; exit}' "$FRONTEND_ENV_FILE")"
+auth_supabase_url="$(awk -F= '$1 == "NEXT_PUBLIC_SUPABASE_URL" {print $2; exit}' "$FRONTEND_ENV_FILE")"
 [ -n "$auth_api_url" ] || die "FASTAPI_BASE_URL is required for post-alias auth smoke"
 [ -n "$auth_supabase_url" ] || die "NEXT_PUBLIC_SUPABASE_URL is required for post-alias auth smoke"
 if ! timeout --foreground 4m "$ROOT_DIR/deploy/smoke/auth-smoke.sh" \
