@@ -23,7 +23,7 @@ import { readViewportSafeBounds } from "@/lib/ui/viewportSafeArea";
  * Dismiss listeners are not owned here — pair with useDismissOnOutsideOrEscape.
  */
 export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
-  anchor: HTMLElement | DOMRect | null,
+  anchor: HTMLElement | DOMRect | RefObject<HTMLElement | null> | null,
   opts: {
     enabled: boolean;
     placement?: "below" | "above" | "left" | "right";
@@ -54,8 +54,13 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
 
   const reposition = useCallback(() => {
     const floating = ref.current;
-    if (!enabled || !floating || !anchor) return;
-    const a = anchor instanceof HTMLElement ? anchor.getBoundingClientRect() : anchor;
+    const anchorElement =
+      anchor !== null && "current" in anchor ? anchor.current : anchor;
+    if (!enabled || !floating || !anchorElement) return;
+    const a =
+      anchorElement instanceof HTMLElement
+        ? anchorElement.getBoundingClientRect()
+        : anchorElement;
     const bounds = readViewportSafeBounds({ viewportPadding });
     const maxWidth = Math.max(0, bounds.right - bounds.left);
     const maxHeight = Math.max(0, bounds.bottom - bounds.top);
