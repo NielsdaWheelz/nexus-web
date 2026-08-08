@@ -274,12 +274,17 @@ def _fake_auth_smoke_curl(arguments: list[str], url: str) -> bool:
         )
 
     if headers is not None:
+        vary = (
+            "RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Router-Segment-Prefetch"
+            if parsed.path in {"/lectern", "/browse", "/auth/session/recover"}
+            else "Cookie"
+        )
         response_headers = [
             f"HTTP/1.1 {status}\r\n",
             "Cache-Control: private, no-store\r\n",
             "Pragma: no-cache\r\n",
             "Expires: 0\r\n",
-            "Vary: Cookie\r\n",
+            f"Vary: {vary}\r\n",
         ]
         if location:
             response_headers.append(f"Location: {location}\r\n")
