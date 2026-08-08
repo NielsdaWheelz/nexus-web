@@ -1,5 +1,10 @@
 {
 	email {$CADDY_ACME_EMAIL}
+	log default {
+		format filter {
+			request>headers>X-Nexus-Internal delete
+		}
+	}
 }
 
 {$CADDY_SITE} {

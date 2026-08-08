@@ -267,6 +267,13 @@ def test_production_compose_is_topology_only_and_app_activation_is_narrow() -> N
     assert '("stop", "--timeout", "30", *_WRITERS)' in controller
 
 
+def test_caddy_runtime_logs_redact_the_internal_trust_header() -> None:
+    caddyfile = (REPO_ROOT / "deploy/hetzner/Caddyfile").read_text(encoding="utf-8")
+
+    assert "log default" in caddyfile
+    assert "request>headers>X-Nexus-Internal delete" in caddyfile
+
+
 def test_permanent_resource_sharing_firewall_has_no_cutover_mode() -> None:
     script = REPO_ROOT / "deploy/vercel/sync-resource-sharing-firewall.sh"
     source = script.read_text(encoding="utf-8")
