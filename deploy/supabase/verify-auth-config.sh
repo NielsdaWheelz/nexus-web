@@ -300,8 +300,8 @@ if config.get("password_min_length") != 15:
     fail("Supabase Auth password_min_length must be exactly 15")
 if config.get("password_required_characters") not in (None, ""):
     fail("Supabase Auth password_required_characters must be empty")
-if config.get("refresh_token_reuse_interval") != 10:
-    fail("Supabase Auth refresh_token_reuse_interval must be exactly 10")
+if config.get("security_refresh_token_reuse_interval") != 10:
+    fail("Supabase Auth security_refresh_token_reuse_interval must be exactly 10")
 
 require_nonempty("smtp_admin_email")
 require_nonempty("smtp_host")

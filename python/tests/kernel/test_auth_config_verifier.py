@@ -132,7 +132,10 @@ def test_auth_config_verifier_accepts_the_closed_membership_contract(tmp_path: P
     ("override", "field"),
     [
         ({"refresh_token_rotation_enabled": False}, "refresh_token_rotation_enabled"),
-        ({"refresh_token_reuse_interval": 9}, "refresh_token_reuse_interval"),
+        (
+            {"security_refresh_token_reuse_interval": 9},
+            "security_refresh_token_reuse_interval",
+        ),
     ],
 )
 def test_auth_config_verifier_requires_the_session_recovery_rotation_contract(
