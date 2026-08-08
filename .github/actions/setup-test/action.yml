@@ -47,7 +47,11 @@ runs:
 
     - uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
       with:
-        version: 2.90.0
+        version: 2.112.0
+
+    - name: Verify the pinned Supabase CLI
+      shell: bash
+      run: test "$(supabase --version | sed -n '1p')" = "2.112.0"
 
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
