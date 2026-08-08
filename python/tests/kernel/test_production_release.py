@@ -201,6 +201,66 @@ def test_host_apply_rejects_writable_caddy_input(tmp_path: Path) -> None:
         assert harness.state()["service_mutations"] == []
 
 
+def test_current_verification_allows_a_successor_caddy_configuration_transition(
+    tmp_path: Path,
+) -> None:
+    with _host_harness(tmp_path) as harness:
+        replacement = tmp_path / "successor-caddy"
+        replacement.write_text("successor-caddy\n", encoding="utf-8")
+        subprocess.run(
+            (
+                "sudo",
+                "--non-interactive",
+                "install",
+                "-o",
+                "0",
+                "-g",
+                "0",
+                "-m",
+                "0444",
+                str(replacement),
+                str(harness.root / "etc/nexus/Caddyfile"),
+            ),
+            check=True,
+            capture_output=True,
+        )
+
+        verified = harness.run_verify_current()
+
+        assert verified.returncode == 0, verified.stderr
+
+
+def test_candidate_still_requires_exact_live_caddy_configuration(
+    tmp_path: Path,
+) -> None:
+    with _host_harness(tmp_path) as harness:
+        replacement = tmp_path / "successor-caddy"
+        replacement.write_text("successor-caddy\n", encoding="utf-8")
+        subprocess.run(
+            (
+                "sudo",
+                "--non-interactive",
+                "install",
+                "-o",
+                "0",
+                "-g",
+                "0",
+                "-m",
+                "0444",
+                str(replacement),
+                str(harness.root / "etc/nexus/Caddyfile"),
+            ),
+            check=True,
+            capture_output=True,
+        )
+
+        failed = harness.run_apply()
+
+        assert failed.returncode != 0
+        assert "installed Caddy configuration differs" in failed.stderr
+        assert not harness.attempt_path.exists()
+
+
 @pytest.mark.parametrize(
     ("table_exists", "database_revision"),
     [(False, "0210"), (True, None)],

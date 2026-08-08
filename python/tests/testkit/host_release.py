@@ -658,6 +658,19 @@ class HostReleaseHarness:
             environment=self._environment(),
         )
 
+    def run_verify_current(self) -> subprocess.CompletedProcess[str]:
+        return self._run_controller(
+            (
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "verify-current",
+                str(self.repo_root / "deploy/hetzner/release.py"),
+                str(self.root),
+                CURRENT_SHA,
+            ),
+            environment=self._environment(source_sha=CURRENT_SHA),
+        )
+
     def run_fail_bound_frontend(self) -> subprocess.CompletedProcess[str]:
         return self._run_controller(
             (
@@ -1163,6 +1176,16 @@ def finalize_main(arguments: list[str]) -> int:
     return 0
 
 
+def verify_current_main(arguments: list[str]) -> int:
+    _drop_to_test_group()
+    release_path, root, source_sha = arguments
+    release = _load_release(Path(release_path), "nexus_host_release_verify_current_driver")
+    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    host.verify_current(source_sha)
+    sys.stdout.buffer.write(_canonical_json({"source_sha": source_sha, "status": "current"}))
+    return 0
+
+
 def fail_bound_frontend_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id = arguments
@@ -1198,6 +1221,8 @@ def main() -> int:
         return apply_main(sys.argv[2:])
     if sys.argv[1] == "finalize":
         return finalize_main(sys.argv[2:])
+    if sys.argv[1] == "verify-current":
+        return verify_current_main(sys.argv[2:])
     if sys.argv[1] == "fail-bound-frontend":
         return fail_bound_frontend_main(sys.argv[2:])
     if sys.argv[1] == "fail-auth-smoke":
