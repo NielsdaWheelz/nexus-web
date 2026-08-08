@@ -672,6 +672,20 @@ class HostReleaseHarness:
             environment=self._environment(),
         )
 
+    def run_fail_auth_smoke(self) -> subprocess.CompletedProcess[str]:
+        return self._run_controller(
+            (
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "fail-auth-smoke",
+                str(self.repo_root / "deploy/hetzner/release.py"),
+                str(self.root),
+                self.source_sha,
+                "dpl_Test123",
+            ),
+            environment=self._environment(),
+        )
+
     def state(self) -> dict[str, Any]:
         return _load_state(self.state_path)
 
@@ -1162,6 +1176,19 @@ def fail_bound_frontend_main(arguments: list[str]) -> int:
     return 0
 
 
+def fail_auth_smoke_main(arguments: list[str]) -> int:
+    _drop_to_test_group()
+    release_path, root, source_sha, deployment_id = arguments
+    release = _load_release(Path(release_path), "nexus_host_release_fail_auth_smoke_driver")
+    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    attempt = host.fail_auth_smoke(
+        source_sha=source_sha,
+        deployment_id=deployment_id,
+    )
+    sys.stdout.buffer.write(_canonical_json(attempt.as_json()))
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         raise AssertionError("host release test helper requires a command")
@@ -1173,6 +1200,8 @@ def main() -> int:
         return finalize_main(sys.argv[2:])
     if sys.argv[1] == "fail-bound-frontend":
         return fail_bound_frontend_main(sys.argv[2:])
+    if sys.argv[1] == "fail-auth-smoke":
+        return fail_auth_smoke_main(sys.argv[2:])
     raise AssertionError(f"unknown host release test helper command: {sys.argv[1]}")
 
 

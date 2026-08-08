@@ -106,6 +106,17 @@ settle_bound_frontend_failure() {
   die "the immutable bound Vercel deployment is permanently unavailable; host settlement completed"
 }
 
+settle_auth_smoke_failure() {
+  local deployment_id="$1"
+  timeout --foreground 16m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    timeout --foreground 15m sudo env PYTHONDONTWRITEBYTECODE=1 \
+    "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+    python3 -B "$REMOTE_CONTROLLER" fail-auth-smoke \
+      --source-sha "$SOURCE_SHA" \
+      --deployment-id "$deployment_id"
+  die "post-alias auth smoke failed; host settlement completed for forward fix"
+}
+
 case "$PRODUCTION_HOST" in
   *[!a-z0-9.-]*|.*|*..*|*.) die "committed production host is malformed" ;;
 esac
@@ -520,6 +531,22 @@ timeout --foreground 2m "$ROOT_DIR/deploy/supabase/verify-auth-config.sh" \
   --env-file "$SHARED_ENV_FILE" \
   --frontend-env-file "$FRONTEND_ENV_FILE"
 
+auth_api_url="$(awk -F= '$1 == "FASTAPI_BASE_URL" {print $2; exit}' "$FRONTEND_ENV_FILE")"
+auth_supabase_url="$(awk -F= '$1 == "NEXT_PUBLIC_SUPABASE_URL" {print $2; exit}' "$FRONTEND_ENV_FILE")"
+[ -n "$auth_api_url" ] || die "FASTAPI_BASE_URL is required for post-alias auth smoke"
+[ -n "$auth_supabase_url" ] || die "NEXT_PUBLIC_SUPABASE_URL is required for auth smoke"
+
+# Prove candidate-owned auth behavior before host writers are stopped. The
+# candidate URL is not an allowlisted production callback origin, so this mode
+# intentionally exercises only origin-independent redirects, recovery
+# rendering, cache privacy, public pages, and stale-cookie handling.
+if ! timeout --foreground 4m "$ROOT_DIR/deploy/smoke/auth-smoke.sh" \
+  --frontend-only \
+  --app-url "https://${deployment_url}" \
+  --supabase-url "$auth_supabase_url"; then
+  die "staged frontend auth smoke failed before host activation"
+fi
+
 if [ "$status" = "new" ] || [ "$phase" != "FrontendPromoted" ]; then
   timeout --foreground 66m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
     timeout --foreground 65m sudo env PYTHONDONTWRITEBYTECODE=1 \
@@ -616,21 +643,11 @@ jq -e --arg sha "$SOURCE_SHA" 'keys == ["source_sha"] and .source_sha == $sha' \
   "$production_version" >/dev/null || \
   die "authoritative frontend does not serve the exact candidate SHA"
 
-auth_api_url="$(awk -F= '$1 == "FASTAPI_BASE_URL" {print $2; exit}' "$FRONTEND_ENV_FILE")"
-auth_supabase_url="$(awk -F= '$1 == "NEXT_PUBLIC_SUPABASE_URL" {print $2; exit}' "$FRONTEND_ENV_FILE")"
-[ -n "$auth_api_url" ] || die "FASTAPI_BASE_URL is required for post-alias auth smoke"
-[ -n "$auth_supabase_url" ] || die "NEXT_PUBLIC_SUPABASE_URL is required for post-alias auth smoke"
 if ! timeout --foreground 4m "$ROOT_DIR/deploy/smoke/auth-smoke.sh" \
   --app-url "https://${PRODUCTION_HOST}" \
   --api-url "$auth_api_url" \
   --supabase-url "$auth_supabase_url"; then
-  timeout --foreground 16m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
-    timeout --foreground 15m sudo env PYTHONDONTWRITEBYTECODE=1 \
-    "PYTHONPATH=${REMOTE_BUNDLE}/python" \
-    python3 -B "$REMOTE_CONTROLLER" fail-bound-frontend \
-      --source-sha "$SOURCE_SHA" \
-      --deployment-id "$bound_deployment_id"
-  die "post-alias auth smoke failed; release was settled for forward fix"
+  settle_auth_smoke_failure "$bound_deployment_id"
 fi
 
 timeout --foreground 16m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \

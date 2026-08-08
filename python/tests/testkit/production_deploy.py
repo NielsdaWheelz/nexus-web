@@ -22,6 +22,7 @@ ARTIFACT_ID = 8001
 BOUND_DEPLOYMENT_ID = "dpl_BoundCandidate"
 CURRENT_DEPLOYMENT_ID = "dpl_Current"
 PRODUCTION_HOST = "nexus.nielseriknandal.com"
+CANDIDATE_HOST = "bound-candidate.vercel.app"
 PROJECT_NAME = "nexus-web"
 PROJECT_ID = "prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs"
 TEAM_ID = "team_fKVvTyTsMBQ7qFjccFO17BJL"
@@ -181,7 +182,7 @@ def _fake_ssh(state: dict[str, Any], arguments: list[str]) -> None:
         print(_canonical_json(state["host_inspect"]), end="")
     elif "install-bundle" in command:
         state["bundle_installed"] = True
-    elif "fail-bound-frontend" in command:
+    elif "fail-bound-frontend" in command or "fail-auth-smoke" in command:
         phase = state["host_inspect"]["phase"]
         state["host_inspect"]["phase"] = (
             "RolledBack"
@@ -220,10 +221,16 @@ def _deployment(
     }
 
 
-def _fake_auth_smoke_curl(arguments: list[str], url: str) -> bool:
+def _fake_auth_smoke_curl(
+    state: dict[str, Any],
+    arguments: list[str],
+    url: str,
+) -> bool:
     parsed = urlparse(url)
-    if parsed.netloc not in {PRODUCTION_HOST, "api.nexus.example"}:
+    if parsed.netloc not in {PRODUCTION_HOST, CANDIDATE_HOST, "api.nexus.example"}:
         return False
+    candidate = parsed.netloc == CANDIDATE_HOST
+    candidate_failure = candidate and state.get("candidate_auth_smoke_failure")
     if parsed.path == "/version":
         return False
     output_flag = "--output" if "--output" in arguments else "-o"
@@ -246,15 +253,17 @@ def _fake_auth_smoke_curl(arguments: list[str], url: str) -> bool:
             status = 404
     elif parsed.path == "/lectern":
         status = 307
-        location = f"https://{PRODUCTION_HOST}/login"
+        location = f"https://{parsed.netloc}/login"
+    elif parsed.path == "/browse" and candidate_failure and "fixture-auth-token" in cookie:
+        status = 500
     elif parsed.path == "/browse":
         status = 307
         if "stale-project" in cookie:
-            location = f"https://{PRODUCTION_HOST}/login?next=%2Fbrowse"
+            location = f"https://{parsed.netloc}/login?next=%2Fbrowse"
         elif "fixture-auth-token" in cookie:
-            location = f"https://{PRODUCTION_HOST}/auth/session/recover?next=%2Fbrowse"
+            location = f"https://{parsed.netloc}/auth/session/recover?next=%2Fbrowse"
         else:
-            location = f"https://{PRODUCTION_HOST}/login?next=%2Fbrowse"
+            location = f"https://{parsed.netloc}/login?next=%2Fbrowse"
     elif parsed.path == "/auth/session/recover":
         status = 200
     elif parsed.path == "/auth/session/resolve":
@@ -269,7 +278,7 @@ def _fake_auth_smoke_curl(arguments: list[str], url: str) -> bool:
         location = "https://fixture.supabase.co/auth/v1/authorize?" + urlencode(
             {
                 "provider": provider,
-                "redirect_to": f"https://{PRODUCTION_HOST}/auth/callback",
+                "redirect_to": f"https://{parsed.netloc}/auth/callback",
             }
         )
 
@@ -323,7 +332,7 @@ def _fake_curl(state: dict[str, Any], arguments: list[str]) -> None:
     output_flag = "--output" if "--output" in arguments else "-o"
     output = Path(_argument(arguments, output_flag)) if output_flag in arguments else None
     url = next(argument for argument in arguments if argument.startswith("https://"))
-    if _fake_auth_smoke_curl(arguments, url):
+    if _fake_auth_smoke_curl(state, arguments, url):
         return
     assert output is not None
     if url == "https://api.supabase.com/v1/projects/fixture/config/auth":
@@ -519,6 +528,7 @@ class ProductionDeployHarness:
                 "bound_api_status": 200,
                 "bound_payload_mode": "normal",
                 "bound_ready_state": "READY",
+                "candidate_auth_smoke_failure": False,
                 "bundle_installed": host_inspect["status"] != "new",
                 "events": [],
                 "host_inspect": host_inspect,

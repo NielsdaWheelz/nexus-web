@@ -482,6 +482,28 @@ def test_bound_frontend_failure_settles_partial_activation_with_a_missing_writer
             assert state["containers"][service]["running"] is False
 
 
+def test_auth_smoke_failure_has_a_distinct_forward_fix_reason(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    release = _release_module()
+    harness = host_release_harness
+
+    interrupted = harness.run_apply(interrupt_phase="BackendActivationStarted")
+    assert interrupted.returncode == -signal.SIGKILL
+
+    settled = harness.run_fail_auth_smoke()
+
+    assert settled.returncode == 0, settled.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+    assert attempt.failure_code == "post-alias-auth-smoke-failed"
+    assert (
+        release.ReleaseStore(release.ReleasePaths.under(harness.root)).forward_fix_sha()
+        == SOURCE_SHA
+    )
+
+
 def test_host_apply_recovers_a_completed_migration_side_effect_without_reapplying_it(
     host_release_harness: HostReleaseHarness,
 ) -> None:
