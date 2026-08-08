@@ -390,6 +390,31 @@ def test_supabase_credentials_reject_a_cli_url_outside_the_recorded_runtime() ->
         )
 
 
+def test_supabase_start_failure_reports_redacted_output_and_container_state() -> None:
+    error = subprocess.CalledProcessError(
+        1,
+        ("supabase", "start"),
+        output=(
+            "DB URL: postgresql://postgres:db-password@127.0.0.1:25422/postgres\n"
+            '{"ANON_KEY":"anon-secret"}\n'
+        ),
+        stderr=("JWT secret: jwt-secret\nsupabase_auth_test container logs: auth failed"),
+    )
+
+    message = services._supabase_start_failure_message(
+        error,
+        "supabase_auth_test\tExited (1)\tpublic.ecr.aws/supabase/gotrue:latest\n",
+    )
+
+    assert "local Supabase failed to start" in message
+    assert "supabase_auth_test\tExited (1)" in message
+    assert "auth failed" in message
+    assert "[REDACTED]" in message
+    assert "db-password" not in message
+    assert "anon-secret" not in message
+    assert "jwt-secret" not in message
+
+
 def test_admin_invite_records_ownership_before_provider_creation_and_returns_email_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -41,6 +41,7 @@ from nexus_test_control.runtime import (
     ResourcePhase,
     RuntimeContractError,
     RuntimePorts,
+    RuntimeRecord,
     canonical_repo_root,
     claim_run,
     cleanup_candidates,
@@ -94,6 +95,7 @@ SUPABASE_EXCLUDED_SERVICES = (
 _PORT_DEFAULTS = (15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091)
 _EPHEMERAL_PORT_RANGE_PATH = Path("/proc/sys/net/ipv4/ip_local_port_range")
 _CONSERVATIVE_EPHEMERAL_PORT_RANGE = (32768, 65535)
+_SUPABASE_DIAGNOSTIC_TAIL_CHARS = 8192
 _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_DIR")
 _STATUS_KEYS = frozenset(
     {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
@@ -424,21 +426,82 @@ def _start_services(root: Path) -> None:
     )
     _wait_minio(f"http://127.0.0.1:{runtime.ports.minio}/minio/health/ready")
     _write_supabase_config(root)
+    start_command = (
+        "supabase",
+        "--workdir",
+        runtime.supabase_workdir,
+        "start",
+        "--exclude",
+        SUPABASE_EXCLUDED_SERVICES,
+    )
     try:
-        _run(
+        _run(start_command, cwd=root, capture_output=True)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeContractError(_supabase_start_failure(root, runtime, error)) from error
+
+
+def _supabase_start_failure(
+    root: Path,
+    runtime: RuntimeRecord,
+    error: subprocess.CalledProcessError,
+) -> str:
+    try:
+        containers = _run(
             (
-                "supabase",
-                "--workdir",
-                runtime.supabase_workdir,
-                "start",
-                "--exclude",
-                SUPABASE_EXCLUDED_SERVICES,
+                "docker",
+                "ps",
+                "--all",
+                "--filter",
+                f"label=com.supabase.cli.project={runtime.compose_project}",
+                "--format",
+                "{{.Names}}\t{{.Status}}\t{{.Image}}",
             ),
             cwd=root,
             capture_output=True,
+        ).stdout
+    except (subprocess.CalledProcessError, RuntimeContractError) as diagnostic_error:
+        containers = (
+            f"<container inspection failed: {_redact_supabase_output(str(diagnostic_error))}>"
         )
-    except subprocess.CalledProcessError:
-        raise RuntimeContractError("local Supabase failed to start") from None
+    return _supabase_start_failure_message(error, containers)
+
+
+def _supabase_start_failure_message(
+    error: subprocess.CalledProcessError,
+    containers: str | None,
+) -> str:
+    container_state = (containers or "").strip() or "<no Supabase containers found>"
+    return "\n".join(
+        (
+            "local Supabase failed to start",
+            f"supabase stdout:\n{_redact_supabase_output(error.stdout)}",
+            f"supabase stderr:\n{_redact_supabase_output(error.stderr)}",
+            f"Supabase container states:\n{_redact_supabase_output(container_state)}",
+        )
+    )
+
+
+def _redact_supabase_output(output: str | None) -> str:
+    if not output:
+        return "<empty>"
+    redacted = re.sub(
+        r"\beyJ[a-zA-Z0-9_-]{12,}\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b",
+        "[REDACTED_JWT]",
+        output,
+    )
+    redacted = re.sub(
+        r"(?i)([\"']?(?:anon[_ -]?key|publishable[_ -]?key|service[_ -]?role[_ -]?key|jwt[_ -]?secret|secret[_ -]?key|db[_ -]?url|password|access[_ -]?token)[\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,}]+)",
+        r"\1[REDACTED]",
+        redacted,
+    )
+    redacted = re.sub(
+        r"(?i)(postgres(?:ql)?://[^:\s]+:)[^@\s]+(@)",
+        r"\1[REDACTED]\2",
+        redacted,
+    )
+    if len(redacted) > _SUPABASE_DIAGNOSTIC_TAIL_CHARS:
+        redacted = "…" + redacted[-_SUPABASE_DIAGNOSTIC_TAIL_CHARS:]
+    return redacted.strip() or "<empty>"
 
 
 def read_supabase_credentials(
