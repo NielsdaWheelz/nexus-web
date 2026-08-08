@@ -24,7 +24,7 @@ def provider_config(repo_root: Path, **overrides: object) -> dict[str, object]:
         "security_manual_linking_enabled": True,
         "security_update_password_require_reauthentication": False,
         "refresh_token_rotation_enabled": True,
-        "refresh_token_reuse_interval": 10,
+        "security_refresh_token_reuse_interval": 10,
         "hook_after_user_created_enabled": False,
         "hook_before_user_created_enabled": False,
         "hook_custom_access_token_enabled": False,
