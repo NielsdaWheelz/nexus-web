@@ -360,10 +360,19 @@ SHA tags are discoverability only; production consumes manifest digests.
 5. Prove one resulting revision. Record `BackendActivationStarted`; start app
    services by digest with a bounded Compose health wait; then prove exact API
    body, both workers, shared task-contract digest, schema, and unchanged infra.
-6. Host `apply` stops at `AwaitingFrontendPromotion`. Local deploy promotes only
-   the bound Vercel ID, resolves the authoritative host, then calls host
-   `finalize --deployment-id`. Finalize re-proves public web/API, workers, DB,
-   images, and config before publishing record/current.
+6. Before host `apply` stops writers, the local deploy runs the candidate-safe
+   frontend auth smoke against the staged Vercel URL. This checks only
+   origin-independent redirects, recovery rendering, cache privacy, public
+   pages, and stale-cookie handling; it cannot use the production callback
+   allowlist from a generated candidate URL. A failure blocks before host
+   mutation.
+7. Host `apply` stops at `AwaitingFrontendPromotion`. Local deploy promotes only
+   the bound Vercel ID, resolves the authoritative host, and runs the full
+   post-alias auth smoke. If that smoke fails, it settles the attempt with
+   `post-alias-auth-smoke-failed` and stops writers for a forward fix; it never
+   mislabels an auth-oracle failure as a missing Vercel deployment. On success,
+   it calls host `finalize --deployment-id`. Finalize re-proves public web/API,
+   workers, DB, images, and config before publishing record/current.
 
 Rerunning `deploy.sh <sha>` is the only resume command. The root-owned installed
 bundle is authoritative for replay and current verification even after the CI

@@ -3340,6 +3340,32 @@ class HostRelease:
         deployment_id: str,
     ) -> ReleaseAttempt:
         """Settle an attempt whose immutable frontend deployment is permanently gone."""
+        return self._settle_frontend_failure(
+            source_sha=source_sha,
+            deployment_id=deployment_id,
+            failure_code="bound-frontend-unavailable",
+        )
+
+    def fail_auth_smoke(
+        self,
+        *,
+        source_sha: str,
+        deployment_id: str,
+    ) -> ReleaseAttempt:
+        """Settle a promoted attempt whose post-alias auth oracle failed."""
+        return self._settle_frontend_failure(
+            source_sha=source_sha,
+            deployment_id=deployment_id,
+            failure_code="post-alias-auth-smoke-failed",
+        )
+
+    def _settle_frontend_failure(
+        self,
+        *,
+        source_sha: str,
+        deployment_id: str,
+        failure_code: str,
+    ) -> ReleaseAttempt:
         self.store.assert_no_oracle_attempt()
         self.store.require_current_record()
         _require_match("Vercel deployment id", deployment_id, _DEPLOYMENT_ID)
@@ -3352,7 +3378,7 @@ class HostRelease:
             raise ReleaseBlocked("bound frontend failure cannot rewrite a terminal attempt")
         self._terminalize_attempt(
             source_sha,
-            failure_code="bound-frontend-unavailable",
+            failure_code=failure_code,
         )
         settled = self.store.load_attempt(source_sha)
         if settled is None or not settled.terminal:
@@ -4305,6 +4331,10 @@ def _parser() -> argparse.ArgumentParser:
     fail_frontend.add_argument("--source-sha", required=True)
     fail_frontend.add_argument("--deployment-id", required=True)
 
+    fail_auth_smoke = commands.add_parser("fail-auth-smoke")
+    fail_auth_smoke.add_argument("--source-sha", required=True)
+    fail_auth_smoke.add_argument("--deployment-id", required=True)
+
     verify = commands.add_parser("verify-current")
     verify.add_argument("--source-sha", required=True)
 
@@ -4423,6 +4453,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "fail-bound-frontend":
             attempt = controller.fail_bound_frontend(
+                source_sha=args.source_sha,
+                deployment_id=args.deployment_id,
+            )
+            sys.stdout.buffer.write(
+                _canonical_json({"source_sha": attempt.source_sha, "phase": attempt.phase.value})
+            )
+            return 0
+        if args.command == "fail-auth-smoke":
+            attempt = controller.fail_auth_smoke(
                 source_sha=args.source_sha,
                 deployment_id=args.deployment_id,
             )

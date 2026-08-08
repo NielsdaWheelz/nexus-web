@@ -110,6 +110,31 @@ def test_deploy_uses_existing_current_record_and_artifact_owner_publisher(
     assert len(promotions) == 1
 
 
+def test_staged_frontend_auth_smoke_blocks_host_activation(
+    tmp_path: Path,
+) -> None:
+    harness = _harness(
+        tmp_path,
+        inspect=_inspect(
+            status="new",
+            current_sha=CURRENT_SHA,
+            current_deployment_id=CURRENT_DEPLOYMENT_ID,
+        ),
+        authoritative_id=CURRENT_DEPLOYMENT_ID,
+    )
+    harness.update_state(candidate_auth_smoke_failure=True)
+
+    failed = harness.run()
+
+    assert failed.returncode != 0
+    assert "staged frontend auth smoke failed before host activation" in failed.stderr
+    state = harness.state()
+    ssh = _joined_events(state, "ssh")
+    assert not any(" apply " in f" {command} " for command in ssh)
+    assert not any(" fail-auth-smoke " in f" {command} " for command in ssh)
+    assert not any("promote" in arguments for arguments in _events(state, "node"))
+
+
 @pytest.mark.parametrize(
     ("authoritative_id", "forward_fix_sha", "failed_deployment_ids", "promotes"),
     [

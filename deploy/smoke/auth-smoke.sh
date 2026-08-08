@@ -4,6 +4,7 @@ set -euo pipefail
 APP_URL="${NEXUS_SMOKE_APP_URL:-}"
 API_URL="${NEXUS_SMOKE_API_URL:-}"
 SUPABASE_URL="${NEXUS_SMOKE_SUPABASE_URL:-}"
+FRONTEND_ONLY=0
 
 die() {
   echo "error: $*" >&2
@@ -42,6 +43,9 @@ Required (flag or env):
                                               cookie the boundary parser reads,
                                               so the crafted expired cookie is
                                               one the deployed app interprets.
+  --frontend-only                             Candidate-safe frontend contract.
+                                              Omits checks that require the
+                                              production callback origin or API.
 
 Local tools:
   curl and python3 are required.
@@ -65,6 +69,10 @@ while [ $# -gt 0 ]; do
       SUPABASE_URL="$2"
       shift 2
       ;;
+    --frontend-only)
+      FRONTEND_ONLY=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -76,7 +84,8 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$APP_URL" ] || die "set --app-url or NEXUS_SMOKE_APP_URL"
-[ -n "$API_URL" ] || die "set --api-url or NEXUS_SMOKE_API_URL"
+[ "$FRONTEND_ONLY" = "1" ] || [ -n "$API_URL" ] || \
+  die "set --api-url or NEXUS_SMOKE_API_URL"
 [ -n "$SUPABASE_URL" ] || die "set --supabase-url or NEXUS_SMOKE_SUPABASE_URL"
 command -v curl >/dev/null 2>&1 || die "curl is not installed"
 command -v python3 >/dev/null 2>&1 || die "python3 is not installed"
@@ -451,7 +460,7 @@ PY
 
 echo "Auth production smoke check"
 echo "  app: ${APP_URL}"
-echo "  api: ${API_URL}"
+[ "$FRONTEND_ONLY" = "1" ] || echo "  api: ${API_URL}"
 echo
 
 invalid_cookie="$(build_invalid_cookie)"
@@ -488,12 +497,13 @@ else
 fi
 assert_session_cache_headers "recovery surface" "$recovery_headers" "rendered-page"
 
-resolve_headers="${temporary}/resolve.headers"
-resolve_body="${temporary}/resolve.body"
-status="$(request_with_capture POST "${APP_URL}/auth/session/resolve" "$invalid_cookie" "$resolve_headers" "$resolve_body")"
-if [ "$status" != "401" ] || [ -n "$(header_value "$resolve_headers" Location)" ]; then
-  fail "invalid cookie resolver must terminally return 401 without redirect"
-elif ! python3 - "$resolve_headers" "$AUTH_COOKIE_PREFIX" <<'PY'
+if [ "$FRONTEND_ONLY" = "0" ]; then
+  resolve_headers="${temporary}/resolve.headers"
+  resolve_body="${temporary}/resolve.body"
+  status="$(request_with_capture POST "${APP_URL}/auth/session/resolve" "$invalid_cookie" "$resolve_headers" "$resolve_body")"
+  if [ "$status" != "401" ] || [ -n "$(header_value "$resolve_headers" Location)" ]; then
+    fail "invalid cookie resolver must terminally return 401 without redirect"
+  elif ! python3 - "$resolve_headers" "$AUTH_COOKIE_PREFIX" <<'PY'
 import sys
 
 prefix = "set-cookie: " + sys.argv[2].lower()
@@ -504,12 +514,13 @@ cookies = [
 ]
 raise SystemExit(0 if cookies and all("max-age=0" in cookie for cookie in cookies) else 1)
 PY
-then
-  fail "terminal resolver did not expire every emitted auth cookie"
-else
-  pass "invalid cookie resolves once and terminally clears cookies"
+  then
+    fail "terminal resolver did not expire every emitted auth cookie"
+  else
+    pass "invalid cookie resolves once and terminally clears cookies"
+  fi
+  assert_session_cache_headers "terminal resolver" "$resolve_headers"
 fi
-assert_session_cache_headers "terminal resolver" "$resolve_headers"
 
 # Public pages return 200.
 for path in $PUBLIC_PATHS; do
@@ -521,29 +532,33 @@ for path in $PUBLIC_PATHS; do
   fi
 done
 
-for provider in google github; do
-  IFS=$'\t' read -r status location < <(
-    http_status_and_location "${APP_URL}/auth/oauth?provider=${provider}"
-  )
-  assert_oauth_start "$provider" "$status" "$location"
-done
+if [ "$FRONTEND_ONLY" = "0" ]; then
+  for provider in google github; do
+    IFS=$'\t' read -r status location < <(
+      http_status_and_location "${APP_URL}/auth/oauth?provider=${provider}"
+    )
+    assert_oauth_start "$provider" "$status" "$location"
+  done
+fi
 
-# Anonymous BFF route returns JSON 401 E_UNAUTHENTICATED.
-status="$(http_status "${APP_URL}${BFF_PATH}")"
-body="$(http_body "${APP_URL}${BFF_PATH}")"
-assert_bff_unauthenticated \
-  "anonymous BFF route ${BFF_PATH} returns 401 E_UNAUTHENTICATED" \
-  "$status" "$body"
+if [ "$FRONTEND_ONLY" = "0" ]; then
+  # Anonymous BFF route returns JSON 401 E_UNAUTHENTICATED.
+  status="$(http_status "${APP_URL}${BFF_PATH}")"
+  body="$(http_body "${APP_URL}${BFF_PATH}")"
+  assert_bff_unauthenticated \
+    "anonymous BFF route ${BFF_PATH} returns 401 E_UNAUTHENTICATED" \
+    "$status" "$body"
 
-# Terminal-cookie BFF route returns JSON 401 E_UNAUTHENTICATED and is private.
-bff_headers="${temporary}/bff.headers"
-bff_body="${temporary}/bff.body"
-status="$(request_with_capture GET "${APP_URL}${BFF_PATH}" "$invalid_cookie" "$bff_headers" "$bff_body")"
-body="$(<"$bff_body")"
-assert_bff_unauthenticated \
-  "terminal-cookie BFF route ${BFF_PATH} returns 401 E_UNAUTHENTICATED" \
-  "$status" "$body"
-assert_session_cache_headers "terminal-cookie BFF route" "$bff_headers"
+  # Terminal-cookie BFF route returns JSON 401 E_UNAUTHENTICATED and is private.
+  bff_headers="${temporary}/bff.headers"
+  bff_body="${temporary}/bff.body"
+  status="$(request_with_capture GET "${APP_URL}${BFF_PATH}" "$invalid_cookie" "$bff_headers" "$bff_body")"
+  body="$(<"$bff_body")"
+  assert_bff_unauthenticated \
+    "terminal-cookie BFF route ${BFF_PATH} returns 401 E_UNAUTHENTICATED" \
+    "$status" "$body"
+  assert_session_cache_headers "terminal-cookie BFF route" "$bff_headers"
+fi
 
 # A stale cookie for another Supabase project is not a session and must neither
 # enter recovery nor mutate the current project's cookies.
@@ -559,20 +574,22 @@ else
   pass "stale project cookie does not mutate current-project auth cookies"
 fi
 
-# /docs is not reachable in production.
-status="$(http_status "${API_URL}/docs")"
-if [ "$status" = "404" ]; then
-  pass "/docs is not reachable in production (404)"
-else
-  fail "/docs is reachable in production (${status})"
-fi
+if [ "$FRONTEND_ONLY" = "0" ]; then
+  # /docs is not reachable in production.
+  status="$(http_status "${API_URL}/docs")"
+  if [ "$status" = "404" ]; then
+    pass "/docs is not reachable in production (404)"
+  else
+    fail "/docs is reachable in production (${status})"
+  fi
 
-# The API readiness endpoint returns 200.
-status="$(http_status "${API_URL}/readyz")"
-if [ "$status" = "200" ]; then
-  pass "API readiness endpoint returns 200"
-else
-  fail "API readiness endpoint: expected 200, got ${status}"
+  # The API readiness endpoint returns 200.
+  status="$(http_status "${API_URL}/readyz")"
+  if [ "$status" = "200" ]; then
+    pass "API readiness endpoint returns 200"
+  else
+    fail "API readiness endpoint: expected 200, got ${status}"
+  fi
 fi
 
 echo
