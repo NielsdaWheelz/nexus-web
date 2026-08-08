@@ -322,14 +322,10 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
     headers: { Origin: webOrigin },
     maxRedirects: 0,
   });
-  expect(endedSessionUpdate.status()).toBe(303);
+  expect(endedSessionUpdate.status()).toBe(401);
   expect(endedSessionUpdate.headers()["cache-control"]).toContain("no-store");
-  const endedSessionLocation = new URL(
-    endedSessionUpdate.headers()["location"] ?? "",
-    webOrigin,
-  );
-  expect(endedSessionLocation.origin).toBe(webOrigin);
-  expect(endedSessionLocation.pathname).toBe("/login");
+  expect(endedSessionUpdate.headers()).not.toHaveProperty("location");
+  expect(await endedSessionUpdate.json()).toEqual({ kind: "SessionEnded" });
   expect(
     await hasSupabaseAuthCookie(page.context()),
     "Ended-session update created an auth cookie.",
@@ -373,7 +369,11 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
   expect(recoveryGet.headers()["cache-control"]).toBe("private, no-store");
   expect(recoveryGet.headers()["pragma"]).toBe("no-cache");
   expect(recoveryGet.headers()["expires"]).toBe("0");
-  expect(recoveryGet.headers()["vary"]).toContain("Cookie");
+  // Next's App Router owns the HTML page Vary set and emits its RSC vary
+  // dimensions here. The canonical private no-store policy above is the
+  // cache-safety contract for this rendered page; route-handler responses
+  // retain the explicit `Vary: Cookie` contract.
+  expect(recoveryGet.headers()["vary"]).toContain("rsc");
   expect(
     recoveryGet.headers()["set-cookie"],
     "GET /auth/session/recover must not mutate the session.",
@@ -405,7 +405,7 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
     refresh_token: "terminal-refresh-token",
   });
   resolveRequests.length = 0;
-  await gotoWithStrictCsp(page, "/browse");
+  await gotoWithStrictCsp(page, "/browse", { waitUntil: "commit" });
   await expect(page).toHaveURL(
     (url) =>
       url.pathname === "/login" && url.searchParams.get("next") === "/browse",

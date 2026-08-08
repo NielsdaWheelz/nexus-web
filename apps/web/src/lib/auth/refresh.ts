@@ -19,6 +19,10 @@ import {
 import { type CookieToSet } from "@/lib/supabase/types";
 
 const TERMINAL_CODES = new Set([
+  // Supabase local/hosted Auth can report an invalid refresh-grant value as
+  // validation_failed. This is terminal only at this internal refresh
+  // boundary; every other provider operation keeps its own classification.
+  "validation_failed",
   "refresh_token_not_found",
   "refresh_token_already_used",
   "session_not_found",

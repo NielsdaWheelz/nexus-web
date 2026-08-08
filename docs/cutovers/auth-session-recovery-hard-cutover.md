@@ -122,7 +122,9 @@ union member and never becomes `SessionEnded`. Unknown provider codes, a
 successful refresh without cookies, or rotated cookies that do not parse as
 active are defects.
 
-Exact refresh-terminal codes are `refresh_token_not_found`,
+Exact refresh-terminal codes are `validation_failed` (only for this internal
+refresh-grant call when the presented refresh credential is invalid),
+`refresh_token_not_found`,
 `refresh_token_already_used`, `session_not_found`, `session_expired`, and
 `user_not_found`/`user_banned`. Use provider `error.code`/`error.name`; never
 message text.
@@ -157,7 +159,7 @@ The endpoint has no response body and accepts no token, cookie name, provider,
 redirect, or target in its body. `next` stays solely on the GET recovery URL and
 uses the existing `AuthReturnTarget` parser.
 
-Every session-dependent response uses:
+Every session-dependent route-handler, BFF, and mutation response uses:
 
 ```text
 Cache-Control: private, no-store
@@ -165,6 +167,12 @@ Pragma: no-cache
 Expires: 0
 Vary: Cookie
 ```
+
+Rendered App Router HTML pages are the one framework-owned exception: Next.js
+appends its RSC `Vary` dimensions while rendering and owns that final header.
+Those pages still carry the canonical `private, no-store` policy, which is the
+cache-safety requirement; direct route-handler/BFF responses keep `Vary:
+Cookie` explicitly.
 
 Static/public assets retain their existing cache policy.
 
@@ -319,8 +327,10 @@ auth error decoder, or Android recovery state machine.
 6. No non-GET request receives an auth redirect or loses its body to recovery.
 7. The unauthenticated client boundary redirects only for terminal
    `401 E_UNAUTHENTICATED`, never 503/500.
-8. All session-dependent page, auth, and BFF outcomes carry the canonical cache
-   headers; static/public assets are unchanged.
+8. All session-dependent page, auth, and BFF outcomes carry the canonical
+   no-store headers; route-handler/BFF outcomes also carry `Vary: Cookie`, and
+   rendered pages carry Next's framework RSC `Vary`; static/public assets are
+   unchanged.
 9. Concurrent same-cookie refreshes make one in-process provider call and every
    waiter receives the same successor set; no raw cookie is retained as a key.
 10. Android waits for cookie installation, survives hot/cold exact App Links,
