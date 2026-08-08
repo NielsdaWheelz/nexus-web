@@ -21,9 +21,13 @@ import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceError
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -46,18 +50,104 @@ import app.nexus.android.playback.NexusPlayerBridge
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import java.net.URI
+import java.net.URLDecoder
+import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.nio.charset.StandardCharsets
+
+internal sealed interface RedirectLoopAction {
+    data class Recover(val url: String) : RedirectLoopAction
+    data object Terminal : RedirectLoopAction
+}
+
+internal class RedirectLoopCircuit {
+    private var recoveryEntered = false
+    private var recoverySurfaceLoaded = false
+    private var failedUrl: String? = null
+
+    fun onRedirectLoop(failedUrl: String?, baseUrl: String): RedirectLoopAction {
+        if (recoveryEntered) {
+            return RedirectLoopAction.Terminal
+        }
+        recoveryEntered = true
+        this.failedUrl = failedUrl
+        recoverySurfaceLoaded = false
+        val failed = failedUrl?.let(::parseUri)
+        val requestedNext = if (failed?.path?.startsWith("/auth/") == true) {
+            failed.queryParameter("next")
+        } else {
+            failed?.rawPath?.let { path ->
+                path + (failed.rawQuery?.let { "?$it" } ?: "")
+            }
+        }
+        val next = requestedNext?.takeIf {
+            it.startsWith("/") && !it.startsWith("//") && !it.startsWith("/auth/")
+        } ?: DEFAULT_AUTH_RETURN_TARGET
+        val recoveryUrl = URI(baseUrl).resolve("/auth/session/recover")
+        return RedirectLoopAction.Recover(
+            "$recoveryUrl?next=${URLEncoder.encode(next, StandardCharsets.UTF_8.name())}",
+        )
+    }
+
+    fun onSuccessfulNavigation(url: String?) {
+        val parsed = url?.let(::parseUri) ?: return
+        if (parsed.path == "/auth/session/recover") {
+            recoverySurfaceLoaded = true
+            return
+        }
+        if (parsed.path?.startsWith("/auth/") == true) {
+            return
+        }
+        if (!recoverySurfaceLoaded && url == failedUrl) {
+            return
+        }
+        recoveryEntered = false
+        recoverySurfaceLoaded = false
+        failedUrl = null
+    }
+
+    fun reset() {
+        recoveryEntered = false
+        recoverySurfaceLoaded = false
+        failedUrl = null
+    }
+
+    private fun parseUri(value: String): URI? =
+        runCatching { URI(value) }.getOrNull()
+
+    private fun URI.queryParameter(name: String): String? =
+        rawQuery
+            ?.split('&')
+            ?.asSequence()
+            ?.mapNotNull { part ->
+                val separator = part.indexOf('=')
+                val key = if (separator >= 0) part.substring(0, separator) else part
+                if (decode(key) != name) {
+                    return@mapNotNull null
+                }
+                decode(if (separator >= 0) part.substring(separator + 1) else "")
+            }
+            ?.firstOrNull()
+
+    private fun decode(value: String): String? =
+        runCatching { URLDecoder.decode(value, StandardCharsets.UTF_8.name()) }.getOrNull()
+}
 
 @OptIn(UnstableApi::class)
 class MainActivity : AppCompatActivity() {
     internal lateinit var webView: WebView
     internal lateinit var shellChromeClient: WebChromeClient
+    private lateinit var root: FrameLayout
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private val nexusBaseUri = Uri.parse(BuildConfig.NEXUS_BASE_URL)
     internal var pendingHandoffVerifier: String? = null
     private val googleSignInController by lazy { GoogleSignInController(this) }
     private lateinit var offlineMediaCapability: OfflineMediaWebCapability
+    private val redirectLoopCircuit = RedirectLoopCircuit()
+    private var redirectLoopTerminal: View? = null
+    private var redirectLoopRetryUrl: String? = null
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -134,11 +224,39 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 CookieManager.getInstance().flush()
+                redirectLoopCircuit.onSuccessfulNavigation(url)
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 offlineMediaCapability.onPageStarted()
                 playerBridge.onPageStarted()
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?,
+            ) {
+                if (
+                    request?.isForMainFrame != true ||
+                    error?.errorCode != WebViewClient.ERROR_REDIRECT_LOOP
+                ) {
+                    return
+                }
+                view?.stopLoading()
+                when (
+                    val action = redirectLoopCircuit.onRedirectLoop(
+                        request?.url?.toString() ?: view?.url,
+                        BuildConfig.NEXUS_BASE_URL,
+                    )
+                ) {
+                    is RedirectLoopAction.Recover -> {
+                        redirectLoopRetryUrl = action.url
+                        removeRedirectLoopTerminal()
+                        webView.loadUrl(action.url)
+                    }
+                    RedirectLoopAction.Terminal -> showRedirectLoopTerminal()
+                }
             }
         }
 
@@ -223,7 +341,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.BLACK)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
-        val root = FrameLayout(this).apply {
+        root = FrameLayout(this).apply {
             addView(
                 webView,
                 FrameLayout.LayoutParams(
@@ -310,6 +428,45 @@ class MainActivity : AppCompatActivity() {
         webView.onResume()
         webView.resumeTimers()
         playerBridge.onResume()
+    }
+
+    private fun showRedirectLoopTerminal() {
+        if (redirectLoopTerminal != null) {
+            return
+        }
+        val terminal = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(48, 48, 48, 48)
+            setBackgroundColor(Color.BLACK)
+            addView(TextView(this@MainActivity).apply {
+                text = "Nexus could not restore this session."
+                setTextColor(Color.WHITE)
+                textSize = 18f
+            })
+            addView(Button(this@MainActivity).apply {
+                text = "Retry"
+                setOnClickListener {
+                    val retryUrl = redirectLoopRetryUrl ?: return@setOnClickListener
+                    redirectLoopCircuit.reset()
+                    removeRedirectLoopTerminal()
+                    webView.loadUrl(retryUrl)
+                }
+            })
+        }
+        redirectLoopTerminal = terminal
+        root.addView(
+            terminal,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+    }
+
+    private fun removeRedirectLoopTerminal() {
+        redirectLoopTerminal?.let(root::removeView)
+        redirectLoopTerminal = null
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

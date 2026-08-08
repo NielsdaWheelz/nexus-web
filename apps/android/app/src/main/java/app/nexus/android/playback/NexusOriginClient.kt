@@ -1,7 +1,12 @@
 package app.nexus.android.playback
 
+import android.os.Handler
+import android.os.Looper
 import android.webkit.CookieManager
 import app.nexus.android.BuildConfig
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
@@ -40,7 +45,7 @@ internal interface NexusOriginTransport {
 
 internal interface NexusCookieStore {
     fun cookiesFor(url: String): String?
-    fun install(url: String, setCookie: String)
+    suspend fun install(url: String, setCookie: String)
     fun flush()
 }
 
@@ -50,12 +55,32 @@ private class WebViewCookieStore : NexusCookieStore {
     private val manager: CookieManager by lazy(LazyThreadSafetyMode.NONE) {
         CookieManager.getInstance()
     }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun cookiesFor(url: String): String? = manager.getCookie(url)
 
-    override fun install(url: String, setCookie: String) {
-        manager.setCookie(url, setCookie)
-    }
+    override suspend fun install(url: String, setCookie: String) =
+        suspendCancellableCoroutine { continuation ->
+            val posted = mainHandler.post {
+                manager.setCookie(url, setCookie) { accepted ->
+                    if (!continuation.isActive) {
+                        return@setCookie
+                    }
+                    if (accepted) {
+                        continuation.resume(Unit)
+                    } else {
+                        continuation.resumeWithException(
+                            IOException("WebView rejected owned-origin cookie"),
+                        )
+                    }
+                }
+            }
+            if (!posted && continuation.isActive) {
+                continuation.resumeWithException(
+                    IOException("WebView cookie acknowledgement could not be scheduled"),
+                )
+            }
+        }
 
     override fun flush() {
         manager.flush()
@@ -155,24 +180,28 @@ internal class NexusOriginClient(
                 }
 
                 override fun onResponse(call: Call, response: Response) {
-                    val result = runCatching {
-                        response.use { decodeResponse(it) }
+                    CoroutineScope(continuation.context + Dispatchers.IO).launch {
+                        try {
+                            val result = response.use { decodeResponse(it) }
+                            if (continuation.isActive) {
+                                continuation.resume(result)
+                            }
+                        } catch (error: Throwable) {
+                            if (continuation.isActive) {
+                                continuation.resumeWithException(error)
+                            }
+                        }
                     }
-                    if (!continuation.isActive) {
-                        return
-                    }
-                    result.fold(
-                        onSuccess = { continuation.resume(it) },
-                        onFailure = { continuation.resumeWithException(it) },
-                    )
                 }
             }
         )
     }
 
-    private fun decodeResponse(response: Response): NexusOriginResponse {
+    private suspend fun decodeResponse(response: Response): NexusOriginResponse {
         val setCookies = response.headers("Set-Cookie")
-        setCookies.forEach { cookies.install(origin, it) }
+        for (setCookie in setCookies) {
+            cookies.install(origin, setCookie)
+        }
         if (setCookies.isNotEmpty()) {
             cookies.flush()
         }

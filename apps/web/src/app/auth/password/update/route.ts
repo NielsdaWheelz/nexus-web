@@ -1,28 +1,26 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
 import { getSessionVerification } from "@/lib/auth/dal";
 import {
   authFormFailure,
   readSameOriginAuthForm,
 } from "@/lib/auth/form-response";
 import { parsePasswordUpdateForm } from "@/lib/auth/form-fields";
-import { SESSION_ENDED_MESSAGE } from "@/lib/auth/messages";
-import { noStore } from "@/lib/auth/no-store";
 import { updatePasswordFlow } from "@/lib/auth/password-flow";
 import { refreshSession } from "@/lib/auth/refresh";
 import {
   authReturnTargetToHref,
-  buildLoginUrl,
   isDefaultAuthReturnTarget,
   parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
-import { applyRotatedCookies } from "@/lib/auth/rotated-cookies";
 import {
-  clearSupabaseAuthCookies,
-  getSupabaseAuthCookieNames,
-} from "@/lib/auth/session-cookie";
+  AuthDependencyError,
+  finalizeSessionResponse,
+  type SessionEffect,
+} from "@/lib/auth/session-response";
+import { getSupabaseAuthCookieNames } from "@/lib/auth/session-cookie";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
-import type { CookieToSet } from "@/lib/supabase/types";
 
 export const runtime = "nodejs";
 
@@ -41,135 +39,160 @@ function buildPasswordSurfaceUrl(
   return url;
 }
 
-function passwordSurfaceReturnTarget(
-  origin: string,
-  target: ReturnType<typeof parseAuthReturnTarget>,
-): ReturnType<typeof parseAuthReturnTarget> {
-  const url = buildPasswordSurfaceUrl(origin, target, false);
-  return parseAuthReturnTarget(`${url.pathname}${url.search}`);
+function sessionEndedResponse(effect: SessionEffect): NextResponse {
+  return finalizeSessionResponse(
+    NextResponse.json({ kind: "SessionEnded" }, { status: 401 }),
+    effect,
+  );
+}
+
+function internalResponse(): NextResponse {
+  return NextResponse.json(
+    { error: { code: "E_INTERNAL", message: "Password update failed" } },
+    { status: 500 },
+  );
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const origin = resolveCallbackRedirectOrigin(request);
+  if (request.headers.get("origin") !== origin) {
+    return authFormFailure({
+      body: { kind: "Forbidden" },
+      status: 403,
+    });
+  }
+
+  const requestCookieNames = getSupabaseAuthCookieNames(
+    (await cookies()).getAll(),
+  );
+  let sessionEffect: SessionEffect = { kind: "Preserve" };
+  let verification: Awaited<ReturnType<typeof getSessionVerification>>;
+  try {
+    verification = await getSessionVerification();
+  } catch (error) {
+    if (error instanceof AuthDependencyError) {
+      return finalizeSessionResponse(
+        authFormFailure({ body: { kind: "ServiceUnavailable" }, status: 503 }),
+        sessionEffect,
+      );
+    }
+    return finalizeSessionResponse(internalResponse(), sessionEffect);
+  }
+
+  switch (verification.kind) {
+    case "Verified":
+      break;
+    case "Anonymous":
+      return sessionEndedResponse(sessionEffect);
+    case "SessionEnded":
+      return sessionEndedResponse({
+        kind: "Clear",
+        cookieNames: verification.cookieNames,
+        feedback: true,
+      });
+    case "RefreshRequired": {
+      let refreshed: Awaited<ReturnType<typeof refreshSession>>;
+      try {
+        refreshed = await refreshSession();
+      } catch (error) {
+        if (error instanceof AuthDependencyError) {
+          return finalizeSessionResponse(
+            authFormFailure({ body: { kind: "ServiceUnavailable" }, status: 503 }),
+            sessionEffect,
+          );
+        }
+        return finalizeSessionResponse(internalResponse(), sessionEffect);
+      }
+      switch (refreshed.kind) {
+        case "SessionEnded":
+          return sessionEndedResponse({
+            kind: "Clear",
+            cookieNames: [
+              ...new Set([
+                ...requestCookieNames,
+                ...refreshed.cookieNames,
+              ]),
+            ],
+            feedback: true,
+          });
+        case "Refreshed":
+          sessionEffect = {
+            kind: "Rotate",
+            cookiesToSet: refreshed.cookiesToSet,
+          };
+          break;
+      }
+      break;
+    }
+  }
+
   const requestForm = await readSameOriginAuthForm(request);
   if (requestForm.kind === "Rejected") {
-    return requestForm.response;
+    return finalizeSessionResponse(requestForm.response, sessionEffect);
   }
 
   const form = parsePasswordUpdateForm(requestForm.formData);
   if (!form || !form.password) {
-    return authFormFailure({
-      body: { kind: "InvalidRequest" },
-      status: 400,
-    });
+    return finalizeSessionResponse(
+      authFormFailure({ body: { kind: "InvalidRequest" }, status: 400 }),
+      sessionEffect,
+    );
   }
 
   const target = parseAuthReturnTarget(form.next);
-  const verification = await getSessionVerification();
-  let rotatedCookies: CookieToSet[] = [];
-  switch (verification.kind) {
-    case "Verified":
-      break;
-    case "RefreshRequired": {
-      // The password exists only in this POST body. Refresh inline so an
-      // expired access token cannot redirect through GET and silently discard
-      // the mutation the user just submitted.
-      const refreshed = await refreshSession();
-      if (refreshed.status === "failed") {
-        if (refreshed.reason === "timeout") {
-          return authFormFailure({
-            body: { kind: "ServiceUnavailable" },
-            status: 503,
-          });
-        }
-        const response = noStore(
-          NextResponse.redirect(
-            buildLoginUrl(
-              requestForm.origin,
-              passwordSurfaceReturnTarget(requestForm.origin, target),
-              { errorDescription: SESSION_ENDED_MESSAGE },
-            ),
-            { status: 303 },
-          ),
-        );
-        const requestCookies = (await cookies()).getAll();
-        clearSupabaseAuthCookies(
-          response,
-          getSupabaseAuthCookieNames(requestCookies),
-        );
-        return response;
-      }
-      rotatedCookies = refreshed.cookiesToSet;
-      break;
-    }
-    case "SignInRequired": {
-      const response = noStore(
-        NextResponse.redirect(
-          buildLoginUrl(
-            requestForm.origin,
-            passwordSurfaceReturnTarget(requestForm.origin, target),
-            { errorDescription: SESSION_ENDED_MESSAGE },
-          ),
-          { status: 303 },
-        ),
-      );
-      clearSupabaseAuthCookies(response, verification.cookieNames);
-      return response;
-    }
-  }
-  const auth = await createRouteHandlerClient();
-  const outcome = await updatePasswordFlow({
-    supabase: auth.supabase,
-    password: form.password,
-  });
-  await auth.settlePendingCookieWrites();
-
-  function applySessionCookies(response: NextResponse): NextResponse {
-    // Refresh cookies establish the session used for this mutation. Any later
-    // auth-state cookies emitted by updateUser win for the same cookie name.
-    applyRotatedCookies(response, rotatedCookies);
-    return auth.applyCookies(response);
+  const auth = await createRouteHandlerClient(
+    sessionEffect.kind === "Rotate" ? sessionEffect.cookiesToSet : [],
+  );
+  let outcome: Awaited<ReturnType<typeof updatePasswordFlow>>;
+  try {
+    outcome = await updatePasswordFlow({
+      supabase: auth.supabase,
+      password: form.password,
+    });
+    await auth.settlePendingCookieWrites();
+  } catch {
+    return auth.applyCookies(internalResponse(), sessionEffect);
   }
 
   switch (outcome.kind) {
-    case "Saved": {
-      const successUrl = buildPasswordSurfaceUrl(
-        requestForm.origin,
-        target,
-        true,
-      );
-      return applySessionCookies(
-        noStore(NextResponse.redirect(successUrl, { status: 303 })),
-      );
-    }
-    case "PolicyRejected":
-      return applySessionCookies(
-        authFormFailure({ body: outcome, status: 400 }),
-      );
-    case "SessionEnded": {
-      const response = noStore(
+    case "Saved":
+      return auth.applyCookies(
         NextResponse.redirect(
-          buildLoginUrl(
-            requestForm.origin,
-            passwordSurfaceReturnTarget(requestForm.origin, target),
-            { errorDescription: SESSION_ENDED_MESSAGE },
-          ),
+          buildPasswordSurfaceUrl(requestForm.origin, target, true),
           { status: 303 },
         ),
+        sessionEffect,
       );
-      const requestCookies = (await cookies()).getAll();
-      clearSupabaseAuthCookies(
-        response,
-        getSupabaseAuthCookieNames(requestCookies),
+    case "PolicyRejected":
+      return auth.applyCookies(
+        authFormFailure({ body: outcome, status: 400 }),
+        sessionEffect,
       );
-      return response;
-    }
+    case "SessionEnded":
+      return auth.applyCookies(
+        NextResponse.json({ kind: "SessionEnded" }, { status: 401 }),
+        {
+          kind: "Clear",
+          cookieNames: [
+            ...new Set([
+              ...requestCookieNames,
+              ...(sessionEffect.kind === "Rotate"
+                ? sessionEffect.cookiesToSet.map(({ name }) => name)
+                : []),
+            ]),
+          ],
+          feedback: true,
+        },
+      );
     case "RateLimited":
-      return applySessionCookies(
+      return auth.applyCookies(
         authFormFailure({ body: outcome, status: 429 }),
+        sessionEffect,
       );
     case "ServiceUnavailable":
-      return applySessionCookies(
+      return auth.applyCookies(
         authFormFailure({ body: outcome, status: 503 }),
+        sessionEffect,
       );
   }
 

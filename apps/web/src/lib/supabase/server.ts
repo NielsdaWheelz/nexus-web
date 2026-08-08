@@ -1,8 +1,9 @@
 /**
- * Server-side Supabase client for Next.js route handlers and server components.
+ * Writable server-side Supabase client for Next.js route handlers and server
+ * actions.
  *
  * This client uses cookies for session management and should only be used
- * on the server side (route handlers, server components, middleware).
+ * on the server side (route handlers and server actions).
  *
  * Security:
  * - Access tokens are never exposed to the browser
@@ -18,7 +19,7 @@ import {
 import { type CookieToSet } from "./types";
 
 /**
- * Create a Supabase client for server-side operations.
+ * Create a writable Supabase client for response-owning server operations.
  *
  * Uses cookies for session management. The access token is extracted
  * from the session for forwarding to FastAPI.
@@ -35,24 +36,46 @@ export async function createClient() {
           return cookieStore.getAll();
         },
         setAll(cookiesToSet: CookieToSet[]) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }: CookieToSet) =>
-              cookieStore.set(name, value, options)
-            );
-          } catch (error) {
-            if (!(error instanceof Error)) {
-              throw error;
-            }
-            // justify-ignore-error: a Server Component cannot mutate cookies.
-            // Middleware and route handlers that own the response refresh and
-            // rotate the same session cookies, so the write is safely dropped
-            // here.
-          }
+          cookiesToSet.forEach(({ name, value, options }: CookieToSet) =>
+            cookieStore.set(name, value, options)
+          );
         },
       },
       global: {
         fetch: createSupabaseDeadlineFetch("Supabase auth operation timed out"),
       },
     }
+  );
+}
+
+/**
+ * Create the verifier client used by Server Components.
+ *
+ * Server Components may inspect and cryptographically verify the incoming
+ * access token, but they do not own the response and therefore must never
+ * refresh or mutate the session cookie jar. A cookie write is a contract
+ * violation and fails loudly; the request-time resolver owns that transition.
+ */
+export async function createSessionVerifierClient() {
+  const cookieStore = await cookies();
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookieOptions: SUPABASE_AUTH_COOKIE_OPTIONS,
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll() {
+          throw new Error(
+            "Server Component session verification attempted to mutate cookies",
+          );
+        },
+      },
+      global: {
+        fetch: createSupabaseDeadlineFetch("Supabase auth operation timed out"),
+      },
+    },
   );
 }

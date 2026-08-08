@@ -5,10 +5,8 @@ export const AUTH_CALLBACK_CANCELLED_MESSAGE =
 export const OAUTH_START_FAILURE_MESSAGE =
   "We couldn't start sign in. Please try again.";
 
-// Shown on /login after a forced sign-out: a refresh failed, or the session was
-// revoked. Stated plainly — never as an opaque "session expired". The
-// /auth/refresh route sets this exact string as the `error_description` it
-// redirects with.
+// Shown on /login after a forced sign-out: session resolution failed or the
+// session was revoked. Stated plainly — never as an opaque "session expired".
 export const SESSION_ENDED_MESSAGE =
   "Your session ended. Please sign in again.";
 export const AUTH_ENDED_FEEDBACK_COOKIE = "nexus.auth-ended.v1";

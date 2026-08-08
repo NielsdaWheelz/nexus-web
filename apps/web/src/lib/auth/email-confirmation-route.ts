@@ -11,7 +11,6 @@ import {
   authFormFailure,
   readSameOriginAuthForm,
 } from "@/lib/auth/form-response";
-import { noStore } from "@/lib/auth/no-store";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 
 /**
@@ -49,12 +48,9 @@ export async function handleEmailConfirmation(
     case "Confirmed": {
       await auth.settlePendingCookieWrites();
       return auth.applyCookies(
-        noStore(
-          NextResponse.redirect(
-            new URL("/account/password", requestForm.origin),
-            { status: 303 },
-          ),
-        ),
+        NextResponse.redirect(new URL("/account/password", requestForm.origin), {
+          status: 303,
+        }),
       );
     }
     case "InvalidOrExpired":

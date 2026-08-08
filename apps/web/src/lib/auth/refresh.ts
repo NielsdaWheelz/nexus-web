@@ -1,10 +1,16 @@
 import { createServerClient } from "@supabase/ssr";
-import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import {
   getSupabaseAuthCookieNames,
+  getSupabaseAuthCookieValue,
+  readSupabaseSessionCookie,
   type CookieValue,
 } from "@/lib/auth/session-cookie";
+import {
+  AuthDependencyError,
+  isAuthDependencyFailure,
+  type NonEmptyCookieSet,
+} from "@/lib/auth/session-response";
 import { isAbortError } from "@/lib/errors";
 import {
   SUPABASE_AUTH_COOKIE_OPTIONS,
@@ -12,50 +18,65 @@ import {
 } from "@/lib/supabase/client-config";
 import { type CookieToSet } from "@/lib/supabase/types";
 
-// Supabase rotates the refresh token single-use on every successful refresh and
-// reports a re-presented just-rotated token with this exact REST error code.
-const REFRESH_TOKEN_ALREADY_USED_CODE = "refresh_token_already_used";
+const TERMINAL_CODES = new Set([
+  // Supabase local/hosted Auth can report an invalid refresh-grant value as
+  // validation_failed. This is terminal only at this internal refresh
+  // boundary; every other provider operation keeps its own classification.
+  "validation_failed",
+  "refresh_token_not_found",
+  "refresh_token_already_used",
+  "session_not_found",
+  "session_expired",
+  "user_not_found",
+  "user_banned",
+]);
 
-type RefreshResult =
-  | { status: "refreshed"; cookiesToSet: CookieToSet[] }
-  | { status: "failed"; reason: "timeout" | "auth_error" | "no_session" };
+export type SessionRefreshOutcome =
+  | { kind: "Refreshed"; cookiesToSet: NonEmptyCookieSet }
+  | { kind: "SessionEnded"; cookieNames: readonly string[] };
 
-// Internal: a single attempt also surfaces the Supabase error code so the one
-// retry can be gated on the precise rotation-race error and nothing else.
-type RefreshAttempt =
-  | { status: "refreshed"; cookiesToSet: CookieToSet[] }
-  | { status: "failed"; reason: "timeout" | "no_session" }
-  | { status: "failed"; reason: "auth_error"; code: string | null };
+type SessionCookieDigest = string & {
+  readonly __sessionCookieDigest: unique symbol;
+};
 
-// justify-concurrency: concurrent callers in this process share one refresh,
-// keyed on the presented auth-cookie value, because Supabase rotates the
-// refresh token single-use and a second concurrent refresh of the same token
-// would race that rotation. In-process dedup covers only one serverless
-// instance; cross-instance safety rests deliberately on Supabase's 10s
-// refresh_token_reuse_interval — re-presenting a just-rotated token returns the
-// same new session — so no distributed lock is introduced. The bound is one
-// shared refresh per distinct cookie value, which is correct: a distinct cookie
-// value is a distinct refresh token and so a genuinely distinct operation.
-const inFlightRefreshes = new Map<string, Promise<RefreshResult>>();
+// justify-concurrency: one process shares a provider refresh for one presented
+// credential. Supabase's configured reuse interval owns cross-instance races.
+// The key is an irreversible digest so bearer credentials never persist in
+// process-global keys.
+const inFlightRefreshes = new Map<
+  SessionCookieDigest,
+  Promise<SessionRefreshOutcome>
+>();
 
-// The reconstructed auth-cookie value is the single-use refresh-token blob the
-// caller presents; concurrent callers presenting the same value share one
-// refresh.
-function readAuthCookieValue(cookieList: readonly CookieValue[]): string {
-  const cookieNames = getSupabaseAuthCookieNames(cookieList);
-  return cookieNames
-    .map(
-      (name) => cookieList.find((cookie) => cookie.name === name)?.value ?? "",
-    )
-    .join("");
+async function digestSessionCookie(value: string): Promise<SessionCookieDigest> {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(bytes), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("") as SessionCookieDigest;
 }
 
-async function runBoundedRefresh(): Promise<RefreshAttempt> {
-  const cookieStore = await cookies();
+function applyCookieWrites(
+  cookies: readonly CookieValue[],
+  writes: readonly CookieToSet[],
+): CookieValue[] {
+  const values = new Map(cookies.map(({ name, value }) => [name, value]));
+  for (const { name, value, options } of writes) {
+    if (value === "" && options?.maxAge === 0) {
+      values.delete(name);
+    } else {
+      values.set(name, value);
+    }
+  }
+  return Array.from(values, ([name, value]) => ({ name, value }));
+}
 
-  // Force Next to materialize incoming cookies before the refresh reads them.
-  cookieStore.getAll();
-
+async function runRefresh(
+  presentedCookies: readonly CookieValue[],
+): Promise<SessionRefreshOutcome> {
+  let providerCookies = [...presentedCookies];
   const cookiesToSet: CookieToSet[] = [];
   let cookieWriteCount = 0;
 
@@ -66,14 +87,12 @@ async function runBoundedRefresh(): Promise<RefreshAttempt> {
       cookieOptions: SUPABASE_AUTH_COOKIE_OPTIONS,
       cookies: {
         getAll() {
-          return cookieStore.getAll();
+          return providerCookies;
         },
-        setAll(nextCookiesToSet: CookieToSet[]) {
-          nextCookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options);
-            cookiesToSet.push({ name, value, options });
-            cookieWriteCount += 1;
-          });
+        setAll(nextCookies: CookieToSet[]) {
+          cookiesToSet.push(...nextCookies);
+          providerCookies = applyCookieWrites(providerCookies, nextCookies);
+          cookieWriteCount += nextCookies.length;
         },
       },
       global: {
@@ -82,36 +101,41 @@ async function runBoundedRefresh(): Promise<RefreshAttempt> {
     },
   );
 
-  // refreshSession() with no argument reads the refresh token from the cookie
-  // store and writes the rotated session back through setAll above.
   let result: Awaited<ReturnType<typeof supabase.auth.refreshSession>>;
   try {
     result = await supabase.auth.refreshSession();
   } catch (error) {
-    if (!isAbortError(error)) {
-      throw error;
+    if (isAbortError(error) || isAuthDependencyFailure(error)) {
+      throw new AuthDependencyError();
     }
-    return { status: "failed", reason: "timeout" };
+    throw error;
   }
 
   const { data, error } = result;
   if (error) {
-    // auth-js catches fetch aborts/network failures and returns them as a
-    // retryable error (status 0); provider 5xx responses use the same type.
-    // Neither proves that the refresh token is dead, so callers must preserve
-    // the session and surface a retryable terminal response.
-    if (isAuthRetryableFetchError(error)) {
-      return { status: "failed", reason: "timeout" };
+    if (isAuthDependencyFailure(error)) {
+      throw new AuthDependencyError();
     }
-    return { status: "failed", reason: "auth_error", code: error.code ?? null };
+    if (
+      (error.code !== undefined && TERMINAL_CODES.has(error.code)) ||
+      error.name === "AuthSessionMissingError"
+    ) {
+      return {
+        kind: "SessionEnded",
+        cookieNames: getSupabaseAuthCookieNames(presentedCookies),
+      };
+    }
+    // justify-defect: the fixed provider operation must classify every exact
+    // error code; a new or codeless state is contract drift.
+    throw new Error(
+      `Unexpected Supabase refresh error code: ${error.code ?? error.name}`,
+    );
   }
-
   if (!data.session) {
-    return { status: "failed", reason: "no_session" };
+    // justify-defect: provider success must establish a session.
+    throw new Error("Supabase refresh succeeded without a session");
   }
 
-  // Supabase SSR applies rotated session cookies from an auth-state callback
-  // scheduled a macrotask after refreshSession resolves; drain it.
   let previousWriteCount = cookieWriteCount;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -121,72 +145,40 @@ async function runBoundedRefresh(): Promise<RefreshAttempt> {
     previousWriteCount = cookieWriteCount;
   }
 
-  return { status: "refreshed", cookiesToSet };
-}
-
-async function refreshOnceWithRetry(): Promise<RefreshResult> {
-  let attempt = await runBoundedRefresh();
-
-  // Distinguish a genuine rotation race from a dead refresh token: only an
-  // "already used" error is worth a single retry, and the retry re-reads the
-  // cookies so it presents whatever token a concurrent rotation just wrote. Any
-  // other failure is terminal — refresh is attempted at most twice, never more.
+  const [firstCookie, ...remainingCookies] = cookiesToSet;
   if (
-    attempt.status === "failed" &&
-    attempt.reason === "auth_error" &&
-    attempt.code === REFRESH_TOKEN_ALREADY_USED_CODE
+    !firstCookie ||
+    readSupabaseSessionCookie(providerCookies).state !== "active"
   ) {
-    attempt = await runBoundedRefresh();
+    // justify-defect: refresh success must publish a non-empty, live successor
+    // cookie set before any caller can continue as authenticated.
+    throw new Error(
+      "Supabase refresh did not produce an active successor session",
+    );
   }
-
-  if (attempt.status === "refreshed") {
-    return { status: "refreshed", cookiesToSet: attempt.cookiesToSet };
-  }
-
-  if (attempt.reason === "auth_error") {
-    console.error("auth_refresh_failed", {
-      reason: "auth_error",
-      code: attempt.code,
-    });
-    return { status: "failed", reason: "auth_error" };
-  }
-
-  console.error("auth_refresh_failed", { reason: attempt.reason });
-  return { status: "failed", reason: attempt.reason };
+  return {
+    kind: "Refreshed",
+    cookiesToSet: [firstCookie, ...remainingCookies],
+  };
 }
 
-/**
- * Performs exactly one bounded Supabase session refresh.
- *
- * Single-flight within this process: concurrent callers presenting the same
- * auth cookie share one refresh. Retries exactly once when Supabase reports the
- * presented refresh token was already used — a rotation race — re-reading the
- * cookies inside the retry rather than reusing stale captured state. Emits a
- * structured log line on failure.
- *
- * On success it returns the rotated cookies for the caller to apply to its own
- * response; on failure it returns a typed reason.
- */
-export async function refreshSession(): Promise<RefreshResult> {
-  const cookieKey = readAuthCookieValue((await cookies()).getAll());
+export async function refreshSession(): Promise<SessionRefreshOutcome> {
+  const presentedCookies = (await cookies()).getAll();
+  const cookieValue = getSupabaseAuthCookieValue(presentedCookies);
+  if (!cookieValue) {
+    return {
+      kind: "SessionEnded",
+      cookieNames: getSupabaseAuthCookieNames(presentedCookies),
+    };
+  }
 
-  let refresh = inFlightRefreshes.get(cookieKey);
+  const digest = await digestSessionCookie(cookieValue);
+  let refresh = inFlightRefreshes.get(digest);
   if (!refresh) {
-    refresh = refreshOnceWithRetry().finally(() => {
-      inFlightRefreshes.delete(cookieKey);
+    refresh = runRefresh(presentedCookies).finally(() => {
+      inFlightRefreshes.delete(digest);
     });
-    inFlightRefreshes.set(cookieKey, refresh);
+    inFlightRefreshes.set(digest, refresh);
   }
-
-  const result = await refresh;
-  if (result.status === "refreshed") {
-    // Every waiter has a distinct request-local cookie store. The refresh
-    // owner was updated inside runBoundedRefresh; re-stage the same cookies for
-    // it and stage them for any single-flight joiners before callers continue.
-    const cookieStore = await cookies();
-    for (const { name, value, options } of result.cookiesToSet) {
-      cookieStore.set(name, value, options);
-    }
-  }
-  return result;
+  return refresh;
 }

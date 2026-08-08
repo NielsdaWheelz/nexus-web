@@ -174,9 +174,10 @@ function expectStrictCsp(
 export async function gotoWithStrictCsp(
   page: Page,
   path: string,
+  options?: Parameters<Page["goto"]>[1],
 ): Promise<Response> {
   const safeTarget = path.split(/[?#]/, 1)[0] || "/";
-  return expectStrictCsp(await page.goto(path), safeTarget);
+  return expectStrictCsp(await page.goto(path, options), safeTarget);
 }
 
 function assertCanonicalSecretAuthLink(

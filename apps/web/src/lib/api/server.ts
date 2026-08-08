@@ -28,9 +28,11 @@ function readApiErrorBody(body: unknown): {
 /**
  * Server-side equivalent of `apiFetch`: reads the Supabase session cookie,
  * forwards the access token to FastAPI, and parses the response with the same
- * ApiError semantics as the browser path. Middleware (`updateSession`) has
- * already redirected `refreshable` sessions through `/auth/refresh`, so the
- * cookie is always `active` by the time a server component runs.
+ * ApiError semantics as the browser path. The page/session gate owns browser
+ * recovery; this server consumer never redirects or refreshes. It forwards
+ * only an active session and reports every other cookie state as
+ * `E_UNAUTHENTICATED`. Route handlers that own a response resolve refreshable
+ * sessions inline before calling FastAPI.
  */
 export async function callFastAPI<T>(
   path: string,

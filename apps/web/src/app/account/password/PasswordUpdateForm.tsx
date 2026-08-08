@@ -15,9 +15,11 @@ import { decodePasswordUpdateOutcome } from "@/lib/auth/form-outcomes";
 import type { PasswordUpdateOutcome } from "@/lib/auth/password-flow";
 import {
   authReturnTargetToHref,
+  buildLoginUrl,
   isDefaultAuthReturnTarget,
   type AuthReturnTarget,
 } from "@/lib/auth/redirects";
+import { SESSION_ENDED_MESSAGE } from "@/lib/auth/messages";
 
 const PASSWORD_HELP_ID = "password-update-help";
 const PASSWORD_ERROR_ID = "password-update-error";
@@ -157,6 +159,14 @@ export default function PasswordUpdateForm({
       }
       const rawOutcome: unknown = await response.json();
       const outcome = decodePasswordUpdateOutcome(rawOutcome);
+      if (outcome.kind === "SessionEnded") {
+        window.location.replace(
+          buildLoginUrl(window.location.origin, nextPath, {
+            errorDescription: SESSION_ENDED_MESSAGE,
+          }).toString(),
+        );
+        return;
+      }
       const presentation = passwordUpdateErrorMessage(outcome);
       if (presentation.kind === "RedirectExpected") {
         throw new Error("Password-update terminal response did not redirect");

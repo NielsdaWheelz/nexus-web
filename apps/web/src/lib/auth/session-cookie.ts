@@ -14,6 +14,7 @@ export type SessionState =
   | {
       state: "active";
       accessToken: string;
+      canRefresh: boolean;
       expiresAt: number;
       cookieNames: string[];
     }
@@ -104,6 +105,34 @@ export function parseCookieHeader(header: string | null): CookieValue[] {
     });
 }
 
+export function getSupabaseAuthCookieValue(
+  cookies: readonly CookieValue[],
+): string | null {
+  const cookieName = getSupabaseAuthCookieName();
+  if (!cookieName) {
+    return null;
+  }
+
+  const direct = cookies.find(
+    ({ name, value }) => name === cookieName && value,
+  );
+  if (direct) {
+    return direct.value;
+  }
+
+  const chunks: string[] = [];
+  for (let index = 0; ; index += 1) {
+    const chunk = cookies.find(
+      ({ name, value }) => name === `${cookieName}.${index}` && value,
+    );
+    if (!chunk) {
+      break;
+    }
+    chunks.push(chunk.value);
+  }
+  return chunks.length > 0 ? chunks.join("") : null;
+}
+
 function parseSupabaseSessionPayload(value: unknown): SupabaseSessionPayload | null {
   if (!isRecord(value)) {
     return null;
@@ -140,25 +169,7 @@ export function readSupabaseSessionCookie(
   }
 
   const cookieNames = getSupabaseAuthCookieNames(cookies);
-  const directCookie = cookies.find(
-    ({ name, value }) => name === cookieName && value
-  );
-  let value = directCookie?.value ?? "";
-
-  if (!value) {
-    const chunks: string[] = [];
-    for (let index = 0; ; index += 1) {
-      const chunk = cookies.find(
-        ({ name, value: chunkValue }) =>
-          name === `${cookieName}.${index}` && chunkValue
-      );
-      if (!chunk) {
-        break;
-      }
-      chunks.push(chunk.value);
-    }
-    value = chunks.join("");
-  }
+  const value = getSupabaseAuthCookieValue(cookies);
 
   if (!value) {
     return {
@@ -212,6 +223,7 @@ export function readSupabaseSessionCookie(
     return {
       state: "active",
       accessToken: session.accessToken,
+      canRefresh: Boolean(session.refreshToken),
       expiresAt: session.expiresAt,
       cookieNames,
     };

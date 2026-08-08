@@ -2,7 +2,7 @@ import { getEnv } from "@/lib/env";
 import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { internalAuthHeaders } from "@/lib/auth/internal-auth-headers";
-import { noStore } from "@/lib/auth/no-store";
+import { finalizeSessionResponse } from "@/lib/auth/session-response";
 import {
   AUTH_CALLBACK_CANCELLED_MESSAGE,
   AUTH_CALLBACK_FAILURE_MESSAGE,
@@ -18,6 +18,10 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 const TEMPORARY_REDIRECT = 307;
+
+function preserve(response: NextResponse): NextResponse {
+  return finalizeSessionResponse(response, { kind: "Preserve" });
+}
 
 // Error codes produced by `/auth/callback` in handoff mode.
 // This route owns the public copy because no other surface renders it.
@@ -50,7 +54,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const redirectOrigin = resolveCallbackRedirectOrigin(request);
 
     if (errorCode) {
-      return noStore(
+      return preserve(
         NextResponse.redirect(
           buildLoginUrl(redirectOrigin, target, {
             errorDescription: publicErrorMessage(errorCode),
@@ -61,7 +65,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
 
     if (!code || !hv) {
-      return noStore(
+      return preserve(
         NextResponse.redirect(
           buildLoginUrl(redirectOrigin, target, {
             errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
@@ -91,7 +95,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       // justify-ignore-error: a timed-out or failed handoff consume collapses
       // into the same public failure as a non-2xx response — by design, so the
       // route doesn't leak which of expired/used/wrong-verifier occurred.
-      return noStore(
+      return preserve(
         NextResponse.redirect(
           buildLoginUrl(redirectOrigin, target, {
             errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
@@ -102,7 +106,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
 
     if (!consumeResponse.ok) {
-      return noStore(
+      return preserve(
         NextResponse.redirect(
           buildLoginUrl(redirectOrigin, target, {
             errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
@@ -116,7 +120,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const accessToken = body?.data?.access_token;
     const refreshToken = body?.data?.refresh_token;
     if (typeof accessToken !== "string" || typeof refreshToken !== "string") {
-      return noStore(
+      return preserve(
         NextResponse.redirect(
           buildLoginUrl(redirectOrigin, target, {
             errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
@@ -136,7 +140,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     await settlePendingCookieWrites();
 
     return applyCookies(
-      noStore(
+      preserve(
         NextResponse.redirect(buildAuthReturnTargetUrl(redirectOrigin, target), {
           status: TEMPORARY_REDIRECT,
         })
@@ -146,7 +150,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     if (!(error instanceof Error)) {
       throw error;
     }
-    return noStore(
+    return preserve(
       new NextResponse(AUTH_CALLBACK_FAILURE_MESSAGE, { status: 500 })
     );
   }

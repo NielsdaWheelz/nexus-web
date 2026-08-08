@@ -81,7 +81,7 @@ async function readAuthSession(
   ) as SupabaseSession;
 }
 
-async function expireAccessToken(
+async function writeAuthSession(
   context: BrowserContext,
   session: SupabaseSession,
 ): Promise<void> {
@@ -93,10 +93,7 @@ async function expireAccessToken(
   if (!template)
     throw new Error("Cannot expire an absent Supabase auth cookie.");
   const encoded = `base64-${Buffer.from(
-    JSON.stringify({
-      ...session,
-      expires_at: Math.floor(Date.now() / 1_000) - 3_600,
-    }),
+    JSON.stringify(session),
   ).toString("base64url")}`;
   await context.clearCookies({ name: new RegExp(`^${baseName}(?:\\.\\d+)?$`) });
   await context.addCookies(
@@ -120,6 +117,16 @@ async function expireAccessToken(
       }),
     ),
   );
+}
+
+async function expireAccessToken(
+  context: BrowserContext,
+  session: SupabaseSession,
+): Promise<void> {
+  await writeAuthSession(context, {
+    ...session,
+    expires_at: Math.floor(Date.now() / 1_000) - 3_600,
+  });
 }
 
 test("invited user chooses and replaces a password while scanner-safe acceptance and refresh preserve the session contract", async ({
@@ -315,14 +322,10 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
     headers: { Origin: webOrigin },
     maxRedirects: 0,
   });
-  expect(endedSessionUpdate.status()).toBe(303);
+  expect(endedSessionUpdate.status()).toBe(401);
   expect(endedSessionUpdate.headers()["cache-control"]).toContain("no-store");
-  const endedSessionLocation = new URL(
-    endedSessionUpdate.headers()["location"] ?? "",
-    webOrigin,
-  );
-  expect(endedSessionLocation.origin).toBe(webOrigin);
-  expect(endedSessionLocation.pathname).toBe("/login");
+  expect(endedSessionUpdate.headers()).not.toHaveProperty("location");
+  expect(await endedSessionUpdate.json()).toEqual({ kind: "SessionEnded" });
   expect(
     await hasSupabaseAuthCookie(page.context()),
     "Ended-session update created an auth cookie.",
@@ -347,7 +350,7 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
     refreshResponse.ok(),
     `Expired invited-user session did not refresh through the real BFF and Supabase boundary: ${refreshResponse.status()} ${refreshText.slice(0, 500)}`,
   ).toBeTruthy();
-  expect(refreshResponse.headers()["cache-control"]).toBe("no-store");
+  expect(refreshResponse.headers()["cache-control"]).toBe("private, no-store");
   expect(
     (JSON.parse(refreshText) as { data: typeof profile }).data,
   ).toMatchObject(profile);
@@ -359,5 +362,60 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
   expect(
     rotated.refresh_token === original.refresh_token,
     "BFF refresh did not rotate the refresh token.",
+  ).toBeFalsy();
+
+  const recoveryGet = await app.get("/auth/session/recover?next=%2Fbrowse");
+  expect(recoveryGet.status()).toBe(200);
+  expect(recoveryGet.headers()["cache-control"]).toBe("private, no-store");
+  expect(recoveryGet.headers()["pragma"]).toBe("no-cache");
+  expect(recoveryGet.headers()["expires"]).toBe("0");
+  // Next's App Router owns the HTML page Vary set and emits its RSC vary
+  // dimensions here. The canonical private no-store policy above is the
+  // cache-safety contract for this rendered page; route-handler responses
+  // retain the explicit `Vary: Cookie` contract.
+  expect(recoveryGet.headers()["vary"]).toContain("rsc");
+  expect(
+    recoveryGet.headers()["set-cookie"],
+    "GET /auth/session/recover must not mutate the session.",
+  ).toBeUndefined();
+
+  await expireAccessToken(page.context(), rotated);
+  const resolveRequests: { method: string; origin?: string; header?: string }[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname !== "/auth/session/resolve") {
+      return;
+    }
+    resolveRequests.push({
+      method: request.method(),
+      origin: request.headers()["origin"],
+      header: request.headers()["x-nexus-session"],
+    });
+  });
+  await gotoWithStrictCsp(page, "/browse");
+  await expect(page).toHaveURL(/\/browse$/);
+  expect(resolveRequests).toEqual([
+    { method: "POST", origin: webOrigin, header: "Resolve" },
+  ]);
+
+  const terminal = await readAuthSession(page.context());
+  await writeAuthSession(page.context(), {
+    ...terminal,
+    access_token: "invalid-access-token",
+    expires_at: Math.floor(Date.now() / 1_000) + 3_600,
+    refresh_token: "terminal-refresh-token",
+  });
+  resolveRequests.length = 0;
+  await gotoWithStrictCsp(page, "/browse", { waitUntil: "commit" });
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/login" && url.searchParams.get("next") === "/browse",
+  );
+  await expect(page.getByText("Your session ended. Please sign in again.")).toBeVisible();
+  expect(resolveRequests).toEqual([
+    { method: "POST", origin: webOrigin, header: "Resolve" },
+  ]);
+  expect(
+    await hasSupabaseAuthCookie(page.context()),
+    "Terminal recovery retained the invalid auth cookie.",
   ).toBeFalsy();
 });

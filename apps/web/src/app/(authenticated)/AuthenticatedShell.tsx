@@ -8,7 +8,6 @@ import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import LecternMutationNotice from "@/components/LecternMutationNotice";
 import { WebVitalsReporter } from "@/components/workspace/WebVitalsReporter";
 import LocalVaultAutoSync from "./LocalVaultAutoSync";
-import SessionRefresher from "@/lib/auth/SessionRefresher";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
@@ -65,7 +64,6 @@ export default function AuthenticatedShell({
       <RenderEnvironmentProvider value={renderEnvironment}>
         <UnauthenticatedApiBoundary>
           <ActivityCaptureLifecycle />
-          <SessionRefresher />
           <LocalVaultAutoSync />
           <WebVitalsReporter />
           <ResourceCacheProvider value={resources}>

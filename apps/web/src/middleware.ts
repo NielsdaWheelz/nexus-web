@@ -38,7 +38,10 @@ export function middleware(request: NextRequest) {
     buildReportingEndpoints(request.nextUrl.origin),
   );
   if (isAuthResponsePath(request.nextUrl.pathname)) {
-    response.headers.set("Cache-Control", "no-store");
+    response.headers.set("Cache-Control", "private, no-store");
+    response.headers.set("Pragma", "no-cache");
+    response.headers.set("Expires", "0");
+    response.headers.set("Vary", "Cookie");
   }
   if (isEmailActionLanding(request.nextUrl.pathname)) {
     response.headers.set("Referrer-Policy", "no-referrer");

@@ -49,6 +49,14 @@ test-results/runs/<run-id>/android-visual-logcat.txt
 The manifest never contains a password, admin key, access/refresh token, handoff
 code, verifier, cookie, or raw authorization header.
 
+The shell's auth recovery is intentionally observable in this same path: a
+main-frame redirect loop enters `/auth/session/recover` once, then presents a
+native Retry terminal on a second loop. It never clears WebView data or
+cookies. Native authenticated BFF requests wait for every WebView
+`CookieManager.setCookie` acknowledgement and flush before completing the
+request, so hot and cold App Link handoffs exercise the same cookie owner as
+production.
+
 ## Change lanes
 
 | Change | Action |
