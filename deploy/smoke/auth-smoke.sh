@@ -28,7 +28,8 @@ Checks:
   - Google and GitHub OAuth initiation target the exact Supabase authorize
     endpoint and app callback.
   - Anonymous and terminal-cookie BFF routes return JSON 401 E_UNAUTHENTICATED.
-  - Every session-dependent response is private no-store.
+  - Every session-dependent response is private no-store. Rendered App Router
+    pages carry Next's framework RSC Vary set; route handlers carry Vary: Cookie.
   - /docs is not reachable in production.
   - The API readiness endpoint returns 200.
 
@@ -156,7 +157,9 @@ PY
 assert_session_cache_headers() {
   local label="$1"
   local headers="$2"
-  if ! python3 - "$headers" <<'PY'
+  local vary_contract="${3:-cookie}"
+  if ! VARY_CONTRACT="$vary_contract" python3 - "$headers" <<'PY'
+import os
 import sys
 
 headers: dict[str, list[str]] = {}
@@ -166,11 +169,47 @@ for line in open(sys.argv[1], encoding="iso-8859-1"):
     key, value = line.split(":", 1)
     headers.setdefault(key.lower(), []).append(value.strip())
 
+directives: dict[str, str | None] = {}
+for value in headers.get("cache-control", []):
+    for raw_directive in value.split(","):
+        name, separator, argument = raw_directive.strip().partition("=")
+        if not name:
+            raise SystemExit(1)
+        directives[name.lower()] = argument.strip().strip('"') if separator else None
+
+valid_cache = (
+    {"private", "no-store"}.issubset(directives)
+    and "public" not in directives
+    and "s-maxage" not in directives
+)
+if "max-age" in directives:
+    try:
+        valid_cache = valid_cache and int(directives["max-age"] or "") <= 0
+    except ValueError:
+        valid_cache = False
+
+vary = {
+    token.strip().lower()
+    for token in ",".join(headers.get("vary", [])).split(",")
+    if token.strip()
+}
+if os.environ["VARY_CONTRACT"] == "cookie":
+    valid_vary = "cookie" in vary
+elif os.environ["VARY_CONTRACT"] == "rendered-page":
+    valid_vary = {
+        "rsc",
+        "next-router-state-tree",
+        "next-router-prefetch",
+        "next-router-segment-prefetch",
+    }.issubset(vary)
+else:
+    raise SystemExit(1)
+
 valid = (
-    headers.get("cache-control") == ["private, no-store"]
+    valid_cache
     and headers.get("pragma") == ["no-cache"]
     and headers.get("expires") == ["0"]
-    and "cookie" in ",".join(headers.get("vary", [])).lower().split(",")
+    and valid_vary
 )
 raise SystemExit(0 if valid else 1)
 PY
@@ -234,9 +273,12 @@ from urllib.parse import parse_qs, urlparse
 
 parsed = urlparse(os.environ["LOCATION"])
 app = urlparse(os.environ["APP_URL"])
+same_origin = (
+    (parsed.scheme == app.scheme and parsed.netloc == app.netloc)
+    or (parsed.scheme == "" and parsed.netloc == "")
+)
 valid = (
-    parsed.scheme == app.scheme
-    and parsed.netloc == app.netloc
+    same_origin
     and parsed.path == "/auth/session/recover"
     and parse_qs(parsed.query) == {"next": [os.environ["EXPECTED_NEXT"]]}
 )
@@ -433,7 +475,7 @@ invalid_page_body="${temporary}/invalid-page.body"
 status="$(request_with_capture GET "${APP_URL}${PROTECTED_PATH}" "$invalid_cookie" "$invalid_page_headers" "$invalid_page_body")"
 location="$(header_value "$invalid_page_headers" Location)"
 assert_exact_recovery_redirect "invalid cookie enters canonical recovery" "$status" "$location" "$PROTECTED_PATH"
-assert_session_cache_headers "invalid-cookie protected page" "$invalid_page_headers"
+assert_session_cache_headers "invalid-cookie protected page" "$invalid_page_headers" "rendered-page"
 
 recovery_headers="${temporary}/recovery.headers"
 recovery_body="${temporary}/recovery.body"
@@ -444,7 +486,7 @@ if [ "$status" != "200" ] || [ -n "$(header_value "$recovery_headers" Set-Cookie
 else
   pass "recovery surface is non-mutating"
 fi
-assert_session_cache_headers "recovery surface" "$recovery_headers"
+assert_session_cache_headers "recovery surface" "$recovery_headers" "rendered-page"
 
 resolve_headers="${temporary}/resolve.headers"
 resolve_body="${temporary}/resolve.body"
