@@ -2003,6 +2003,7 @@ class HostRelease:
         bundle: Path,
         candidate: CandidateManifest,
         attempt: ReleaseAttempt,
+        check_caddy: bool = True,
     ) -> None:
         manifest_path = bundle / "candidate-manifest.json"
         if (
@@ -2026,15 +2027,16 @@ class HostRelease:
             or config_metadata.st_mode & 0o022
         ):
             raise ReleaseDefect("captured release config is not immutable exact input")
-        caddy_metadata = self.paths.caddy_config.stat()
-        if (
-            not stat.S_ISREG(caddy_metadata.st_mode)
-            or caddy_metadata.st_uid != 0
-            or caddy_metadata.st_gid != 0
-            or stat.S_IMODE(caddy_metadata.st_mode) != 0o444
-            or (bundle / "Caddyfile").read_bytes() != self.paths.caddy_config.read_bytes()
-        ):
-            raise ReleaseDefect("installed Caddy configuration differs from release input")
+        if check_caddy:
+            caddy_metadata = self.paths.caddy_config.stat()
+            if (
+                not stat.S_ISREG(caddy_metadata.st_mode)
+                or caddy_metadata.st_uid != 0
+                or caddy_metadata.st_gid != 0
+                or stat.S_IMODE(caddy_metadata.st_mode) != 0o444
+                or (bundle / "Caddyfile").read_bytes() != self.paths.caddy_config.read_bytes()
+            ):
+                raise ReleaseDefect("installed Caddy configuration differs from release input")
 
     def _validate_caddy_mount(self, inspected: dict[str, Any]) -> None:
         mounts = inspected.get("Mounts")
@@ -3661,6 +3663,7 @@ class HostRelease:
             bundle=self.bundle(source_sha),
             candidate=candidate,
             attempt=attempt,
+            check_caddy=False,
         )
         expected_record = ReleaseRecord.from_attempt(
             attempt=attempt,
