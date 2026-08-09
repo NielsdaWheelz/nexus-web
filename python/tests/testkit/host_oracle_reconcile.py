@@ -24,9 +24,9 @@ _SERVICES = (
 _WRITERS = ("api", "worker-interactive", "worker-background")
 _RESOURCE_LIMITS = {
     "postgres": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
-    "caddy": (32 * 1024 * 1024, 64 * 1024 * 1024, 128),
+    "caddy": (32 * 1024 * 1024, 48 * 1024 * 1024, 128),
     "api": (192 * 1024 * 1024, 320 * 1024 * 1024, 256),
-    "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
+    "worker-interactive": (128 * 1024 * 1024, 224 * 1024 * 1024, 256),
     "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
 }
 _OWNER_USER_ID = "00000000-0000-4000-8000-000000000001"
