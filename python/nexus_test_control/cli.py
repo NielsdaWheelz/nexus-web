@@ -307,6 +307,7 @@ def _execute_workflow(
         "NEXUS_TEST_RESULTS_DIR": str(results_directory),
         "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
         "NEXUS_TEST_RUN_ID": run_id,
+        "PARSER_TEMP_ROOT": str(results_directory / "parser-tmp"),
     }
     if command.android_visual is not None:
         owned_environment["NEXUS_ANDROID_VISUAL_SHA"] = command.android_visual.sha
@@ -474,6 +475,7 @@ def _execute_diagnose(
         "NEXUS_TEST_RESULTS_DIR": str(absolute_results_directory),
         "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
         "NEXUS_TEST_RUN_ID": run_id,
+        "PARSER_TEMP_ROOT": str(absolute_results_directory / "parser-tmp"),
     }
     try:
         workflow_run = run_workflow(
@@ -669,6 +671,7 @@ def _execute_prove(
         "NEXUS_TEST_RESULTS_DIR": str(results_directory),
         "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
         "NEXUS_TEST_RUN_ID": run_id,
+        "PARSER_TEMP_ROOT": str(results_directory / "parser-tmp"),
     }
     with measure_owned_memory(repo_root, include_containers=False) as memory_sampler:
         try:

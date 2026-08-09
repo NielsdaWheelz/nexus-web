@@ -5,6 +5,7 @@
 // docs/cutovers/collection-refinement-capability-hard-cutover.md.
 
 import type { LecternItem } from "@/lib/lectern/contract";
+import { assertNever } from "@/lib/assertNever";
 
 type Direction = "asc" | "desc";
 
@@ -19,10 +20,6 @@ export const CANONICAL_LECTERN_VIEW: LecternView = { kind: "Custom" };
 export type DecodedLecternView =
   | { kind: "Valid"; view: LecternView }
   | { kind: "Invalid" };
-
-function assertNever(x: never): never {
-  throw new Error(`Unreachable Lectern view case: ${JSON.stringify(x)}`);
-}
 
 /**
  * Strict, total decode of the view-owned `sort`/`direction` keys. A partial,

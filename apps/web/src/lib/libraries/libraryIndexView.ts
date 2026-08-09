@@ -3,6 +3,8 @@
 // `Sort by` inventory. See
 // docs/cutovers/collection-refinement-capability-hard-cutover.md.
 
+import { assertNever } from "@/lib/assertNever";
+
 type Direction = "asc" | "desc";
 
 export type LibrariesIndexView =
@@ -18,12 +20,6 @@ export const CANONICAL_LIBRARIES_INDEX_VIEW: LibrariesIndexView = {
 export type DecodedLibrariesIndexView =
   | { kind: "Valid"; view: LibrariesIndexView }
   | { kind: "Invalid" };
-
-function assertNever(x: never): never {
-  throw new Error(
-    `Unreachable Libraries index view case: ${JSON.stringify(x)}`,
-  );
-}
 
 /**
  * Strict, total decode of the view-owned `sort`/`direction` keys. A partial,

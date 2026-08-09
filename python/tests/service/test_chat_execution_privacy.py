@@ -30,6 +30,7 @@ def test_suspended_chat_exposes_only_phase_and_masks_its_private_journal(
                 job_id=chat.job_id,
                 worker_id=worker_id,
                 lease_seconds=300,
+                heavy_kinds=(),
                 allowed_kinds=("chat_run",),
             )
             assert claimed is not None and claimed.attempts == attempt

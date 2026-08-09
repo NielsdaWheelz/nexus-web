@@ -946,14 +946,11 @@ returns the same job ID. It never creates a replacement attempt or revision.
 If no matching dead job exists, it returns the existing not-found/conflict
 contract rather than guessing.
 
-Keep one separate internal legacy repair transition:
-
-- `POST /internal/ingest/content-index/{media_id}/repair`.
-
-It is valid only for a legacy `failed` index state with no current live/dead
-reindex job. It requests a genuinely new revision with `operator_repair`; it
-never masquerades as replay of a dead operation. There is no public control and
-the periodic reconciler does not invoke this transition.
+The later bounded-resource media-processing hard cutover supersedes repair
+presentation and removes the separate legacy failed-index repair transition.
+Both internal exact-replay routes now delegate to the same exact current-dead
+repair owner as `POST /media/{media_id}/repair`; no route creates a replacement
+revision or preserves a compatibility path.
 
 Extend health with:
 

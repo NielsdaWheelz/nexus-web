@@ -19,7 +19,7 @@ cp deploy/env/env-prod-worker.example deploy/env/env-prod-worker
 | `env-prod` | Values genuinely shared by web and VPS |
 | `env-prod-frontend` | Vercel/Next.js only |
 | `env-prod-backend` | API, Caddy, Postgres, R2 credentials, provider secrets |
-| `env-prod-worker` | Worker timing and schedule values only |
+| `env-prod-worker` | Worker parser path, timing, and schedule values only |
 
 The three VPS inputs must partition their keys: a key may occur in exactly one
 file. Blank, placeholder, malformed, forbidden, and duplicate values fail before
@@ -88,6 +88,10 @@ resume command is `deploy/hetzner/deploy.sh <source-sha>`.
 Production has exactly `interactive` and `background` workers. Their normal env
 contains no `WORKER_LANE`, raw job-kind allowlist, or maintenance authorization.
 Compose assigns lanes; the registry assigns kinds.
+
+`PARSER_TEMP_ROOT` is exactly `/var/lib/nexus/parser-tmp`. Production Compose
+binds that host directory only into the background worker; it is not a tunable
+capacity control.
 
 The background lane owns ordinary periodic work. Maintenance kinds run only in
 a bounded explicitly authorized one-off process; there is no deployed

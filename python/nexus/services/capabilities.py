@@ -157,6 +157,8 @@ def derive_capabilities(
     source_retry_available: bool = False,
     source_refresh_available: bool = False,
     source_suspended: bool = False,
+    source_repair_available: bool = False,
+    search_repair_available: bool = False,
 ) -> CapabilitiesOut:
     """Derive capabilities from media state."""
     processing_status = _validate_processing_status(processing_status)
@@ -252,6 +254,8 @@ def derive_capabilities(
         can_retry=can_retry,
         can_refresh_source=can_refresh_source,
         can_retry_metadata=can_retry_metadata,
+        can_repair_source=(is_creator or is_admin) and source_repair_available,
+        can_repair_search=(is_creator or is_admin) and search_repair_available,
         can_edit_authors=can_edit_authors,
         can_read_embeds=is_document and kind == MediaKind.web_article.value,
     )

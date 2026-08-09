@@ -32,11 +32,8 @@ import {
   collectionActivityText,
   formatCollectionPublicationDate,
 } from "./collectionRowFormatting";
+import { assertNever } from "@/lib/assertNever";
 import styles from "./CollectionRow.module.css";
-
-function assertNever(value: never, context: string): never {
-  throw new Error(`${context}: ${JSON.stringify(value)}`);
-}
 
 function renderContext(context: CollectionContext): ReactNode {
   switch (context.kind) {
@@ -66,7 +63,7 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
         case "failed":
           return <Pill tone="danger">Processing failed</Pill>;
         case "suspended":
-          return <Pill tone="warning">Processing paused</Pill>;
+          return <Pill tone="warning">Needs attention</Pill>;
         default:
           return assertNever(
             processingStatus,

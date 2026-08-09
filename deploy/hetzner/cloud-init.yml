@@ -52,7 +52,19 @@ runcmd:
   - install -d -o root -g root -m 0755 /opt/nexus/releases
   - install -d -o root -g root -m 0750 /etc/nexus /etc/nexus/config
   - install -d -o root -g root -m 0750 /var/lib/nexus/releases /var/lib/nexus/releases/attempts /var/lib/nexus/releases/records /var/lib/nexus/releases/oracle-attempts
+  - install -d -o 10001 -g 10001 -m 0700 /var/lib/nexus/parser-tmp
   - install -d -o root -g root -m 0750 /var/backups/nexus
+  - |
+    if [ ! -e /swapfile ]; then
+      # mkswap reserves the first page for its header, so a file sized at exactly
+      # 1 GiB reports SwapTotal one page short of the release gate. Provision
+      # above the gate so `SwapTotal >= 1 GiB` genuinely holds.
+      fallocate --length 1025M /swapfile
+      chmod 0600 /swapfile
+      mkswap /swapfile
+    fi
+    swapon --show=NAME --noheadings | grep -qx /swapfile || swapon /swapfile
+    grep -qxF '/swapfile none swap sw 0 0' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
   - ufw allow OpenSSH
   - ufw allow 80/tcp
   - ufw allow 443/tcp

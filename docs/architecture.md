@@ -588,8 +588,11 @@ same entrypoint with fixed `interactive` and `background` lanes:
 
 - **Job loop**: `claim_next_job` atomically picks one due row with
   `FOR UPDATE SKIP LOCKED` (new work _or_ a crashed job whose lease expired),
-  flips it to `running` with a lease, dispatches to the registered handler under a
-  heartbeat thread, then commits a terminal/retry transition. Retries are bounded
+  admits it through its registry-owned `Light | Heavy` class, flips it to
+  `running` with a lease, dispatches to the registered handler under a heartbeat
+  thread, then commits a terminal/retry transition. One queue-owned capacity
+  row permits at most one Heavy attempt globally without blocking eligible
+  Light work. Retries are bounded
   per-kind (`max_attempts`, `retry_delays_seconds`, `lease_seconds`); exhaustion
   dead-letters the row. Domain finalizers close or suspend current Chat, Note,
   Dossier, Media teardown, Podcast live-sync, and Podcast-backfill state without
@@ -602,8 +605,8 @@ The **registry** (`jobs/registry.py`) is the source of truth mapping job kind â†
 handler + policy. `config.py` owns the disjoint/exhaustive 20-kind production
 topology and separate three-kind maintenance declaration. The entrypoint rejects
 missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
-`get_task_contract_digest()` fingerprints the registry's per-kind
-attempt/lease policy for API `/version` and worker release-health proof. See
+`get_task_contract_digest()` fingerprints the registry's per-kind resource
+class and attempt/lease policy for API `/version` and worker release-health proof. See
 [modules/jobs.md](modules/jobs.md).
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):

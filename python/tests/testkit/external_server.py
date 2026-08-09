@@ -11,7 +11,7 @@ import re
 import socket
 import threading
 import wave
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
@@ -783,67 +783,112 @@ def _tool_output_citation(payload: dict[str, Any]) -> int | None:
     return ordinals[0]
 
 
-_STRICT_OUTPUTS: dict[str, tuple[frozenset[str], str, dict[str, Any]]] = {
+def _fixed(result: dict[str, Any]) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """Wrap a request-independent strict output so every entry resolves the same way."""
+    return lambda _payload: result
+
+
+# Metadata the enricher supplies for a media item that declares none of its own.
+# The canonical article fixture is the corpus this fake knows about.
+_METADATA_ENRICHMENT_UNKNOWN: dict[str, Any] = {
+    "title": "SOFIA Confirms Water on the Sunlit Moon",
+    "authors": ["NASA"],
+    "publisher": "NASA",
+    "description": (
+        "SOFIA detected a water signature in Clavius Crater, confirming that water "
+        "exists on the sunlit surface of the Moon."
+    ),
+    "published_date": "2020-10",
+    "language": "en",
+}
+
+# `build_enrichment_user_content` emits one `- current_<field>: <json>` line per
+# fact the media already declares.
+_CURRENT_METADATA_LINE = re.compile(r"^- current_([a-z_]+): (.+)$", re.MULTILINE)
+
+
+def _media_metadata_enrichment(payload: dict[str, Any]) -> dict[str, Any]:
+    """Confirm the metadata a media item already declares; supply only the rest.
+
+    A fake is an owned working implementation of its boundary. Returning one
+    document's identity for every request would retitle every media item in the
+    suite to the same string, which makes resource identity unprovable in any
+    proof whose media is enriched -- so echo known-good facts, exactly as the
+    prompt's own rules direct a real enricher to do, and fill only what the
+    item leaves unknown.
+    """
+    result = dict(_METADATA_ENRICHMENT_UNKNOWN)
+    for field, raw in _CURRENT_METADATA_LINE.findall(_input_text(payload)):
+        if field not in result:
+            continue
+        try:
+            declared = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if declared:
+            result[field] = declared
+    return result
+
+
+_STRICT_OUTPUTS: dict[
+    str, tuple[frozenset[str], str, Callable[[dict[str, Any]], dict[str, Any]]]
+] = {
     "media_metadata_enrichment": (
         frozenset({"title", "authors", "publisher", "description", "published_date", "language"}),
         "extract bibliographic and descriptive metadata",
-        {
-            "title": "SOFIA Confirms Water on the Sunlit Moon",
-            "authors": ["NASA"],
-            "publisher": "NASA",
-            "description": (
-                "SOFIA detected a water signature in Clavius Crater, confirming that water "
-                "exists on the sunlit surface of the Moon."
-            ),
-            "published_date": "2020-10",
-            "language": "en",
-        },
+        _media_metadata_enrichment,
     ),
     "MediaUnitSynthesis": (
         frozenset({"summary_md", "claims"}),
         "building a reusable unit for one document",
-        {
-            "summary_md": (
-                "The document reports that SOFIA confirmed water on the sunlit Moon, "
-                "detecting a water signature in Clavius Crater."
-            ),
-            "claims": [
-                {
-                    "claim_text": (
-                        "SOFIA detected a water signature in Clavius Crater, confirming "
-                        "water on the sunlit Moon."
-                    ),
-                    "candidate_index": 0,
-                }
-            ],
-        },
+        _fixed(
+            {
+                "summary_md": (
+                    "The document reports that SOFIA confirmed water on the sunlit Moon, "
+                    "detecting a water signature in Clavius Crater."
+                ),
+                "claims": [
+                    {
+                        "claim_text": (
+                            "SOFIA detected a water signature in Clavius Crater, confirming "
+                            "water on the sunlit Moon."
+                        ),
+                        "candidate_index": 0,
+                    }
+                ],
+            }
+        ),
     ),
     "SynapseSynthesis": (
         frozenset({"connections"}),
         "resonance engine of a personal knowledge system",
-        {"connections": []},
+        _fixed({"connections": []}),
     ),
     "StandardSynthesis": (
         frozenset({"content_html", "citations"}),
         "expert teacher and careful research writer",
-        {
-            "content_html": (
-                '<article><section id="finding"><h2>Finding</h2><p>The fixture dossier '
-                "records one grounded finding from the available source "
-                '<cite data-nexus-citation="1"></cite>.</p></section></article>'
-            ),
-            "citations": [{"ordinal": 1, "candidate_index": 0, "role": "supports"}],
-        },
+        _fixed(
+            {
+                "content_html": (
+                    '<article><section id="finding"><h2>Finding</h2><p>The fixture dossier '
+                    "records one grounded finding from the available source "
+                    '<cite data-nexus-citation="1"></cite>.</p></section></article>'
+                ),
+                "citations": [{"ordinal": 1, "candidate_index": 0, "role": "supports"}],
+            }
+        ),
     ),
     "IdeaResolverEnvelope": (
         frozenset({"kind", "idea_subject_id", "display_title", "idea_key"}),
         "resolve a selected phrase to one exact idea identity",
-        {
-            "kind": "Unresolved",
-            "idea_subject_id": None,
-            "display_title": None,
-            "idea_key": None,
-        },
+        _fixed(
+            {
+                "kind": "Unresolved",
+                "idea_subject_id": None,
+                "display_title": None,
+                "idea_key": None,
+            }
+        ),
     ),
 }
 
@@ -858,7 +903,7 @@ def _strict_json_result(payload: dict[str, Any], output: object) -> str:
     contract = _STRICT_OUTPUTS.get(name) if isinstance(name, str) else None
     if contract is None:
         raise RequestRejected(422, "unknown_strict_output")
-    expected_properties, prompt_marker, result = contract
+    expected_properties, prompt_marker, resolve = contract
     schema = format_value.get("schema")
     properties = schema.get("properties") if isinstance(schema, dict) else None
     if (
@@ -873,7 +918,7 @@ def _strict_json_result(payload: dict[str, Any], output: object) -> str:
         or prompt_marker not in _input_text(payload).casefold()
     ):
         raise RequestRejected(422, "strict_output_contract_mismatch")
-    return json.dumps(result, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(resolve(payload), separators=(",", ":"), ensure_ascii=False)
 
 
 def _usage() -> dict[str, Any]:

@@ -37,8 +37,10 @@ from nexus.schemas.media import (
     MediaReadState,
     OfflineDownloadSpecOut,
     PodcastEpisodeChapterOut,
+    SourceCountedProgress,
+    SourceStageProgress,
 )
-from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable
+from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 from nexus.services.capabilities import derive_capabilities, is_text_document_ready
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
@@ -56,6 +58,10 @@ from nexus.services.offline_download_source import (
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.resource_grants import media_grant_path_exists_sql
+from nexus.services.source_publication import (
+    SourceCountedProgress as PublishedSourceCountedProgress,
+)
+from nexus.services.source_publication import load_source_progress
 
 logger = get_logger(__name__)
 
@@ -728,6 +734,7 @@ def list_media_for_viewer_by_ids(
         )
         media.document_embed_summary = embed_summaries_by_media.get(media_id)
         media_list.append(media)
+    _apply_source_progress(db, media_list)
     _apply_consumption_state(db, viewer_id, media_list)
     return media_list
 
@@ -821,6 +828,8 @@ def _media_out_from_row(
         source_retry_available=bool(row.get("source_retry_available")),
         source_refresh_available=bool(row.get("source_refresh_available")),
         source_suspended=source_job_suspended,
+        source_repair_available=source_job_suspended,
+        search_repair_available=row["retrieval_status"] == "suspended",
     )
     playback_source = derive_playback_source(
         kind=row["kind"],
@@ -835,6 +844,7 @@ def _media_out_from_row(
         title=row["title"],
         canonical_source_url=row["canonical_source_url"],
         processing_status=processing_status,
+        source_progress=absent(),
         transcript_state=row["transcript_state"],
         transcript_coverage=row["transcript_coverage"],
         transcript_origin=presence_from_nullable(row["transcript_origin"]),
@@ -865,6 +875,32 @@ def _media_out_from_row(
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _apply_source_progress(db: Session, media_outs: list[MediaOut]) -> None:
+    progress_by_media_id = load_source_progress(db, tuple(media.id for media in media_outs))
+    for media in media_outs:
+        progress = progress_by_media_id.get(media.id)
+        if progress is None:
+            media.source_progress = absent()
+        elif isinstance(progress, PublishedSourceCountedProgress):
+            media.source_progress = present(
+                SourceCountedProgress(
+                    completed=progress.completed,
+                    total=progress.total,
+                    unit=progress.unit,
+                    run_count=progress.run_count,
+                    updated_at=progress.updated_at,
+                )
+            )
+        else:
+            media.source_progress = present(
+                SourceStageProgress(
+                    stage=progress.stage,
+                    run_count=progress.run_count,
+                    updated_at=progress.updated_at,
+                )
+            )
 
 
 def _apply_consumption_state(
@@ -1124,6 +1160,7 @@ def list_visible_media(
         media.document_embed_summary = embed_summaries_by_media.get(media_id)
         media_list.append(media)
 
+    _apply_source_progress(db, media_list)
     _apply_consumption_state(db, viewer_id, media_list)
 
     next_cursor = None
@@ -1253,6 +1290,7 @@ def read_event_snapshot(db: Session, *, viewer_id: UUID, media_id: UUID) -> Medi
     media = get_media_for_viewer(db, viewer_id, media_id)
     payload = {
         "processing_status": media.processing_status,
+        "source_progress": media.source_progress.model_dump(mode="json"),
         "last_error_code": media.last_error_code,
         "failure_stage": media.failure_stage,
         "retrieval_status": media.retrieval_status,

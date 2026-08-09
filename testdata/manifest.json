@@ -30,6 +30,16 @@
       ]
     },
     {
+      "path": "testdata/pdf/bounded-citation-712.json",
+      "sha256": "a562bc6ede70a44fe00494035a7e77c60f60c7c37144cf0dea055c3dc482476e",
+      "source": "repo-authored: deterministic dense citation-heavy 712-page PDF recipe with a truncated adversarial variant",
+      "license": "Repository-owned test data; retained as the bounded-ingestion lifecycle and health corpus",
+      "purpose": [
+        "Real-stack durable PDF ingest, counted Activity progress, interactive-lane availability, and complete content indexing",
+        "Typed background rejection after a valid PDF signature reaches the real parser boundary"
+      ]
+    },
+    {
       "path": "python/tests/fixtures/epub/moby-dick-epub3.epub",
       "sha256": "1215d453321c51b130e41354355ad159e48154c1e1431bc1c41d6f138f8b1556",
       "source": "https://www.gutenberg.org/ebooks/2701",

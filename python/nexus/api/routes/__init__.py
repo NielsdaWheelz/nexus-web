@@ -29,6 +29,7 @@ from nexus.api.routes.listening_state import router as listening_state_router
 from nexus.api.routes.llm_profiles import router as llm_profiles_router
 from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
+from nexus.api.routes.media_activity import router as media_activity_router
 from nexus.api.routes.media_assets import router as media_assets_router
 from nexus.api.routes.media_ingest import router as media_ingest_router
 from nexus.api.routes.messages import router as messages_router
@@ -76,6 +77,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(media_ingest_router)
     api_router.include_router(listening_state_router)
     api_router.include_router(podcast_transcripts_router)
+    api_router.include_router(media_activity_router)
     api_router.include_router(public_resource_shares_router)
     api_router.include_router(reader_router)
     api_router.include_router(media_router)

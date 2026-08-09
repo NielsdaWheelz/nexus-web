@@ -6,11 +6,12 @@ import hashlib
 import json
 import re
 from collections.abc import Iterable, Mapping
+from typing import Any, cast
 from urllib.parse import unquote
 from uuid import UUID
 
 from lxml.etree import ParserError
-from lxml.html import HtmlElement, tostring
+from lxml.html import HtmlElement
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -23,10 +24,11 @@ from nexus.schemas.reader_apparatus import (
     ReaderApparatusItemOut,
     ReaderApparatusResponse,
 )
-from nexus.schemas.retrieval import retrieval_locator_json
+from nexus.schemas.retrieval import RetrievalLocator, retrieval_locator_json
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.capabilities import is_document_status_ready
-from nexus.services.html_tree import parse_html_document
+from nexus.services.html_tree import inner_html, parse_html_document, serialize_html
+from nexus.services.parser_temp import nested_utf8_byte_length
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resources
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.text import normalize_whitespace
@@ -36,6 +38,10 @@ SUPPORTED_MEDIA_KINDS = frozenset({"web_article", "epub", "pdf"})
 _LEGACY_NAMED_NOTE_RE = re.compile(r"^f(?P<number>[1-9]\d*)n$")
 _PROJECT_GUTENBERG_LINKNOTE_REF_RE = re.compile(r"^linknoteref-(?P<number>[1-9]\d*)$")
 _PROJECT_GUTENBERG_LINKNOTE_TARGET_RE = re.compile(r"^linknote-(?P<number>[1-9]\d*)$")
+
+
+class HtmlApparatusTargetLimitExceeded(Exception):
+    """The compact cross-document target index exceeded its parser budget."""
 
 
 def visible_reader_apparatus_item_ids(
@@ -219,10 +225,10 @@ def extract_html_apparatus(
 
         target_key_token = target_id or str((external_target or {}).get("target_ref") or "")
         marker_key = f"{source_kind}:ref:{ordinal:06d}:{_stable_token(target_key_token)}"
-        target_source_ref = {**source_ref, "target_id": target_id}
+        target_source_ref: dict[str, object] = {**source_ref, "target_id": target_id}
         if external_target is not None:
-            target_source_ref = dict(external_target.get("source_ref") or target_source_ref)
-        marker_source_ref = dict(target_source_ref)
+            target_source_ref = _object_dict(external_target.get("source_ref") or target_source_ref)
+        marker_source_ref: dict[str, object] = dict(target_source_ref)
         if external_target is not None:
             marker_source_ref = {
                 **source_ref,
@@ -292,7 +298,7 @@ def extract_html_apparatus(
         )
         ordinal += 1
 
-    return _inner_html(root), items, edges
+    return _fragment_html(root), items, edges
 
 
 def collect_html_apparatus_targets(
@@ -301,18 +307,25 @@ def collect_html_apparatus_targets(
     document_href: str,
     source_kind: str,
     source_ref: dict[str, object],
+    max_targets: int,
+    max_backlinks: int,
+    max_retained_utf8_bytes: int,
     extraction_method: str = "html_semantic",
-) -> dict[str, dict[str, object]]:
+) -> tuple[dict[str, dict[str, object]], int, int, int]:
+    if max_targets < 0 or max_backlinks < 0 or max_retained_utf8_bytes < 0:
+        raise ValueError("HTML apparatus target budgets cannot be negative")
     if not html.strip():
-        return {}
+        return {}, 0, 0, 0
     try:
         doc = parse_html_document(html)
     except ParserError:
-        return {}
+        return {}, 0, 0, 0
     body = doc.body
     root = body if body is not None else doc
     targets: dict[str, dict[str, object]] = {}
     ordinal = 0
+    retained_utf8_bytes = 0
+    backlink_count = 0
     for element in root.iter():
         if not isinstance(element, HtmlElement):
             continue
@@ -329,6 +342,8 @@ def collect_html_apparatus_targets(
         body_text = _element_text(element)
         if not body_text:
             continue
+        if ordinal >= max_targets:
+            raise HtmlApparatusTargetLimitExceeded("HTML apparatus target count exceeded")
         target_ref = f"{document_href}#{target_id}"
         target_kind = _target_kind_for_context(context)
         source_ref_for_target = {
@@ -336,7 +351,9 @@ def collect_html_apparatus_targets(
             "target_href": document_href,
             "target_id": target_id,
         }
-        targets[target_ref] = {
+        backlinks = _link_hrefs(element, max_count=max_backlinks - backlink_count)
+        backlink_count += len(backlinks)
+        target = {
             "target_ref": target_ref,
             "target_href": document_href,
             "target_id": target_id,
@@ -349,10 +366,14 @@ def collect_html_apparatus_targets(
             "source_ref": source_ref_for_target,
             "sort_key": f"{_source_order_key(element, ordinal)}.target",
             "stable_key": f"{source_kind}:target:{_stable_token(target_ref)}",
-            "backlinks": _link_hrefs(element),
+            "backlinks": backlinks,
         }
+        retained_utf8_bytes += nested_utf8_byte_length(target)
+        if retained_utf8_bytes > max_retained_utf8_bytes:
+            raise HtmlApparatusTargetLimitExceeded("HTML apparatus target text exceeded")
+        targets[target_ref] = target
         ordinal += 1
-    return targets
+    return targets, ordinal, retained_utf8_bytes, backlink_count
 
 
 def _extract_distill_apparatus(
@@ -1182,6 +1203,7 @@ def _extract_project_gutenberg_linknotes(
         target_id = _local_target_id(element)
         if target_id != f"linknote-{number}":
             return
+        assert target_id is not None
         marker_text = _element_text(element)
         if marker_text not in {str(number), f"[{number}]"}:
             return
@@ -1424,7 +1446,7 @@ def _materialize_external_targets_in_document(
                 "body_html_sanitized": None,
                 "confidence": confidence,
                 "extraction_method": str(external_target["extraction_method"]),
-                "source_ref": dict(external_target.get("source_ref") or {}),
+                "source_ref": _object_dict(external_target.get("source_ref")),
                 "sort_key": str(external_target["sort_key"]),
                 "_locator_text": body_text,
             }
@@ -1511,9 +1533,7 @@ def _apparatus_locator_span_by_key(
     if not token_pairs:
         return locator_spans
 
-    rendered = tostring(root, encoding="unicode", method="html")
-    html_with_tokens = rendered.decode("utf-8") if isinstance(rendered, bytes) else rendered
-    canonical_with_tokens = generate_canonical_text(html_with_tokens)
+    canonical_with_tokens = generate_canonical_text(serialize_html(root))
     token_values = [token for _stable_key, *tokens in token_pairs for token in tokens]
     canonical_without_tokens = canonical_with_tokens
     for token in token_values:
@@ -1593,9 +1613,7 @@ def _apparatus_locator_texts_in_order(html_sanitized: str | None) -> list[tuple[
         stable_key = (element.get("data-reader-apparatus-item-id") or "").strip()
         if not stable_key:
             continue
-        rendered = tostring(element, encoding="unicode", method="html")
-        html = rendered.decode("utf-8") if isinstance(rendered, bytes) else rendered
-        text_value = generate_canonical_text(html)
+        text_value = generate_canonical_text(serialize_html(element))
         if text_value:
             locator_texts.append((stable_key, text_value))
     return locator_texts
@@ -1675,7 +1693,10 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
             label=row["label"],
             body_text=row["body_text"],
             body_html_sanitized=row["body_html_sanitized"],
-            locator=retrieval_locator_json(row["locator"]),
+            locator=cast(
+                RetrievalLocator | None,
+                retrieval_locator_json(_object_dict(row["locator"]) or None),
+            ),
             locator_status=row["locator_status"],
             confidence=row["confidence"],
             extraction_method=str(row["extraction_method"]),
@@ -1879,7 +1900,11 @@ def replace_media_apparatus(
         bindparam("source_ref", type_=JSONB),
     )
     for item in items:
-        locator = retrieval_locator_json(item.get("locator")) if item.get("locator") else None
+        locator = (
+            retrieval_locator_json(_object_dict(item.get("locator")))
+            if item.get("locator")
+            else None
+        )
         stable_key = str(item["stable_key"])
         values = {
             "media_id": media_id,
@@ -2460,7 +2485,7 @@ def _target_ref(element: HtmlElement) -> str | None:
     return href or None
 
 
-def _link_hrefs(element: HtmlElement) -> list[str]:
+def _link_hrefs(element: HtmlElement, *, max_count: int) -> list[str]:
     hrefs: list[str] = []
     for descendant in element.iter():
         if not isinstance(descendant, HtmlElement):
@@ -2469,6 +2494,8 @@ def _link_hrefs(element: HtmlElement) -> list[str]:
             continue
         href = (descendant.get("href") or "").strip()
         if href:
+            if len(hrefs) >= max_count:
+                raise HtmlApparatusTargetLimitExceeded("HTML apparatus backlink count exceeded")
             hrefs.append(href)
     return hrefs
 
@@ -2660,7 +2687,7 @@ def _read_quoted_bibtex_value(body: str, start: int) -> tuple[str, int]:
     return body[start + 1 :].strip(), len(body)
 
 
-def _bibliography_data_text(data: dict[object, object]) -> str:
+def _bibliography_data_text(data: Mapping[str, object]) -> str:
     parts: list[str] = []
     for key in ("title", "author", "journal", "booktitle", "publisher", "year", "doi", "url"):
         value = data.get(key)
@@ -2709,7 +2736,14 @@ def _unique_text_span(canonical_text: str, locator_text: str) -> tuple[int, int]
     return start, start + len(locator_text)
 
 
-def _inner_html(root: HtmlElement) -> str:
+def _fragment_html(root: HtmlElement) -> str:
+    # A parsed document is rooted at `body`; anything else is already a fragment.
     if str(root.tag).lower() == "body":
-        return "".join(tostring(child, encoding="unicode", method="html") for child in root)
-    return tostring(root, encoding="unicode", method="html")
+        return inner_html(root)
+    return serialize_html(root)
+
+
+def _object_dict(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): item for key, item in value.items()}

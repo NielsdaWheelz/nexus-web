@@ -30,6 +30,7 @@ export interface DesktopNexusController {
   readonly busy: boolean;
   readonly announcement: string | null;
   readonly focusKey: string;
+  readonly dialogLabel: string;
   readonly nexusOpenShortcutLabel: string;
   readonly actionsRequest: DesktopNexusActionsRequest | null;
   /** A retained workflow panel owned by the shared controller. */

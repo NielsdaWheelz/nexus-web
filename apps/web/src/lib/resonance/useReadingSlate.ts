@@ -17,6 +17,7 @@ import type {
   SlateSnapshot,
   SlateTarget,
 } from "@/lib/resonance/contract";
+import { assertNever } from "@/lib/assertNever";
 
 export type ReadingSlateDestination =
   { kind: "Lectern" } | { kind: "Library"; id: string; name: string };
@@ -93,10 +94,6 @@ export interface ReadingSlateController {
   state: ReadingSlateState;
   add: (item: SlateItem, options: ReadingSlateAddOptions) => void;
   focusRequest: ReadingSlateFocusRequest | null;
-}
-
-function assertNever(value: never): never {
-  throw new Error(`Unhandled Reading Slate variant: ${JSON.stringify(value)}`);
 }
 
 function visibleItems(state: ReadingSlateState): SlateItem[] | null {

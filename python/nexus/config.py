@@ -20,6 +20,7 @@ import os
 from datetime import datetime
 from enum import Enum
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
@@ -28,13 +29,13 @@ from pydantic_settings import BaseSettings
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
 INTERACTIVE_WORKER_JOB_KINDS: tuple[str, ...] = (
-    "ingest_media_source",
     "chat_run",
     "dossier_build",
     "podcast_sync_subscription_job",
     "oracle_reading_generate",
 )
 BACKGROUND_WORKER_JOB_KINDS: tuple[str, ...] = (
+    "ingest_media_source",
     "media_content_reindex_job",
     "enrich_metadata",
     "media_unit_build",
@@ -298,6 +299,7 @@ class Settings(BaseSettings):
     ingest_semantic_failed_retry_seconds: int = Field(
         default=1800, alias="INGEST_SEMANTIC_FAILED_RETRY_SECONDS"
     )
+    parser_temp_root: Path = Field(default=Path("/tmp/nexus-parser-tmp"), alias="PARSER_TEMP_ROOT")
 
     # Worker runtime. Normal workers use one fixed lane. A raw allowlist is
     # accepted only for a gated, bounded maintenance invocation.
@@ -790,6 +792,8 @@ class Settings(BaseSettings):
             raise ValueError("INGEST_SEMANTIC_REPAIR_BATCH_LIMIT must be >= 1.")
         if self.ingest_semantic_failed_retry_seconds < 1:
             raise ValueError("INGEST_SEMANTIC_FAILED_RETRY_SECONDS must be >= 1.")
+        if not self.parser_temp_root.is_absolute():
+            raise ValueError("PARSER_TEMP_ROOT must be an absolute path.")
         if self.worker_lane == "maintenance":
             if not self.nexus_allow_worker_maintenance:
                 raise ValueError(

@@ -11,6 +11,7 @@ import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { MediaActivityProvider } from "@/lib/media/MediaActivityProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { CompletionUndoFeedbackOwner } from "@/lib/lectern/useCompletionUndo";
 import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
@@ -151,21 +152,23 @@ function AuthenticatedWorkspace({
                       <ResourceOverlaysProvider>
                         <GlobalPlayerProvider accountId={accountId}>
                           <ResourceActionRuntimeProvider>
-                            <Nexus />
-                            <ResourceActionOverlays />
-                            <div
-                              className={styles.layout}
-                              data-hydrated={hydrated || undefined}
-                            >
-                              <AppNav />
-                              <main className={styles.main}>
-                                <WalknoteSessionProvider>
-                                  <WorkspaceHost />
-                                  <LecternMutationNotice />
-                                  <GlobalPlayerSurfaces />
-                                </WalknoteSessionProvider>
-                              </main>
-                            </div>
+                            <MediaActivityProvider>
+                              <Nexus />
+                              <ResourceActionOverlays />
+                              <div
+                                className={styles.layout}
+                                data-hydrated={hydrated || undefined}
+                              >
+                                <AppNav />
+                                <main className={styles.main}>
+                                  <WalknoteSessionProvider>
+                                    <WorkspaceHost />
+                                    <LecternMutationNotice />
+                                    <GlobalPlayerSurfaces />
+                                  </WalknoteSessionProvider>
+                                </main>
+                              </div>
+                            </MediaActivityProvider>
                           </ResourceActionRuntimeProvider>
                         </GlobalPlayerProvider>
                       </ResourceOverlaysProvider>

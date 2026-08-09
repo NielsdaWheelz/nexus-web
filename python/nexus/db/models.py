@@ -1369,6 +1369,13 @@ class MediaSourceAttempt(Base):
     source_type: Mapped[str] = mapped_column(Text, nullable=False)
     attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
     run_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    processing_stage: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_completed: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    progress_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_updated_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False)
     intent_key: Mapped[str] = mapped_column(Text, nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -86,7 +86,7 @@ logger = get_logger(__name__)
 # Exact private response paths. These responses carry per-viewer state or
 # private source capabilities and must never be retained by an intermediary.
 PRIVATE_NO_STORE_PATH_RE = re.compile(
-    r"/media/[^/]+/(reader-state|offline-download-spec)"
+    r"/media/activity|/media/[^/]+/(reader-state|offline-download-spec)"
     r"|/me/reader-profile|/consumption/(activity|stats|sessions)"
 )
 

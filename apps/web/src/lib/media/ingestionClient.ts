@@ -14,6 +14,7 @@ import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import { type DocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import { isRecord } from "@/lib/validation";
+import { publishAcceptedMediaActivity } from "@/lib/media/activityClient";
 
 export type UploadFileKind = "Pdf" | "Epub";
 
@@ -206,6 +207,7 @@ export async function uploadIngestFile(args: {
   // (the upload-init identity is durable); publish once so a mounted All pane
   // reconciles. Aborts and defects throw past this point and never publish.
   publishLibraryPlacementChange([...args.libraryIds]);
+  publishAcceptedMediaActivity();
   return result;
 }
 
@@ -540,6 +542,7 @@ export async function addMediaFromUrl({
   // One acknowledged create-with-placement: publish this request's destinations
   // (an empty list still lands in Default) so a mounted All pane reconciles.
   publishLibraryPlacementChange([...libraryIds]);
+  publishAcceptedMediaActivity();
   return result;
 }
 

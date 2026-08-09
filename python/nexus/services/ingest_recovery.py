@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TypedDict
+from typing import Literal, TypedDict
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media
 from nexus.config import (
     BACKGROUND_WORKER_JOB_KINDS,
     INTERACTIVE_WORKER_JOB_KINDS,
@@ -17,17 +18,15 @@ from nexus.config import (
 )
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
 from nexus.jobs.queue import (
     current_dead_job_for_payload,
     enqueue_job,
     ingest_operation_health,
-    lock_jobs_for_payload,
     requeue_dead_job,
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import Presence, absent, present
-from nexus.services.content_indexing import request_media_content_reindex
 
 logger = get_logger(__name__)
 
@@ -206,72 +205,43 @@ def enqueue_stale_ingest_reconcile(*, request_id: str | None = None) -> None:
         db.close()
 
 
-def retry_dead_content_index_job(*, media_id: UUID) -> UUID:
-    db = get_session_factory()()
-    try:
-
-        def replay() -> UUID:
-            state = (
-                db.execute(
-                    text(
-                        """
-                    SELECT cis.revision
-                    FROM media m
-                    JOIN content_index_states cis
-                      ON cis.owner_kind = 'media'
-                     AND cis.owner_id = m.id
-                    WHERE m.id = :media_id
-                    FOR UPDATE OF m, cis
-                    """
-                    ),
-                    {"media_id": media_id},
-                )
-                .mappings()
-                .one_or_none()
-            )
-            if state is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Content index not found.")
-            job = current_dead_job_for_payload(
-                db,
-                kind="media_content_reindex_job",
-                expected_payload_match={
-                    "media_id": str(media_id),
-                    "revision": int(state["revision"]),
-                },
-            )
-            if job is None:
-                raise ConflictError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "The current content-index operation is not suspended.",
-                )
-            if not requeue_dead_job(db, job_id=job.id):
-                # justify-defect: the exact dead row is locked in this transaction.
-                raise AssertionError("locked dead content-index job could not be replayed")
-            db.commit()
-            return job.id
-
-        return retry_serializable(db, "retry_dead_content_index_job", replay)
-    finally:
-        db.close()
+RepairScope = Literal["Source", "Search"]
 
 
-def retry_dead_source_job(*, media_id: UUID) -> UUID:
-    db = get_session_factory()()
-    try:
+def repair_media_work(
+    db: Session,
+    *,
+    media_id: UUID,
+    scope: RepairScope,
+    viewer_id: UUID | None = None,
+    is_admin: bool = False,
+) -> UUID:
+    """Requeue only exact dead work for the current source attempt or index revision."""
 
-        def replay() -> UUID:
+    def repair() -> UUID:
+        if viewer_id is not None:
+            if not can_read_media(db, viewer_id, media_id):
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+            creator_id = db.execute(
+                text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
+                {"media_id": media_id},
+            ).scalar_one()
+            if creator_id != viewer_id and not is_admin:
+                raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Media owner required")
+
+        if scope == "Source":
             row = (
                 db.execute(
                     text(
                         """
-                    SELECT msa.id AS attempt_id, msa.job_id
-                    FROM media m
-                    JOIN media_source_attempts msa ON msa.media_id = m.id
-                    WHERE m.id = :media_id
-                    ORDER BY msa.attempt_no DESC, msa.created_at DESC, msa.id DESC
-                    LIMIT 1
-                    FOR UPDATE OF m, msa
-                    """
+                        SELECT msa.id AS attempt_id, msa.job_id
+                        FROM media m
+                        JOIN media_source_attempts msa ON msa.media_id = m.id
+                        WHERE m.id = :media_id
+                        ORDER BY msa.attempt_no DESC, msa.created_at DESC, msa.id DESC
+                        LIMIT 1
+                        FOR UPDATE OF m, msa
+                        """
                     ),
                     {"media_id": media_id},
                 )
@@ -279,84 +249,63 @@ def retry_dead_source_job(*, media_id: UUID) -> UUID:
                 .one_or_none()
             )
             if row is None or row["job_id"] is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source operation not found.")
-            job = current_dead_job_for_payload(
-                db,
-                kind="ingest_media_source",
-                expected_payload_match={"attempt_id": str(row["attempt_id"])},
-            )
-            if job is None or job.id != row["job_id"]:
-                raise ConflictError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "The current source operation is not suspended.",
+                job = None
+                exact = False
+            else:
+                job = current_dead_job_for_payload(
+                    db,
+                    kind="ingest_media_source",
+                    expected_payload_match={
+                        "media_id": str(media_id),
+                        "attempt_id": str(row["attempt_id"]),
+                    },
                 )
-            if not requeue_dead_job(db, job_id=job.id):
-                # justify-defect: the exact dead row is locked in this transaction.
-                raise AssertionError("locked dead source job could not be replayed")
-            db.commit()
-            return job.id
-
-        return retry_serializable(db, "retry_dead_source_job", replay)
-    finally:
-        db.close()
-
-
-def repair_legacy_failed_content_index(
-    *,
-    media_id: UUID,
-    request_id: str | None,
-) -> UUID:
-    db = get_session_factory()()
-    try:
-
-        def repair() -> UUID:
+                exact = job is not None and job.id == row["job_id"]
+        elif scope == "Search":
             row = (
                 db.execute(
                     text(
                         """
-                    SELECT cis.revision, cis.status
-                    FROM media m
-                    JOIN content_index_states cis
-                      ON cis.owner_kind = 'media'
-                     AND cis.owner_id = m.id
-                    WHERE m.id = :media_id
-                    FOR UPDATE OF m, cis
-                    """
+                        SELECT cis.revision
+                        FROM media m
+                        JOIN content_index_states cis
+                          ON cis.owner_kind = 'media'
+                         AND cis.owner_id = m.id
+                        WHERE m.id = :media_id
+                        FOR UPDATE OF m, cis
+                        """
                     ),
                     {"media_id": media_id},
                 )
                 .mappings()
                 .one_or_none()
             )
-            if row is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Content index not found.")
-            if row["status"] != "failed":
-                raise ConflictError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "Only a legacy failed content index can be repaired.",
+            job = (
+                None
+                if row is None
+                else current_dead_job_for_payload(
+                    db,
+                    kind="media_content_reindex_job",
+                    expected_payload_match={
+                        "media_id": str(media_id),
+                        "revision": int(row["revision"]),
+                    },
                 )
-            jobs = lock_jobs_for_payload(
-                db,
-                kind="media_content_reindex_job",
-                expected_payload_match={
-                    "media_id": str(media_id),
-                    "revision": int(row["revision"]),
-                },
             )
-            if any(job.status in {"pending", "failed", "running", "dead"} for job in jobs):
-                raise ConflictError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "The current content index already has an owned operation.",
-                )
-            intent = request_media_content_reindex(
-                db,
-                media_id=media_id,
-                reason="operator_repair",
-                request_id=request_id,
-            )
-            db.commit()
-            return intent.background_job_id
+            exact = job is not None
+        else:
+            # justify-defect: RepairScope is a closed transport-owned union.
+            raise AssertionError(f"unknown media repair scope: {scope!r}")
 
-        return retry_serializable(db, "repair_legacy_failed_content_index", repair)
-    finally:
-        db.close()
+        if not exact or job is None:
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED,
+                "No exact current dead operation is repairable.",
+            )
+        if not requeue_dead_job(db, job_id=job.id):
+            # justify-defect: current_dead_job_for_payload locked this exact dead row.
+            raise AssertionError("locked dead media job could not be requeued")
+        db.commit()
+        return job.id
+
+    return retry_serializable(db, "repair_media_work", repair)

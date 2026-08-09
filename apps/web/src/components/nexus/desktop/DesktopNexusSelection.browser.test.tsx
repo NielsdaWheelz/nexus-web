@@ -45,7 +45,7 @@ function entry(paneId: string, label: string): NexusEntry {
   };
 }
 
-it("keeps virtual selection stable under result reflow until the pointer moves", () => {
+it("uses the workflow label and keeps virtual selection stable under result reflow", () => {
   const first = entry("reading-notes", "Reading notes");
   const second = entry("project-notes", "Project notes");
 
@@ -70,6 +70,7 @@ it("keeps virtual selection stable under result reflow until the pointer moves",
       busy: false,
       announcement: null,
       focusKey: "Root",
+      dialogLabel: "Activity",
       nexusOpenShortcutLabel: "Ctrl+K",
       actionsRequest: null,
       setQuery: () => {},
@@ -84,6 +85,7 @@ it("keeps virtual selection stable under result reflow until the pointer moves",
   }
 
   render(withRenderEnvironment(<Scenario />));
+  expect(screen.getByRole("dialog", { name: "Activity" })).toBeVisible();
   const input = screen.getByRole("combobox", { name: "Find anything…" });
   const firstPrimaryId = desktopNexusCellId(first.key, "Primary");
   const secondPrimary = screen.getByRole("gridcell", {

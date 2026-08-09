@@ -14,6 +14,7 @@ import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
 import { requestNexusOpen } from "@/lib/nexus/events";
+import { useMediaActivity } from "@/lib/media/MediaActivityProvider";
 import { DEFAULT_KEYBINDINGS } from "@/lib/keybindings";
 import { useKeybinding, useKeybindingLabel } from "@/lib/keybindingsProvider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -46,6 +47,7 @@ const NAV_ACCOUNT_ITEM = toNavItem(NAV_ACCOUNT);
 export default function AppNav() {
   const isMobile = useIsMobileViewport();
   const { state, activateWorkspaceTarget } = useWorkspaceStore();
+  const { snapshot, activityOpen } = useMediaActivity();
 
   const [collapsed, setCollapsed] = useState(false);
   const commandCombo =
@@ -121,8 +123,19 @@ export default function AppNav() {
       }),
     [],
   );
+  const openActivity = useCallback(
+    () => requestNexusOpen({ kind: "Activity" }),
+    [],
+  );
+  const activityCount = snapshot?.nonterminalCount ?? 0;
   if (isMobile) {
-    return <MobilePaneBar />;
+    return (
+      <MobilePaneBar
+        activityCount={activityCount}
+        activityOpen={activityOpen}
+        onOpenActivity={openActivity}
+      />
+    );
   }
 
   return (
@@ -138,6 +151,9 @@ export default function AppNav() {
       commandCombo={commandCombo}
       onOpenCommand={openCommand}
       onOpenAdd={openAdd}
+      activityCount={activityCount}
+      activityOpen={activityOpen}
+      onOpenActivity={openActivity}
       onNavigate={onNavigate}
     />
   );

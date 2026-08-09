@@ -7,11 +7,13 @@ behind parser-agnostic typed outcomes.
 Does NOT own lifecycle transitions or background-job dispatch.
 """
 
-import hashlib
 import re
 import tarfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import delete, text
@@ -27,6 +29,12 @@ from nexus.services.latex_apparatus import (
     LatexSourceArchiveUnsafe,
     extract_latex_biblatex_apparatus_from_archive,
 )
+from nexus.services.parser_temp import (
+    nested_utf8_byte_length,
+    parser_attempt_directory,
+    stream_storage_object_to_file,
+    utf8_byte_length,
+)
 from nexus.services.pdf_highlight_geometry import (
     GeometryValidationError,
     canonicalize_geometry,
@@ -40,6 +48,12 @@ from nexus.storage.client import StorageError
 from nexus.text import normalize_whitespace
 
 logger = get_logger(__name__)
+
+PDF_EXTRACTED_TEXT_MAX_BYTES = 32 * 1024 * 1024
+PDF_MAX_PAGES = 10_000
+PDF_APPARATUS_MAX_ITEMS = 2_000
+PDF_APPARATUS_MAX_EDGES = 2_000
+PDF_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
 
 _PDF_REFERENCE_LINK_Y_TOLERANCE_PT = 5.0
 _PDF_REFERENCE_LINK_X_TOLERANCE_PT = 2.0
@@ -149,6 +163,44 @@ class PdfLegalFootnoteMarker:
     rect_coords: tuple[float, float, float, float]
 
 
+@dataclass(frozen=True)
+class _PdfParsedSource:
+    result: PdfExtractionResult
+    apparatus: PdfApparatusResult
+
+
+@dataclass(frozen=True)
+class _PdfNativeCitationLink:
+    page_index: int
+    link_index: int
+    name: str
+    destination_page_index: int
+    destination_point: tuple[float, float] | None
+    source_rect: tuple[float, float, float, float]
+    exact: str
+    link_xref: int | None
+
+
+class _PdfResourceLimitExceeded(Exception):
+    pass
+
+
+@dataclass
+class _PdfApparatusScan:
+    in_references: bool = False
+    reference_blocks: list[PdfReferenceBlock] = field(default_factory=list)
+    native_links: list[_PdfNativeCitationLink] = field(default_factory=list)
+    native_total_links: int = 0
+    native_internal_links: int = 0
+    native_skipped: dict[str, int] = field(default_factory=dict)
+    legal_targets: list[PdfLegalFootnoteTarget] = field(default_factory=list)
+    legal_marker_candidates: dict[int, list[PdfLegalFootnoteMarker]] = field(default_factory=dict)
+    legal_skipped: dict[str, int] = field(default_factory=dict)
+    page_heights: list[float | None] = field(default_factory=list)
+    retained_item_count: int = 0
+    retained_utf8_bytes: int = 0
+
+
 # ---------------------------------------------------------------------------
 # Plain-text normalization
 # ---------------------------------------------------------------------------
@@ -251,9 +303,13 @@ def _parse_pdf_date(raw: str | None) -> str | None:
 
 
 def _extract_with_pymupdf(
-    pdf_bytes: bytes,
-) -> PdfExtractionResult | PdfExtractionError:
-    """Extract text from PDF bytes using PyMuPDF.
+    pdf_path: Path,
+    *,
+    media_id: UUID,
+    source_byte_length: int,
+    record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
+) -> _PdfParsedSource | PdfExtractionError:
+    """Extract bounded text from a file-backed PDF using PyMuPDF.
 
     Returns parser-agnostic typed outcome. All PyMuPDF-specific exceptions
     are caught and mapped here.
@@ -268,7 +324,7 @@ def _extract_with_pymupdf(
         )
 
     try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        doc = fitz.open(pdf_path)
     except RuntimeError as exc:
         err_str = str(exc).lower()
         if "password" in err_str or "encrypted" in err_str:
@@ -306,44 +362,78 @@ def _extract_with_pymupdf(
                 error_message="PDF has zero pages",
                 terminal=False,
             )
+        if page_count > PDF_MAX_PAGES:
+            return _pdf_resource_limit_error(
+                f"PDF has {page_count} pages; limit is {PDF_MAX_PAGES}"
+            )
 
-        raw_page_texts: list[str] = []
+        normalized_pages: list[str] = []
         page_labels: list[str | None] = []
         page_sizes: list[tuple[float, float] | None] = []
         page_rotations: list[int | None] = []
+        normalized_text_bytes = 0
+        nonempty_page_count = 0
+        apparatus_scan = _PdfApparatusScan()
+        record_progress(0, page_count, "Page")
         for page_num in range(page_count):
             try:
                 page = doc[page_num]
-                page_text = str(page.get_text("text") or "")
-                try:
-                    raw_page_label = page.get_label()
-                except (AttributeError, RuntimeError):
-                    raw_page_label = None
-                page_label = (
-                    raw_page_label.strip()
-                    if isinstance(raw_page_label, str) and raw_page_label.strip()
-                    else None
-                )
-                page_rect = page.rect
-                page_size = (float(page_rect.width), float(page_rect.height))
-                page_rotation = int(page.rotation or 0)
             except (RuntimeError, AttributeError, ValueError):
+                page = None
+            if page is None:
                 page_text = ""
                 page_label = None
                 page_size = None
                 page_rotation = None
-            raw_page_texts.append(page_text)
+                apparatus_scan.page_heights.append(None)
+            else:
+                try:
+                    _scan_pdf_page_apparatus(apparatus_scan, page, page_num)
+                except _PdfResourceLimitExceeded as exc:
+                    return _pdf_resource_limit_error(str(exc))
+                try:
+                    page_text = str(page.get_text("text") or "")
+                    try:
+                        raw_page_label = page.get_label()
+                    except (AttributeError, RuntimeError):
+                        raw_page_label = None
+                    page_label = (
+                        raw_page_label.strip()
+                        if isinstance(raw_page_label, str) and raw_page_label.strip()
+                        else None
+                    )
+                    page_rect = page.rect
+                    page_size = (float(page_rect.width), float(page_rect.height))
+                    page_rotation = int(page.rotation or 0)
+                except (RuntimeError, AttributeError, ValueError):
+                    page_text = ""
+                    page_label = None
+                    page_size = None
+                    page_rotation = None
+            normalized_page = normalize_pdf_text(page_text)
+            if normalized_page:
+                if nonempty_page_count:
+                    normalized_text_bytes += 2
+                normalized_text_bytes += utf8_byte_length(normalized_page)
+                nonempty_page_count += 1
+            if normalized_text_bytes > PDF_EXTRACTED_TEXT_MAX_BYTES:
+                return PdfExtractionError(
+                    error_code=ApiErrorCode.E_SOURCE_TOO_LARGE.value,
+                    error_message="PDF extracted text exceeds the 32 MiB limit",
+                    terminal=True,
+                )
+            normalized_pages.append(normalized_page)
             page_labels.append(page_label)
             page_sizes.append(page_size)
             page_rotations.append(page_rotation)
+            completed = page_num + 1
+            if completed % 10 == 0 or completed == page_count:
+                record_progress(completed, page_count, "Page")
 
-        combined_raw = "\f".join(raw_page_texts)
-        normalized = normalize_pdf_text(combined_raw)
-
-        normalized_pages = _build_page_texts_from_raw(raw_page_texts)
+        normalized = "\n\n".join(page for page in normalized_pages if page)
 
         if not normalized:
-            return PdfExtractionResult(
+            result = PdfExtractionResult(
                 page_count=page_count,
                 plain_text="",
                 page_spans=_build_page_spans(
@@ -355,194 +445,263 @@ def _extract_with_pymupdf(
                     page_rotations,
                 ),
                 has_text=False,
-                source_byte_length=len(pdf_bytes),
+                source_byte_length=source_byte_length,
                 pdf_title=pdf_title,
                 pdf_author=pdf_author,
                 pdf_subject=pdf_subject,
                 pdf_creation_date=pdf_creation_date,
             )
 
-        page_spans = _build_page_spans(
-            normalized_pages,
-            normalized,
-            page_count,
-            page_labels,
-            page_sizes,
-            page_rotations,
-        )
-
-        return PdfExtractionResult(
-            page_count=page_count,
-            plain_text=normalized,
-            page_spans=page_spans,
-            has_text=True,
-            source_byte_length=len(pdf_bytes),
-            pdf_title=pdf_title,
-            pdf_author=pdf_author,
-            pdf_subject=pdf_subject,
-            pdf_creation_date=pdf_creation_date,
-        )
+        else:
+            result = PdfExtractionResult(
+                page_count=page_count,
+                plain_text=normalized,
+                page_spans=_build_page_spans(
+                    normalized_pages,
+                    normalized,
+                    page_count,
+                    page_labels,
+                    page_sizes,
+                    page_rotations,
+                ),
+                has_text=True,
+                source_byte_length=source_byte_length,
+                pdf_title=pdf_title,
+                pdf_author=pdf_author,
+                pdf_subject=pdf_subject,
+                pdf_creation_date=pdf_creation_date,
+            )
+        try:
+            apparatus = _merge_pdf_apparatus_results(
+                _materialize_pdf_native_link_apparatus(apparatus_scan, media_id=media_id),
+                _materialize_pdf_legal_footnote_apparatus(apparatus_scan, media_id=media_id),
+            )
+            _validate_pdf_apparatus_budget(apparatus)
+        except _PdfResourceLimitExceeded as exc:
+            return _pdf_resource_limit_error(str(exc))
+        return _PdfParsedSource(result=result, apparatus=apparatus)
     finally:
         doc.close()
 
 
-def _extract_pdf_native_link_apparatus(
-    pdf_bytes: bytes,
+def _scan_pdf_page_apparatus(scan: _PdfApparatusScan, page, page_index: int) -> None:
+    try:
+        page_height = float(page.rect.height)
+    except (AttributeError, TypeError, ValueError):
+        page_height = None
+    scan.page_heights.append(page_height)
+
+    try:
+        raw_page_blocks = page.get_text("blocks")
+        if len(raw_page_blocks) > PDF_APPARATUS_MAX_ITEMS:
+            raise _PdfResourceLimitExceeded("PDF page block count exceeds apparatus limit")
+        page_blocks = sorted(raw_page_blocks, key=lambda block: (float(block[1]), float(block[0])))
+    except (RuntimeError, TypeError, ValueError, IndexError):
+        page_blocks = []
+    for block in page_blocks:
+        text_value = _normalize_pdf_block_text(str(block[4] or ""))
+        if not text_value:
+            continue
+        if text_value == "References":
+            scan.in_references = True
+            continue
+        if not scan.in_references:
+            continue
+        match = re.match(r"^\[(\d+)\]\s+", text_value)
+        coords = _pdf_block_rect_coords(block)
+        if match is None or coords is None:
+            continue
+        reference = PdfReferenceBlock(
+            page_index=page_index,
+            label=f"[{int(match.group(1))}]",
+            label_number=int(match.group(1)),
+            body_text=text_value,
+            rect_coords=coords,
+        )
+        _retain_pdf_scan_item(scan, reference.label, reference.body_text)
+        scan.reference_blocks.append(reference)
+
+    try:
+        links = page.get_links()
+    except (RuntimeError, ValueError, AttributeError):
+        links = []
+    if len(links) > PDF_APPARATUS_MAX_ITEMS:
+        raise _PdfResourceLimitExceeded("PDF page link count exceeds apparatus limit")
+    for link_index, link in enumerate(links):
+        scan.native_total_links += 1
+        if "page" in link:
+            scan.native_internal_links += 1
+        name = str(link.get("nameddest") or "")
+        if not name.startswith("cite."):
+            _increment(scan.native_skipped, "non_citation_destination")
+            continue
+        if "uri" in link:
+            _increment(scan.native_skipped, "external_uri")
+            continue
+        if "page" not in link:
+            _increment(scan.native_skipped, "missing_destination_page")
+            continue
+        source_rect = _pdf_rect_coords(link.get("from"))
+        if source_rect is None:
+            _increment(scan.native_skipped, "missing_source_rect")
+            continue
+        exact = _pdf_link_text(page, link.get("from")).strip()
+        if not exact:
+            _increment(scan.native_skipped, "missing_marker_text")
+            continue
+        try:
+            validate_exact_length(exact)
+            canonicalize_geometry(page_index + 1, [_quad_from_rect_coords(source_rect)])
+            destination_page_index = int(link["page"])
+        except (GeometryValidationError, TypeError, ValueError):
+            _increment(scan.native_skipped, "invalid_geometry")
+            continue
+        destination_point = _pdf_point_coords(link.get("to"))
+        citation_link = _PdfNativeCitationLink(
+            page_index=page_index,
+            link_index=link_index,
+            name=name,
+            destination_page_index=destination_page_index,
+            destination_point=destination_point,
+            source_rect=source_rect,
+            exact=exact,
+            link_xref=(int(link["xref"]) if isinstance(link.get("xref"), int) else None),
+        )
+        _retain_pdf_scan_item(scan, citation_link.name, citation_link.exact)
+        scan.native_links.append(citation_link)
+
+    try:
+        lines = _pdf_text_lines(page)
+        if len(lines) > PDF_APPARATUS_MAX_ITEMS:
+            raise _PdfResourceLimitExceeded("PDF page line count exceeds apparatus limit")
+        body_font_size = _pdf_body_font_size(page, lines)
+        page_targets = _pdf_legal_footnote_targets_for_page(
+            page,
+            page_index,
+            lines,
+            body_font_size=body_font_size,
+            skipped=scan.legal_skipped,
+        )
+        for target in page_targets:
+            _retain_pdf_scan_item(scan, target.body_text)
+            scan.legal_targets.append(target)
+        target_labels = {target.label_number for target in page_targets}
+        for marker in _pdf_legal_footnote_markers_for_page(
+            page,
+            page_index,
+            lines,
+            target_labels=target_labels,
+            body_font_size=body_font_size,
+        ):
+            _retain_pdf_scan_item(scan)
+            scan.legal_marker_candidates.setdefault(marker.label_number, []).append(marker)
+    except (RuntimeError, ValueError, AttributeError, TypeError, IndexError):
+        _increment(scan.legal_skipped, "page_parse_failed")
+
+
+def _retain_pdf_scan_item(scan: _PdfApparatusScan, *text_values: str) -> None:
+    next_count = scan.retained_item_count + 1
+    if next_count > PDF_APPARATUS_MAX_ITEMS:
+        raise _PdfResourceLimitExceeded("PDF apparatus retained item count exceeds limit")
+    next_bytes = scan.retained_utf8_bytes + sum(utf8_byte_length(value) for value in text_values)
+    if next_bytes > PDF_APPARATUS_MAX_RETAINED_UTF8_BYTES:
+        raise _PdfResourceLimitExceeded("PDF apparatus retained text exceeds 8 MiB limit")
+    scan.retained_item_count = next_count
+    scan.retained_utf8_bytes = next_bytes
+
+
+def _materialize_pdf_native_link_apparatus(
+    scan: _PdfApparatusScan,
     *,
     media_id: UUID,
 ) -> PdfApparatusResult:
-    try:
-        import fitz  # PyMuPDF
-    except ImportError:
-        return PdfApparatusResult(
-            diagnostics={"pdf_native_link": {"status": "pymupdf_unavailable"}}
-        )
-
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except RuntimeError as exc:
-        return PdfApparatusResult(
-            diagnostics={
-                "pdf_native_link": {
-                    "status": "open_failed",
-                    "error": str(exc),
-                }
-            }
-        )
-
     items: list[dict[str, object]] = []
     edges: list[dict[str, object]] = []
-    total_links = 0
-    internal_links = 0
-    citation_link_count = 0
-    skipped: dict[str, int] = {}
-    try:
-        reference_blocks = _pdf_reference_blocks(doc)
-        target_key_by_destination: dict[str, str] = {}
-        target_key_by_block: dict[str, str] = {}
-        for page_index in range(len(doc)):
-            page = doc[page_index]
-            for link_index, link in enumerate(page.get_links()):
-                total_links += 1
-                if "page" in link:
-                    internal_links += 1
-                name = str(link.get("nameddest") or "")
-                if not name.startswith("cite."):
-                    _increment(skipped, "non_citation_destination")
-                    continue
-                if "uri" in link:
-                    _increment(skipped, "external_uri")
-                    continue
-                if "page" not in link:
-                    _increment(skipped, "missing_destination_page")
-                    continue
-                rect = link.get("from")
-                rect_coords = _pdf_rect_coords(rect)
-                if rect_coords is None:
-                    _increment(skipped, "missing_source_rect")
-                    continue
-                exact = _pdf_link_text(page, rect).strip()
-                if not exact:
-                    _increment(skipped, "missing_marker_text")
-                    continue
-                try:
-                    validate_exact_length(exact)
-                    geometry = canonicalize_geometry(
-                        page_index + 1,
-                        [_quad_from_rect_coords(rect_coords)],
-                    )
-                except GeometryValidationError:
-                    _increment(skipped, "invalid_geometry")
-                    continue
-
-                citation_link_count += 1
-                stable_key = (
-                    "pdf:native-citation-ref:"
-                    f"{page_index + 1:04d}:{link_index:04d}:{_stable_token(name)}"
-                )
-                locator = {
+    target_key_by_destination: dict[str, str] = {}
+    target_key_by_block: dict[str, str] = {}
+    for link in scan.native_links:
+        stable_key = (
+            "pdf:native-citation-ref:"
+            f"{link.page_index + 1:04d}:{link.link_index:04d}:{_stable_token(link.name)}"
+        )
+        geometry = canonicalize_geometry(
+            link.page_index + 1,
+            [_quad_from_rect_coords(link.source_rect)],
+        )
+        marker_source_ref = {
+            "format": "pdf",
+            "page_number": link.page_index + 1,
+            "link_index": link.link_index,
+            "link_xref": link.link_xref,
+            "named_destination": link.name,
+            "destination_page_number": link.destination_page_index + 1,
+            "destination_point": _pdf_point_json(link.destination_point),
+            "source_rect": _pdf_rect_json(link.source_rect),
+        }
+        items.append(
+            {
+                "stable_key": stable_key,
+                "kind": "bibliography_ref",
+                "label": link.exact,
+                "body_text": None,
+                "body_html_sanitized": None,
+                "locator": {
                     "type": "pdf_page_geometry",
                     "media_id": str(media_id),
-                    "page_number": page_index + 1,
+                    "page_number": link.page_index + 1,
                     "quads": [_quad_json(quad) for quad in geometry.quads],
-                    "exact": exact,
-                    "text_quote_selector": {"exact": exact},
-                }
-                marker_source_ref = {
-                    "format": "pdf",
-                    "page_number": page_index + 1,
-                    "link_index": link_index,
-                    "link_xref": link.get("xref"),
-                    "named_destination": name,
-                    "destination_page_number": int(link["page"]) + 1,
-                    "destination_point": _pdf_point_json(link.get("to")),
-                    "source_rect": {
-                        "left": rect_coords[0],
-                        "top": rect_coords[1],
-                        "right": rect_coords[2],
-                        "bottom": rect_coords[3],
-                    },
-                }
-                items.append(
-                    {
-                        "stable_key": stable_key,
-                        "kind": "bibliography_ref",
-                        "label": exact,
-                        "body_text": None,
-                        "body_html_sanitized": None,
-                        "locator": locator,
-                        "locator_status": "exact",
-                        "confidence": "exact",
-                        "extraction_method": "pdf_native_link",
-                        "source_ref": marker_source_ref,
-                        "sort_key": f"{page_index + 1:04d}.{link_index:04d}.marker",
-                    }
-                )
-                target_key = target_key_by_destination.get(name)
+                    "exact": link.exact,
+                    "text_quote_selector": {"exact": link.exact},
+                },
+                "locator_status": "exact",
+                "confidence": "exact",
+                "extraction_method": "pdf_native_link",
+                "source_ref": marker_source_ref,
+                "sort_key": f"{link.page_index + 1:04d}.{link.link_index:04d}.marker",
+            }
+        )
+        target_key = target_key_by_destination.get(link.name)
+        if target_key is None:
+            target = _pdf_reference_block_for_destination(
+                destination_page_index=link.destination_page_index,
+                destination_point=link.destination_point,
+                reference_blocks=scan.reference_blocks,
+                page_heights=scan.page_heights,
+            )
+            if target is None:
+                _increment(scan.native_skipped, "missing_reference_target")
+            else:
+                block_key = _pdf_reference_block_key(target)
+                target_key = target_key_by_block.get(block_key)
                 if target_key is None:
-                    target_block = _pdf_reference_block_for_destination(
-                        doc=doc,
-                        destination_page_index=int(link["page"]),
-                        destination_point=link.get("to"),
-                        reference_blocks=reference_blocks,
+                    target_item = _pdf_native_link_target_item(
+                        media_id=media_id,
+                        destination_name=link.name,
+                        destination_point=link.destination_point,
+                        target=target,
+                        skipped=scan.native_skipped,
                     )
-                    if target_block is None:
-                        _increment(skipped, "missing_reference_target")
-                    else:
-                        block_key = _pdf_reference_block_key(target_block)
-                        target_key = target_key_by_block.get(block_key)
-                        if target_key is None:
-                            target_item = _pdf_native_link_target_item(
-                                media_id=media_id,
-                                destination_name=name,
-                                destination_point=link.get("to"),
-                                target=target_block,
-                                skipped=skipped,
-                            )
-                            if target_item is not None:
-                                target_key = str(target_item["stable_key"])
-                                target_key_by_block[block_key] = target_key
-                                items.append(target_item)
-                        if target_key is not None:
-                            target_key_by_destination[name] = target_key
-                if target_key is None:
-                    continue
-                edges.append(
-                    {
-                        "stable_key": f"{stable_key}->{target_key}",
-                        "from_stable_key": stable_key,
-                        "to_stable_key": target_key,
-                        "relation": "cites_bibliography_entry",
-                        "confidence": "exact",
-                        "extraction_method": "pdf_native_link_target",
-                        "source_ref": marker_source_ref,
-                        "sort_key": f"{page_index + 1:04d}.{link_index:04d}.edge",
-                    }
-                )
-    finally:
-        doc.close()
+                    if target_item is not None:
+                        target_key = str(target_item["stable_key"])
+                        target_key_by_block[block_key] = target_key
+                        items.append(target_item)
+                if target_key is not None:
+                    target_key_by_destination[link.name] = target_key
+        if target_key is not None:
+            edges.append(
+                {
+                    "stable_key": f"{stable_key}->{target_key}",
+                    "from_stable_key": stable_key,
+                    "to_stable_key": target_key,
+                    "relation": "cites_bibliography_entry",
+                    "confidence": "exact",
+                    "extraction_method": "pdf_native_link_target",
+                    "source_ref": marker_source_ref,
+                    "sort_key": f"{link.page_index + 1:04d}.{link.link_index:04d}.edge",
+                }
+            )
 
-    unresolved_marker_count = citation_link_count - len(edges)
+    unresolved_marker_count = len(scan.native_links) - len(edges)
     if not items:
         state_status = "empty"
         status = "no_supported_citation_links"
@@ -559,178 +718,118 @@ def _extract_pdf_native_link_apparatus(
         diagnostics={
             "pdf_native_link": {
                 "status": status,
-                "marker_count": citation_link_count,
+                "marker_count": len(scan.native_links),
                 "target_count": len(target_key_by_block),
                 "edge_count": len(edges),
                 "unresolved_marker_count": unresolved_marker_count,
-                "total_link_count": total_links,
-                "internal_link_count": internal_links,
-                "citation_link_count": citation_link_count,
-                "skipped": skipped,
+                "total_link_count": scan.native_total_links,
+                "internal_link_count": scan.native_internal_links,
+                "citation_link_count": len(scan.native_links),
+                "skipped": scan.native_skipped,
             }
         },
     )
 
 
-def _extract_pdf_legal_footnote_apparatus(
-    pdf_bytes: bytes,
+def _materialize_pdf_legal_footnote_apparatus(
+    scan: _PdfApparatusScan,
     *,
     media_id: UUID,
 ) -> PdfApparatusResult:
-    try:
-        import fitz  # PyMuPDF
-    except ImportError:
-        return PdfApparatusResult(
-            diagnostics={"pdf_legal_footnotes": {"status": "pymupdf_unavailable"}}
-        )
-
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except RuntimeError as exc:
+    targets = scan.legal_targets
+    skipped = scan.legal_skipped
+    page_count = len(scan.page_heights)
+    if not targets:
         return PdfApparatusResult(
             diagnostics={
                 "pdf_legal_footnotes": {
-                    "status": "open_failed",
-                    "error": str(exc),
-                }
-            }
-        )
-
-    skipped: dict[str, int] = {}
-    try:
-        targets: list[PdfLegalFootnoteTarget] = []
-        marker_candidates: dict[int, list[PdfLegalFootnoteMarker]] = {}
-        for page_index in range(len(doc)):
-            page = doc[page_index]
-            lines = _pdf_text_lines(page)
-            body_font_size = _pdf_body_font_size(page, lines)
-            page_targets = _pdf_legal_footnote_targets_for_page(
-                page,
-                page_index,
-                lines,
-                body_font_size=body_font_size,
-                skipped=skipped,
-            )
-            targets.extend(page_targets)
-            target_labels = {target.label_number for target in page_targets}
-            for marker in _pdf_legal_footnote_markers_for_page(
-                page,
-                page_index,
-                lines,
-                target_labels=target_labels,
-                body_font_size=body_font_size,
-            ):
-                marker_candidates.setdefault(marker.label_number, []).append(marker)
-
-        if not targets:
-            return PdfApparatusResult(
-                diagnostics={
-                    "pdf_legal_footnotes": {
-                        "status": "no_supported_legal_footnotes",
-                        "adapter_version": "pdf_legal_footnotes_v1",
-                        "page_count": len(doc),
-                        "marker_count": 0,
-                        "target_count": 0,
-                        "edge_count": 0,
-                        "unresolved_marker_count": 0,
-                        "unpaired_target_count": 0,
-                        "skipped": skipped,
-                    }
-                }
-            )
-
-        targets_by_label = {target.label_number: target for target in targets}
-        if len(targets_by_label) != len(targets):
-            _increment(skipped, "duplicate_target_label")
-            return _empty_pdf_legal_footnote_result(
-                "ambiguous_target_labels",
-                skipped,
-                page_count=len(doc),
-            )
-
-        expected_labels = list(range(1, len(targets) + 1))
-        if sorted(targets_by_label) != expected_labels:
-            _increment(skipped, "non_contiguous_target_labels")
-            return _empty_pdf_legal_footnote_result(
-                "ambiguous_target_labels",
-                skipped,
-                page_count=len(doc),
-            )
-
-        markers_by_label: dict[int, PdfLegalFootnoteMarker] = {}
-        for label in expected_labels:
-            candidates = marker_candidates.get(label, [])
-            if len(candidates) != 1:
-                _increment(skipped, "missing_marker" if not candidates else "ambiguous_marker")
-                return _empty_pdf_legal_footnote_result(
-                    "ambiguous_marker_targets",
-                    skipped,
-                    page_count=len(doc),
-                )
-            markers_by_label[label] = candidates[0]
-
-        items: list[dict[str, object]] = []
-        edges: list[dict[str, object]] = []
-        target_key_by_label: dict[int, str] = {}
-        for target in sorted(targets, key=lambda row: row.label_number):
-            target_item = _pdf_legal_footnote_target_item(media_id=media_id, target=target)
-            if target_item is None:
-                _increment(skipped, "invalid_target_geometry")
-                return _empty_pdf_legal_footnote_result(
-                    "invalid_geometry",
-                    skipped,
-                    page_count=len(doc),
-                )
-            target_key_by_label[target.label_number] = str(target_item["stable_key"])
-            items.append(target_item)
-
-        for label in expected_labels:
-            marker = markers_by_label[label]
-            marker_item = _pdf_legal_footnote_marker_item(media_id=media_id, marker=marker)
-            if marker_item is None:
-                _increment(skipped, "invalid_marker_geometry")
-                return _empty_pdf_legal_footnote_result(
-                    "invalid_geometry",
-                    skipped,
-                    page_count=len(doc),
-                )
-            marker_key = str(marker_item["stable_key"])
-            target_key = target_key_by_label[label]
-            items.append(marker_item)
-            marker_source_ref = dict(marker_item["source_ref"])
-            edges.append(
-                {
-                    "stable_key": f"{marker_key}->{target_key}",
-                    "from_stable_key": marker_key,
-                    "to_stable_key": target_key,
-                    "relation": "points_to_note",
-                    "confidence": "strong",
-                    "extraction_method": "pdf_legal_footnote_pair",
-                    "source_ref": marker_source_ref,
-                    "sort_key": f"{marker.page_index + 1:04d}.{label:04d}.edge",
-                }
-            )
-
-        return PdfApparatusResult(
-            status="ready",
-            items=items,
-            edges=edges,
-            diagnostics={
-                "pdf_legal_footnotes": {
-                    "status": "targets_materialized",
+                    "status": "no_supported_legal_footnotes",
                     "adapter_version": "pdf_legal_footnotes_v1",
-                    "page_count": len(doc),
-                    "marker_count": len(markers_by_label),
-                    "target_count": len(targets),
-                    "edge_count": len(edges),
+                    "page_count": page_count,
+                    "marker_count": 0,
+                    "target_count": 0,
+                    "edge_count": 0,
                     "unresolved_marker_count": 0,
                     "unpaired_target_count": 0,
                     "skipped": skipped,
                 }
-            },
+            }
         )
-    finally:
-        doc.close()
+    targets_by_label = {target.label_number: target for target in targets}
+    if len(targets_by_label) != len(targets):
+        _increment(skipped, "duplicate_target_label")
+        return _empty_pdf_legal_footnote_result(
+            "ambiguous_target_labels", skipped, page_count=page_count
+        )
+    expected_labels = list(range(1, len(targets) + 1))
+    if sorted(targets_by_label) != expected_labels:
+        _increment(skipped, "non_contiguous_target_labels")
+        return _empty_pdf_legal_footnote_result(
+            "ambiguous_target_labels", skipped, page_count=page_count
+        )
+    markers_by_label: dict[int, PdfLegalFootnoteMarker] = {}
+    for label in expected_labels:
+        candidates = scan.legal_marker_candidates.get(label, [])
+        if len(candidates) != 1:
+            _increment(skipped, "missing_marker" if not candidates else "ambiguous_marker")
+            return _empty_pdf_legal_footnote_result(
+                "ambiguous_marker_targets", skipped, page_count=page_count
+            )
+        markers_by_label[label] = candidates[0]
+
+    items: list[dict[str, object]] = []
+    edges: list[dict[str, object]] = []
+    target_key_by_label: dict[int, str] = {}
+    for target in sorted(targets, key=lambda row: row.label_number):
+        target_item = _pdf_legal_footnote_target_item(media_id=media_id, target=target)
+        if target_item is None:
+            _increment(skipped, "invalid_target_geometry")
+            return _empty_pdf_legal_footnote_result(
+                "invalid_geometry", skipped, page_count=page_count
+            )
+        target_key_by_label[target.label_number] = str(target_item["stable_key"])
+        items.append(target_item)
+    for label in expected_labels:
+        marker = markers_by_label[label]
+        marker_item = _pdf_legal_footnote_marker_item(media_id=media_id, marker=marker)
+        if marker_item is None:
+            _increment(skipped, "invalid_marker_geometry")
+            return _empty_pdf_legal_footnote_result(
+                "invalid_geometry", skipped, page_count=page_count
+            )
+        marker_key = str(marker_item["stable_key"])
+        target_key = target_key_by_label[label]
+        items.append(marker_item)
+        edges.append(
+            {
+                "stable_key": f"{marker_key}->{target_key}",
+                "from_stable_key": marker_key,
+                "to_stable_key": target_key,
+                "relation": "points_to_note",
+                "confidence": "strong",
+                "extraction_method": "pdf_legal_footnote_pair",
+                "source_ref": dict(marker_item["source_ref"]),
+                "sort_key": f"{marker.page_index + 1:04d}.{label:04d}.edge",
+            }
+        )
+    return PdfApparatusResult(
+        status="ready",
+        items=items,
+        edges=edges,
+        diagnostics={
+            "pdf_legal_footnotes": {
+                "status": "targets_materialized",
+                "adapter_version": "pdf_legal_footnotes_v1",
+                "page_count": page_count,
+                "marker_count": len(markers_by_label),
+                "target_count": len(targets),
+                "edge_count": len(edges),
+                "unresolved_marker_count": 0,
+                "unpaired_target_count": 0,
+                "skipped": skipped,
+            }
+        },
+    )
 
 
 def _empty_pdf_legal_footnote_result(
@@ -774,13 +873,33 @@ def _merge_pdf_apparatus_results(*results: PdfApparatusResult) -> PdfApparatusRe
     return PdfApparatusResult(status=status, items=items, edges=edges, diagnostics=diagnostics)
 
 
+def _validate_pdf_apparatus_budget(result: PdfApparatusResult) -> None:
+    if len(result.items) > PDF_APPARATUS_MAX_ITEMS:
+        raise _PdfResourceLimitExceeded("PDF apparatus item count exceeds limit")
+    if len(result.edges) > PDF_APPARATUS_MAX_EDGES:
+        raise _PdfResourceLimitExceeded("PDF apparatus edge count exceeds limit")
+    retained_bytes = sum(nested_utf8_byte_length(item) for item in result.items)
+    retained_bytes += sum(nested_utf8_byte_length(edge) for edge in result.edges)
+    if retained_bytes > PDF_APPARATUS_MAX_RETAINED_UTF8_BYTES:
+        raise _PdfResourceLimitExceeded("PDF apparatus output exceeds 8 MiB retained-text limit")
+
+
+def _pdf_resource_limit_error(message: str) -> PdfExtractionError:
+    return PdfExtractionError(
+        error_code=ApiErrorCode.E_SOURCE_TOO_LARGE.value,
+        error_message=message,
+        terminal=True,
+    )
+
+
 def _extract_pdf_source_package_apparatus(
     *,
     storage_client,
+    attempt_directory: Path,
     media_id: UUID,
     source_package: PdfSourcePackageArtifact | None,
     source_package_diagnostics: dict[str, object] | None,
-) -> PdfApparatusResult:
+) -> PdfApparatusResult | PdfExtractionError:
     diagnostics: dict[str, object] = {}
     if source_package_diagnostics:
         diagnostics["arxiv_source_package"] = dict(source_package_diagnostics)
@@ -788,7 +907,15 @@ def _extract_pdf_source_package_apparatus(
         return PdfApparatusResult(diagnostics=diagnostics)
 
     try:
-        source_bytes = b"".join(storage_client.stream_object(source_package.storage_path))
+        source_path = attempt_directory / "source-package.tar"
+        source_package_sha256_hex = stream_storage_object_to_file(
+            storage_client,
+            storage_path=source_package.storage_path,
+            destination=source_path,
+            expected_size_bytes=source_package.size_bytes,
+        )
+        if source_package_sha256_hex != source_package.sha256_hex.lower():
+            raise AssertionError("PDF source package SHA-256 differs from persisted metadata")
     except StorageError as exc:
         return PdfApparatusResult(
             diagnostics={
@@ -813,11 +940,13 @@ def _extract_pdf_source_package_apparatus(
     }
     try:
         result = extract_latex_biblatex_apparatus_from_archive(
-            source_bytes,
+            source_path,
             source_kind=f"pdf:{media_id}:source-package",
             source_ref=source_ref,
         )
     except LatexSourceArchiveUnsafe as exc:
+        if exc.resource_limit:
+            return _pdf_resource_limit_error(f"PDF source package exceeds limits: {exc}")
         return PdfApparatusResult(
             diagnostics={
                 **diagnostics,
@@ -852,7 +981,7 @@ def _extract_pdf_source_package_apparatus(
 def _pdf_legal_footnote_targets_for_page(
     page,
     page_index: int,
-    lines: list[dict[str, object]],
+    lines: list[dict[str, Any]],
     *,
     body_font_size: float | None,
     skipped: dict[str, int],
@@ -864,7 +993,7 @@ def _pdf_legal_footnote_targets_for_page(
         [line for line in lines if float(line["top"]) >= band_top],
         key=lambda line: (float(line["top"]), float(line["left"])),
     )
-    label_rows: list[tuple[int, dict[str, object]]] = []
+    label_rows: list[tuple[int, dict[str, Any]]] = []
     for line in lower_lines:
         label = _numeric_label(str(line["text"]))
         if label is None:
@@ -876,7 +1005,7 @@ def _pdf_legal_footnote_targets_for_page(
     targets: list[PdfLegalFootnoteTarget] = []
     for index, (label, label_line) in enumerate(label_rows):
         next_label_line = label_rows[index + 1][1] if index + 1 < len(label_rows) else None
-        body_lines: list[dict[str, object]] = []
+        body_lines: list[dict[str, Any]] = []
         for line in lower_lines:
             if line is label_line:
                 continue
@@ -923,7 +1052,7 @@ def _pdf_legal_footnote_targets_for_page(
 def _pdf_legal_footnote_markers_for_page(
     page,
     page_index: int,
-    lines: list[dict[str, object]],
+    lines: list[dict[str, Any]],
     *,
     target_labels: set[int],
     body_font_size: float | None,
@@ -964,7 +1093,7 @@ def _pdf_legal_footnote_target_item(
     *,
     media_id: UUID,
     target: PdfLegalFootnoteTarget,
-) -> dict[str, object] | None:
+) -> dict[str, Any] | None:
     try:
         validate_exact_length(target.body_text)
         geometry = canonicalize_geometry(
@@ -1006,7 +1135,7 @@ def _pdf_legal_footnote_marker_item(
     *,
     media_id: UUID,
     marker: PdfLegalFootnoteMarker,
-) -> dict[str, object] | None:
+) -> dict[str, Any] | None:
     label = str(marker.label_number)
     try:
         validate_exact_length(label)
@@ -1044,13 +1173,13 @@ def _pdf_legal_footnote_marker_item(
     }
 
 
-def _pdf_text_lines(page) -> list[dict[str, object]]:
-    lines: list[dict[str, object]] = []
+def _pdf_text_lines(page) -> list[dict[str, Any]]:
+    lines: list[dict[str, Any]] = []
     text_dict = page.get_text("dict")
     for block in text_dict.get("blocks", []):
         for line in block.get("lines", []):
             raw_spans = line.get("spans", [])
-            spans: list[dict[str, object]] = []
+            spans: list[dict[str, Any]] = []
             for span in raw_spans:
                 text_value = str(span.get("text") or "")
                 bbox = span.get("bbox") or (0, 0, 0, 0)
@@ -1098,7 +1227,7 @@ def _pdf_text_lines(page) -> list[dict[str, object]]:
     return lines
 
 
-def _pdf_body_font_size(page, lines: list[dict[str, object]]) -> float | None:
+def _pdf_body_font_size(page, lines: list[dict[str, Any]]) -> float | None:
     band_top = float(page.rect.height) * _PDF_LEGAL_FOOTNOTE_BAND_TOP_RATIO
     sizes: list[float] = []
     for line in lines:
@@ -1116,8 +1245,8 @@ def _pdf_body_font_size(page, lines: list[dict[str, object]]) -> float | None:
 
 
 def _pdf_legal_footnote_target_has_note_style(
-    label_line: dict[str, object],
-    body_lines: list[dict[str, object]],
+    label_line: dict[str, Any],
+    body_lines: list[dict[str, Any]],
     *,
     body_font_size: float,
 ) -> bool:
@@ -1132,9 +1261,9 @@ def _pdf_legal_footnote_target_has_note_style(
 
 
 def _pdf_span_is_raised_marker(
-    span: dict[str, object],
-    line: dict[str, object],
-    lines: list[dict[str, object]],
+    span: dict[str, Any],
+    line: dict[str, Any],
+    lines: list[dict[str, Any]],
 ) -> bool:
     body_spans = _pdf_adjacent_body_spans_for_marker(span, line, lines)
     if not body_spans:
@@ -1148,15 +1277,15 @@ def _pdf_span_is_raised_marker(
 
 
 def _pdf_adjacent_body_spans_for_marker(
-    span: dict[str, object],
-    line: dict[str, object],
-    lines: list[dict[str, object]],
-) -> list[dict[str, object]]:
+    span: dict[str, Any],
+    line: dict[str, Any],
+    lines: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     marker_top = float(span["top"])
     marker_bottom = float(span["bottom"])
     marker_left = float(span["left"])
     marker_right = float(span["right"])
-    candidates: list[dict[str, object]] = []
+    candidates: list[dict[str, Any]] = []
     for candidate_line in lines:
         if abs(float(candidate_line["top"]) - marker_top) > _PDF_LEGAL_FOOTNOTE_LINE_Y_TOLERANCE_PT:
             continue
@@ -1178,7 +1307,7 @@ def _pdf_adjacent_body_spans_for_marker(
     return candidates
 
 
-def _pdf_line_max_font_size(line: dict[str, object]) -> float:
+def _pdf_line_max_font_size(line: dict[str, Any]) -> float:
     return max(float(span["size"]) for span in line["spans"])
 
 
@@ -1189,7 +1318,7 @@ def _numeric_label(value: str) -> int | None:
     return int(text_value)
 
 
-def _pdf_union_rect(lines: list[dict[str, object]]) -> tuple[float, float, float, float]:
+def _pdf_union_rect(lines: list[dict[str, Any]]) -> tuple[float, float, float, float]:
     return (
         min(float(line["left"]) for line in lines),
         min(float(line["top"]) for line in lines),
@@ -1207,15 +1336,6 @@ def _pdf_rect_json(coords: tuple[float, float, float, float]) -> dict[str, float
     }
 
 
-def _build_page_texts_from_raw(raw_page_texts: list[str]) -> list[str]:
-    """Normalize each page text individually for span offset construction."""
-    result = []
-    for raw in raw_page_texts:
-        normed = normalize_pdf_text(raw)
-        result.append(normed)
-    return result
-
-
 def _increment(counter: dict[str, int], key: str) -> None:
     counter[key] = counter.get(key, 0) + 1
 
@@ -1225,42 +1345,6 @@ def _stable_token(value: str) -> str:
     return token[:96] or "item"
 
 
-def _pdf_reference_blocks(doc) -> list[PdfReferenceBlock]:
-    blocks: list[PdfReferenceBlock] = []
-    in_references = False
-    for page_index in range(len(doc)):
-        page = doc[page_index]
-        page_blocks = sorted(
-            page.get_text("blocks"),
-            key=lambda block: (float(block[1]), float(block[0])),
-        )
-        for block in page_blocks:
-            text_value = _normalize_pdf_block_text(str(block[4] or ""))
-            if not text_value:
-                continue
-            if text_value == "References":
-                in_references = True
-                continue
-            if not in_references:
-                continue
-            match = re.match(r"^\[(\d+)\]\s+", text_value)
-            if not match:
-                continue
-            coords = _pdf_block_rect_coords(block)
-            if coords is None:
-                continue
-            blocks.append(
-                PdfReferenceBlock(
-                    page_index=page_index,
-                    label=f"[{int(match.group(1))}]",
-                    label_number=int(match.group(1)),
-                    body_text=text_value,
-                    rect_coords=coords,
-                )
-            )
-    return blocks
-
-
 def _pdf_native_link_target_item(
     *,
     media_id: UUID,
@@ -1268,7 +1352,7 @@ def _pdf_native_link_target_item(
     destination_point: object,
     target: PdfReferenceBlock,
     skipped: dict[str, int],
-) -> dict[str, object] | None:
+) -> dict[str, Any] | None:
     try:
         validate_exact_length(target.body_text)
         geometry = canonicalize_geometry(
@@ -1323,22 +1407,20 @@ def _pdf_native_link_target_item(
 
 def _pdf_reference_block_for_destination(
     *,
-    doc,
     destination_page_index: int,
-    destination_point: object,
+    destination_point: tuple[float, float] | None,
     reference_blocks: list[PdfReferenceBlock],
+    page_heights: list[float | None],
 ) -> PdfReferenceBlock | None:
-    try:
-        page = doc[destination_page_index]
-        destination_top = float(page.rect.height) - float(destination_point.y)
-    except (IndexError, TypeError, ValueError, AttributeError):
+    if destination_point is None or not 0 <= destination_page_index < len(page_heights):
         return None
+    page_height = page_heights[destination_page_index]
+    if page_height is None:
+        return None
+    destination_x, destination_y = destination_point
+    destination_top = page_height - destination_y
     candidates = [block for block in reference_blocks if block.page_index == destination_page_index]
     if not candidates:
-        return None
-    try:
-        destination_x = float(destination_point.x)
-    except (TypeError, ValueError, AttributeError):
         return None
     ranked = sorted(
         candidates,
@@ -1369,7 +1451,7 @@ def _pdf_reference_block_key(block: PdfReferenceBlock) -> str:
     return f"{block.page_index}:{block.label_number}:{left:.3f}:{top:.3f}:{right:.3f}:{bottom:.3f}"
 
 
-def _pdf_block_rect_coords(block: object) -> tuple[float, float, float, float] | None:
+def _pdf_block_rect_coords(block: Any) -> tuple[float, float, float, float] | None:
     try:
         left = float(block[0])
         top = float(block[1])
@@ -1386,7 +1468,7 @@ def _normalize_pdf_block_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def _pdf_rect_coords(rect: object) -> tuple[float, float, float, float] | None:
+def _pdf_rect_coords(rect: Any) -> tuple[float, float, float, float] | None:
     try:
         left = float(rect.x0)
         top = float(rect.y0)
@@ -1413,7 +1495,7 @@ def _quad_from_rect_coords(coords: tuple[float, float, float, float]) -> dict[st
     }
 
 
-def _quad_json(quad) -> dict[str, float]:
+def _quad_json(quad: Any) -> dict[str, float]:
     return {
         "x1": float(quad.x1),
         "y1": float(quad.y1),
@@ -1426,18 +1508,31 @@ def _quad_json(quad) -> dict[str, float]:
     }
 
 
-def _pdf_link_text(page, rect: object) -> str:
+def _pdf_link_text(page: Any, rect: Any) -> str:
     try:
         return str(page.get_textbox(rect) or "")
     except (RuntimeError, ValueError, TypeError):
         return ""
 
 
-def _pdf_point_json(point: object) -> dict[str, float] | None:
+def _pdf_point_json(point: Any) -> dict[str, float] | None:
+    if point is None:
+        return None
+    if isinstance(point, tuple):
+        if len(point) != 2:
+            return None
+        return {"x": float(point[0]), "y": float(point[1])}
+    try:
+        return {"x": float(point.x), "y": float(point.y)}
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _pdf_point_coords(point: Any) -> tuple[float, float] | None:
     if point is None:
         return None
     try:
-        return {"x": float(point.x), "y": float(point.y)}
+        return float(point.x), float(point.y)
     except (TypeError, ValueError, AttributeError):
         return None
 
@@ -1562,63 +1657,77 @@ def validate_page_spans(
 def build_pdf_extraction_plan(
     *,
     media_id: UUID,
+    attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
     storage_client,
+    record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     source_package: PdfSourcePackageArtifact | None = None,
     source_package_diagnostics: dict[str, object] | None = None,
 ) -> PdfExtractionPlan | PdfExtractionError:
     """Acquire and parse immutable PDF input without opening a DB transaction."""
     t0 = time.monotonic()
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        pdf_path = attempt_directory / "source.pdf"
+        source_sha256_hex = stream_storage_object_to_file(
+            storage_client,
+            storage_path=storage_path,
+            destination=pdf_path,
+            expected_size_bytes=source_size_bytes,
+        )
+        parsed = _extract_with_pymupdf(
+            pdf_path,
+            media_id=media_id,
+            source_byte_length=source_size_bytes,
+            record_progress=record_progress,
+        )
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
 
-    try:
-        pdf_bytes = b"".join(storage_client.stream_object(storage_path))
-    except StorageError as exc:
-        raise StorageError(exc.message, exc.code) from exc
+        if isinstance(parsed, PdfExtractionError):
+            logger.warning(
+                "pdf_extraction_failed",
+                media_id=str(media_id),
+                error_code=parsed.error_code,
+                parser="pymupdf",
+                elapsed_ms=elapsed_ms,
+                file_size=source_size_bytes,
+            )
+            return parsed
 
-    result = _extract_with_pymupdf(pdf_bytes)
-    elapsed_ms = int((time.monotonic() - t0) * 1000)
-
-    if isinstance(result, PdfExtractionError):
-        logger.warning(
-            "pdf_extraction_failed",
+        result = parsed.result
+        logger.info(
+            "pdf_extraction_completed",
             media_id=str(media_id),
-            error_code=result.error_code,
+            page_count=result.page_count,
+            has_text=result.has_text,
+            plain_text_len=len(result.plain_text),
             parser="pymupdf",
             elapsed_ms=elapsed_ms,
-            file_size=len(pdf_bytes),
+            file_size=source_size_bytes,
         )
-        return result
-
-    logger.info(
-        "pdf_extraction_completed",
-        media_id=str(media_id),
-        page_count=result.page_count,
-        has_text=result.has_text,
-        plain_text_len=len(result.plain_text),
-        parser="pymupdf",
-        elapsed_ms=elapsed_ms,
-        file_size=len(pdf_bytes),
-    )
-    pdf_apparatus = _merge_pdf_apparatus_results(
-        _extract_pdf_native_link_apparatus(pdf_bytes, media_id=media_id),
-        _extract_pdf_legal_footnote_apparatus(pdf_bytes, media_id=media_id),
-        _extract_pdf_source_package_apparatus(
+        source_apparatus = _extract_pdf_source_package_apparatus(
             storage_client=storage_client,
+            attempt_directory=attempt_directory,
             media_id=media_id,
             source_package=source_package,
             source_package_diagnostics=source_package_diagnostics,
-        ),
-    )
-    return PdfExtractionPlan(
-        result=result,
-        apparatus=pdf_apparatus,
-        storage_path=storage_path,
-        source_size_bytes=source_size_bytes,
-        source_sha256_hex=hashlib.sha256(pdf_bytes).hexdigest(),
-        source_package=source_package,
-        source_package_diagnostics=source_package_diagnostics,
-    )
+        )
+        if isinstance(source_apparatus, PdfExtractionError):
+            return source_apparatus
+        try:
+            pdf_apparatus = _merge_pdf_apparatus_results(parsed.apparatus, source_apparatus)
+            _validate_pdf_apparatus_budget(pdf_apparatus)
+        except _PdfResourceLimitExceeded as exc:
+            return _pdf_resource_limit_error(str(exc))
+        return PdfExtractionPlan(
+            result=result,
+            apparatus=pdf_apparatus,
+            storage_path=storage_path,
+            source_size_bytes=source_size_bytes,
+            source_sha256_hex=source_sha256_hex,
+            source_package=source_package,
+            source_package_diagnostics=source_package_diagnostics,
+        )
 
 
 def publish_pdf_extraction_plan(

@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
 from nexus.jobs.queue import (
+    HEAVY_CAPACITY_OCCUPIED_SQL,
     JobExecutionContext,
+    JobResourceClass,
     JobRow,
     RescheduleRequested,
     claim_job,
@@ -64,6 +66,13 @@ class JobWorker:
         self.session_factory = session_factory
         self.worker_id = worker_id
         self.registry = dict(get_default_registry() if registry is None else registry)
+        self.heavy_kinds = tuple(
+            sorted(
+                definition.kind
+                for definition in self.registry.values()
+                if definition.resource_class == "Heavy"
+            )
+        )
         self.poll_interval_seconds = float(max(poll_interval_seconds, 0.1))
         self.idle_backoff_max_seconds = float(
             max(idle_backoff_max_seconds, self.poll_interval_seconds)
@@ -111,6 +120,7 @@ class JobWorker:
                 db,
                 worker_id=self.worker_id,
                 lease_seconds=self.default_lease_seconds,
+                heavy_kinds=self.heavy_kinds,
                 allowed_kinds=self.allowed_kinds,
             )
             db.commit()
@@ -128,6 +138,7 @@ class JobWorker:
                 job_id=job_id,
                 worker_id=self.worker_id,
                 lease_seconds=self.default_lease_seconds,
+                heavy_kinds=self.heavy_kinds,
                 allowed_kinds=self.allowed_kinds,
             )
             db.commit()
@@ -162,6 +173,7 @@ class JobWorker:
                 job_id=claimed.id,
                 worker_id=self.worker_id,
                 lease_seconds=definition.lease_seconds,
+                resource_class=definition.resource_class,
             )
             db.commit()
         if not still_owned:
@@ -178,6 +190,7 @@ class JobWorker:
         stop_event, heartbeat_thread = self._start_heartbeat_thread(
             job_id=claimed.id,
             lease_seconds=definition.lease_seconds,
+            resource_class=definition.resource_class,
         )
 
         try:
@@ -185,6 +198,7 @@ class JobWorker:
                 job_id=claimed.id,
                 worker_id=self.worker_id,
                 attempt_no=claimed.attempts,
+                resource_class=definition.resource_class,
             )
             handler_result = definition.handler(payload=claimed.payload, context=context)
 
@@ -468,7 +482,7 @@ class JobWorker:
                         wait_state = (
                             db.execute(
                                 text(
-                                    """
+                                    f"""
                                     WITH next_wait AS (
                                         SELECT
                                             (
@@ -496,6 +510,12 @@ class JobWorker:
                                                 FROM background_jobs
                                                 WHERE status IN ('pending', 'failed')
                                                   AND available_at <= now()
+                                                  AND (
+                                                      NOT kind = ANY(
+                                                          CAST(:heavy_kinds AS text[])
+                                                      )
+                                                      OR NOT {HEAVY_CAPACITY_OCCUPIED_SQL}
+                                                  )
                                             )
                                             OR EXISTS (
                                                 SELECT 1
@@ -503,70 +523,12 @@ class JobWorker:
                                                 WHERE status = 'running'
                                                   AND lease_expires_at IS NOT NULL
                                                   AND lease_expires_at <= now()
-                                            )
-                                        ) AS has_due_job,
-                                        CASE
-                                            WHEN next_available_at IS NULL
-                                              AND next_lease_expires_at IS NULL
-                                            THEN NULL
-                                            WHEN next_available_at IS NULL
-                                            THEN EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
-                                            WHEN next_lease_expires_at IS NULL
-                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
-                                            WHEN next_available_at <= next_lease_expires_at
-                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
-                                            ELSE EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
-                                        END AS seconds_until_next_job
-                                    FROM next_wait
-                                    """
-                                )
-                            )
-                            .mappings()
-                            .one()
-                        )
-                    else:
-                        wait_state = (
-                            db.execute(
-                                text(
-                                    """
-                                    WITH next_wait AS (
-                                        SELECT
-                                            (
-                                                SELECT available_at
-                                                FROM background_jobs
-                                                WHERE status IN ('pending', 'failed')
-                                                  AND kind = ANY(:allowed_kinds)
-                                                  AND available_at > now()
-                                                ORDER BY available_at ASC, id ASC
-                                                LIMIT 1
-                                            ) AS next_available_at,
-                                            (
-                                                SELECT lease_expires_at
-                                                FROM background_jobs
-                                                WHERE status = 'running'
-                                                  AND lease_expires_at IS NOT NULL
-                                                  AND kind = ANY(:allowed_kinds)
-                                                  AND lease_expires_at > now()
-                                                ORDER BY lease_expires_at ASC, id ASC
-                                                LIMIT 1
-                                            ) AS next_lease_expires_at
-                                    )
-                                    SELECT
-                                        (
-                                            EXISTS (
-                                                SELECT 1
-                                                FROM background_jobs
-                                                WHERE status IN ('pending', 'failed')
-                                                  AND kind = ANY(:allowed_kinds)
-                                                  AND available_at <= now()
-                                            )
-                                            OR EXISTS (
-                                                SELECT 1
-                                                FROM background_jobs
-                                                WHERE status = 'running'
-                                                  AND lease_expires_at IS NOT NULL
-                                                  AND kind = ANY(:allowed_kinds)
-                                                  AND lease_expires_at <= now()
+                                                  AND (
+                                                      NOT kind = ANY(
+                                                          CAST(:heavy_kinds AS text[])
+                                                      )
+                                                      OR NOT {HEAVY_CAPACITY_OCCUPIED_SQL}
+                                                  )
                                             )
                                         ) AS has_due_job,
                                         CASE
@@ -584,7 +546,87 @@ class JobWorker:
                                     FROM next_wait
                                     """
                                 ),
-                                {"allowed_kinds": list(self.allowed_kinds)},
+                                {"heavy_kinds": list(self.heavy_kinds)},
+                            )
+                            .mappings()
+                            .one()
+                        )
+                    else:
+                        wait_state = (
+                            db.execute(
+                                text(
+                                    f"""
+                                    WITH next_wait AS (
+                                        SELECT
+                                            (
+                                                SELECT available_at
+                                                FROM background_jobs
+                                                WHERE status IN ('pending', 'failed')
+                                                  AND kind = ANY(:allowed_kinds)
+                                                  AND available_at > now()
+                                                ORDER BY available_at ASC, id ASC
+                                                LIMIT 1
+                                            ) AS next_available_at,
+                                            (
+                                                SELECT lease_expires_at
+                                                FROM background_jobs
+                                                WHERE status = 'running'
+                                                  AND lease_expires_at IS NOT NULL
+                                                  AND kind = ANY(:allowed_kinds)
+                                                  AND lease_expires_at > now()
+                                                ORDER BY lease_expires_at ASC, id ASC
+                                                LIMIT 1
+                                            ) AS next_lease_expires_at
+                                    )
+                                    SELECT
+                                        (
+                                            EXISTS (
+                                                SELECT 1
+                                                FROM background_jobs
+                                                WHERE status IN ('pending', 'failed')
+                                                  AND kind = ANY(:allowed_kinds)
+                                                  AND available_at <= now()
+                                                  AND (
+                                                      NOT kind = ANY(
+                                                          CAST(:heavy_kinds AS text[])
+                                                      )
+                                                      OR NOT {HEAVY_CAPACITY_OCCUPIED_SQL}
+                                                  )
+                                            )
+                                            OR EXISTS (
+                                                SELECT 1
+                                                FROM background_jobs
+                                                WHERE status = 'running'
+                                                  AND lease_expires_at IS NOT NULL
+                                                  AND kind = ANY(:allowed_kinds)
+                                                  AND lease_expires_at <= now()
+                                                  AND (
+                                                      NOT kind = ANY(
+                                                          CAST(:heavy_kinds AS text[])
+                                                      )
+                                                      OR NOT {HEAVY_CAPACITY_OCCUPIED_SQL}
+                                                  )
+                                            )
+                                        ) AS has_due_job,
+                                        CASE
+                                            WHEN next_available_at IS NULL
+                                              AND next_lease_expires_at IS NULL
+                                            THEN NULL
+                                            WHEN next_available_at IS NULL
+                                            THEN EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
+                                            WHEN next_lease_expires_at IS NULL
+                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
+                                            WHEN next_available_at <= next_lease_expires_at
+                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
+                                            ELSE EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
+                                        END AS seconds_until_next_job
+                                    FROM next_wait
+                                    """
+                                ),
+                                {
+                                    "allowed_kinds": list(self.allowed_kinds),
+                                    "heavy_kinds": list(self.heavy_kinds),
+                                },
                             )
                             .mappings()
                             .one()
@@ -627,7 +669,7 @@ class JobWorker:
             stop_event.wait(timeout)
 
     def _start_heartbeat_thread(
-        self, *, job_id: UUID, lease_seconds: int
+        self, *, job_id: UUID, lease_seconds: int, resource_class: JobResourceClass
     ) -> tuple[threading.Event, threading.Thread]:
         stop_event = threading.Event()
         heartbeat_every = min(self.heartbeat_interval_seconds, max(float(lease_seconds) / 2.0, 1.0))
@@ -643,6 +685,7 @@ class JobWorker:
                             job_id=job_id,
                             worker_id=self.worker_id,
                             lease_seconds=lease_seconds,
+                            resource_class=resource_class,
                         )
                         db.commit()
                         if not updated:

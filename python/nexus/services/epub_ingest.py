@@ -10,22 +10,23 @@ Reuses existing sanitization/canonicalization/fragment-block primitives.
 from __future__ import annotations
 
 import hashlib
-import io
 import logging
 import posixpath
 import re
 import time
 import unicodedata
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, BinaryIO, Literal, cast
 from urllib.parse import unquote, urlparse
 from uuid import UUID
 from xml.etree import ElementTree as ET
 
 from lxml.etree import LxmlError
-from lxml.html import Element, HtmlElement, tostring
+from lxml.html import Element, HtmlElement
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -41,8 +42,21 @@ from nexus.db.models import (
 from nexus.errors import ApiErrorCode
 from nexus.services.canonicalize import generate_canonical_text_with_element_offsets
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from nexus.services.html_tree import parse_html_document, remove_element, unwrap_element
+from nexus.services.html5_shape import normalize_html5_shape
+from nexus.services.html_tree import (
+    inner_html,
+    parse_html_document,
+    remove_element,
+    serialize_html,
+    unwrap_element,
+)
+from nexus.services.parser_temp import (
+    parser_attempt_directory,
+    stream_storage_object_to_file,
+    utf8_byte_length,
+)
 from nexus.services.reader_apparatus import (
+    HtmlApparatusTargetLimitExceeded,
     attach_fragment_locators,
     collect_html_apparatus_targets,
     extract_html_apparatus,
@@ -57,6 +71,11 @@ if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
 
 logger = logging.getLogger(__name__)
+
+EPUB_RENDERED_TEXT_MAX_BYTES = 64 * 1024 * 1024
+EPUB_APPARATUS_MAX_TARGETS = 10_000
+EPUB_APPARATUS_MAX_BACKLINKS = 10_000
+EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # Public result types
@@ -368,7 +387,13 @@ class _ChapterSpec:
     href: str
     media_type: str
     linear: bool
-    raw_html: str
+
+
+@dataclass(frozen=True)
+class _StagedChapter:
+    chapter: _ChapterSpec
+    html_path: Path
+    source_sha256: str
 
 
 @dataclass
@@ -388,8 +413,8 @@ class _AssetEntry:
     epub_path: str
     manifest_id: str | None
     asset_key: str
-    content: bytes
     content_type: str
+    size_bytes: int
     fallback_id: str | None
     properties: str | None
 
@@ -437,6 +462,7 @@ class EpubExtractionPlan:
     nav_locations: tuple[_NavLocationSpec, ...]
     asset_entries: tuple[_AssetEntry, ...]
     asset_storage_paths: dict[str, str]
+    apparatus_source_fingerprint: str
 
 
 class _EpubExtractionFailure(Exception):
@@ -456,7 +482,44 @@ def build_epub_extraction_plan(
     storage_path: str,
     source_size_bytes: int,
     storage_client: StorageClientBase,
+    record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     now: datetime | None = None,
+) -> EpubExtractionPlan | EpubExtractionError:
+    """Materialize and parse one immutable EPUB without retaining source bytes."""
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        epub_path = attempt_directory / "source.epub"
+        stream_storage_object_to_file(
+            storage_client,
+            storage_path=storage_path,
+            destination=epub_path,
+            expected_size_bytes=source_size_bytes,
+        )
+        return _build_epub_extraction_plan_from_file(
+            session_factory=session_factory,
+            media_id=media_id,
+            attempt_id=attempt_id,
+            storage_path=storage_path,
+            source_size_bytes=source_size_bytes,
+            storage_client=storage_client,
+            record_progress=record_progress,
+            epub_path=epub_path,
+            attempt_directory=attempt_directory,
+            now=now,
+        )
+
+
+def _build_epub_extraction_plan_from_file(
+    *,
+    session_factory: sessionmaker[Session],
+    media_id: UUID,
+    attempt_id: UUID,
+    storage_path: str,
+    source_size_bytes: int,
+    storage_client: StorageClientBase,
+    record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
+    epub_path: Path,
+    attempt_directory: Path,
+    now: datetime | None,
 ) -> EpubExtractionPlan | EpubExtractionError:
     """Acquire, parse, and stage immutable attempt-owned EPUB assets."""
     if now is None:
@@ -471,22 +534,10 @@ def build_epub_extraction_plan(
         max_parse_time_ms=settings.max_epub_archive_parse_time_ms,
     )
 
-    # ---- read bytes from storage -------------------------------------------
-    try:
-        epub_bytes = b"".join(storage_client.stream_object(storage_path))
-    except StorageError as exc:
-        raise StorageError(exc.message, exc.code) from exc
-
-    # ---- archive safety gate -----------------------------------------------
-    safety_err = check_archive_safety(epub_bytes, safety_cfg)
-    if safety_err is not None:
-        return safety_err
-
     # ---- parse OPF ---------------------------------------------------------
     t_start = time.monotonic()
-    uploaded_asset_paths: list[str] = []
     try:
-        zf = zipfile.ZipFile(io.BytesIO(epub_bytes))
+        zf = zipfile.ZipFile(epub_path)
     except zipfile.BadZipFile as exc:
         return EpubExtractionError(
             error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
@@ -494,6 +545,9 @@ def build_epub_extraction_plan(
         )
 
     try:
+        safety_err = _check_archive_safety(zf, safety_cfg)
+        if safety_err is not None:
+            return safety_err
         opf_path = _find_opf_path(zf)
         if opf_path is None:
             return EpubExtractionError(
@@ -520,30 +574,35 @@ def build_epub_extraction_plan(
 
         # ---- extract readable chapters -------------------------------------
         chapter_specs = _collect_readable_chapters(zf, manifest, spine_items)
-        if not chapter_specs:
-            return EpubExtractionError(
-                error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
-                error_message="Zero renderable XHTML spine items after extraction",
-            )
-
         asset_entries: list[_AssetEntry] = []
         asset_key_map: dict[str, str] = {}
         readable_paths = {
             item.href for item in manifest.values() if item.media_type in _READABLE_MEDIA_TYPES
         }
-
-        for ch in chapter_specs:
-            ch.raw_html = _rewrite_chapter_resources(
-                ch.raw_html,
-                ch.href,
+        try:
+            staged_chapters, external_apparatus_targets = _stage_epub_chapters(
                 zf,
-                media_id,
-                manifest,
-                asset_entries,
-                asset_key_map,
-                readable_paths,
+                chapter_specs,
+                staging_directory=attempt_directory,
+                media_id=media_id,
+                manifest=manifest,
+                asset_entries=asset_entries,
+                asset_key_map=asset_key_map,
+                readable_paths=readable_paths,
             )
-        external_apparatus_targets = _collect_epub_apparatus_targets(chapter_specs)
+        except HtmlApparatusTargetLimitExceeded as exc:
+            return EpubExtractionError(
+                error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+                error_message=f"EPUB apparatus exceeds its bounded index: {exc}",
+                terminal=True,
+            )
+        if not staged_chapters:
+            return EpubExtractionError(
+                error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
+                error_message="Zero renderable XHTML spine items after extraction",
+            )
+        chapter_total = len(staged_chapters)
+        record_progress(0, chapter_total, "Chapter")
 
         # ---- sanitize chapters ----------------------------------------------
         sanitized_chapters: list[
@@ -556,10 +615,13 @@ def build_epub_extraction_plan(
         ] = []
         all_block_specs: list[list] = []
         retained_hrefs: list[str] = []
+        chapter_source_fingerprints: list[dict[str, object]] = []
+        rendered_text_bytes = 0
 
-        for ch in chapter_specs:
+        for chapter_index, staged in enumerate(staged_chapters, start=1):
+            ch = staged.chapter
             html_with_apparatus, apparatus_items, apparatus_edges = extract_html_apparatus(
-                ch.raw_html,
+                staged.html_path.read_text(encoding="utf-8"),
                 source_kind=f"epub:{ch.spine_idx}",
                 document_href=ch.href,
                 external_targets=external_apparatus_targets,
@@ -578,17 +640,37 @@ def build_epub_extraction_plan(
                     error_code=ApiErrorCode.E_SANITIZATION_FAILED.value,
                     error_message=f"Sanitization failed for spine item {ch.spine_idx}: {exc}",
                 )
+            del html_with_apparatus
 
             if not html_sanitized.strip():
+                record_progress(chapter_index, chapter_total, "Chapter")
                 continue
+            rendered_text_bytes += utf8_byte_length(html_sanitized)
+            if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
+                return EpubExtractionError(
+                    error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+                    error_message="EPUB rendered text exceeds the 64 MiB limit",
+                    terminal=True,
+                )
             sanitized_chapters.append((ch, html_sanitized, apparatus_items, apparatus_edges))
             retained_hrefs.append(ch.href)
+            chapter_source_fingerprints.append(
+                {
+                    "package_href": ch.href,
+                    "manifest_id": ch.manifest_id,
+                    "spine_index": ch.spine_idx,
+                    "spine_itemref_id": ch.itemref_id,
+                    "xhtml_sha256": staged.source_sha256,
+                }
+            )
+            record_progress(chapter_index, chapter_total, "Chapter")
 
         if not sanitized_chapters:
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
                 error_message="Zero renderable chapters after sanitization",
             )
+        del external_apparatus_targets
 
         # build href -> fragment_idx lookup
         href_to_frag_idx = _build_href_to_frag_idx(retained_hrefs)
@@ -613,6 +695,7 @@ def build_epub_extraction_plan(
             ]
         ] = []
         anchor_offsets_by_fragment: dict[int, dict[str, int]] = {}
+        canonical_text_digest = hashlib.sha256()
         for fragment_idx, (ch, html_sanitized, apparatus_items, apparatus_edges) in enumerate(
             sanitized_chapters
         ):
@@ -636,6 +719,16 @@ def build_epub_extraction_plan(
                         f"EPUB navigation target {targets[anchor_id]} names a missing anchor"
                     ),
                 )
+            rendered_text_bytes += utf8_byte_length(canonical_text)
+            if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
+                return EpubExtractionError(
+                    error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+                    error_message="EPUB rendered text exceeds the 64 MiB limit",
+                    terminal=True,
+                )
+            if fragment_idx:
+                canonical_text_digest.update(b"\n")
+            canonical_text_digest.update(canonical_text.encode("utf-8"))
             anchor_offsets_by_fragment[fragment_idx] = offsets
             fragment = Fragment(
                 media_id=media_id,
@@ -671,7 +764,7 @@ def build_epub_extraction_plan(
             )
 
         asset_storage_paths: dict[str, str] = {}
-        for ae in asset_entries:
+        for asset_index, ae in enumerate(asset_entries):
             asset_storage_key = build_epub_attempt_asset_storage_path(
                 media_id,
                 attempt_id,
@@ -687,8 +780,28 @@ def build_epub_extraction_plan(
             finally:
                 reservation_db.close()
             try:
-                storage_client.put_object(asset_storage_key, ae.content, ae.content_type)
-                uploaded_asset_paths.append(asset_storage_key)
+                with zf.open(ae.epub_path) as asset_stream:
+                    if ae.content_type == _SUPPORTED_SVG_IMAGE_TYPE:
+                        sanitized_path = attempt_directory / f"asset-{asset_index}.svg"
+                        with sanitized_path.open("w+b") as sanitized_stream:
+                            _write_sanitized_svg_asset(
+                                cast(BinaryIO, asset_stream),
+                                sanitized_stream,
+                                ae.epub_path,
+                            )
+                            ae.size_bytes = sanitized_stream.tell()
+                            sanitized_stream.seek(0)
+                            storage_client.put_object_stream(
+                                asset_storage_key,
+                                sanitized_stream,
+                                ae.content_type,
+                            )
+                    else:
+                        storage_client.put_object_stream(
+                            asset_storage_key,
+                            cast(BinaryIO, asset_stream),
+                            ae.content_type,
+                        )
                 asset_storage_paths[ae.asset_key] = asset_storage_key
             except StorageError as exc:
                 raise StorageError(exc.message, exc.code) from exc
@@ -715,6 +828,15 @@ def build_epub_extraction_plan(
             nav_locations=tuple(nav_locations),
             asset_entries=tuple(asset_entries),
             asset_storage_paths=asset_storage_paths,
+            apparatus_source_fingerprint=source_fingerprint(
+                "epub",
+                storage_path,
+                source_size_bytes,
+                chapter_source_fingerprints,
+                len(fragments),
+                len(toc_nodes),
+                f"sha256:{canonical_text_digest.hexdigest()}",
+            ),
         )
 
     except _EpubExtractionFailure as exc:
@@ -842,7 +964,7 @@ def publish_epub_extraction_plan(
                 asset_key=asset.asset_key,
                 storage_path=plan.asset_storage_paths[asset.asset_key],
                 content_type=asset.content_type,
-                size_bytes=len(asset.content),
+                size_bytes=asset.size_bytes,
                 fallback_item_id=asset.fallback_id,
                 properties=asset.properties,
                 created_at=plan.now,
@@ -890,24 +1012,7 @@ def publish_epub_extraction_plan(
         db,
         media_id=media_id,
         media_kind="epub",
-        source_fingerprint_value=source_fingerprint(
-            "epub",
-            plan.storage_path,
-            plan.source_size_bytes,
-            [
-                {
-                    "package_href": chapter.href,
-                    "manifest_id": chapter.manifest_id,
-                    "spine_index": chapter.spine_idx,
-                    "spine_itemref_id": chapter.itemref_id,
-                    "xhtml_sha256": hashlib.sha256(chapter.raw_html.encode("utf-8")).hexdigest(),
-                }
-                for _fragment, chapter, _items, _edges in plan.fragment_specs
-            ],
-            len(fragments),
-            len(plan.toc_nodes),
-            "\n".join(fragment.canonical_text for fragment in fragments),
-        ),
+        source_fingerprint_value=plan.apparatus_source_fingerprint,
         items=apparatus_items,
         edges=apparatus_edges,
         status="ready" if apparatus_items else "empty",
@@ -920,36 +1025,14 @@ def publish_epub_extraction_plan(
 # ---------------------------------------------------------------------------
 
 
-def check_archive_safety(
-    data: bytes,
-    cfg: _ArchiveSafetyConfig | None = None,
+def _check_archive_safety(
+    zf: zipfile.ZipFile,
+    cfg: _ArchiveSafetyConfig,
 ) -> EpubExtractionError | None:
-    """Shared archive-safety gate for EPUB bytes.
-
-    Consumed by both extraction executor and lifecycle preflight path.
-    """
-    if cfg is None:
-        settings = get_settings()
-        cfg = _ArchiveSafetyConfig(
-            max_entries=settings.max_epub_archive_entries,
-            max_total_uncompressed_bytes=settings.max_epub_archive_total_uncompressed_bytes,
-            max_single_entry_uncompressed_bytes=settings.max_epub_archive_single_entry_uncompressed_bytes,
-            max_compression_ratio=settings.max_epub_archive_compression_ratio,
-            max_parse_time_ms=settings.max_epub_archive_parse_time_ms,
-        )
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(data))
-    except zipfile.BadZipFile as exc:
-        return EpubExtractionError(
-            error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
-            error_message=f"Invalid archive: {exc}",
-            terminal=True,
-        )
-
+    """Validate an already file-backed EPUB archive before reading entries."""
     infos = zf.infolist()
 
     if len(infos) > cfg.max_entries:
-        zf.close()
         return EpubExtractionError(
             error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
             error_message=f"Archive has {len(infos)} entries (limit {cfg.max_entries})",
@@ -962,21 +1045,18 @@ def check_archive_safety(
         # path safety: reject absolute, traversal, drive-qualified
         name = info.filename
         if name.startswith("/") or name.startswith("\\"):
-            zf.close()
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
                 error_message=f"Absolute path in archive: {name}",
                 terminal=True,
             )
         if ".." in name.split("/"):
-            zf.close()
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
                 error_message=f"Path traversal in archive: {name}",
                 terminal=True,
             )
         if len(name) > 1 and name[1] == ":":
-            zf.close()
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
                 error_message=f"Drive-qualified path in archive: {name}",
@@ -984,7 +1064,6 @@ def check_archive_safety(
             )
 
         if name in seen_names:
-            zf.close()
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
                 error_message=f"Duplicate path in archive: {name}",
@@ -996,7 +1075,6 @@ def check_archive_safety(
         compressed = info.compress_size
 
         if uncompressed > cfg.max_single_entry_uncompressed_bytes:
-            zf.close()
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
                 error_message=(
@@ -1009,7 +1087,6 @@ def check_archive_safety(
         total_uncompressed += uncompressed
 
         if compressed > 0 and uncompressed / compressed > cfg.max_compression_ratio:
-            zf.close()
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
                 error_message=(
@@ -1020,7 +1097,6 @@ def check_archive_safety(
             )
 
     if total_uncompressed > cfg.max_total_uncompressed_bytes:
-        zf.close()
         return EpubExtractionError(
             error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
             error_message=(
@@ -1030,7 +1106,6 @@ def check_archive_safety(
             terminal=True,
         )
 
-    zf.close()
     return None
 
 
@@ -1210,11 +1285,11 @@ def _collect_readable_chapters(
         if entry.media_type not in _READABLE_MEDIA_TYPES:
             continue
         try:
-            raw = _decode_epub_text(zf.read(entry.href))
+            info = zf.getinfo(entry.href)
         # justify-ignore-error: unreadable spine entries are not renderable chapters.
         except _ZIP_ENTRY_READ_ERRORS:
             continue
-        if not raw.strip():
+        if info.file_size < 1:
             continue
         chapters.append(
             _ChapterSpec(
@@ -1224,7 +1299,6 @@ def _collect_readable_chapters(
                 href=entry.href,
                 media_type=entry.media_type,
                 linear=spine_item.linear,
-                raw_html=raw,
             )
         )
     return chapters
@@ -1239,27 +1313,78 @@ def _decode_epub_text(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def _collect_epub_apparatus_targets(
+def _stage_epub_chapters(
+    zf: zipfile.ZipFile,
     chapter_specs: list[_ChapterSpec],
-) -> dict[str, dict[str, object]]:
+    *,
+    staging_directory: Path,
+    media_id: UUID,
+    manifest: dict[str, _ManifestItem],
+    asset_entries: list[_AssetEntry],
+    asset_key_map: dict[str, str],
+    readable_paths: set[str],
+) -> tuple[list[_StagedChapter], dict[str, dict[str, object]]]:
+    """Rewrite each readable spine item once and index its apparatus targets.
+
+    Rewritten chapter HTML is spilled to the attempt directory so the later
+    marker pass reads exactly the package-relative links indexed here, while
+    only one chapter's HTML is retained at a time.
+    """
+    staged_chapters: list[_StagedChapter] = []
     targets: dict[str, dict[str, object]] = {}
+    target_count = 0
+    retained_utf8_bytes = 0
+    backlink_count = 0
     for ch in chapter_specs:
-        targets.update(
-            collect_html_apparatus_targets(
-                ch.raw_html,
-                document_href=ch.href,
-                source_kind=f"epub:{ch.spine_idx}",
-                source_ref={
-                    "format": "xhtml",
-                    "package_href": ch.href,
-                    "manifest_id": ch.manifest_id,
-                    "spine_index": ch.spine_idx,
-                    "spine_itemref_id": ch.itemref_id,
-                },
-                extraction_method="epub_noteref",
-            )
+        try:
+            raw = zf.read(ch.href)
+        # justify-ignore-error: an unreadable spine entry is not a renderable chapter.
+        except _ZIP_ENTRY_READ_ERRORS:
+            continue
+        source_sha256 = hashlib.sha256(raw).hexdigest()
+        rewritten_html = _rewrite_chapter_resources(
+            _decode_epub_text(raw),
+            ch.href,
+            zf,
+            media_id,
+            manifest,
+            asset_entries,
+            asset_key_map,
+            readable_paths,
         )
-    return targets
+        del raw
+        html_path = staging_directory / f"chapter-{ch.spine_idx}.html"
+        html_path.write_text(rewritten_html, encoding="utf-8")
+        staged_chapters.append(
+            _StagedChapter(chapter=ch, html_path=html_path, source_sha256=source_sha256)
+        )
+        (
+            chapter_targets,
+            chapter_target_count,
+            chapter_retained_utf8_bytes,
+            chapter_backlink_count,
+        ) = collect_html_apparatus_targets(
+            rewritten_html,
+            document_href=ch.href,
+            source_kind=f"epub:{ch.spine_idx}",
+            source_ref={
+                "format": "xhtml",
+                "package_href": ch.href,
+                "manifest_id": ch.manifest_id,
+                "spine_index": ch.spine_idx,
+                "spine_itemref_id": ch.itemref_id,
+            },
+            extraction_method="epub_noteref",
+            max_targets=EPUB_APPARATUS_MAX_TARGETS - target_count,
+            max_backlinks=EPUB_APPARATUS_MAX_BACKLINKS - backlink_count,
+            max_retained_utf8_bytes=(EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - retained_utf8_bytes),
+        )
+        del rewritten_html
+        targets.update(chapter_targets)
+        target_count += chapter_target_count
+        retained_utf8_bytes += chapter_retained_utf8_bytes
+        backlink_count += chapter_backlink_count
+    return staged_chapters, targets
 
 
 # ---------------------------------------------------------------------------
@@ -1444,15 +1569,7 @@ def _document_body_inner_html(doc: HtmlElement) -> str:
     body = doc.body
     if body is None:
         body = doc
-    chunks: list[str] = []
-    if body.text:
-        chunks.append(body.text)
-    for child in body:
-        rendered_child = tostring(child, encoding="unicode", method="html")
-        chunks.append(
-            rendered_child.decode("utf-8") if isinstance(rendered_child, bytes) else rendered_child
-        )
-    return "".join(chunks)
+    return inner_html(body)
 
 
 def _ensure_asset_entry(
@@ -1482,16 +1599,13 @@ def _ensure_asset_entry(
         return None
 
     try:
-        content = zf.read(epub_path)
+        info = zf.getinfo(epub_path)
     except KeyError as exc:
         raise _EpubExtractionFailure(
             f"Referenced EPUB image asset missing from archive: {epub_path}"
         ) from exc
 
     content_type = manifest_item.media_type
-    if content_type == _SUPPORTED_SVG_IMAGE_TYPE:
-        content = _sanitize_svg_asset(content, epub_path)
-
     key = _derive_asset_key(epub_path, asset_key_map)
     asset_key_map[epub_path] = key
     asset_entries.append(
@@ -1499,8 +1613,8 @@ def _ensure_asset_entry(
             epub_path=epub_path,
             manifest_id=manifest_item.manifest_id,
             asset_key=key,
-            content=content,
             content_type=content_type,
+            size_bytes=info.file_size,
             fallback_id=manifest_item.fallback_id,
             properties=manifest_item.properties,
         )
@@ -1537,9 +1651,13 @@ def _manifest_item_for_href(
     return None
 
 
-def _sanitize_svg_asset(content: bytes, epub_path: str) -> bytes:
+def _write_sanitized_svg_asset(
+    source: BinaryIO,
+    destination: BinaryIO,
+    epub_path: str,
+) -> None:
     try:
-        root = ET.fromstring(content)
+        root = ET.parse(source).getroot()
     except ET.ParseError as exc:
         raise _EpubExtractionFailure(f"Referenced SVG asset cannot be parsed: {epub_path}") from exc
 
@@ -1547,7 +1665,7 @@ def _sanitize_svg_asset(content: bytes, epub_path: str) -> bytes:
         raise _EpubExtractionFailure(f"Referenced SVG asset is not an SVG document: {epub_path}")
 
     _sanitize_svg_asset_element(root)
-    return ET.tostring(root, encoding="utf-8", method="xml")
+    ET.ElementTree(root).write(destination, encoding="utf-8", xml_declaration=True)
 
 
 def _sanitize_svg_asset_element(element: ET.Element) -> bool:
@@ -1601,20 +1719,18 @@ def _epub_sanitize(html: str) -> str:
     if body is None:
         if isinstance(doc, HtmlElement):
             _sanitize_epub_element(doc)
-            result = tostring(doc, encoding="unicode", method="html")
-            return result.decode("utf-8") if isinstance(result, bytes) else result
+            return serialize_html(doc)
         return ""
 
     for child in list(body):
         if isinstance(child, HtmlElement):
             _sanitize_epub_element(child)
 
-    result = tostring(body, encoding="unicode", method="html")
-    if isinstance(result, bytes):
-        result = result.decode("utf-8")
-    if result.startswith("<body>") and result.endswith("</body>"):
-        result = result[6:-7]
-    return result
+    # Emit only shapes libxml2 and HTML5 tree construction read identically, so a
+    # later canonicalizing parse of this output agrees with the browser's DOM.
+    normalize_html5_shape(body)
+
+    return inner_html(body)
 
 
 def _sanitize_epub_element(element: HtmlElement) -> None:

@@ -158,7 +158,7 @@
     {
       "id": "durable-job-fence-bypass",
       "patch": "testdata/faults/durable-job-fence-bypass.patch",
-      "sha256": "a71537f871f47b09f2e16b6726e74adf19421da696c8be0e4d251a92d7c73231",
+      "sha256": "ce64236642a3d35b6d538b193717765778080fc4b26c6f358fad3284a2f31434",
       "proofs": [
         "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker"
       ],

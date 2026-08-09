@@ -829,6 +829,7 @@ export const REQUIRED_RESOURCE_ACTION_SURFACES = [
   { id: "desktop-pane-header", host: "SurfaceHeader" },
   { id: "primary-mobile-pane-header", host: "MobilePaneBar" },
   { id: "secondary-mobile-pane-header", host: "MobileSecondaryPaneHost" },
+  { id: "media-activity-row", host: "MediaActivityPage" },
 ] as const;
 
 /** Commands that remain named controls because their operand is not a Resource. */

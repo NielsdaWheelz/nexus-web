@@ -86,6 +86,8 @@ class CapabilitiesOut(BaseModel):
     can_retry: bool = False
     can_refresh_source: bool = False
     can_retry_metadata: bool = False
+    can_repair_source: bool = False
+    can_repair_search: bool = False
     can_edit_authors: bool = False
     can_read_embeds: bool = False
 
@@ -248,6 +250,33 @@ class PodcastEpisodeChapterOut(BaseModel):
     image_url: str | None = None
 
 
+class SourceStageProgress(BaseModel):
+    kind: Literal["Stage"] = "Stage"
+    stage: Literal["Validate", "Extract", "Finalize"]
+    run_count: int = Field(ge=0)
+    updated_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SourceCountedProgress(BaseModel):
+    kind: Literal["Counted"] = "Counted"
+    stage: Literal["Extract"] = "Extract"
+    completed: int = Field(ge=0)
+    total: int = Field(gt=0)
+    unit: Literal["Page", "Chapter"]
+    run_count: int = Field(ge=0)
+    updated_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+SourceProgress = Annotated[
+    SourceStageProgress | SourceCountedProgress,
+    Field(discriminator="kind"),
+]
+
+
 class MediaOut(BaseModel):
     """Response schema for media."""
 
@@ -256,6 +285,7 @@ class MediaOut(BaseModel):
     title: str
     canonical_source_url: str | None
     processing_status: MediaProcessingStatus
+    source_progress: Presence[SourceProgress]
     transcript_state: str | None = None
     transcript_coverage: str | None = None
     transcript_origin: Presence[Literal["Publisher", "Imported", "Generated"]]

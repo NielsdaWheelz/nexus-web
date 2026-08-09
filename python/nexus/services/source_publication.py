@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.models import MediaSourceAttempt
+from nexus.db.models import MediaSourceAttempt, MediaSourceAttemptStatus
 from nexus.db.retries import retry_serializable
 from nexus.jobs.queue import JobExecutionContext, lock_and_renew_running_job_claim
 from nexus.logging import get_logger
@@ -24,6 +26,7 @@ class SourcePublicationFence:
     job_id: UUID
     worker_id: str
     attempt_no: int
+    resource_class: Literal["Light", "Heavy"]
 
     @classmethod
     def from_context(
@@ -37,6 +40,7 @@ class SourcePublicationFence:
             job_id=context.job_id,
             worker_id=context.worker_id,
             attempt_no=context.attempt_no,
+            resource_class=context.resource_class,
         )
 
     def execution_context(self) -> JobExecutionContext:
@@ -44,11 +48,183 @@ class SourcePublicationFence:
             job_id=self.job_id,
             worker_id=self.worker_id,
             attempt_no=self.attempt_no,
+            resource_class=self.resource_class,
         )
 
 
 class SourcePublicationSuperseded(Exception):
     """The worker no longer owns the exact source operation."""
+
+
+@dataclass(frozen=True)
+class SourceStageProgress:
+    kind: Literal["Stage"]
+    stage: Literal["Validate", "Extract", "Finalize"]
+    run_count: int
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class SourceCountedProgress:
+    kind: Literal["Counted"]
+    stage: Literal["Extract"]
+    completed: int
+    total: int
+    unit: Literal["Page", "Chapter"]
+    run_count: int
+    updated_at: datetime
+
+
+type SourceProgress = SourceStageProgress | SourceCountedProgress
+
+
+def reset_source_progress(attempt: MediaSourceAttempt) -> None:
+    """Reset the full progress snapshot when an exact source run starts."""
+    attempt.processing_stage = "Validate"
+    attempt.progress_completed = 0
+    attempt.progress_total = None
+    attempt.progress_unit = None
+    attempt.progress_updated_at = func.now()
+
+
+def record_source_extraction_progress(
+    *,
+    session_factory: sessionmaker[Session],
+    fence: SourcePublicationFence,
+    media_id: UUID,
+    completed: int,
+    total: int,
+    unit: Literal["Page", "Chapter"],
+) -> None:
+    """Publish one monotonic counted snapshot under the exact source lease."""
+    if total < 1 or completed < 0 or completed > total:
+        raise ValueError("source extraction progress is outside its counted range")
+
+    def mutate(_db: Session, attempt: MediaSourceAttempt) -> None:
+        if attempt.processing_stage not in {"Validate", "Extract"}:
+            raise AssertionError("source extraction progress regressed from a later stage")
+        if attempt.progress_total is not None and int(attempt.progress_total) != total:
+            raise AssertionError("source extraction progress total changed within one run")
+        if attempt.progress_unit is not None and str(attempt.progress_unit) != unit:
+            raise AssertionError("source extraction progress unit changed within one run")
+        if completed < int(attempt.progress_completed or 0):
+            raise AssertionError("source extraction progress regressed within one run")
+        attempt.processing_stage = "Extract"
+        attempt.progress_completed = completed
+        attempt.progress_total = total
+        attempt.progress_unit = unit
+        attempt.progress_updated_at = func.now()
+
+    run_source_publication_phase(
+        session_factory=session_factory,
+        label="record_source_extraction_progress",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=mutate,
+    )
+
+
+def record_source_finalizing(
+    *,
+    session_factory: sessionmaker[Session],
+    fence: SourcePublicationFence,
+    media_id: UUID,
+) -> None:
+    """Advance an exact source run to its final publication stage."""
+
+    def mutate(_db: Session, attempt: MediaSourceAttempt) -> None:
+        if attempt.processing_stage not in {"Validate", "Extract"}:
+            raise AssertionError("source finalization started from an invalid stage")
+        attempt.processing_stage = "Finalize"
+        attempt.progress_completed = 0
+        attempt.progress_total = None
+        attempt.progress_unit = None
+        attempt.progress_updated_at = func.now()
+
+    run_source_publication_phase(
+        session_factory=session_factory,
+        label="record_source_finalizing",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=mutate,
+    )
+
+
+def load_source_progress(
+    db: Session,
+    media_ids: tuple[UUID, ...],
+) -> dict[UUID, SourceProgress]:
+    """Load and normalize the latest source progress for each requested media.
+
+    Presence means "a source run is in flight". A terminal attempt keeps its last
+    persisted stage as history, but must project Absent so completed media do not
+    report perpetual `Finalize` progress on MediaOut, SSE, and Activity.
+    """
+    if not media_ids:
+        return {}
+    attempts = db.scalars(
+        select(MediaSourceAttempt)
+        .where(
+            MediaSourceAttempt.media_id.in_(media_ids),
+            MediaSourceAttempt.status.in_(
+                (
+                    MediaSourceAttemptStatus.accepted,
+                    MediaSourceAttemptStatus.queued,
+                    MediaSourceAttemptStatus.running,
+                )
+            ),
+        )
+        .distinct(MediaSourceAttempt.media_id)
+        .order_by(
+            MediaSourceAttempt.media_id,
+            MediaSourceAttempt.attempt_no.desc(),
+            MediaSourceAttempt.created_at.desc(),
+            MediaSourceAttempt.id.desc(),
+        )
+    ).all()
+    progress_by_media_id: dict[UUID, SourceProgress] = {}
+    for attempt in attempts:
+        progress = _source_progress_from_attempt(attempt)
+        if progress is not None:
+            progress_by_media_id[attempt.media_id] = progress
+    return progress_by_media_id
+
+
+def _source_progress_from_attempt(attempt: MediaSourceAttempt) -> SourceProgress | None:
+    stage = attempt.processing_stage
+    completed = int(attempt.progress_completed or 0)
+    total = attempt.progress_total
+    unit = attempt.progress_unit
+    updated_at = attempt.progress_updated_at
+    run_count = int(attempt.run_count or 0)
+    if stage is None:
+        if completed != 0 or total is not None or unit is not None or updated_at is not None:
+            raise AssertionError("absent source progress has persisted progress fields")
+        return None
+    if stage not in {"Validate", "Extract", "Finalize"}:
+        raise AssertionError("source progress stage is invalid")
+    if run_count < 1 or updated_at is None:
+        raise AssertionError("present source progress is missing its run identity")
+    if total is None and unit is None and completed == 0:
+        return SourceStageProgress(
+            kind="Stage",
+            stage=cast(Literal["Validate", "Extract", "Finalize"], stage),
+            run_count=run_count,
+            updated_at=updated_at,
+        )
+    if stage != "Extract" or total is None or unit not in {"Page", "Chapter"}:
+        raise AssertionError("counted source progress has an invalid shape")
+    if int(total) < 1 or completed < 0 or completed > int(total):
+        raise AssertionError("counted source progress is outside its persisted range")
+    return SourceCountedProgress(
+        kind="Counted",
+        stage="Extract",
+        completed=completed,
+        total=int(total),
+        unit=cast(Literal["Page", "Chapter"], unit),
+        run_count=run_count,
+        updated_at=updated_at,
+    )
 
 
 def require_source_publication(

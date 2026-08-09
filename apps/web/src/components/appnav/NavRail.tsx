@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import {
   ChevronLeft,
   ChevronRight,
+  ListTodo,
   Plus,
   Search,
 } from "lucide-react";
@@ -35,6 +36,9 @@ export default function NavRail({
   commandCombo,
   onOpenCommand,
   onOpenAdd,
+  activityCount,
+  activityOpen,
+  onOpenActivity,
   onNavigate,
 }: {
   items: readonly NavItem[];
@@ -48,6 +52,9 @@ export default function NavRail({
   commandCombo: string;
   onOpenCommand: () => void;
   onOpenAdd: () => void;
+  activityCount: number;
+  activityOpen: boolean;
+  onOpenActivity: () => void;
   onNavigate: (event: MouseEvent<HTMLElement>, href: string) => AppNavActivationResult;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -139,6 +146,27 @@ export default function NavRail({
           aria-hidden="true"
         />
         <ul className={styles.navList}>
+          <li>
+            <button
+              type="button"
+              className={`${styles.item} ${styles.activityItem} ${activityOpen ? styles.active : ""}`}
+              onClick={onOpenActivity}
+              aria-haspopup="dialog"
+              aria-pressed={activityOpen}
+              aria-label={`Activity, ${activityCount} open ${activityCount === 1 ? "item" : "items"}`}
+              title={collapsed ? "Activity" : undefined}
+            >
+              <span className={styles.itemIcon}>
+                <ListTodo size={20} strokeWidth={2} aria-hidden="true" />
+              </span>
+              {!collapsed && <span className={styles.itemLabel}>Activity</span>}
+              {activityCount > 0 ? (
+                <span className={styles.activityBadge} aria-hidden="true">
+                  {activityCount > 99 ? "99+" : activityCount}
+                </span>
+              ) : null}
+            </button>
+          </li>
           {items.map((item) => {
             const Icon = item.icon;
             const active = item.id === activeId;

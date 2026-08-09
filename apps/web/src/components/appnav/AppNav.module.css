@@ -205,6 +205,42 @@
     color var(--duration-fast) var(--ease-glide);
 }
 
+.activityItem {
+  /* `.item` is written for <a>, which is transparent by default. This is the
+     one <button> wearing it, so the user-agent ButtonFace background must be
+     reset explicitly or the entry renders as an opaque light rectangle among
+     transparent nav links in both themes. */
+  background: transparent;
+  border: 0;
+  font: inherit;
+  text-align: start;
+}
+
+.activityBadge {
+  min-width: 1.35rem;
+  margin-left: auto;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--accent-muted);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.collapsed .activityBadge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 1rem;
+  padding-inline: 3px;
+  font-size: 0.625rem;
+}
+
+.collapsed .activityItem {
+  position: relative;
+}
+
 .item:hover {
   background: var(--surface-hover);
   color: var(--ink);
@@ -499,6 +535,27 @@
   border: var(--stroke-hairline) solid var(--surface-2);
   border-radius: 50%;
   background: var(--accent);
+}
+
+.mobileActivityIcon {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.mobileActivityBadge {
+  position: absolute;
+  top: -9px;
+  left: 10px;
+  min-width: 1rem;
+  padding-inline: 3px;
+  border: var(--stroke-hairline) solid var(--surface-2);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--ink-on-accent);
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1rem;
 }
 
 .topBarTitle {

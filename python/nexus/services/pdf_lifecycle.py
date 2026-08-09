@@ -5,6 +5,8 @@ Public confirm/retry calls route through ``media_source_ingest`` so source
 attempts remain the owner.
 """
 
+from collections.abc import Callable
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -73,17 +75,21 @@ def retry_pdf_ingest_for_viewer(
 def prepare_pdf_source(
     *,
     media_id: UUID,
+    attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
+    record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     source_package: PdfSourcePackageArtifact | None = None,
     source_package_diagnostics: dict[str, object] | None = None,
 ) -> PdfExtractionPlan:
     """Acquire and parse one immutable PDF source outside a DB transaction."""
     plan = build_pdf_extraction_plan(
         media_id=media_id,
+        attempt_id=attempt_id,
         storage_path=storage_path,
         source_size_bytes=source_size_bytes,
         storage_client=get_storage_client(),
+        record_progress=record_progress,
         source_package=source_package,
         source_package_diagnostics=source_package_diagnostics,
     )

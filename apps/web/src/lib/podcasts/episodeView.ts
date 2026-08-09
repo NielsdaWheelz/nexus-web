@@ -3,6 +3,8 @@
 // query, and the exact control inventories. See
 // docs/cutovers/collection-refinement-capability-hard-cutover.md.
 
+import { assertNever } from "@/lib/assertNever";
+
 export const EPISODE_STATE_FILTERS = [
   "all",
   "unplayed",
@@ -33,12 +35,6 @@ export const CANONICAL_PODCAST_EPISODE_VIEW: PodcastEpisodeView = {
 export type DecodedPodcastEpisodeView =
   | { kind: "Valid"; view: PodcastEpisodeView }
   | { kind: "Invalid" };
-
-function assertNever(x: never): never {
-  throw new Error(
-    `Unreachable Podcast episode view case: ${JSON.stringify(x)}`,
-  );
-}
 
 /**
  * Strict, total decode of the view-owned `state`/`sort` keys. A duplicated,

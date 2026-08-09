@@ -235,6 +235,7 @@ def run_environment(
         "NEXUS_INTERNAL_SECRET": "nexus-test-internal-secret",
         "NEXUS_RUNTIME_IDENTITY_FILE": str(_runtime_identity_path(root)),
         "NEXUS_TEST_RUN_ID": run.run_id,
+        "PARSER_TEMP_ROOT": str(root / "test-results" / "runs" / run.run_id / "parser-tmp"),
         "OPENAI_API_BASE_URL": (f"{runtime_endpoint(root, environment, EndpointKind.EXTERNAL)}/v1"),
         "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
         "R2_ACCESS_KEY_ID": MINIO_ACCESS_KEY,

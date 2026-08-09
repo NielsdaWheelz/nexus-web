@@ -101,7 +101,7 @@ def test_step_identity_codec_and_phase_evidence_fail_closed() -> None:
     (
         ("pending", 0, None, DurableExecutionPhase.Queued),
         ("running", 1, None, DurableExecutionPhase.Running),
-        ("pending", 0, "E_JOB_LEASE_EXPIRED", DurableExecutionPhase.Recovering),
+        ("pending", 0, "E_WORKER_INTERRUPTED", DurableExecutionPhase.Recovering),
         ("running", 2, None, DurableExecutionPhase.Recovering),
         ("failed", 1, "E_PROVIDER", DurableExecutionPhase.Recovering),
         ("dead", 3, "E_PROVIDER", DurableExecutionPhase.Suspended),

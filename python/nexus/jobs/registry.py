@@ -11,7 +11,12 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from nexus.config import get_settings
-from nexus.jobs.queue import JobExecutionContext, JobRow, RescheduleRequested
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobResourceClass,
+    JobRow,
+    RescheduleRequested,
+)
 from nexus.services.podcasts.types import (
     PODCAST_REFRESH_RUN_PRUNE_INTERVAL_SECONDS,
     PODCAST_SYNC_JOB_LEASE_SECONDS,
@@ -30,6 +35,7 @@ class JobDefinition:
 
     kind: str
     handler: JobHandler
+    resource_class: JobResourceClass
     max_attempts: int = 3
     retry_delays_seconds: tuple[int, ...] = (60, 300, 900)
     lease_seconds: int = 300
@@ -57,6 +63,7 @@ def get_task_contract_digest() -> str:
             "max_attempts": definition.max_attempts,
             "retry_delays_seconds": list(definition.retry_delays_seconds),
             "lease_seconds": definition.lease_seconds,
+            "resource_class": definition.resource_class,
         }
         for definition in sorted(definitions.values(), key=lambda item: item.kind)
     ]
@@ -89,6 +96,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "ingest_media_source": JobDefinition(
             kind="ingest_media_source",
             handler=_run_ingest_media_source,
+            resource_class="Heavy",
             max_attempts=3,
             retry_delays_seconds=(60, 300),
             lease_seconds=300,
@@ -97,6 +105,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "media_content_reindex_job": JobDefinition(
             kind="media_content_reindex_job",
             handler=_run_media_content_reindex,
+            resource_class="Heavy",
             max_attempts=3,
             retry_delays_seconds=(60, 300),
             lease_seconds=900,
@@ -105,6 +114,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "enrich_metadata": JobDefinition(
             kind="enrich_metadata",
             handler=_run_enrich_metadata,
+            resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=120,
@@ -113,6 +123,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "chat_run": JobDefinition(
             kind="chat_run",
             handler=_run_chat_run,
+            resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
@@ -130,6 +141,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "dossier_build": JobDefinition(
             kind="dossier_build",
             handler=_run_dossier_build,
+            resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
@@ -139,6 +151,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "podcast_sync_subscription_job": JobDefinition(
             kind="podcast_sync_subscription_job",
             handler=_run_podcast_sync_subscription,
+            resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=PODCAST_SYNC_JOB_LEASE_SECONDS,
@@ -147,6 +160,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "podcast_backfill_subscription": JobDefinition(
             kind="podcast_backfill_subscription",
             handler=_run_podcast_backfill_subscription,
+            resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=900,
@@ -157,6 +171,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "podcast_reindex_semantic_job": JobDefinition(
             kind="podcast_reindex_semantic_job",
             handler=_run_podcast_reindex_semantic,
+            resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300),
             lease_seconds=300,
@@ -165,6 +180,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "note_reindex_job": JobDefinition(
             kind="note_reindex_job",
             handler=_run_note_reindex,
+            resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=900,
@@ -173,6 +189,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "podcast_refresh_due_job": JobDefinition(
             kind="podcast_refresh_due_job",
             handler=_run_podcast_refresh_due,
+            resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=300,
@@ -181,6 +198,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "podcast_refresh_run_prune_job": JobDefinition(
             kind="podcast_refresh_run_prune_job",
             handler=_run_podcast_refresh_run_prune,
+            resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=300,
@@ -189,6 +207,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "reconcile_stale_ingest_media_job": JobDefinition(
             kind="reconcile_stale_ingest_media_job",
             handler=_run_reconcile_stale_ingest_media,
+            resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=300,
@@ -201,6 +220,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "sync_gutenberg_catalog_job": JobDefinition(
             kind="sync_gutenberg_catalog_job",
             handler=_run_sync_gutenberg_catalog,
+            resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=7200,
@@ -213,6 +233,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "prune_background_jobs_job": JobDefinition(
             kind="prune_background_jobs_job",
             handler=_run_prune_background_jobs,
+            resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=300,
@@ -225,6 +246,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "purge_expired_auth_handoff_codes": JobDefinition(
             kind="purge_expired_auth_handoff_codes",
             handler=_run_purge_expired_auth_handoff_codes,
+            resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=300,
@@ -233,6 +255,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "oracle_reading_generate": JobDefinition(
             kind="oracle_reading_generate",
             handler=_run_oracle_reading_generate,
+            resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=300,  # worst case: retrieval + 45s call + 45s repair round
@@ -240,6 +263,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "media_unit_build": JobDefinition(
             kind="media_unit_build",
             handler=_run_media_unit_build,
+            resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=300,
@@ -250,6 +274,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "synapse_scan": JobDefinition(
             kind="synapse_scan",
             handler=_run_synapse_scan,
+            resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=300,
@@ -258,6 +283,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "dawn_write_job": JobDefinition(
             kind="dawn_write_job",
             handler=_run_dawn_write_sweep,
+            resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=300,
@@ -270,6 +296,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "atlas_project_job": JobDefinition(
             kind="atlas_project_job",
             handler=_run_atlas_project,
+            resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(120, 600, 1800),
             lease_seconds=300,
@@ -286,6 +313,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "media_teardown": JobDefinition(
             kind="media_teardown",
             handler=_run_media_teardown,
+            resource_class="Light",
             max_attempts=5,
             retry_delays_seconds=(60, 300, 900, 3600, 21600),
             lease_seconds=300,
@@ -297,6 +325,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "storage_object_cleanup": JobDefinition(
             kind="storage_object_cleanup",
             handler=_run_storage_object_cleanup,
+            resource_class="Light",
             max_attempts=5,
             retry_delays_seconds=(60, 300, 900, 3600, 21600),
             lease_seconds=300,
@@ -307,6 +336,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "storage_orphan_sweep": JobDefinition(
             kind="storage_orphan_sweep",
             handler=_run_storage_orphan_sweep,
+            resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(300, 900, 3600),
             lease_seconds=300,

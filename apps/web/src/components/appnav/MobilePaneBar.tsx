@@ -8,7 +8,7 @@ import {
   type FocusEvent as ReactFocusEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, ListTodo } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
@@ -39,7 +39,15 @@ function activeCollapsedFilterAction(
   );
 }
 
-export default function MobilePaneBar() {
+export default function MobilePaneBar({
+  activityCount,
+  activityOpen,
+  onOpenActivity,
+}: {
+  activityCount: number;
+  activityOpen: boolean;
+  onOpenActivity(): void;
+}) {
   const { motionPhase, paneChrome } = useMobileChrome();
   const { acquire } = useMobileChromeVisibleLocks();
   const warmPane = usePaneWarm();
@@ -168,6 +176,23 @@ export default function MobilePaneBar() {
         className={styles.topBarControls}
         data-testid="top-bar-controls"
       >
+        <button
+          type="button"
+          className={styles.topBarButton}
+          onClick={onOpenActivity}
+          aria-haspopup="dialog"
+          aria-pressed={activityOpen}
+          aria-label={`Activity, ${activityCount} open ${activityCount === 1 ? "item" : "items"}`}
+        >
+          <span className={styles.mobileActivityIcon}>
+            <ListTodo size={19} aria-hidden="true" />
+            {activityCount > 0 ? (
+              <span className={styles.mobileActivityBadge} aria-hidden="true">
+                {activityCount > 99 ? "99+" : activityCount}
+              </span>
+            ) : null}
+          </span>
+        </button>
         {paneChrome?.controls}
         {viewMenu ? (
           <ActionMenu

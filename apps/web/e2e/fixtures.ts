@@ -287,6 +287,7 @@ export async function expectInvalidPasswordFeedback(page: Page): Promise<void> {
 
 export const minioOrigin = runtime.minioOrigin;
 export const inbucketOrigin = runtime.inbucketOrigin;
+export const apiOrigin = runtime.apiOrigin;
 export const supabaseAnonKey = publicSupabaseAnonKey;
 export const supabaseOrigin = runtime.supabaseOrigin;
 export const webOrigin = runtime.webOrigin;

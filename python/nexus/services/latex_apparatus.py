@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import io
 import re
 import tarfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from nexus.config import get_settings
+from nexus.services.parser_temp import nested_utf8_byte_length
 from nexus.text import normalize_whitespace
 
 _CITATION_COMMANDS = {
@@ -22,12 +23,17 @@ _FOOTNOTE_COMMANDS = {
     "footnotetext",
 }
 _MAX_SOURCE_FILE_BYTES = 2_000_000
+LATEX_SELECTED_SOURCE_MAX_BYTES = 8 * 1024 * 1024
+LATEX_APPARATUS_MAX_ITEMS = 2_000
+LATEX_APPARATUS_MAX_EDGES = 2_000
+LATEX_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
 
 
 class LatexSourceArchiveUnsafe(ValueError):
-    def __init__(self, reason: str, message: str):
+    def __init__(self, reason: str, message: str, *, resource_limit: bool = False):
         super().__init__(message)
         self.reason = reason
+        self.resource_limit = resource_limit
 
 
 @dataclass(frozen=True)
@@ -71,14 +77,21 @@ class LatexFootnote:
     sort_key: str
 
 
+@dataclass
+class _LatexOutputBudget:
+    item_count: int = 0
+    edge_count: int = 0
+    retained_utf8_bytes: int = 0
+
+
 def extract_latex_biblatex_apparatus_from_archive(
-    source_bytes: bytes,
+    source_path: Path,
     *,
     source_kind: str,
     source_ref: dict[str, object],
     safety_cfg: LatexSourceArchiveSafetyConfig | None = None,
 ) -> LatexBiblatexApparatus:
-    files = _source_archive_text_files(source_bytes, safety_cfg=safety_cfg)
+    files = _source_archive_text_files(source_path, safety_cfg=safety_cfg)
     tex_name, tex = _primary_tex_file(files)
     bib_resource_names = _bib_resource_names(tex)
     bib_names = bib_resource_names or tuple(name for name in files if name.lower().endswith(".bib"))
@@ -102,7 +115,12 @@ def extract_latex_biblatex_apparatus_from_archive(
         },
     )
     diagnostics = dict(result.diagnostics)
-    latex_diag = dict(diagnostics.get("latex_biblatex") or {})
+    raw_latex_diag = diagnostics.get("latex_biblatex")
+    latex_diag: dict[str, object] = (
+        {str(key): value for key, value in raw_latex_diag.items()}
+        if isinstance(raw_latex_diag, dict)
+        else {}
+    )
     if missing_bib_resources:
         latex_diag["missing_bib_resources"] = missing_bib_resources
         diagnostics["latex_biblatex"] = latex_diag
@@ -126,19 +144,26 @@ def extract_latex_biblatex_apparatus(
     markers = _citation_markers(source)
     footnotes = _footnotes(source)
     bib_entries = _bib_entries_by_key(bib)
+    if len(markers) + len(footnotes) > LATEX_APPARATUS_MAX_ITEMS:
+        raise _latex_resource_limit(
+            "apparatus_item_limit", "LaTeX apparatus item count exceeds limit"
+        )
     cited_keys = _ordered_unique(key for marker in markers for key in marker.keys)
     missing_keys = [key for key in cited_keys if key not in bib_entries]
     cited_entries = [bib_entries[key] for key in cited_keys if key in bib_entries]
 
     items: list[dict[str, object]] = []
     edges: list[dict[str, object]] = []
+    output_budget = _LatexOutputBudget()
     target_key_by_citation_key: dict[str, str] = {}
 
     for target_index, entry in enumerate(cited_entries):
         target_key = f"{source_kind}:latex-bibliography-target:{_stable_token(entry.key)}"
         target_key_by_citation_key[entry.key] = target_key
         body_text = _bib_entry_text(entry)
-        items.append(
+        _append_latex_item(
+            items,
+            output_budget,
             {
                 "stable_key": target_key,
                 "kind": "bibliography_entry",
@@ -154,7 +179,7 @@ def extract_latex_biblatex_apparatus(
                 },
                 "sort_key": f"bibliography.{target_index:06d}.target",
                 "_locator_text": "",
-            }
+            },
         )
 
     for marker in markers:
@@ -167,7 +192,9 @@ def extract_latex_biblatex_apparatus(
             "command": marker.command,
             "citation_keys": list(marker.keys),
         }
-        items.append(
+        _append_latex_item(
+            items,
+            output_budget,
             {
                 "stable_key": marker_key,
                 "kind": "bibliography_ref",
@@ -179,7 +206,7 @@ def extract_latex_biblatex_apparatus(
                 "source_ref": marker_source_ref,
                 "sort_key": f"{marker.sort_key}.marker",
                 "_locator_text": "",
-            }
+            },
         )
         for key_index, citation_key in enumerate(marker.keys):
             target_key = target_key_by_citation_key.get(citation_key)
@@ -189,7 +216,9 @@ def extract_latex_biblatex_apparatus(
                 **marker_source_ref,
                 "citation_key": citation_key,
             }
-            edges.append(
+            _append_latex_edge(
+                edges,
+                output_budget,
                 {
                     "stable_key": f"{marker_key}->{target_key}:{key_index:03d}",
                     "from_stable_key": marker_key,
@@ -199,11 +228,13 @@ def extract_latex_biblatex_apparatus(
                     "extraction_method": "latex_biblatex_citation",
                     "source_ref": edge_source_ref,
                     "sort_key": f"{marker.sort_key}.edge.{key_index:03d}",
-                }
+                },
             )
 
     for footnote in footnotes:
-        items.append(
+        _append_latex_item(
+            items,
+            output_budget,
             {
                 "stable_key": f"{source_kind}:latex-footnote:{footnote.ordinal:06d}",
                 "kind": "footnote",
@@ -219,7 +250,7 @@ def extract_latex_biblatex_apparatus(
                 },
                 "sort_key": f"{footnote.sort_key}.target",
                 "_locator_text": "",
-            }
+            },
         )
 
     status = "empty"
@@ -246,14 +277,56 @@ def extract_latex_biblatex_apparatus(
     )
 
 
+def _append_latex_item(
+    items: list[dict[str, object]],
+    budget: _LatexOutputBudget,
+    item: dict[str, object],
+) -> None:
+    budget.item_count += 1
+    if budget.item_count > LATEX_APPARATUS_MAX_ITEMS:
+        raise _latex_resource_limit(
+            "apparatus_item_limit", "LaTeX apparatus item count exceeds limit"
+        )
+    _retain_latex_output_bytes(budget, item)
+    items.append(item)
+
+
+def _append_latex_edge(
+    edges: list[dict[str, object]],
+    budget: _LatexOutputBudget,
+    edge: dict[str, object],
+) -> None:
+    budget.edge_count += 1
+    if budget.edge_count > LATEX_APPARATUS_MAX_EDGES:
+        raise _latex_resource_limit(
+            "apparatus_edge_limit", "LaTeX apparatus edge count exceeds limit"
+        )
+    _retain_latex_output_bytes(budget, edge)
+    edges.append(edge)
+
+
+def _retain_latex_output_bytes(budget: _LatexOutputBudget, value: object) -> None:
+    budget.retained_utf8_bytes += nested_utf8_byte_length(value)
+    if budget.retained_utf8_bytes > LATEX_APPARATUS_MAX_RETAINED_UTF8_BYTES:
+        raise _latex_resource_limit(
+            "apparatus_retained_text_limit",
+            "LaTeX apparatus output exceeds 8 MiB retained-text limit",
+        )
+
+
+def _latex_resource_limit(reason: str, message: str) -> LatexSourceArchiveUnsafe:
+    return LatexSourceArchiveUnsafe(reason, message, resource_limit=True)
+
+
 def _source_archive_text_files(
-    source_bytes: bytes,
+    source_path: Path,
     *,
     safety_cfg: LatexSourceArchiveSafetyConfig | None = None,
 ) -> dict[str, str]:
     cfg = safety_cfg or _default_source_archive_safety_config()
     files: dict[str, str] = {}
-    with tarfile.open(fileobj=io.BytesIO(source_bytes), mode="r:*") as archive:
+    selected_source_bytes = 0
+    with tarfile.open(name=source_path, mode="r:*") as archive:
         total_uncompressed = 0
         seen_names: set[str] = set()
         entry_count = 0
@@ -263,6 +336,7 @@ def _source_archive_text_files(
                 raise LatexSourceArchiveUnsafe(
                     "too_many_entries",
                     f"Source archive has more than {cfg.max_entries} entries",
+                    resource_limit=True,
                 )
             name = _safe_source_archive_name(member.name)
             if name in seen_names:
@@ -286,6 +360,7 @@ def _source_archive_text_files(
                         f"Entry '{name}' uncompressed size {member.size} exceeds limit "
                         f"{cfg.max_single_entry_uncompressed_bytes}"
                     ),
+                    resource_limit=True,
                 )
             total_uncompressed += int(member.size)
             if total_uncompressed > cfg.max_total_uncompressed_bytes:
@@ -295,18 +370,25 @@ def _source_archive_text_files(
                         f"Total uncompressed source archive size {total_uncompressed} "
                         f"exceeds limit {cfg.max_total_uncompressed_bytes}"
                     ),
+                    resource_limit=True,
                 )
 
             if member.size > _MAX_SOURCE_FILE_BYTES:
                 continue
             if not name.lower().endswith((".tex", ".bib")):
                 continue
+            selected_source_bytes += int(member.size)
+            if selected_source_bytes > LATEX_SELECTED_SOURCE_MAX_BYTES:
+                raise _latex_resource_limit(
+                    "selected_source_too_large",
+                    "Selected LaTeX and BibTeX source exceeds 8 MiB limit",
+                )
             extracted = archive.extractfile(member)
             if extracted is None:
                 continue
             files[name] = extracted.read().decode("utf-8", errors="replace")
         _check_source_archive_compression_ratio(
-            source_bytes,
+            source_path.stat().st_size,
             total_uncompressed,
             cfg.max_compression_ratio,
         )
@@ -368,16 +450,17 @@ def _safe_source_archive_name(raw_name: str) -> str:
 
 
 def _check_source_archive_compression_ratio(
-    source_bytes: bytes,
+    compressed_size_bytes: int,
     total_uncompressed: int,
     max_compression_ratio: int,
 ) -> None:
-    compressed_bytes = max(len(source_bytes), 1)
+    compressed_bytes = max(compressed_size_bytes, 1)
     ratio = total_uncompressed / compressed_bytes
     if ratio > max_compression_ratio:
         raise LatexSourceArchiveUnsafe(
             "compression_ratio_too_high",
             (f"Source archive compression ratio {ratio:.1f} exceeds limit {max_compression_ratio}"),
+            resource_limit=True,
         )
 
 
@@ -407,6 +490,8 @@ def _bib_resource_names(tex: str) -> tuple[str, ...]:
 
 def _citation_markers(tex: str) -> list[LatexCitationMarker]:
     markers: list[LatexCitationMarker] = []
+    retained_bytes = 0
+    edge_count = 0
     for match in re.finditer(r"\\([A-Za-z]+)\*?", tex):
         command = match.group(1)
         if command not in _CITATION_COMMANDS:
@@ -418,20 +503,35 @@ def _citation_markers(tex: str) -> list[LatexCitationMarker]:
         keys = tuple(key.strip() for key in keys_body.split(",") if key.strip())
         if not keys:
             continue
-        markers.append(
-            LatexCitationMarker(
-                ordinal=len(markers),
-                command=command,
-                keys=keys,
-                raw=tex[match.start() : end],
-                sort_key=f"citation.{match.start():09d}.{len(markers):06d}",
+        if len(markers) >= LATEX_APPARATUS_MAX_ITEMS:
+            raise _latex_resource_limit(
+                "apparatus_item_limit", "LaTeX citation marker count exceeds limit"
             )
+        edge_count += len(keys)
+        if edge_count > LATEX_APPARATUS_MAX_EDGES:
+            raise _latex_resource_limit(
+                "apparatus_edge_limit", "LaTeX citation edge count exceeds limit"
+            )
+        marker = LatexCitationMarker(
+            ordinal=len(markers),
+            command=command,
+            keys=keys,
+            raw=tex[match.start() : end],
+            sort_key=f"citation.{match.start():09d}.{len(markers):06d}",
         )
+        retained_bytes += nested_utf8_byte_length(marker.__dict__)
+        if retained_bytes > LATEX_APPARATUS_MAX_RETAINED_UTF8_BYTES:
+            raise _latex_resource_limit(
+                "apparatus_retained_text_limit",
+                "LaTeX citation markers exceed retained-text limit",
+            )
+        markers.append(marker)
     return markers
 
 
 def _footnotes(tex: str) -> list[LatexFootnote]:
     footnotes: list[LatexFootnote] = []
+    retained_bytes = 0
     for match in re.finditer(r"\\([A-Za-z]+)\*?", tex):
         command = match.group(1)
         if command not in _FOOTNOTE_COMMANDS:
@@ -452,15 +552,24 @@ def _footnotes(tex: str) -> list[LatexFootnote]:
         body_text = _latex_text_to_plain(body[0])
         if not body_text:
             continue
-        footnotes.append(
-            LatexFootnote(
-                ordinal=len(footnotes),
-                command=command,
-                label=label or str(len(footnotes) + 1),
-                body_text=body_text,
-                sort_key=f"footnote.{match.start():09d}.{len(footnotes):06d}",
+        if len(footnotes) >= LATEX_APPARATUS_MAX_ITEMS:
+            raise _latex_resource_limit(
+                "apparatus_item_limit", "LaTeX footnote count exceeds limit"
             )
+        footnote = LatexFootnote(
+            ordinal=len(footnotes),
+            command=command,
+            label=label or str(len(footnotes) + 1),
+            body_text=body_text,
+            sort_key=f"footnote.{match.start():09d}.{len(footnotes):06d}",
         )
+        retained_bytes += nested_utf8_byte_length(footnote.__dict__)
+        if retained_bytes > LATEX_APPARATUS_MAX_RETAINED_UTF8_BYTES:
+            raise _latex_resource_limit(
+                "apparatus_retained_text_limit",
+                "LaTeX footnotes exceed retained-text limit",
+            )
+        footnotes.append(footnote)
     return footnotes
 
 
@@ -483,6 +592,7 @@ def _latex_command_argument(tex: str, pos: int) -> tuple[str, str, int] | None:
 
 def _bib_entries_by_key(bib: str) -> dict[str, BibEntry]:
     entries: dict[str, BibEntry] = {}
+    retained_bytes = 0
     pos = 0
     while True:
         at = bib.find("@", pos)
@@ -501,7 +611,21 @@ def _bib_entries_by_key(bib: str) -> dict[str, BibEntry]:
         body, end = balanced
         key, fields = _parse_bib_entry_body(body)
         if key:
-            entries[key] = BibEntry(key=key, entry_type=entry_type, fields=fields)
+            entry = BibEntry(key=key, entry_type=entry_type, fields=fields)
+            if key not in entries and len(entries) >= LATEX_APPARATUS_MAX_ITEMS:
+                raise _latex_resource_limit(
+                    "apparatus_item_limit", "BibTeX entry count exceeds limit"
+                )
+            prior = entries.get(key)
+            if prior is not None:
+                retained_bytes -= nested_utf8_byte_length(prior.__dict__)
+            retained_bytes += nested_utf8_byte_length(entry.__dict__)
+            if retained_bytes > LATEX_APPARATUS_MAX_RETAINED_UTF8_BYTES:
+                raise _latex_resource_limit(
+                    "apparatus_retained_text_limit",
+                    "BibTeX entries exceed retained-text limit",
+                )
+            entries[key] = entry
         pos = end
     return entries
 

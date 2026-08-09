@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,23 @@ _SERVICES = (
     "worker-background",
 )
 _WRITERS = ("api", "worker-interactive", "worker-background")
+_RESOURCE_LIMITS = {
+    "postgres": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
+    "caddy": (32 * 1024 * 1024, 64 * 1024 * 1024, 128),
+    "api": (192 * 1024 * 1024, 320 * 1024 * 1024, 256),
+    "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
+    "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
+    "migration": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
+}
+_MIGRATION_COMMAND = (
+    "sh",
+    "-c",
+    "cd /app/migrations && /app/.venv/bin/alembic upgrade head",
+)
+_HOST_RESERVED_MEMORY_BYTES = 320 * 1024 * 1024
+_MIN_AVAILABLE_MEMORY_BYTES = 256 * 1024 * 1024
+_MIN_SWAP_BYTES = 1024 * 1024 * 1024
+_MIN_PARSER_TEMP_FREE_BYTES = 512 * 1024 * 1024
 _INFRASTRUCTURE_SERVICES = ("postgres", "caddy")
 _INFRASTRUCTURE_VOLUME_TARGETS = {
     "postgres": {"/var/lib/postgresql/data": "nexus_postgres_data"},
@@ -334,6 +352,10 @@ class ReleasePaths:
     caddy_config: Path = Path("/etc/nexus/Caddyfile")
     backup_root: Path = Path("/var/backups/nexus")
     lock_path: Path = Path("/run/lock/nexus-release.lock")
+    parser_temp_root: Path = Path("/var/lib/nexus/parser-tmp")
+    meminfo: Path = Path("/proc/meminfo")
+    memory_pressure: Path = Path("/proc/pressure/memory")
+    cgroup_controllers: Path = Path("/sys/fs/cgroup/cgroup.controllers")
 
     @classmethod
     def under(cls, root: Path) -> ReleasePaths:
@@ -345,6 +367,10 @@ class ReleasePaths:
             caddy_config=root / "etc/nexus/Caddyfile",
             backup_root=root / "var/backups/nexus",
             lock_path=root / "run/lock/nexus-release.lock",
+            parser_temp_root=root / "var/lib/nexus/parser-tmp",
+            meminfo=root / "proc/meminfo",
+            memory_pressure=root / "proc/pressure/memory",
+            cgroup_controllers=root / "sys/fs/cgroup/cgroup.controllers",
         )
 
     @property
@@ -1837,6 +1863,13 @@ def _stdout(command: tuple[str, ...], *, environment: dict[str, str] | None = No
         raise ReleaseDefect(f"{command[0]} returned non-UTF-8 output") from exc
 
 
+def _inspect_one(container_id: str, label: str) -> dict[str, Any]:
+    raw = _read_json_output(_run(("docker", "inspect", container_id)).stdout, label)
+    if not isinstance(raw, list) or len(raw) != 1 or not isinstance(raw[0], dict):
+        raise ReleaseDefect(f"{label} is malformed")
+    return raw[0]
+
+
 def _bundle_files(path: Path) -> frozenset[str]:
     if not path.is_dir() or path.is_symlink():
         raise ReleaseDefect("release bundle must be a real directory")
@@ -2084,9 +2117,16 @@ class HostRelease:
         candidate: CandidateManifest,
         config_path: Path,
         arguments: tuple[str, ...],
+        profiles: tuple[str, ...] = (),
         input_bytes: bytes | None = None,
         timeout_seconds: int = 180,
     ) -> subprocess.CompletedProcess[bytes]:
+        # Profiles are opted into per invocation, never globally: enabling
+        # `release` for every command would put the profile-gated migration
+        # one-off in scope for `up`, which must never start it implicitly.
+        profile_arguments = tuple(
+            argument for profile in profiles for argument in ("--profile", profile)
+        )
         return _run(
             (
                 "docker",
@@ -2097,6 +2137,7 @@ class HostRelease:
                 str(config_path),
                 "--file",
                 str(bundle / "docker-compose.yml"),
+                *profile_arguments,
                 *arguments,
             ),
             environment=self._compose_environment(
@@ -2115,23 +2156,56 @@ class HostRelease:
         candidate: CandidateManifest,
         config_path: Path,
         arguments: tuple[str, ...],
+        expected_image_id: str,
         timeout_seconds: int,
     ) -> bytes:
-        completed = self._settle_compose_job(name)
+        service = arguments[0]
+        if service not in {"migration", "worker-background"}:
+            raise ReleaseDefect(f"durable Compose job service {service!r} is unsupported")
+        expected_image_reference = (
+            candidate.images.api if service == "migration" else candidate.images.worker
+        )
+        expected_command = _MIGRATION_COMMAND if service == "migration" else arguments[1:]
+        completed = self._settle_compose_job(
+            name,
+            service=service,
+            expected_image_reference=expected_image_reference,
+            expected_image_id=expected_image_id,
+            expected_command=expected_command,
+        )
         if completed is not None:
             return completed
 
-        result = self._compose(
+        self._compose(
             bundle=bundle,
             candidate=candidate,
             config_path=config_path,
             arguments=("run", "--name", name, "--no-deps", "--no-TTY", *arguments),
+            # Only the migration one-off is profile-gated; other one-off services
+            # are always in scope and need no profile opt-in.
+            profiles=("release",) if service == "migration" else (),
             timeout_seconds=timeout_seconds,
         )
-        _run(("docker", "rm", name))
-        return result.stdout
+        completed = self._settle_compose_job(
+            name,
+            service=service,
+            expected_image_reference=expected_image_reference,
+            expected_image_id=expected_image_id,
+            expected_command=expected_command,
+        )
+        if completed is None:
+            raise ReleaseDefect(f"durable Compose job {name} disappeared after completion")
+        return completed
 
-    def _settle_compose_job(self, name: str) -> bytes | None:
+    def _settle_compose_job(
+        self,
+        name: str,
+        *,
+        service: str,
+        expected_image_reference: str,
+        expected_image_id: str,
+        expected_command: tuple[str, ...],
+    ) -> bytes | None:
         if re.fullmatch(r"nexus-[a-z0-9-]{1,120}", name) is None:
             raise ReleaseDefect("durable Compose job name is malformed")
         listed = _stdout(
@@ -2148,13 +2222,38 @@ class HostRelease:
             raise ReleaseDefect(f"durable Compose job {name} is not unique")
         if listed:
             _require_match("durable Compose job container id", listed, _CONTAINER_ID)
-            raw = _read_json_output(
-                _run(("docker", "inspect", listed)).stdout,
-                f"durable Compose job {name}",
-            )
-            if not isinstance(raw, list) or len(raw) != 1 or not isinstance(raw[0], dict):
-                raise ReleaseDefect(f"durable Compose job {name} inspect is malformed")
-            state = _mapping(raw[0].get("State"), f"durable Compose job {name} state")
+            inspected = _inspect_one(listed, f"durable Compose job {name} inspect")
+            try:
+                config = _mapping(
+                    inspected.get("Config"),
+                    f"durable Compose job {name} config",
+                )
+                labels = _mapping(
+                    config.get("Labels"),
+                    f"durable Compose job {name} labels",
+                )
+            except ReleaseDefect as exc:
+                raise ReleaseDefect("durable Compose job identity differs") from exc
+            if (
+                inspected.get("Name") != f"/{name}"
+                or inspected.get("Image") != expected_image_id
+                or config.get("Image") != expected_image_reference
+                or config.get("Cmd") != list(expected_command)
+                or labels.get("com.docker.compose.project") != "nexus"
+                or labels.get("com.docker.compose.service") != service
+                or labels.get("com.docker.compose.oneoff") != "True"
+                # Compose stamps `config-hash` from its own internal service
+                # digest, which `docker compose config --hash` does not
+                # reproduce; requiring equality against that value rejects even
+                # the container Compose just created. Prove Compose authored the
+                # container by requiring a well-formed label, and pin the actual
+                # execution through the immutable bundle's image id, command, and
+                # resource limits, all of which are compared here.
+                or _SHA256.fullmatch(str(labels.get("com.docker.compose.config-hash"))) is None
+            ):
+                raise ReleaseDefect("durable Compose job identity differs")
+            self._validate_resource_limits(service, inspected)
+            state = _mapping(inspected.get("State"), f"durable Compose job {name} state")
             if state.get("Running") is True:
                 raise ReleaseBlocked(f"durable Compose job {name} is still running")
             exit_code = state.get("ExitCode")
@@ -2166,6 +2265,21 @@ class HostRelease:
                 raise ExternalCommandFailed(f"durable Compose job {name} failed")
             return output
         return None
+
+    def _validate_resource_limits(self, service: str, inspected: dict[str, Any]) -> None:
+        expected = _RESOURCE_LIMITS.get(service)
+        if expected is None:
+            raise ReleaseDefect(f"resource contract for {service!r} is unsupported")
+        host_config = _mapping(inspected.get("HostConfig"), f"{service} host config")
+        observed = (
+            host_config.get("MemoryReservation"),
+            host_config.get("Memory"),
+            host_config.get("PidsLimit"),
+        )
+        if observed != expected:
+            raise PermanentReleaseFailure(
+                f"{service} resource limits differ: observed={observed!r} expected={expected!r}"
+            )
 
     def _config_snapshot(self) -> ConfigSnapshot:
         if not self.paths.current_config.is_symlink():
@@ -2216,13 +2330,7 @@ class HostRelease:
             )
             container_id = result.stdout.decode().strip()
             _require_match(f"{service} container id", container_id, _CONTAINER_ID)
-            raw = _read_json_output(
-                _run(("docker", "inspect", container_id)).stdout,
-                f"{service} container inspect",
-            )
-            if not isinstance(raw, list) or len(raw) != 1 or not isinstance(raw[0], dict):
-                raise ReleaseDefect(f"{service} container inspect shape is malformed")
-            inspected = raw[0]
+            inspected = _inspect_one(container_id, f"{service} container inspect")
             state = _mapping(inspected.get("State"), f"{service} state")
             expected_running = writers_running if service in _WRITERS else True
             if state.get("Running") is not expected_running:
@@ -2237,6 +2345,14 @@ class HostRelease:
                     )
             image_id = _require_match(f"{service} image id", inspected.get("Image"), _IMAGE_ID)
             config = _mapping(inspected.get("Config"), f"{service} config")
+            labels = _mapping(config.get("Labels"), f"{service} Compose labels")
+            if (
+                labels.get("com.docker.compose.project") != "nexus"
+                or labels.get("com.docker.compose.service") != service
+            ):
+                raise PermanentReleaseFailure(
+                    f"live {service} does not belong to the exact Nexus Compose project"
+                )
             if (
                 service in expected_infra_images
                 and config.get("Image") != expected_infra_images[service]
@@ -2252,6 +2368,295 @@ class HostRelease:
                 config_sha256=hashlib.sha256(_canonical_json(config)).hexdigest(),
             )
         return evidence
+
+    def _container_usage(self, container_id: str, service: str) -> tuple[int, int]:
+        raw = _read_json_output(
+            _run(
+                (
+                    "docker",
+                    "stats",
+                    "--no-stream",
+                    "--format",
+                    "{{json .}}",
+                    container_id,
+                )
+            ).stdout,
+            f"{service} resource usage",
+        )
+        value = _mapping(raw, f"{service} resource usage")
+        usage = value.get("MemUsage")
+        pids = value.get("PIDs")
+        if not isinstance(usage, str) or not isinstance(pids, str) or not pids.isdigit():
+            raise ReleaseDefect(f"{service} resource usage is malformed")
+        matched = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(B|KiB|MiB|GiB) / .+", usage)
+        if matched is None:
+            raise ReleaseDefect(f"{service} memory usage is malformed")
+        multiplier = {
+            "B": 1,
+            "KiB": 1024,
+            "MiB": 1024 * 1024,
+            "GiB": 1024 * 1024 * 1024,
+        }[matched.group(2)]
+        try:
+            memory = int(Decimal(matched.group(1)) * multiplier)
+        except InvalidOperation as exc:
+            raise ReleaseDefect(f"{service} memory usage is malformed") from exc
+        return memory, int(pids)
+
+    def _converge_resource_limits(self, source_sha: str) -> None:
+        current_record = self.store.require_current_record()
+        current_attempt = self.store.load_attempt(current_record.source_sha)
+        if current_attempt is None or current_attempt.phase is not ReleasePhase.Succeeded:
+            raise ReleaseDefect("current release attempt is not exactly succeeded")
+        self.store.assert_candidate_admissible(source_sha)
+        bundle = self.bundle(source_sha)
+        candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
+        config = self._config_snapshot()
+        self._compose(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config.path,
+            arguments=("config", "--quiet"),
+        )
+        forward_fix_sha = self.store.forward_fix_sha()
+        containers = self._container_evidence(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config.path,
+            writers_running=forward_fix_sha is None,
+        )
+        if any(
+            containers[service] != current_attempt.containers[service]
+            for service in _INFRASTRUCTURE_SERVICES
+        ):
+            raise PermanentReleaseFailure(
+                "live infrastructure differs from the current release attempt"
+            )
+        if forward_fix_sha is None and (
+            containers["api"].image != current_record.api_image_id
+            or containers["worker-interactive"].image != current_record.worker_image_id
+            or containers["worker-background"].image != current_record.worker_image_id
+        ):
+            raise PermanentReleaseFailure(
+                "live predecessor containers differ from the current release record"
+            )
+        self._preflight_host_capacity(
+            containers,
+            writers_running=forward_fix_sha is None,
+        )
+
+        drifted: list[tuple[str, str]] = []
+        for service in _SERVICES:
+            container_id = containers[service].container_id
+            inspected = _inspect_one(container_id, f"{service} resource convergence inspect")
+            host_config = _mapping(inspected.get("HostConfig"), f"{service} host config")
+            expected = _RESOURCE_LIMITS[service]
+            observed = (
+                host_config.get("MemoryReservation"),
+                host_config.get("Memory"),
+                host_config.get("PidsLimit"),
+            )
+            if observed == expected:
+                continue
+            state = _mapping(inspected.get("State"), f"{service} convergence state")
+            running = state.get("Running")
+            if type(running) is not bool:
+                raise ReleaseDefect(f"{service} convergence running state is malformed")
+            expected_running = service not in _WRITERS or forward_fix_sha is None
+            if running is not expected_running:
+                state_name = "running" if expected_running else "stopped"
+                raise ReleaseBlocked(
+                    f"{service} is not freshly proved {state_name} for resource convergence"
+                )
+            memory, pids = self._container_usage(container_id, service) if running else (0, 0)
+            if memory >= expected[1]:
+                raise ReleaseBlocked(f"{service} current memory is not below its hard limit")
+            if pids > expected[2]:
+                raise ReleaseBlocked(f"{service} current PID use exceeds its limit")
+            drifted.append((service, container_id))
+
+        for service, container_id in drifted:
+            reservation, memory, pids = _RESOURCE_LIMITS[service]
+            _run(
+                (
+                    "docker",
+                    "update",
+                    "--memory-reservation",
+                    str(reservation),
+                    "--memory",
+                    str(memory),
+                    "--pids-limit",
+                    str(pids),
+                    container_id,
+                )
+            )
+            self._validate_resource_limits(
+                service,
+                _inspect_one(container_id, f"{service} converged resource inspect"),
+            )
+            print(
+                "host-container-resource-converged"
+                f" id={container_id} service={service!r}"
+                f" reservation={reservation} memory={memory} pids={pids}",
+                file=sys.stderr,
+            )
+
+    def _host_text(self, path: Path, label: str) -> str:
+        try:
+            return path.read_text(encoding="ascii")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ReleaseBlocked(f"host {label} evidence is unavailable") from exc
+
+    def _revalidate_attempt_host_capacity(
+        self,
+        attempt: ReleaseAttempt,
+        *,
+        writers_running: bool | None,
+    ) -> None:
+        for service in _SERVICES:
+            evidence = attempt.containers[service]
+            inspected = _inspect_one(evidence.container_id, f"{service} replay preflight inspect")
+            config = _mapping(inspected.get("Config"), f"{service} replay preflight config")
+            labels = _mapping(config.get("Labels"), f"{service} replay preflight labels")
+            state = _mapping(inspected.get("State"), f"{service} replay preflight state")
+            running = state.get("Running")
+            if type(running) is not bool:
+                raise ReleaseDefect(f"{service} replay preflight running state is malformed")
+            if (
+                inspected.get("Image") != evidence.image
+                or hashlib.sha256(_canonical_json(config)).hexdigest() != evidence.config_sha256
+                or labels.get("com.docker.compose.project") != "nexus"
+                or labels.get("com.docker.compose.service") != service
+            ):
+                raise ReleaseDefect(f"{service} identity changed before replay mutation")
+            if service in _INFRASTRUCTURE_SERVICES:
+                if running is not True:
+                    raise ReleaseBlocked(f"{service} is not running before replay mutation")
+            elif writers_running is not None and running is not writers_running:
+                expected = "running" if writers_running else "stopped"
+                raise ReleaseBlocked(f"{service} is not {expected} before replay mutation")
+            self._validate_resource_limits(service, inspected)
+            if service == "caddy":
+                self._validate_caddy_mount(inspected)
+
+        # Prepared can be a crash prefix with some exact writers already stopped.
+        # Treat every recorded writer id as owned while the fresh inspections above
+        # prove its actual state; later phases require every writer stopped.
+        self._preflight_host_capacity(
+            attempt.containers,
+            writers_running=writers_running is not False,
+        )
+
+    def _preflight_host_capacity(
+        self,
+        containers: dict[str, ContainerEvidence],
+        *,
+        writers_running: bool,
+    ) -> None:
+        controllers = self._host_text(
+            self.paths.cgroup_controllers,
+            "cgroup v2 controller",
+        ).split()
+        if "memory" not in controllers:
+            raise ReleaseBlocked("host cgroup v2 memory controller is unavailable")
+
+        meminfo: dict[str, int] = {}
+        for line in self._host_text(self.paths.meminfo, "memory").splitlines():
+            key, separator, raw = line.partition(":")
+            if key not in {"MemTotal", "MemAvailable", "SwapTotal"}:
+                continue
+            parts = raw.split()
+            if not separator or len(parts) != 2 or parts[1] != "kB" or not parts[0].isdigit():
+                raise ReleaseDefect(f"host {key} evidence is malformed")
+            if key in meminfo:
+                raise ReleaseDefect(f"host {key} evidence is duplicated")
+            meminfo[key] = int(parts[0]) * 1024
+        if set(meminfo) != {"MemTotal", "MemAvailable", "SwapTotal"}:
+            raise ReleaseDefect("host memory evidence is incomplete")
+        hard_sum = sum(_RESOURCE_LIMITS[service][1] for service in _SERVICES)
+        if meminfo["MemTotal"] - hard_sum < _HOST_RESERVED_MEMORY_BYTES:
+            raise ReleaseBlocked("host memory reserve is below 320 MiB")
+        if meminfo["MemAvailable"] < _MIN_AVAILABLE_MEMORY_BYTES:
+            raise ReleaseBlocked("host available memory is below 256 MiB")
+        if meminfo["SwapTotal"] < _MIN_SWAP_BYTES:
+            raise ReleaseBlocked("host swap is below 1 GiB")
+
+        pressure: dict[str, float] = {}
+        for line in self._host_text(self.paths.memory_pressure, "memory pressure").splitlines():
+            parts = line.split()
+            if not parts or parts[0] not in {"some", "full"}:
+                continue
+            avg10 = next((item for item in parts[1:] if item.startswith("avg10=")), None)
+            if avg10 is None or parts[0] in pressure:
+                raise ReleaseDefect("host memory pressure evidence is malformed")
+            try:
+                pressure[parts[0]] = float(avg10.removeprefix("avg10="))
+            except ValueError as exc:
+                raise ReleaseDefect("host memory pressure evidence is malformed") from exc
+        if set(pressure) != {"some", "full"}:
+            raise ReleaseDefect("host memory pressure evidence is incomplete")
+        if pressure["full"] != 0 or pressure["some"] > 5:
+            raise ReleaseBlocked("host memory pressure exceeds the release envelope")
+
+        try:
+            parser_temp_metadata = self.paths.parser_temp_root.lstat()
+        except OSError as exc:
+            raise ReleaseBlocked("parser temporary filesystem is unavailable") from exc
+        if (
+            not stat.S_ISDIR(parser_temp_metadata.st_mode)
+            or parser_temp_metadata.st_uid != 10001
+            or parser_temp_metadata.st_gid != 10001
+            or stat.S_IMODE(parser_temp_metadata.st_mode) != 0o700
+        ):
+            raise ReleaseBlocked("parser temporary root metadata is not exact")
+        try:
+            parser_temp_free = shutil.disk_usage(self.paths.parser_temp_root).free
+        except OSError as exc:
+            raise ReleaseBlocked("parser temporary filesystem is unavailable") from exc
+        if parser_temp_free < _MIN_PARSER_TEMP_FREE_BYTES:
+            raise ReleaseBlocked("parser temporary filesystem has less than 512 MiB free")
+
+        output = _stdout(("docker", "ps", "--quiet", "--no-trunc"))
+        running_ids = tuple(line for line in output.splitlines() if line)
+        if len(running_ids) != len(set(running_ids)):
+            raise ReleaseDefect("running container evidence is duplicated")
+        for container_id in running_ids:
+            _require_match("running container id", container_id, _CONTAINER_ID)
+        expected_running = {
+            evidence.container_id
+            for service, evidence in containers.items()
+            if service in _INFRASTRUCTURE_SERVICES or writers_running
+        }
+        unknown: list[str] = []
+        for container_id in running_ids:
+            inspected = _inspect_one(container_id, f"running container {container_id} inspect")
+            config = _mapping(inspected.get("Config"), "running container config")
+            labels = _mapping(config.get("Labels"), "running container labels")
+            project = labels.get("com.docker.compose.project")
+            service = labels.get("com.docker.compose.service")
+            oneoff = labels.get("com.docker.compose.oneoff")
+            state = _mapping(inspected.get("State"), "running container state")
+            restart_count = inspected.get("RestartCount")
+            oom_killed = state.get("OOMKilled")
+            if type(restart_count) is not int or type(oom_killed) is not bool:
+                raise ReleaseDefect("running container restart/OOM evidence is malformed")
+            print(
+                "host-container"
+                f" id={container_id} project={project!r} service={service!r}"
+                f" restarts={restart_count} oom_killed={oom_killed}",
+                file=sys.stderr,
+            )
+            # The exact long-lived service containers are known by identity; the
+            # controller's own bounded one-offs (migration, oracle reconcile) are
+            # known by exact Compose project membership so a resumed release does
+            # not report its own in-flight job as a foreign container.
+            known = container_id in expected_running or (project == "nexus" and oneoff == "True")
+            if not known:
+                unknown.append(f"{container_id} project={project!r} service={service!r}")
+        if unknown:
+            raise ReleaseBlocked("unknown running container: " + ", ".join(unknown))
+        stats = _stdout(("docker", "stats", "--no-stream", "--format", "{{json .}}", *running_ids))
+        print(f"host-container-memory {stats}", file=sys.stderr)
 
     def _image_identity(self, image: str, candidate: CandidateManifest) -> str:
         _run(("docker", "pull", image), timeout_seconds=600)
@@ -2437,6 +2842,18 @@ class HostRelease:
             config_path=config.path,
             writers_running=forward_fix_sha is None,
         )
+        self._preflight_host_capacity(
+            containers,
+            writers_running=forward_fix_sha is None,
+        )
+        for service in _SERVICES:
+            self._validate_resource_limits(
+                service,
+                _inspect_one(
+                    containers[service].container_id,
+                    f"{service} preflight resource inspect",
+                ),
+            )
         if forward_fix_sha is None:
             if (
                 containers["api"].image != current_record.api_image_id
@@ -2539,9 +2956,19 @@ class HostRelease:
             bundle=bundle,
             candidate=candidate,
             config_path=config_path,
-            arguments=("stop", "--timeout", "30", *_WRITERS),
+            arguments=("stop", "--timeout", "30", "worker-background"),
         )
-        for service in _WRITERS:
+        self._assert_running_state(
+            attempt.containers["worker-background"].container_id,
+            running=False,
+        )
+        self._compose(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config_path,
+            arguments=("stop", "--timeout", "30", "worker-interactive", "api"),
+        )
+        for service in ("worker-interactive", "api"):
             self._assert_running_state(
                 attempt.containers[service].container_id,
                 running=False,
@@ -2558,9 +2985,28 @@ class HostRelease:
             bundle=bundle,
             candidate=candidate,
             config_path=config_path,
-            arguments=("stop", "--timeout", "30", *_WRITERS),
+            arguments=("stop", "--timeout", "30", "worker-background"),
         )
-        for service in _WRITERS:
+        output = (
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=("ps", "--all", "--quiet", "worker-background"),
+            )
+            .stdout.decode()
+            .strip()
+        )
+        if output:
+            _require_match("stopped worker-background container id", output, _CONTAINER_ID)
+            self._assert_running_state(output, running=False)
+        self._compose(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config_path,
+            arguments=("stop", "--timeout", "30", "worker-interactive", "api"),
+        )
+        for service in ("worker-interactive", "api"):
             output = (
                 self._compose(
                     bundle=bundle,
@@ -2583,17 +3029,7 @@ class HostRelease:
     def _restart_predecessor(self, attempt: ReleaseAttempt) -> None:
         for service in _WRITERS:
             evidence = attempt.containers[service]
-            inspected = _read_json_output(
-                _run(("docker", "inspect", evidence.container_id)).stdout,
-                f"rollback {service} inspect",
-            )
-            if (
-                not isinstance(inspected, list)
-                or len(inspected) != 1
-                or not isinstance(inspected[0], dict)
-            ):
-                raise ReleaseDefect(f"rollback {service} inspect shape is malformed")
-            item = inspected[0]
+            item = _inspect_one(evidence.container_id, f"rollback {service} inspect")
             if item.get("Image") != evidence.image:
                 raise ReleaseDefect(f"rollback {service} image identity changed")
             config = _mapping(item.get("Config"), f"rollback {service} config")
@@ -2850,23 +3286,34 @@ class HostRelease:
         bundle: Path,
         candidate: CandidateManifest,
         config_path: Path,
+        expected_image_id: str,
     ) -> None:
         self._compose_job(
             name=f"nexus-release-{candidate.source_sha}-migration",
             bundle=bundle,
             candidate=candidate,
             config_path=config_path,
-            arguments=(
-                "api",
-                "sh",
-                "-c",
-                "cd /app/migrations && /app/.venv/bin/alembic upgrade head",
-            ),
+            arguments=("migration",),
+            expected_image_id=expected_image_id,
             timeout_seconds=1800,
         )
 
-    def _settle_completed_migration(self, source_sha: str) -> None:
-        self._settle_compose_job(f"nexus-release-{source_sha}-migration")
+    def _settle_completed_migration(
+        self,
+        source_sha: str,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+        expected_image_id: str,
+    ) -> None:
+        self._settle_compose_job(
+            f"nexus-release-{source_sha}-migration",
+            service="migration",
+            expected_image_reference=candidate.images.api,
+            expected_image_id=expected_image_id,
+            expected_command=_MIGRATION_COMMAND,
+        )
 
     def _prove_database_revision(
         self,
@@ -2890,14 +3337,9 @@ class HostRelease:
     def _prove_infra_unchanged(self, attempt: ReleaseAttempt) -> None:
         for service in ("postgres", "caddy"):
             evidence = attempt.containers[service]
-            raw = _read_json_output(
-                _run(("docker", "inspect", evidence.container_id)).stdout,
-                f"{service} unchanged inspect",
-            )
-            if not isinstance(raw, list) or len(raw) != 1 or not isinstance(raw[0], dict):
-                raise ReleaseDefect(f"{service} unchanged inspect shape is malformed")
-            item = raw[0]
+            item = _inspect_one(evidence.container_id, f"{service} unchanged inspect")
             config = _mapping(item.get("Config"), f"{service} unchanged config")
+            self._validate_resource_limits(service, item)
             if service == "caddy":
                 self._validate_caddy_mount(item)
             if (
@@ -3066,8 +3508,9 @@ class HostRelease:
             .strip()
         )
         _require_match(f"{service} container id", container_id, _CONTAINER_ID)
-        image_id = _stdout(("docker", "inspect", "--format", "{{.Image}}", container_id))
-        _require_match(f"{service} image id", image_id, _IMAGE_ID)
+        inspected = _inspect_one(container_id, f"{service} activated container inspect")
+        self._validate_resource_limits(service, inspected)
+        image_id = _require_match(f"{service} image id", inspected.get("Image"), _IMAGE_ID)
         return image_id
 
     def apply(
@@ -3117,6 +3560,7 @@ class HostRelease:
         self.store.assert_candidate_admissible(source_sha)
         existing = self.store.load_attempt(source_sha)
         if existing is None:
+            self._converge_resource_limits(source_sha)
             preflight = self.preflight(source_sha)
             current = self.store.require_current_record().source_sha
             attempt = ReleaseAttempt.prepared(
@@ -3179,6 +3623,10 @@ class HostRelease:
                 f"release {source_sha} completed its pending ForwardFixRequired publication"
             )
         if attempt.phase is ReleasePhase.Prepared:
+            self._revalidate_attempt_host_capacity(
+                attempt,
+                writers_running=False if attempt.forward_fix_of is not None else None,
+            )
             self._stop_writers(
                 bundle=bundle,
                 candidate=candidate,
@@ -3189,6 +3637,7 @@ class HostRelease:
             self.store.replace_attempt(attempt)
 
         if attempt.phase is ReleasePhase.WritersStopped:
+            self._revalidate_attempt_host_capacity(attempt, writers_running=False)
             revisions = self._database_revisions(
                 bundle=bundle,
                 candidate=candidate,
@@ -3241,6 +3690,7 @@ class HostRelease:
                 self.store.replace_attempt(attempt)
 
         if attempt.phase is ReleasePhase.BackupVerified:
+            self._revalidate_attempt_host_capacity(attempt, writers_running=False)
             self._validate_backup_evidence(
                 bundle=bundle,
                 candidate=candidate,
@@ -3250,6 +3700,7 @@ class HostRelease:
             self.store.replace_attempt(attempt)
 
         if attempt.phase is ReleasePhase.DataMutationStarted:
+            self._revalidate_attempt_host_capacity(attempt, writers_running=False)
             revisions = self._database_revisions(
                 bundle=bundle,
                 candidate=candidate,
@@ -3266,12 +3717,19 @@ class HostRelease:
                 current_revision=current_revision,
             )
             if revisions == (candidate.expected_database_revision,):
-                self._settle_completed_migration(candidate.source_sha)
+                self._settle_completed_migration(
+                    candidate.source_sha,
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=Path(attempt.config_path),
+                    expected_image_id=attempt.candidate_api_image_id,
+                )
             else:
                 self._migrate(
                     bundle=bundle,
                     candidate=candidate,
                     config_path=Path(attempt.config_path),
+                    expected_image_id=attempt.candidate_api_image_id,
                 )
             self._prove_database_revision(
                 bundle=bundle,
@@ -3961,6 +4419,11 @@ class HostOracleReconcile:
                 candidate=execution.candidate,
                 config_path=Path(target.record.config_path),
                 arguments=tuple(command_arguments),
+                expected_image_id=(
+                    target.record.worker_image_id
+                    if execution.repair is None
+                    else execution.repair.repair_worker_image_id
+                ),
                 timeout_seconds=timeout_seconds,
             )
         return self.host._compose(
@@ -4018,13 +4481,7 @@ class HostOracleReconcile:
         service: str,
         evidence: ContainerEvidence,
     ) -> dict[str, Any]:
-        raw = _read_json_output(
-            _run(("docker", "inspect", evidence.container_id)).stdout,
-            f"Oracle {service} container inspect",
-        )
-        if not isinstance(raw, list) or len(raw) != 1 or not isinstance(raw[0], dict):
-            raise ReleaseDefect(f"Oracle {service} container inspect is malformed")
-        item = raw[0]
+        item = _inspect_one(evidence.container_id, f"Oracle {service} container inspect")
         config = _mapping(item.get("Config"), f"Oracle {service} config")
         if (
             item.get("Image") != evidence.image

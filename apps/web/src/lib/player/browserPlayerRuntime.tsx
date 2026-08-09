@@ -122,6 +122,7 @@ import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { activityRecorder } from "@/lib/consumption/activityRecorder";
 import { parseMediaRef } from "@/lib/consumption/activityContract";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
+import { assertNever } from "@/lib/assertNever";
 
 export const PLAYER_SKIP_BACK_SECONDS = 15;
 export const PLAYER_SKIP_FORWARD_SECONDS = 30;
@@ -187,10 +188,6 @@ function canCaptureOutputEffectsSource(sourceUrl: string): boolean {
   } catch {
     return false;
   }
-}
-
-function assertNever(value: never): never {
-  throw new Error(`Unhandled player session state: ${JSON.stringify(value)}`);
 }
 
 type PlaybackRateState =
