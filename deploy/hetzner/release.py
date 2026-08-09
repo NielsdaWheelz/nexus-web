@@ -62,9 +62,9 @@ _SERVICES = (
 _WRITERS = ("api", "worker-interactive", "worker-background")
 _RESOURCE_LIMITS = {
     "postgres": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
-    "caddy": (32 * 1024 * 1024, 64 * 1024 * 1024, 128),
+    "caddy": (32 * 1024 * 1024, 48 * 1024 * 1024, 128),
     "api": (192 * 1024 * 1024, 320 * 1024 * 1024, 256),
-    "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
+    "worker-interactive": (128 * 1024 * 1024, 224 * 1024 * 1024, 256),
     "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
     "migration": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
 }
@@ -73,6 +73,10 @@ _MIGRATION_COMMAND = (
     "-c",
     "cd /app/migrations && /app/.venv/bin/alembic upgrade head",
 )
+# The smallest production host this envelope is committed to. A nominally
+# 2 GiB instance reports less than 2 GiB of usable MemTotal, so the floor is
+# the measured value; sizing against the nominal one leaves the reserve short.
+_MIN_HOST_MEMORY_BYTES = 1919 * 1024 * 1024
 _HOST_RESERVED_MEMORY_BYTES = 320 * 1024 * 1024
 _MIN_AVAILABLE_MEMORY_BYTES = 256 * 1024 * 1024
 _MIN_SWAP_BYTES = 1024 * 1024 * 1024
