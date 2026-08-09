@@ -604,6 +604,65 @@ def test_openai_nonstream_strict_outputs_decode_through_the_real_codec(
     assert json.loads(decoded.response.content.text) == expected
 
 
+def test_metadata_enrichment_confirms_the_metadata_a_media_item_declares() -> None:
+    """A media item that already knows what it is keeps its own identity.
+
+    A boundary that answered with one fixed document's identity would retitle
+    every enriched media item in the suite to the same string, so no proof
+    downstream could tell two resources apart.
+    """
+    properties = dict(_STRICT_CASES[0][2])
+    schema = parse_canonical_schema(
+        {
+            "type": "object",
+            "properties": properties,
+            "required": list(properties),
+            "additionalProperties": False,
+        }
+    )
+    messages = (
+        SystemMessage(
+            blocks=(PromptBlock(text=_STRICT_CASES[0][1], stability=Stable(GlobalScope())),)
+        ),
+        UserMessage(
+            blocks=(
+                PromptBlock(
+                    text=(
+                        "Known metadata:\n"
+                        "- kind: epub\n"
+                        '- current_title: "Canonical Reader Positions"\n'
+                        '- current_authors: ["Nexus Fixtures"]\n'
+                        '- current_language: "en"\n'
+                        "\nEarly extracted text:\n---\nChapter one.\n---"
+                    ),
+                    stability=Dynamic(),
+                ),
+            )
+        ),
+    )
+    with running_external_protocol_server(fixture_root=_FIXTURES) as address:
+        status, headers, body = _openai_request(
+            address,
+            _encoded_body(
+                messages=messages,
+                tools=(),
+                output=StrictJsonOutput(name="media_metadata_enrichment", schema=schema),
+                stream=False,
+            ),
+        )
+    assert status == 200
+    decoded = openai_codec.decode_response(status, headers, body)
+    assert isinstance(decoded, Succeeded)
+    assert isinstance(decoded.response.content, TextContent)
+    enriched = json.loads(decoded.response.content.text)
+    assert enriched["title"] == "Canonical Reader Positions"
+    assert enriched["authors"] == ["Nexus Fixtures"]
+    assert enriched["language"] == "en"
+    # Fields the item leaves unknown are still supplied.
+    assert enriched["publisher"] == "NASA"
+    assert enriched["published_date"] == "2020-10"
+
+
 def test_unknown_paths_and_prompts_fail_closed() -> None:
     with running_external_protocol_server(fixture_root=_FIXTURES) as address:
         status, _, body = _request(
