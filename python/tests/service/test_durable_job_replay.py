@@ -101,6 +101,7 @@ def test_expired_claim_replays_once_and_fences_the_crashed_worker(engine: Engine
             job_id=job.id,
             worker_id="crashed-worker",
             lease_seconds=300,
+            heavy_kinds=(),
             allowed_kinds=(_KIND,),
         )
         assert crashed_claim is not None, "synthetic crashed worker did not acquire its job"

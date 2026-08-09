@@ -8,7 +8,7 @@ import posixpath
 import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Literal, cast
 from urllib.parse import unquote, urlparse
 from uuid import UUID, uuid4
 
@@ -24,8 +24,10 @@ from nexus.db.models import (
     MediaFile,
     MediaKind,
     MediaSourceAttempt,
-    MediaSourceAttemptStatus,
     ProcessingStatus,
+)
+from nexus.db.models import (
+    MediaSourceAttemptStatus as DbMediaSourceAttemptStatus,
 )
 from nexus.db.session import transaction
 from nexus.errors import (
@@ -43,7 +45,11 @@ from nexus.jobs.queue import (
     supersede_unclaimed_job,
 )
 from nexus.logging import get_logger
-from nexus.schemas.media import FromUrlResponse
+from nexus.schemas.media import (
+    FromUrlResponse,
+    MediaProcessingStatus,
+    MediaSourceAttemptStatus,
+)
 from nexus.services import library_entries, library_governance
 from nexus.services import (
     media_source_types as source_types,
@@ -104,6 +110,9 @@ from nexus.services.source_attempt_artifacts import (
 from nexus.services.source_publication import (
     SourcePublicationFence,
     SourcePublicationSuperseded,
+    record_source_extraction_progress,
+    record_source_finalizing,
+    reset_source_progress,
     run_source_publication_phase,
 )
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
@@ -147,11 +156,11 @@ class SourcePublicationLockSetChanged(RuntimeError):
     """A source projection discovered an affected media row after planning."""
 
 
-_ATTEMPT_ACCEPTED = MediaSourceAttemptStatus.accepted.value
-_ATTEMPT_QUEUED = MediaSourceAttemptStatus.queued.value
-_ATTEMPT_RUNNING = MediaSourceAttemptStatus.running.value
-_ATTEMPT_SUCCEEDED = MediaSourceAttemptStatus.succeeded.value
-_ATTEMPT_FAILED = MediaSourceAttemptStatus.failed.value
+_ATTEMPT_ACCEPTED = DbMediaSourceAttemptStatus.accepted.value
+_ATTEMPT_QUEUED = DbMediaSourceAttemptStatus.queued.value
+_ATTEMPT_RUNNING = DbMediaSourceAttemptStatus.running.value
+_ATTEMPT_SUCCEEDED = DbMediaSourceAttemptStatus.succeeded.value
+_ATTEMPT_FAILED = DbMediaSourceAttemptStatus.failed.value
 _IN_FLIGHT_ATTEMPT_STATUSES = {
     _ATTEMPT_ACCEPTED,
     _ATTEMPT_QUEUED,
@@ -436,7 +445,7 @@ def _accept_url_source(
                 media_id=media.id,
                 source_attempt_id=existing_attempt.id,
                 source_type=existing_attempt.source_type,
-                source_attempt_status=existing_attempt.status,
+                source_attempt_status=_source_attempt_status(existing_attempt.status),
                 idempotency_outcome="reused",
                 processing_status=_status_to_str(media.processing_status),
                 ingest_enqueued=existing_attempt.status in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED},
@@ -489,7 +498,7 @@ def _accept_url_source(
     source_payload: dict[str, object] = {
         "url": url,
         "kind": spec["kind"],
-        **dict(spec["source_payload"]),
+        **_source_payload_from_spec(spec),
     }
     if assign_viewer_libraries:
         source_payload["library_ids"] = [str(library_id) for library_id in library_ids]
@@ -534,7 +543,7 @@ def _accept_url_source(
         media_id=media.id,
         source_attempt_id=attempt.id,
         source_type=attempt.source_type,
-        source_attempt_status=attempt.status,
+        source_attempt_status=_source_attempt_status(attempt.status),
         idempotency_outcome="created" if created else "reused",
         processing_status=_status_to_str(media.processing_status),
         ingest_enqueued=ingest_enqueued,
@@ -597,7 +606,7 @@ def accept_browser_article_capture(
                 media_id=media.id,
                 source_attempt_id=existing.id,
                 source_type=existing.source_type,
-                source_attempt_status=existing.status,
+                source_attempt_status=_source_attempt_status(existing.status),
                 idempotency_outcome="reused",
                 processing_status=_status_to_str(media.processing_status),
                 ingest_enqueued=existing.status in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED},
@@ -694,7 +703,7 @@ def accept_browser_article_capture(
             media_id=media.id,
             source_attempt_id=attempt.id,
             source_type=attempt.source_type,
-            source_attempt_status=attempt.status,
+            source_attempt_status=_source_attempt_status(attempt.status),
             idempotency_outcome="created",
             processing_status=_status_to_str(media.processing_status),
             ingest_enqueued=False,
@@ -715,7 +724,7 @@ def accept_browser_article_capture(
         media_id=media.id,
         source_attempt_id=attempt.id,
         source_type=attempt.source_type,
-        source_attempt_status=attempt.status,
+        source_attempt_status=_source_attempt_status(attempt.status),
         idempotency_outcome="created",
         processing_status=_status_to_str(media.processing_status),
         ingest_enqueued=ingest_enqueued,
@@ -786,7 +795,7 @@ def accept_embedded_source(
             source_attempt_id=existing_attempt.id,
             source_type=existing_attempt.source_type,
             provider_target_ref=existing_attempt.provider_target_ref,
-            source_attempt_status=existing_attempt.status,
+            source_attempt_status=_source_attempt_status(existing_attempt.status),
             processing_status=_status_to_str(media.processing_status),
             needs_enqueue=False,
         )
@@ -796,7 +805,7 @@ def accept_embedded_source(
         "kind": spec["kind"],
         "parent_media_id": str(parent_media_id),
         "document_embed_key": document_embed_key,
-        **dict(spec["source_payload"]),
+        **_source_payload_from_spec(spec),
         "library_ids": [str(library_id) for library_id in library_ids],
     }
     attempt = create_attempt(
@@ -824,7 +833,7 @@ def accept_embedded_source(
         source_attempt_id=attempt.id,
         source_type=attempt.source_type,
         provider_target_ref=attempt.provider_target_ref,
-        source_attempt_status=attempt.status,
+        source_attempt_status=_source_attempt_status(attempt.status),
         processing_status=_status_to_str(media.processing_status),
         needs_enqueue=created,
     )
@@ -963,7 +972,7 @@ def accept_browser_file_capture(
                 media_id=media.id,
                 source_attempt_id=existing_attempt.id,
                 source_type=existing_attempt.source_type,
-                source_attempt_status=existing_attempt.status,
+                source_attempt_status=_source_attempt_status(existing_attempt.status),
                 idempotency_outcome="reused",
                 processing_status=_status_to_str(media.processing_status),
                 ingest_enqueued=existing_attempt.status in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED},
@@ -1047,7 +1056,7 @@ def accept_browser_file_capture(
             media_id=media.id,
             source_attempt_id=attempt.id,
             source_type=attempt.source_type,
-            source_attempt_status=attempt.status,
+            source_attempt_status=_source_attempt_status(attempt.status),
             idempotency_outcome="created",
             processing_status=_status_to_str(media.processing_status),
             ingest_enqueued=False,
@@ -1079,7 +1088,7 @@ def accept_browser_file_capture(
             media_id=media.id,
             source_attempt_id=attempt.id,
             source_type=attempt.source_type,
-            source_attempt_status=attempt.status,
+            source_attempt_status=_source_attempt_status(attempt.status),
             idempotency_outcome="created",
             processing_status=_status_to_str(media.processing_status),
             ingest_enqueued=False,
@@ -1100,7 +1109,7 @@ def accept_browser_file_capture(
         media_id=media.id,
         source_attempt_id=attempt.id,
         source_type=attempt.source_type,
-        source_attempt_status=attempt.status,
+        source_attempt_status=_source_attempt_status(attempt.status),
         idempotency_outcome="created",
         processing_status=_status_to_str(media.processing_status),
         ingest_enqueued=ingest_enqueued,
@@ -1224,6 +1233,7 @@ def run_source_attempt(
             attempt.run_count = int(attempt.run_count or 0) + 1
             attempt.started_at = func.now()
             attempt.updated_at = func.now()
+            reset_source_progress(attempt)
 
         run_source_publication_phase(
             session_factory=session_factory,
@@ -2089,6 +2099,13 @@ def _url_source_spec(url: str) -> dict[str, object]:
         "provider_target_ref": None,
         "source_payload": {},
     }
+
+
+def _source_payload_from_spec(spec: dict[str, object]) -> dict[str, object]:
+    value = spec.get("source_payload")
+    if not isinstance(value, dict):
+        raise AssertionError("URL source spec has a malformed source payload")
+    return {str(key): item for key, item in value.items()}
 
 
 def _find_reusable_url_media(
@@ -3397,7 +3414,7 @@ def _run_remote_file(
         session_factory,
         media_id,
         kind,
-        attempt_id=attempt.id,
+        fence=fence,
         storage_path=storage_path,
         source_size_bytes=fetched.size_bytes,
         source_package=source_package,
@@ -3429,14 +3446,19 @@ def _run_remote_file(
             media_file.size_bytes = fetched.size_bytes
         if source_package is not None or source_package_diagnostics:
             source_payload = dict(locked_attempt.source_payload or {})
-            source_payload["arxiv_source_package"] = source_package_diagnostics or {
-                "status": "fetched",
-                "source_url": source_package.source_url,
-                "storage_path": source_package.storage_path,
-                "content_type": source_package.content_type,
-                "size_bytes": source_package.size_bytes,
-                "sha256_hex": source_package.sha256_hex,
-            }
+            if source_package_diagnostics:
+                source_payload["arxiv_source_package"] = source_package_diagnostics
+            elif source_package is not None:
+                source_payload["arxiv_source_package"] = {
+                    "status": "fetched",
+                    "source_url": source_package.source_url,
+                    "storage_path": source_package.storage_path,
+                    "content_type": source_package.content_type,
+                    "size_bytes": source_package.size_bytes,
+                    "sha256_hex": source_package.sha256_hex,
+                }
+            else:
+                raise AssertionError("source-package branch has no package state")
             locked_attempt.source_payload = source_payload
         response, old_asset_paths = _publish_prepared_file_source(
             db,
@@ -3596,7 +3618,6 @@ def _run_existing_file(
         session_factory,
         media_id,
         kind,
-        attempt_id=fence.attempt_id,
         storage_path=storage_path,
         source_size_bytes=source_size_bytes,
         fence=fence,
@@ -3608,7 +3629,6 @@ def _materialize_existing_file_source(
     media_id: UUID,
     kind: str,
     *,
-    attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
     fence: SourcePublicationFence,
@@ -3619,7 +3639,7 @@ def _materialize_existing_file_source(
         session_factory,
         media_id,
         kind,
-        attempt_id=attempt_id,
+        fence=fence,
         storage_path=storage_path,
         source_size_bytes=source_size_bytes,
         source_package=source_package,
@@ -3652,33 +3672,53 @@ def _prepare_existing_file_source(
     media_id: UUID,
     kind: str,
     *,
-    attempt_id: UUID,
+    fence: SourcePublicationFence,
     storage_path: str,
     source_size_bytes: int,
     source_package: PdfSourcePackageArtifact | None = None,
     source_package_diagnostics: dict[str, object] | None = None,
 ) -> object:
+    def record_progress(completed: int, total: int, unit: Literal["Page", "Chapter"]) -> None:
+        record_source_extraction_progress(
+            session_factory=session_factory,
+            fence=fence,
+            media_id=media_id,
+            completed=completed,
+            total=total,
+            unit=unit,
+        )
+
     if kind == MediaKind.pdf.value:
         from nexus.services.pdf_lifecycle import prepare_pdf_source
 
-        return prepare_pdf_source(
+        prepared = prepare_pdf_source(
             media_id=media_id,
+            attempt_id=fence.attempt_id,
             storage_path=storage_path,
             source_size_bytes=source_size_bytes,
+            record_progress=record_progress,
             source_package=source_package,
             source_package_diagnostics=source_package_diagnostics,
         )
-    if kind == MediaKind.epub.value:
+    elif kind == MediaKind.epub.value:
         from nexus.services.epub_lifecycle import prepare_epub_source
 
-        return prepare_epub_source(
+        prepared = prepare_epub_source(
             session_factory=session_factory,
             media_id=media_id,
-            attempt_id=attempt_id,
+            attempt_id=fence.attempt_id,
             storage_path=storage_path,
             source_size_bytes=source_size_bytes,
+            record_progress=record_progress,
         )
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be PDF or EPUB.")
+    else:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be PDF or EPUB.")
+    record_source_finalizing(
+        session_factory=session_factory,
+        fence=fence,
+        media_id=media_id,
+    )
+    return prepared
 
 
 def _publish_prepared_file_source(
@@ -3719,7 +3759,6 @@ def _finalize_prepared_file_source(
 
         if not isinstance(prepared, EpubExtractionPlan):
             raise AssertionError("EPUB source plan has the wrong type")
-        storage_client = get_storage_client()
         finalize_db = session_factory()
         try:
             for asset_storage_path in prepared.asset_storage_paths.values():
@@ -3989,9 +4028,9 @@ def _parse_source_action_intent_key(intent_key: str) -> dict[str, str] | None:
     ):
         return None
     return {
-        "action": action,
-        "media_id": media_id,
-        "previous_attempt_id": previous_attempt_id,
+        "action": str(action),
+        "media_id": str(media_id),
+        "previous_attempt_id": str(previous_attempt_id),
     }
 
 
@@ -4087,6 +4126,8 @@ def _upload_init_response(
         and attempt.status in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED}
     )
     if can_sign_upload:
+        if media_file is None:
+            raise AssertionError("signable upload has no media file")
         # Lock the media row, reject a teardown intent, and persist
         # signed_upload_expires_at BEFORE signing (spec §3.1). A replayed init extends
         # the timestamp; nothing can sign after a claim. Own short transaction.
@@ -4199,10 +4240,25 @@ def _delete_storage_object(storage_client, storage_path: str) -> None:
         pass
 
 
-def _status_to_str(value: object) -> str:
+def _status_to_str(value: object) -> MediaProcessingStatus:
     if isinstance(value, str):
-        return value
-    enum_value = getattr(value, "value", None)
-    if isinstance(enum_value, str):
-        return enum_value
-    return str(value)
+        status = value
+    else:
+        enum_value = getattr(value, "value", None)
+        status = enum_value if isinstance(enum_value, str) else str(value)
+    if status not in {"pending", "extracting", "ready_for_reading", "failed", "suspended"}:
+        raise AssertionError("media has an invalid processing status")
+    return cast(MediaProcessingStatus, status)
+
+
+def _source_attempt_status(value: object) -> MediaSourceAttemptStatus:
+    if not isinstance(value, str) or value not in {
+        "accepted",
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "superseded",
+    }:
+        raise AssertionError("source attempt has an invalid status")
+    return cast(MediaSourceAttemptStatus, value)

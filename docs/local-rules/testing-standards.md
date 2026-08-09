@@ -680,6 +680,13 @@ Generic enterprise load and soak testing is out of scope. Targeted ingestion,
 query-plan, memory, worker-throughput, or browser-startup proof is allowed when
 the one-user workload or developer machine has a measured problem.
 
+The `durable-ingest-reader-open` critical journey owns the bounded-media
+lifecycle/availability seam: a manifest-owned 712-page PDF crosses public
+upload, source extraction, Activity, complete content indexing, and concurrent
+interactive `chat_run` work on the real local stack. It does not prove Caddy or
+cgroup behavior; isolated parser RSS and the production Compose/release checks
+own those layers.
+
 ### Android and extension
 
 Chromium and Android WebView are the default supported matrix. Other browsers

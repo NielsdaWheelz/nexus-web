@@ -565,8 +565,8 @@ export function useNexusController(): NexusController {
       (pane) => pane.id === state.activePrimaryPaneId,
     );
     return activePane
-      ? `${activePane.id} ${activePane.currentVisit.id}`
-      : ` ${state.activePrimaryPaneId}`;
+      ? `${activePane.id}\0${activePane.currentVisit.id}`
+      : `\0${state.activePrimaryPaneId}`;
   }, [state]);
   const navigationBaselineRef = useRef(activeNavigationToken);
   useEffect(() => {
@@ -1565,6 +1565,8 @@ export function useNexusController(): NexusController {
               sessionId: startAddSession(detail.seed),
               activation: PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
             });
+          } else if (detail.kind === "Activity") {
+            setPage({ kind: "Activity" });
           } else if (detail.kind === "UnsupportedLink") {
             setPage({ kind: "UnsupportedLink" });
           } else {
@@ -1775,7 +1777,9 @@ export function useNexusController(): NexusController {
       ? addSession.state.branch === "Opml"
         ? "Import OPML"
         : "Add content"
-      : "Nexus";
+      : page.kind === "Activity"
+        ? "Activity"
+        : "Nexus";
   const focusKey =
     page.kind === "Add"
       ? `${addSession.state.sessionId}:${addSession.state.branch}:${addSession.state.initialFocus}`
@@ -1879,6 +1883,7 @@ export function useNexusController(): NexusController {
     busy: showBusy && remoteBusy,
     announcement: announcement || null,
     focusKey,
+    dialogLabel,
     nexusOpenShortcutLabel: keybindingController.labelFor("Nexus.Open") ?? "",
     actionsRequest,
     inputReady: () =>

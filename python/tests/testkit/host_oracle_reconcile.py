@@ -22,6 +22,13 @@ _SERVICES = (
     "worker-background",
 )
 _WRITERS = ("api", "worker-interactive", "worker-background")
+_RESOURCE_LIMITS = {
+    "postgres": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
+    "caddy": (32 * 1024 * 1024, 64 * 1024 * 1024, 128),
+    "api": (192 * 1024 * 1024, 320 * 1024 * 1024, 256),
+    "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
+    "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
+}
 _OWNER_USER_ID = "00000000-0000-4000-8000-000000000001"
 _TASK_CONTRACT_DIGEST = "f" * 64
 _PRIOR_ORACLE_DIGEST = "sha256:" + "d" * 64
@@ -70,8 +77,15 @@ def _root_own(paths: tuple[Path, ...]) -> None:
     )
 
 
-def _container_config(image: str) -> dict[str, object]:
-    return {"Env": [], "Image": image}
+def _container_config(image: str, service: str) -> dict[str, object]:
+    return {
+        "Env": [],
+        "Image": image,
+        "Labels": {
+            "com.docker.compose.project": "nexus",
+            "com.docker.compose.service": service,
+        },
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,7 +229,12 @@ class HostOracleReconcileHarness:
         )
         containers = {
             service: {
-                "config": _container_config(image),
+                "config": _container_config(image, service),
+                "host_config": {
+                    "MemoryReservation": _RESOURCE_LIMITS[service][0],
+                    "Memory": _RESOURCE_LIMITS[service][1],
+                    "PidsLimit": _RESOURCE_LIMITS[service][2],
+                },
                 "id": character * 64,
                 "image_id": image_id,
                 "running": True,
@@ -499,6 +518,7 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
     container = _container_for_id(state, container_id)
     inspected: dict[str, object] = {
         "Config": container["config"],
+        "HostConfig": container["host_config"],
         "Image": container["image_id"],
         "State": {
             "Health": {"Status": "healthy"},
@@ -613,6 +633,17 @@ def _compose_operation(arguments: list[str]) -> list[str]:
     return arguments[file_index + 2 :]
 
 
+def _worker_background_config_hash(compose_file: str) -> str:
+    identity = "\n".join(
+        (
+            compose_file,
+            os.environ["API_IMAGE"],
+            os.environ["WORKER_IMAGE"],
+        )
+    )
+    return hashlib.sha256(identity.encode()).hexdigest()
+
+
 def _handle_oracle_run(
     state: dict[str, Any],
     operation: list[str],
@@ -644,11 +675,34 @@ def _handle_oracle_run(
     if operation[:2] != ["run", "--name"]:
         raise AssertionError("mutating Oracle command must be one durable named job")
     name = operation[2]
+    worker_image = os.environ["WORKER_IMAGE"]
+    worker_image_id = (
+        state["images"][worker_image]["id"]
+        if worker_image in state["images"]
+        else state["containers"]["worker-background"]["image_id"]
+    )
     state["jobs"][name] = {
         "command": command,
+        "config": {
+            "Cmd": operation[6:],
+            "Image": worker_image,
+            "Labels": {
+                "com.docker.compose.config-hash": _worker_background_config_hash(compose_file),
+                "com.docker.compose.oneoff": "True",
+                "com.docker.compose.project": "nexus",
+                "com.docker.compose.service": "worker-background",
+            },
+        },
         "exit_code": 0,
+        "host_config": {
+            "MemoryReservation": _RESOURCE_LIMITS["worker-background"][0],
+            "Memory": _RESOURCE_LIMITS["worker-background"][1],
+            "PidsLimit": _RESOURCE_LIMITS["worker-background"][2],
+        },
         "id": hashlib.sha256(name.encode()).hexdigest(),
+        "image_id": worker_image_id,
         "logs": _canonical_json(payload).decode(),
+        "name": f"/{name}",
         "running": False,
     }
     _write_json(payload)
@@ -660,6 +714,9 @@ def _handle_compose(
     *,
     compose_file: str,
 ) -> None:
+    if operation == ["config", "--hash", "worker-background"]:
+        sys.stdout.write(f"worker-background {_worker_background_config_hash(compose_file)}\n")
+        return
     if operation[:3] == ["ps", "--all", "--quiet"]:
         sys.stdout.write(str(state["containers"][operation[3]]["id"]) + "\n")
         return
@@ -761,7 +818,20 @@ def fake_docker_main() -> int:
                 )
                 if job is None:
                     raise
-                _write_json([{"State": {"ExitCode": job["exit_code"], "Running": job["running"]}}])
+                _write_json(
+                    [
+                        {
+                            "Config": job["config"],
+                            "HostConfig": job["host_config"],
+                            "Image": job["image_id"],
+                            "Name": job["name"],
+                            "State": {
+                                "ExitCode": job["exit_code"],
+                                "Running": job["running"],
+                            },
+                        }
+                    ]
+                )
     elif arguments[0] == "stop":
         if arguments[1:3] != ["--time", "30"]:
             raise AssertionError(f"unsupported fake stop command: {arguments!r}")

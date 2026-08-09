@@ -26,6 +26,19 @@ _SERVICES = (
     "worker-background",
 )
 _WRITERS = ("api", "worker-interactive", "worker-background")
+_RESOURCE_LIMITS = {
+    "postgres": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
+    "caddy": (32 * 1024 * 1024, 64 * 1024 * 1024, 128),
+    "api": (192 * 1024 * 1024, 320 * 1024 * 1024, 256),
+    "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
+    "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
+    "migration": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
+}
+_MIGRATION_COMMAND = [
+    "sh",
+    "-c",
+    "cd /app/migrations && /app/.venv/bin/alembic upgrade head",
+]
 CURRENT_SHA = "a" * 40
 CURRENT_DEPLOYMENT_ID = "dpl_Current123"
 _PUBLIC_HOSTS = frozenset({"api.example.test:443", "web.example.test:443"})
@@ -60,6 +73,26 @@ def _root_own(paths: tuple[Path, ...]) -> None:
         check=True,
         capture_output=True,
     )
+
+
+def _nexus_worker_own(path: Path) -> None:
+    if os.geteuid() == 0:
+        os.chown(path, 10001, 10001)
+        path.chmod(0o700)
+    else:
+        subprocess.run(
+            (
+                "sudo",
+                "--non-interactive",
+                "sh",
+                "-c",
+                'chown 10001:10001 "$1" && chmod 0700 "$1"',
+                "nexus-test-parser-temp",
+                str(path),
+            ),
+            check=True,
+            capture_output=True,
+        )
 
 
 def _load_release(path: Path, module_name: str) -> ModuleType:
@@ -305,6 +338,25 @@ class HostReleaseHarness:
         current_bundle = _write_bundle(root, CURRENT_SHA, current_candidate)
 
         (root / "var/backups").mkdir(parents=True)
+        parser_temp_root = root / "var/lib/nexus/parser-tmp"
+        parser_temp_root.mkdir(parents=True)
+        _nexus_worker_own(parser_temp_root)
+        meminfo = root / "proc/meminfo"
+        meminfo.parent.mkdir(parents=True)
+        meminfo.write_text(
+            "MemTotal: 2097152 kB\nMemAvailable: 524288 kB\nSwapTotal: 1048576 kB\n",
+            encoding="ascii",
+        )
+        pressure = root / "proc/pressure/memory"
+        pressure.parent.mkdir(parents=True)
+        pressure.write_text(
+            "some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n"
+            "full avg10=0.00 avg60=0.00 avg300=0.00 total=1\n",
+            encoding="ascii",
+        )
+        controllers = root / "sys/fs/cgroup/cgroup.controllers"
+        controllers.parent.mkdir(parents=True)
+        controllers.write_text("cpu io memory pids\n", encoding="ascii")
         immutable_inputs = (*candidate_bundle, *current_bundle, config_path, caddy_path)
 
         current_api_image_id = "sha256:" + "5" * 64
@@ -338,7 +390,23 @@ class HostReleaseHarness:
                     if service.startswith("worker-")
                     else "sha256:" + character * 64
                 ),
-                "config": {"Env": [], "Image": image},
+                "config": {
+                    "Env": [],
+                    "Image": image,
+                    "Labels": {
+                        "com.docker.compose.project": "nexus",
+                        "com.docker.compose.service": service,
+                    },
+                },
+                "host_config": {
+                    "MemoryReservation": _RESOURCE_LIMITS[service][0],
+                    "Memory": _RESOURCE_LIMITS[service][1],
+                    "PidsLimit": _RESOURCE_LIMITS[service][2],
+                },
+                "memory_usage": 16 * 1024 * 1024,
+                "oom_killed": False,
+                "pids": 8,
+                "restart_count": 0,
                 "running": True,
             }
 
@@ -377,6 +445,7 @@ class HostReleaseHarness:
                 "interrupt_fired": False,
                 "jobs": {},
                 "migration_count": 0,
+                "migration_config_hash": "0" * 64,
                 "migration_interrupt_fired": False,
                 "missing_services": [],
                 "operation_failure_count": {},
@@ -386,6 +455,7 @@ class HostReleaseHarness:
                 "candidate_active": False,
                 "public_api_mode": "valid",
                 "public_requests": [],
+                "resource_mutations": [],
                 "return_interrupt_fired": False,
                 "service_mutations": [],
                 "source_sha": CURRENT_SHA,
@@ -720,9 +790,15 @@ def _container(state: dict[str, Any], container_id: str) -> dict[str, Any]:
     containers = state["containers"]
     if not isinstance(containers, dict):
         raise AssertionError("fake container state is malformed")
-    for container in containers.values():
-        if isinstance(container, dict) and container.get("id") == container_id:
-            return container
+    # Real `docker inspect` resolves a unique id prefix, which is what callers
+    # get back from a truncated `docker ps --quiet`.
+    matched = [
+        container
+        for container in containers.values()
+        if isinstance(container, dict) and str(container.get("id", "")).startswith(container_id)
+    ]
+    if len(matched) == 1:
+        return matched[0]
     raise AssertionError(f"unknown fake container {container_id}")
 
 
@@ -730,9 +806,12 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
     container = _container(state, container_id)
     inspected: dict[str, object] = {
         "Config": container["config"],
+        "HostConfig": container["host_config"],
         "Image": container["image_id"],
+        "RestartCount": container["restart_count"],
         "State": {
             "Health": {"Status": "healthy"},
+            "OOMKilled": container["oom_killed"],
             "Running": container["running"],
         },
     }
@@ -775,7 +854,12 @@ def _compose_operation(arguments: list[str]) -> list[str]:
         file_index = arguments.index("--file")
     except ValueError as exc:
         raise AssertionError("fake Compose command has no --file boundary") from exc
-    return arguments[file_index + 2 :]
+    operation = arguments[file_index + 2 :]
+    # Global flags may follow --file before the subcommand, as with `--profile`
+    # for the release-gated migration one-off.
+    while operation[:1] == ["--profile"]:
+        operation = operation[2:]
+    return operation
 
 
 def _semantic_operation(arguments: list[str], *, candidate_active: bool) -> str | None:
@@ -950,12 +1034,31 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
         return
     if operation[:2] == ["run", "--name"]:
         name = operation[2]
+        service = operation[5]
         state["migration_count"] += 1
         state["database_revision"] = state["candidate_revision"]
+        reservation, memory, pids = _RESOURCE_LIMITS[service]
         state["jobs"][name] = {
+            "config": {
+                "Cmd": _MIGRATION_COMMAND,
+                "Image": state["candidate_api_image"],
+                "Labels": {
+                    "com.docker.compose.config-hash": state["migration_config_hash"],
+                    "com.docker.compose.oneoff": "True",
+                    "com.docker.compose.project": "nexus",
+                    "com.docker.compose.service": "migration",
+                },
+            },
             "exit_code": 0,
+            "host_config": {
+                "MemoryReservation": reservation,
+                "Memory": memory,
+                "PidsLimit": pids,
+            },
             "id": "8" * 64,
+            "image_id": state["candidate_api_image_id"],
             "logs": "migration complete\n",
+            "name": f"/{name}",
             "running": False,
         }
         if (
@@ -1084,6 +1187,49 @@ def fake_docker_main() -> int:
         job = state["jobs"].get(name)
         if job is not None:
             sys.stdout.write(str(job["id"]) + "\n")
+    elif arguments[:2] == ["ps", "--quiet"] and set(arguments[2:]) <= {"--no-trunc"}:
+        # Real `docker ps --quiet` truncates to 12 characters unless --no-trunc
+        # is given; callers that compare against full Compose ids must ask for
+        # the untruncated form.
+        untruncated = "--no-trunc" in arguments[2:]
+        for container in state["containers"].values():
+            if container["running"]:
+                container_id = str(container["id"])
+                sys.stdout.write((container_id if untruncated else container_id[:12]) + "\n")
+    elif arguments[:4] == ["stats", "--no-stream", "--format", "{{json .}}"]:
+        for container_id in arguments[4:]:
+            container = _container(state, container_id)
+            if not container["running"]:
+                continue
+            usage = int(container["memory_usage"])
+            _write_json(
+                {
+                    "ID": container_id[:12],
+                    "MemUsage": f"{usage / 1024 / 1024:g}MiB / 2GiB",
+                    "PIDs": str(container["pids"]),
+                }
+            )
+    elif arguments[0] == "update":
+        container_id = arguments[-1]
+        container = _container(state, container_id)
+        reservation = int(arguments[arguments.index("--memory-reservation") + 1])
+        memory = int(arguments[arguments.index("--memory") + 1])
+        pids = int(arguments[arguments.index("--pids-limit") + 1])
+        container["host_config"] = {
+            "MemoryReservation": reservation,
+            "Memory": memory,
+            "PidsLimit": pids,
+        }
+        service = next(name for name, item in state["containers"].items() if item is container)
+        state["resource_mutations"].append(
+            {
+                "memory": memory,
+                "pids": pids,
+                "reservation": reservation,
+                "service": service,
+            }
+        )
+        sys.stdout.write(container_id + "\n")
     elif arguments[0] == "inspect":
         if arguments[1:3] == ["--format", "{{.State.Running}}"]:
             container = _container(state, arguments[3])
@@ -1104,7 +1250,20 @@ def fake_docker_main() -> int:
                 )
                 if job is None:
                     raise
-                _write_json([{"State": {"ExitCode": job["exit_code"], "Running": job["running"]}}])
+                _write_json(
+                    [
+                        {
+                            "Config": job["config"],
+                            "HostConfig": job["host_config"],
+                            "Image": job["image_id"],
+                            "Name": job["name"],
+                            "State": {
+                                "ExitCode": job["exit_code"],
+                                "Running": job["running"],
+                            },
+                        }
+                    ]
+                )
     elif arguments[0] == "start":
         container = _container(state, arguments[1])
         container["running"] = True

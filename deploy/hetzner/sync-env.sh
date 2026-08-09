@@ -48,6 +48,7 @@ MOONSHOT_API_KEY
 NEXUS_FABLE_RETENTION_ACCEPTED_AT
 POSTGRES_IMAGE
 CADDY_IMAGE
+PARSER_TEMP_ROOT
 "
 
 die() {
@@ -297,6 +298,10 @@ reject_removed_podcast_env_keys() {
 require_worker_defaults() {
   local file="$1"
   local key value
+
+  value="$(normalize_env_value "$(env_value "PARSER_TEMP_ROOT" "$file" || true)")"
+  [ "$value" = "/var/lib/nexus/parser-tmp" ] || \
+    die "PARSER_TEMP_ROOT must be /var/lib/nexus/parser-tmp"
 
   for key in WORKER_LANE WORKER_ALLOWED_JOB_KINDS NEXUS_ALLOW_WORKER_MAINTENANCE; do
     if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then

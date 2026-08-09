@@ -264,7 +264,34 @@ def test_production_compose_is_topology_only_and_app_activation_is_narrow() -> N
         '"--wait-timeout",',
     ):
         assert activation_contract in controller
-    assert '("stop", "--timeout", "30", *_WRITERS)' in controller
+    assert 'arguments=("stop", "--timeout", "30", "worker-background")' in controller
+
+
+def test_production_compose_declares_the_exact_resource_envelope() -> None:
+    compose = (REPO_ROOT / "deploy/hetzner/docker-compose.yml").read_text(encoding="utf-8")
+
+    expected = (
+        ("postgres", "256m", "512m", 256),
+        ("caddy", "32m", "64m", 128),
+        ("api", "192m", "320m", 256),
+        ("worker-interactive", "128m", "256m", 256),
+        ("worker-background", "128m", "448m", 256),
+        ("migration", "256m", "512m", 256),
+    )
+    for index, (service, reservation, hard, pids) in enumerate(expected):
+        start = compose.index(f"  {service}:\n")
+        end = (
+            compose.index(f"  {expected[index + 1][0]}:\n")
+            if index + 1 < len(expected)
+            else compose.index("\nvolumes:\n")
+        )
+        block = compose[start:end]
+        assert f"mem_reservation: {reservation}" in block
+        assert f"mem_limit: {hard}" in block
+        assert f"pids_limit: {pids}" in block
+
+    background = compose[compose.index("  worker-background:\n") : compose.index("  migration:\n")]
+    assert "/var/lib/nexus/parser-tmp:/var/lib/nexus/parser-tmp" in background
 
 
 def test_caddy_runtime_logs_redact_the_internal_trust_header() -> None:

@@ -143,6 +143,7 @@ class ApiErrorCode(str, Enum):
     # EPUB errors (400/404/409)
     E_RETRY_INVALID_STATE = "E_RETRY_INVALID_STATE"  # 409
     E_RETRY_NOT_ALLOWED = "E_RETRY_NOT_ALLOWED"  # 409
+    E_REPAIR_NOT_ALLOWED = "E_REPAIR_NOT_ALLOWED"  # 409
     E_REGENERATION_NOT_ALLOWED = (
         "E_REGENERATION_NOT_ALLOWED"  # 409 - completed answer not regeneratable
     )
@@ -317,6 +318,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     # EPUB errors
     ApiErrorCode.E_RETRY_INVALID_STATE: 409,
     ApiErrorCode.E_RETRY_NOT_ALLOWED: 409,
+    ApiErrorCode.E_REPAIR_NOT_ALLOWED: 409,
     ApiErrorCode.E_REGENERATION_NOT_ALLOWED: 409,
     ApiErrorCode.E_CHAPTER_NOT_FOUND: 404,
     ApiErrorCode.E_ARCHIVE_UNSAFE: 400,

@@ -1,7 +1,12 @@
 """Canonical text generation from sanitized HTML.
 
-Canonicalization runs on a browser-equivalent HTML5 fragment parse so the
-persisted canonical_text matches the frontend DOM walk exactly.
+Canonicalization runs on a streaming libxml2 (lxml) HTML fragment parse, fed the
+already-sanitized HTML. Both producers of that input (`sanitize_html` and the
+EPUB sanitizer) themselves parse and re-serialize through lxml, so canonicalize
+receives an lxml fixed point and agrees with the frontend DOM walk for every
+construct those sanitizers normalize. Divergence from browser tree construction
+is possible only for constructs preserved verbatim by the sanitizers (notably
+inline SVG); that equivalence is not currently proven by a test.
 
 Canonicalization Rules:
 1. Walk text nodes in document order
@@ -26,10 +31,9 @@ import unicodedata
 from array import array
 from bisect import bisect_left
 from collections import defaultdict, deque
-from xml.dom import Node
-from xml.dom.minidom import Element
+from collections.abc import Mapping
 
-import html5lib
+from lxml.etree import HTMLParser
 
 # Block-level elements that introduce line breaks
 BLOCK_ELEMENTS = frozenset(
@@ -90,6 +94,64 @@ class _RawTextBuilder:
         return "".join(self._chunks)
 
 
+class _CanonicalTextTarget:
+    """Stream sanitized HTML into canonical raw text without retaining a DOM."""
+
+    def __init__(self, element_ids: set[str]) -> None:
+        self.builder = _RawTextBuilder()
+        self.element_ids = element_ids
+        self.raw_offsets: dict[str, int] = {}
+        self._visible_stack: list[bool] = []
+        self._tag_stack: list[str] = []
+
+    def start(self, tag: str, attributes: Mapping[str, str]) -> None:
+        normalized_tag = tag.lower()
+        parent_visible = self._visible_stack[-1] if self._visible_stack else True
+        visible = (
+            parent_visible
+            and normalized_tag not in SKIP_ELEMENTS
+            and "hidden" not in attributes
+            and str(attributes.get("aria-hidden") or "").lower() != "true"
+        )
+        self._visible_stack.append(visible)
+        self._tag_stack.append(normalized_tag)
+        if not visible:
+            return
+        if (
+            normalized_tag in BLOCK_ELEMENTS
+            and self.builder.length
+            and self.builder.last_char != "\n"
+        ):
+            self.builder.append("\n")
+        for attribute in ("id", "name"):
+            value = str(attributes.get(attribute) or "")
+            if value in self.element_ids:
+                self.raw_offsets.setdefault(value, self.builder.length)
+        if normalized_tag == "br":
+            self.builder.append("\n")
+
+    def data(self, text: str) -> None:
+        if not self._visible_stack or not self._visible_stack[-1]:
+            return
+        normalized = _normalize_text(text)
+        if normalized:
+            self.builder.append(normalized)
+
+    def end(self, _tag: str) -> None:
+        normalized_tag = self._tag_stack.pop()
+        visible = self._visible_stack.pop()
+        if (
+            visible
+            and normalized_tag in BLOCK_ELEMENTS
+            and self.builder.length
+            and self.builder.last_char != "\n"
+        ):
+            self.builder.append("\n")
+
+    def close(self) -> None:
+        return None
+
+
 def generate_canonical_text(html_sanitized: str) -> str:
     """Generate canonical text from sanitized HTML.
 
@@ -115,26 +177,18 @@ def generate_canonical_text_with_element_offsets(
     if not html_sanitized or not html_sanitized.strip():
         return "", {}
 
-    fragment = html5lib.parseFragment(
-        f"<div>{html_sanitized}</div>",
-        treebuilder="dom",
-        namespaceHTMLElements=False,
-    )
-
-    root = None
-    for child in fragment.childNodes:
-        if child.nodeType == Node.ELEMENT_NODE:
-            root = child
-            break
-
-    if root is None:
-        return "", {}
-
-    builder = _RawTextBuilder()
-    raw_offsets: dict[str, int] = {}
-
-    _walk_element(root, builder, element_ids, raw_offsets)
-    text, final_source_starts = _canonical_text_with_sources(builder.build())
+    target = _CanonicalTextTarget(element_ids)
+    parser = HTMLParser(target=target)
+    parser.feed("<div>")
+    parser.feed(html_sanitized)
+    parser.feed("</div>")
+    parser.close()
+    raw_text = target.builder.build()
+    raw_offsets = target.raw_offsets
+    del parser, target
+    if not raw_offsets:
+        return _canonical_text_without_sources(raw_text), {}
+    text, final_source_starts = _canonical_text_with_sources(raw_text)
     source_starts = sorted(final_source_starts)
     offsets = {
         element_id: bisect_left(source_starts, raw_offset)
@@ -143,45 +197,65 @@ def generate_canonical_text_with_element_offsets(
     return text, offsets
 
 
-def _walk_element(
-    element: Element,
-    builder: _RawTextBuilder,
-    element_ids: set[str],
-    raw_offsets: dict[str, int],
-) -> None:
-    """Recursively walk a DOM element tree and extract text."""
-    tag = element.tagName.lower()
+def _canonical_text_without_sources(raw_text: str) -> str:
+    """Apply the exact canonical transform without per-character source arrays."""
+    normalized_text = unicodedata.normalize("NFC", raw_text)
+    return _trim_lines_without_sources(_collapse_blank_lines_without_sources(normalized_text))
 
-    if _is_hidden(element):
-        return
 
-    if tag in SKIP_ELEMENTS:
-        return
+def _collapse_blank_lines_without_sources(text: str) -> str:
+    chunks: list[str] = []
+    index = 0
+    while index < len(text):
+        newline = text.find("\n", index)
+        if newline == -1:
+            chunks.append(text[index:])
+            break
+        if newline > index:
+            chunks.append(text[index:newline])
+        index = newline
 
-    is_block = tag in BLOCK_ELEMENTS
+        end = index + 1
+        newline_count = 1
+        while end < len(text) and _is_whitespace(text[end]):
+            if text[end] == "\n":
+                newline_count += 1
+            end += 1
+        if newline_count < 2:
+            chunks.append("\n")
+            index += 1
+            continue
+        chunks.append("\n\n")
+        index = end
+    return "".join(chunks)
 
-    if is_block and builder.length and builder.last_char != "\n":
-        builder.append("\n")
 
-    for attribute in ("id", "name"):
-        value = element.getAttribute(attribute)
-        if value in element_ids:
-            raw_offsets.setdefault(value, builder.length)
-
-    if tag == "br":
-        builder.append("\n")
-        return
-
-    for child in element.childNodes:
-        if child.nodeType == Node.TEXT_NODE:
-            normalized = _normalize_text(child.data or "")
-            if normalized:
-                builder.append(normalized)
-        elif child.nodeType == Node.ELEMENT_NODE:
-            _walk_element(child, builder, element_ids, raw_offsets)
-
-    if is_block and builder.length and builder.last_char != "\n":
-        builder.append("\n")
+def _trim_lines_without_sources(text: str) -> str:
+    chunks: list[str] = []
+    line_start = 0
+    while line_start <= len(text):
+        newline = text.find("\n", line_start)
+        line_end = len(text) if newline == -1 else newline
+        first = line_start
+        while first < line_end and _is_whitespace(text[first]):
+            first += 1
+        last = line_end - 1
+        while last >= first and _is_whitespace(text[last]):
+            last -= 1
+        if first <= last:
+            chunks.append(text[first : last + 1])
+        if newline == -1:
+            break
+        chunks.append("\n")
+        line_start = newline + 1
+    line_trimmed = "".join(chunks)
+    start = 0
+    while start < len(line_trimmed) and _is_whitespace(line_trimmed[start]):
+        start += 1
+    end = len(line_trimmed)
+    while end > start and _is_whitespace(line_trimmed[end - 1]):
+        end -= 1
+    return line_trimmed[start:end]
 
 
 def _canonical_text_with_sources(raw_text: str) -> tuple[str, array]:
@@ -307,15 +381,3 @@ def _normalize_text(text: str) -> str:
     normalized = WHITESPACE_RE.sub(" ", text)
 
     return normalized
-
-
-def _is_hidden(element: Element) -> bool:
-    """Check if element is hidden (hidden attr or aria-hidden="true")."""
-    if element.hasAttribute("hidden"):
-        return True
-
-    aria_hidden = element.getAttribute("aria-hidden").lower()
-    if aria_hidden == "true":
-        return True
-
-    return False

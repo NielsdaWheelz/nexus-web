@@ -25,6 +25,7 @@ def test_conversation_delete_removes_its_dead_chat_journal_only(engine: Engine) 
                 job_id=chat.job_id,
                 worker_id=worker_id,
                 lease_seconds=300,
+                heavy_kinds=(),
                 allowed_kinds=("chat_run",),
             )
             assert claimed is not None

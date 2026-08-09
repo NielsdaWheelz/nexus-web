@@ -6,7 +6,9 @@ import re
 from collections.abc import Callable
 from urllib.parse import urlparse
 
-from lxml.html import HtmlElement, fragment_fromstring, tostring
+from lxml.html import HtmlElement, fragment_fromstring
+
+from nexus.services.html_tree import inner_html
 
 _DROP_WITH_CONTENT = frozenset(
     {
@@ -150,13 +152,7 @@ def _sanitize(
         elif tag == "img":
             _sanitize_image(element, asset_handle_for_key=asset_handle_for_key)
 
-    chunks: list[str] = []
-    if root.text:
-        chunks.append(root.text)
-    for child in root:
-        rendered = tostring(child, encoding="unicode", method="html")
-        chunks.append(rendered.decode("utf-8") if isinstance(rendered, bytes) else rendered)
-    return "".join(chunks)
+    return inner_html(root)
 
 
 def _sanitize_link(element: HtmlElement) -> None:

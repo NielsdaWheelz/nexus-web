@@ -112,6 +112,7 @@ _SAFE_HEAVY_ENV = (
     "NEXUS_TEST_EVIDENCE_RUN_ID",
     "NEXUS_TEST_RESULTS_DIR",
     "NEXUS_TEST_RUN_ID",
+    "PARSER_TEMP_ROOT",
     "PATH",
     "PLAYWRIGHT_BROWSERS_PATH",
     "PYTHONDONTWRITEBYTECODE",
@@ -147,6 +148,7 @@ _SAFE_CHILD_ENV = (
     "NEXUS_TEST_EVIDENCE_RUN_ID",
     "NEXUS_TEST_RESULTS_DIR",
     "NEXUS_TEST_RUN_ID",
+    "PARSER_TEMP_ROOT",
     "PATH",
     "PLAYWRIGHT_BROWSERS_PATH",
     "PYTHONDONTWRITEBYTECODE",
@@ -304,6 +306,7 @@ _TEST_GOOGLE_CLIENT_ID = "nexus-test.apps.googleusercontent.com"
 _CRITICAL_JOURNEY_IDS = frozenset(
     {
         "auth-session",
+        "durable-ingest-reader-open",
         "grounded-chat-citation",
         "nexus-search-open-restore",
         "password-recovery",
@@ -2053,6 +2056,7 @@ def _run_journeys(
                 prepared.supabase,
             )
             if journey_id in {
+                "durable-ingest-reader-open",
                 "grounded-chat-citation",
                 "chat-regeneration",
                 "resource-share-boundary",

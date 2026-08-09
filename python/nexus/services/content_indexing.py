@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import json
 import math
 import re
-from collections.abc import Mapping, Sequence
+from array import array
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, TypeGuard
+from itertools import chain, islice
+from pathlib import Path
+from typing import Any, BinaryIO, Literal, TypeGuard
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import JobExecutionContext
 from nexus.services import media_intelligence
+from nexus.services.parser_temp import utf8_byte_length
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.semantic_chunks import (
@@ -33,6 +41,11 @@ from nexus.services.web_article_structure import (
 
 CHUNK_MAX_TOKENS = 420
 CHUNK_OVERLAP_TOKENS = 60
+CONTENT_INDEX_EMBEDDING_BATCH_SIZE = 64
+CONTENT_INDEX_CHUNK_MAX_BYTES = 256 * 1024
+CONTENT_INDEX_SPOOL_MAX_BYTES = 384 * 1024 * 1024
+_CONTENT_INDEX_SPOOL_RECORD_MAX_BYTES = CONTENT_INDEX_CHUNK_MAX_BYTES * 16 + 1024 * 1024
+_CONTENT_INDEX_SPOOL_VERSION = 1
 MEDIA_CONTENT_REINDEX_JOB_KIND = "media_content_reindex_job"
 MEDIA_CONTENT_REINDEX_REASONS = frozenset(
     {
@@ -98,7 +111,22 @@ class PlannedContentChunk:
     parts: tuple[tuple[IndexableBlock, int, int, int], ...]
     text: str
     locator: dict[str, object]
-    embedding: tuple[float, ...]
+    embedding_f32: bytes
+
+
+class ContentIndexResourceLimitExceeded(Exception):
+    """Expected rejection when a document cannot fit the indexing envelope."""
+
+    error_code = ApiErrorCode.E_SOURCE_TOO_LARGE
+
+    def __init__(self) -> None:
+        super().__init__("Document content exceeds the bounded indexing envelope.")
+
+
+# justify-defect: the spool is private same-system scratch written and read by
+# one worker attempt; any shape, identity, or digest drift is internal corruption.
+class ContentIndexSpoolCorruption(AssertionError):
+    """A same-system document plan did not match its closed spool contract."""
 
 
 @dataclass(frozen=True)
@@ -110,6 +138,24 @@ class ContentIndexPlan:
     embedding_provider: str
     embedding_model: str
     embedding_dimensions: int
+
+
+@dataclass(frozen=True)
+class SpooledContentIndexPlan:
+    owner: IndexOwner
+    source_kind: DocumentSourceKind
+    blocks: tuple[IndexableBlock, ...]
+    spool_path: Path
+    chunk_count: int
+    embedding_provider: str
+    embedding_model: str
+    embedding_dimensions: int
+
+
+TextEmbeddingBatch = Callable[
+    [list[str]],
+    tuple[str, Sequence[Sequence[float]]],
+]
 
 
 def plan_content_index(
@@ -125,73 +171,140 @@ def plan_content_index(
     embedding_dimensions = transcript_embedding_dimensions()
     embedding_provider = current_transcript_embedding_provider()
 
-    text_blocks = [block for block in blocks if block.canonical_text.strip()]
-    chunks: list[list[tuple[IndexableBlock, int, int, int]]] = []
-    current_parts: list[tuple[IndexableBlock, int, int, int]] = []
-    current_tokens = 0
-    for block in text_blocks:
-        for start_offset, end_offset, token_count in _block_pieces(block.canonical_text):
-            if token_count == 0:
-                continue
-            if current_parts:
-                previous_block, _, previous_end_offset, _ = current_parts[-1]
-                if (
-                    current_tokens + token_count > CHUNK_MAX_TOKENS
-                    or not _same_locator_anchor(previous_block, block)
-                    or previous_end_offset != len(previous_block.canonical_text)
-                    or start_offset != 0
-                    or _separator_before(previous_block, block) != ""
-                ):
-                    chunks.append(current_parts)
-                    current_parts = []
-                    current_tokens = 0
-            current_parts.append((block, start_offset, end_offset, token_count))
-            current_tokens += token_count
-    if current_parts:
-        chunks.append(current_parts)
-
-    chunk_texts = [_chunk_text(chunk) for chunk in chunks]
-    chunk_locators: list[dict[str, object]] = []
-    for chunk_parts, chunk_text in zip(chunks, chunk_texts, strict=True):
-        chunk_locator = _chunk_locator(chunk_parts, chunk_text)
-        _validate_selector(
-            source_kind,
-            chunk_locator,
-            chunk_text,
-            context="content chunk summary locator",
+    planned_chunks: list[PlannedContentChunk] = []
+    chunk_batch: list[list[tuple[IndexableBlock, int, int, int]]] = []
+    for chunk_parts in _iter_content_chunk_parts(blocks):
+        chunk_batch.append(chunk_parts)
+        if len(chunk_batch) == CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
+            planned_chunks.extend(
+                _plan_content_chunk_batch(
+                    source_kind=source_kind,
+                    chunk_parts_batch=chunk_batch,
+                    embedding_model=embedding_model,
+                    embedding_dimensions=embedding_dimensions,
+                    maximum_chunk_bytes=None,
+                    embed_texts=build_text_embeddings,
+                )
+            )
+            chunk_batch = []
+    if chunk_batch:
+        planned_chunks.extend(
+            _plan_content_chunk_batch(
+                source_kind=source_kind,
+                chunk_parts_batch=chunk_batch,
+                embedding_model=embedding_model,
+                embedding_dimensions=embedding_dimensions,
+                maximum_chunk_bytes=None,
+                embed_texts=build_text_embeddings,
+            )
         )
-        chunk_locators.append(chunk_locator)
-
-    embeddings: list[list[float]] = []
-    if chunk_texts:
-        returned_embedding_model, embeddings = build_text_embeddings(chunk_texts)
-        if returned_embedding_model != embedding_model:
-            raise ValueError("Embedding model changed during content indexing")
-        if len(embeddings) != len(chunks):
-            raise ValueError("Embedding count does not match chunk count")
-        for embedding in embeddings:
-            if len(embedding) != embedding_dimensions:
-                raise ValueError("Embedding dimensions do not match configured dimensions")
 
     return ContentIndexPlan(
         owner=owner,
         source_kind=source_kind,
         blocks=tuple(blocks),
-        chunks=tuple(
-            PlannedContentChunk(
-                parts=tuple(chunk_parts),
-                text=chunk_text,
-                locator=chunk_locator,
-                embedding=tuple(embedding),
+        chunks=tuple(planned_chunks),
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+        embedding_dimensions=embedding_dimensions,
+    )
+
+
+def build_spooled_content_index_plan(
+    *,
+    owner: IndexOwner,
+    source_kind: DocumentSourceKind,
+    blocks: Sequence[IndexableBlock],
+    spool_path: Path,
+    embed_texts: TextEmbeddingBatch,
+) -> SpooledContentIndexPlan:
+    """Build a bounded document plan outside the publication transaction."""
+    if owner.kind != "media" or source_kind not in {"web_article", "epub", "pdf"}:
+        raise ValueError("spooled content-index planning is document-media only")
+    block_list = list(blocks)
+    _validate_blocks(owner=owner, source_kind=source_kind, blocks=block_list)
+    embedding_model = current_transcript_embedding_model()
+    embedding_dimensions = transcript_embedding_dimensions()
+    embedding_provider = current_transcript_embedding_provider()
+    header = {
+        "block_count": len(block_list),
+        "embedding_dimensions": embedding_dimensions,
+        "embedding_model": embedding_model,
+        "embedding_provider": embedding_provider,
+        "kind": "Header",
+        "owner_id": str(owner.id),
+        "owner_kind": owner.kind,
+        "source_kind": source_kind,
+        "version": _CONTENT_INDEX_SPOOL_VERSION,
+    }
+    digest = hashlib.sha256()
+    written_bytes = 0
+    chunk_count = 0
+    try:
+        with spool_path.open("xb") as spool:
+            written_bytes = _write_spool_record(
+                spool,
+                header,
+                written_bytes=written_bytes,
+                digest=digest,
             )
-            for chunk_parts, chunk_text, chunk_locator, embedding in zip(
-                chunks,
-                chunk_texts,
-                chunk_locators,
-                embeddings,
-                strict=True,
+            chunk_batch: list[list[tuple[IndexableBlock, int, int, int]]] = []
+            for chunk_parts in _iter_content_chunk_parts(block_list):
+                chunk_batch.append(chunk_parts)
+                if len(chunk_batch) == CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
+                    planned = _plan_content_chunk_batch(
+                        source_kind=source_kind,
+                        chunk_parts_batch=chunk_batch,
+                        embedding_model=embedding_model,
+                        embedding_dimensions=embedding_dimensions,
+                        maximum_chunk_bytes=CONTENT_INDEX_CHUNK_MAX_BYTES,
+                        embed_texts=embed_texts,
+                    )
+                    for chunk in planned:
+                        written_bytes = _write_spool_record(
+                            spool,
+                            _spool_chunk_record(chunk_count, chunk),
+                            written_bytes=written_bytes,
+                            digest=digest,
+                        )
+                        chunk_count += 1
+                    del planned
+                    chunk_batch = []
+            if chunk_batch:
+                for chunk in _plan_content_chunk_batch(
+                    source_kind=source_kind,
+                    chunk_parts_batch=chunk_batch,
+                    embedding_model=embedding_model,
+                    embedding_dimensions=embedding_dimensions,
+                    maximum_chunk_bytes=CONTENT_INDEX_CHUNK_MAX_BYTES,
+                    embed_texts=embed_texts,
+                ):
+                    written_bytes = _write_spool_record(
+                        spool,
+                        _spool_chunk_record(chunk_count, chunk),
+                        written_bytes=written_bytes,
+                        digest=digest,
+                    )
+                    chunk_count += 1
+            _write_spool_record(
+                spool,
+                {
+                    "chunk_count": chunk_count,
+                    "kind": "Complete",
+                    "sha256": digest.hexdigest(),
+                },
+                written_bytes=written_bytes,
+                digest=None,
             )
-        ),
+    except Exception:
+        spool_path.unlink(missing_ok=True)
+        raise
+    return SpooledContentIndexPlan(
+        owner=owner,
+        source_kind=source_kind,
+        blocks=tuple(block_list),
+        spool_path=spool_path,
+        chunk_count=chunk_count,
         embedding_provider=embedding_provider,
         embedding_model=embedding_model,
         embedding_dimensions=embedding_dimensions,
@@ -201,7 +314,7 @@ def plan_content_index(
 def publish_content_index(
     db: Session,
     *,
-    plan: ContentIndexPlan,
+    plan: ContentIndexPlan | SpooledContentIndexPlan,
     reason: str,
 ) -> ContentIndexResult:
     """Replace one complete materialization inside the caller's transaction."""
@@ -275,7 +388,13 @@ def publish_content_index(
         ).scalar_one()
         block_ids_by_idx[expected_idx] = block_id
 
-    if not plan.chunks:
+    planned_chunks = iter(_content_index_plan_chunks(plan))
+    try:
+        first_chunk = next(planned_chunks)
+    except StopIteration:
+        first_chunk = None
+
+    if first_chunk is None:
         _set_index_state(
             db,
             owner=plan.owner,
@@ -287,7 +406,12 @@ def publish_content_index(
         )
         return ContentIndexResult(owner=plan.owner, status="no_text", chunk_count=0)
 
-    for chunk_idx, chunk in enumerate(plan.chunks):
+    published_chunk_count = 0
+    for chunk_idx, chunk in enumerate(chain((first_chunk,), planned_chunks)):
+        if chunk is None:
+            # justify-defect: the empty-plan branch returned above.
+            raise AssertionError("content-index chunk iterator yielded an absent first chunk")
+        published_chunk_count += 1
         chunk_parts = chunk.parts
         chunk_text = chunk.text
         summary_locator = chunk.locator
@@ -464,10 +588,20 @@ def publish_content_index(
                 "embedding_provider": plan.embedding_provider,
                 "embedding_model": plan.embedding_model,
                 "embedding_dimensions": plan.embedding_dimensions,
-                "embedding_vector": to_pgvector_literal(list(chunk.embedding)),
+                "embedding_vector": _packed_embedding_literal(
+                    chunk.embedding_f32,
+                    dimensions=plan.embedding_dimensions,
+                ),
                 "now": now,
             },
         )
+
+    expected_chunk_count = (
+        len(plan.chunks) if isinstance(plan, ContentIndexPlan) else plan.chunk_count
+    )
+    if published_chunk_count != expected_chunk_count:
+        # justify-defect: the closed plan count must match its streamed records.
+        raise AssertionError("content-index plan chunk count changed during publication")
 
     _set_index_state(
         db,
@@ -488,7 +622,7 @@ def publish_content_index(
     return ContentIndexResult(
         owner=plan.owner,
         status="ready",
-        chunk_count=len(plan.chunks),
+        chunk_count=published_chunk_count,
     )
 
 
@@ -963,7 +1097,7 @@ def publish_media_content_reindex(
     db: Session,
     *,
     work: MediaContentReindexWork,
-    plan: ContentIndexPlan,
+    plan: ContentIndexPlan | SpooledContentIndexPlan,
     context: JobExecutionContext,
     lease_seconds: int,
 ) -> ContentIndexResult | None:
@@ -1006,7 +1140,8 @@ def publish_media_content_reindex(
         raise AssertionError("media content-index plan identity is malformed")
 
     result = publish_content_index(db, plan=plan, reason=work.reason)
-    if work.source_kind == "pdf" and not plan.chunks:
+    plan_chunk_count = len(plan.chunks) if isinstance(plan, ContentIndexPlan) else plan.chunk_count
+    if work.source_kind == "pdf" and plan_chunk_count == 0:
         db.execute(
             text(
                 """
@@ -1878,25 +2013,372 @@ def _is_positive_number(value: object) -> TypeGuard[int | float]:
     return _is_number(value) and float(value) > 0
 
 
-def _block_pieces(text_value: str) -> list[tuple[int, int, int]]:
-    words = list(re.finditer(r"\S+", text_value))
-    if not words:
-        return [(0, len(text_value), 0)]
-    if len(words) <= CHUNK_MAX_TOKENS:
-        return [(0, len(text_value), len(words))]
+def _iter_content_chunk_parts(
+    blocks: Sequence[IndexableBlock],
+) -> Iterator[list[tuple[IndexableBlock, int, int, int]]]:
+    """Yield one chunk descriptor at a time without retaining a second corpus graph."""
+    current_parts: list[tuple[IndexableBlock, int, int, int]] = []
+    current_tokens = 0
+    for block in blocks:
+        for start_offset, end_offset, token_count in _block_pieces(block.canonical_text):
+            if token_count == 0:
+                continue
+            if current_parts:
+                previous_block, _, previous_end_offset, _ = current_parts[-1]
+                if (
+                    current_tokens + token_count > CHUNK_MAX_TOKENS
+                    or not _same_locator_anchor(previous_block, block)
+                    or previous_end_offset != len(previous_block.canonical_text)
+                    or start_offset != 0
+                    or _separator_before(previous_block, block) != ""
+                ):
+                    yield current_parts
+                    current_parts = []
+                    current_tokens = 0
+            current_parts.append((block, start_offset, end_offset, token_count))
+            current_tokens += token_count
+    if current_parts:
+        yield current_parts
 
-    pieces = []
-    step = CHUNK_MAX_TOKENS - CHUNK_OVERLAP_TOKENS
-    word_idx = 0
-    while word_idx < len(words):
-        end_word_idx = min(word_idx + CHUNK_MAX_TOKENS, len(words))
-        pieces.append(
-            (words[word_idx].start(), words[end_word_idx - 1].end(), end_word_idx - word_idx)
+
+def _plan_content_chunk_batch(
+    *,
+    source_kind: str,
+    chunk_parts_batch: Sequence[list[tuple[IndexableBlock, int, int, int]]],
+    embedding_model: str,
+    embedding_dimensions: int,
+    maximum_chunk_bytes: int | None,
+    embed_texts: TextEmbeddingBatch,
+) -> list[PlannedContentChunk]:
+    """Embed one bounded batch and retain vectors in pgvector's float32 shape."""
+    if not 1 <= len(chunk_parts_batch) <= CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
+        raise AssertionError("content-index embedding batch is outside its closed bound")
+    chunk_texts = [_chunk_text(chunk_parts) for chunk_parts in chunk_parts_batch]
+    if maximum_chunk_bytes is not None and any(
+        utf8_byte_length(chunk_text) > maximum_chunk_bytes for chunk_text in chunk_texts
+    ):
+        raise ContentIndexResourceLimitExceeded()
+    chunk_locators: list[dict[str, object]] = []
+    for chunk_parts, chunk_text in zip(chunk_parts_batch, chunk_texts, strict=True):
+        chunk_locator = _chunk_locator(chunk_parts, chunk_text)
+        _validate_selector(
+            source_kind,
+            chunk_locator,
+            chunk_text,
+            context="content chunk summary locator",
         )
-        if end_word_idx == len(words):
-            break
-        word_idx += step
-    return pieces
+        chunk_locators.append(chunk_locator)
+
+    returned_embedding_model, embeddings = embed_texts(chunk_texts)
+    if returned_embedding_model != embedding_model:
+        raise ValueError("Embedding model changed during content indexing")
+    if len(embeddings) != len(chunk_parts_batch):
+        raise ValueError("Embedding count does not match chunk count")
+
+    planned: list[PlannedContentChunk] = []
+    for chunk_parts, chunk_text, chunk_locator, embedding in zip(
+        chunk_parts_batch,
+        chunk_texts,
+        chunk_locators,
+        embeddings,
+        strict=True,
+    ):
+        if len(embedding) != embedding_dimensions:
+            raise ValueError("Embedding dimensions do not match configured dimensions")
+        normalized_embedding: list[float] = []
+        for value in embedding:
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                raise ValueError("Embedding values must be finite")
+            normalized_embedding.append(numeric)
+        planned.append(
+            PlannedContentChunk(
+                parts=tuple(chunk_parts),
+                text=chunk_text,
+                locator=chunk_locator,
+                embedding_f32=array("f", normalized_embedding).tobytes(),
+            )
+        )
+    return planned
+
+
+def _packed_embedding_literal(value: bytes, *, dimensions: int) -> str:
+    if len(value) != dimensions * array("f").itemsize:
+        raise AssertionError("packed content-index embedding has an invalid byte length")
+    vector = array("f")
+    vector.frombytes(value)
+    return to_pgvector_literal(list(vector))
+
+
+def _spool_chunk_record(chunk_idx: int, chunk: PlannedContentChunk) -> dict[str, object]:
+    return {
+        "chunk_idx": chunk_idx,
+        "embedding_f32": base64.b64encode(chunk.embedding_f32).decode("ascii"),
+        "kind": "Chunk",
+        "locator": chunk.locator,
+        "parts": [
+            {
+                "block_idx": block.block_idx,
+                "end_offset": end_offset,
+                "start_offset": start_offset,
+                "token_count": token_count,
+            }
+            for block, start_offset, end_offset, token_count in chunk.parts
+        ],
+        "text": chunk.text,
+    }
+
+
+def _canonical_spool_record(record: Mapping[str, object]) -> bytes:
+    return (
+        json.dumps(record, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+
+def _write_spool_record(
+    spool: BinaryIO,
+    record: Mapping[str, object],
+    *,
+    written_bytes: int,
+    digest: Any,
+) -> int:
+    encoded = _canonical_spool_record(record)
+    if (
+        len(encoded) > _CONTENT_INDEX_SPOOL_RECORD_MAX_BYTES
+        or written_bytes + len(encoded) > CONTENT_INDEX_SPOOL_MAX_BYTES
+    ):
+        raise ContentIndexResourceLimitExceeded()
+    spool.write(encoded)
+    if digest is not None:
+        digest.update(encoded)
+    return written_bytes + len(encoded)
+
+
+def _spool_record_mapping(raw: bytes, *, context: str) -> dict[str, object]:
+    try:
+        decoded = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ContentIndexSpoolCorruption(f"{context} is not canonical JSON") from exc
+    if not isinstance(decoded, dict):
+        raise ContentIndexSpoolCorruption(f"{context} has an invalid shape")
+    if _canonical_spool_record(decoded) != raw:
+        raise ContentIndexSpoolCorruption(f"{context} is not canonically encoded")
+    return decoded
+
+
+def _exact_spool_record(
+    raw: bytes,
+    *,
+    expected_keys: frozenset[str],
+    context: str,
+) -> dict[str, object]:
+    decoded = _spool_record_mapping(raw, context=context)
+    if set(decoded) != expected_keys:
+        raise ContentIndexSpoolCorruption(f"{context} has an invalid shape")
+    return decoded
+
+
+def _read_spool_line(spool: BinaryIO, *, context: str) -> bytes:
+    raw = spool.readline(_CONTENT_INDEX_SPOOL_RECORD_MAX_BYTES + 1)
+    if not raw or len(raw) > _CONTENT_INDEX_SPOOL_RECORD_MAX_BYTES or not raw.endswith(b"\n"):
+        raise ContentIndexSpoolCorruption(f"{context} is absent, truncated, or oversized")
+    return raw
+
+
+def _require_spool_int(value: object, *, context: str) -> int:
+    if not _is_int(value):
+        raise ContentIndexSpoolCorruption(f"{context} must be an integer")
+    return value
+
+
+def _decode_spooled_chunk(
+    record: Mapping[str, object],
+    *,
+    plan: SpooledContentIndexPlan,
+    expected_chunk_idx: int,
+) -> PlannedContentChunk:
+    chunk_idx = _require_spool_int(record["chunk_idx"], context="spool chunk index")
+    if chunk_idx != expected_chunk_idx:
+        raise ContentIndexSpoolCorruption("spool chunk order is not contiguous")
+    chunk_text = record["text"]
+    locator = record["locator"]
+    raw_parts = record["parts"]
+    raw_embedding = record["embedding_f32"]
+    if (
+        not isinstance(chunk_text, str)
+        or utf8_byte_length(chunk_text) > CONTENT_INDEX_CHUNK_MAX_BYTES
+    ):
+        raise ContentIndexSpoolCorruption("spool chunk text is invalid")
+    if not isinstance(locator, dict):
+        raise ContentIndexSpoolCorruption("spool chunk locator is invalid")
+    if not isinstance(raw_parts, list) or not raw_parts:
+        raise ContentIndexSpoolCorruption("spool chunk parts are invalid")
+    if not isinstance(raw_embedding, str):
+        raise ContentIndexSpoolCorruption("spool chunk embedding is invalid")
+
+    parts: list[tuple[IndexableBlock, int, int, int]] = []
+    total_tokens = 0
+    for part_idx, raw_part in enumerate(raw_parts):
+        if not isinstance(raw_part, dict) or set(raw_part) != {
+            "block_idx",
+            "end_offset",
+            "start_offset",
+            "token_count",
+        }:
+            raise ContentIndexSpoolCorruption(f"spool chunk part {part_idx} has an invalid shape")
+        block_idx = _require_spool_int(
+            raw_part["block_idx"], context=f"spool chunk part {part_idx} block index"
+        )
+        start_offset = _require_spool_int(
+            raw_part["start_offset"], context=f"spool chunk part {part_idx} start offset"
+        )
+        end_offset = _require_spool_int(
+            raw_part["end_offset"], context=f"spool chunk part {part_idx} end offset"
+        )
+        token_count = _require_spool_int(
+            raw_part["token_count"], context=f"spool chunk part {part_idx} token count"
+        )
+        if not 0 <= block_idx < len(plan.blocks):
+            raise ContentIndexSpoolCorruption("spool chunk part names an absent block")
+        block = plan.blocks[block_idx]
+        if not 0 <= start_offset <= end_offset <= len(block.canonical_text) or token_count <= 0:
+            raise ContentIndexSpoolCorruption("spool chunk part offsets or token count are invalid")
+        total_tokens += token_count
+        parts.append((block, start_offset, end_offset, token_count))
+    if total_tokens > CHUNK_MAX_TOKENS or _chunk_text(parts) != chunk_text:
+        raise ContentIndexSpoolCorruption("spool chunk parts do not reconstruct its text")
+    expected_locator = _chunk_locator(parts, chunk_text)
+    if _canonical_spool_record(expected_locator) != _canonical_spool_record(locator):
+        raise ContentIndexSpoolCorruption("spool chunk locator does not match its parts")
+    try:
+        embedding_f32 = base64.b64decode(raw_embedding, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ContentIndexSpoolCorruption("spool chunk embedding is not canonical base64") from exc
+    if len(embedding_f32) != plan.embedding_dimensions * array("f").itemsize:
+        raise ContentIndexSpoolCorruption("spool chunk embedding dimensions do not match its plan")
+    try:
+        _validate_selector(plan.source_kind, locator, chunk_text, context="spool chunk locator")
+    except ValueError as exc:
+        raise ContentIndexSpoolCorruption(
+            "spool chunk locator violates its source contract"
+        ) from exc
+    return PlannedContentChunk(
+        parts=tuple(parts),
+        text=chunk_text,
+        locator=locator,
+        embedding_f32=embedding_f32,
+    )
+
+
+def read_spooled_content_index_chunks(
+    plan: SpooledContentIndexPlan,
+) -> Iterator[PlannedContentChunk]:
+    """Validate and stream one exact complete document plan from local scratch."""
+    try:
+        size_bytes = plan.spool_path.stat().st_size
+    except OSError as exc:
+        raise ContentIndexSpoolCorruption("content-index spool is absent") from exc
+    if size_bytes > CONTENT_INDEX_SPOOL_MAX_BYTES:
+        raise ContentIndexSpoolCorruption("content-index spool exceeds its committed envelope")
+    digest = hashlib.sha256()
+    expected_header = {
+        "block_count": len(plan.blocks),
+        "embedding_dimensions": plan.embedding_dimensions,
+        "embedding_model": plan.embedding_model,
+        "embedding_provider": plan.embedding_provider,
+        "kind": "Header",
+        "owner_id": str(plan.owner.id),
+        "owner_kind": plan.owner.kind,
+        "source_kind": plan.source_kind,
+        "version": _CONTENT_INDEX_SPOOL_VERSION,
+    }
+    try:
+        with plan.spool_path.open("rb") as spool:
+            header_raw = _read_spool_line(spool, context="content-index spool header")
+            header = _exact_spool_record(
+                header_raw,
+                expected_keys=frozenset(expected_header),
+                context="content-index spool header",
+            )
+            if header != expected_header:
+                raise ContentIndexSpoolCorruption(
+                    "content-index spool header does not match its plan"
+                )
+            digest.update(header_raw)
+            chunk_count = 0
+            while True:
+                raw = _read_spool_line(spool, context="content-index spool record")
+                record = _spool_record_mapping(raw, context="content-index spool record")
+                record_kind = record.get("kind")
+                if record_kind == "Complete":
+                    if set(record) != {"chunk_count", "kind", "sha256"}:
+                        raise ContentIndexSpoolCorruption(
+                            "content-index spool completion has an invalid shape"
+                        )
+                    complete_count = _require_spool_int(
+                        record["chunk_count"], context="content-index spool complete count"
+                    )
+                    if (
+                        complete_count != chunk_count
+                        or complete_count != plan.chunk_count
+                        or record["sha256"] != digest.hexdigest()
+                        or spool.read(1) != b""
+                    ):
+                        raise ContentIndexSpoolCorruption(
+                            "content-index spool completion does not match its records"
+                        )
+                    return
+                if record_kind != "Chunk":
+                    raise ContentIndexSpoolCorruption("content-index spool record kind is invalid")
+                if set(record) != {
+                    "chunk_idx",
+                    "embedding_f32",
+                    "kind",
+                    "locator",
+                    "parts",
+                    "text",
+                }:
+                    raise ContentIndexSpoolCorruption(
+                        "content-index spool chunk has an invalid shape"
+                    )
+                chunk = _decode_spooled_chunk(
+                    record,
+                    plan=plan,
+                    expected_chunk_idx=chunk_count,
+                )
+                digest.update(raw)
+                chunk_count += 1
+                yield chunk
+    except ContentIndexSpoolCorruption:
+        raise
+    except OSError as exc:
+        raise ContentIndexSpoolCorruption("content-index spool could not be read") from exc
+
+
+def _content_index_plan_chunks(
+    plan: ContentIndexPlan | SpooledContentIndexPlan,
+) -> Iterator[PlannedContentChunk]:
+    if isinstance(plan, ContentIndexPlan):
+        yield from plan.chunks
+        return
+    yield from read_spooled_content_index_chunks(plan)
+
+
+def _block_pieces(text_value: str) -> Iterator[tuple[int, int, int]]:
+    matches = iter(re.finditer(r"\S+", text_value))
+    window = list(islice(matches, CHUNK_MAX_TOKENS + 1))
+    if not window:
+        yield (0, len(text_value), 0)
+        return
+    step = CHUNK_MAX_TOKENS - CHUNK_OVERLAP_TOKENS
+    while window:
+        has_more = len(window) > CHUNK_MAX_TOKENS
+        current = window[:CHUNK_MAX_TOKENS] if has_more else window
+        yield (current[0].start(), current[-1].end(), len(current))
+        if not has_more:
+            return
+        window = window[step:]
+        window.extend(islice(matches, CHUNK_MAX_TOKENS + 1 - len(window)))
 
 
 def _separator_before(previous_block: IndexableBlock | None, block: IndexableBlock) -> str:

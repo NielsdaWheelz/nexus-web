@@ -50,6 +50,7 @@ import type {
   ChatRunResponse,
 } from "@/lib/conversations/types";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { assertNever } from "@/lib/assertNever";
 import styles from "./ChatComposer.module.css";
 
 // ============================================================================
@@ -104,10 +105,6 @@ interface ChatComposerProps {
   activeRunId?: string | null;
   /** Backend cancel action for the active run. */
   onCancelRun?: () => Promise<void> | void;
-}
-
-function assertNever(value: never): never {
-  throw new Error(`Unexpected chat send capability: ${JSON.stringify(value)}`);
 }
 
 function sendCapabilityMessage(capability: ChatSendCapability): string {

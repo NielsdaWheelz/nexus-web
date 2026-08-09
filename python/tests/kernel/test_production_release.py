@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import signal
 import stat
 import subprocess
@@ -50,7 +51,7 @@ def _candidate(source_sha: str = SOURCE_SHA) -> dict[str, object]:
             "api": f"ghcr.io/nielsdawheelz/nexus-api@sha256:{IMAGE_DIGEST}",
             "worker": f"ghcr.io/nielsdawheelz/nexus-worker@sha256:{WORKER_DIGEST}",
         },
-        "expected_database_revision": "0211",
+        "expected_database_revision": "0212",
         "expected_oracle_manifest_digest": f"sha256:{ORACLE_DIGEST}",
     }
 
@@ -114,6 +115,28 @@ def _stored_attempt(module: ModuleType, tmp_path: Path):
     return module.ReleaseStore(module.ReleasePaths.under(tmp_path)).load_attempt(SOURCE_SHA)
 
 
+def _set_owner(path: Path, uid: int, gid: int) -> None:
+    if os.geteuid() == 0:
+        os.chown(path, uid, gid)
+        return
+    subprocess.run(
+        ("sudo", "--non-interactive", "chown", f"{uid}:{gid}", "--", str(path)),
+        check=True,
+        capture_output=True,
+    )
+
+
+def _set_mode(path: Path, mode: int) -> None:
+    if os.geteuid() == 0:
+        path.chmod(mode)
+        return
+    subprocess.run(
+        ("sudo", "--non-interactive", "chmod", f"{mode:o}", "--", str(path)),
+        check=True,
+        capture_output=True,
+    )
+
+
 @pytest.fixture
 def host_release_harness(tmp_path: Path) -> Iterator[HostReleaseHarness]:
     with _host_harness(tmp_path) as harness:
@@ -152,36 +175,302 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
     assert attempt.backup.sha256 == hashlib.sha256(backup_bytes).hexdigest()
 
     state = harness.state()
-    assert state["database_revision"] == "0211"
+    assert state["database_revision"] == "0212"
     assert state["backup_dump_count"] == 1
     assert state["backup_verify_count"] == 2
     assert state["migration_count"] == 1
     assert state["jobs"] == {}
     assert state["ancestry_proofs"] == [
         {
-            "candidate_head": "0211",
+            "candidate_head": "0212",
             "current_revision": "0210",
-            "heads": ["0211"],
+            "heads": ["0212"],
             "is_ancestor": True,
         },
         {
-            "candidate_head": "0211",
+            "candidate_head": "0212",
             "current_revision": "0210",
-            "heads": ["0211"],
+            "heads": ["0212"],
             "is_ancestor": True,
         },
     ]
     assert state["service_mutations"] == [
         {
             "operation": "stop",
-            "services": ["api", "worker-interactive", "worker-background"],
+            "services": ["worker-background"],
+        },
+        {
+            "operation": "stop",
+            "services": ["worker-interactive", "api"],
         },
         {
             "operation": "up",
             "services": ["api", "worker-interactive", "worker-background"],
         },
     ]
+    migration = next(
+        command
+        for command in state["commands"]
+        if "run" in command and f"nexus-release-{SOURCE_SHA}-migration" in command
+    )
+    run = migration[migration.index("run") :]
+    assert run[:6] == [
+        "run",
+        "--name",
+        f"nexus-release-{SOURCE_SHA}-migration",
+        "--no-deps",
+        "--no-TTY",
+        "migration",
+    ]
     assert not tuple(release.ReleasePaths.under(tmp_path).state_root.rglob("*.partial"))
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "contents", "message"),
+    [
+        (
+            "proc/meminfo",
+            "MemTotal: 2097152 kB\nMemAvailable: 262143 kB\nSwapTotal: 1048576 kB\n",
+            "available memory",
+        ),
+        (
+            "proc/meminfo",
+            "MemTotal: 2097152 kB\nMemAvailable: 262144 kB\nSwapTotal: 1048575 kB\n",
+            "swap",
+        ),
+        (
+            "proc/meminfo",
+            "MemTotal: 1966079 kB\nMemAvailable: 262144 kB\nSwapTotal: 1048576 kB\n",
+            "host memory reserve",
+        ),
+        ("sys/fs/cgroup/cgroup.controllers", "cpu io pids\n", "cgroup v2 memory controller"),
+        (
+            "proc/pressure/memory",
+            "some avg10=5.01 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n",
+            "memory pressure",
+        ),
+        (
+            "proc/pressure/memory",
+            "some avg10=5.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.01 avg60=0.00 avg300=0.00 total=1\n",
+            "memory pressure",
+        ),
+    ],
+)
+def test_host_apply_blocks_host_pressure_before_stopping_a_writer(
+    host_release_harness: HostReleaseHarness,
+    relative_path: str,
+    contents: str,
+    message: str,
+) -> None:
+    harness = host_release_harness
+    path = harness.root / relative_path
+    path.write_text(contents, encoding="utf-8")
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert message in failed.stderr
+    assert not harness.attempt_path.exists()
+    assert harness.state()["service_mutations"] == []
+
+
+def test_host_apply_blocks_an_unknown_running_container_before_stopping_a_writer(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    harness = host_release_harness
+    containers = harness.state()["containers"]
+    containers["stale-test"] = {
+        "config": {
+            "Env": [],
+            "Image": "example.invalid/stale@sha256:" + "a" * 64,
+            "Labels": {
+                "com.docker.compose.project": "nexus-test",
+                "com.docker.compose.service": "api",
+            },
+        },
+        "host_config": {"Memory": 1, "MemoryReservation": 1, "PidsLimit": 1},
+        "id": "b" * 64,
+        "image_id": "sha256:" + "b" * 64,
+        "oom_killed": False,
+        "restart_count": 0,
+        "running": True,
+    }
+    harness.update_state(containers=containers)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "unknown running container" in failed.stderr
+    assert "nexus-test" in failed.stderr
+    assert not harness.attempt_path.exists()
+    assert harness.state()["service_mutations"] == []
+
+
+def test_host_apply_converges_predecessor_resource_limits_before_stopping_a_writer(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    harness = host_release_harness
+    containers = harness.state()["containers"]
+    for container in containers.values():
+        container["host_config"] = {
+            "Memory": 0,
+            "MemoryReservation": 0,
+            "PidsLimit": 0,
+        }
+    harness.update_state(containers=containers)
+
+    completed = harness.run_apply()
+
+    assert completed.returncode == 0, completed.stderr
+    state = harness.state()
+    assert [mutation["service"] for mutation in state["resource_mutations"]] == [
+        "postgres",
+        "caddy",
+        "api",
+        "worker-interactive",
+        "worker-background",
+    ]
+    assert state["service_mutations"][:2] == [
+        {"operation": "stop", "services": ["worker-background"]},
+        {"operation": "stop", "services": ["worker-interactive", "api"]},
+    ]
+
+
+def test_forward_fix_converges_stopped_writer_limits_without_requesting_live_stats(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    release = _release_module()
+    harness = host_release_harness
+    store = release.ReleaseStore(release.ReleasePaths.under(harness.root))
+    failed_attempt = _prepared(release)
+    store.create_attempt(failed_attempt)
+    for phase in (
+        release.ReleasePhase.WritersStopped,
+        release.ReleasePhase.BackendActivationStarted,
+        release.ReleasePhase.ForwardFixPending,
+        release.ReleasePhase.ForwardFixRequired,
+    ):
+        failed_attempt = failed_attempt.advance(
+            phase,
+            now="2026-08-06T12:01:00Z",
+            failure_code=(
+                "candidate-invariant"
+                if phase
+                in {
+                    release.ReleasePhase.ForwardFixPending,
+                    release.ReleasePhase.ForwardFixRequired,
+                }
+                else None
+            ),
+        )
+        store.replace_attempt(failed_attempt)
+    store.set_forward_fix(SOURCE_SHA)
+    state = harness.state()
+    containers = state["containers"]
+    for service in ("api", "worker-interactive", "worker-background"):
+        container = containers[service]
+        container["running"] = False
+        container["host_config"] = {
+            "Memory": 0,
+            "MemoryReservation": 0,
+            "PidsLimit": 0,
+        }
+        if service == "api":
+            container["image_id"] = state["api_image_id"]
+            container["config"]["Image"] = state["api_image"]
+        else:
+            container["image_id"] = state["worker_image_id"]
+            container["config"]["Image"] = state["worker_image"]
+    harness.update_state(containers=containers, database_revision="0212")
+    successor_sha = harness.install_candidate(_candidate(NEXT_SHA))
+
+    completed = harness.run_apply(source_sha=successor_sha)
+
+    assert completed.returncode == 0, completed.stderr
+    assert [item["service"] for item in harness.state()["resource_mutations"]] == [
+        "api",
+        "worker-interactive",
+        "worker-background",
+    ]
+
+
+def test_host_apply_blocks_unsafe_resource_convergence_before_any_mutation(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    harness = host_release_harness
+    containers = harness.state()["containers"]
+    containers["worker-background"]["host_config"]["Memory"] = 0
+    containers["worker-background"]["memory_usage"] = 448 * 1024 * 1024
+    harness.update_state(containers=containers)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "worker-background current memory is not below its hard limit" in failed.stderr
+    state = harness.state()
+    assert state["resource_mutations"] == []
+    assert state["service_mutations"] == []
+
+
+def test_host_preflight_blocks_low_parser_temp_disk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = _release_module()
+    paths = release.ReleasePaths.under(tmp_path)
+    paths.cgroup_controllers.parent.mkdir(parents=True)
+    paths.cgroup_controllers.write_text("cpu io memory pids\n", encoding="ascii")
+    paths.meminfo.parent.mkdir(parents=True)
+    paths.meminfo.write_text(
+        "MemTotal: 2097152 kB\nMemAvailable: 524288 kB\nSwapTotal: 1048576 kB\n",
+        encoding="ascii",
+    )
+    paths.memory_pressure.parent.mkdir(parents=True)
+    paths.memory_pressure.write_text(
+        "some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n"
+        "full avg10=0.00 avg60=0.00 avg300=0.00 total=1\n",
+        encoding="ascii",
+    )
+    paths.parser_temp_root.mkdir(parents=True, mode=0o700)
+    _set_owner(paths.parser_temp_root, 10001, 10001)
+    monkeypatch.setattr(
+        release.shutil,
+        "disk_usage",
+        lambda _path: release.shutil._ntuple_diskusage(1, 1, 512 * 1024 * 1024 - 1),
+    )
+
+    try:
+        with pytest.raises(release.ReleaseBlocked, match="less than 512 MiB"):
+            release.HostRelease(paths)._preflight_host_capacity({}, writers_running=True)
+    finally:
+        _set_owner(paths.parser_temp_root, os.getuid(), os.getgid())
+
+
+@pytest.mark.parametrize("invalid_metadata", ("mode", "owner", "symlink"))
+def test_host_apply_rejects_unsafe_parser_temp_metadata_before_mutation(
+    host_release_harness: HostReleaseHarness,
+    invalid_metadata: str,
+) -> None:
+    harness = host_release_harness
+    parser_temp_root = harness.root / "var/lib/nexus/parser-tmp"
+    if invalid_metadata == "mode":
+        _set_mode(parser_temp_root, 0o755)
+    elif invalid_metadata == "owner":
+        _set_owner(parser_temp_root, 0, 0)
+    else:
+        parser_temp_root.rmdir()
+        replacement = harness.root / "var/lib/nexus/parser-tmp-target"
+        replacement.mkdir(mode=0o700)
+        _set_owner(replacement, 10001, 10001)
+        parser_temp_root.symlink_to(replacement, target_is_directory=True)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "parser temporary root metadata is not exact" in failed.stderr
+    assert not harness.attempt_path.exists()
+    assert harness.state()["resource_mutations"] == []
+    assert harness.state()["service_mutations"] == []
 
 
 def test_host_apply_rejects_writable_caddy_input(tmp_path: Path) -> None:
@@ -506,10 +795,111 @@ def test_host_apply_replays_every_durable_phase_after_process_death(
     assert completed is not None
     assert completed.phase is release.ReleasePhase.AwaitingFrontendPromotion
     state = harness.state()
-    assert state["database_revision"] == "0211"
+    assert state["database_revision"] == "0212"
     assert state["migration_count"] == 1
     assert state["jobs"] == {}
     assert not tuple(release.ReleasePaths.under(tmp_path).state_root.rglob("*.partial"))
+
+
+@pytest.mark.parametrize(
+    "phase",
+    ("Prepared", "WritersStopped", "BackupVerified", "DataMutationStarted"),
+)
+def test_host_apply_revalidates_volatile_capacity_before_replay_mutation(
+    host_release_harness: HostReleaseHarness,
+    phase: str,
+) -> None:
+    harness = host_release_harness
+    interrupted = harness.run_apply(interrupt_phase=phase)
+    assert interrupted.returncode == -signal.SIGKILL, interrupted.stderr
+    before = harness.state()
+    (harness.root / "proc/pressure/memory").write_text(
+        "some avg10=5.01 avg60=0.00 avg300=0.00 total=1\n"
+        "full avg10=0.00 avg60=0.00 avg300=0.00 total=1\n",
+        encoding="ascii",
+    )
+
+    blocked = harness.run_apply()
+
+    assert blocked.returncode != 0
+    assert "memory pressure" in blocked.stderr
+    after = harness.state()
+    assert after["service_mutations"] == before["service_mutations"]
+    assert after["backup_dump_count"] == before["backup_dump_count"]
+    assert after["migration_count"] == before["migration_count"]
+
+
+@pytest.mark.parametrize(
+    "identity_drift",
+    (
+        "project",
+        "service",
+        "oneoff",
+        "config_hash",
+        "image_reference",
+        "image_id",
+        "command",
+    ),
+)
+def test_migration_recovery_rejects_and_preserves_a_foreign_stopped_name_collision(
+    host_release_harness: HostReleaseHarness,
+    identity_drift: str,
+) -> None:
+    harness = host_release_harness
+    interrupted = harness.run_apply(interrupt_phase="DataMutationStarted")
+    assert interrupted.returncode == -signal.SIGKILL, interrupted.stderr
+    state = harness.state()
+    name = f"nexus-release-{SOURCE_SHA}-migration"
+    job = {
+        "config": {
+            "Cmd": [
+                "sh",
+                "-c",
+                "cd /app/migrations && /app/.venv/bin/alembic upgrade head",
+            ],
+            "Image": state["candidate_api_image"],
+            "Labels": {
+                "com.docker.compose.config-hash": state["migration_config_hash"],
+                "com.docker.compose.oneoff": "True",
+                "com.docker.compose.project": "nexus",
+                "com.docker.compose.service": "migration",
+            },
+        },
+        "exit_code": 0,
+        "host_config": {
+            "MemoryReservation": 256 * 1024 * 1024,
+            "Memory": 512 * 1024 * 1024,
+            "PidsLimit": 256,
+        },
+        "id": "8" * 64,
+        "image_id": state["candidate_api_image_id"],
+        "logs": "foreign collision\n",
+        "name": f"/{name}",
+        "running": False,
+    }
+    if identity_drift in {"project", "service", "oneoff", "config_hash"}:
+        label = {
+            "project": "com.docker.compose.project",
+            "service": "com.docker.compose.service",
+            "oneoff": "com.docker.compose.oneoff",
+            "config_hash": "com.docker.compose.config-hash",
+        }[identity_drift]
+        job["config"]["Labels"][label] = "foreign"
+    elif identity_drift == "image_reference":
+        job["config"]["Image"] = "example.invalid/foreign@sha256:" + "d" * 64
+    elif identity_drift == "image_id":
+        job["image_id"] = "sha256:" + "d" * 64
+    else:
+        job["config"]["Cmd"] = ["sh", "-c", "true"]
+    state["jobs"] = {name: job}
+    harness.update_state(jobs=state["jobs"])
+
+    blocked = harness.run_apply()
+
+    assert blocked.returncode != 0
+    assert "durable Compose job identity differs" in blocked.stderr
+    assert name in harness.state()["jobs"]
+    assert harness.state()["migration_count"] == 0
 
 
 @pytest.mark.parametrize("missing_service", ("api", "worker-interactive", "worker-background"))
@@ -577,7 +967,7 @@ def test_host_apply_recovers_a_completed_migration_side_effect_without_reapplyin
     persisted = _stored_attempt(release, tmp_path)
     assert persisted is not None
     assert persisted.phase is release.ReleasePhase.DataMutationStarted
-    assert harness.state()["database_revision"] == "0211"
+    assert harness.state()["database_revision"] == "0212"
 
     replayed = harness.run_apply(interrupt_after_migration=True)
 
@@ -665,7 +1055,7 @@ def test_forward_fix_accepts_advanced_schema_and_stopped_writers(
         else:
             container["image_id"] = state["worker_image_id"]
             container["config"]["Image"] = state["worker_image"]
-    harness.update_state(containers=containers, database_revision="0211")
+    harness.update_state(containers=containers, database_revision="0212")
 
     successor_sha = harness.install_candidate(_candidate(NEXT_SHA))
     completed = harness.run_apply(source_sha=successor_sha)

@@ -145,6 +145,7 @@ def test_epub_ingest_repairs_structural_anchors_without_reordering_intervals(
             storage_path=storage_path,
             source_size_bytes=len(payload),
             storage_client=storage,
+            record_progress=lambda _completed, _total, _unit: None,
         )
         assert isinstance(plan, EpubExtractionPlan), (
             f"structural-anchor EPUB did not produce an extraction plan: {plan!r}"

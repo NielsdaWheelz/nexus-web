@@ -3,6 +3,8 @@
 // subscriptions API query, and the exact control inventories. See
 // docs/cutovers/collection-refinement-capability-hard-cutover.md.
 
+import { assertNever } from "@/lib/assertNever";
+
 export const SUBSCRIPTION_FILTERS = [
   "all",
   "has_new",
@@ -38,12 +40,6 @@ export const CANONICAL_PODCAST_SUBSCRIPTION_VIEW: PodcastSubscriptionView = {
 export type DecodedPodcastSubscriptionView =
   | { kind: "Valid"; view: PodcastSubscriptionView }
   | { kind: "Invalid" };
-
-function assertNever(x: never): never {
-  throw new Error(
-    `Unreachable Podcast subscription view case: ${JSON.stringify(x)}`,
-  );
-}
 
 /**
  * Strict, total decode of the view-owned `filter`/`sort`/`library_id` keys. A

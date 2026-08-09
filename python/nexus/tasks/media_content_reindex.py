@@ -14,10 +14,12 @@ from nexus.services.content_indexing import (
     MEDIA_CONTENT_REINDEX_REASONS,
     IndexOwner,
     MediaContentReindexWork,
-    plan_content_index,
+    build_spooled_content_index_plan,
     prepare_media_content_reindex,
     publish_media_content_reindex,
 )
+from nexus.services.parser_temp import parser_attempt_directory
+from nexus.services.semantic_chunks import build_text_embeddings
 
 
 def media_content_reindex_job(
@@ -60,33 +62,36 @@ def media_content_reindex_job(
             "revision": revision,
         }
 
-    plan = plan_content_index(
-        owner=work.blocks[0].owner if work.blocks else IndexOwner("media", media_id),
-        source_kind=work.source_kind,
-        blocks=list(work.blocks),
-    )
-
-    publish_db = get_session_factory()()
-    try:
-
-        def publish():
-            result = publish_media_content_reindex(
-                publish_db,
-                work=work,
-                plan=plan,
-                context=context,
-                lease_seconds=lease_seconds,
-            )
-            publish_db.commit()
-            return result
-
-        result = retry_serializable(
-            publish_db,
-            "publish_media_content_reindex",
-            publish,
+    with parser_attempt_directory(context.job_id) as attempt_directory:
+        plan = build_spooled_content_index_plan(
+            owner=work.blocks[0].owner if work.blocks else IndexOwner("media", media_id),
+            source_kind=work.source_kind,
+            blocks=work.blocks,
+            spool_path=attempt_directory / "content-index.jsonl",
+            embed_texts=build_text_embeddings,
         )
-    finally:
-        publish_db.close()
+
+        publish_db = get_session_factory()()
+        try:
+
+            def publish():
+                result = publish_media_content_reindex(
+                    publish_db,
+                    work=work,
+                    plan=plan,
+                    context=context,
+                    lease_seconds=lease_seconds,
+                )
+                publish_db.commit()
+                return result
+
+            result = retry_serializable(
+                publish_db,
+                "publish_media_content_reindex",
+                publish,
+            )
+        finally:
+            publish_db.close()
 
     if result is None:
         return {

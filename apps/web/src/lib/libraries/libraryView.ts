@@ -7,6 +7,7 @@ import {
   LIBRARY_MEDIA_KINDS,
   type LibraryMediaKind,
 } from "@/lib/libraries/mediaKind";
+import { assertNever } from "@/lib/assertNever";
 
 export type SortDirection = "asc" | "desc";
 
@@ -45,10 +46,6 @@ export const CANONICAL_LIBRARY_VIEW: LibraryEntryView = {
 export type DecodedLibraryView =
   | { kind: "Valid"; view: LibraryEntryView }
   | { kind: "Invalid" };
-
-function assertNever(x: never): never {
-  throw new Error(`Unreachable library view case: ${JSON.stringify(x)}`);
-}
 
 type FactualSortKey = "title" | "creator" | "published" | "added";
 

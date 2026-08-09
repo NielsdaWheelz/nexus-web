@@ -434,13 +434,30 @@
       "id": "durable-ingest-reader-open",
       "proof": "apps/web/e2e/journeys/durable-ingest-reader-open.journey.spec.ts",
       "source_globs": [
+        "apps/worker/main.py",
+        "python/nexus/api/routes/media_activity.py",
+        "python/nexus/config.py",
+        "python/nexus/jobs/queue.py",
+        "python/nexus/jobs/registry.py",
+        "python/nexus/jobs/worker.py",
+        "python/nexus/services/chat_run*.py",
+        "python/nexus/services/content_indexing.py",
+        "python/nexus/services/epub_ingest.py",
+        "python/nexus/services/media_activity.py",
+        "python/nexus/services/media_source_ingest.py",
         "python/nexus/services/node_ingest.py",
         "python/nexus/services/media.py",
+        "python/nexus/services/pdf_ingest.py",
+        "python/nexus/services/source_publication.py",
+        "python/nexus/tasks/chat_run.py",
         "apps/web/src/app/(authenticated)/media/**/*",
+        "apps/web/src/app/api/media/activity/**/*",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
       "risks": [
-        "database-object-convergence"
+        "database-object-convergence",
+        "durable-job-replay",
+        "production-runtime-health"
       ]
     },
     {

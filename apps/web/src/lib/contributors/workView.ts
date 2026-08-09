@@ -3,6 +3,8 @@
 // `Sort by` inventory. See
 // docs/cutovers/collection-refinement-capability-hard-cutover.md.
 
+import { assertNever } from "@/lib/assertNever";
+
 type Direction = "asc" | "desc";
 
 export type AuthorWorksView =
@@ -18,10 +20,6 @@ export const CANONICAL_AUTHOR_WORKS_VIEW: AuthorWorksView = {
 export type DecodedAuthorWorksView =
   | { kind: "Valid"; view: AuthorWorksView }
   | { kind: "Invalid" };
-
-function assertNever(x: never): never {
-  throw new Error(`Unreachable Author works view case: ${JSON.stringify(x)}`);
-}
 
 /**
  * Strict, total decode of the view-owned `sort`/`direction` keys. A partial,

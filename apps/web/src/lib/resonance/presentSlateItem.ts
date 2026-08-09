@@ -5,10 +5,7 @@ import type {
   ConsumptionModality,
 } from "@/lib/collections/types";
 import type { SlateItem, SlateReason, SlateTarget } from "@/lib/resonance/contract";
-
-function assertNever(value: never): never {
-  throw new Error(`Unhandled Slate reason: ${JSON.stringify(value)}`);
-}
+import { assertNever } from "@/lib/assertNever";
 
 export function presentSlateReason(reason: SlateReason): string {
   switch (reason.kind) {

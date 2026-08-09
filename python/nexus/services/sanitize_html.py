@@ -16,10 +16,16 @@ import re
 from urllib.parse import quote, urljoin, urlparse
 
 from lxml.etree import ParserError
-from lxml.html import HtmlElement, tostring
+from lxml.html import HtmlElement
 
 from nexus import web_paths
-from nexus.services.html_tree import parse_html_document, remove_element, unwrap_element
+from nexus.services.html5_shape import normalize_html5_shape
+from nexus.services.html_tree import (
+    inner_html,
+    parse_html_document,
+    remove_element,
+    unwrap_element,
+)
 
 ALLOWED_TAGS = frozenset(
     {
@@ -157,15 +163,13 @@ def sanitize_html(
                 allow_document_embed_attrs=allow_document_embed_attrs,
             )
 
-    # Serialize back to string
-    # Use method='html' to preserve HTML semantics (e.g., self-closing tags)
-    result = tostring(body, encoding="unicode", method="html")
+    # Emit only shapes libxml2 and HTML5 tree construction read identically, so a
+    # later canonicalizing parse of this output agrees with the browser's DOM.
+    normalize_html5_shape(body)
 
-    # Remove the wrapper body tag that lxml adds
-    if result.startswith("<body>") and result.endswith("</body>"):
-        result = result[6:-7]
-
-    return result
+    # Serialize the sanitized children; the `body` wrapper lxml added is not part
+    # of the fragment we store.
+    return inner_html(body)
 
 
 def _sanitize_element(

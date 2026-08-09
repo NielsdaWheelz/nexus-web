@@ -335,6 +335,7 @@ export type ManageTabsOrigin =
 
 export type NexusPage =
   | { readonly kind: "Root" }
+  | { readonly kind: "Activity" }
   | { readonly kind: "UnsupportedLink" }
   | {
       readonly kind: "CommandFailed";
@@ -379,6 +380,7 @@ export type NexusPage =
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }
+  | { readonly kind: "Activity" }
   | { readonly kind: "Add"; readonly seed: AddSeed }
   | { readonly kind: "QuickAction"; readonly actionId: NexusCommandId }
   | { readonly kind: "UnsupportedLink" };

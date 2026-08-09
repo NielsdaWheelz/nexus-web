@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "title": "Bounded Media Processing Evidence Corpus",
+  "author": "Nexus SME Council",
+  "subject": "Dense citation-heavy 712-page bounded ingestion proof",
+  "page_count": 712,
+  "findings_per_page": 24,
+  "reference_count": 120,
+  "finding_text": "Bounded admission preserves durable work while interactive service remains independently available",
+  "adversarial_pdf": "%PDF-1.4\n% Deliberately truncated after a valid PDF signature.\n"
+}

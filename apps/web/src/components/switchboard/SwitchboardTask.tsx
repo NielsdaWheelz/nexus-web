@@ -13,6 +13,7 @@ import AddPanelBoundary from "@/components/nexus/AddPanelBoundary";
 import ChooseBrowsePage from "@/components/nexus/ChooseBrowsePage";
 import ChooseCreatePage from "@/components/nexus/ChooseCreatePage";
 import ManageTabsPage from "@/components/nexus/ManageTabsPage";
+import MediaActivityPage from "@/components/nexus/MediaActivityPage";
 import type { AddContentSessionController } from "@/components/nexus/useAddContentSession";
 import type {
   NexusManagedClosedPane,
@@ -46,6 +47,7 @@ import SwitchboardSearch, {
   type MobileNexusActionsRequest,
   type MobileNexusFailureSource,
 } from "./SwitchboardSearch";
+import { assertNever } from "@/lib/assertNever";
 import styles from "./switchboard.module.css";
 
 export interface MobileNexusTaskController {
@@ -109,10 +111,6 @@ export interface MobileNexusTaskController {
   restoreManagedPane(paneId: string): void;
   retryRetainedActivation(): void;
   cancelRetainedActivation(): void;
-}
-
-function assertNever(value: never): never {
-  throw new Error(`Unhandled Switchboard page: ${JSON.stringify(value)}`);
 }
 
 function CreationStatus({
@@ -248,6 +246,20 @@ export default function SwitchboardTask({
             onEscapeRoot={escape}
             onUnavailable={controller.announceUnavailable}
             onRetry={controller.retry}
+          />
+        );
+      case "Activity":
+        return (
+          <MediaActivityPage
+            visible={active}
+            onBack={back}
+            onOpenMedia={(mediaId) =>
+              controller.openTarget({
+                kind: "InternalHref",
+                href: `/media/${mediaId}`,
+                labelHint: "Media",
+              })
+            }
           />
         );
       case "EntryActions":

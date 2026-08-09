@@ -658,6 +658,9 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
     assert environment["NEXUS_RUNTIME_IDENTITY_FILE"] == str(
         tmp_path / ".nexus-test/runtime-identity.json"
     )
+    assert environment["PARSER_TEMP_ROOT"] == str(
+        tmp_path / "test-results/runs/0123456789abcdef/parser-tmp"
+    )
     assert environment["NEXUS_EXTENSION_REDIRECT_ORIGINS"] == (
         f"https://{TEST_EXTENSION_ID}.chromiumapp.org"
     )

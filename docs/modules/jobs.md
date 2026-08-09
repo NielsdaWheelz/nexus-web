@@ -102,9 +102,9 @@ kind; queue completion is not a claim that the answer published.
 
 `config.py` declares one complete topology:
 
-- `INTERACTIVE_WORKER_JOB_KINDS`: ingest, chat, Dossier, subscription live sync,
-  and Oracle generation;
-- `BACKGROUND_WORKER_JOB_KINDS`: content indexing, enrichment, derived units,
+- `INTERACTIVE_WORKER_JOB_KINDS`: chat, Dossier, subscription live sync, and
+  Oracle generation;
+- `BACKGROUND_WORKER_JOB_KINDS`: source ingest, content indexing, enrichment, derived units,
   semantic indexing, subscription backfill, Podcast due admission and run
   retention, ambient generation, teardown, storage cleanup, and reconciliation;
 - `MAINTENANCE_JOB_KINDS`: Gutenberg catalog sync, queue pruning, and expired
@@ -116,6 +116,12 @@ complete registry. The worker entrypoint defects on drift.
 Only the background lane can claim or schedule production periodic work.
 Production deploys exactly `worker-interactive` and `worker-background`; there
 is no undifferentiated `worker` service.
+
+Every registry definition owns one closed `Light | Heavy` resource class, and
+that class is part of the task-contract digest. `ingest_media_source` and
+`media_content_reindex_job` are Heavy; all other kinds are Light. Queue-owned
+capacity admission permits one Heavy running attempt globally while leaving
+eligible Light work claimable. Domain handlers never touch capacity state.
 
 Normal workers require `WORKER_LANE=interactive|background`; they never accept
 a raw allowlist. A bounded maintenance process requires

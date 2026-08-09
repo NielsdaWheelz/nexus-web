@@ -39,10 +39,7 @@ from nexus.services.content_indexing import (
     request_media_content_reindex,
 )
 from nexus.services.image_validation import fetch_validated_image
-from nexus.services.ingest_recovery import (
-    retry_dead_content_index_job,
-    retry_dead_source_job,
-)
+from nexus.services.ingest_recovery import repair_media_work
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
@@ -218,7 +215,8 @@ def _pending_source_job_ids(
                 suspended.append((media_id, attempt.job_id))
             pending.append(attempt.job_id)
     for media_id, expected_job_id in suspended:
-        replayed_job_id = retry_dead_source_job(media_id=media_id)
+        with session_factory() as db:
+            replayed_job_id = repair_media_work(db, media_id=media_id, scope="Source")
         if replayed_job_id != expected_job_id:
             raise RuntimeError(f"Oracle media {media_id} replayed a foreign source job")
     return tuple(dict.fromkeys(pending))
@@ -268,7 +266,8 @@ def _ensure_index_job_ids(
             job_ids.append(intent.background_job_id)
         db.commit()
     for media_id, expected_job_id in suspended:
-        replayed_job_id = retry_dead_content_index_job(media_id=media_id)
+        with session_factory() as db:
+            replayed_job_id = repair_media_work(db, media_id=media_id, scope="Search")
         if replayed_job_id != expected_job_id:
             raise RuntimeError(f"Oracle media {media_id} replayed a foreign content-index job")
     return tuple(dict.fromkeys(job_ids))

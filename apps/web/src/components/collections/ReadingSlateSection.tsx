@@ -25,11 +25,8 @@ import {
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useOptionalPaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import { assertNever } from "@/lib/assertNever";
 import styles from "./ReadingSlateSection.module.css";
-
-function assertNever(value: never): never {
-  throw new Error(`Unhandled Reading Slate variant: ${JSON.stringify(value)}`);
-}
 
 function shouldMoveTerminalFocusToPaneChrome(
   isActive: boolean,

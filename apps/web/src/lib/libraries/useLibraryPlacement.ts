@@ -24,6 +24,7 @@ import {
 } from "@/lib/libraries/libraryPlacementCommit";
 import type { ResourceActionMutationLease } from "@/lib/actions/resourceActionMutation";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
+import { assertNever } from "@/lib/assertNever";
 
 type PlacementOp = "Add" | "Remove";
 type PlacementRequest = "Load" | PlacementOp | "Create";
@@ -134,10 +135,6 @@ function destinationGoneContent(): FeedbackContent {
     message:
       "The authoritative Library list changed while the placement was being confirmed.",
   };
-}
-
-function assertNever(phase: never): never {
-  throw new Error(`Unreachable placement phase: ${JSON.stringify(phase)}`);
 }
 
 function placementFailureTitle(request: PlacementRequest): string {

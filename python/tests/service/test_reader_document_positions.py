@@ -81,6 +81,7 @@ def test_epub_navigation_and_document_map_share_exact_canonical_positions(
             storage_path=storage_path,
             source_size_bytes=len(payload),
             storage_client=storage,
+            record_progress=lambda _completed, _total, _unit: None,
         )
         assert isinstance(plan, EpubExtractionPlan), (
             f"authored EPUB did not produce an extraction plan: {plan!r}"
@@ -183,6 +184,7 @@ def test_real_epub_fixture_retains_known_book_structure(engine: Engine) -> None:
             storage_path=storage_path,
             source_size_bytes=len(payload),
             storage_client=storage,
+            record_progress=lambda _completed, _total, _unit: None,
         )
         assert isinstance(result, EpubExtractionPlan), (
             f"canonical real EPUB did not produce an extraction plan: {result!r}"

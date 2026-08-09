@@ -2,6 +2,7 @@
 # Compose assigns each normal worker its fixed lane. Raw allowlists are reserved
 # for gated, one-off maintenance invocations and do not belong in this file.
 
+PARSER_TEMP_ROOT=/var/lib/nexus/parser-tmp
 WORKER_POLL_INTERVAL_SECONDS=5
 WORKER_IDLE_BACKOFF_MAX_SECONDS=300
 WORKER_SCHEDULER_INTERVAL_SECONDS=300

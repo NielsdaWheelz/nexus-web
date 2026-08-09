@@ -25,6 +25,7 @@ import type {
   MediaId,
   PlayerDescriptor,
 } from "@/lib/lectern/contract";
+import { assertNever } from "@/lib/assertNever";
 
 // --- Session / origin model (spec §6) ---------------------------------------
 
@@ -137,10 +138,6 @@ export interface SessionTransition {
 }
 
 // --- Internal helpers --------------------------------------------------------
-
-function assertNever(value: never): never {
-  throw new Error(`Unreachable player-session variant: ${JSON.stringify(value)}`);
-}
 
 /** The audio session a state carries, or `undefined` when Absent. */
 function sessionOf(state: PlayerSessionState): AudioSession | undefined {

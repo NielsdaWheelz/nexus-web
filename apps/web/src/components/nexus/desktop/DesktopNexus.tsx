@@ -137,7 +137,7 @@ export default function DesktopNexus({
         <div
           ref={panelRef}
           role="dialog"
-          aria-label="Nexus"
+          aria-label={controller.dialogLabel}
           className={styles.surface}
           onClick={(event) => event.stopPropagation()}
         >

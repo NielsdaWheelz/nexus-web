@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urljoin, urlparse
 
-from lxml.html import Element, HtmlElement, tostring
+from lxml.html import Element, HtmlElement
 
 from nexus.errors import InvalidRequestError
 from nexus.schemas.media import DocumentEmbedKind, DocumentEmbedProvider, DocumentEmbedSourceShape
-from nexus.services.html_tree import parse_html_document
+from nexus.services.html_tree import inner_html, parse_html_document
 from nexus.services.url_normalize import validate_requested_url
 from nexus.services.x_identity import classify_x_url
 from nexus.services.youtube_identity import classify_youtube_url
@@ -73,7 +73,7 @@ def extract_document_embeds(html: str, base_url: str) -> ExtractedDocumentEmbeds
         ordinal += 1
 
     return ExtractedDocumentEmbeds(
-        html=_body_inner_html(body),
+        html=inner_html(body),
         embeds=embeds,
         diagnostics={"detected_count": len(embeds)},
     )
@@ -234,19 +234,6 @@ def _replace_with_placeholder(element: HtmlElement, embed: DetectedDocumentEmbed
     figure.append(caption)
     figure.tail = element.tail
     parent.replace(element, figure)
-
-
-def _body_inner_html(body: HtmlElement) -> str:
-    parts = [body.text or ""]
-    parts.extend(
-        str(child) if not isinstance(child, HtmlElement) else _element_html(child) for child in body
-    )
-    return "".join(parts)
-
-
-def _element_html(element: HtmlElement) -> str:
-    value = tostring(element, encoding="unicode", method="html")
-    return value if isinstance(value, str) else value.decode()
 
 
 def _clip(value: str, max_length: int) -> str:

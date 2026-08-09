@@ -76,6 +76,31 @@ Production coordinates are committed, not ambient: SSH
 `niels-erik-nandals-projects` / `team_fKVvTyTsMBQ7qFjccFO17BJL`. Changing any
 coordinate is a reviewed infrastructure change, not a release flag.
 
+The host contract is cgroup v2 with the memory controller, at least 1 GiB
+swap, at least 512 MiB free under `/var/lib/nexus/parser-tmp`, and no running
+container outside the exact `nexus` Compose project. Existing hosts must be
+prepared once before this hard cutover:
+
+```bash
+sudo install -d -o 10001 -g 10001 -m 0700 /var/lib/nexus/parser-tmp
+# mkswap reserves the first page for its header, so a file sized at exactly 1 GiB
+# reports SwapTotal one page short of the release gate. Provision above the gate,
+# and replace an existing undersized swapfile rather than keeping it.
+if ! sudo test -e /swapfile || [ "$(stat -c %s /swapfile)" -le 1073741824 ]; then
+  swapon --show=NAME --noheadings | grep -qx /swapfile && sudo swapoff /swapfile
+  sudo rm -f /swapfile
+  sudo fallocate --length 1025M /swapfile
+  sudo chmod 0600 /swapfile
+  sudo mkswap /swapfile
+fi
+swapon --show=NAME --noheadings | grep -qx /swapfile || sudo swapon /swapfile
+grep -qxF '/swapfile none swap sw 0 0' /etc/fstab || \
+  echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+Remove stale test stacks only by their reviewed exact Compose project name;
+never run wildcard removal or `docker system prune`.
+
 Vercel custom-domain auto-assignment must be disabled. Vercel Authentication must
 protect previews only (`ssoProtection.deploymentType=preview`) so the staged
 production-target deployment URL is publicly probeable without exposing preview
@@ -171,19 +196,32 @@ The command performs the complete protocol:
 
 1. validates Git, CI, bundle, manifest, and staged Vercel identity;
 2. installs the immutable bundle and inspects durable host state;
-3. preflights the exact content-addressed config path and digest, Compose, Caddy
-   equality, image identity, live infra, database ancestry, capacity, and
-   predecessor evidence without mutation;
-4. stops and proves stopped only the three app writers;
-5. when migration is pending, creates and verifies one durable custom-format
-   Postgres backup before recording `DataMutationStarted` and upgrading;
-6. records `BackendActivationStarted`, activates app images by digest, and
+3. before the first hard-cut attempt, proves exact predecessor identity, host
+   capacity, foreign-container absence, and current memory/PID use; when an
+   existing container lacks the canonical envelope, the immutable controller
+   idempotently applies it with `docker update` and immediately inspects the
+   result; unsafe current use blocks before any update;
+4. preflights the exact content-addressed config path and digest, Compose, Caddy
+   equality, image identity, applied memory/PID limits, cgroup, memory, swap,
+   PSI, parser/backup disk, running-container ownership, live infra, database
+   ancestry, and predecessor evidence without mutation;
+5. stops and proves stopped the background worker first, then the interactive
+   worker and API;
+6. when migration is pending, creates and verifies one durable custom-format
+   Postgres backup before recording `DataMutationStarted` and upgrading in a
+   512 MiB / 256 PID one-off container;
+7. records `BackendActivationStarted`, activates app images by digest, and
    waits boundedly for Compose health before proving exact API/readiness bodies,
    workers, shared task-contract digest, schema, config, images, and unchanged
    infra;
-7. promotes only the bound Vercel deployment, explicitly binds the committed
+8. promotes only the bound Vercel deployment, explicitly binds the committed
    custom domain to it, proves the provider alias and public web/API vector,
    writes one immutable record, and atomically publishes current SHA.
+
+Resource convergence is the permanent release-owned entry to the hard-cut
+envelope. It is safe to replay after process death, skips already exact
+containers, never recreates Postgres or Caddy, and has no manual or legacy
+alternative.
 
 Success ends the no-use window. No separate migration, Compose, smoke, or
 promotion command is part of the normal path.

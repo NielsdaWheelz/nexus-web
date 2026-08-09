@@ -1,5 +1,7 @@
 """EPUB source lifecycle boundary and extraction artifact cleanup."""
 
+from collections.abc import Callable
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -81,6 +83,7 @@ def prepare_epub_source(
     attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
+    record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
 ) -> EpubExtractionPlan:
     """Acquire and parse one EPUB into an immutable publication plan."""
     plan = build_epub_extraction_plan(
@@ -90,6 +93,7 @@ def prepare_epub_source(
         storage_path=storage_path,
         source_size_bytes=source_size_bytes,
         storage_client=get_storage_client(),
+        record_progress=record_progress,
     )
     if isinstance(plan, EpubExtractionError):
         raise ApiError(

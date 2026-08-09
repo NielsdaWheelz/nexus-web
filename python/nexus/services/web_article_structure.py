@@ -9,7 +9,7 @@ from dataclasses import replace as dataclass_replace
 from typing import assert_never, cast
 from uuid import UUID
 
-from lxml.html import HtmlElement, fragment_fromstring, tostring
+from lxml.html import HtmlElement, fragment_fromstring
 
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.document_embed_extraction import DetectedDocumentEmbed, extract_document_embeds
@@ -20,6 +20,7 @@ from nexus.services.document_embeds import (
     DocumentEmbedTargetTerminal,
 )
 from nexus.services.fragment_blocks import FragmentBlockSpec
+from nexus.services.html_tree import inner_html, serialize_html
 from nexus.services.reader_apparatus import extract_html_apparatus
 from nexus.services.sanitize_html import sanitize_html
 from nexus.text import normalize_whitespace
@@ -251,7 +252,7 @@ def add_heading_anchors(html_sanitized: str, *, fragment_idx: int) -> str:
         tag = str(element.tag).lower()
         if tag not in HEADING_TAGS:
             continue
-        label = _label(_element_html(element))
+        label = _label(serialize_html(element))
         if not label:
             continue
         existing_id = element.get("id")
@@ -268,7 +269,7 @@ def add_heading_anchors(html_sanitized: str, *, fragment_idx: int) -> str:
         used.add(anchor_id)
         element.set("id", anchor_id)
         ordinal += 1
-    return _inner_html(root)
+    return inner_html(root)
 
 
 def build_web_article_index_blocks(
@@ -334,7 +335,7 @@ def _headings(
         tag = str(element.tag).lower()
         if tag not in HEADING_TAGS:
             continue
-        label = _label(_element_html(element))
+        label = _label(serialize_html(element))
         if not label:
             continue
         match = _find_line(canonical_text, label, cursor)
@@ -409,18 +410,7 @@ def _label(html: str) -> str:
     return normalize_whitespace(generate_canonical_text(html))
 
 
-def _element_html(element: HtmlElement) -> str:
-    html = tostring(element, encoding="unicode", method="html")
-    return html if isinstance(html, str) else html.decode()
-
-
 def _slug(value: str) -> str:
     ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_value.lower()).strip("-")
     return slug or "section"
-
-
-def _inner_html(root: HtmlElement) -> str:
-    parts = [root.text or ""]
-    parts.extend(tostring(child, encoding="unicode", method="html") for child in root)
-    return "".join(parts)

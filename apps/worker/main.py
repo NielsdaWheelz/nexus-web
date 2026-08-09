@@ -23,10 +23,12 @@ from nexus.config import (
     get_settings,
 )
 from nexus.db.session import get_session_factory
+from nexus.jobs.queue import parser_operation_has_live_job
 from nexus.jobs.registry import get_default_registry, get_task_contract_digest
 from nexus.jobs.worker import JobWorker
 from nexus.logging import configure_logging, get_logger
 from nexus.runtime_health import get_runtime_identity
+from nexus.services.parser_temp import prune_stale_parser_temp
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 
 logger = get_logger(__name__)
@@ -134,6 +136,18 @@ def main() -> None:
     worker = create_worker(
         successful_cycle_callback=publisher.publish if publisher is not None else None
     )
+    if settings.worker_lane == "background":
+        with worker.session_factory() as db:
+            removed_parser_temp_directories = prune_stale_parser_temp(
+                settings.parser_temp_root,
+                operation_is_live=lambda operation_id: parser_operation_has_live_job(
+                    db, operation_id=operation_id
+                ),
+            )
+        logger.info(
+            "parser_temp_startup_pruned",
+            removed_directories=removed_parser_temp_directories,
+        )
     logger.info(
         "postgres_worker_started",
         worker_id=worker.worker_id,

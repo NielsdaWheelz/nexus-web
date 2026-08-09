@@ -3,14 +3,11 @@ import type {
   ConsumptionModality,
 } from "@/lib/collections/types";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
+import { assertNever } from "@/lib/assertNever";
 
 export interface ActivityText {
   readonly visible: string;
   readonly accessible: string;
-}
-
-function assertNever(value: never, context: string): never {
-  throw new Error(`${context}: ${JSON.stringify(value)}`);
 }
 
 function consumptionVerb(modality: ConsumptionModality) {

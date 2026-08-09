@@ -1712,6 +1712,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     (web_root / "node_modules").mkdir()
     for journey_id in (
         "auth-session",
+        "durable-ingest-reader-open",
         "grounded-chat-citation",
         "nexus-search-open-restore",
         "not-critical",
@@ -1889,12 +1890,14 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     ]
     assert invited_users == ["auth-session"]
     assert password_users == [
+        "durable-ingest-reader-open",
         "grounded-chat-citation",
         "nexus-search-open-restore",
         "password-recovery",
         "resource-share-boundary",
     ]
     assert entitlements == [
+        "nexus+0123456789abcdef+durable-ingest-reader-open@example.invalid",
         "nexus+0123456789abcdef+grounded-chat-citation@example.invalid",
         "nexus+0123456789abcdef+resource-share-boundary@example.invalid",
     ]
@@ -1911,6 +1914,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
         "--workers=1",
         "--retries=0",
         "./e2e/journeys/auth-session.journey.spec.ts",
+        "./e2e/journeys/durable-ingest-reader-open.journey.spec.ts",
         "./e2e/journeys/grounded-chat-citation.journey.spec.ts",
         "./e2e/journeys/nexus-search-open-restore.journey.spec.ts",
         "./e2e/journeys/password-recovery.journey.spec.ts",
