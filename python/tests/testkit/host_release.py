@@ -401,6 +401,7 @@ class HostReleaseHarness:
                 "host_config": {
                     "MemoryReservation": _RESOURCE_LIMITS[service][0],
                     "Memory": _RESOURCE_LIMITS[service][1],
+                    "MemorySwap": _RESOURCE_LIMITS[service][1],
                     "PidsLimit": _RESOURCE_LIMITS[service][2],
                 },
                 "memory_usage": 16 * 1024 * 1024,
@@ -1053,6 +1054,7 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
             "host_config": {
                 "MemoryReservation": reservation,
                 "Memory": memory,
+                "MemorySwap": memory,
                 "PidsLimit": pids,
             },
             "id": "8" * 64,
@@ -1215,9 +1217,22 @@ def fake_docker_main() -> int:
         reservation = int(arguments[arguments.index("--memory-reservation") + 1])
         memory = int(arguments[arguments.index("--memory") + 1])
         pids = int(arguments[arguments.index("--pids-limit") + 1])
+        if "--memory-swap" not in arguments:
+            # Real dockerd refuses this: "Memory limit should be smaller than
+            # already set memoryswap limit, update the memoryswap at the same
+            # time". Accepting it here would let a controller that can never
+            # converge a real host pass every proof.
+            sys.stderr.write(
+                f"Error response from daemon: Cannot update container {container_id}: "
+                "Memory limit should be smaller than already set memoryswap limit, "
+                "update the memoryswap at the same time\n"
+            )
+            return 1
+        memory_swap = int(arguments[arguments.index("--memory-swap") + 1])
         container["host_config"] = {
             "MemoryReservation": reservation,
             "Memory": memory,
+            "MemorySwap": memory_swap,
             "PidsLimit": pids,
         }
         service = next(name for name, item in state["containers"].items() if item is container)

@@ -11,6 +11,7 @@ services:
     restart: unless-stopped
     mem_reservation: 256m
     mem_limit: 512m
+    memswap_limit: 512m
     pids_limit: 256
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set}
@@ -31,6 +32,7 @@ services:
     restart: unless-stopped
     mem_reservation: 32m
     mem_limit: 48m
+    memswap_limit: 48m
     pids_limit: 128
     environment:
       CADDY_SITE: ${CADDY_SITE:?set}
@@ -53,6 +55,7 @@ services:
     restart: unless-stopped
     mem_reservation: 192m
     mem_limit: 320m
+    memswap_limit: 320m
     pids_limit: 256
     env_file:
       - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
@@ -78,6 +81,7 @@ services:
     restart: unless-stopped
     mem_reservation: 128m
     mem_limit: 224m
+    memswap_limit: 224m
     pids_limit: 256
     env_file:
       - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
@@ -103,6 +107,7 @@ services:
     restart: unless-stopped
     mem_reservation: 128m
     mem_limit: 448m
+    memswap_limit: 448m
     pids_limit: 256
     env_file:
       - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
@@ -130,6 +135,7 @@ services:
     image: ${API_IMAGE:?set an immutable candidate digest}
     mem_reservation: 256m
     mem_limit: 512m
+    memswap_limit: 512m
     pids_limit: 256
     env_file:
       - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
