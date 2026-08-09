@@ -289,6 +289,9 @@ def test_production_compose_declares_the_exact_resource_envelope() -> None:
         block = compose[start:end]
         assert f"mem_reservation: {reservation}" in block
         assert f"mem_limit: {hard}" in block
+        # Equal values deny the container swap, so the hard limit bounds RAM+swap.
+        # Docker otherwise defaults memoryswap to twice the memory limit.
+        assert f"memswap_limit: {hard}" in block
         assert f"pids_limit: {pids}" in block
 
     background = compose[compose.index("  worker-background:\n") : compose.index("  migration:\n")]
@@ -329,6 +332,7 @@ def test_the_declared_envelope_fits_the_committed_host_with_its_reserve() -> Non
         block = compose[start : start + 400]
         assert f"mem_reservation: {reservation // (1024 * 1024)}m" in block
         assert f"mem_limit: {hard // (1024 * 1024)}m" in block
+        assert f"memswap_limit: {hard // (1024 * 1024)}m" in block
         assert f"pids_limit: {pids}" in block
 
 

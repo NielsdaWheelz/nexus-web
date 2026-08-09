@@ -233,6 +233,7 @@ class HostOracleReconcileHarness:
                 "host_config": {
                     "MemoryReservation": _RESOURCE_LIMITS[service][0],
                     "Memory": _RESOURCE_LIMITS[service][1],
+                    "MemorySwap": _RESOURCE_LIMITS[service][1],
                     "PidsLimit": _RESOURCE_LIMITS[service][2],
                 },
                 "id": character * 64,
@@ -697,6 +698,7 @@ def _handle_oracle_run(
         "host_config": {
             "MemoryReservation": _RESOURCE_LIMITS["worker-background"][0],
             "Memory": _RESOURCE_LIMITS["worker-background"][1],
+            "MemorySwap": _RESOURCE_LIMITS["worker-background"][1],
             "PidsLimit": _RESOURCE_LIMITS["worker-background"][2],
         },
         "id": hashlib.sha256(name.encode()).hexdigest(),

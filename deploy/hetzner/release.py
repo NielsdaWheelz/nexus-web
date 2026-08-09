@@ -2284,6 +2284,14 @@ class HostRelease:
             raise PermanentReleaseFailure(
                 f"{service} resource limits differ: observed={observed!r} expected={expected!r}"
             )
+        # Without this the hard limit bounds RAM only: Docker defaults memoryswap
+        # to twice the memory limit, so a service could take its whole limit again
+        # from host swap and the committed envelope would not hold.
+        if host_config.get("MemorySwap") != expected[1]:
+            raise PermanentReleaseFailure(
+                f"{service} memory-swap limit differs: "
+                f"observed={host_config.get('MemorySwap')!r} expected={expected[1]!r}"
+            )
 
     def _config_snapshot(self) -> ConfigSnapshot:
         if not self.paths.current_config.is_symlink():
@@ -2488,6 +2496,11 @@ class HostRelease:
                     "--memory-reservation",
                     str(reservation),
                     "--memory",
+                    str(memory),
+                    # The daemon refuses a memory update that leaves memoryswap
+                    # unset, and equal values deny the container swap entirely so
+                    # the hard limit bounds RAM+swap rather than RAM alone.
+                    "--memory-swap",
                     str(memory),
                     "--pids-limit",
                     str(pids),
