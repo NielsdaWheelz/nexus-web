@@ -68,7 +68,13 @@ Set only provider credentials:
 ```bash
 export GH_TOKEN=<github-token>
 export VERCEL_TOKEN=<vercel-token>
+export SUPABASE_MANAGEMENT_ACCESS_TOKEN=<supabase-management-token>
 ```
+
+`SUPABASE_MANAGEMENT_ACCESS_TOKEN` is required before any release mutation:
+`deploy/supabase/verify-auth-config.sh` proves hosted refresh rotation with it,
+and the release blocks without it. It is never read from synced runtime env
+files.
 
 Production coordinates are committed, not ambient: SSH
 `nexus@5.78.194.235`, web `nexus.nielseriknandal.com`, Vercel project

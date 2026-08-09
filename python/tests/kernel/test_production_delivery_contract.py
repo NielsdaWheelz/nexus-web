@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from typing import cast
 
 REPO_ROOT = Path(__file__).parents[3]
 
@@ -272,9 +273,9 @@ def test_production_compose_declares_the_exact_resource_envelope() -> None:
 
     expected = (
         ("postgres", "256m", "512m", 256),
-        ("caddy", "32m", "64m", 128),
+        ("caddy", "32m", "48m", 128),
         ("api", "192m", "320m", 256),
-        ("worker-interactive", "128m", "256m", 256),
+        ("worker-interactive", "128m", "224m", 256),
         ("worker-background", "128m", "448m", 256),
         ("migration", "256m", "512m", 256),
     )
@@ -292,6 +293,43 @@ def test_production_compose_declares_the_exact_resource_envelope() -> None:
 
     background = compose[compose.index("  worker-background:\n") : compose.index("  migration:\n")]
     assert "/var/lib/nexus/parser-tmp:/var/lib/nexus/parser-tmp" in background
+
+
+def test_the_declared_envelope_fits_the_committed_host_with_its_reserve() -> None:
+    """The long-lived services must fit the smallest committed host and still
+    leave the host reserve free.
+
+    Sizing the envelope against a host's nominal RAM rather than its real
+    MemTotal leaves the reserve short, which the release preflight can only
+    discover against production -- after CI has passed and the release SHA is
+    already on main.
+    """
+    controller = (REPO_ROOT / "deploy/hetzner/release.py").read_text(encoding="utf-8")
+    namespace: dict[str, object] = {}
+    for name in ("_SERVICES", "_RESOURCE_LIMITS", "_MIN_HOST_MEMORY_BYTES"):
+        start = controller.index(f"{name} = ")
+        exec(controller[start : controller.index("\n_", start + 1)], namespace)  # noqa: S102
+    reserved = 320 * 1024 * 1024
+    limits = cast(dict[str, tuple[int, int, int]], namespace["_RESOURCE_LIMITS"])
+    services = cast(tuple[str, ...], namespace["_SERVICES"])
+    host_floor = cast(int, namespace["_MIN_HOST_MEMORY_BYTES"])
+
+    hard_sum = sum(limits[service][1] for service in services)
+    assert host_floor - hard_sum >= reserved, (
+        f"declared envelope leaves {(host_floor - hard_sum) / 1048576:.2f} MiB "
+        f"on a {host_floor / 1048576:.0f} MiB host; the reserve floor is "
+        f"{reserved / 1048576:.0f} MiB"
+    )
+
+    compose = (REPO_ROOT / "deploy/hetzner/docker-compose.yml").read_text(encoding="utf-8")
+    for service, (reservation, hard, pids) in limits.items():
+        # Anchor to the line start: `      api:` under `depends_on` also contains
+        # `  api:`, so an unanchored search reads the wrong block.
+        start = compose.index(f"\n  {service}:\n")
+        block = compose[start : start + 400]
+        assert f"mem_reservation: {reservation // (1024 * 1024)}m" in block
+        assert f"mem_limit: {hard // (1024 * 1024)}m" in block
+        assert f"pids_limit: {pids}" in block
 
 
 def test_caddy_runtime_logs_redact_the_internal_trust_header() -> None:

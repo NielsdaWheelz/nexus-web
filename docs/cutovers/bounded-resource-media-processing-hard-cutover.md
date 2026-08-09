@@ -352,12 +352,20 @@ Use non-Swarm Compose `mem_limit`, `mem_reservation`, and `pids_limit`:
 | Service | Reservation | Hard memory | PIDs |
 | --- | ---: | ---: | ---: |
 | Postgres | 256 MiB | 512 MiB | 256 |
-| Caddy | 32 MiB | 64 MiB | 128 |
+| Caddy | 32 MiB | 48 MiB | 128 |
 | API | 192 MiB | 320 MiB | 256 |
-| interactive worker | 128 MiB | 256 MiB | 256 |
+| interactive worker | 128 MiB | 224 MiB | 256 |
 | background worker | 128 MiB | 448 MiB | 256 |
 
-Hard sum: `1,600 MiB`; host reserve: at least `320 MiB`; swap is excluded.
+Hard sum: `1,552 MiB`; host reserve: at least `320 MiB`; swap is excluded.
+
+The envelope is sized against real `MemTotal`, not the host's nominal RAM. A
+nominal 2 GiB instance reports `1,919.6 MiB`, so a `1,600 MiB` sum leaves
+`319.65 MiB` and misses the reserve floor by 364 KiB. Caddy and the interactive
+worker carry the reduction because measured steady-state use is `24.4 MiB` and
+`139.3 MiB`; the background worker keeps `448 MiB` because that is the measured
+bounded-parser envelope. The result reserves `367.6 MiB`, so the floor survives
+a kernel change that shifts reserved memory.
 Migration job: `512 MiB`, `256` PIDs after application writers stop.
 
 Before merge, isolated parser-process RSS probes validate representative bounded

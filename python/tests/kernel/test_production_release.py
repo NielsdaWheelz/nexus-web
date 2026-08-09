@@ -240,7 +240,7 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
         ),
         (
             "proc/meminfo",
-            "MemTotal: 1966079 kB\nMemAvailable: 262144 kB\nSwapTotal: 1048576 kB\n",
+            "MemTotal: 1916927 kB\nMemAvailable: 262144 kB\nSwapTotal: 1048576 kB\n",
             "host memory reserve",
         ),
         ("sys/fs/cgroup/cgroup.controllers", "cpu io pids\n", "cgroup v2 memory controller"),
