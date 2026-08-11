@@ -21,6 +21,7 @@ import {
   useMobileChromeSurface,
   useMobileChromeVisibleLocks,
 } from "@/lib/workspace/mobileChrome";
+import { mediaActivityAttentionLabel } from "@/lib/status/mediaActivity";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
 import styles from "./AppNav.module.css";
 
@@ -44,7 +45,7 @@ export default function MobilePaneBar({
   activityOpen,
   onOpenActivity,
 }: {
-  activityCount: number;
+  activityCount: number | null;
   activityOpen: boolean;
   onOpenActivity(): void;
 }) {
@@ -182,11 +183,11 @@ export default function MobilePaneBar({
           onClick={onOpenActivity}
           aria-haspopup="dialog"
           aria-pressed={activityOpen}
-          aria-label={`Activity, ${activityCount} open ${activityCount === 1 ? "item" : "items"}`}
+          aria-label={mediaActivityAttentionLabel(activityCount)}
         >
           <span className={styles.mobileActivityIcon}>
             <ListTodo size={19} aria-hidden="true" />
-            {activityCount > 0 ? (
+            {activityCount !== null && activityCount > 0 ? (
               <span className={styles.mobileActivityBadge} aria-hidden="true">
                 {activityCount > 99 ? "99+" : activityCount}
               </span>

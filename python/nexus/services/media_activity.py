@@ -13,8 +13,10 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas.media import MediaOut
 from nexus.schemas.media_activity import (
+    MediaActivityActiveStateOut,
     MediaActivityCapabilitiesOut,
     MediaActivityItemOut,
+    MediaActivityNeedsAttentionStateOut,
     MediaActivityOut,
 )
 from nexus.schemas.presence import Absent, Present, absent, present
@@ -22,12 +24,17 @@ from nexus.services.media import list_media_for_viewer_by_ids
 
 WORKER_INTERRUPTED_CODE = "E_WORKER_INTERRUPTED"
 
-ActivityStatus = Literal["Queued", "Processing", "Ready", "NeedsAttention"]
 ActivityStage = Literal["Validate", "Extract", "Finalize", "Index"]
 WaitingReason = Literal["Queue", "Capacity", "RetryBackoff"]
 
 
 def _activity_rows(db: Session, *, viewer_id: UUID, limit: int) -> list[RowMapping]:
+    """Return one classified, viewer-visible row per media item.
+
+    Classification, totals, ordering, and the page limit deliberately share the
+    same CTE. This prevents completed work from consuming the page that should
+    contain current attention or active work.
+    """
     return list(
         db.execute(
             text(
@@ -73,13 +80,7 @@ def _activity_rows(db: Session, *, viewer_id: UUID, limit: int) -> list[RowMappi
                             THEN capacity.job_id
                             ELSE NULL
                         END AS capacity_job_id,
-                        now() AS database_now,
-                        count(*) FILTER (
-                            WHERE msa.status NOT IN ('succeeded', 'superseded')
-                               OR source_job.status = 'dead'
-                               OR cis.status IN ('pending', 'indexing', 'failed')
-                               OR index_job.status IN ('pending', 'failed', 'running', 'dead')
-                        ) OVER () AS nonterminal_count
+                        now() AS database_now
                     FROM media m
                     JOIN visible_media vm ON vm.media_id = m.id
                     JOIN LATERAL (
@@ -97,7 +98,6 @@ def _activity_rows(db: Session, *, viewer_id: UUID, limit: int) -> list[RowMappi
                         SELECT exact.*, count(*) OVER () AS exact_count
                         FROM background_jobs exact
                         WHERE exact.kind = 'media_content_reindex_job'
-                          AND exact.status <> 'succeeded'
                           AND exact.payload @> jsonb_build_object(
                               'media_id', m.id::text,
                               'revision', cis.revision
@@ -109,15 +109,86 @@ def _activity_rows(db: Session, *, viewer_id: UUID, limit: int) -> list[RowMappi
                       ON capacity.resource_class = 'Heavy'
                     LEFT JOIN background_jobs capacity_holder
                       ON capacity_holder.id = capacity.job_id
-                    WHERE NOT (
-                        msa.status = 'accepted'
-                        AND msa.job_id IS NULL
-                    )
+                ), classified AS (
+                    SELECT
+                        activity.*,
+                        CASE
+                            -- Source state owns the projection until publication.
+                            WHEN source_attempt_status NOT IN ('succeeded', 'superseded')
+                             AND source_job_status = 'dead'
+                                THEN 'NeedsAttention'
+                            WHEN source_attempt_status = 'failed'
+                             AND (
+                                source_job_status IS NULL
+                                OR source_job_status NOT IN ('pending', 'failed', 'running')
+                             )
+                                THEN 'NeedsAttention'
+                            WHEN source_attempt_status NOT IN ('succeeded', 'superseded')
+                                THEN 'Active'
+                            -- A dead source job after publication is an operator
+                            -- anomaly; it must not re-alert the user.
+                            WHEN source_attempt_status IN ('succeeded', 'superseded')
+                             AND index_status = 'failed'
+                             AND NOT (
+                                COALESCE(exact_index_job_count, 0) = 1
+                                AND index_job_status = 'dead'
+                             )
+                                THEN 'InvariantDefect'
+                            WHEN source_attempt_status IN ('succeeded', 'superseded')
+                             AND index_job_status = 'dead'
+                                THEN 'NeedsAttention'
+                            WHEN source_attempt_status IN ('succeeded', 'superseded')
+                             AND (
+                                index_status IN ('pending', 'indexing', 'failed')
+                                OR index_job_status IN ('pending', 'failed', 'running')
+                             )
+                                THEN 'Active'
+                            ELSE 'Complete'
+                        END AS classification,
+                        CASE
+                            WHEN source_attempt_status NOT IN ('succeeded', 'superseded')
+                                THEN GREATEST(
+                                    source_updated_at,
+                                    COALESCE(source_job_updated_at, source_updated_at)
+                                )
+                            ELSE GREATEST(
+                                COALESCE(index_updated_at, source_updated_at),
+                                COALESCE(index_job_updated_at, source_updated_at)
+                            )
+                        END AS lifecycle_updated_at
+                    FROM activity
+                ), totals AS (
+                    SELECT
+                        count(*) FILTER (WHERE classification = 'NeedsAttention')::integer
+                            AS needs_attention_count,
+                        count(*) FILTER (WHERE classification = 'Active')::integer
+                            AS active_count,
+                        count(*) FILTER (WHERE classification = 'InvariantDefect')::integer
+                            AS invariant_defect_count
+                    FROM classified
+                ), ordered AS (
+                    SELECT classified.*, totals.*,
+                        (totals.needs_attention_count + totals.active_count > :limit)
+                            AS has_more
+                    FROM classified
+                    CROSS JOIN totals
+                    WHERE classification <> 'Complete'
+                    ORDER BY
+                        CASE
+                            WHEN classification = 'InvariantDefect' THEN 0
+                            WHEN classification = 'NeedsAttention' THEN 1
+                            ELSE 2
+                        END,
+                        CASE
+                            WHEN classification = 'NeedsAttention' THEN lifecycle_updated_at
+                        END ASC NULLS LAST,
+                        CASE
+                            WHEN classification = 'Active' THEN lifecycle_updated_at
+                        END DESC NULLS LAST,
+                        source_attempt_id DESC
+                    LIMIT :limit
                 )
-                SELECT *
-                FROM activity
-                ORDER BY created_at DESC, source_attempt_id DESC
-                LIMIT :limit
+                SELECT * FROM ordered
                 """
             ),
             {"viewer_id": viewer_id, "limit": limit},
@@ -128,12 +199,7 @@ def _activity_rows(db: Session, *, viewer_id: UUID, limit: int) -> list[RowMappi
 
 
 def _source_stage(row: RowMapping, media: MediaOut) -> ActivityStage:
-    """Where the source run stands, independent of in-flight progress.
-
-    `source_progress` is Present only while a run is in flight, so a terminal
-    attempt reports its persisted stage from the attempt row rather than
-    collapsing back to `Validate`.
-    """
+    """Return the current or persisted source stage without inventing one."""
     if isinstance(media.source_progress, Present):
         return cast(ActivityStage, media.source_progress.value.stage)
     persisted = row["source_attempt_stage"]
@@ -172,59 +238,93 @@ def _latest_updated_at(row: RowMapping, media: MediaOut) -> datetime:
     )
 
 
+def _status_code(
+    row: RowMapping,
+    *,
+    job_prefix: Literal["source_job", "index_job"],
+) -> Absent | Present[str]:
+    status = row[f"{job_prefix}_status"]
+    error_code = row[f"{job_prefix}_error_code"]
+    if error_code is None:
+        return absent()
+    if status in {"failed", "dead"}:
+        return present(str(error_code))
+    if status == "running" and error_code == WORKER_INTERRUPTED_CODE:
+        return present(str(error_code))
+    return absent()
+
+
+def _queue_fields(
+    row: RowMapping,
+    *,
+    job_prefix: Literal["source_job", "index_job"],
+) -> tuple[int, int]:
+    return (
+        int(row[f"{job_prefix}_attempts"] or 0),
+        int(row[f"{job_prefix}_max_attempts"] or 0),
+    )
+
+
 def _activity_item(row: RowMapping, media: MediaOut) -> MediaActivityItemOut:
     if row["source_job_id"] is not None and (
         row["source_job_kind"] != "ingest_media_source" or not row["source_job_exact"]
     ):
-        # justify-defect: one source attempt owns one exact ingest operation.
         raise AssertionError("source attempt points at a foreign queue operation")
     if int(row["exact_index_job_count"] or 0) > 1:
-        # justify-defect: one current content revision owns at most one live/dead operation.
         raise AssertionError("multiple exact content-index jobs match one current revision")
+    if row["classification"] == "InvariantDefect":
+        raise AssertionError("failed content index state has no exact current repair operation")
+    if row["classification"] == "Complete":
+        raise AssertionError("complete Activity row crossed the classified query boundary")
 
-    source_dead = row["source_job_status"] == "dead"
+    source_published = row["source_attempt_status"] in {"succeeded", "superseded"}
     index_dead = row["index_job_status"] == "dead"
-    source_finished = row["source_attempt_status"] in {"succeeded", "superseded"}
-    index_active = row["index_status"] in {"pending", "indexing", "failed"} or row[
-        "index_job_status"
-    ] in {"pending", "failed", "running"}
-
-    if source_dead or index_dead or row["source_attempt_status"] == "failed":
-        status: ActivityStatus = "NeedsAttention"
-        stage: ActivityStage | None = "Index" if index_dead else _source_stage(row, media)
-        waiting = absent()
-        queue_prefix = "index_job" if index_dead else "source_job"
-    elif not source_finished:
-        status = "Processing" if row["source_job_status"] == "running" else "Queued"
-        stage = _source_stage(row, media)
-        waiting = _waiting_reason(row, job_prefix="source_job")
-        queue_prefix = "source_job"
-    elif index_active:
-        status = "Ready"
-        stage = "Index"
-        waiting = _waiting_reason(row, job_prefix="index_job")
-        queue_prefix = "index_job"
-    else:
-        status = "Ready"
-        stage = None
-        waiting = absent()
-        queue_prefix = "index_job"
-
-    queue_attempts = row[f"{queue_prefix}_attempts"]
-    queue_max_attempts = row[f"{queue_prefix}_max_attempts"]
-    queue_status = row[f"{queue_prefix}_status"]
-    queue_error_code = row[f"{queue_prefix}_error_code"]
-    # A reclaimed attempt runs again carrying E_WORKER_INTERRUPTED, so the code is
-    # surfaced while running as well. That is the exact queue evidence the
-    # interruption rule requires; nothing here ever infers OOM.
-    failure_code = (
-        queue_error_code
-        if queue_status in {"failed", "dead"}
-        or (queue_status == "running" and queue_error_code == WORKER_INTERRUPTED_CODE)
-        else (
-            row["source_attempt_error_code"] if row["source_attempt_status"] == "failed" else None
+    source_dead = row["source_job_status"] == "dead"
+    attention = row["classification"] == "NeedsAttention"
+    if attention:
+        if index_dead and source_published:
+            scope: Literal["Source", "Search"] = "Search"
+            stage: ActivityStage = "Index"
+            failure_code = row["index_job_error_code"]
+        else:
+            if source_published or not (source_dead or row["source_attempt_status"] == "failed"):
+                raise AssertionError("classified source attention has no terminal source evidence")
+            scope = "Source"
+            stage = _source_stage(row, media)
+            failure_code = row["source_job_error_code"] or row["source_attempt_error_code"]
+        queue_prefix: Literal["source_job", "index_job"] = (
+            "index_job" if scope == "Search" else "source_job"
         )
-    )
+        queue_attempts, queue_max_attempts = _queue_fields(row, job_prefix=queue_prefix)
+        state = MediaActivityNeedsAttentionStateOut(
+            scope=scope,
+            stage=stage,
+            failure_code=(absent() if failure_code is None else present(str(failure_code))),
+        )
+    else:
+        queue_prefix = "index_job" if source_published else "source_job"
+        queue_attempts, queue_max_attempts = _queue_fields(row, job_prefix=queue_prefix)
+        status: Literal["Queued", "Processing"] = (
+            "Processing" if row[f"{queue_prefix}_status"] == "running" else "Queued"
+        )
+        stage = (
+            "Index"
+            if source_published
+            else (
+                "Validate"
+                if row["source_job_id"] is None
+                and row["source_attempt_status"] in {"accepted", "queued"}
+                else _source_stage(row, media)
+            )
+        )
+        state = MediaActivityActiveStateOut(
+            status=status,
+            stage=stage,
+            waiting_reason=_waiting_reason(row, job_prefix=queue_prefix),
+            progress=absent() if source_published else media.source_progress,
+            status_code=_status_code(row, job_prefix=queue_prefix),
+        )
+
     return MediaActivityItemOut(
         media_id=media.id,
         title=media.title,
@@ -233,15 +333,11 @@ def _activity_item(row: RowMapping, media: MediaOut) -> MediaActivityItemOut:
             media.kind,
         ),
         source_attempt_id=row["source_attempt_id"],
-        status=status,
-        stage=absent() if stage is None else present(stage),
-        waiting_reason=waiting,
-        progress=media.source_progress,
-        failure_code=absent() if failure_code is None else present(str(failure_code)),
+        state=state,
         request_id=absent() if row["request_id"] is None else present(str(row["request_id"])),
         run_count=int(row["run_count"]),
-        queue_attempts=int(queue_attempts or 0),
-        queue_max_attempts=int(queue_max_attempts or 0),
+        queue_attempts=queue_attempts,
+        queue_max_attempts=queue_max_attempts,
         created_at=row["created_at"],
         updated_at=_latest_updated_at(row, media),
         capabilities=MediaActivityCapabilitiesOut(
@@ -262,7 +358,14 @@ def read_media_activity(
 ) -> MediaActivityOut:
     rows = _activity_rows(db, viewer_id=viewer_id, limit=limit)
     if not rows:
-        return MediaActivityOut(nonterminal_count=0, items=[])
+        return MediaActivityOut(
+            needs_attention_count=0,
+            active_count=0,
+            has_more=False,
+            items=[],
+        )
+    if int(rows[0]["invariant_defect_count"] or 0) > 0:
+        raise AssertionError("Activity snapshot contains an invariant defect")
     media = {
         item.id: item
         for item in list_media_for_viewer_by_ids(
@@ -275,7 +378,12 @@ def read_media_activity(
     expected_media_ids = [UUID(str(row["media_id"])) for row in rows]
     missing_media_ids = [media_id for media_id in expected_media_ids if media_id not in media]
     if missing_media_ids:
-        # justify-defect: Activity and media hydration share the same viewer predicate.
         raise AssertionError("Activity media hydration lost viewer-visible rows")
     items = [_activity_item(row, media[UUID(str(row["media_id"]))]) for row in rows]
-    return MediaActivityOut(nonterminal_count=int(rows[0]["nonterminal_count"]), items=items)
+    first = rows[0]
+    return MediaActivityOut(
+        needs_attention_count=int(first["needs_attention_count"]),
+        active_count=int(first["active_count"]),
+        has_more=bool(first["has_more"]),
+        items=items,
+    )

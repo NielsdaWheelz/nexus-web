@@ -13,10 +13,6 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { formatDisplayDate } from "@/lib/display/format";
-import {
-  libraryPlacementUnknownSince,
-  useLibraryPlacementRevision,
-} from "@/lib/libraries/placementRevision";
 import type {
   MediaActivityItem,
   MediaActivityStage,
@@ -27,8 +23,8 @@ import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import {
+  mediaActivityAttentionCopy,
   mediaActivityKindLabel,
-  mediaActivityProgressCopy,
   mediaActivityRepairErrorMessage,
   mediaActivityStatusCopy,
 } from "@/lib/status/mediaActivity";
@@ -39,7 +35,24 @@ type PipelineStep = (typeof PIPELINE_STEPS)[number];
 type PipelineStepState = "Complete" | "Current" | "Upcoming" | "Attention";
 
 function activityStatusLabel(item: MediaActivityItem): string {
-  return item.status === "NeedsAttention" ? "Needs attention" : item.status;
+  return item.state.kind === "NeedsAttention"
+    ? "Needs attention"
+    : item.state.status;
+}
+
+function activitySummary(
+  needsAttentionCount: number,
+  activeCount: number,
+): string {
+  if (needsAttentionCount === 0) {
+    return activeCount === 0
+      ? "No imports need attention."
+      : `${activeCount} in progress`;
+  }
+  const attention = mediaActivityAttentionCopy(needsAttentionCount);
+  return activeCount === 0
+    ? attention
+    : `${attention} · ${activeCount} in progress`;
 }
 
 function activePipelineStep(stage: MediaActivityStage): PipelineStep {
@@ -59,18 +72,12 @@ function pipelineStepState(
   step: PipelineStep,
 ): PipelineStepState {
   if (step === "Upload") return "Complete";
-  if (item.status === "Ready" && item.stage.kind === "Absent") {
-    return "Complete";
-  }
-  const active =
-    item.stage.kind === "Present"
-      ? activePipelineStep(item.stage.value)
-      : "Validate";
+  const active = activePipelineStep(item.state.stage);
   const stepIndex = PIPELINE_STEPS.indexOf(step);
   const activeIndex = PIPELINE_STEPS.indexOf(active);
   if (stepIndex < activeIndex) return "Complete";
   if (stepIndex > activeIndex) return "Upcoming";
-  return item.status === "NeedsAttention" ? "Attention" : "Current";
+  return item.state.kind === "NeedsAttention" ? "Attention" : "Current";
 }
 
 function Pipeline({ item }: { item: MediaActivityItem }) {
@@ -102,13 +109,17 @@ function ActivityDetails({
   item: MediaActivityItem;
   updatedAt: string;
 }) {
+  const code =
+    item.state.kind === "NeedsAttention"
+      ? item.state.failureCode
+      : item.state.statusCode;
   return (
     <details className={styles.details}>
       <summary>Details</summary>
       <dl>
         <div>
           <dt>Stage</dt>
-          <dd>{item.stage.kind === "Present" ? item.stage.value : "Complete"}</dd>
+          <dd>{item.state.stage}</dd>
         </div>
         <div>
           <dt>Run</dt>
@@ -120,11 +131,11 @@ function ActivityDetails({
             {item.queueAttempts} of {item.queueMaxAttempts}
           </dd>
         </div>
-        {item.failureCode.kind === "Present" ? (
+        {code.kind === "Present" ? (
           <div>
             <dt>Code</dt>
             <dd>
-              <code>{item.failureCode.value}</code>
+              <code>{code.value}</code>
             </dd>
           </div>
         ) : null}
@@ -167,17 +178,13 @@ function ActivityRow({
   updatedAt: string;
 }) {
   const statusCopy = mediaActivityStatusCopy(item);
-  const countedDetail =
-    item.status === "NeedsAttention" && item.progress.kind === "Present"
-      ? mediaActivityProgressCopy(item.progress.value)
-      : null;
   const actionSubject = useMemo<ResourceActionSubject>(
     () => ({ ref: canonicalResourceRef({ scheme: "media", id: item.mediaId }) }),
     [item.mediaId],
   );
   return (
     <li>
-      <article className={styles.card} data-status={item.status}>
+      <article className={styles.card} data-kind={item.state.kind}>
         <header className={styles.cardHeader}>
           <div>
             <p className={styles.kind}>{mediaActivityKindLabel(item.mediaKind)}</p>
@@ -186,9 +193,8 @@ function ActivityRow({
           <span className={styles.status}>{activityStatusLabel(item)}</span>
         </header>
         <Pipeline item={item} />
-        <div className={styles.facts} aria-live="polite">
+        <div className={styles.facts}>
           <strong>{statusCopy}</strong>
-          {countedDetail === null ? null : <span>{countedDetail}</span>}
         </div>
         <div className={styles.actions}>
           {item.capabilities.canOpen ? (
@@ -272,6 +278,8 @@ export default function MediaActivityPage({
     ReturnType<typeof mediaActivityRepairErrorMessage> | null
   >(null);
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
+  const announcedAttentionCountRef = useRef<number | null>(null);
+  const [attentionAnnouncement, setAttentionAnnouncement] = useState("");
   // Tracks only the user's own Refresh press. The provider's `refreshing` flag
   // also flips on every background poll, which would disable and relabel a
   // focused button every five seconds and blur it out from under a keyboard user.
@@ -283,21 +291,24 @@ export default function MediaActivityPage({
     return endActivityOpening;
   }, [visible, beginActivityOpening, endActivityOpening]);
 
-  // Removing a row's media through the canonical dropdown publishes an
-  // Unknown-scoped placement change; that is the only completion signal the
-  // resource-action runtime gives a surface it does not own. Re-read the
-  // composed snapshot on it so the removed row and the open-items badge drop
-  // immediately instead of waiting for the next poll -- or forever, once the
-  // per-opening polling window has expired.
-  const placementChange = useLibraryPlacementRevision();
-  const observedPlacementRevisionRef = useRef(placementChange.revision);
   useEffect(() => {
-    const observed = observedPlacementRevisionRef.current;
-    if (placementChange.revision === observed) return;
-    observedPlacementRevisionRef.current = placementChange.revision;
-    if (!libraryPlacementUnknownSince(observed)) return;
-    void refreshActivity();
-  }, [placementChange.revision, refreshActivity]);
+    if (snapshot === null) return;
+    const previousCount = announcedAttentionCountRef.current;
+    announcedAttentionCountRef.current = snapshot.needsAttentionCount;
+    // A live region is for new information, not a summary of work that was
+    // already present when Activity opened. While hidden, retain the latest
+    // known count so reopening is quiet for the same reason.
+    if (
+      previousCount === null ||
+      previousCount === snapshot.needsAttentionCount ||
+      !visible
+    ) {
+      return;
+    }
+    setAttentionAnnouncement(
+      `${mediaActivityAttentionCopy(snapshot.needsAttentionCount)}.`,
+    );
+  }, [snapshot, visible]);
 
   const repair = async (mediaId: string, scope: MediaRepairScope) => {
     setRepairing({ mediaId, scope });
@@ -318,6 +329,15 @@ export default function MediaActivityPage({
 
   if (defect !== null) throw defect.error;
 
+  const summary =
+    snapshot === null
+      ? "Loading Activity…"
+      : activitySummary(snapshot.needsAttentionCount, snapshot.activeCount);
+  const totalCount =
+    snapshot === null
+      ? 0
+      : snapshot.needsAttentionCount + snapshot.activeCount;
+
   return (
     <section className={styles.page}>
       <header className={styles.header}>
@@ -328,11 +348,7 @@ export default function MediaActivityPage({
           <h2 tabIndex={-1} data-switchboard-heading>
             Activity
           </h2>
-          <p>
-            {snapshot === null
-              ? "Recent media work"
-              : `${snapshot.nonterminalCount} open ${snapshot.nonterminalCount === 1 ? "item" : "items"}`}
-          </p>
+          <p>{summary}</p>
         </div>
         <button
           type="button"
@@ -350,7 +366,7 @@ export default function MediaActivityPage({
       </header>
 
       {automaticRefreshEnded ? (
-        <p className={styles.pollingEnded} role="status">
+        <p className={styles.pollingEnded}>
           <strong>Automatic updates ended.</strong> Refresh to check again.
         </p>
       ) : null}
@@ -365,36 +381,46 @@ export default function MediaActivityPage({
           actions={[{ label: "Refresh", onClick: () => void refreshActivity() }]}
         />
       ) : null}
+      <p className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">
+        {attentionAnnouncement}
+      </p>
 
       {snapshot === null && loadState.kind === "Loading" ? (
-        <p className={styles.empty} role="status">
+        <p className={styles.empty}>
           Loading Activity…
         </p>
       ) : snapshot === null ? null : snapshot.items.length === 0 ? (
         <div className={styles.empty}>
-          <strong>No recent media work</strong>
-          <p>New imports and indexing work will appear here.</p>
+          <strong>No imports need attention.</strong>
+          <p>New import failures will appear here.</p>
         </div>
       ) : (
-        <ul className={styles.list}>
-          {snapshot.items.map((item) => (
-            <ActivityRow
-              key={item.mediaId}
-              item={item}
-              repairing={
-                repairing?.mediaId === item.mediaId ? repairing.scope : null
-              }
-              onOpen={() => onOpenMedia(item.mediaId)}
-              onRepair={(scope) => void repair(item.mediaId, scope)}
-              updatedAt={
-                formatDisplayDate(item.updatedAt, display, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                }) ?? item.updatedAt
-              }
-            />
-          ))}
-        </ul>
+        <>
+          {snapshot.hasMore ? (
+            <p className={styles.truncation}>
+              Showing {snapshot.items.length} of {totalCount} imports.
+            </p>
+          ) : null}
+          <ul className={styles.list}>
+            {snapshot.items.map((item) => (
+              <ActivityRow
+                key={item.mediaId}
+                item={item}
+                repairing={
+                  repairing?.mediaId === item.mediaId ? repairing.scope : null
+                }
+                onOpen={() => onOpenMedia(item.mediaId)}
+                onRepair={(scope) => void repair(item.mediaId, scope)}
+                updatedAt={
+                  formatDisplayDate(item.updatedAt, display, {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  }) ?? item.updatedAt
+                }
+              />
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );

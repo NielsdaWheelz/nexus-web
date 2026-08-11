@@ -28,6 +28,18 @@ export function mediaActivityKindLabel(kind: LibraryMediaKind): string {
   }
 }
 
+export function mediaActivityAttentionCopy(count: number): string {
+  return count === 1
+    ? "1 import needs attention"
+    : `${count} imports need attention`;
+}
+
+export function mediaActivityAttentionLabel(count: number | null): string {
+  return count === null || count === 0
+    ? "Activity"
+    : `Activity, ${mediaActivityAttentionCopy(count)}`;
+}
+
 export function mediaActivityProgressCopy(progress: SourceProgress): string {
   switch (progress.kind) {
     case "Stage":
@@ -56,75 +68,58 @@ export function mediaActivityProgressCopy(progress: SourceProgress): string {
 }
 
 export function mediaActivityStatusCopy(item: MediaActivityItem): string {
-  switch (item.status) {
-    case "Queued":
-      if (item.waitingReason.kind === "Absent") return "Waiting in queue";
-      switch (item.waitingReason.value) {
-        case "Queue":
-          return "Waiting in queue";
-        case "Capacity":
-          return "Waiting for capacity";
-        case "RetryBackoff":
-          return "Waiting to retry";
+  switch (item.state.kind) {
+    case "Active": {
+      const { progress, stage, status, statusCode, waitingReason } = item.state;
+      switch (status) {
+        case "Queued":
+          if (waitingReason.kind === "Absent") return "Waiting in queue";
+          switch (waitingReason.value) {
+            case "Queue":
+              return "Waiting in queue";
+            case "Capacity":
+              return "Waiting for capacity";
+            case "RetryBackoff":
+              return "Waiting to retry";
+            default:
+              return assertNever(
+                waitingReason.value,
+                "Unreachable waiting reason",
+              );
+          }
+        case "Processing":
+          // A reclaimed attempt is running again but is recovering, not
+          // progressing. The exact queue status code is the sole evidence.
+          if (
+            statusCode.kind === "Present" &&
+            statusCode.value === WORKER_INTERRUPTED_CODE
+          ) {
+            return "Worker interrupted; recovering";
+          }
+          if (stage === "Index") return "Indexing for search";
+          if (progress.kind === "Present") {
+            return mediaActivityProgressCopy(progress.value);
+          }
+          switch (stage) {
+            case "Validate":
+              return "Validating source";
+            case "Extract":
+              return "Extracting source";
+            case "Finalize":
+              return "Finalizing reader";
+            default:
+              return assertNever(stage, "Unreachable processing stage");
+          }
         default:
-          return assertNever(
-            item.waitingReason.value,
-            "Unreachable waiting reason",
-          );
+          return assertNever(status, "Unreachable active Activity status");
       }
-    case "Processing":
-      // A reclaimed attempt is running again but is recovering, not progressing.
-      // Say so from the exact queue evidence rather than showing the stale or
-      // reset stage, and never infer a cause the queue did not record.
-      if (
-        item.failureCode.kind === "Present" &&
-        item.failureCode.value === WORKER_INTERRUPTED_CODE
-      ) {
-        return "Worker interrupted; recovering";
-      }
-      if (item.stage.kind === "Present" && item.stage.value === "Index") {
-        return "Indexing for search";
-      }
-      if (item.progress.kind === "Present") {
-        return mediaActivityProgressCopy(item.progress.value);
-      }
-      if (item.stage.kind === "Absent") return "Starting work";
-      switch (item.stage.value) {
-        case "Validate":
-          return "Validating source";
-        case "Extract":
-          return "Extracting source";
-        case "Finalize":
-          return "Finalizing reader";
-        case "Index":
-          return "Indexing for search";
-        default:
-          return assertNever(item.stage.value, "Unreachable processing stage");
-      }
-    case "Ready":
-      if (item.stage.kind !== "Present" || item.stage.value !== "Index") {
-        return "Ready";
-      }
-      if (item.waitingReason.kind === "Absent") return "Ready to read; indexing";
-      switch (item.waitingReason.value) {
-        case "Queue":
-          return "Ready to read; waiting to index";
-        case "Capacity":
-          return "Ready to read; waiting for indexing capacity";
-        case "RetryBackoff":
-          return "Ready to read; waiting to retry indexing";
-        default:
-          return assertNever(
-            item.waitingReason.value,
-            "Unreachable waiting reason",
-          );
-      }
+    }
     case "NeedsAttention":
       return item.capabilities.canRepairSource || item.capabilities.canRepairSearch
         ? "Needs repair"
         : "Processing failed";
     default:
-      return assertNever(item.status, "Unreachable Activity status");
+      return assertNever(item.state, "Unreachable Activity state");
   }
 }
 

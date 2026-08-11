@@ -3,13 +3,16 @@ export interface MediaActivityPollingSchedule {
   readonly expiresAtMs: number;
 }
 
-/** The one schedule shape for one visible Activity opening. */
+const MEDIA_ACTIVITY_POLL_INTERVAL_MS = 5_000;
+const MEDIA_ACTIVITY_POLL_WINDOW_MS = 15 * 60_000;
+
+/** The one bounded schedule shape for a known-active Activity window. */
 export function mediaActivityPollingSchedule(
-  openedAtMs: number,
+  startedAtMs: number,
 ): MediaActivityPollingSchedule {
   return {
-    pollIntervalMs: 5_000,
-    expiresAtMs: openedAtMs + 15 * 60_000,
+    pollIntervalMs: MEDIA_ACTIVITY_POLL_INTERVAL_MS,
+    expiresAtMs: startedAtMs + MEDIA_ACTIVITY_POLL_WINDOW_MS,
   };
 }
 

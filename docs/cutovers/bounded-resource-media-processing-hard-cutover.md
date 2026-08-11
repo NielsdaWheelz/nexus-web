@@ -290,31 +290,13 @@ Retry. Read and search capabilities retain independent owners.
 
 ### `GET /media/activity?limit=20`
 
-Authenticated, viewer-filtered, newest intent first; `limit` is `1..20`, default
-`20`; no pagination. Register the static Activity router before
-`/media/{media_id}`. Response includes `nonterminal_count` and composed items:
-
-```text
-media_id, title, media_kind, source_attempt_id
-status: Queued | Processing | Ready | NeedsAttention
-stage: Presence<Validate | Extract | Finalize | Index>
-waiting_reason: Presence<Queue | Capacity | RetryBackoff>
-progress: Presence<SourceProgress>
-failure_code: Presence<string>, request_id: Presence<string>
-run_count, queue_attempts, queue_max_attempts
-created_at, updated_at
-capabilities: can_open, can_repair_source, can_repair_search, can_remove
-```
-
-Rules:
-
-- due Heavy + occupied lease => `Queued/Capacity`;
-- future `available_at` => `Queued/RetryBackoff`;
-- other waiting => `Queued/Queue`;
-- exact running => `Processing`;
-- readable with index work => `Ready/Index`;
-- exact current dead source/index job => `NeedsAttention`;
-- raw queue/host errors never cross the API.
+The current contract is owned by
+[`media-activity-attention-hard-cutover.md`](media-activity-attention-hard-cutover.md).
+It hard-replaces the original response and presentation above while retaining
+this document's source, job, progress, repair, and capability owners. Activity
+now returns a strict nested `Active | NeedsAttention` union, exact
+`needs_attention_count` and `active_count`, and `has_more`; complete work is
+absent before ordering and limiting.
 
 ### `POST /media/{media_id}/repair`
 
@@ -328,11 +310,12 @@ work returns `E_REPAIR_NOT_ALLOWED`. Internal routes reuse the same service.
 
 Activity is a Nexus switchboard workflow, not a pane or new router destination.
 
-- App navigation exposes Activity with a nonterminal badge.
-- Rows show `Upload -> Validate -> Extract -> Index`.
-- Copy is factual: `Waiting for capacity`, `Extracting page 84 of 712`,
-  `Waiting to retry`, `Worker interrupted; recovering`, `Ready to read; indexing`,
-  `Needs repair`.
+- App navigation badges only current actionable failures. Active work is quiet
+  and never badges; complete work is absent.
+- Rows retain the factual current stage, including `Finalize`, without
+  inventing percentage or ETA.
+- Copy remains factual: `Waiting for capacity`, `Extracting page 84 of 712`,
+  `Waiting to retry`, `Worker interrupted; recovering`, and `Needs repair`.
 - A reclaimed attempt says worker interruption, never inferred OOM, satisfying
   the interruption rule in Rules and goals. Interruption is read from the exact
   queue evidence (`E_WORKER_INTERRUPTED`), never from a heuristic.
@@ -340,10 +323,9 @@ Activity is a Nexus switchboard workflow, not a pane or new router destination.
 - Show counted units, never percentage or ETA.
 - Details expose safe stage/code, attempts, timestamps, and request ID; never
   raw queue errors, payloads, stack traces, or host paths.
-- Poll every 5 seconds only while Activity is open, single-flight, for at most
-  15 minutes per opening; then offer Refresh. This is the sole
-  `justify-polling`. Badge refreshes on mount, accepted ingest, repair, and panel
-  refresh. No global SSE plane is added.
+- Poll every 5 seconds only while the last good snapshot has active work, using
+  the bounded single-flight lifecycle and invalidation rules in the Activity
+  attention cutover. No global SSE plane is added.
 
 ## Production resource contract
 

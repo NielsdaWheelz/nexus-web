@@ -127,7 +127,7 @@ export default function AppNav() {
     () => requestNexusOpen({ kind: "Activity" }),
     [],
   );
-  const activityCount = snapshot?.nonterminalCount ?? 0;
+  const activityCount = snapshot === null ? null : snapshot.needsAttentionCount;
   if (isMobile) {
     return (
       <MobilePaneBar

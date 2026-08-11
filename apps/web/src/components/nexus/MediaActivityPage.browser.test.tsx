@@ -39,30 +39,22 @@ const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
 function activityResponse() {
   return {
     data: {
-      nonterminal_count: 1,
+      needs_attention_count: 1,
+      active_count: 0,
+      has_more: false,
       items: [
         {
           media_id: MEDIA_ID,
           title: "A 712-page systems book",
           media_kind: "pdf",
           source_attempt_id: ATTEMPT_ID,
-          status: "NeedsAttention",
-          stage: { kind: "Present", value: "Extract" },
-          waiting_reason: { kind: "Absent" },
-          failure_code: { kind: "Present", value: "E_SOURCE_TOO_LARGE" },
-          request_id: { kind: "Present", value: "req_activity_123" },
-          progress: {
-            kind: "Present",
-            value: {
-              kind: "Counted",
-              stage: "Extract",
-              completed: 84,
-              total: 712,
-              unit: "Page",
-              run_count: 2,
-              updated_at: "2026-08-07T12:00:00Z",
-            },
+          state: {
+            kind: "NeedsAttention",
+            scope: "Source",
+            stage: "Extract",
+            failure_code: { kind: "Present", value: "E_SOURCE_TOO_LARGE" },
           },
+          request_id: { kind: "Present", value: "req_activity_123" },
           run_count: 2,
           queue_attempts: 4,
           queue_max_attempts: 4,
@@ -76,6 +68,43 @@ function activityResponse() {
           },
         },
       ],
+    },
+  };
+}
+
+function activeActivityItem() {
+  return {
+    media_id: "44444444-4444-4444-8444-444444444444",
+    title: "A new web article",
+    media_kind: "web_article",
+    source_attempt_id: "55555555-5555-4555-8555-555555555555",
+    state: {
+      kind: "Active",
+      status: "Processing",
+      stage: "Extract",
+      waiting_reason: { kind: "Absent" },
+      progress: {
+        kind: "Present",
+        value: {
+          kind: "Stage",
+          stage: "Extract",
+          run_count: 1,
+          updated_at: "2026-08-07T12:01:00Z",
+        },
+      },
+      status_code: { kind: "Absent" },
+    },
+    request_id: { kind: "Absent" },
+    run_count: 1,
+    queue_attempts: 1,
+    queue_max_attempts: 4,
+    created_at: "2026-08-07T12:00:00Z",
+    updated_at: "2026-08-07T12:01:00Z",
+    capabilities: {
+      can_open: false,
+      can_repair_source: false,
+      can_repair_search: false,
+      can_remove: false,
     },
   };
 }
@@ -118,7 +147,7 @@ interface RecordedRequest {
  * benignly so the tree mounts.
  */
 function installBff(input: {
-  readonly activity: () => unknown;
+  readonly activity: () => unknown | Response;
   readonly capabilities?: readonly unknown[];
   readonly onDelete?: () => Response;
 }): RecordedRequest[] {
@@ -133,7 +162,8 @@ function installBff(input: {
       requests.push({ path: url.pathname, method, body });
 
       if (url.pathname === "/api/media/activity") {
-        return jsonResponse(input.activity());
+        const activity = input.activity();
+        return activity instanceof Response ? activity : jsonResponse(activity);
       }
       if (url.pathname === `/api/media/${MEDIA_ID}/repair`) {
         return jsonResponse(
@@ -226,29 +256,43 @@ describe("Nexus Activity workflow", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders factual progress and replays only the offered source repair", async () => {
-    const requests = installBff({ activity: activityResponse });
+  it("renders server-ordered attention before active work and replays only the offered source repair", async () => {
+    const base = activityResponse();
+    const requests = installBff({
+      activity: () => ({
+        data: {
+          ...base.data,
+          active_count: 1,
+          items: [...base.data.items, activeActivityItem()],
+        },
+      }),
+    });
 
-    const view = renderActivity();
+    renderActivity();
 
     expect(await screen.findByRole("heading", { name: "Activity" })).toBeVisible();
     expect(await screen.findByText("Needs repair")).toBeVisible();
-    expect(screen.getByText("Extracting page 84 of 712")).toBeVisible();
+    expect(screen.getByText("Extracting source")).toBeVisible();
     expect(screen.getByText("PDF")).toBeVisible();
-    await userEvent.click(screen.getByText("Details"));
-    expect(screen.getByText(/Aug 7, 2026/)).toBeVisible();
-    expect(screen.getByText("E_SOURCE_TOO_LARGE")).toBeVisible();
-    expect(screen.getByText("req_activity_123")).toBeVisible();
-    const pipeline = screen.getByRole("list", {
+    expect(screen.getByText(
+      "1 import needs attention · 1 in progress",
+    )).toBeVisible();
+    expect(
+      screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent),
+    ).toEqual(["A 712-page systems book", "A new web article"]);
+    const attentionCard = screen.getAllByRole("article")[0];
+    if (attentionCard === undefined) throw new Error("Activity card is missing");
+    await userEvent.click(within(attentionCard).getByText("Details"));
+    expect(within(attentionCard).getByText(/Aug 7, 2026/)).toBeVisible();
+    expect(within(attentionCard).getByText("E_SOURCE_TOO_LARGE")).toBeVisible();
+    expect(within(attentionCard).getByText("req_activity_123")).toBeVisible();
+    const pipeline = within(attentionCard).getByRole("list", {
       name: "Upload, validate, extract, index",
     });
     for (const step of ["Upload", "Validate", "Extract", "Index"]) {
       expect(within(pipeline).getByText(step)).toBeVisible();
     }
     expect(screen.queryByRole("button", { name: "Repair search" })).toBeNull();
-    expect(view.container.textContent).not.toMatch(
-      /%|\bETA\b|out of memory|\/host\//i,
-    );
     expect(
       requests.filter((request) => request.path === "/api/media/activity"),
       "mount and opening refreshes were not single-flight",
@@ -275,6 +319,45 @@ describe("Nexus Activity workflow", () => {
     );
   });
 
+  it("announces only a later attention-count change", async () => {
+    let needsAttentionCount = 1;
+    const base = activityResponse();
+    const requests = installBff({
+      activity: () => ({
+        data: {
+          ...base.data,
+          needs_attention_count: needsAttentionCount,
+          has_more: needsAttentionCount > base.data.items.length,
+        },
+      }),
+    });
+
+    renderActivity();
+
+    await screen.findByText("Needs repair");
+    const activityRequests = () =>
+      requests.filter((request) => request.path === "/api/media/activity");
+    await waitFor(() => expect(activityRequests()).toHaveLength(1));
+    expect(
+      screen.getAllByRole("status").map((status) => status.textContent),
+    ).not.toContain("1 import needs attention.");
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh activity" }));
+    await waitFor(() => expect(activityRequests()).toHaveLength(2));
+    expect(
+      screen.getAllByRole("status").map((status) => status.textContent),
+    ).toEqual(expect.not.arrayContaining(["1 import needs attention."]));
+
+    needsAttentionCount = 2;
+    await userEvent.click(screen.getByRole("button", { name: "Refresh activity" }));
+    await waitFor(() => expect(activityRequests()).toHaveLength(3));
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("status").map((status) => status.textContent),
+      ).toContain("2 imports need attention."),
+    );
+  });
+
   it("sends Search only for an exact search repair capability", async () => {
     const base = activityResponse();
     const item = base.data.items[0]!;
@@ -285,7 +368,12 @@ describe("Nexus Activity workflow", () => {
           items: [
             {
               ...item,
-              failure_code: { kind: "Absent" as const },
+              state: {
+                kind: "NeedsAttention",
+                scope: "Search",
+                stage: "Index",
+                failure_code: { kind: "Absent" as const },
+              },
               request_id: { kind: "Absent" as const },
               capabilities: {
                 ...item.capabilities,
@@ -315,6 +403,53 @@ describe("Nexus Activity workflow", () => {
     expect(screen.queryByText("Request ID")).toBeNull();
   });
 
+  it("states when the server-trimmed attention and active snapshot is truncated", async () => {
+    const base = activityResponse();
+    installBff({
+      activity: () => ({
+        data: {
+          ...base.data,
+          needs_attention_count: 1,
+          active_count: 22,
+          has_more: true,
+          items: [...base.data.items, activeActivityItem()],
+        },
+      }),
+    });
+
+    renderActivity();
+
+    expect(await screen.findByText("Showing 2 of 23 imports.")).toBeVisible();
+  });
+
+  it("announces refresh failures assertively", async () => {
+    installBff({
+      activity: () =>
+        jsonResponse(
+          {
+            error: {
+              code: "E_UPSTREAM",
+              message: "The import service is unavailable",
+            },
+          },
+          503,
+        ),
+    });
+
+    renderActivity();
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole("alert")
+          .some(
+            (alert) =>
+              within(alert).queryByText("Activity couldn’t be loaded") !== null,
+          ),
+      ).toBe(true),
+    );
+  });
+
   it("removes a terminally rejected source through the canonical resource dropdown", async () => {
     // The stuck row: the bounded parser rejected the source, so nothing is
     // repairable or openable. Removal is the only remaining verb, and it is
@@ -325,7 +460,14 @@ describe("Nexus Activity workflow", () => {
     const requests = installBff({
       activity: () =>
         removed
-          ? { data: { nonterminal_count: 0, items: [] } }
+          ? {
+              data: {
+                needs_attention_count: 0,
+                active_count: 0,
+                has_more: false,
+                items: [],
+              },
+            }
           : {
               data: {
                 ...base.data,
@@ -359,7 +501,7 @@ describe("Nexus Activity workflow", () => {
 
     renderActivity();
 
-    expect(await screen.findByText("1 open item")).toBeVisible();
+    expect(await screen.findByText("1 import needs attention")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Repair source" })).toBeNull();
     const trigger = await screen.findByRole("button", {
       name: "More actions for A 712-page systems book",
@@ -381,10 +523,11 @@ describe("Nexus Activity workflow", () => {
         ),
       ).toHaveLength(1),
     );
-    // The committed removal re-reads Activity, so the row and the open-items
-    // badge drop without waiting for the next poll.
-    expect(await screen.findByText("No recent media work")).toBeVisible();
-    expect(screen.getByText("0 open items")).toBeVisible();
+    // The committed removal re-reads Activity, so the row and attention
+    // indicator disappear without waiting for the next poll.
+    expect(
+      await screen.findByText("New import failures will appear here."),
+    ).toBeVisible();
   });
 
   it("offers no resource dropdown for an item that cannot be removed", async () => {
