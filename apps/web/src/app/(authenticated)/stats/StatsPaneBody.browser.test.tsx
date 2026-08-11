@@ -13,8 +13,8 @@ const HREF = "/stats?view=stats&period=day&anchor=2026-08-10";
 const VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
 const DEVICE_HANDLE = "ncd1.AAAAAAAAAAAAAAAAAAAAAA";
-const ADJUSTMENT_HANDLE =
-  "nca1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+const EXCLUSION_HANDLE =
+  "nce1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
 
 function stats(
   activeMs: number,
@@ -31,8 +31,6 @@ function stats(
           activeMs,
           recordedActiveMs,
           excludedActiveMs: correction === "Excluded" ? 60_000 : 0,
-          observedActiveMs: activeMs,
-          manualActiveMs: 0,
           forwardWordPosition: 0,
           forwardMediaPositionMs: 0,
           activeDays: activeMs === 0 ? 0 : 1,
@@ -51,15 +49,10 @@ function stats(
             correction === "Observed"
               ? [
                   {
-                    source: "Observed",
                     mediaRef: "media:00000000-0000-4000-8000-000000000002",
                     title: "A Book",
                     modality: "Reading",
-                    device: {
-                      kind: "Present",
-                      value: { deviceHandle: DEVICE_HANDLE, label: "Desktop" },
-                    },
-                    adjustmentHandle: { kind: "Absent" },
+                    device: { deviceHandle: DEVICE_HANDLE, label: "Desktop" },
                     startedAt: "2026-08-10T16:00:00.000Z",
                     endedAt: "2026-08-10T16:01:00.000Z",
                     activeMs: 60_000,
@@ -79,7 +72,7 @@ function stats(
           correction === "Excluded"
             ? [
                 {
-                  adjustmentHandle: ADJUSTMENT_HANDLE,
+                  exclusionHandle: EXCLUSION_HANDLE,
                   mediaRef: "media:00000000-0000-4000-8000-000000000002",
                   title: "A Book",
                   modality: "Reading",
@@ -178,12 +171,19 @@ describe("Stats activity freshness", () => {
         "2 min",
       ),
     );
+    expect(screen.getByRole("region", { name: "Activity summary" })).toHaveTextContent(
+      "Observed time",
+    );
+    expect(screen.queryByText(/added/i)).not.toBeInTheDocument();
   });
 
   it("excludes an observed session and restores that exact correction", async () => {
     let currentProjection = stats(60_000, "Observed");
     const posted: unknown[] = [];
     vi.stubGlobal("confirm", vi.fn(() => true));
+    let releaseExclude: () => void = () => {
+      throw new Error("Exclude request did not start");
+    };
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -199,14 +199,16 @@ describe("Stats activity freshness", () => {
             posted.length === 1
               ? stats(0, "Excluded")
               : stats(60_000, "Observed");
+          if (posted.length === 1) {
+            await new Promise<void>((resolve) => {
+              releaseExclude = resolve;
+            });
+          }
           return new Response(
             JSON.stringify({
               data: {
-                outcome: posted.length === 1 ? "Excluded" : "Retracted",
-                adjustmentHandle: {
-                  kind: "Present",
-                  value: ADJUSTMENT_HANDLE,
-                },
+                outcome: posted.length === 1 ? "Excluded" : "Restored",
+                exclusionHandle: EXCLUSION_HANDLE,
               },
             }),
             { status: 200, headers: { "content-type": "application/json" } },
@@ -221,13 +223,25 @@ describe("Stats activity freshness", () => {
     const user = userEvent.setup();
     render(<StatsPane />);
 
-    await user.click(
-      await screen.findByRole("button", { name: "Don’t count this" }),
-    );
+    const sessionActions = await screen.findByRole("button", {
+      name: /Actions for A Book, Reading/,
+    });
+    sessionActions.focus();
+    await user.keyboard("{Enter}");
+    const exclude = await screen.findByRole("menuitem", {
+      name: "Don’t count this session",
+    });
+    expect(exclude).toHaveFocus();
+    await user.keyboard("{Enter}");
     await waitFor(() => expect(posted).toHaveLength(1));
+    await waitFor(() => expect(sessionActions).toHaveFocus());
+    releaseExclude();
     expect(
       await screen.findByRole("heading", { name: "Excluded activity" }),
     ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "No observed activity yet" }),
+    ).not.toBeInTheDocument();
     expect(posted[0]).toMatchObject({
       kind: "Exclude",
       modality: "Reading",
@@ -236,13 +250,17 @@ describe("Stats activity freshness", () => {
       endedAt: "2026-08-10T16:01:00.000Z",
     });
 
-    await user.click(screen.getByRole("button", { name: "Restore" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: /Restore A Book session from/,
+      }),
+    );
     expect(
-      await screen.findByRole("button", { name: "Don’t count this" }),
+      await screen.findByRole("button", { name: /Actions for A Book, Reading/ }),
     ).toBeVisible();
     expect(posted[1]).toMatchObject({
-      kind: "Retract",
-      adjustmentHandle: ADJUSTMENT_HANDLE,
+      kind: "Restore",
+      exclusionHandle: EXCLUSION_HANDLE,
     });
   });
 
@@ -258,11 +276,9 @@ describe("Stats activity freshness", () => {
     );
     render(<StatsPane />);
 
+    expect(await screen.findByText(/continues beyond range/)).toBeVisible();
     expect(
-      await screen.findByText("Open all time to correct"),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "Don’t count this" }),
+      screen.queryByRole("button", { name: /Actions for A Book, Reading/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -279,7 +295,7 @@ describe("Stats activity freshness", () => {
             {
               error: {
                 code: "E_RESOURCE_CONFLICT",
-                message: "already retracted",
+                message: "already restored",
               },
             },
             { status: 409 },
@@ -296,7 +312,10 @@ describe("Stats activity freshness", () => {
     render(<StatsPane />);
 
     await user.click(
-      await screen.findByRole("button", { name: "Don’t count this" }),
+      await screen.findByRole("button", { name: /Actions for A Book, Reading/ }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Don’t count this session" }),
     );
     expect(
       await screen.findByText("Activity changed before this correction"),

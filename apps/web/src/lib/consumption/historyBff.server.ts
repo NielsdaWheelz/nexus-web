@@ -5,11 +5,11 @@ import { NextResponse } from "next/server";
 import { privateNoStoreResponse } from "@/lib/api/privateNoStoreResponse.server";
 import { proxyToFastAPI } from "@/lib/api/proxy";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
-import { decodeActivityAdjustmentRequest } from "./activityAdjustments";
 import {
   decodeActivityRequest,
   type ActivityRequest,
 } from "./activityContract";
+import { decodeActivityExclusionRequest } from "./activityExclusions";
 
 const ACTIVITY_BATCH_MAX_BYTES = 48_000;
 
@@ -121,15 +121,15 @@ export async function postActivityWithDependencies(
   );
 }
 
-export async function postActivityAdjustmentWithProxy(
+export async function postActivityExclusionWithProxy(
   request: Request,
   proxy: typeof proxyToFastAPI,
 ): Promise<Response> {
-  let decoded: ReturnType<typeof decodeActivityAdjustmentRequest>;
+  let decoded: ReturnType<typeof decodeActivityExclusionRequest>;
   try {
-    decoded = decodeActivityAdjustmentRequest(await request.json());
+    decoded = decodeActivityExclusionRequest(await request.json());
   } catch {
-    return invalidConsumptionRequest("Invalid activity adjustment");
+    return invalidConsumptionRequest("Invalid activity exclusion");
   }
   const forwarded = new Request(request.url, {
     method: "POST",
@@ -138,6 +138,6 @@ export async function postActivityAdjustmentWithProxy(
     signal: request.signal,
   });
   return privateNoStoreResponse(
-    await proxy(forwarded, "/consumption/activity-adjustments"),
+    await proxy(forwarded, "/consumption/activity-exclusions"),
   );
 }

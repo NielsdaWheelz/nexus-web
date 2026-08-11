@@ -22,9 +22,10 @@ class ConsumptionActivityCounts:
     """Global fact and replay-ledger cardinalities for an operator review."""
 
     activity_spans: int
-    activity_adjustments: int
+    activity_exclusions: int
     completion_facts: int
     activity_replays: int
+    activity_exclusion_replays: int
     accepted_spans: int
     deduplicated_spans: int
     capture_key_duplicates: int
@@ -41,14 +42,19 @@ def read_global_counts(db: Session) -> ConsumptionActivityCounts:
                 """
             SELECT
                 (SELECT count(*) FROM consumption_activity_spans) AS activity_spans,
-                (SELECT count(*) FROM consumption_activity_adjustments)
-                    AS activity_adjustments,
+                (SELECT count(*) FROM consumption_activity_exclusions)
+                    AS activity_exclusions,
                 (SELECT count(*) FROM consumption_completion_facts) AS completion_facts,
                 (
                     SELECT count(*)
                     FROM resource_mutations
                     WHERE mutation_scope = 'Consumption.Activity'
                 ) AS activity_replays,
+                (
+                    SELECT count(*)
+                    FROM resource_mutations
+                    WHERE mutation_scope = 'Consumption.ActivityExclusions'
+                ) AS activity_exclusion_replays,
                 (
                     SELECT coalesce(sum((response_json ->> 'acceptedCount')::bigint), 0)
                     FROM resource_mutations
@@ -93,9 +99,10 @@ def read_global_counts(db: Session) -> ConsumptionActivityCounts:
     )
     return ConsumptionActivityCounts(
         activity_spans=int(row["activity_spans"]),
-        activity_adjustments=int(row["activity_adjustments"]),
+        activity_exclusions=int(row["activity_exclusions"]),
         completion_facts=int(row["completion_facts"]),
         activity_replays=int(row["activity_replays"]),
+        activity_exclusion_replays=int(row["activity_exclusion_replays"]),
         accepted_spans=int(row["accepted_spans"]),
         deduplicated_spans=int(row["deduplicated_spans"]),
         capture_key_duplicates=int(row["capture_key_duplicates"]),

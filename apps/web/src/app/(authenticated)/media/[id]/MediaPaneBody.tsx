@@ -14,7 +14,6 @@ import {
   useLayoutEffect,
   useRef,
   useMemo,
-  type FormEvent,
 } from "react";
 import { executeResourceChat } from "@/lib/resources/resourceActionExecution";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
@@ -319,7 +318,6 @@ import {
   type ResolvedHighlightReaderTarget,
 } from "@/lib/reader/readerTargetHash";
 import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import Select from "@/components/ui/Select";
 import { mediaKindIcon } from "@/lib/resources/resourceKind";
@@ -330,8 +328,6 @@ import type {
   ActionSelectDetail,
 } from "@/lib/ui/actionDescriptor";
 import type { PaneResourceHeaderPublication } from "@/lib/panes/paneHeaderModel";
-import { parseMediaRef } from "@/lib/consumption/activityContract";
-import { submitActivityAdjustment } from "@/lib/consumption/activityAdjustments";
 import styles from "./page.module.css";
 
 export function resolveActiveWebFragment<T extends { id: string }>({
@@ -765,161 +761,6 @@ function transcriptSeedErrorMessage(
   }
 }
 
-function activityVerb(kind: string): "reading" | "listening" | "viewing" {
-  if (kind === "podcast_episode") return "listening";
-  if (kind === "video") return "viewing";
-  return "reading";
-}
-
-function localDateTimeValue(epochMs: number): string {
-  const date = new Date(epochMs);
-  const local = new Date(epochMs - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-}
-
-export function AddActivityDialog({
-  open,
-  mediaId,
-  mediaKind,
-  returnFocusTo,
-  onClose,
-  onAdded,
-}: {
-  open: boolean;
-  mediaId: string;
-  mediaKind: string;
-  returnFocusTo: HTMLButtonElement | null;
-  onClose: () => void;
-  onAdded: () => void;
-}) {
-  const [startedAt, setStartedAt] = useState(() =>
-    localDateTimeValue(Date.now() - 30 * 60_000),
-  );
-  const [durationMinutes, setDurationMinutes] = useState("30");
-  const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
-  const [defect, setDefect] = useState<unknown>(null);
-  const mutationIdRef = useRef<string | null>(null);
-  const verb = activityVerb(mediaKind);
-
-  useEffect(() => {
-    if (!open) return;
-    setStartedAt(localDateTimeValue(Date.now() - 30 * 60_000));
-    setDurationMinutes("30");
-    setFailure(null);
-    setDefect(null);
-    mutationIdRef.current = null;
-  }, [open, mediaId]);
-
-  if (defect !== null) throw defect;
-
-  const resetReplayIdentity = () => {
-    mutationIdRef.current = null;
-    setFailure(null);
-  };
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const start = new Date(startedAt);
-    const minutes = Number(durationMinutes);
-    if (
-      !Number.isInteger(minutes) ||
-      minutes < 1 ||
-      minutes > 1_440 ||
-      Number.isNaN(start.getTime()) ||
-      start.getTime() + minutes * 60_000 > Date.now()
-    ) {
-      setFailure({
-        tone: "Warning",
-        title: "Check the activity time",
-        message: "Use 1–1,440 minutes and a start whose full duration is in the past.",
-      });
-      return;
-    }
-    setPending(true);
-    setFailure(null);
-    try {
-      mutationIdRef.current ??= globalThis.crypto.randomUUID();
-      await submitActivityAdjustment({
-        kind: "Add",
-        clientMutationId: mutationIdRef.current,
-        mediaRef: parseMediaRef(
-          canonicalResourceRef({ scheme: "media", id: mediaId }),
-        ),
-        occurredAt: start.toISOString(),
-        durationMs: minutes * 60_000,
-      });
-      mutationIdRef.current = null;
-      onAdded();
-      onClose();
-    } catch (error) {
-      try {
-        setFailure(mediaPaneErrorMessage(error, "Consumption"));
-      } catch (sameSystemDefect) {
-        setDefect(sameSystemDefect);
-      }
-    } finally {
-      setPending(false);
-    }
-  };
-
-  return (
-    <Dialog
-      open={open}
-      title={`Add ${verb} time`}
-      onClose={onClose}
-      onDismissRequest={() => (pending ? "blocked" : "accepted")}
-      initialFocus={(container) =>
-        container.querySelector<HTMLInputElement>('input[type="datetime-local"]')
-      }
-      returnFocusTo={() => returnFocusTo}
-    >
-      <form className={styles.activityAdjustmentForm} onSubmit={submit}>
-        {failure ? (
-          <FeedbackNotice content={failure} announcement="Assertive" />
-        ) : null}
-        <label className={styles.activityAdjustmentField}>
-          <span>Start</span>
-          <Input
-            type="datetime-local"
-            required
-            value={startedAt}
-            disabled={pending}
-            onChange={(event) => {
-              resetReplayIdentity();
-              setStartedAt(event.target.value);
-            }}
-          />
-        </label>
-        <label className={styles.activityAdjustmentField}>
-          <span>Duration (minutes)</span>
-          <Input
-            type="number"
-            min={1}
-            max={1_440}
-            step={1}
-            required
-            inputMode="numeric"
-            value={durationMinutes}
-            disabled={pending}
-            onChange={(event) => {
-              resetReplayIdentity();
-              setDurationMinutes(event.target.value);
-            }}
-          />
-        </label>
-        <div className={styles.activityAdjustmentActions}>
-          <Button type="button" variant="secondary" disabled={pending} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" loading={pending}>
-            Add time
-          </Button>
-        </div>
-      </form>
-    </Dialog>
-  );
-}
-
 export default function MediaPaneBody() {
   const activitySnapshot = useActivityRuntimeSnapshot();
   const consumptionActivityStatus = activityStatus(activitySnapshot);
@@ -993,9 +834,6 @@ export default function MediaPaneBody() {
     target?.kind === "page" ? Number(target.value) : null;
   const requestedStartMs = target?.kind === "t" ? Number(target.value) : null;
   const feedback = useFeedback();
-  const [addActivityOpen, setAddActivityOpen] = useState(false);
-  const [addActivityTrigger, setAddActivityTrigger] =
-    useState<HTMLButtonElement | null>(null);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
     null,
   );
@@ -6265,18 +6103,7 @@ export default function MediaPaneBody() {
   // ResourceActionMenu keyed by the pane's actionSubject.
   const readerViewActions = useMemo<ActionDescriptor[]>(() => {
     if (!media) return [];
-    const view: ActionDescriptor[] = [
-      {
-        kind: "command",
-        id: "ViewAction.Consumption.AddTime",
-        label: `Add ${activityVerb(media.kind)} time…`,
-        restoreFocusOnClose: false,
-        onSelect: ({ triggerEl }) => {
-          setAddActivityTrigger(triggerEl);
-          setAddActivityOpen(true);
-        },
-      },
-    ];
+    const view: ActionDescriptor[] = [];
     if (mediaResourceHeader?.status === "Ready") {
       view.push({
         kind: "command",
@@ -8545,24 +8372,6 @@ export default function MediaPaneBody() {
           onClose={() => setCreditsOverlayOpen(false)}
         />
       ) : null}
-
-      <AddActivityDialog
-        open={addActivityOpen}
-        mediaId={media.id}
-        mediaKind={media.kind}
-        returnFocusTo={addActivityTrigger}
-        onClose={() => setAddActivityOpen(false)}
-        onAdded={() =>
-          feedback.publish({
-            kind: "Hud",
-            key: "consumption-activity-added",
-            content: {
-              tone: "Success",
-              title: `${activityVerb(media.kind)[0]?.toUpperCase()}${activityVerb(media.kind).slice(1)} time added`,
-            },
-          })
-        }
-      />
 
       <Dialog
         open={highlightColorIntent !== null}

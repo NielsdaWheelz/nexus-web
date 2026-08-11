@@ -1,4 +1,4 @@
-"""Sole DML owner of Consumption's activity and completion facts."""
+"""Sole DML owner of Consumption activity, exclusions, and completion facts."""
 
 from __future__ import annotations
 
@@ -229,19 +229,17 @@ def observed_session_in_txn(
                   AND device_id = :device_id
                   AND NOT EXISTS (
                       SELECT 1
-                      FROM consumption_activity_adjustments x
+                      FROM consumption_activity_exclusions x
                       WHERE x.user_id = consumption_activity_spans.user_id
                         AND x.media_id = consumption_activity_spans.media_id
-                        AND x.kind = 'Exclude'
                         AND x.modality = consumption_activity_spans.modality
                         AND x.device_id = consumption_activity_spans.device_id
-                        AND x.retracted_at IS NULL
-                        AND consumption_activity_spans.occurred_at >= x.occurred_at
+                        AND x.restored_at IS NULL
+                        AND consumption_activity_spans.occurred_at >= x.started_at
                         AND consumption_activity_spans.occurred_at
                               + consumption_activity_spans.duration_ms
                                   * interval '1 millisecond'
-                            <= x.occurred_at
-                              + x.duration_ms * interval '1 millisecond'
+                            <= x.ended_at
                   )
             ), marked AS (
                 SELECT *,
@@ -281,78 +279,74 @@ def observed_session_in_txn(
     )
 
 
-def insert_adjustment_in_txn(
+def insert_exclusion_in_txn(
     db: Session,
     *,
     viewer_id: UUID,
     media_id: UUID,
-    kind: Literal["Add", "Exclude"],
     modality: ActivityModality,
-    device_id: str | None,
-    occurred_at: datetime,
-    duration_ms: int,
+    device_id: str,
+    started_at: datetime,
+    ended_at: datetime,
 ) -> UUID:
-    adjustment_id = new_uuid7()
+    exclusion_id = new_uuid7()
     db.execute(
         text(
             """
-            INSERT INTO consumption_activity_adjustments (
-                id, user_id, media_id, kind, modality, device_id,
-                occurred_at, duration_ms
+            INSERT INTO consumption_activity_exclusions (
+                id, user_id, media_id, modality, device_id, started_at, ended_at
             ) VALUES (
-                :id, :viewer_id, :media_id, :kind, :modality, :device_id,
-                :occurred_at, :duration_ms
+                :id, :viewer_id, :media_id, :modality, :device_id, :started_at, :ended_at
             )
             """
         ),
         {
-            "id": adjustment_id,
+            "id": exclusion_id,
             "viewer_id": viewer_id,
             "media_id": media_id,
-            "kind": kind,
             "modality": modality,
             "device_id": device_id,
-            "occurred_at": occurred_at,
-            "duration_ms": duration_ms,
+            "started_at": started_at,
+            "ended_at": ended_at,
         },
     )
-    return adjustment_id
+    return exclusion_id
 
 
-def retract_adjustment_in_txn(
-    db: Session, *, viewer_id: UUID, adjustment_id: UUID
-) -> Literal["Retracted", "Missing", "AlreadyRetracted"]:
+def restore_exclusion_in_txn(
+    db: Session, *, viewer_id: UUID, exclusion_id: UUID
+) -> Literal["Restored", "Missing", "AlreadyRestored"]:
     row = db.execute(
         text(
             """
-            SELECT retracted_at
-            FROM consumption_activity_adjustments
-            WHERE id = :adjustment_id AND user_id = :viewer_id
+            SELECT restored_at
+            FROM consumption_activity_exclusions
+            WHERE id = :exclusion_id AND user_id = :viewer_id
             """
         ),
-        {"adjustment_id": adjustment_id, "viewer_id": viewer_id},
+        {"exclusion_id": exclusion_id, "viewer_id": viewer_id},
     ).one_or_none()
     if row is None:
         return "Missing"
     if row[0] is not None:
-        return "AlreadyRetracted"
+        return "AlreadyRestored"
     result = db.execute(
         text(
             """
-            UPDATE consumption_activity_adjustments
-            SET retracted_at = now()
-            WHERE id = :adjustment_id
+            UPDATE consumption_activity_exclusions
+            SET restored_at = now()
+            WHERE id = :exclusion_id
               AND user_id = :viewer_id
-              AND retracted_at IS NULL
+              AND restored_at IS NULL
             """
         ),
-        {"adjustment_id": adjustment_id, "viewer_id": viewer_id},
+        {"exclusion_id": exclusion_id, "viewer_id": viewer_id},
     )
     if not isinstance(result, CursorResult) or result.rowcount != 1:
         raise AssertionError(
-            "activity adjustment retraction did not affect exactly one row"
-        )  # justify-service-invariant-check: the viewer lock serializes retraction.
-    return "Retracted"
+            "activity exclusion restore did not affect exactly one row"
+        )  # justify-service-invariant-check: the viewer lock serializes restore.
+    return "Restored"
 
 
 def insert_completion_fact_in_txn(
@@ -413,7 +407,7 @@ def delete_completion_fact_in_txn(
 def delete_all_for_media_in_txn(db: Session, *, media_id: UUID) -> None:
     """Remove retained activity facts as part of explicit media teardown."""
     db.execute(
-        text("DELETE FROM consumption_activity_adjustments WHERE media_id = :media_id"),
+        text("DELETE FROM consumption_activity_exclusions WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
     db.execute(

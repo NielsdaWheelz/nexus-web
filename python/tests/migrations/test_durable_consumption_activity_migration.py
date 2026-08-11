@@ -8,7 +8,6 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
@@ -20,9 +19,6 @@ def test_0213_backfills_unique_capture_keys_and_installs_adjustment_storage(
     migration_root = repo_root / "migrations"
     config = Config(migration_root / "alembic.ini")
     config.set_main_option("script_location", str(migration_root / "alembic"))
-    expected_head = ScriptDirectory.from_config(config).get_current_head()
-    assert expected_head == "0213", f"durable activity must be the sole head: {expected_head!r}"
-
     command.upgrade(config, "0212")
     user_id = uuid4()
     media_id = uuid4()
@@ -63,7 +59,7 @@ def test_0213_backfills_unique_capture_keys_and_installs_adjustment_storage(
                 ],
             )
 
-        command.upgrade(config, "head")
+        command.upgrade(config, "0213")
 
         with engine.begin() as connection:
             actual_head = connection.scalar(text("SELECT version_num FROM alembic_version"))
@@ -103,7 +99,7 @@ def test_0213_backfills_unique_capture_keys_and_installs_adjustment_storage(
                 )
             )
 
-        assert actual_head == expected_head
+        assert actual_head == "0213"
         assert [row.id for row in retained] == sorted(span_ids), (
             f"0213 lost retained activity spans: {retained!r}"
         )

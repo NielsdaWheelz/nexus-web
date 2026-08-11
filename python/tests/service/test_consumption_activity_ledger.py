@@ -236,12 +236,15 @@ def test_capture_keys_regroup_without_duplication_and_conflict_atomically(
         end=datetime.now(UTC) + timedelta(minutes=1),
     )["activity"]["totals"]
     assert final_totals == {
-        **final_totals,
+        "activeMs": 4_000,
+        "forwardWordPosition": 0,
+        "forwardMediaPositionMs": 0,
         "recordedActiveMs": 4_000,
         "excludedActiveMs": 0,
-        "observedActiveMs": 4_000,
-        "manualActiveMs": 0,
-        "activeMs": 4_000,
+        "activeDays": 0,
+        "streak": 0,
+        "longestStreak": 0,
+        "sessionCount": 1,
     }
 
     expired = activity_api.client.post(
@@ -278,41 +281,20 @@ def test_capture_keys_regroup_without_duplication_and_conflict_atomically(
     assert rejected_missing_media.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
 
 
-def test_adjustments_replay_once_and_project_add_exclude_retract(
+def test_exclusions_replay_once_and_project_exact_observed_sessions(
     activity_api: ActivityApi,
     engine: Engine,
 ) -> None:
-    """Concurrent replay is one correction and projections preserve observed provenance."""
-    start = datetime.now(UTC) - timedelta(minutes=10)
-    add_mutation_id = uuid4()
-    add_body = {
-        "kind": "Add",
-        "clientMutationId": str(add_mutation_id),
-        "mediaRef": f"media:{activity_api.media_id}",
-        "occurredAt": _iso(start + timedelta(minutes=5)),
-        "durationMs": 5_000,
-    }
-
-    def add_once() -> tuple[int, dict]:
-        response = activity_api.client.post(
-            "/consumption/activity-adjustments",
-            json=add_body,
-        )
-        return response.status_code, response.json()
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        add_results = list(executor.map(lambda _index: add_once(), range(2)))
-    assert [status for status, _payload in add_results] == [200, 200], (
-        f"concurrent exact adjustment replay did not linearize: {add_results!r}"
-    )
-    assert add_results[0][1] == add_results[1][1], (
-        f"exact replay returned different adjustment outcomes: {add_results!r}"
-    )
-    add_handle = add_results[0][1]["data"]["adjustmentHandle"]["value"]
-
+    """Exclusions subtract only exact observed sessions and restore by sealed identity."""
+    start = datetime.now(UTC) - timedelta(hours=2)
     observed = _reading_span(
         capture_key=uuid4(),
         occurred_at=start,
+        duration_ms=10_000,
+    )
+    observed_after_gap = _reading_span(
+        capture_key=uuid4(),
+        occurred_at=start + timedelta(minutes=20),
         duration_ms=10_000,
     )
     captured = activity_api.client.post(
@@ -320,29 +302,84 @@ def test_adjustments_replay_once_and_project_add_exclude_retract(
         json=_activity_body(
             activity_api,
             client_mutation_id=uuid4(),
-            spans=[observed],
+            spans=[observed, observed_after_gap],
         ),
     )
     assert captured.status_code == 204, (
         f"observed correction fixture was not accepted: {captured.status_code} {captured.text}"
     )
+    deduplicated = activity_api.client.post(
+        "/consumption/activity",
+        json=_activity_body(
+            activity_api,
+            client_mutation_id=uuid4(),
+            spans=[observed, observed_after_gap],
+        ),
+    )
+    assert deduplicated.status_code == 204, (
+        "exact observed capture-key replay did not deduplicate: "
+        f"{deduplicated.status_code} {deduplicated.text}"
+    )
+
+    rejected_add = activity_api.client.post(
+        "/consumption/activity-exclusions",
+        json={
+            "kind": "Add",
+            "clientMutationId": str(uuid4()),
+            "mediaRef": f"media:{activity_api.media_id}",
+            "occurredAt": _iso(start),
+            "durationMs": 5_000,
+        },
+    )
+    assert rejected_add.status_code == 400, (
+        "the exclusion boundary accepted positive manual duration: "
+        f"{rejected_add.status_code} {rejected_add.text}"
+    )
+    assert rejected_add.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    clipped_sessions = _sessions(
+        activity_api,
+        start=start + timedelta(seconds=5),
+        end=start + timedelta(minutes=1),
+    )
+    assert len(clipped_sessions) == 1 and clipped_sessions[0]["continuesBeforeRange"] is True
+    clipped = clipped_sessions[0]
+    rejected_clipped = activity_api.client.post(
+        "/consumption/activity-exclusions",
+        json={
+            "kind": "Exclude",
+            "clientMutationId": str(uuid4()),
+            "mediaRef": clipped["mediaRef"],
+            "modality": clipped["modality"],
+            "deviceHandle": clipped["device"]["deviceHandle"],
+            "startedAt": clipped["startedAt"],
+            "endedAt": clipped["endedAt"],
+        },
+    )
+    assert rejected_clipped.status_code == 400, (
+        "a range-clipped projection was accepted as an exact observed session: "
+        f"{rejected_clipped.status_code} {rejected_clipped.text}"
+    )
+
     sessions = _sessions(
         activity_api,
         start=start - timedelta(minutes=1),
-        end=datetime.now(UTC) + timedelta(minutes=1),
+        end=start + timedelta(minutes=30),
     )
-    observed_session = next(row for row in sessions if row["source"] == "Observed")
+    assert len(sessions) == 1, f"expected one observed session, got {sessions!r}"
+    observed_session = sessions[0]
+    assert observed_session["device"]["deviceHandle"].startswith("ncd1.")
     exclude_body = {
         "kind": "Exclude",
         "clientMutationId": str(uuid4()),
         "mediaRef": observed_session["mediaRef"],
         "modality": observed_session["modality"],
-        "deviceHandle": observed_session["device"]["value"]["deviceHandle"],
+        "deviceHandle": observed_session["device"]["deviceHandle"],
         "startedAt": observed_session["startedAt"],
         "endedAt": observed_session["endedAt"],
     }
     wrong_device = activity_api.client.post(
-        "/consumption/activity-adjustments",
+        "/consumption/activity-exclusions",
         json={
             **exclude_body,
             "clientMutationId": str(uuid4()),
@@ -353,16 +390,48 @@ def test_adjustments_replay_once_and_project_add_exclude_retract(
         "Exclude accepted a device other than the exact projected session device: "
         f"{wrong_device.status_code} {wrong_device.text}"
     )
-    excluded = activity_api.client.post(
-        "/consumption/activity-adjustments",
+
+    def exclude_once() -> tuple[int, dict]:
+        response = activity_api.client.post(
+            "/consumption/activity-exclusions",
+            json=exclude_body,
+        )
+        return response.status_code, response.json()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        exclude_results = list(executor.map(lambda _index: exclude_once(), range(2)))
+    assert [status for status, _payload in exclude_results] == [200, 200], (
+        f"concurrent exact exclusion replay did not linearize: {exclude_results!r}"
+    )
+    assert exclude_results[0][1] == exclude_results[1][1], (
+        f"exact replay returned different exclusion outcomes: {exclude_results!r}"
+    )
+    exclusion_handle = exclude_results[0][1]["data"]["exclusionHandle"]
+    assert exclude_results[0][1]["data"] == {
+        "outcome": "Excluded",
+        "exclusionHandle": exclusion_handle,
+    }
+    assert exclusion_handle.startswith("nce1.")
+    cached_replay = activity_api.client.post(
+        "/consumption/activity-exclusions",
         json=exclude_body,
     )
-    assert excluded.status_code == 200, (
-        f"exact observed session was not excluded: {excluded.status_code} {excluded.text}"
+    assert cached_replay.status_code == 200, cached_replay.text
+    assert cached_replay.headers["cache-control"] == "private, no-store"
+
+    replay_mismatch = activity_api.client.post(
+        "/consumption/activity-exclusions",
+        json={
+            "kind": "Restore",
+            "clientMutationId": exclude_body["clientMutationId"],
+            "exclusionHandle": exclusion_handle,
+        },
     )
-    exclude_handle = excluded.json()["data"]["adjustmentHandle"]["value"]
+    assert replay_mismatch.status_code == 409, replay_mismatch.text
+    assert replay_mismatch.json()["error"]["code"] == "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"
+
     stale_session = activity_api.client.post(
-        "/consumption/activity-adjustments",
+        "/consumption/activity-exclusions",
         json={**exclude_body, "clientMutationId": str(uuid4())},
     )
     assert stale_session.status_code == 400, (
@@ -373,109 +442,101 @@ def test_adjustments_replay_once_and_project_add_exclude_retract(
     excluded_stats = _stats(
         activity_api,
         start=start - timedelta(minutes=1),
-        end=datetime.now(UTC) + timedelta(minutes=1),
+        end=start + timedelta(minutes=30),
     )
     totals = excluded_stats["activity"]["totals"]
-    assert {
-        key: totals[key]
-        for key in (
-            "recordedActiveMs",
-            "excludedActiveMs",
-            "observedActiveMs",
-            "manualActiveMs",
-            "activeMs",
-        )
-    } == {
-        "recordedActiveMs": 10_000,
-        "excludedActiveMs": 10_000,
-        "observedActiveMs": 0,
-        "manualActiveMs": 5_000,
-        "activeMs": 5_000,
-    }, f"corrections produced the wrong provenance totals: {totals!r}"
+    assert {key: totals[key] for key in ("recordedActiveMs", "excludedActiveMs", "activeMs")} == {
+        "recordedActiveMs": 20_000,
+        "excludedActiveMs": 20_000,
+        "activeMs": 0,
+    }, f"exclusion produced the wrong observed totals: {totals!r}"
     assert len(excluded_stats["activity"]["activeExclusions"]) == 1
-    assert excluded_stats["activity"]["activeExclusions"][0]["adjustmentHandle"] == exclude_handle
-    assert (
-        excluded_stats["activity"]["activeExclusions"][0]["device"]
-        == observed_session["device"]["value"]
-    )
+    assert excluded_stats["activity"]["activeExclusions"][0]["exclusionHandle"] == exclusion_handle
+    assert excluded_stats["activity"]["activeExclusions"][0]["device"] == observed_session["device"]
     projected_sessions = excluded_stats["activity"]["sessions"]["rows"]
-    assert [(row["source"], row["activeMs"]) for row in projected_sessions] == [
-        ("Manual", 5_000)
-    ], f"excluded observed spans remained in the session projection: {projected_sessions!r}"
+    assert projected_sessions == [], (
+        f"excluded observed spans remained in the session projection: {projected_sessions!r}"
+    )
+    assert sum(row["activeMs"] for row in excluded_stats["activity"]["timeline"]) == 0
+
+    gap_stats = _stats(
+        activity_api,
+        start=start + timedelta(minutes=1),
+        end=start + timedelta(minutes=2),
+    )
+    assert gap_stats["activity"]["totals"]["recordedActiveMs"] == 0
+    assert gap_stats["activity"]["activeExclusions"] == [], (
+        "an exclusion with no removed span leaked into a gap-only Stats range: "
+        f"{gap_stats['activity']['activeExclusions']!r}"
+    )
 
     device_filtered = activity_api.client.get(
         "/consumption/stats",
         params={
             "start": _iso(start - timedelta(minutes=1)),
-            "end": _iso(datetime.now(UTC) + timedelta(minutes=1)),
+            "end": _iso(start + timedelta(minutes=30)),
             "timeZone": "UTC",
             "bucket": "Day",
             "currentDeviceId": activity_api.device_id,
-            "deviceHandle": observed_session["device"]["value"]["deviceHandle"],
+            "deviceHandle": observed_session["device"]["deviceHandle"],
         },
     )
     assert device_filtered.status_code == 200, device_filtered.text
     device_activity = device_filtered.json()["data"]["activity"]
-    assert device_activity["totals"]["recordedActiveMs"] == 10_000
-    assert device_activity["totals"]["excludedActiveMs"] == 10_000
-    assert device_activity["totals"]["manualActiveMs"] == 0
+    assert device_activity["totals"]["recordedActiveMs"] == 20_000
+    assert device_activity["totals"]["excludedActiveMs"] == 20_000
     assert device_activity["totals"]["activeMs"] == 0
-    assert device_activity["inapplicableFilters"] == ["manual"]
+    assert device_activity["inapplicableFilters"] == []
 
-    retract_mutation_id = uuid4()
-    retract_body = {
-        "kind": "Retract",
-        "clientMutationId": str(retract_mutation_id),
-        "adjustmentHandle": exclude_handle,
+    restore_body = {
+        "kind": "Restore",
+        "clientMutationId": str(uuid4()),
+        "exclusionHandle": exclusion_handle,
     }
-    retracted = activity_api.client.post(
-        "/consumption/activity-adjustments",
-        json=retract_body,
+    restored = activity_api.client.post(
+        "/consumption/activity-exclusions",
+        json=restore_body,
     )
-    replayed_retract = activity_api.client.post(
-        "/consumption/activity-adjustments",
-        json=retract_body,
+    replayed_restore = activity_api.client.post(
+        "/consumption/activity-exclusions",
+        json=restore_body,
     )
-    assert retracted.status_code == 200 and replayed_retract.status_code == 200, (
-        f"exact retraction replay did not converge: {retracted.text} {replayed_retract.text}"
+    assert restored.status_code == 200 and replayed_restore.status_code == 200, (
+        f"exact restore replay did not converge: {restored.text} {replayed_restore.text}"
     )
-    assert retracted.json() == replayed_retract.json()
-    assert retracted.json()["data"] == {
-        "outcome": "Retracted",
-        "adjustmentHandle": {"kind": "Present", "value": exclude_handle},
+    assert restored.json() == replayed_restore.json()
+    assert restored.json()["data"] == {
+        "outcome": "Restored",
+        "exclusionHandle": exclusion_handle,
     }
 
-    restored = _stats(
+    restored_stats = _stats(
         activity_api,
         start=start - timedelta(minutes=1),
-        end=datetime.now(UTC) + timedelta(minutes=1),
+        end=start + timedelta(minutes=30),
     )
-    restored_totals = restored["activity"]["totals"]
-    assert restored_totals["observedActiveMs"] == 10_000
-    assert restored_totals["manualActiveMs"] == 5_000
-    assert restored_totals["activeMs"] == 15_000
-    assert restored["activity"]["activeExclusions"] == []
+    restored_totals = restored_stats["activity"]["totals"]
+    assert restored_totals["recordedActiveMs"] == 20_000
+    assert restored_totals["excludedActiveMs"] == 0
+    assert restored_totals["activeMs"] == 20_000
+    assert restored_stats["activity"]["activeExclusions"] == []
+    restored_sessions = restored_stats["activity"]["sessions"]["rows"]
+    assert (
+        len(restored_sessions) == 1 and restored_sessions[0]["device"] == observed_session["device"]
+    )
 
-    removed_add = activity_api.client.post(
-        "/consumption/activity-adjustments",
-        json={
-            "kind": "Retract",
-            "clientMutationId": str(uuid4()),
-            "adjustmentHandle": add_handle,
-        },
+    already_restored = activity_api.client.post(
+        "/consumption/activity-exclusions",
+        json={**restore_body, "clientMutationId": str(uuid4())},
     )
-    assert removed_add.status_code == 200, removed_add.text
-    final = _stats(
-        activity_api,
-        start=start - timedelta(minutes=1),
-        end=datetime.now(UTC) + timedelta(minutes=1),
-    )["activity"]["totals"]
-    assert final["activeMs"] == 10_000 and final["manualActiveMs"] == 0, final
+    assert already_restored.status_code == 409, already_restored.text
+    assert already_restored.json()["error"]["code"] == "E_RESOURCE_CONFLICT"
 
     with Session(engine) as db:
         counts = read_global_counts(db)
-    assert counts.activity_adjustments >= 2
-    assert counts.accepted_spans >= 5
+    assert counts.activity_exclusions >= 1
+    assert counts.activity_exclusion_replays >= 2
+    assert counts.accepted_spans >= 1
     assert counts.deduplicated_spans >= 1
     assert counts.capture_key_duplicates == 0
     assert counts.capture_key_conflicts == 0
@@ -494,8 +555,8 @@ def test_adjustments_replay_once_and_project_add_exclude_retract(
                 SELECT
                     (SELECT count(*) FROM consumption_activity_spans
                      WHERE media_id = :media_id) AS spans,
-                    (SELECT count(*) FROM consumption_activity_adjustments
-                     WHERE media_id = :media_id) AS adjustments
+                    (SELECT count(*) FROM consumption_activity_exclusions
+                     WHERE media_id = :media_id) AS exclusions
                 """
                 ),
                 {"media_id": activity_api.media_id},
@@ -503,4 +564,4 @@ def test_adjustments_replay_once_and_project_add_exclude_retract(
             .mappings()
             .one()
         )
-    assert dict(remaining) == {"spans": 0, "adjustments": 0}
+    assert dict(remaining) == {"spans": 0, "exclusions": 0}

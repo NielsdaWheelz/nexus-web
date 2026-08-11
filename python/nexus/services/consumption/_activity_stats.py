@@ -26,9 +26,7 @@ from nexus.config import get_settings
 from nexus.errors import InvalidRequestError
 from nexus.services.consumption.handles import (
     parse_device_handle,
-    seal_activity_adjustment,
     seal_device,
-    unseal_activity_adjustment,
 )
 from nexus.services.contributor_credits import (
     current_contributor_rows_for_media_sql,
@@ -63,7 +61,7 @@ def timeline_rows_sql(bucket: str) -> str:
             SELECT bucket_start, lead(bucket_start, 1, :end) OVER (ORDER BY bucket_start) AS bucket_end
             FROM (SELECT {series} AS bucket_start) generated
         ), clipped AS ({visible_effective_activity_sql()}), intersections AS (
-            SELECT b.bucket_start, b.bucket_end, c.id, c.source, c.modality,
+            SELECT b.bucket_start, b.bucket_end, c.id, c.modality,
                    greatest(c.clipped_start, b.bucket_start) AS overlap_start,
                    least(c.clipped_end, b.bucket_end) AS overlap_end,
                    extract(epoch FROM c.ended_at - c.occurred_at) * 1000 AS span_ms,
@@ -80,10 +78,10 @@ def timeline_rows_sql(bucket: str) -> str:
             FROM intersections
         ), allocated AS (
             SELECT *, floor(word_exact)::bigint AS word_floor, floor(media_exact)::bigint AS media_floor,
-                   sum(floor(word_exact)::bigint) OVER (PARTITION BY source, id) AS word_floor_sum,
-                   sum(floor(media_exact)::bigint) OVER (PARTITION BY source, id) AS media_floor_sum,
-                   row_number() OVER (PARTITION BY source, id ORDER BY (word_exact - floor(word_exact)) DESC, bucket_start, id) AS word_rank,
-                   row_number() OVER (PARTITION BY source, id ORDER BY (media_exact - floor(media_exact)) DESC, bucket_start, id) AS media_rank
+                   sum(floor(word_exact)::bigint) OVER (PARTITION BY id) AS word_floor_sum,
+                   sum(floor(media_exact)::bigint) OVER (PARTITION BY id) AS media_floor_sum,
+                   row_number() OVER (PARTITION BY id ORDER BY (word_exact - floor(word_exact)) DESC, bucket_start, id) AS word_rank,
+                   row_number() OVER (PARTITION BY id ORDER BY (media_exact - floor(media_exact)) DESC, bucket_start, id) AS media_rank
             FROM weighted
         ), apportioned AS (
             SELECT *, word_range_total - word_floor_sum AS word_remainder_count,
@@ -120,50 +118,39 @@ def require_bucket_ceiling(
 
 
 def activity_totals_sql() -> str:
-    """One provenance-preserving factual total relation."""
+    """Recorded observed facts minus exact active exclusions."""
     return f"""
         WITH recorded AS ({visible_recorded_clipped_spans_sql()}),
-        observed AS ({visible_clipped_spans_sql()}),
-        manual AS ({visible_clipped_manual_activity_sql()}),
+        effective AS ({visible_clipped_spans_sql()}),
         modalities AS (
-            SELECT modality FROM recorded
-            UNION SELECT modality FROM manual
+            SELECT DISTINCT modality FROM recorded
         ), recorded_totals AS (
             SELECT modality,
                    sum(extract(epoch FROM clipped_end - clipped_start) * 1000)::bigint
                        AS recorded_active_ms
             FROM recorded GROUP BY modality
-        ), observed_totals AS (
+        ), effective_totals AS (
             SELECT modality,
                sum(extract(epoch FROM clipped_end - clipped_start) * 1000)::bigint
-                   AS observed_active_ms,
+                   AS active_ms,
                sum(round(greatest(0, coalesce(word_end - word_start, 0))
                    * extract(epoch FROM clipped_end - clipped_start)
                    / extract(epoch FROM ended_at - occurred_at)))::bigint AS forward_word_position,
                sum(round(greatest(0, coalesce(media_position_end_ms - media_position_start_ms, 0))
                    * extract(epoch FROM clipped_end - clipped_start)
                    / extract(epoch FROM ended_at - occurred_at)))::bigint AS forward_media_position_ms
-            FROM observed GROUP BY modality
-        ), manual_totals AS (
-            SELECT modality,
-                   sum(extract(epoch FROM clipped_end - clipped_start) * 1000)::bigint
-                       AS manual_active_ms
-            FROM manual GROUP BY modality
+            FROM effective GROUP BY modality
         )
         SELECT modalities.modality,
                coalesce(recorded_active_ms, 0)::bigint AS recorded_active_ms,
-               (coalesce(recorded_active_ms, 0) - coalesce(observed_active_ms, 0))::bigint
+               (coalesce(recorded_active_ms, 0) - coalesce(active_ms, 0))::bigint
                    AS excluded_active_ms,
-               coalesce(observed_active_ms, 0)::bigint AS observed_active_ms,
-               coalesce(manual_active_ms, 0)::bigint AS manual_active_ms,
-               (coalesce(observed_active_ms, 0) + coalesce(manual_active_ms, 0))::bigint
-                   AS active_ms,
+               coalesce(active_ms, 0)::bigint AS active_ms,
                coalesce(forward_word_position, 0)::bigint AS forward_word_position,
                coalesce(forward_media_position_ms, 0)::bigint AS forward_media_position_ms
         FROM modalities
         LEFT JOIN recorded_totals USING (modality)
-        LEFT JOIN observed_totals USING (modality)
-        LEFT JOIN manual_totals USING (modality)
+        LEFT JOIN effective_totals USING (modality)
     """
 
 
@@ -275,22 +262,14 @@ def encode_session_cursor(*, as_of: datetime, query: ActivityQuery, row: dict[st
     session_start = row["session_start"]
     if not isinstance(session_start, datetime):
         raise TypeError("session_start must be a datetime")
-    source = str(row["source"])
-    if source == "Observed":
-        identity = str(seal_device(str(row["device_id"])))
-    elif source == "Manual" and isinstance(row["adjustment_id"], UUID):
-        identity = str(seal_activity_adjustment(row["adjustment_id"]))
-    else:
-        raise TypeError("session cursor row has an invalid source identity")
     payload = {
-        "v": 1,
+        "v": 2,
         "a": as_of.isoformat(),
         "q": _query_hash(query),
         "s": session_start.isoformat(),
         "m": f"media:{row['media_id']}",
         "o": row["modality"],
-        "r": source,
-        "i": identity,
+        "i": str(seal_device(str(row["device_id"]))),
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     tag = hmac.new(_cursor_key(), raw, hashlib.sha256).digest()[:16]
@@ -299,7 +278,7 @@ def encode_session_cursor(*, as_of: datetime, query: ActivityQuery, row: dict[st
 
 def decode_session_cursor(
     raw: str, *, query: ActivityQuery, db: Session, viewer_id: UUID
-) -> tuple[datetime, tuple[datetime, UUID, str, str, str]]:
+) -> tuple[datetime, tuple[datetime, UUID, str, str]]:
     try:
         packed = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
         if base64.urlsafe_b64encode(packed).rstrip(b"=").decode() != raw:
@@ -314,11 +293,10 @@ def decode_session_cursor(
         value = json.loads(body)
         if (
             not isinstance(value, dict)
-            or set(value) != {"v", "a", "q", "s", "m", "o", "r", "i"}
-            or value["v"] != 1
+            or set(value) != {"v", "a", "q", "s", "m", "o", "i"}
+            or value["v"] != 2
             or value["q"] != _query_hash(query)
             or value["o"] not in {"Reading", "Listening", "Viewing"}
-            or value["r"] not in {"Observed", "Manual"}
             or not isinstance(value["m"], str)
             or not value["m"].startswith("media:")
         ):
@@ -327,18 +305,13 @@ def decode_session_cursor(
         session_start = datetime.fromisoformat(value["s"])
         if as_of.tzinfo is None or session_start.tzinfo is None:
             raise ValueError
-        identity = (
-            resolve_device_handle(db, viewer_id=viewer_id, raw=value["i"])
-            if value["r"] == "Observed"
-            else str(unseal_activity_adjustment(value["i"]))
-        )
+        identity = resolve_device_handle(db, viewer_id=viewer_id, raw=value["i"])
         if identity is None:
             raise ValueError
         return as_of, (
             session_start,
             UUID(value["m"][len("media:") :]),
             value["o"],
-            value["r"],
             identity,
         )
     except (
@@ -373,7 +346,7 @@ def _query_hash(query: ActivityQuery) -> str:
 def _cursor_key() -> bytes:
     return hashlib.sha256(
         base64.b64decode(get_settings().effective_stream_token_signing_key, validate=True)
-        + b"consumption-session-cursor-v1"
+        + b"consumption-session-cursor-v2"
     ).digest()
 
 
@@ -407,17 +380,16 @@ def _visible_clipped_spans_sql(*, exclude_corrected: bool) -> str:
         """
               AND NOT EXISTS (
                   SELECT 1
-                  FROM consumption_activity_adjustments x
+                  FROM consumption_activity_exclusions x
                   WHERE x.user_id = s.user_id
                     AND x.media_id = s.media_id
-                    AND x.kind = 'Exclude'
                     AND x.modality = s.modality
                     AND x.device_id = s.device_id
                     AND x.created_at <= :as_of_created_at
-                    AND (x.retracted_at IS NULL OR x.retracted_at > :as_of_created_at)
-                    AND s.occurred_at >= x.occurred_at
+                    AND (x.restored_at IS NULL OR x.restored_at > :as_of_created_at)
+                    AND s.occurred_at >= x.started_at
                     AND s.occurred_at + s.duration_ms * interval '1 millisecond'
-                        <= x.occurred_at + x.duration_ms * interval '1 millisecond'
+                        <= x.ended_at
               )
         """
         if exclude_corrected
@@ -430,8 +402,7 @@ def _visible_clipped_spans_sql(*, exclude_corrected: bool) -> str:
                    s.occurred_at, s.duration_ms, s.progress_start, s.progress_end,
                    s.word_start, s.word_end, s.media_position_start_ms,
                    s.media_position_end_ms, s.created_at, m.title,
-                   s.occurred_at + s.duration_ms * interval '1 millisecond' AS ended_at,
-                   'Observed'::text AS source, NULL::uuid AS adjustment_id
+                   s.occurred_at + s.duration_ms * interval '1 millisecond' AS ended_at
             FROM consumption_activity_spans s
             JOIN visible_media vm ON vm.media_id = s.media_id
             JOIN media m ON m.id = s.media_id
@@ -458,45 +429,9 @@ def visible_clipped_spans_sql() -> str:
     return _visible_clipped_spans_sql(exclude_corrected=True)
 
 
-def visible_clipped_manual_activity_sql() -> str:
-    """Visible active Add corrections represented as metric-compatible facts."""
-    return f"""
-        WITH visible_media AS ({visible_media_ids_cte_sql()}),
-        source AS (
-            SELECT s.id, s.media_id, s.modality, NULL::text AS device_id,
-                   NULL::text AS device_class, s.occurred_at, s.duration_ms,
-                   NULL::double precision AS progress_start,
-                   NULL::double precision AS progress_end,
-                   NULL::bigint AS word_start, NULL::bigint AS word_end,
-                   NULL::bigint AS media_position_start_ms,
-                   NULL::bigint AS media_position_end_ms,
-                   s.created_at, m.title,
-                   s.occurred_at + s.duration_ms * interval '1 millisecond' AS ended_at,
-                   'Manual'::text AS source, s.id AS adjustment_id
-            FROM consumption_activity_adjustments s
-            JOIN visible_media vm ON vm.media_id = s.media_id
-            JOIN media m ON m.id = s.media_id
-            WHERE s.user_id = :viewer_id
-              AND s.kind = 'Add'
-              AND s.created_at <= :as_of_created_at
-              AND (s.retracted_at IS NULL OR s.retracted_at > :as_of_created_at)
-              AND s.occurred_at < :end
-              AND s.occurred_at + s.duration_ms * interval '1 millisecond' > :start
-        )
-        SELECT source.*,
-               GREATEST(occurred_at, :start) AS clipped_start,
-               LEAST(ended_at, :end) AS clipped_end
-        FROM source
-    """
-
-
 def visible_effective_activity_sql() -> str:
-    """Effective observed plus active manual activity for factual projections."""
-    return f"""
-        SELECT * FROM ({visible_clipped_spans_sql()}) observed
-        UNION ALL
-        SELECT * FROM ({visible_clipped_manual_activity_sql()}) manual
-    """
+    """Visible observed facts after exact active exclusions."""
+    return visible_clipped_spans_sql()
 
 
 def sessionized_spans_sql() -> str:
@@ -521,17 +456,16 @@ def sessionized_spans_sql() -> str:
               AND s.occurred_at + s.duration_ms * interval '1 millisecond' > :context_start
               AND NOT EXISTS (
                   SELECT 1
-                  FROM consumption_activity_adjustments x
+                  FROM consumption_activity_exclusions x
                   WHERE x.user_id = s.user_id
                     AND x.media_id = s.media_id
-                    AND x.kind = 'Exclude'
                     AND x.modality = s.modality
                     AND x.device_id = s.device_id
                     AND x.created_at <= :as_of_created_at
-                    AND (x.retracted_at IS NULL OR x.retracted_at > :as_of_created_at)
-                    AND s.occurred_at >= x.occurred_at
+                    AND (x.restored_at IS NULL OR x.restored_at > :as_of_created_at)
+                    AND s.occurred_at >= x.started_at
                     AND s.occurred_at + s.duration_ms * interval '1 millisecond'
-                        <= x.occurred_at + x.duration_ms * interval '1 millisecond'
+                        <= x.ended_at
               )
         ), running AS (
             SELECT context_spans.*,
@@ -563,7 +497,6 @@ def sessionized_spans_sql() -> str:
             GROUP BY media_id, modality, device_id, island
         ), observed AS (
             SELECT id, media_id, modality, device_id, title,
-                   'Observed'::text AS source, NULL::uuid AS adjustment_id,
                    island::text AS island,
                    GREATEST(occurred_at, :start) AS clipped_start,
                    LEAST(ended_at, :end) AS clipped_end,
@@ -592,21 +525,8 @@ def sessionized_spans_sql() -> str:
             FROM islands
             JOIN island_bounds USING (media_id, modality, device_id, island)
             WHERE occurred_at < :end AND ended_at > :start
-        ), manual_source AS ({visible_clipped_manual_activity_sql()}),
-        manual AS (
-            SELECT id, media_id, modality, device_id, title, source,
-                   adjustment_id, id::text AS island, clipped_start, clipped_end,
-                   NULL::double precision AS clipped_progress_start,
-                   NULL::double precision AS clipped_progress_end,
-                   0::bigint AS clipped_word_delta,
-                   0::bigint AS clipped_media_delta,
-                   occurred_at < :start AS continues_before_range,
-                   ended_at > :end AS continues_after_range
-            FROM manual_source
         )
         SELECT * FROM observed
-        UNION ALL
-        SELECT * FROM manual
     """
 
 
@@ -617,7 +537,7 @@ def session_rows(
     query: ActivityQuery,
     as_of: datetime,
     limit: int,
-    after: tuple[datetime, UUID, str, str, str] | None = None,
+    after: tuple[datetime, UUID, str, str] | None = None,
     longest_first: bool = False,
 ) -> list[dict[str, Any]]:
     """Return one page of SQL-derived sessions, newest first.
@@ -639,16 +559,14 @@ def session_rows(
         "limit_plus_one": limit + 1,
     } | filter_params
     if after is not None:
-        keyset = """WHERE (session_start, media_id, modality, source, sort_identity) <
-            (:after_start, :after_media_id, :after_modality, :after_source,
-             :after_sort_identity)"""
+        keyset = """WHERE (session_start, media_id, modality, sort_identity) <
+            (:after_start, :after_media_id, :after_modality, :after_sort_identity)"""
         params.update(
             {
                 "after_start": after[0],
                 "after_media_id": after[1],
                 "after_modality": after[2],
-                "after_source": after[3],
-                "after_sort_identity": after[4],
+                "after_sort_identity": after[3],
             }
         )
     # Filters are injected only from fixed clauses built above, never request SQL.
@@ -656,18 +574,16 @@ def session_rows(
         "AND s.created_at <= :as_of_created_at", "AND s.created_at <= :as_of_created_at" + filters
     )
     order = (
-        "active_ms DESC, session_start ASC, media_id ASC, modality ASC, source ASC, "
-        "sort_identity ASC"
+        "active_ms DESC, session_start ASC, media_id ASC, modality ASC, sort_identity ASC"
         if longest_first
-        else "session_start DESC, media_id DESC, modality DESC, source DESC, sort_identity DESC"
+        else "session_start DESC, media_id DESC, modality DESC, sort_identity DESC"
     )
     return [
         dict(row)
         for row in db.execute(
             text(f"""
         WITH session_spans AS ({sql}), sessions AS (
-            SELECT media_id, modality, device_id, source, adjustment_id,
-                   coalesce(device_id, adjustment_id::text) AS sort_identity,
+            SELECT media_id, modality, device_id, device_id AS sort_identity,
                    min(title) AS title,
                    min(clipped_start) AS session_start, max(clipped_end) AS session_end,
                    sum(extract(epoch FROM clipped_end - clipped_start) * 1000)::bigint AS active_ms,
@@ -680,7 +596,7 @@ def session_rows(
                    bool_or(continues_before_range) AS continues_before_range,
                    bool_or(continues_after_range) AS continues_after_range
             FROM session_spans
-            GROUP BY media_id, modality, device_id, source, adjustment_id, island
+            GROUP BY media_id, modality, device_id, island
         )
         SELECT * FROM sessions
         {keyset}
@@ -792,7 +708,7 @@ def device_breakdown_rows(
 def active_exclusion_rows(
     db: Session, *, viewer_id: UUID, query: ActivityQuery, as_of: datetime
 ) -> list[dict[str, Any]]:
-    """Active visible Exclude corrections and their effective removed duration."""
+    """Active visible exclusions and their effective removed duration."""
     clauses: list[str] = []
     params: dict[str, Any] = {}
     if query.modality is not None:
@@ -821,9 +737,8 @@ def active_exclusion_rows(
         for row in db.execute(
             text(f"""
                 WITH visible_media AS ({visible_media_ids_cte_sql()})
-                SELECT x.id AS adjustment_id, x.media_id, m.title, x.modality,
-                       x.device_id, x.occurred_at AS started_at,
-                       x.occurred_at + x.duration_ms * interval '1 millisecond' AS ended_at,
+                SELECT x.id AS exclusion_id, x.media_id, m.title, x.modality,
+                       x.device_id, x.started_at, x.ended_at,
                        coalesce(sum(
                            extract(epoch FROM
                                least(
@@ -834,7 +749,7 @@ def active_exclusion_rows(
                                - greatest(s.occurred_at, :start)
                            ) * 1000
                        ), 0)::bigint AS excluded_active_ms
-                FROM consumption_activity_adjustments x
+                FROM consumption_activity_exclusions x
                 JOIN visible_media vm ON vm.media_id = x.media_id
                 JOIN media m ON m.id = x.media_id
                 LEFT JOIN consumption_activity_spans s
@@ -843,21 +758,21 @@ def active_exclusion_rows(
                  AND s.modality = x.modality
                  AND s.device_id = x.device_id
                  AND s.created_at <= :as_of_created_at
-                 AND s.occurred_at >= x.occurred_at
+                 AND s.occurred_at >= x.started_at
                  AND s.occurred_at + s.duration_ms * interval '1 millisecond'
-                     <= x.occurred_at + x.duration_ms * interval '1 millisecond'
+                     <= x.ended_at
                  AND s.occurred_at < :end
                  AND s.occurred_at + s.duration_ms * interval '1 millisecond' > :start
                 WHERE x.user_id = :viewer_id
-                  AND x.kind = 'Exclude'
                   AND x.created_at <= :as_of_created_at
-                  AND (x.retracted_at IS NULL OR x.retracted_at > :as_of_created_at)
-                  AND x.occurred_at < :end
-                  AND x.occurred_at + x.duration_ms * interval '1 millisecond' > :start
+                  AND (x.restored_at IS NULL OR x.restored_at > :as_of_created_at)
+                  AND x.started_at < :end
+                  AND x.ended_at > :start
                   {filters}
                 GROUP BY x.id, x.media_id, m.title, x.modality, x.device_id,
-                         x.occurred_at, x.duration_ms
-                ORDER BY x.occurred_at DESC, x.id DESC
+                         x.started_at, x.ended_at
+                HAVING count(s.id) > 0
+                ORDER BY x.started_at DESC, x.id DESC
             """),
             {
                 "viewer_id": viewer_id,
@@ -1108,9 +1023,9 @@ def session_count(db: Session, *, viewer_id: UUID, query: ActivityQuery, as_of: 
         db.scalar(
             text(f"""
                 WITH session_spans AS ({sql}), sessions AS (
-                    SELECT media_id, modality, device_id, source, adjustment_id, island
+                    SELECT media_id, modality, device_id, island
                     FROM session_spans
-                    GROUP BY media_id, modality, device_id, source, adjustment_id, island
+                    GROUP BY media_id, modality, device_id, island
                 )
                 SELECT count(*) FROM sessions
             """),
