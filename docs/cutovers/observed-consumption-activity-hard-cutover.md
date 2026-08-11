@@ -1,10 +1,8 @@
 # Observed Consumption Activity — Hard Cutover
 
-**Status:** IMPLEMENTED IN SOURCE · 2026-08-11. Focused policy/static,
-real-Postgres, real-Chromium, and migration proofs pass. The production bundle
-and real-stack journey are locally blocked by repeated SIGTERM under shared-host
-memory pressure; clean-commit PR/full and physical Android proofs remain
-unexecuted.
+**Status:** IMPLEMENTED IN SOURCE · 2026-08-11. Policy/static, real-Postgres,
+real-Chromium, migration, production-bundle, real-stack journey, and Android
+host proofs pass. Physical Android device proof remains required before release.
 
 **Type:** Hard cutover — no positive manual time, legacy endpoint, legacy
 payload, compatibility decoder, dual schema, fallback, or feature flag.
