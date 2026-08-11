@@ -277,6 +277,9 @@ Modify:
   `resourceActionProductOracle.ts`, its ActionMenu policy inventory,
   `testdata/proofs.json`, and
   `python/nexus_test_control/model.py`'s independently frozen ownership digest;
+- release proof fixtures: `python/tests/kernel/test_production_release.py` and
+  `python/tests/testkit/{production_deploy,release_bundle}.py` advance their
+  candidate database revision to `0214`;
 - docs: `architecture.md`, `modules/consumption-activity.md`, and a
   supersession note in the implemented durable-activity cutover.
 
