@@ -21,6 +21,7 @@ import type { AudioSession, PlayerError } from "@/lib/player/playerSession";
 import {
   expectExactRecord,
   expectFiniteNumber,
+  expectIsoInstant,
   expectNonnegativeInteger,
   expectOneOf,
   expectString,
@@ -46,6 +47,22 @@ export type AndroidPlayerPersistence =
       message: string;
     };
 
+export type AndroidActivitySyncSnapshot = {
+  capture:
+    | { kind: "Recording" }
+    | { kind: "Idle" }
+    | { kind: "Paused" }
+    | {
+        kind: "Blocked";
+        reason: "StorageUnavailable" | "CapacityReached";
+      };
+  sync:
+    | { kind: "Synced" }
+    | { kind: "Pending"; count: number; oldestAt: string }
+    | { kind: "Failed"; count: number };
+  acceptedRevision: number;
+};
+
 export interface AndroidPauseShorteningSnapshot {
   deviceDefaultMode: PauseShorteningMode;
   podcastOverride: Presence<PauseShorteningMode>;
@@ -67,6 +84,7 @@ interface AndroidSnapshotBase {
   persistence: AndroidPlayerPersistence;
   playbackFailure: Presence<PlayerError>;
   pauseShortening: AndroidPauseShorteningSnapshot;
+  activitySync: AndroidActivitySyncSnapshot;
 }
 
 export type AndroidPlayerSnapshot =
@@ -74,6 +92,7 @@ export type AndroidPlayerSnapshot =
       kind: "Absent";
       deviceDefaultPauseShorteningMode: PauseShorteningMode;
       pauseShorteningSavedOnDeviceMs: number;
+      activitySync: AndroidActivitySyncSnapshot;
     }
   | (Omit<AndroidSnapshotBase, "rateState"> & {
       kind: "Canonical";
@@ -167,7 +186,10 @@ type CommandBase = {
 
 export type AndroidPlayerCommand =
   | (CommandBase & { kind: "Connect"; accountId: string })
-  | (CommandBase & { kind: "GetSnapshot" })
+  | (CommandBase & {
+      kind: "GetSnapshot" | "RetryFailedActivity" | "DiscardFailedActivity";
+    })
+  | (CommandBase & { kind: "SetActivityPaused"; paused: boolean })
   | (CommandBase & {
       kind: "LoadCanonical";
       sessionKey: string;
@@ -432,6 +454,7 @@ function decodeSnapshotBase(
       decodePlayerError,
     ),
     pauseShortening: decodePauseShortening(value.pauseShortening),
+    activitySync: decodeActivitySync(value.activitySync),
   };
 }
 
@@ -451,6 +474,7 @@ export function decodeAndroidPlayerSnapshot(
         "kind",
         "deviceDefaultPauseShorteningMode",
         "pauseShorteningSavedOnDeviceMs",
+        "activitySync",
       ],
       "PlayerSnapshot.Absent",
     );
@@ -464,6 +488,7 @@ export function decodeAndroidPlayerSnapshot(
         value.pauseShorteningSavedOnDeviceMs,
         "PlayerSnapshot.Absent.pauseShorteningSavedOnDeviceMs",
       ),
+      activitySync: decodeActivitySync(value.activitySync),
     };
   }
   const baseKeys = [
@@ -479,6 +504,7 @@ export function decodeAndroidPlayerSnapshot(
     "persistence",
     "playbackFailure",
     "pauseShortening",
+    "activitySync",
   ] as const;
   if (kind === "Canonical") {
     exactKeys(value, [...baseKeys, "session"], "PlayerSnapshot.Canonical");
@@ -506,6 +532,84 @@ export function decodeAndroidPlayerSnapshot(
     rateState: base.rateState,
     descriptor: decodePreviewAudioDescriptor(value.descriptor),
   };
+}
+
+function decodeActivitySync(raw: unknown): AndroidActivitySyncSnapshot {
+  const value = expectExactRecord(
+    raw,
+    ["capture", "sync", "acceptedRevision"],
+    "AndroidActivitySyncSnapshot",
+  );
+  const capture = asRecord(value.capture, "AndroidActivitySyncSnapshot.capture");
+  const captureKind = expectOneOf(
+    capture.kind,
+    ["Recording", "Idle", "Paused", "Blocked"] as const,
+    "AndroidActivitySyncSnapshot.capture.kind",
+  );
+  const decodedCapture =
+    captureKind === "Blocked"
+      ? (exactKeys(capture, ["kind", "reason"], "AndroidActivitySyncSnapshot.capture.Blocked"), {
+          kind: captureKind,
+          reason: expectOneOf(
+            capture.reason,
+            ["StorageUnavailable", "CapacityReached"] as const,
+            "AndroidActivitySyncSnapshot.capture.Blocked.reason",
+          ),
+        } as const)
+      : (exactKeys(capture, ["kind"], `AndroidActivitySyncSnapshot.capture.${captureKind}`),
+        { kind: captureKind } as const);
+  const sync = asRecord(value.sync, "AndroidActivitySyncSnapshot.sync");
+  const syncKind = expectOneOf(
+    sync.kind,
+    ["Synced", "Pending", "Failed"] as const,
+    "AndroidActivitySyncSnapshot.sync.kind",
+  );
+  const decodedSync =
+    syncKind === "Synced"
+      ? (exactKeys(sync, ["kind"], "AndroidActivitySyncSnapshot.sync.Synced"), {
+          kind: syncKind,
+        } as const)
+      : syncKind === "Pending"
+        ? (exactKeys(sync, ["kind", "count", "oldestAt"], "AndroidActivitySyncSnapshot.sync.Pending"), {
+            kind: syncKind,
+            count: expectPositiveInteger(
+              sync.count,
+              "AndroidActivitySyncSnapshot.sync.Pending.count",
+            ),
+            oldestAt: expectIsoInstant(
+              sync.oldestAt,
+              "AndroidActivitySyncSnapshot.sync.Pending.oldestAt",
+            ),
+          } as const)
+        : (exactKeys(sync, ["kind", "count"], "AndroidActivitySyncSnapshot.sync.Failed"), {
+            kind: syncKind,
+            count: expectPositiveInteger(
+              sync.count,
+              "AndroidActivitySyncSnapshot.sync.Failed.count",
+            ),
+          } as const);
+  return {
+    capture: decodedCapture,
+    sync: decodedSync,
+    acceptedRevision: expectNonnegativeSafeInteger(
+      value.acceptedRevision,
+      "AndroidActivitySyncSnapshot.acceptedRevision",
+    ),
+  };
+}
+
+function expectPositiveInteger(raw: unknown, name: string): number {
+  const value = expectNonnegativeInteger(raw, name);
+  if (value === 0) throw new TypeError(`${name} must be positive`);
+  return value;
+}
+
+function expectNonnegativeSafeInteger(raw: unknown, name: string): number {
+  const value = expectNonnegativeInteger(raw, name);
+  if (!Number.isSafeInteger(value)) {
+    throw new TypeError(`${name} must be a safe integer`);
+  }
+  return value;
 }
 
 function decodePlaybackRateState(raw: unknown): AndroidPlaybackRateState {

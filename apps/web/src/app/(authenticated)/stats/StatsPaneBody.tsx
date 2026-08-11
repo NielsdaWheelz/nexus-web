@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch, type ApiPath } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+  type ApiPath,
+} from "@/lib/api/client";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { useResource } from "@/lib/api/useResource";
 import {
@@ -12,13 +17,24 @@ import {
   statsPath,
   statsSessionsPath,
   type ActivityModality,
+  type ActiveExclusion,
   type ConsumptionStats,
   type StatsPeriod,
   type StatsSession,
   type StatsUrlState,
 } from "@/lib/consumption/statsContract";
 import {
+  submitActivityAdjustment,
+  type ActivityAdjustmentRequest,
+} from "@/lib/consumption/activityAdjustments";
+import { parseMediaRef } from "@/lib/consumption/activityContract";
+import {
+  publishConsumptionProjectionChange,
+  useConsumptionProjectionRevision,
+} from "@/lib/consumption/projectionRevision";
+import {
   requirePaneRuntime,
+  usePaneIsActive,
   usePaneReturnReady,
   usePaneRuntime,
   usePaneSearchParams,
@@ -27,6 +43,13 @@ import {
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import ActivityHealth from "./ActivityHealth";
+import Button from "@/components/ui/Button";
+import {
+  type FeedbackContent,
+  useFeedback,
+} from "@/components/feedback/Feedback";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import styles from "./StatsPaneBody.module.css";
 
 const PERIOD_LABEL: Record<StatsPeriod, string> = {
@@ -48,6 +71,57 @@ function duration(ms: number): string {
 
 function number(value: number): string {
   return new Intl.NumberFormat().format(value);
+}
+
+function correctionFailure(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const requestId = error.requestId;
+  switch (error.code) {
+    case "E_UNAUTHENTICATED":
+      handleUnauthenticatedApiError(error);
+      return {
+        tone: "Warning",
+        title: "Sign in again to change activity",
+        requestId,
+      };
+    case "E_NETWORK":
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Warning",
+        title: "Activity wasn’t changed",
+        message: "Check your connection and retry.",
+        requestId,
+      };
+    case "E_MEDIA_NOT_FOUND":
+    case "E_NOT_FOUND":
+      return {
+        tone: "Warning",
+        title: "That activity is no longer available",
+        requestId,
+      };
+    case "E_INVALID_REQUEST":
+    case "E_CONFLICT":
+    case "E_RESOURCE_CONFLICT":
+      return {
+        tone: "Warning",
+        title: "Activity changed before this correction",
+        message: "Review the refreshed history and retry if needed.",
+        requestId,
+      };
+    default:
+      throw error;
+  }
+}
+
+function excludeCorrectionKey(row: StatsSession): string {
+  const device = row.device.kind === "Present" ? row.device.value.deviceHandle : "missing";
+  return `exclude:${row.mediaRef}:${device}:${row.startedAt}:${row.endedAt}`;
+}
+
+function retractCorrectionKey(adjustmentHandle: string): string {
+  return `retract:${adjustmentHandle}`;
 }
 function dateLabel(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -203,7 +277,7 @@ function Timeline({ data }: { data: ConsumptionStats }) {
   return (
     <Section
       title="Activity over time"
-      detail="Observed active time, in your local time."
+      detail="Recorded and added active time, in your local time."
       scope={data.activity}
     >
       <div className={styles.legend}>
@@ -576,11 +650,17 @@ function SessionRows({
   nextCursor,
   loadingMore,
   onLoadMore,
+  correctingKey,
+  onExclude,
+  onRemove,
 }: {
   rows: StatsSession[];
   nextCursor: string | null;
   loadingMore: boolean;
   onLoadMore: () => void;
+  correctingKey: string | null;
+  onExclude: (row: StatsSession) => void;
+  onRemove: (row: StatsSession) => void;
 }) {
   const paneRuntime = usePaneRuntime();
   return (
@@ -591,13 +671,14 @@ function SessionRows({
             <th scope="col">Session</th>
             <th scope="col">Active time</th>
             <th scope="col">Movement</th>
+            <th scope="col">Correction</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => {
             const href = mediaPath(row.mediaRef);
             return (
-              <tr key={`${row.mediaRef}-${row.startedAt}`}>
+              <tr key={`${row.source}-${row.mediaRef}-${row.startedAt}`}>
                 <th scope="row">
                   {href ? (
                     <button
@@ -620,7 +701,7 @@ function SessionRows({
                     row.title
                   )}
                   <span className={styles.muted}>
-                    {row.modality} · {shortDate(row.startedAt)}
+                    {row.source} · {row.modality} · {shortDate(row.startedAt)}
                     {row.continuesBeforeRange || row.continuesAfterRange
                       ? " · continues beyond range"
                       : ""}
@@ -631,6 +712,39 @@ function SessionRows({
                   {row.forwardWordPosition
                     ? `${number(row.forwardWordPosition)} words`
                     : duration(row.forwardMediaPositionMs)}
+                </td>
+                <td>
+                  {row.source === "Observed" &&
+                  !row.continuesBeforeRange &&
+                  !row.continuesAfterRange ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={correctingKey !== null}
+                      loading={
+                        correctingKey === excludeCorrectionKey(row)
+                      }
+                      onClick={() => onExclude(row)}
+                    >
+                      Don’t count this
+                    </Button>
+                  ) : row.source === "Observed" ? (
+                    <span className={styles.muted}>Open all time to correct</span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={correctingKey !== null}
+                      loading={
+                        row.adjustmentHandle.kind === "Present" &&
+                        correctingKey ===
+                          retractCorrectionKey(row.adjustmentHandle.value)
+                      }
+                      onClick={() => onRemove(row)}
+                    >
+                      Remove
+                    </Button>
+                  )}
                 </td>
               </tr>
             );
@@ -648,6 +762,79 @@ function SessionRows({
         </button>
       ) : null}
     </>
+  );
+}
+
+function ActiveExclusionRows({
+  rows,
+  correctingKey,
+  onRestore,
+}: {
+  rows: ActiveExclusion[];
+  correctingKey: string | null;
+  onRestore: (row: ActiveExclusion) => void;
+}) {
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Session</th>
+          <th scope="col">Excluded time</th>
+          <th scope="col">Correction</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.adjustmentHandle}>
+            <th scope="row">
+              {row.title}
+              <span className={styles.muted}>
+                {row.modality} · {row.device.label} · {shortDate(row.startedAt)}
+              </span>
+            </th>
+            <td>{duration(row.excludedActiveMs)}</td>
+            <td>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={correctingKey !== null}
+                loading={
+                  correctingKey === retractCorrectionKey(row.adjustmentHandle)
+                }
+                onClick={() => onRestore(row)}
+              >
+                Restore
+              </Button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ActiveExclusionsSection({
+  data,
+  correctingKey,
+  onRestore,
+}: {
+  data: ConsumptionStats;
+  correctingKey: string | null;
+  onRestore: (row: ActiveExclusion) => void;
+}) {
+  if (data.activity.activeExclusions.length === 0) return null;
+  return (
+    <Section
+      title="Excluded activity"
+      detail="Observed sessions you chose not to count."
+      scope={data.activity}
+    >
+      <ActiveExclusionRows
+        rows={data.activity.activeExclusions}
+        correctingKey={correctingKey}
+        onRestore={onRestore}
+      />
+    </Section>
   );
 }
 
@@ -780,7 +967,10 @@ function YearReading({ data, year }: { data: ConsumptionStats; year: number }) {
         </div>
         <h2>{year}</h2>
         <strong>{duration(data.activity.totals.activeMs)}</strong>
-        <span>observed active time</span>
+        <span>
+          {duration(data.activity.totals.observedActiveMs)} observed ·{" "}
+          {duration(data.activity.totals.manualActiveMs)} added
+        </span>
       </header>
       <div className={styles.yearFacts}>
         <div>
@@ -853,6 +1043,36 @@ function YearReading({ data, year }: { data: ConsumptionStats; year: number }) {
 }
 
 export default function StatsPaneBody() {
+  const feedback = useFeedback();
+  const [correctionDefect, setCorrectionDefect] = useState<unknown>(null);
+  const [correctingKey, setCorrectingKey] = useState<string | null>(null);
+  const correctionMutationIds = useRef(new Map<string, string>());
+  const isPaneActive = usePaneIsActive();
+  const projectionChange = useConsumptionProjectionRevision();
+  const [lifecycleRevision, setLifecycleRevision] = useState(0);
+  const wasPaneActive = useRef(isPaneActive);
+  useEffect(() => {
+    if (!wasPaneActive.current && isPaneActive) {
+      setLifecycleRevision((revision) => revision + 1);
+    }
+    wasPaneActive.current = isPaneActive;
+  }, [isPaneActive]);
+  useEffect(() => {
+    const revalidate = () => setLifecycleRevision((revision) => revision + 1);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") revalidate();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", revalidate);
+    window.addEventListener("pageshow", revalidate);
+    window.addEventListener("online", revalidate);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", revalidate);
+      window.removeEventListener("pageshow", revalidate);
+      window.removeEventListener("online", revalidate);
+    };
+  }, []);
   const hydratedTimeZone = useHydratedBrowserTimeZone();
   const codec = useMemo(
     () => ({
@@ -878,8 +1098,12 @@ export default function StatsPaneBody() {
     hydratedTimeZone && urlIsCanonical
       ? statsPath(state, hydratedTimeZone)
       : null;
+  const resourceKey =
+    path === null
+      ? null
+      : `${path}\u0000${projectionChange.revision}\u0000${lifecycleRevision}`;
   const resource = useResource<{ path: string; data: ConsumptionStats }>({
-    cacheKey: path,
+    cacheKey: resourceKey,
     load: async (signal) => {
       const requestPath = path as ApiPath;
       return {
@@ -898,7 +1122,7 @@ export default function StatsPaneBody() {
   useEffect(() => {
     setExtraSessions([]);
     setNextSessionCursor(null);
-  }, [path]);
+  }, [resourceKey]);
   const previous = useRef<{
     data: ConsumptionStats;
     state: StatsUrlState;
@@ -925,7 +1149,8 @@ export default function StatsPaneBody() {
     data.completion.total === 0 &&
     data.retainedArtifacts.highlights === 0 &&
     data.retainedArtifacts.noteBlocks === 0 &&
-    data.retainedArtifacts.neutralLinks === 0;
+    data.retainedArtifacts.neutralLinks === 0 &&
+    data.activity.activeExclusions.length === 0;
   const filterEmpty =
     data !== null &&
     data.activity.appliedFilters.some((filter) => filter !== "time");
@@ -989,6 +1214,111 @@ export default function StatsPaneBody() {
       setLoadingMoreSessions(false);
     }
   };
+
+  const applyCorrection = async (
+    key: string,
+    buildRequest: (clientMutationId: string) => ActivityAdjustmentRequest,
+    successTitle: string,
+  ) => {
+    if (correctingKey !== null) return;
+    const clientMutationId =
+      correctionMutationIds.current.get(key) ?? globalThis.crypto.randomUUID();
+    correctionMutationIds.current.set(key, clientMutationId);
+    setCorrectingKey(key);
+    try {
+      await submitActivityAdjustment(buildRequest(clientMutationId));
+      correctionMutationIds.current.delete(key);
+      feedback.publish({
+        kind: "Hud",
+        key: "consumption-activity-correction",
+        content: { tone: "Success", title: successTitle },
+      });
+    } catch (error) {
+      try {
+        feedback.publish({
+          kind: "Hud",
+          key: "consumption-activity-correction",
+          content: correctionFailure(error),
+        });
+        if (
+          isApiError(error) &&
+          (error.code === "E_INVALID_REQUEST" ||
+            error.code === "E_RESOURCE_CONFLICT")
+        ) {
+          publishConsumptionProjectionChange();
+        }
+      } catch (defect) {
+        setCorrectionDefect(defect);
+      }
+    } finally {
+      setCorrectingKey(null);
+    }
+  };
+  const excludeSession = (row: StatsSession) => {
+    if (row.source !== "Observed" || row.device.kind !== "Present") {
+      setCorrectionDefect(
+        new Error("Observed Stats session has no device identity"),
+      );
+      return;
+    }
+    if (!window.confirm(`Don’t count this ${duration(row.activeMs)} session?`)) {
+      return;
+    }
+    const key = excludeCorrectionKey(row);
+    const deviceHandle = row.device.value.deviceHandle;
+    void applyCorrection(
+      key,
+      (clientMutationId) => ({
+        kind: "Exclude",
+        clientMutationId,
+        mediaRef: parseMediaRef(row.mediaRef),
+        modality: row.modality,
+        deviceHandle,
+        startedAt: row.startedAt,
+        endedAt: row.endedAt,
+      }),
+      "Session excluded",
+    );
+  };
+  const removeManualSession = (row: StatsSession) => {
+    if (row.source !== "Manual" || row.adjustmentHandle.kind !== "Present") {
+      setCorrectionDefect(
+        new Error("Manual Stats session has no adjustment identity"),
+      );
+      return;
+    }
+    if (!window.confirm(`Remove this ${duration(row.activeMs)} added time?`)) {
+      return;
+    }
+    const adjustmentHandle = row.adjustmentHandle.value;
+    const key = retractCorrectionKey(adjustmentHandle);
+    void applyCorrection(
+      key,
+      (clientMutationId) => ({
+        kind: "Retract",
+        clientMutationId,
+        adjustmentHandle,
+      }),
+      "Added time removed",
+    );
+  };
+  const restoreExclusion = (row: ActiveExclusion) => {
+    if (!window.confirm(`Count this ${duration(row.excludedActiveMs)} session again?`)) {
+      return;
+    }
+    const key = retractCorrectionKey(row.adjustmentHandle);
+    void applyCorrection(
+      key,
+      (clientMutationId) => ({
+        kind: "Retract",
+        clientMutationId,
+        adjustmentHandle: row.adjustmentHandle,
+      }),
+      "Session restored",
+    );
+  };
+
+  if (correctionDefect !== null) throw correctionDefect;
 
   return (
     <main className={styles.pane} aria-busy={updating || initialLoading}>
@@ -1137,6 +1467,7 @@ export default function StatsPaneBody() {
           )}
         </div>
       </header>
+      <ActivityHealth />
       {updating ? (
         <p className={styles.busy} role="status">
           Updating{" "}
@@ -1194,6 +1525,11 @@ export default function StatsPaneBody() {
         ) : noActivity ? (
           !wholeEmpty ? (
             <>
+              <ActiveExclusionsSection
+                data={data}
+                correctingKey={correctingKey}
+                onRestore={restoreExclusion}
+              />
               <Completions data={data} />
               <CreatedAndKept data={data} />
             </>
@@ -1204,6 +1540,10 @@ export default function StatsPaneBody() {
               <div>
                 <span>Active time</span>
                 <strong>{duration(data.activity.totals.activeMs)}</strong>
+                <small>
+                  {duration(data.activity.totals.observedActiveMs)} observed ·{" "}
+                  {duration(data.activity.totals.manualActiveMs)} added
+                </small>
               </div>
               <div>
                 <span>Active days</span>
@@ -1249,8 +1589,16 @@ export default function StatsPaneBody() {
                 nextCursor={sessionCursor}
                 loadingMore={loadingMoreSessions}
                 onLoadMore={() => void loadMoreSessions()}
+                correctingKey={correctingKey}
+                onExclude={excludeSession}
+                onRemove={removeManualSession}
               />
             </Section>
+            <ActiveExclusionsSection
+              data={data}
+              correctingKey={correctingKey}
+              onRestore={restoreExclusion}
+            />
             <Completions data={data} />
             <CreatedAndKept data={data} />
           </>

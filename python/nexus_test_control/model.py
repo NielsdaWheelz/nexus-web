@@ -80,12 +80,13 @@ class PriorityRiskId(StrEnum):
     PRODUCTION_RUNTIME_HEALTH = "production-runtime-health"
     ORACLE_PUBLICATION = "oracle-publication"
     PRODUCTION_RELEASE_TEST_CONTROL = "production-release-test-control"
+    DURABLE_CONSUMPTION_ACTIVITY = "durable-consumption-activity"
     NATIVE_RELEASE_AUTH_HANDOFF = "native-release-auth-handoff"
     NATIVE_SYSTEM_INSETS = "native-system-insets"
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "bbc5305280cf9394597b48553f7ba8c87c6d8c79e91c20549e9a04b4bf012aae"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "8dfe22bac5d3825ffc7878baf6df9ec6d5f2fdbf82f97464e77e1e15598c00d6"
 
 
 class ResourceKind(StrEnum):

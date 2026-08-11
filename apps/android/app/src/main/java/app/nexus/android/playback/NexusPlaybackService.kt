@@ -101,6 +101,9 @@ private fun nexusPlayerCommands(
 internal val NEXUS_CUSTOM_SESSION_ACTIONS: Set<String> = setOf(
     "Connect",
     "GetSnapshot",
+    "RetryFailedActivity",
+    "DiscardFailedActivity",
+    "SetActivityPaused",
     "LoadCanonical",
     "LoadPreview",
     "SetPlaybackRateState",
@@ -202,6 +205,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private lateinit var audioProcessorChain: DefaultAudioSink.DefaultAudioProcessorChain
     private lateinit var savedTime: SavedTimeAccounting
     private lateinit var consumptionRecorder: NativeConsumptionRecorder
+    private lateinit var activityOutbox: NativeActivityOutbox
     private lateinit var offlineMediaStore: OfflineMediaStore
     private lateinit var remoteMediaSourceFactory: DefaultMediaSourceFactory
     private val loadErrorHandlingPolicy = DefaultLoadErrorHandlingPolicy()
@@ -259,14 +263,17 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 audioOffloadPreferences(naturalPauseShortening = false)
             )
             .build()
+        activityOutbox = NativeActivityOutbox(this)
         consumptionRecorder = NativeConsumptionRecorder(
             context = this,
             scope = serviceScope,
             client = NexusOriginClient(),
+            activityOutbox = activityOutbox,
             readPlayback = ::recorderPlaybackSample,
             onListeningStateAccepted = ::installAcceptedListeningState,
             onListeningStateAdopted = ::installRecoveredListeningState,
             onPersistenceChanged = ::installPersistence,
+            onActivitySyncChanged = { publishSnapshot() },
         )
         player.addListener(this)
         player.addAnalyticsListener(
@@ -310,6 +317,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         consumptionRecorder.close()
         timelineJob?.cancel()
         serviceScope.cancel()
+        activityOutbox.close()
         mediaSession.release()
         player.release()
         super.onDestroy()
@@ -442,6 +450,39 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                     snapshot(),
                     matchingPendingReceipt(),
                 )
+            is PlayerCommand.RetryFailedActivity -> {
+                if (accountId == null) {
+                    PlayerWire.rejected(
+                        command.requestId,
+                        PlayerRejectionCode.AccountMismatch,
+                    )
+                } else {
+                    consumptionRecorder.retryFailedActivity()
+                    PlayerWire.accepted(command.requestId)
+                }
+            }
+            is PlayerCommand.DiscardFailedActivity -> {
+                if (accountId == null) {
+                    PlayerWire.rejected(
+                        command.requestId,
+                        PlayerRejectionCode.AccountMismatch,
+                    )
+                } else {
+                    consumptionRecorder.discardFailedActivity()
+                    PlayerWire.accepted(command.requestId)
+                }
+            }
+            is PlayerCommand.SetActivityPaused -> {
+                if (accountId == null) {
+                    PlayerWire.rejected(
+                        command.requestId,
+                        PlayerRejectionCode.AccountMismatch,
+                    )
+                } else {
+                    consumptionRecorder.setActivityPaused(command.paused)
+                    PlayerWire.accepted(command.requestId)
+                }
+            }
             is PlayerCommand.LoadCanonical -> loadCanonical(command)
             is PlayerCommand.LoadPreview -> loadPreview(command)
             is PlayerCommand.Play -> {
@@ -581,6 +622,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         }
         preferences.discardForeignReceipt(command.accountId)
         accountId = command.accountId
+        consumptionRecorder.openActivityOutbox(command.accountId)
         consumptionRecorder.retryPersistence()
         refreshControllerAvailableCommands()
         return PlayerWire.connected(
@@ -1168,6 +1210,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         val current = loaded ?: return PlayerSnapshot.Absent(
             deviceDefaultPauseShorteningMode = preferences.deviceDefaultMode(),
             pauseShorteningSavedOnDeviceMs = savedTime.totalMs,
+            activitySync = consumptionRecorder.activitySync().toPlayerSnapshot(),
         )
         val phase = phase()
         val positionMs = max(0, player.currentPosition)
@@ -1189,6 +1232,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                     persistence = persistence,
                     playbackFailure = failure,
                     pauseShortening = commonPause,
+                    activitySync = consumptionRecorder.activitySync().toPlayerSnapshot(),
                 )
             is LoadedSession.Preview ->
                 PlayerSnapshot.Preview(
@@ -1208,6 +1252,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                         sessionOverride = Presence.Absent,
                         effectiveMode = PauseShorteningMode.Off,
                     ),
+                    activitySync = consumptionRecorder.activitySync().toPlayerSnapshot(),
                 )
         }
     }
@@ -1535,6 +1580,9 @@ internal fun availableNexusPlayerCommandIds(
         persistenceDrained = persistenceDrained,
     )
 }
+
+private fun NativeActivitySyncSnapshot.toPlayerSnapshot(): PlayerActivitySyncSnapshot =
+    PlayerActivitySyncSnapshot(capture, sync, acceptedRevision)
 
 internal fun playerSnapshotBlockedByNaturalEnd(
     canonicalLoaded: Boolean,

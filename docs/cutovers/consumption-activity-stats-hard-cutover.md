@@ -5,6 +5,14 @@
 compatibility payload, feature flag, backfill, or aggregate cache.
 
 The whole of [`docs/rules/index.md`](../rules/index.md) governs this cutover.
+
+> **Superseded 2026-08-10:** the ephemeral browser/native delivery, batch
+> identity, failure, and “no durable queue” contracts in this historical record
+> were hard-cut by
+> [`durable-consumption-activity-hard-cutover.md`](durable-consumption-activity-hard-cutover.md).
+> Its span/session/completion rationale remains historical context; active
+> behavior is documented in
+> [`../modules/consumption-activity.md`](../modules/consumption-activity.md).
 The rules with the most direct design consequences are boundaries, cleanliness,
 codebase, concurrency, database, frontend, keys and identities, operation
 types, resource lifecycle, retries, simplicity, testing, and timing.

@@ -712,6 +712,10 @@ Consumption Activity's bounded historical facts.
   `activityRecorder`. Reading accrues only while the media pane is active, the
   document is visible and focused, and recent genuine reader input keeps the
   reader eligible.
+- Web article, EPUB, PDF, and transcript projections supply their actual
+  activity scrollport through one format-neutral adapter contract. Restore,
+  navigation, preview, and return intents remain ineligible until genuine
+  input returns the source to `Reader`.
 - The adapter projects the same semantic viewport that drives document-position
   presentation; it
   never remeasures a scrollbar, writes spans itself, sends a raw device id, or
@@ -720,9 +724,11 @@ Consumption Activity's bounded historical facts.
 - PDF contributes observed time/progress but not exact word traversal. The
   canonical text/document-metrics owners provide word positions for supported
   reflowable content.
-- The recorder flushes bounded best-effort batches through the activity BFF;
-  it has no durable browser queue. Its facts power `/stats`, not cursor restore
-  or reader navigation.
+- The recorder closes bounded semantic spans into the Consumption-owned,
+  account-scoped IndexedDB outbox before upload. Reload, offline operation,
+  lifecycle closure, and ambiguous delivery retain the stable capture fact;
+  storage failure blocks capture visibly instead of falling back to memory.
+  These facts power `/stats`, not cursor restore or reader navigation.
 
 See [consumption-activity.md](consumption-activity.md) for the history
 contract and [player.md](player.md) for audio capture ownership.

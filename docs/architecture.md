@@ -1414,12 +1414,21 @@ refill, not destination state.
 
 ### 8.9 Consumption Activity & Stats
 
-`services/consumption/` stores two historical fact families only: bounded
-observed spans and first post-cutover completion facts. The browser's one
-tab-local recorder is fed by the reader, the owned global audio element, and
-the visible embedded-video pane; it never exposes the raw `nx_device` value.
+`services/consumption/` stores bounded observed spans, first post-cutover
+completion facts, and additive/exclusion adjustments that never rewrite
+observation history. The browser's tab-local recorder is fed by the reader,
+the owned global audio element, and the visible embedded-video pane. Every
+closed span commits first to an account-scoped IndexedDB outbox; native Android
+listening uses the equivalent service-owned SQLite outbox. Stable capture keys
+make regrouped delivery idempotent. Storage failure or capacity exhaustion
+blocks capture visibly; there is no memory-only fallback. The BFF remains the
+only raw `nx_device` reader.
+
 `/stats` renders URL-owned factual time buckets, current visibility-scoped
-breakdowns, derived sessions, and a deterministic Year in Reading view. The
+breakdowns, derived observed/manual sessions, active exclusions, capture/sync
+health, and a deterministic Year in Reading view. Accepted writes publish the
+process-local Consumption revision; focus, activation, visibility, pageshow,
+and online transitions revalidate cross-process state without polling. The
 full contract is [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus

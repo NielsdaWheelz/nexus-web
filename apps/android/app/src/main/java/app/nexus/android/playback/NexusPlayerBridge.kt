@@ -152,7 +152,7 @@ internal class NexusPlayerBridge(
                     runCatching {
                         event.requireExactKeys("protocolVersion", "kind", "snapshot")
                         sessionFence.observeSnapshotEvent(
-                            snapshotSessionKey(event.requireObject("snapshot"))
+                            playerSnapshotSessionKey(event.requireObject("snapshot"))
                         )
                     }.getOrElse { return@post }
                 }
@@ -561,7 +561,7 @@ internal class NexusPlayerBridge(
     }
 
     private fun installSnapshotIdentity(snapshot: org.json.JSONObject) {
-        sessionFence.installSnapshot(snapshotSessionKey(snapshot))
+        sessionFence.installSnapshot(playerSnapshotSessionKey(snapshot))
     }
 
     private data class ControllerReconciliation(
@@ -591,77 +591,13 @@ internal class NexusPlayerBridge(
                     PLAYER_PROTOCOL_VERSION.toLong()
             )
             val snapshot = reply.requireObject("snapshot")
-            val sessionKey = snapshotSessionKey(snapshot)
+            val sessionKey = playerSnapshotSessionKey(snapshot)
             val pending = pendingNaturalEnd(
                 reply.requireObject("pendingNaturalEnd")
             )
             require(pending == null || pending.accountId == accountId)
             ControllerReconciliation(snapshot, sessionKey, pending)
         }.getOrNull()
-    }
-
-    private fun snapshotSessionKey(
-        snapshot: org.json.JSONObject,
-    ): UUID? {
-        return when (snapshot.requireBoundedString("kind", 1, 16)) {
-            "Absent" -> {
-                snapshot.requireExactKeys(
-                    "kind",
-                    "deviceDefaultPauseShorteningMode",
-                    "pauseShorteningSavedOnDeviceMs",
-                )
-                PauseShorteningMode.valueOf(
-                    snapshot.requireBoundedString(
-                        "deviceDefaultPauseShorteningMode",
-                        1,
-                        16,
-                    )
-                )
-                snapshot.requireLong(
-                    "pauseShorteningSavedOnDeviceMs",
-                    0,
-                    Long.MAX_VALUE,
-                )
-                null
-            }
-            "Canonical" -> {
-                snapshot.requireExactKeys(
-                    "kind",
-                    "sessionKey",
-                    "phase",
-                    "positionMs",
-                    "durationMs",
-                    "bufferedMs",
-                    "volume",
-                    "observedBaseRate",
-                    "rateState",
-                    "persistence",
-                    "playbackFailure",
-                    "pauseShortening",
-                    "session",
-                )
-                snapshot.requireCanonicalUuid("sessionKey")
-            }
-            "Preview" -> {
-                snapshot.requireExactKeys(
-                    "kind",
-                    "sessionKey",
-                    "phase",
-                    "positionMs",
-                    "durationMs",
-                    "bufferedMs",
-                    "volume",
-                    "observedBaseRate",
-                    "rateState",
-                    "persistence",
-                    "playbackFailure",
-                    "pauseShortening",
-                    "descriptor",
-                )
-                snapshot.requireCanonicalUuid("sessionKey")
-            }
-            else -> error("unknown player snapshot")
-        }
     }
 
     private fun pendingNaturalEnd(
@@ -688,5 +624,70 @@ internal class NexusPlayerBridge(
             SessionCommand(NexusPlaybackService.ACTION_WEB_VISIBILITY, Bundle.EMPTY),
             Bundle().apply { putBoolean(NexusPlaybackService.ARG_VISIBLE, visible) },
         )
+    }
+}
+
+internal fun playerSnapshotSessionKey(snapshot: JSONObject): UUID? {
+    return when (snapshot.requireBoundedString("kind", 1, 16)) {
+        "Absent" -> {
+            snapshot.requireExactKeys(
+                "kind",
+                "deviceDefaultPauseShorteningMode",
+                "pauseShorteningSavedOnDeviceMs",
+                "activitySync",
+            )
+            PauseShorteningMode.valueOf(
+                snapshot.requireBoundedString(
+                    "deviceDefaultPauseShorteningMode",
+                    1,
+                    16,
+                )
+            )
+            snapshot.requireLong(
+                "pauseShorteningSavedOnDeviceMs",
+                0,
+                Long.MAX_VALUE,
+            )
+            null
+        }
+        "Canonical" -> {
+            snapshot.requireExactKeys(
+                "kind",
+                "sessionKey",
+                "phase",
+                "positionMs",
+                "durationMs",
+                "bufferedMs",
+                "volume",
+                "observedBaseRate",
+                "rateState",
+                "persistence",
+                "playbackFailure",
+                "pauseShortening",
+                "activitySync",
+                "session",
+            )
+            snapshot.requireCanonicalUuid("sessionKey")
+        }
+        "Preview" -> {
+            snapshot.requireExactKeys(
+                "kind",
+                "sessionKey",
+                "phase",
+                "positionMs",
+                "durationMs",
+                "bufferedMs",
+                "volume",
+                "observedBaseRate",
+                "rateState",
+                "persistence",
+                "playbackFailure",
+                "pauseShortening",
+                "activitySync",
+                "descriptor",
+            )
+            snapshot.requireCanonicalUuid("sessionKey")
+        }
+        else -> error("unknown player snapshot")
     }
 }

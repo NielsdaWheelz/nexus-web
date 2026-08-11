@@ -12,13 +12,25 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import InvalidRequestError
 from nexus.responses import ok
-from nexus.schemas.consumption_activity import ActivityRecordIn
+from nexus.schemas.consumption_activity import (
+    ActivityAdjustmentIn,
+    ActivityRecordIn,
+    AddActivityAdjustmentIn,
+    ExcludeActivityAdjustmentIn,
+)
 from nexus.services.consumption import _activity_stats
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_taxonomy import try_parse_contributor_handle
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
 router = APIRouter(tags=["consumption"])
+
+
+def _media_id(raw: str) -> UUID:
+    ref = parse_resource_ref(raw)
+    if isinstance(ref, ResourceRefParseFailure) or ref.scheme != "media":
+        raise InvalidRequestError(message="Invalid mediaRef")
+    return ref.id
 
 
 @router.post("/consumption/activity", status_code=204)
@@ -30,12 +42,34 @@ def post_activity(
     consumption_service.record_activity_batch(
         viewer.user_id,
         client_mutation_id=body.client_mutation_id,
-        media_id=body.media_id,
+        media_ref=body.media_ref,
+        media_id=_media_id(body.media_ref),
         device_id=body.device_id,
         device_class=body.device_class,
         batch=body.batch,
     )
     return Response(status_code=204)
+
+
+@router.post("/consumption/activity-adjustments")
+def post_activity_adjustment(
+    body: ActivityAdjustmentIn,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+) -> dict:
+    """Apply one strict factual activity correction."""
+    media_id = (
+        _media_id(body.media_ref)
+        if isinstance(body, AddActivityAdjustmentIn | ExcludeActivityAdjustmentIn)
+        else None
+    )
+    return ok(
+        consumption_service.apply_activity_adjustment(
+            viewer.user_id,
+            command=body,
+            media_id=media_id,
+        ),
+        by_alias=True,
+    )
 
 
 def _activity_query(

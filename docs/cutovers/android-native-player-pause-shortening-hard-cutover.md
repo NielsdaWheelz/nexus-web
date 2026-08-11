@@ -1,5 +1,11 @@
 # Android Native Player and Pause Shortening — Hard Cutover
 
+> **Activity-delivery supersession (2026-08-10):** the listening-activity
+> queue, best-effort flush, and activity lifecycle statements in this
+> historical cutover are replaced by
+> [`durable-consumption-activity-hard-cutover.md`](durable-consumption-activity-hard-cutover.md).
+> Progress heartbeat and natural-end receipt behavior below remain current.
+
 Status: IMPLEMENTED IN SOURCE — focused backend, web, Android, production-build,
 and real-stack browser proof passed. Full Android instrumentation is host-limited;
 physical-device, real-media, CI, signed-release, deploy, and production gates

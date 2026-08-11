@@ -64,7 +64,7 @@ export default function AuthenticatedShell({
     <AuthenticatedAccountProvider account={account}>
       <RenderEnvironmentProvider value={renderEnvironment}>
         <UnauthenticatedApiBoundary>
-          <ActivityCaptureLifecycle />
+          <ActivityCaptureLifecycle accountId={account.accountId} />
           <LocalVaultAutoSync />
           <WebVitalsReporter />
           <ResourceCacheProvider value={resources}>

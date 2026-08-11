@@ -27,8 +27,7 @@ interface UseReaderActivityAdapterInput {
   canRead: boolean;
   paneActive: boolean;
   viewport: ReaderActivityViewport;
-  readerRootRef: RefObject<HTMLDivElement | null>;
-  pdfViewportRef: RefObject<HTMLDivElement | null>;
+  activityRootRef: RefObject<HTMLDivElement | null>;
   activeContent: ReaderActivityText | null;
   semanticViewport: ReaderSemanticViewport | null;
   documentProjection: ReaderDocumentProjection | null;
@@ -45,7 +44,7 @@ interface ReaderActivityAdapter {
 
 const READING_IDLE_AFTER_MS = 300_000;
 
-function isPdfScrollKey(event: KeyboardEvent): boolean {
+function isReaderScrollKey(event: KeyboardEvent): boolean {
   return (
     event.key === "ArrowDown" ||
     event.key === "ArrowUp" ||
@@ -68,8 +67,7 @@ export function useReaderActivityAdapter({
   canRead,
   paneActive,
   viewport,
-  readerRootRef,
-  pdfViewportRef,
+  activityRootRef,
   activeContent,
   semanticViewport,
   documentProjection,
@@ -81,10 +79,16 @@ export function useReaderActivityAdapter({
   semanticViewportRef.current = semanticViewport;
   const documentProjectionRef = useRef(documentProjection);
   documentProjectionRef.current = documentProjection;
+  const genuineRestoreSourceKeyRef = useRef<string | undefined>(undefined);
   const documentKind = documentProjection?.kind ?? null;
   const updateRef = useRef<() => void>(() => undefined);
 
   const noteGenuineInput = useCallback(() => {
+    const currentViewport = semanticViewportRef.current;
+    genuineRestoreSourceKeyRef.current =
+      currentViewport?.intent === "Restore"
+        ? currentViewport.sourceKey
+        : undefined;
     lastGenuineInputMonoRef.current = performance.now();
     updateRef.current();
   }, []);
@@ -98,8 +102,7 @@ export function useReaderActivityAdapter({
     ) {
       return;
     }
-    const isPdf = documentKind === "Pdf";
-    const root = isPdf ? pdfViewportRef.current : readerRootRef.current;
+    const root = activityRootRef.current;
     if (!root) return;
 
     const recorder = activityRecorder();
@@ -133,7 +136,10 @@ export function useReaderActivityAdapter({
         eligible:
           paneActive &&
           !previewLease.isActive() &&
-          currentSemanticViewport?.intent === "Reader" &&
+          (currentSemanticViewport?.intent === "Reader" ||
+            (currentSemanticViewport?.intent === "Restore" &&
+              genuineRestoreSourceKeyRef.current ===
+                currentSemanticViewport.sourceKey)) &&
           document.visibilityState === "visible" &&
           document.hasFocus() &&
           lastGenuineInputMono !== undefined &&
@@ -158,30 +164,25 @@ export function useReaderActivityAdapter({
     });
     const noteInput = (event: Event) => {
       if (!event.isTrusted) return;
-      if (event instanceof KeyboardEvent && !isPdfScrollKey(event)) return;
+      if (event instanceof KeyboardEvent && !isReaderScrollKey(event)) return;
       onGenuineReaderInput();
-      lastGenuineInputMonoRef.current = performance.now();
-      update();
+      noteGenuineInput();
     };
     updateRef.current = update;
     const unsubscribePreviewLease = previewLease.subscribe(update);
     root.addEventListener("pointerdown", noteInput, { passive: true });
-    if (isPdf) {
-      root.addEventListener("touchstart", noteInput, { passive: true });
-      root.addEventListener("wheel", noteInput, { passive: true });
-      root.addEventListener("keydown", noteInput);
-    }
+    root.addEventListener("touchstart", noteInput, { passive: true });
+    root.addEventListener("wheel", noteInput, { passive: true });
+    root.addEventListener("keydown", noteInput);
     document.addEventListener("visibilitychange", update);
     window.addEventListener("focus", update);
     window.addEventListener("blur", update);
     update();
     return () => {
       root.removeEventListener("pointerdown", noteInput);
-      if (isPdf) {
-        root.removeEventListener("touchstart", noteInput);
-        root.removeEventListener("wheel", noteInput);
-        root.removeEventListener("keydown", noteInput);
-      }
+      root.removeEventListener("touchstart", noteInput);
+      root.removeEventListener("wheel", noteInput);
+      root.removeEventListener("keydown", noteInput);
       document.removeEventListener("visibilitychange", update);
       window.removeEventListener("focus", update);
       window.removeEventListener("blur", update);
@@ -196,15 +197,21 @@ export function useReaderActivityAdapter({
     mediaId,
     observerKey,
     onGenuineReaderInput,
+    noteGenuineInput,
     paneActive,
-    pdfViewportRef,
+    activityRootRef,
     previewLease,
-    readerRootRef,
     viewport.hydrated,
     viewport.kind,
   ]);
 
   useEffect(() => {
+    if (
+      semanticViewport?.intent !== "Restore" ||
+      semanticViewport.sourceKey !== genuineRestoreSourceKeyRef.current
+    ) {
+      genuineRestoreSourceKeyRef.current = undefined;
+    }
     updateRef.current();
   }, [documentProjection, semanticViewport]);
 

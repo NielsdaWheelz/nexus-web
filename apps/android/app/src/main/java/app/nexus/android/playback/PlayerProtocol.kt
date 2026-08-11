@@ -183,10 +183,20 @@ internal data class PauseShorteningSnapshot(
     val savedOnDeviceMs: Long,
 )
 
+internal data class PlayerActivitySyncSnapshot(
+    val capture: NativeActivityCapture,
+    val sync: NativeActivitySync,
+    val acceptedRevision: Long = 0,
+)
+
 internal sealed interface PlayerSnapshot {
     data class Absent(
         val deviceDefaultPauseShorteningMode: PauseShorteningMode,
         val pauseShorteningSavedOnDeviceMs: Long,
+        val activitySync: PlayerActivitySyncSnapshot = PlayerActivitySyncSnapshot(
+            NativeActivityCapture.Idle,
+            NativeActivitySync.Synced,
+        ),
     ) : PlayerSnapshot
 
     data class Canonical(
@@ -202,6 +212,10 @@ internal sealed interface PlayerSnapshot {
         val persistence: PlayerPersistence,
         val playbackFailure: Presence<PlayerFailure>,
         val pauseShortening: PauseShorteningSnapshot,
+        val activitySync: PlayerActivitySyncSnapshot = PlayerActivitySyncSnapshot(
+            NativeActivityCapture.Idle,
+            NativeActivitySync.Synced,
+        ),
     ) : PlayerSnapshot
 
     data class Preview(
@@ -217,6 +231,10 @@ internal sealed interface PlayerSnapshot {
         val persistence: PlayerPersistence,
         val playbackFailure: Presence<PlayerFailure>,
         val pauseShortening: PauseShorteningSnapshot,
+        val activitySync: PlayerActivitySyncSnapshot = PlayerActivitySyncSnapshot(
+            NativeActivityCapture.Idle,
+            NativeActivitySync.Synced,
+        ),
     ) : PlayerSnapshot
 }
 
@@ -229,6 +247,15 @@ internal sealed interface PlayerCommand {
     ) : PlayerCommand
 
     data class GetSnapshot(override val requestId: UUID) : PlayerCommand
+
+    data class RetryFailedActivity(override val requestId: UUID) : PlayerCommand
+
+    data class DiscardFailedActivity(override val requestId: UUID) : PlayerCommand
+
+    data class SetActivityPaused(
+        override val requestId: UUID,
+        val paused: Boolean,
+    ) : PlayerCommand
 
     data class LoadCanonical(
         override val requestId: UUID,
@@ -457,6 +484,18 @@ internal object PlayerWire {
             "GetSnapshot" -> {
                 json.requireExactKeys("kind", "requestId", "protocolVersion")
                 PlayerCommand.GetSnapshot(requestId)
+            }
+            "RetryFailedActivity" -> {
+                json.requireExactKeys("kind", "requestId", "protocolVersion")
+                PlayerCommand.RetryFailedActivity(requestId)
+            }
+            "DiscardFailedActivity" -> {
+                json.requireExactKeys("kind", "requestId", "protocolVersion")
+                PlayerCommand.DiscardFailedActivity(requestId)
+            }
+            "SetActivityPaused" -> {
+                json.requireExactKeys("kind", "requestId", "protocolVersion", "paused")
+                PlayerCommand.SetActivityPaused(requestId, json.requireBoolean("paused"))
             }
             "LoadCanonical" -> {
                 json.requireExactKeys(
@@ -1098,6 +1137,7 @@ private fun PlayerSnapshot.toJson(): JSONObject {
                     "pauseShorteningSavedOnDeviceMs",
                     pauseShorteningSavedOnDeviceMs,
                 )
+                .put("activitySync", activitySync.toJson())
         is PlayerSnapshot.Canonical ->
             commonSnapshotJson(
                 kind = "Canonical",
@@ -1112,7 +1152,7 @@ private fun PlayerSnapshot.toJson(): JSONObject {
                 persistence = persistence,
                 playbackFailure = playbackFailure,
                 pauseShortening = pauseShortening,
-            ).put("session", session.toJson())
+            ).put("session", session.toJson()).put("activitySync", activitySync.toJson())
         is PlayerSnapshot.Preview ->
             commonSnapshotJson(
                 kind = "Preview",
@@ -1127,7 +1167,7 @@ private fun PlayerSnapshot.toJson(): JSONObject {
                 persistence = persistence,
                 playbackFailure = playbackFailure,
                 pauseShortening = pauseShortening,
-            ).put("descriptor", descriptor.toJson())
+            ).put("descriptor", descriptor.toJson()).put("activitySync", activitySync.toJson())
     }
 }
 
@@ -1169,6 +1209,33 @@ private fun PlayerPersistence.toJson(): JSONObject {
                 .put("message", message)
     }
 }
+
+private fun PlayerActivitySyncSnapshot.toJson(): JSONObject = JSONObject()
+    .put(
+        "capture",
+        when (capture) {
+            NativeActivityCapture.Recording -> JSONObject().put("kind", "Recording")
+            NativeActivityCapture.Idle -> JSONObject().put("kind", "Idle")
+            NativeActivityCapture.Paused -> JSONObject().put("kind", "Paused")
+            is NativeActivityCapture.Blocked -> JSONObject()
+                .put("kind", "Blocked")
+                .put("reason", capture.reason.name)
+        },
+    )
+    .put(
+        "sync",
+        when (sync) {
+            NativeActivitySync.Synced -> JSONObject().put("kind", "Synced")
+            is NativeActivitySync.Pending -> JSONObject()
+                .put("kind", "Pending")
+                .put("count", sync.count)
+                .put("oldestAt", sync.oldestAt)
+            is NativeActivitySync.Failed -> JSONObject()
+                .put("kind", "Failed")
+                .put("count", sync.count)
+        },
+    )
+    .put("acceptedRevision", acceptedRevision)
 
 private fun PlayerFailure.toJson(): JSONObject =
     JSONObject().put("code", code).put("message", message)

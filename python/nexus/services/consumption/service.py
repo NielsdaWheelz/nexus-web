@@ -71,6 +71,9 @@ from nexus.schemas.consumption import (
     UndoCompletionCommand,
 )
 from nexus.schemas.consumption_activity import (
+    ActiveExclusionOut,
+    ActivityAdjustmentIn,
+    ActivityAdjustmentResultOut,
     ActivityBatchIn,
     ActivityDeviceClass,
     ActivityMetricsOut,
@@ -80,6 +83,7 @@ from nexus.schemas.consumption_activity import (
     ActivityStatsSectionOut,
     ActivityTimelineRowOut,
     ActivityTotalsOut,
+    AddActivityAdjustmentIn,
     CompletionDateOut,
     CompletionStatsSectionOut,
     CompletionTimelineRowOut,
@@ -89,12 +93,14 @@ from nexus.schemas.consumption_activity import (
     ContributorCompletionOut,
     DeviceActivityOut,
     DeviceSummaryOut,
+    ExcludeActivityAdjustmentIn,
     LocalDayOut,
     LocalHourOut,
     MediaActivityBreakdownOut,
     MediaActivityOut,
     MediaCompletionOut,
     RetainedArtifactsOut,
+    RetractActivityAdjustmentIn,
 )
 from nexus.schemas.presence import Absent, Present, absent, nullable_from_presence, present
 from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot
@@ -121,8 +127,10 @@ from nexus.services.consumption._lectern_store import (
 )
 from nexus.services.consumption.handles import (
     CompletionHandle,
+    seal_activity_adjustment,
     seal_completion,
     seal_device,
+    unseal_activity_adjustment,
     unseal_completion,
 )
 from nexus.services.resource_mutation_replay import (
@@ -134,9 +142,10 @@ from nexus.services.resource_mutation_replay import (
 LECTERN_SCOPE = "Lectern.Commands"
 CONSUMPTION_SCOPE = "Consumption.Commands"
 CONSUMPTION_ACTIVITY_SCOPE = "Consumption.Activity"
+CONSUMPTION_ACTIVITY_ADJUSTMENT_SCOPE = "Consumption.ActivityAdjustments"
 PREVIEW_POSITION_SCOPE = "Consumption.PreviewPosition"
 CONSUMPTION_STATS_LATENCY_BUDGET_MS = 500
-_ACTIVITY_MAX_AGE = timedelta(days=1)
+_ACTIVITY_MAX_AGE = timedelta(days=30)
 _ACTIVITY_MAX_FUTURE_SKEW = timedelta(minutes=5)
 _ACTIVITY_BATCH_MAX_BYTES = 48_000
 _VISIBLE_READER_MEDIA_KIND_SQL = text(f"""
@@ -174,6 +183,7 @@ def get_activity_sessions(
     current_device_id: str,
 ) -> ActivitySessionPageOut:
     """One repeatable-read page of derived Consumption sessions."""
+    started = perf_counter()
     as_of, after = (
         (_activity_stats.as_of_created_at(db), None)
         if cursor is None
@@ -196,10 +206,18 @@ def get_activity_sessions(
         current_device_id=current_device_id,
         time_zone=query.time_zone,
     )
-    return ActivitySessionPageOut(
+    response = ActivitySessionPageOut(
         sessions=[_session_out(row, devices=device_summaries) for row in page],
         next_cursor=present(next_cursor) if next_cursor else absent(),
     )
+    logger.info(
+        "activity_projection_read",
+        surface="Sessions",
+        latency_ms=max(0, int((perf_counter() - started) * 1000)),
+        row_count=len(response.sessions),
+        reason="ok",
+    )
+    return response
 
 
 def _active_filter_names(query: _activity_stats.ActivityQuery) -> list[str]:
@@ -295,17 +313,28 @@ def _session_out(
     ended_at = row["session_end"]
     if not isinstance(started_at, datetime) or not isinstance(ended_at, datetime):
         raise TypeError("session timestamps must be datetimes")
-    device_id = str(row["device_id"])
-    device = devices.get(device_id)
-    if device is None:
-        raise RuntimeError("session device projection is missing")
+    source = str(row["source"])
+    if source == "Observed":
+        device_id = str(row["device_id"])
+        device = devices.get(device_id)
+        if device is None:
+            raise RuntimeError("session device projection is missing")
+        device_out = present(device)
+        adjustment_handle = absent()
+    elif source == "Manual" and isinstance(row["adjustment_id"], UUID):
+        device_out = absent()
+        adjustment_handle = present(seal_activity_adjustment(row["adjustment_id"]))
+    else:
+        raise RuntimeError("session source projection is invalid")
     first_progress = row.get("first_progress")
     last_progress = row.get("last_progress")
     return ActivitySessionOut(
         media_ref=f"media:{row['media_id']}",
         title=str(row["title"]),
         modality=cast(Literal["Reading", "Listening", "Viewing"], row["modality"]),
-        device=device,
+        source=cast(Literal["Observed", "Manual"], source),
+        device=device_out,
+        adjustment_handle=adjustment_handle,
         started_at=started_at,
         ended_at=ended_at,
         active_ms=int(row["active_ms"]),
@@ -364,6 +393,26 @@ def get_activity_stats(
         time_zone=query.time_zone,
     )
     sessions = [_session_out(row, devices=device_summaries) for row in session_page]
+    exclusion_rows = _activity_stats.active_exclusion_rows(
+        db, viewer_id=viewer_id, query=query, as_of=as_of
+    )
+    active_exclusions: list[ActiveExclusionOut] = []
+    for row in exclusion_rows:
+        device = device_summaries.get(str(row["device_id"]))
+        if device is None:
+            raise RuntimeError("active exclusion device projection is missing")
+        active_exclusions.append(
+            ActiveExclusionOut(
+                adjustment_handle=seal_activity_adjustment(row["adjustment_id"]),
+                media_ref=f"media:{row['media_id']}",
+                title=str(row["title"]),
+                modality=cast(Literal["Reading", "Listening", "Viewing"], row["modality"]),
+                device=device,
+                started_at=row["started_at"],
+                ended_at=row["ended_at"],
+                excluded_active_ms=int(row["excluded_active_ms"]),
+            )
+        )
     longest_row = _activity_stats.longest_session_row(
         db, viewer_id=viewer_id, query=query, as_of=as_of
     )
@@ -392,9 +441,13 @@ def get_activity_stats(
     response = ConsumptionStatsOut(
         activity=ActivityStatsSectionOut(
             applied_filters=["time", *active_filters],
-            inapplicable_filters=[],
+            inapplicable_filters=["manual"] if query.device_id is not None else [],
             totals=ActivityTotalsOut(
                 **totals.model_dump(),
+                recorded_active_ms=sum(int(row["recorded_active_ms"]) for row in totals_rows),
+                excluded_active_ms=sum(int(row["excluded_active_ms"]) for row in totals_rows),
+                observed_active_ms=sum(int(row["observed_active_ms"]) for row in totals_rows),
+                manual_active_ms=sum(int(row["manual_active_ms"]) for row in totals_rows),
                 active_days=sum(int(row["active_ms"]) >= 300_000 for row in local_days),
                 streak=streak["streak"],
                 longest_streak=streak["longest_streak"],
@@ -448,6 +501,7 @@ def get_activity_stats(
                 if longest_row is not None
                 else absent()
             ),
+            active_exclusions=active_exclusions,
         ),
         completion=CompletionStatsSectionOut(
             applied_filters=["time", *completion_filters],
@@ -502,13 +556,14 @@ def get_activity_stats(
     )
     duration_ms = max(0, int((perf_counter() - started) * 1000))
     logger.info(
-        "consumption_stats_read",
-        duration_ms=duration_ms,
+        "activity_projection_read",
+        surface="Stats",
+        latency_ms=duration_ms,
         latency_budget_ms=CONSUMPTION_STATS_LATENCY_BUDGET_MS,
         over_budget=duration_ms > CONSUMPTION_STATS_LATENCY_BUDGET_MS,
-        bucket=bucket,
         bucket_count=len(response.activity.timeline),
         session_count=response.activity.totals.session_count,
+        reason="ok",
     )
     return response
 
@@ -1344,6 +1399,7 @@ def record_activity_batch(
     viewer_id: UUID,
     *,
     client_mutation_id: UUID,
+    media_ref: str,
     media_id: UUID,
     device_id: str,
     device_class: ActivityDeviceClass,
@@ -1360,6 +1416,7 @@ def record_activity_batch(
                 fresh,
                 viewer_id,
                 client_mutation_id,
+                media_ref,
                 media_id,
                 device_id,
                 device_class,
@@ -1374,6 +1431,7 @@ def _record_activity_batch_op(
     db: Session,
     viewer_id: UUID,
     client_mutation_id: UUID,
+    media_ref: str,
     media_id: UUID,
     device_id: str,
     device_class: ActivityDeviceClass,
@@ -1382,7 +1440,7 @@ def _record_activity_batch_op(
     _lock_viewer(db, viewer_id)
     request = {
         "clientMutationId": str(client_mutation_id),
-        "mediaId": str(media_id),
+        "mediaRef": media_ref,
         "deviceId": device_id,
         "deviceClass": device_class,
         "batch": batch.model_dump(mode="json", by_alias=True),
@@ -1404,30 +1462,53 @@ def _record_activity_batch_op(
         )
         raise
     if stored is not None:
+        accepted_count = stored["acceptedCount"]
+        deduplicated_count = stored["deduplicatedCount"]
+        if not isinstance(accepted_count, int) or not isinstance(deduplicated_count, int):
+            raise AssertionError(
+                "activity replay memo has invalid capture counts"
+            )  # justify-service-invariant-check: this scope writes integer count fields.
         logger.info(
             "consumption_activity_write",
             outcome="replay",
             span_count=len(batch.spans),
+            accepted_count=accepted_count,
+            deduplicated_count=deduplicated_count,
+            conflict_count=0,
         )
         db.rollback()
         return
     _validate_activity_batch(batch)
-    _require_readable(db, viewer_id, media_id)
-    _activity_store.insert_activity_batch_in_txn(
-        db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        device_id=device_id,
-        device_class=device_class,
-        batch=batch,
-    )
+    _require_activity_media_readable(db, viewer_id, media_id)
+    try:
+        inserted = _activity_store.insert_activity_batch_in_txn(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            device_id=device_id,
+            device_class=device_class,
+            batch=batch,
+        )
+    except ConflictError:
+        logger.info(
+            "consumption_activity_write",
+            outcome="capture_key_conflict",
+            span_count=len(batch.spans),
+            accepted_count=0,
+            deduplicated_count=0,
+            conflict_count=1,
+        )
+        raise
     record_replay(
         db,
         viewer_id=viewer_id,
         scope=CONSUMPTION_ACTIVITY_SCOPE,
         client_mutation_id=str(client_mutation_id),
         request_bytes=request_bytes,
-        response_json={},
+        response_json={
+            "acceptedCount": inserted.accepted_count,
+            "deduplicatedCount": inserted.deduplicated_count,
+        },
         changed_lanes={},
     )
     db.commit()
@@ -1435,6 +1516,9 @@ def _record_activity_batch_op(
         "consumption_activity_write",
         outcome="accepted",
         span_count=len(batch.spans),
+        accepted_count=inserted.accepted_count,
+        deduplicated_count=inserted.deduplicated_count,
+        conflict_count=0,
     )
 
 
@@ -1450,7 +1534,7 @@ def _validate_activity_batch(batch: ActivityBatchIn) -> None:
                 ApiErrorCode.E_INVALID_REQUEST, "occurredAt must include a timezone"
             )
         if span.occurred_at < now - _ACTIVITY_MAX_AGE:
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Activity span is too old")
+            raise InvalidRequestError(ApiErrorCode.E_ACTIVITY_EXPIRED, "Activity span is too old")
         if span.occurred_at > now + _ACTIVITY_MAX_FUTURE_SKEW:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST, "Activity span is in the future"
@@ -1460,6 +1544,174 @@ def _validate_activity_batch(batch: ActivityBatchIn) -> None:
                 ApiErrorCode.E_INVALID_REQUEST, "Activity spans must be ordered and non-overlapping"
             )
         previous_end = span.occurred_at + timedelta(milliseconds=span.duration_ms)
+
+
+def apply_activity_adjustment(
+    viewer_id: UUID,
+    *,
+    command: ActivityAdjustmentIn,
+    media_id: UUID | None,
+) -> ActivityAdjustmentResultOut:
+    """Apply one replayable Add, Exclude, or Retract correction."""
+    fresh = _fresh_session()
+    try:
+        return retry_serializable(
+            fresh,
+            "apply_activity_adjustment",
+            partial(_apply_activity_adjustment_op, fresh, viewer_id, command, media_id),
+        )
+    finally:
+        fresh.close()
+
+
+def _apply_activity_adjustment_op(
+    db: Session,
+    viewer_id: UUID,
+    command: ActivityAdjustmentIn,
+    media_id: UUID | None,
+) -> ActivityAdjustmentResultOut:
+    _lock_viewer(db, viewer_id)
+    request_bytes = canonical_json_bytes(command.model_dump(mode="json", by_alias=True))
+    stored = lookup_replay(
+        db,
+        viewer_id=viewer_id,
+        scope=CONSUMPTION_ACTIVITY_ADJUSTMENT_SCOPE,
+        client_mutation_id=str(command.client_mutation_id),
+        request_bytes=request_bytes,
+    )
+    if stored is not None:
+        db.rollback()
+        return ActivityAdjustmentResultOut.model_validate(stored)
+
+    if isinstance(command, AddActivityAdjustmentIn):
+        if media_id is None:
+            raise AssertionError(
+                "Add adjustment is missing its parsed media identity"
+            )  # justify-service-invariant-check: the strict API boundary parses every mediaRef.
+        _require_aware_interval(command.occurred_at)
+        _require_activity_media_readable(db, viewer_id, media_id)
+        ended_at = command.occurred_at + timedelta(milliseconds=command.duration_ms)
+        if ended_at > db.scalar(text("SELECT now()")):
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Added activity cannot end in the future",
+            )
+        kind = db.scalar(
+            text("SELECT kind FROM media WHERE id = :media_id"), {"media_id": media_id}
+        )
+        if kind is None:
+            raise AssertionError(
+                "visible adjustment media disappeared"
+            )  # justify-service-invariant-check: visibility and kind share one transaction.
+        adjustment_id = _activity_store.insert_adjustment_in_txn(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            kind="Add",
+            modality=_policy.completion_modality_for_kind(str(kind)),
+            device_id=None,
+            occurred_at=command.occurred_at,
+            duration_ms=command.duration_ms,
+        )
+        outcome: Literal["Added", "Excluded", "Retracted"] = "Added"
+    elif isinstance(command, ExcludeActivityAdjustmentIn):
+        if media_id is None:
+            raise AssertionError(
+                "Exclude adjustment is missing its parsed media identity"
+            )  # justify-service-invariant-check: the strict API boundary parses every mediaRef.
+        _require_aware_interval(command.started_at, command.ended_at)
+        if command.started_at >= command.ended_at:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Excluded activity session has an invalid interval",
+            )
+        _require_activity_media_readable(db, viewer_id, media_id)
+        device_id = _activity_stats.resolve_device_handle(
+            db,
+            viewer_id=viewer_id,
+            raw=str(command.device_handle),
+        )
+        if device_id is None:
+            raise AssertionError(
+                "Exclude adjustment did not resolve its required device"
+            )  # justify-service-invariant-check: Exclude carries a required DeviceHandle.
+        session = _activity_store.observed_session_in_txn(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            modality=command.modality,
+            device_id=device_id,
+            started_at=command.started_at,
+            ended_at=command.ended_at,
+        )
+        if session is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Excluded activity must name one exact current observed session",
+            )
+        duration_ms = int((session.ended_at - session.started_at).total_seconds() * 1000)
+        if session.started_at + timedelta(milliseconds=duration_ms) != session.ended_at:
+            raise AssertionError(
+                "observed session boundary is not millisecond-aligned"
+            )  # justify-service-invariant-check: stored spans use integer millisecond duration.
+        adjustment_id = _activity_store.insert_adjustment_in_txn(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            kind="Exclude",
+            modality=command.modality,
+            device_id=device_id,
+            occurred_at=session.started_at,
+            duration_ms=duration_ms,
+        )
+        outcome = "Excluded"
+    elif isinstance(command, RetractActivityAdjustmentIn):
+        if media_id is not None:
+            raise AssertionError(
+                "Retract adjustment unexpectedly received a media identity"
+            )  # justify-service-invariant-check: Retract has no mediaRef at the strict boundary.
+        adjustment_id = unseal_activity_adjustment(str(command.adjustment_handle))
+        result = _activity_store.retract_adjustment_in_txn(
+            db,
+            viewer_id=viewer_id,
+            adjustment_id=adjustment_id,
+        )
+        if result == "Missing":
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Activity adjustment not found")
+        if result == "AlreadyRetracted":
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "Activity adjustment is already retracted",
+            )
+        outcome = "Retracted"
+    else:
+        raise AssertionError(
+            "unknown activity adjustment variant"
+        )  # justify-service-invariant-check: Pydantic owns the exhaustive tagged union.
+
+    response = ActivityAdjustmentResultOut(
+        outcome=outcome,
+        adjustment_handle=present(seal_activity_adjustment(adjustment_id)),
+    )
+    record_replay(
+        db,
+        viewer_id=viewer_id,
+        scope=CONSUMPTION_ACTIVITY_ADJUSTMENT_SCOPE,
+        client_mutation_id=str(command.client_mutation_id),
+        request_bytes=request_bytes,
+        response_json=response.model_dump(mode="json", by_alias=True),
+        changed_lanes={},
+    )
+    db.commit()
+    return response
+
+
+def _require_aware_interval(*values: datetime) -> None:
+    if any(value.tzinfo is None for value in values):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Activity adjustment instants must include a timezone",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1737,6 +1989,11 @@ def _lock_viewer(db: Session, viewer_id: UUID) -> None:
 def _require_readable(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
+
+
+def _require_activity_media_readable(db: Session, viewer_id: UUID, media_id: UUID) -> None:
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
 
 def _visible_reader_media_kind(db: Session, *, viewer_id: UUID, media_id: UUID) -> str:

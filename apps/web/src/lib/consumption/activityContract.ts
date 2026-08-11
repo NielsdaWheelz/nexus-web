@@ -5,37 +5,87 @@ import { isRecord } from "@/lib/validation";
 export type ActivityModality = "Reading" | "Listening" | "Viewing";
 export type ActivityDeviceClass = "Desktop" | "Mobile";
 export type MediaRef = string & { readonly __mediaRef: unique symbol };
+export type ActivityCaptureKey = string & {
+  readonly __activityCaptureKey: unique symbol;
+};
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function parseMediaRef(value: string): MediaRef {
   const parsed = parseResourceRef(value);
   if (!parsed || parsed.scheme !== "media") {
     throw new Error(`Invalid mediaRef: ${JSON.stringify(value)}`);
   }
+  // justify-type-assertion: parseResourceRef established the complete branded
+  // media ResourceRef grammar at this sole constructor.
   return value as MediaRef;
 }
 
-interface ActivitySpanBase {
+export function parseActivityCaptureKey(value: string): ActivityCaptureKey {
+  if (!UUID_RE.test(value)) {
+    throw new Error("captureKey must be a canonical UUID");
+  }
+  // justify-type-assertion: the canonical UUID grammar above is the complete
+  // local contract for a capture key.
+  return value as ActivityCaptureKey;
+}
+
+interface ActivitySpanBodyBase {
   occurredAt: string;
   durationMs: number;
 }
 
-export interface ReadingActivitySpan extends ActivitySpanBase {
+export interface ReadingActivitySpanBody extends ActivitySpanBodyBase {
   progressStart: Presence<number>;
   progressEnd: Presence<number>;
   wordStart: Presence<number>;
   wordEnd: Presence<number>;
 }
 
-export interface ListeningActivitySpan extends ActivitySpanBase {
+export interface ListeningActivitySpanBody extends ActivitySpanBodyBase {
   progressStart: Presence<number>;
   progressEnd: Presence<number>;
   mediaPositionStartMs: Presence<number>;
   mediaPositionEndMs: Presence<number>;
 }
 
-export type ViewingActivitySpan = ActivitySpanBase;
+export type ViewingActivitySpanBody = ActivitySpanBodyBase;
+
+export interface ReadingActivitySpan extends ReadingActivitySpanBody {
+  captureKey: ActivityCaptureKey;
+}
+
+export interface ListeningActivitySpan extends ListeningActivitySpanBody {
+  captureKey: ActivityCaptureKey;
+}
+
+export interface ViewingActivitySpan extends ViewingActivitySpanBody {
+  captureKey: ActivityCaptureKey;
+}
+
+export type ClosedActivitySpan =
+  | {
+      captureKey: ActivityCaptureKey;
+      mediaRef: MediaRef;
+      modality: "Reading";
+      deviceClass: ActivityDeviceClass;
+      span: ReadingActivitySpanBody;
+    }
+  | {
+      captureKey: ActivityCaptureKey;
+      mediaRef: MediaRef;
+      modality: "Listening";
+      deviceClass: ActivityDeviceClass;
+      span: ListeningActivitySpanBody;
+    }
+  | {
+      captureKey: ActivityCaptureKey;
+      mediaRef: MediaRef;
+      modality: "Viewing";
+      deviceClass: ActivityDeviceClass;
+      span: ViewingActivitySpanBody;
+    };
 
 export type ActivityBatch =
   | { modality: "Reading"; spans: ReadingActivitySpan[] }
@@ -52,11 +102,16 @@ export interface ActivityRequest {
 export type ActivityUploadOutcome =
   | { kind: "Accepted" }
   | { kind: "Retryable" }
-  | { kind: "VisibilityLost" }
+  | { kind: "MediaUnavailable" }
+  | { kind: "Expired" }
   | { kind: "AuthenticationLost" }
   | { kind: "Defect" };
 
-function exact(value: Record<string, unknown>, keys: readonly string[], name: string): void {
+function exact(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  name: string,
+): void {
   const actual = Object.keys(value);
   if (actual.length !== keys.length || !keys.every((key) => key in value)) {
     throw new Error(`${name} has an invalid shape`);
@@ -68,14 +123,29 @@ function object(value: unknown, name: string): Record<string, unknown> {
   return value;
 }
 
-function number(value: unknown, name: string, min: number, max: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) {
+function number(
+  value: unknown,
+  name: string,
+  min: number,
+  max: number,
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < min ||
+    value > max
+  ) {
     throw new Error(`${name} is out of range`);
   }
   return value;
 }
 
-function integer(value: unknown, name: string, min: number, max: number): number {
+function integer(
+  value: unknown,
+  name: string,
+  min: number,
+  max: number,
+): number {
   const decoded = number(value, name, min, max);
   if (!Number.isInteger(decoded)) throw new Error(`${name} must be an integer`);
   return decoded;
@@ -88,68 +158,179 @@ function isoTime(value: unknown): string {
   return value;
 }
 
-function optionalNumber(value: unknown, name: string, max: number): Presence<number> {
+function optionalNumber(
+  value: unknown,
+  name: string,
+  max: number,
+): Presence<number> {
   return decodePresence(value, (inner) => integer(inner, name, 0, max));
+}
+
+function spanBase(
+  value: Record<string, unknown>,
+): {
+  captureKey: ActivityCaptureKey;
+  occurredAt: string;
+  durationMs: number;
+} {
+  return {
+    captureKey: parseActivityCaptureKey(
+      typeof value.captureKey === "string" ? value.captureKey : "",
+    ),
+    occurredAt: isoTime(value.occurredAt),
+    durationMs: integer(value.durationMs, "durationMs", 1, 30_000),
+  };
 }
 
 function decodeReadingSpan(raw: unknown): ReadingActivitySpan {
   const value = object(raw, "ReadingSpan");
-  exact(value, ["occurredAt", "durationMs", "progressStart", "progressEnd", "wordStart", "wordEnd"], "ReadingSpan");
-  const progressStart = decodePresence(value.progressStart, (inner) => number(inner, "progressStart", 0, 1));
-  const progressEnd = decodePresence(value.progressEnd, (inner) => number(inner, "progressEnd", 0, 1));
-  const wordStart = optionalNumber(value.wordStart, "wordStart", Number.MAX_SAFE_INTEGER);
-  const wordEnd = optionalNumber(value.wordEnd, "wordEnd", Number.MAX_SAFE_INTEGER);
-  if (progressStart.kind !== progressEnd.kind || wordStart.kind !== wordEnd.kind) {
+  exact(
+    value,
+    [
+      "captureKey",
+      "occurredAt",
+      "durationMs",
+      "progressStart",
+      "progressEnd",
+      "wordStart",
+      "wordEnd",
+    ],
+    "ReadingSpan",
+  );
+  const progressStart = decodePresence(value.progressStart, (inner) =>
+    number(inner, "progressStart", 0, 1),
+  );
+  const progressEnd = decodePresence(value.progressEnd, (inner) =>
+    number(inner, "progressEnd", 0, 1),
+  );
+  const wordStart = optionalNumber(
+    value.wordStart,
+    "wordStart",
+    Number.MAX_SAFE_INTEGER,
+  );
+  const wordEnd = optionalNumber(
+    value.wordEnd,
+    "wordEnd",
+    Number.MAX_SAFE_INTEGER,
+  );
+  if (
+    progressStart.kind !== progressEnd.kind ||
+    wordStart.kind !== wordEnd.kind
+  ) {
     throw new Error("ReadingSpan paired fields must share Presence");
   }
-  return { occurredAt: isoTime(value.occurredAt), durationMs: integer(value.durationMs, "durationMs", 1, 30_000), progressStart, progressEnd, wordStart, wordEnd };
+  return {
+    ...spanBase(value),
+    progressStart,
+    progressEnd,
+    wordStart,
+    wordEnd,
+  };
 }
 
 function decodeListeningSpan(raw: unknown): ListeningActivitySpan {
   const value = object(raw, "ListeningSpan");
-  exact(value, ["occurredAt", "durationMs", "progressStart", "progressEnd", "mediaPositionStartMs", "mediaPositionEndMs"], "ListeningSpan");
-  const progressStart = decodePresence(value.progressStart, (inner) => number(inner, "progressStart", 0, 1));
-  const progressEnd = decodePresence(value.progressEnd, (inner) => number(inner, "progressEnd", 0, 1));
-  const mediaPositionStartMs = optionalNumber(value.mediaPositionStartMs, "mediaPositionStartMs", Number.MAX_SAFE_INTEGER);
-  const mediaPositionEndMs = optionalNumber(value.mediaPositionEndMs, "mediaPositionEndMs", Number.MAX_SAFE_INTEGER);
-  if (progressStart.kind !== progressEnd.kind || mediaPositionStartMs.kind !== mediaPositionEndMs.kind) {
+  exact(
+    value,
+    [
+      "captureKey",
+      "occurredAt",
+      "durationMs",
+      "progressStart",
+      "progressEnd",
+      "mediaPositionStartMs",
+      "mediaPositionEndMs",
+    ],
+    "ListeningSpan",
+  );
+  const progressStart = decodePresence(value.progressStart, (inner) =>
+    number(inner, "progressStart", 0, 1),
+  );
+  const progressEnd = decodePresence(value.progressEnd, (inner) =>
+    number(inner, "progressEnd", 0, 1),
+  );
+  const mediaPositionStartMs = optionalNumber(
+    value.mediaPositionStartMs,
+    "mediaPositionStartMs",
+    Number.MAX_SAFE_INTEGER,
+  );
+  const mediaPositionEndMs = optionalNumber(
+    value.mediaPositionEndMs,
+    "mediaPositionEndMs",
+    Number.MAX_SAFE_INTEGER,
+  );
+  if (
+    progressStart.kind !== progressEnd.kind ||
+    mediaPositionStartMs.kind !== mediaPositionEndMs.kind
+  ) {
     throw new Error("ListeningSpan paired fields must share Presence");
   }
-  return { occurredAt: isoTime(value.occurredAt), durationMs: integer(value.durationMs, "durationMs", 1, 30_000), progressStart, progressEnd, mediaPositionStartMs, mediaPositionEndMs };
+  return {
+    ...spanBase(value),
+    progressStart,
+    progressEnd,
+    mediaPositionStartMs,
+    mediaPositionEndMs,
+  };
 }
 
 function decodeViewingSpan(raw: unknown): ViewingActivitySpan {
   const value = object(raw, "ViewingSpan");
-  exact(value, ["occurredAt", "durationMs"], "ViewingSpan");
-  return { occurredAt: isoTime(value.occurredAt), durationMs: integer(value.durationMs, "durationMs", 1, 30_000) };
+  exact(value, ["captureKey", "occurredAt", "durationMs"], "ViewingSpan");
+  return spanBase(value);
 }
 
 /** Strict request decoder shared by the browser transport and BFF ingress. */
 export function decodeActivityRequest(raw: unknown): ActivityRequest {
   const value = object(raw, "ActivityRequest");
-  exact(value, ["clientMutationId", "mediaRef", "deviceClass", "batch"], "ActivityRequest");
-  if (typeof value.clientMutationId !== "string" || !UUID_RE.test(value.clientMutationId)) {
+  exact(
+    value,
+    ["clientMutationId", "mediaRef", "deviceClass", "batch"],
+    "ActivityRequest",
+  );
+  if (
+    typeof value.clientMutationId !== "string" ||
+    !UUID_RE.test(value.clientMutationId)
+  ) {
     throw new Error("clientMutationId must be a canonical UUID");
   }
-  if (typeof value.deviceClass !== "string" || (value.deviceClass !== "Desktop" && value.deviceClass !== "Mobile")) {
+  if (
+    value.deviceClass !== "Desktop" &&
+    value.deviceClass !== "Mobile"
+  ) {
     throw new Error("deviceClass is invalid");
   }
   const batch = object(value.batch, "ActivityBatch");
   exact(batch, ["modality", "spans"], "ActivityBatch");
-  if (!Array.isArray(batch.spans) || batch.spans.length < 1 || batch.spans.length > 120) {
+  if (
+    !Array.isArray(batch.spans) ||
+    batch.spans.length < 1 ||
+    batch.spans.length > 120
+  ) {
     throw new Error("ActivityBatch.spans must contain 1..120 spans");
   }
   const decodedBatch: ActivityBatch =
     batch.modality === "Reading"
       ? { modality: "Reading", spans: batch.spans.map(decodeReadingSpan) }
       : batch.modality === "Listening"
-        ? { modality: "Listening", spans: batch.spans.map(decodeListeningSpan) }
+        ? {
+            modality: "Listening",
+            spans: batch.spans.map(decodeListeningSpan),
+          }
         : batch.modality === "Viewing"
           ? { modality: "Viewing", spans: batch.spans.map(decodeViewingSpan) }
-          : (() => { throw new Error("ActivityBatch.modality is invalid"); })();
+          : (() => {
+              throw new Error("ActivityBatch.modality is invalid");
+            })();
+  const captureKeys = decodedBatch.spans.map((span) => span.captureKey);
+  if (new Set(captureKeys).size !== captureKeys.length) {
+    throw new Error("ActivityBatch capture keys must be unique");
+  }
   return {
     clientMutationId: value.clientMutationId,
-    mediaRef: parseMediaRef(typeof value.mediaRef === "string" ? value.mediaRef : ""),
+    mediaRef: parseMediaRef(
+      typeof value.mediaRef === "string" ? value.mediaRef : "",
+    ),
     deviceClass: value.deviceClass,
     batch: decodedBatch,
   };
@@ -158,55 +339,43 @@ export function decodeActivityRequest(raw: unknown): ActivityRequest {
 async function responseCode(response: Response): Promise<string | undefined> {
   try {
     const body: unknown = await response.json();
-    if (
-      typeof body === "object" &&
-      body !== null &&
-      "error" in body &&
-      typeof body.error === "object" &&
-      body.error !== null &&
-      "code" in body.error &&
-      typeof body.error.code === "string"
-    ) {
-      return body.error.code;
-    }
+    if (!isRecord(body) || !isRecord(body.error)) return undefined;
+    return typeof body.error.code === "string" ? body.error.code : undefined;
   } catch {
-    // A malformed same-system error response is classified as a recorder defect below.
+    return undefined;
   }
-  return undefined;
 }
 
-/** The sole browser transport boundary for ephemeral Consumption capture. */
-export async function postActivityBatch(input: {
-  body: string;
-  keepalive: boolean;
-  signal?: AbortSignal;
-}): Promise<ActivityUploadOutcome> {
+/** The sole browser HTTP boundary for durable Consumption activity upload. */
+export async function postActivityBatch(
+  body: string,
+  signal?: AbortSignal,
+): Promise<ActivityUploadOutcome> {
+  let response: Response;
   try {
-    const response = await fetch("/api/consumption/activity", {
+    response = await fetch("/api/consumption/activity", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: input.body,
-      keepalive: input.keepalive,
-      signal: input.signal,
+      body,
+      signal,
       cache: "no-store",
     });
-    if (response.status === 204) return { kind: "Accepted" };
-    const code = await responseCode(response);
-    if (
-      (response.status === 403 || response.status === 404) &&
-      (code === "E_MEDIA_NOT_VISIBLE" || code === "E_MEDIA_NOT_FOUND")
-    ) {
-      return { kind: "VisibilityLost" };
-    }
-    if (response.status === 401) {
-      return { kind: "AuthenticationLost" };
-    }
-    if (response.status === 429 || response.status >= 500) return { kind: "Retryable" };
-    return { kind: "Defect" };
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      return { kind: "Retryable" };
-    }
+  } catch {
     return { kind: "Retryable" };
   }
+  if (response.status === 204) return { kind: "Accepted" };
+  const code = await responseCode(response);
+  if (response.status === 401 && code === "E_UNAUTHENTICATED") {
+    return { kind: "AuthenticationLost" };
+  }
+  if (response.status === 404 && code === "E_MEDIA_NOT_FOUND") {
+    return { kind: "MediaUnavailable" };
+  }
+  if (response.status === 400 && code === "E_ACTIVITY_EXPIRED") {
+    return { kind: "Expired" };
+  }
+  if (response.status === 408 || response.status === 429 || response.status >= 500) {
+    return { kind: "Retryable" };
+  }
+  return { kind: "Defect" };
 }
