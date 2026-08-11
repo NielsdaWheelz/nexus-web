@@ -11,12 +11,18 @@ from uuid import UUID
 
 from nexus.config import get_settings
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.consumption_activity import CompletionHandle, DeviceHandle
+from nexus.schemas.consumption_activity import (
+    ActivityAdjustmentHandle,
+    CompletionHandle,
+    DeviceHandle,
+)
 
 _PREFIX = "ncc1"
 _DOMAIN = b"consumption-completion\0v1"
 _DEVICE_PREFIX = "ncd1"
 _DEVICE_DOMAIN = b"consumption-device\0v1"
+_ADJUSTMENT_PREFIX = "nca1"
+_ADJUSTMENT_DOMAIN = b"consumption-activity-adjustment\0v1"
 _TAG_BYTES = 16
 
 
@@ -28,6 +34,11 @@ class InvalidCompletionHandle(InvalidRequestError):
 class InvalidDeviceHandle(InvalidRequestError):
     def __init__(self) -> None:
         super().__init__(ApiErrorCode.E_INVALID_REQUEST, "Invalid device handle")
+
+
+class InvalidActivityAdjustmentHandle(InvalidRequestError):
+    def __init__(self) -> None:
+        super().__init__(ApiErrorCode.E_INVALID_REQUEST, "Invalid activity adjustment handle")
 
 
 def _b64url(raw: bytes) -> str:
@@ -62,6 +73,14 @@ def _tag(completion_id: UUID) -> bytes:
     ).digest()[:_TAG_BYTES]
 
 
+def _adjustment_tag(adjustment_id: UUID) -> bytes:
+    return hmac.new(
+        _key(_ADJUSTMENT_DOMAIN),
+        b"nexus-handle\0" + _ADJUSTMENT_DOMAIN + adjustment_id.bytes,
+        hashlib.sha256,
+    ).digest()[:_TAG_BYTES]
+
+
 def seal_completion(completion_id: UUID) -> CompletionHandle:
     return CompletionHandle(
         f"{_PREFIX}.{_b64url(completion_id.bytes)}.{_b64url(_tag(completion_id))}"
@@ -80,6 +99,27 @@ def unseal_completion(raw: str) -> UUID:
     if not hmac.compare_digest(provided_tag, _tag(completion_id)):
         raise InvalidCompletionHandle()
     return completion_id
+
+
+def seal_activity_adjustment(adjustment_id: UUID) -> ActivityAdjustmentHandle:
+    return ActivityAdjustmentHandle(
+        f"{_ADJUSTMENT_PREFIX}.{_b64url(adjustment_id.bytes)}."
+        f"{_b64url(_adjustment_tag(adjustment_id))}"
+    )
+
+
+def unseal_activity_adjustment(raw: str) -> UUID:
+    try:
+        prefix, encoded_id, encoded_tag = raw.split(".")
+        if prefix != _ADJUSTMENT_PREFIX:
+            raise ValueError("wrong prefix")
+        adjustment_id = UUID(bytes=_decode_b64url(encoded_id, expected_bytes=16))
+        provided_tag = _decode_b64url(encoded_tag, expected_bytes=_TAG_BYTES)
+    except (ValueError, AttributeError) as exc:
+        raise InvalidActivityAdjustmentHandle() from exc
+    if not hmac.compare_digest(provided_tag, _adjustment_tag(adjustment_id)):
+        raise InvalidActivityAdjustmentHandle()
+    return adjustment_id
 
 
 def parse_device_handle(raw: str) -> DeviceHandle:

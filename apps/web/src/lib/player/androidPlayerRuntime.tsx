@@ -22,6 +22,10 @@ import type {
 } from "@/lib/browse/contract";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
+  installNativeActivityActions,
+  installNativeActivitySync,
+} from "@/lib/consumption/activityRuntime";
+import {
   useLectern,
   type CanonicalInstallEvent,
 } from "@/lib/lectern/LecternProvider";
@@ -588,6 +592,7 @@ export function AndroidPlayerRuntimeProvider({
         setPauseMutation({ kind: "Idle" });
       }
       expectedSessionKeyRef.current = sessionKeyOf(next);
+      installNativeActivitySync(accountId, next.activitySync);
       snapshotRef.current = next;
       setSnapshot(next);
       if (authoritative) {
@@ -598,7 +603,7 @@ export function AndroidPlayerRuntimeProvider({
         );
       }
     },
-    [],
+    [accountId],
   );
 
   const installReply = useCallback(
@@ -671,6 +676,35 @@ export function AndroidPlayerRuntimeProvider({
     },
     [getClient, installReply],
   );
+
+  const retryFailedActivity = useCallback(async (): Promise<void> => {
+    await requestAndReconcile({ kind: "RetryFailedActivity" });
+  }, [requestAndReconcile]);
+
+  const discardFailedActivity = useCallback(async (): Promise<void> => {
+    await requestAndReconcile({ kind: "DiscardFailedActivity" });
+  }, [requestAndReconcile]);
+
+  const setActivityPaused = useCallback(
+    async (paused: boolean): Promise<void> => {
+      await requestAndReconcile({ kind: "SetActivityPaused", paused });
+    },
+    [requestAndReconcile],
+  );
+
+  useEffect(() => {
+    installNativeActivityActions(accountId, {
+      retryFailed: retryFailedActivity,
+      discardFailed: discardFailedActivity,
+      setPaused: setActivityPaused,
+    });
+    return () => installNativeActivityActions(accountId, null);
+  }, [
+    accountId,
+    discardFailedActivity,
+    retryFailedActivity,
+    setActivityPaused,
+  ]);
 
   const acknowledgeNaturalEnd = useCallback(
     async (receipt: PendingNaturalEnd): Promise<void> => {
@@ -768,8 +802,9 @@ export function AndroidPlayerRuntimeProvider({
       connectGenerationRef.current += 1;
       clientRef.current?.close();
       clientRef.current = null;
+      installNativeActivitySync(accountId, null);
     };
-  }, [connect]);
+  }, [accountId, connect]);
 
   const loadCanonical = useCallback(
     async (

@@ -346,6 +346,50 @@
       ]
     },
     {
+      "id": "durable-consumption-activity",
+      "source_globs": [
+        "migrations/alembic/versions/0213_durable_consumption_activity.py",
+        "python/nexus/services/consumption/**/*.py",
+        "python/nexus/schemas/consumption_activity.py",
+        "python/nexus/api/routes/consumption_activity.py",
+        "python/nexus/db/models.py",
+        "python/nexus/errors.py",
+        "python/nexus/ops/consumption_activity_counts.py",
+        "apps/web/src/lib/consumption/**/*.ts",
+        "apps/web/src/lib/consumption/**/*.tsx",
+        "apps/web/src/lib/player/androidPlayerProtocol.ts",
+        "apps/web/src/lib/player/androidPlayerRuntime.tsx",
+        "apps/web/src/app/api/consumption/**/*",
+        "apps/web/src/app/(authenticated)/AuthenticatedShell.tsx",
+        "apps/web/src/app/(authenticated)/stats/**/*",
+        "apps/web/src/app/(authenticated)/media/*/ReaderActivityAdapter.ts",
+        "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
+        "apps/android/app/src/main/java/app/nexus/android/playback/**/*"
+      ],
+      "proofs": [
+        "pytest:python/tests/service/test_consumption_activity_ledger.py",
+        "pytest:python/tests/migrations/test_durable_consumption_activity_migration.py",
+        "vitest:apps/web/src/lib/consumption/activityRecorder.unit.test.ts",
+        "vitest:apps/web/src/lib/consumption/activityOutbox.unit.test.ts",
+        "vitest:apps/web/src/lib/consumption/activityRuntime.browser.test.ts",
+        "vitest:apps/web/src/app/(authenticated)/stats/StatsPaneBody.browser.test.tsx",
+        "vitest:apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.activity.browser.test.tsx",
+        "vitest:apps/web/src/app/(authenticated)/media/[id]/ReaderActivityAdapter.browser.test.tsx",
+        "gradle:apps/android/app/src/test/java/app/nexus/android/playback/NativeConsumptionRecorderTest.kt",
+        "gradle:apps/android/app/src/androidTest/java/app/nexus/android/playback/NativeActivityOutboxInstrumentedTest.kt",
+        "playwright:apps/web/e2e/journeys/durable-consumption-activity.journey.spec.ts"
+      ],
+      "capabilities": [
+        "service",
+        "migrations",
+        "kernel-web",
+        "component",
+        "android-host",
+        "android-device",
+        "journeys-all"
+      ]
+    },
+    {
       "id": "native-release-auth-handoff",
       "source_globs": [
         "apps/android/app/src/main/java/app/nexus/android/GoogleSignInController.kt",

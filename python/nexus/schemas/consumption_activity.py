@@ -21,6 +21,7 @@ from nexus.schemas.presence import Absent, Presence
 _IN_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
 _INT64_MAX = 9_223_372_036_854_775_807
 _MAX_ACTIVITY_SPAN_MS = 30_000
+_MAX_ACTIVITY_ADDITION_MS = 86_400_000
 
 ActivityModality = Literal["Reading", "Listening", "Viewing"]
 ActivityDeviceClass = Literal["Desktop", "Mobile"]
@@ -29,6 +30,7 @@ _Progress = Annotated[float, Field(ge=0, le=1)]
 _DurationMs = Annotated[int, Field(gt=0, le=_MAX_ACTIVITY_SPAN_MS)]
 _COMPLETION_HANDLE_RE = re.compile(r"^ncc1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")
 _DEVICE_HANDLE_RE = re.compile(r"^ncd1\.[A-Za-z0-9_-]{22}$")
+_ADJUSTMENT_HANDLE_RE = re.compile(r"^nca1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")
 
 
 class CompletionHandle(str):
@@ -63,9 +65,26 @@ class DeviceHandle(str):
         return core_schema.no_info_after_validator_function(cls._validate, core_schema.str_schema())
 
 
+class ActivityAdjustmentHandle(str):
+    """The sealed outward identity of one activity correction."""
+
+    @classmethod
+    def _validate(cls, value: str) -> ActivityAdjustmentHandle:
+        if not _ADJUSTMENT_HANDLE_RE.fullmatch(value):
+            raise ValueError("invalid activity adjustment handle")
+        return cls(value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: object, _handler: object
+    ) -> core_schema.CoreSchema:
+        return core_schema.no_info_after_validator_function(cls._validate, core_schema.str_schema())
+
+
 class _ActivitySpanIn(BaseModel):
     model_config = _IN_CONFIG
 
+    capture_key: UUID
     occurred_at: datetime
     duration_ms: _DurationMs
     progress_start: Presence[_Progress]
@@ -107,6 +126,7 @@ class ListeningActivitySpanIn(_ActivitySpanIn):
 class ViewingActivitySpanIn(BaseModel):
     model_config = _IN_CONFIG
 
+    capture_key: UUID
     occurred_at: datetime
     duration_ms: _DurationMs
 
@@ -144,10 +164,53 @@ class ActivityRecordIn(BaseModel):
     model_config = _IN_CONFIG
 
     client_mutation_id: UUID
-    media_id: UUID
+    media_ref: str = Field(min_length=1, max_length=100)
     device_id: str = Field(min_length=1, max_length=200)
     device_class: ActivityDeviceClass
     batch: ActivityBatchIn
+
+    @model_validator(mode="after")
+    def _require_distinct_capture_keys(self) -> ActivityRecordIn:
+        capture_keys = [span.capture_key for span in self.batch.spans]
+        if len(capture_keys) != len(set(capture_keys)):
+            raise ValueError("captureKey must be unique within one activity batch")
+        return self
+
+
+class AddActivityAdjustmentIn(BaseModel):
+    model_config = _IN_CONFIG
+
+    kind: Literal["Add"]
+    client_mutation_id: UUID
+    media_ref: str = Field(min_length=1, max_length=100)
+    occurred_at: datetime
+    duration_ms: Annotated[int, Field(gt=0, le=_MAX_ACTIVITY_ADDITION_MS)]
+
+
+class ExcludeActivityAdjustmentIn(BaseModel):
+    model_config = _IN_CONFIG
+
+    kind: Literal["Exclude"]
+    client_mutation_id: UUID
+    media_ref: str = Field(min_length=1, max_length=100)
+    modality: ActivityModality
+    device_handle: DeviceHandle
+    started_at: datetime
+    ended_at: datetime
+
+
+class RetractActivityAdjustmentIn(BaseModel):
+    model_config = _IN_CONFIG
+
+    kind: Literal["Retract"]
+    client_mutation_id: UUID
+    adjustment_handle: ActivityAdjustmentHandle
+
+
+ActivityAdjustmentIn = Annotated[
+    AddActivityAdjustmentIn | ExcludeActivityAdjustmentIn | RetractActivityAdjustmentIn,
+    Field(discriminator="kind"),
+]
 
 
 _OUT_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
@@ -166,7 +229,9 @@ class ActivitySessionOut(BaseModel):
     media_ref: str
     title: str
     modality: ActivityModality
-    device: DeviceSummaryOut
+    source: Literal["Observed", "Manual"]
+    device: Presence[DeviceSummaryOut]
+    adjustment_handle: Presence[ActivityAdjustmentHandle]
     started_at: datetime
     ended_at: datetime
     active_ms: int = Field(ge=0)
@@ -194,6 +259,10 @@ class ActivityMetricsOut(BaseModel):
 
 
 class ActivityTotalsOut(ActivityMetricsOut):
+    recorded_active_ms: int = Field(ge=0)
+    excluded_active_ms: int = Field(ge=0)
+    observed_active_ms: int = Field(ge=0)
+    manual_active_ms: int = Field(ge=0)
     active_days: int = Field(ge=0)
     streak: int = Field(ge=0)
     longest_streak: int = Field(ge=0)
@@ -276,18 +345,6 @@ class ScopedSectionOut(BaseModel):
     inapplicable_filters: list[str]
 
 
-class ActivityStatsSectionOut(ScopedSectionOut):
-    totals: ActivityTotalsOut
-    timeline: list[ActivityTimelineRowOut]
-    local_days: list[LocalDayOut]
-    local_hours: list[LocalHourOut]
-    media: MediaActivityBreakdownOut
-    contributors: ContributorActivityBreakdownOut
-    devices: list[DeviceActivityOut]
-    sessions: ActivitySessionsOut
-    longest_session: Presence[ActivitySessionOut]
-
-
 class CompletionDateOut(BaseModel):
     model_config = _OUT_CONFIG
 
@@ -335,6 +392,39 @@ class RetainedArtifactsOut(ScopedSectionOut):
     highlights: int = Field(ge=0)
     note_blocks: int = Field(ge=0)
     neutral_links: int = Field(ge=0)
+
+
+class ActiveExclusionOut(BaseModel):
+    model_config = _OUT_CONFIG
+
+    adjustment_handle: ActivityAdjustmentHandle
+    media_ref: str
+    title: str
+    modality: ActivityModality
+    device: DeviceSummaryOut
+    started_at: datetime
+    ended_at: datetime
+    excluded_active_ms: int = Field(ge=0)
+
+
+class ActivityStatsSectionOut(ScopedSectionOut):
+    totals: ActivityTotalsOut
+    timeline: list[ActivityTimelineRowOut]
+    local_days: list[LocalDayOut]
+    local_hours: list[LocalHourOut]
+    media: MediaActivityBreakdownOut
+    contributors: ContributorActivityBreakdownOut
+    devices: list[DeviceActivityOut]
+    sessions: ActivitySessionsOut
+    longest_session: Presence[ActivitySessionOut]
+    active_exclusions: list[ActiveExclusionOut]
+
+
+class ActivityAdjustmentResultOut(BaseModel):
+    model_config = _OUT_CONFIG
+
+    outcome: Literal["Added", "Excluded", "Retracted"]
+    adjustment_handle: Presence[ActivityAdjustmentHandle]
 
 
 class ConsumptionStatsOut(BaseModel):

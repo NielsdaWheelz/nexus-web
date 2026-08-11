@@ -1,6 +1,7 @@
 package app.nexus.android.playback
 
 import android.content.Context
+import android.database.sqlite.SQLiteException
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -17,7 +18,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.time.Instant
@@ -33,8 +33,6 @@ internal const val NATIVE_ACTIVITY_CHECKPOINT_MS = 10_000L
 internal const val NATIVE_RECORDER_CADENCE_TICK_MS = 5_000L
 internal const val NATIVE_ACTIVITY_SPAN_MAX_MS = 30_000L
 private const val NATIVE_ACTIVITY_SUSPENSION_AFTER_MS = 35_000L
-private const val NATIVE_ACTIVITY_BATCH_MAX_BYTES = 48_000
-internal const val NATIVE_ACTIVITY_QUEUE_MAX_BATCHES = 120
 
 internal data class RecorderPlaybackSample(
     val positionMs: Long,
@@ -58,10 +56,12 @@ internal class NativeConsumptionRecorder(
     context: Context?,
     private val scope: CoroutineScope,
     private val client: NexusOriginTransport,
+    private val activityOutbox: ActivityOutbox,
     private val readPlayback: () -> RecorderPlaybackSample,
     private val onListeningStateAccepted: (ListeningState) -> Unit,
     private val onListeningStateAdopted: (ListeningState) -> Unit,
     private val onPersistenceChanged: (PlayerPersistence) -> Unit,
+    private val onActivitySyncChanged: (NativeActivitySyncSnapshot) -> Unit,
     private val elapsedNow: () -> Long = SystemClock::elapsedRealtime,
     private val wallNow: () -> Long = System::currentTimeMillis,
     private val retryDelay: suspend (Long) -> Unit = {
@@ -111,11 +111,6 @@ internal class NativeConsumptionRecorder(
         val startedDurationMs: Presence<Long>,
     )
 
-    private data class FrozenActivity(
-        val body: String,
-        var retryAttempt: Int = 0,
-    )
-
     private enum class RecoveryKind {
         Network,
         AuthExpired,
@@ -136,8 +131,11 @@ internal class NativeConsumptionRecorder(
     private var recoveryJob: Job? = null
     private var recoveryKind: RecoveryKind? = null
     private var activityEpoch: ActivityEpoch? = null
-    private val activityQueue = ArrayDeque<FrozenActivity>()
     private var activityJob: Job? = null
+    private var activityAccountId: UUID? = null
+    private var activityBlocked: NativeActivityCapture.Blocked? = null
+    private var activityPaused = false
+    private var activityAcceptedRevision = 0L
     private var naturalEndCapture:
         Pair<UUID, (NaturalEndCapture) -> Unit>? = null
     private var naturalEndSample: RecorderPlaybackSample? = null
@@ -153,6 +151,7 @@ internal class NativeConsumptionRecorder(
         ) {
             if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
                 scope.launch {
+                    drainActivity()
                     if (recoveryKind == RecoveryKind.Network) {
                         retryPersistence()
                     }
@@ -184,6 +183,103 @@ internal class NativeConsumptionRecorder(
             resetEpoch = descriptor.resetEpoch,
         )
         onPersistenceChanged(PlayerPersistence.Ready)
+        publishActivitySync()
+    }
+
+    fun openActivityOutbox(accountId: UUID) {
+        if (activityAccountId != accountId) activityAcceptedRevision = 0
+        activityAccountId = accountId
+        activityBlocked = null
+        try {
+            activityPaused = activityOutbox.isPaused(accountId)
+            activityAcceptedRevision = activityOutbox.sync(
+                accountId,
+                NativeActivityCapture.Idle,
+            ).acceptedRevision
+        } catch (_: SQLiteException) {
+            activityPaused = false
+            blockActivityStorage()
+            return
+        }
+        drainActivity()
+        resumeActivityCaptureIfReady()
+        publishActivitySync()
+    }
+
+    fun activitySync(): NativeActivitySyncSnapshot {
+        val accountId = activityAccountId
+        val capture = activityBlocked ?: when {
+            activityPaused -> NativeActivityCapture.Paused
+            activityEpoch == null -> NativeActivityCapture.Idle
+            else -> NativeActivityCapture.Recording
+        }
+        return if (
+            accountId == null ||
+            activityBlocked?.reason == NativeActivityCapture.Blocked.Reason.StorageUnavailable
+        ) {
+            NativeActivitySyncSnapshot(
+                capture,
+                NativeActivitySync.Synced,
+                activityAcceptedRevision,
+            )
+        } else {
+            try {
+                activityOutbox.sync(accountId, capture).also {
+                    activityAcceptedRevision = it.acceptedRevision
+                }
+            } catch (_: SQLiteException) {
+                activityBlocked = NativeActivityCapture.Blocked(
+                    NativeActivityCapture.Blocked.Reason.StorageUnavailable
+                )
+                NativeActivitySyncSnapshot(
+                    activityBlocked!!,
+                    NativeActivitySync.Synced,
+                    activityAcceptedRevision,
+                )
+            }
+        }
+    }
+
+    fun retryFailedActivity() {
+        val accountId = activityAccountId ?: return
+        try {
+            activityOutbox.retryFailed(accountId)
+        } catch (_: SQLiteException) {
+            blockActivityStorage()
+            return
+        }
+        drainActivity()
+        publishActivitySync()
+    }
+
+    fun discardFailedActivity() {
+        val accountId = activityAccountId ?: return
+        try {
+            activityOutbox.discardFailed(accountId)
+        } catch (_: SQLiteException) {
+            blockActivityStorage()
+            return
+        }
+        if (activityBlocked?.reason == NativeActivityCapture.Blocked.Reason.CapacityReached) {
+            activityBlocked = null
+            resumeActivityCaptureIfReady()
+        }
+        drainActivity()
+        publishActivitySync()
+    }
+
+    fun setActivityPaused(paused: Boolean) {
+        val accountId = activityAccountId ?: return
+        if (paused) closeActivity(reopen = false)
+        try {
+            activityOutbox.setPaused(accountId, paused)
+        } catch (_: SQLiteException) {
+            blockActivityStorage()
+            return
+        }
+        activityPaused = paused
+        if (!paused) resumeActivityCaptureIfReady()
+        publishActivitySync()
     }
 
     fun updateEpisodeRate(episodeRate: Presence<Double>) {
@@ -301,6 +397,24 @@ internal class NativeConsumptionRecorder(
     }
 
     fun retryPersistence() {
+        if (activityBlocked?.reason == NativeActivityCapture.Blocked.Reason.StorageUnavailable) {
+            activityBlocked = null
+            val accountId = activityAccountId
+            if (accountId != null) {
+                try {
+                    activityPaused = activityOutbox.isPaused(accountId)
+                    activityAcceptedRevision = activityOutbox.sync(
+                        accountId,
+                        NativeActivityCapture.Idle,
+                    ).acceptedRevision
+                } catch (_: SQLiteException) {
+                    blockActivityStorage()
+                }
+            }
+        }
+        drainActivity()
+        resumeActivityCaptureIfReady()
+        publishActivitySync()
         val current = session ?: return
         if (recoveryKind == null) {
             return
@@ -323,8 +437,9 @@ internal class NativeConsumptionRecorder(
         recoveryJob = null
         activityJob?.cancel()
         activityJob = null
-        activityEpoch = null
-        activityQueue.clear()
+        closeActivity(reopen = false)
+        activityJob?.cancel()
+        activityJob = null
         naturalEndCapture = null
         naturalEndSample = null
         drainCallback = null
@@ -332,6 +447,8 @@ internal class NativeConsumptionRecorder(
         drainDeadlineJob = null
         session = null
         recoveryKind = null
+        activityBlocked = null
+        publishActivitySync()
     }
 
     fun dismiss() {
@@ -478,7 +595,9 @@ internal class NativeConsumptionRecorder(
                     current.dirty = null
                 }
                 onListeningStateAccepted(result.state)
-                onPersistenceChanged(PlayerPersistence.Ready)
+                if (recoveryKind != RecoveryKind.AuthExpired) {
+                    onPersistenceChanged(PlayerPersistence.Ready)
+                }
                 sendHeartbeatIfReady()
             }
             response.status == 401 -> {
@@ -551,7 +670,7 @@ internal class NativeConsumptionRecorder(
                     recoveryKind = null
                     recoveryJob = null
                     onPersistenceChanged(PlayerPersistence.Ready)
-                    restartActivityRetries()
+                    drainActivity()
                     sendHeartbeatIfReady()
                     completeNaturalEndCaptureIfReady()
                     completeDrainIfReady()
@@ -671,7 +790,7 @@ internal class NativeConsumptionRecorder(
     }
 
     private fun openActivity(current: RecordingSession) {
-        if (activityEpoch != null) {
+        if (activityEpoch != null || activityBlocked != null || activityPaused) {
             return
         }
         val sample = readPlayback().bounded()
@@ -738,83 +857,127 @@ internal class NativeConsumptionRecorder(
                 "mediaPositionEndMs",
                 presenceJson(Presence.Present(end.positionMs)),
             )
-        val body = JSONObject()
-            .put("clientMutationId", UUID.randomUUID().toString())
-            .put("mediaRef", "media:${epoch.mediaId}")
-            .put("deviceClass", "Mobile")
-            .put(
-                "batch",
-                JSONObject()
-                    .put("modality", "Listening")
-                    .put("spans", JSONArray().put(span)),
+        val accountId = activityAccountId ?: return
+        try {
+            when (activityOutbox.enqueue(accountId, epoch.mediaId, span)) {
+                NativeActivityEnqueueResult.Enqueued -> {
+                    activityBlocked = null
+                    drainActivity()
+                }
+                NativeActivityEnqueueResult.CapacityReached -> {
+                    activityBlocked = NativeActivityCapture.Blocked(
+                        NativeActivityCapture.Blocked.Reason.CapacityReached
+                    )
+                    drainActivity()
+                }
+            }
+        } catch (_: SQLiteException) {
+            activityBlocked = NativeActivityCapture.Blocked(
+                NativeActivityCapture.Blocked.Reason.StorageUnavailable
             )
-            .toString()
-        check(body.toByteArray(Charsets.UTF_8).size <= NATIVE_ACTIVITY_BATCH_MAX_BYTES)
-        if (activityQueue.size >= NATIVE_ACTIVITY_QUEUE_MAX_BATCHES) {
-            suspendPersistence(RecoveryKind.Network)
-            return
         }
-        activityQueue.addLast(FrozenActivity(body))
-        sendActivityIfReady()
+        publishActivitySync()
     }
 
-    private fun sendActivityIfReady() {
+    private fun drainActivity() {
+        val accountId = activityAccountId ?: return
         if (
             activityJob?.isActive == true ||
-            activityQueue.isEmpty() ||
-            recoveryKind != null
+            activityBlocked?.reason == NativeActivityCapture.Blocked.Reason.StorageUnavailable
         ) {
             return
         }
-        val frozen = activityQueue.first()
+        val batch = try {
+            activityOutbox.expireBefore(
+                accountId,
+                Instant.ofEpochMilli(wallNow() - NATIVE_ACTIVITY_MAX_AGE_MS),
+            )
+            activityOutbox.nextBatch(accountId)
+        } catch (_: SQLiteException) {
+            blockActivityStorage()
+            return
+        } ?: run {
+            publishActivitySync()
+            return
+        }
         activityJob = scope.launch {
-            val result = runCatching { client.postListeningActivity(frozen.body) }
+            val result = runCatching { client.postListeningActivity(batch.body) }
             activityJob = null
             if (result.exceptionOrNull() is CancellationException) {
                 return@launch
             }
-            result.fold(
-                onSuccess = { response ->
-                    when {
-                        response.status == 204 -> activityQueue.removeFirst()
-                        response.status == 401 -> {
-                            suspendPersistence(RecoveryKind.AuthExpired)
-                        }
-                        response.status == 403 || response.status == 404 ->
-                            activityQueue.removeFirst()
-                        response.status == 408 ||
-                            response.status == 429 ||
-                            response.status >= 500 ->
-                            retryActivity(frozen)
-                        else ->
-                            error("Unexpected Listening activity response ${response.status}")
-                    }
-                },
-                onFailure = { retryActivity(frozen) },
+            val continueDraining = result.fold(
+                onSuccess = { response -> handleActivityResponse(batch, response) },
+                onFailure = { false },
             )
-            sendActivityIfReady()
+            publishActivitySync()
+            if (continueDraining) {
+                drainActivity()
+            }
         }
     }
 
-    private fun retryActivity(frozen: FrozenActivity) {
-        val delayDuration = RetryPolicies.SAME_SYSTEM_CLIENT_RECOVERY
-            .getOrNull(frozen.retryAttempt)
-        if (delayDuration == null) {
-            frozen.retryAttempt = 0
-            suspendPersistence(RecoveryKind.Network)
-            return
-        }
-        frozen.retryAttempt += 1
-        activityJob = scope.launch {
-            retryDelay(delayDuration.inWholeMilliseconds)
-            activityJob = null
-            sendActivityIfReady()
+    private fun handleActivityResponse(
+        batch: NativeActivityUploadBatch,
+        response: NexusOriginResponse,
+    ): Boolean {
+        try {
+            when {
+                response.status == 204 -> {
+                    activityOutbox.acknowledge(batch)
+                    if (
+                        activityBlocked?.reason ==
+                        NativeActivityCapture.Blocked.Reason.CapacityReached
+                    ) {
+                        activityBlocked = null
+                        resumeActivityCaptureIfReady()
+                    }
+                    return true
+                }
+                response.status == 401 -> {
+                    suspendPersistence(RecoveryKind.AuthExpired)
+                    return false
+                }
+                response.status == 408 ||
+                    response.status == 429 ||
+                    response.status >= 500 -> return false
+                else -> {
+                    activityOutbox.markFailed(batch, activityFailure(response))
+                    return true
+                }
+            }
+        } catch (_: SQLiteException) {
+            blockActivityStorage()
+            return false
         }
     }
 
-    private fun restartActivityRetries() {
-        activityQueue.forEach { it.retryAttempt = 0 }
-        sendActivityIfReady()
+    private fun activityFailure(response: NexusOriginResponse): NativeActivityFailure {
+        val code = runCatching {
+            JSONObject(response.body).getJSONObject("error").getString("code")
+        }.getOrNull()
+        return when {
+            response.status == 404 && code == "E_MEDIA_NOT_FOUND" ->
+                NativeActivityFailure.MediaUnavailable
+            response.status == 400 && code == "E_ACTIVITY_EXPIRED" ->
+                NativeActivityFailure.Expired
+            else -> NativeActivityFailure.Defect
+        }
+    }
+
+    private fun resumeActivityCaptureIfReady() {
+        session?.takeIf { it.playing }?.let(::openActivity)
+    }
+
+    private fun publishActivitySync() {
+        onActivitySyncChanged(activitySync())
+    }
+
+    private fun blockActivityStorage() {
+        activityBlocked = NativeActivityCapture.Blocked(
+            NativeActivityCapture.Blocked.Reason.StorageUnavailable
+        )
+        publishActivitySync()
     }
 
     private fun RecorderPlaybackSample.bounded(): RecorderPlaybackSample =

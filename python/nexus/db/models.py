@@ -3000,6 +3000,7 @@ class ConsumptionActivitySpan(Base):
     __tablename__ = "consumption_activity_spans"
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    capture_key: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("users.id", name="fk_consumption_activity_spans_user"),
@@ -3026,6 +3027,11 @@ class ConsumptionActivitySpan(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "capture_key",
+            name="uq_consumption_activity_spans_user_capture_key",
+        ),
         Index("ix_consumption_activity_spans_user_occurred_id", "user_id", "occurred_at", "id"),
         Index(
             "ix_consumption_activity_spans_user_media_occurred_id",
@@ -3042,6 +3048,51 @@ class ConsumptionActivitySpan(Base):
             "id",
         ),
         Index("ix_consumption_activity_spans_media_id", "media_id", "id"),
+    )
+
+
+class ConsumptionActivityAdjustment(Base):
+    """One user-authored additive or excluding activity correction."""
+
+    __tablename__ = "consumption_activity_adjustments"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_consumption_activity_adjustments_user"),
+        nullable=False,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", name="fk_consumption_activity_adjustments_media"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    modality: Mapped[str] = mapped_column(Text, nullable=False)
+    device_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+    retracted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_consumption_activity_adjustments_user_occurred_id",
+            "user_id",
+            "occurred_at",
+            "id",
+        ),
+        Index(
+            "ix_cons_activity_adj_user_media_device_time_id",
+            "user_id",
+            "media_id",
+            "device_id",
+            "occurred_at",
+            "id",
+        ),
+        Index("ix_consumption_activity_adjustments_media_id", "media_id", "id"),
     )
 
 

@@ -1,0 +1,299 @@
+import type { APIResponse, Page } from "playwright/test";
+import { uniqueCanonicalReaderEpub } from "../corpus";
+import {
+  expect,
+  gotoWithStrictCsp,
+  minioOrigin,
+  signIn,
+  test,
+  webOrigin,
+} from "../fixtures";
+import {
+  matchesResponse,
+  pageRequest,
+  type ExactOriginRequest,
+} from "../request";
+
+test.use({ journeyId: "durable-consumption-activity" });
+
+interface ConsumptionStatsPayload {
+  data: {
+    activity: {
+      totals: {
+        activeMs: number;
+        recordedActiveMs: number;
+        excludedActiveMs: number;
+        observedActiveMs: number;
+        manualActiveMs: number;
+      };
+      media: {
+        rows: Array<{
+          mediaRef: string;
+          title: string;
+          activeMs: number;
+        }>;
+      };
+    };
+  };
+}
+
+interface EpubSection {
+  section_id: string;
+  label: string;
+  href_path: string | null;
+  start_offset: number;
+}
+
+async function readJson<T>(response: APIResponse, label: string): Promise<T> {
+  const text = await response.text();
+  expect(
+    response.ok(),
+    `${label} failed: ${response.status()} ${text.slice(0, 500)}`,
+  ).toBeTruthy();
+  return JSON.parse(text) as T;
+}
+
+async function uploadReadableEpub(page: Page, userId: string): Promise<string> {
+  const api = pageRequest(page, webOrigin);
+  const objects = pageRequest(page, minioOrigin);
+  const epub = uniqueCanonicalReaderEpub(userId);
+  const initialized = await readJson<{
+    data: { media_id: string; upload_url: string | null };
+  }>(
+    await api.post("/api/media/upload/init", {
+      headers: {
+        origin: webOrigin,
+        "Idempotency-Key": `durable-consumption-activity-${userId}`,
+      },
+      data: {
+        kind: "epub",
+        filename: "canonical-durable-consumption-activity.epub",
+        content_type: "application/epub+zip",
+        size_bytes: epub.byteLength,
+        library_ids: [],
+      },
+    }),
+    "Consumption journey EPUB acceptance",
+  );
+  const mediaId = initialized.data.media_id;
+  expect(
+    initialized.data.upload_url,
+    `Fresh Consumption journey upload ${mediaId} omitted its object target.`,
+  ).not.toBeNull();
+  const uploaded = await objects.put(initialized.data.upload_url!, {
+    headers: { "Content-Type": "application/epub+zip" },
+    data: epub,
+  });
+  expect(
+    uploaded.ok(),
+    `Consumption journey object upload ${mediaId} failed with ${uploaded.status()}.`,
+  ).toBeTruthy();
+  await readJson(
+    await api.post(`/api/media/${mediaId}/ingest`, {
+      headers: { origin: webOrigin },
+      data: { library_ids: [] },
+    }),
+    `Consumption journey EPUB confirmation for ${mediaId}`,
+  );
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(`/api/media/${mediaId}`);
+        if (!response.ok()) return `http-${response.status()}`;
+        return ((await response.json()) as {
+          data: { processing_status: string };
+        }).data.processing_status;
+      },
+      {
+        message: `Expected Consumption journey EPUB ${mediaId} to become readable.`,
+        timeout: 25_000,
+      },
+    )
+    .toBe("ready_for_reading");
+  return mediaId;
+}
+
+function allTimeStatsPath(): `/api/${string}` {
+  const tomorrow = new Date();
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  tomorrow.setUTCHours(0, 0, 0, 0);
+  const query = new URLSearchParams({
+    timeZone: "UTC",
+    bucket: "Year",
+    end: tomorrow.toISOString(),
+  });
+  return `/api/consumption/stats?${query}`;
+}
+
+async function consumptionStats(
+  api: ExactOriginRequest,
+  path: `/api/${string}`,
+): Promise<ConsumptionStatsPayload["data"]> {
+  return (await readJson<ConsumptionStatsPayload>(
+    await api.get(path),
+    "Consumption stats projection",
+  )).data;
+}
+
+test("restored reader input is durably projected into mounted Stats", async ({
+  page,
+  journeyUser,
+}) => {
+  await signIn(page, journeyUser);
+  const api = pageRequest(page, webOrigin);
+  const mediaId = await uploadReadableEpub(page, journeyUser.id);
+  const navigation = await readJson<{
+    data: { sections: EpubSection[] };
+  }>(
+    await api.get(`/api/media/${mediaId}/navigation`),
+    `EPUB navigation for ${mediaId}`,
+  );
+  const target = navigation.data.sections.find(
+    (section) => section.label === "Second" && section.href_path !== null,
+  );
+  expect(
+    target,
+    `EPUB ${mediaId} did not expose the fixture-owned Second section.`,
+  ).toBeDefined();
+
+  await readJson(
+    await api.put(`/api/media/${mediaId}/reader-state`, {
+      headers: { origin: webOrigin },
+      data: {
+        locator: {
+          kind: "epub",
+          target: {
+            section_id: target!.section_id,
+            href_path: target!.href_path,
+            anchor_id: null,
+          },
+          locations: {
+            text_offset: target!.start_offset,
+            progression: null,
+            total_progression: null,
+            position: null,
+          },
+          text: {
+            quote: null,
+            quote_prefix: null,
+            quote_suffix: null,
+          },
+        },
+        base_revision: 0,
+      },
+    }),
+    `Persisted reader restore for ${mediaId}`,
+  );
+
+  await gotoWithStrictCsp(page, `/media/${mediaId}`);
+  await expect(
+    page.getByRole("heading", { name: target!.label, exact: true }),
+    `Reader did not restore section ${target!.section_id} (${target!.label}).`,
+  ).toBeVisible();
+  const restoredPassage = page
+    .getByText(/Omega proves the selected section/)
+    .first();
+  await expect(
+    restoredPassage,
+    `Reader restored ${target!.label} without its fixture-owned passage.`,
+  ).toBeVisible();
+
+  const statsPath = allTimeStatsPath();
+  const beforeInput = await consumptionStats(api, statsPath);
+  expect(
+    beforeInput.activity.totals.recordedActiveMs,
+    "A programmatic reader restore must not create Consumption activity.",
+  ).toBe(0);
+
+  await restoredPassage.hover();
+  await page.mouse.wheel(0, 480);
+  const recordingAction = page.getByRole("link", {
+    name: "Activity: Recording",
+    exact: true,
+  });
+  await expect(
+    recordingAction,
+    "A trusted Chromium wheel inside the restored reader did not start capture.",
+  ).toBeVisible();
+
+  const statsAction = page.getByRole("link", { name: "Stats", exact: true });
+  await expect(statsAction).toBeVisible();
+  const readerDocumentTimeOrigin = await page.evaluate(
+    () => performance.timeOrigin,
+  );
+  const acceptedCapture = page.waitForResponse(
+    (response) =>
+      matchesResponse(
+        response,
+        webOrigin,
+        "POST",
+        "/api/consumption/activity",
+    ) && response.status() === 204,
+    { timeout: 15_000 },
+  );
+  await statsAction.click();
+  const captureResponse = await acceptedCapture;
+  expect(
+    captureResponse.status(),
+    "Reader capture was not accepted by the public Consumption endpoint.",
+  ).toBe(204);
+
+  await expect(page).toHaveURL(/\/stats(?:[?#]|$)/);
+  expect(
+    await page.evaluate(() => performance.timeOrigin),
+    "Opening Stats replaced the browser document instead of projecting the accepted capture in-process.",
+  ).toBe(readerDocumentTimeOrigin);
+  const summary = page.getByRole("region", { name: "Activity summary" });
+  await expect(
+    summary,
+    "Mounted Stats did not refresh to the just-accepted reader activity.",
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(summary).toContainText("observed");
+  await expect(
+    page
+      .getByRole("button", {
+        name: "Canonical Reader Positions",
+        exact: true,
+      })
+      .first(),
+    `Mounted Stats omitted the recorded work ${mediaId}.`,
+  ).toBeVisible();
+
+  await expect
+    .poll(
+      async () => {
+        const projected = await consumptionStats(api, statsPath);
+        const totals = projected.activity.totals;
+        const work = projected.activity.media.rows.find(
+          (row) => row.mediaRef === `media:${mediaId}`,
+        );
+        return (
+          totals.recordedActiveMs > 0 &&
+          totals.excludedActiveMs === 0 &&
+          totals.observedActiveMs === totals.recordedActiveMs &&
+          totals.manualActiveMs === 0 &&
+          totals.activeMs === totals.recordedActiveMs &&
+          (work?.activeMs ?? 0) > 0
+        );
+      },
+      {
+        message: `Expected accepted reader capture for ${mediaId} in the public Stats projection.`,
+        timeout: 15_000,
+      },
+    )
+    .toBe(true);
+
+  const projected = await consumptionStats(api, statsPath);
+  expect(projected.activity.totals.recordedActiveMs).toBeGreaterThan(0);
+  expect(projected.activity.totals.observedActiveMs).toBe(
+    projected.activity.totals.recordedActiveMs,
+  );
+  expect(projected.activity.totals.activeMs).toBe(
+    projected.activity.totals.recordedActiveMs,
+  );
+  expect(
+    projected.activity.media.rows.find(
+      (row) => row.mediaRef === `media:${mediaId}`,
+    )?.activeMs ?? 0,
+  ).toBeGreaterThan(0);
+});

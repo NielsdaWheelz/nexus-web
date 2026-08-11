@@ -87,6 +87,34 @@
   gap: 0.6rem;
   margin: 1rem 0;
 }
+.activityHealth {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--edge-subtle);
+  border-radius: 0.65rem;
+  background: var(--surface-1);
+}
+.activityHealth h2 {
+  margin: 0;
+  font-size: 0.8rem;
+}
+.activityHealth strong,
+.activityHealth span {
+  margin-left: 0.6rem;
+}
+.activityHealth span {
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+}
+.activityHealthActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
 .summary > div,
 .section,
 .yearFacts > div {
@@ -448,6 +476,13 @@
   .yearFacts {
     grid-template-columns: 1fr;
   }
+  .activityHealth {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .activityHealthActions {
+    width: 100%;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .loading span {
@@ -456,6 +491,7 @@
 }
 @media (forced-colors: active) {
   .summary > div,
+  .activityHealth,
   .section,
   .yearFacts > div,
   .yearHero {

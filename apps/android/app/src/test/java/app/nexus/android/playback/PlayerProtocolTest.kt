@@ -69,6 +69,49 @@ class PlayerProtocolTest {
     }
 
     @Test
+    fun `activity recovery commands accept only their exact account-fenced shape`() {
+        listOf("RetryFailedActivity", "DiscardFailedActivity").forEach { kind ->
+            val exact = JSONObject()
+                .put("kind", kind)
+                .put("requestId", "00000000-0000-4000-8000-000000000001")
+                .put("protocolVersion", 1)
+            assertTrue(
+                PlayerWire.parseCommand(exact.toString()) is
+                    PlayerCommandParseResult.Accepted
+            )
+
+            exact.put("accountId", "00000000-0000-4000-8000-000000000002")
+            assertTrue(
+                PlayerWire.parseCommand(exact.toString()) is
+                    PlayerCommandParseResult.Rejected
+            )
+        }
+    }
+
+    @Test
+    fun `Activity pause requires an exact boolean payload`() {
+        val exact = JSONObject()
+            .put("kind", "SetActivityPaused")
+            .put("requestId", "00000000-0000-4000-8000-000000000001")
+            .put("protocolVersion", 1)
+            .put("paused", true)
+        assertEquals(
+            PlayerCommand.SetActivityPaused(
+                UUID.fromString("00000000-0000-4000-8000-000000000001"),
+                true,
+            ),
+            (PlayerWire.parseCommand(exact.toString()) as
+                PlayerCommandParseResult.Accepted).command,
+        )
+
+        exact.put("paused", 1)
+        assertTrue(
+            PlayerWire.parseCommand(exact.toString()) is
+                PlayerCommandParseResult.Rejected
+        )
+    }
+
+    @Test
     fun `load canonical decodes the full session and rejects inconsistent rate state`() {
         val command = loadCanonicalCommand()
         val accepted = PlayerWire.parseCommand(command.toString())
@@ -215,12 +258,17 @@ class PlayerProtocolTest {
     }
 
     @Test
-    fun `absent snapshot carries only device pause settings`() {
+    fun `absent snapshot carries strict device and activity sync state`() {
         val raw = PlayerWire.snapshot(
             UUID.fromString("00000000-0000-4000-8000-000000000001"),
             PlayerSnapshot.Absent(
                 deviceDefaultPauseShorteningMode = PauseShorteningMode.Natural,
                 pauseShorteningSavedOnDeviceMs = 42,
+                activitySync = PlayerActivitySyncSnapshot(
+                    capture = NativeActivityCapture.Paused,
+                    sync = NativeActivitySync.Pending(2, "2026-08-10T00:00:00Z"),
+                    acceptedRevision = 7,
+                ),
             ),
             Presence.Absent,
         )
@@ -241,11 +289,23 @@ class PlayerProtocolTest {
                 "kind",
                 "deviceDefaultPauseShorteningMode",
                 "pauseShorteningSavedOnDeviceMs",
+                "activitySync",
             ),
             snapshot.keys().asSequence().toSet(),
         )
         assertEquals("Natural", snapshot.getString("deviceDefaultPauseShorteningMode"))
         assertEquals(42, snapshot.getLong("pauseShorteningSavedOnDeviceMs"))
+        val activitySync = snapshot.getJSONObject("activitySync")
+        assertEquals(
+            setOf("capture", "sync", "acceptedRevision"),
+            activitySync.keys().asSequence().toSet(),
+        )
+        assertEquals("Paused", activitySync.getJSONObject("capture").getString("kind"))
+        assertEquals("Pending", activitySync.getJSONObject("sync").getString("kind"))
+        assertEquals(
+            7,
+            activitySync.getLong("acceptedRevision"),
+        )
     }
 
     @Test

@@ -1,6 +1,12 @@
 import { expectExactRecord, isRecord } from "@/lib/validation";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { tryParseContributorHandle } from "@/lib/contributors/handle";
+import {
+  parseActivityAdjustmentHandle,
+  parseActivityDeviceHandle,
+  type ActivityAdjustmentHandle,
+  type ActivityDeviceHandle,
+} from "./activityAdjustments";
 
 export type StatsPeriod = "day" | "week" | "month" | "year" | "all";
 export type StatsView = "stats" | "year";
@@ -47,7 +53,7 @@ export interface ContributorStatsRow extends Metrics {
   roles: string[];
 }
 export interface DeviceStatsRow {
-  deviceHandle: string;
+  deviceHandle: ActivityDeviceHandle;
   label: string;
   firstObservedAt: string;
   lastObservedAt: string;
@@ -56,11 +62,18 @@ export interface DeviceStatsRow {
   activeMs: number;
 }
 
+export interface DeviceSummary {
+  deviceHandle: ActivityDeviceHandle;
+  label: string;
+}
+
 export interface StatsSession extends Metrics {
+  source: "Observed" | "Manual";
   mediaRef: string;
   title: string;
   modality: ActivityModality;
-  device: { deviceHandle: string; label: string };
+  device: Presence<DeviceSummary>;
+  adjustmentHandle: Presence<ActivityAdjustmentHandle>;
   startedAt: string;
   endedAt: string;
   activeMs: number;
@@ -68,6 +81,17 @@ export interface StatsSession extends Metrics {
   lastProgress: Presence<number>;
   continuesBeforeRange: boolean;
   continuesAfterRange: boolean;
+}
+
+export interface ActiveExclusion {
+  adjustmentHandle: ActivityAdjustmentHandle;
+  mediaRef: string;
+  title: string;
+  modality: ActivityModality;
+  device: DeviceSummary;
+  startedAt: string;
+  endedAt: string;
+  excludedActiveMs: number;
 }
 
 interface ScopedSection {
@@ -78,6 +102,10 @@ interface ScopedSection {
 export interface ConsumptionStats {
   activity: ScopedSection & {
     totals: Metrics & {
+      recordedActiveMs: number;
+      excludedActiveMs: number;
+      observedActiveMs: number;
+      manualActiveMs: number;
       activeDays: number;
       streak: number;
       longestStreak: number;
@@ -95,6 +123,7 @@ export interface ConsumptionStats {
     devices: DeviceStatsRow[];
     sessions: { rows: StatsSession[]; nextCursor: Presence<string> };
     longestSession: Presence<StatsSession>;
+    activeExclusions: ActiveExclusion[];
   };
   completion: ScopedSection & {
     total: number;
@@ -403,11 +432,59 @@ function mediaRefAt(value: unknown, name: string): string {
   return raw;
 }
 
-function deviceHandleAt(value: unknown, name: string): string {
+function deviceHandleAt(value: unknown, name: string): ActivityDeviceHandle {
   const raw = stringAt(value, name);
-  if (!/^ncd1\.[A-Za-z0-9_-]{22}$/.test(raw))
+  try {
+    return parseActivityDeviceHandle(raw);
+  } catch {
     throw new Error(`Invalid Stats response: ${name}`);
-  return raw;
+  }
+}
+
+function activityAdjustmentHandleAt(
+  value: unknown,
+  name: string,
+): ActivityAdjustmentHandle {
+  const raw = stringAt(value, name);
+  try {
+    return parseActivityAdjustmentHandle(raw);
+  } catch {
+    throw new Error(`Invalid Stats response: ${name}`);
+  }
+}
+
+function presenceAt<T>(
+  input: unknown,
+  name: string,
+  decode: (raw: unknown) => T,
+): Presence<T> {
+  if (
+    !isRecord(input) ||
+    (input.kind !== "Absent" && input.kind !== "Present")
+  ) {
+    throw new Error(`Invalid Stats response: ${name}`);
+  }
+  if (input.kind === "Absent") {
+    if (Object.keys(input).length !== 1) {
+      throw new Error(`Invalid Stats response: ${name}`);
+    }
+    return { kind: "Absent" };
+  }
+  if (Object.keys(input).length !== 2) {
+    throw new Error(`Invalid Stats response: ${name}`);
+  }
+  return { kind: "Present", value: decode(input.value) };
+}
+
+function deviceSummaryAt(value: unknown, name: string): DeviceSummary {
+  expectExactRecord(value, ["deviceHandle", "label"], name);
+  if (!isRecord(value)) {
+    throw new Error(`Invalid Stats response: ${name}`);
+  }
+  return {
+    deviceHandle: deviceHandleAt(value.deviceHandle, `${name}.deviceHandle`),
+    label: stringAt(value.label, `${name}.label`),
+  };
 }
 
 function contributorHandleAt(value: unknown, name: string): string {
@@ -463,6 +540,88 @@ function metrics(value: unknown, name: string): Metrics {
   };
 }
 
+function statsSessionAt(input: unknown, name: string): StatsSession {
+  expectExactRecord(
+    input,
+    [
+      "source",
+      "mediaRef",
+      "title",
+      "modality",
+      "device",
+      "adjustmentHandle",
+      "startedAt",
+      "endedAt",
+      "activeMs",
+      "forwardWordPosition",
+      "forwardMediaPositionMs",
+      "firstProgress",
+      "lastProgress",
+      "continuesBeforeRange",
+      "continuesAfterRange",
+    ],
+    name,
+  );
+  if (!isRecord(input)) {
+    throw new Error(`Invalid Stats response: ${name}`);
+  }
+  const source = stringAt(input.source, `${name}.source`);
+  if (source !== "Observed" && source !== "Manual") {
+    throw new Error(`Invalid Stats response: ${name}.source`);
+  }
+  const modality = stringAt(input.modality, `${name}.modality`);
+  if (!MODALITIES.has(modality as ActivityModality)) {
+    throw new Error(`Invalid Stats response: ${name}.modality`);
+  }
+  if (
+    typeof input.continuesBeforeRange !== "boolean" ||
+    typeof input.continuesAfterRange !== "boolean"
+  ) {
+    throw new Error(`Invalid Stats response: ${name}.continues`);
+  }
+  const device = presenceAt(input.device, `${name}.device`, (raw) =>
+    deviceSummaryAt(raw, `${name}.device.value`),
+  );
+  const adjustmentHandle = presenceAt(
+    input.adjustmentHandle,
+    `${name}.adjustmentHandle`,
+    (raw) =>
+      activityAdjustmentHandleAt(raw, `${name}.adjustmentHandle.value`),
+  );
+  if (
+    (source === "Observed" &&
+      (device.kind !== "Present" || adjustmentHandle.kind !== "Absent")) ||
+    (source === "Manual" &&
+      (device.kind !== "Absent" || adjustmentHandle.kind !== "Present"))
+  ) {
+    throw new Error(`Invalid Stats response: ${name}.source identity`);
+  }
+  return {
+    ...metrics(input, name),
+    source,
+    mediaRef: mediaRefAt(input.mediaRef, `${name}.mediaRef`),
+    title: stringAt(input.title, `${name}.title`),
+    modality: modality as ActivityModality,
+    device,
+    adjustmentHandle,
+    startedAt: instantAt(input.startedAt, `${name}.startedAt`),
+    endedAt: instantAt(input.endedAt, `${name}.endedAt`),
+    activeMs: numberAt(input.activeMs, `${name}.activeMs`),
+    firstProgress: presenceAt(
+      input.firstProgress,
+      `${name}.firstProgress`,
+      (raw) => numberAt(raw, `${name}.firstProgress.value`),
+    ),
+    lastProgress: presenceAt(
+      input.lastProgress,
+      `${name}.lastProgress`,
+      (raw) => numberAt(raw, `${name}.lastProgress.value`),
+    ),
+    continuesBeforeRange: input.continuesBeforeRange,
+    continuesAfterRange: input.continuesAfterRange,
+  };
+}
+
 function array(value: unknown, name: string): unknown[] {
   if (!Array.isArray(value)) throw new Error(`Invalid Stats response: ${name}`);
   return value;
@@ -504,6 +663,7 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
       "devices",
       "sessions",
       "longestSession",
+      "activeExclusions",
     ],
     "activity",
   );
@@ -519,89 +679,6 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
       `${name}.inapplicableFilters`,
     ).map((item) => stringAt(item, `${name}.inapplicableFilters[]`)),
   });
-  const presence = <T>(
-    input: unknown,
-    name: string,
-    decode: (raw: unknown) => T,
-  ): Presence<T> => {
-    if (
-      !isRecord(input) ||
-      (input.kind !== "Absent" && input.kind !== "Present")
-    )
-      throw new Error(`Invalid Stats response: ${name}`);
-    if (input.kind === "Absent") {
-      if (Object.keys(input).length !== 1)
-        throw new Error(`Invalid Stats response: ${name}`);
-      return { kind: "Absent" };
-    }
-    if (Object.keys(input).length !== 2)
-      throw new Error(`Invalid Stats response: ${name}`);
-    return { kind: "Present", value: decode(input.value) };
-  };
-  const session = (input: unknown, name: string): StatsSession => {
-    expectExactRecord(
-      input,
-      [
-        "mediaRef",
-        "title",
-        "modality",
-        "device",
-        "startedAt",
-        "endedAt",
-        "activeMs",
-        "forwardWordPosition",
-        "forwardMediaPositionMs",
-        "firstProgress",
-        "lastProgress",
-        "continuesBeforeRange",
-        "continuesAfterRange",
-      ],
-      name,
-    );
-    if (!isRecord(input) || !isRecord(input.device))
-      throw new Error(`Invalid Stats response: ${name}`);
-    expectExactRecord(
-      input.device,
-      ["deviceHandle", "label"],
-      `${name}.device`,
-    );
-    const modality = stringAt(input.modality, `${name}.modality`);
-    if (!MODALITIES.has(modality as ActivityModality))
-      throw new Error(`Invalid Stats response: ${name}.modality`);
-    if (
-      typeof input.continuesBeforeRange !== "boolean" ||
-      typeof input.continuesAfterRange !== "boolean"
-    )
-      throw new Error(`Invalid Stats response: ${name}.continues`);
-    return {
-      ...metrics(input, name),
-      mediaRef: mediaRefAt(input.mediaRef, `${name}.mediaRef`),
-      title: stringAt(input.title, `${name}.title`),
-      modality: modality as ActivityModality,
-      device: {
-        deviceHandle: deviceHandleAt(
-          input.device.deviceHandle,
-          `${name}.device.deviceHandle`,
-        ),
-        label: stringAt(input.device.label, `${name}.device.label`),
-      },
-      startedAt: instantAt(input.startedAt, `${name}.startedAt`),
-      endedAt: instantAt(input.endedAt, `${name}.endedAt`),
-      activeMs: numberAt(input.activeMs, `${name}.activeMs`),
-      firstProgress: presence(
-        input.firstProgress,
-        `${name}.firstProgress`,
-        (raw) => numberAt(raw, `${name}.firstProgress.value`),
-      ),
-      lastProgress: presence(
-        input.lastProgress,
-        `${name}.lastProgress`,
-        (raw) => numberAt(raw, `${name}.lastProgress.value`),
-      ),
-      continuesBeforeRange: input.continuesBeforeRange,
-      continuesAfterRange: input.continuesAfterRange,
-    };
-  };
   const totals = metrics(activity.totals, "activity.totals");
   if (!isRecord(activity.totals))
     throw new Error("Invalid Stats response: activity.totals");
@@ -609,6 +686,10 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
     activity.totals,
     [
       "activeMs",
+      "recordedActiveMs",
+      "excludedActiveMs",
+      "observedActiveMs",
+      "manualActiveMs",
       "forwardWordPosition",
       "forwardMediaPositionMs",
       "activeDays",
@@ -822,6 +903,22 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
       ...scoped(activity, "activity"),
       totals: {
         ...totals,
+        recordedActiveMs: numberAt(
+          activity.totals.recordedActiveMs,
+          "totals.recordedActiveMs",
+        ),
+        excludedActiveMs: numberAt(
+          activity.totals.excludedActiveMs,
+          "totals.excludedActiveMs",
+        ),
+        observedActiveMs: numberAt(
+          activity.totals.observedActiveMs,
+          "totals.observedActiveMs",
+        ),
+        manualActiveMs: numberAt(
+          activity.totals.manualActiveMs,
+          "totals.manualActiveMs",
+        ),
         activeDays: numberAt(activity.totals.activeDays, "totals.activeDays"),
         streak: numberAt(activity.totals.streak, "totals.streak"),
         longestStreak: numberAt(
@@ -892,20 +989,64 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
           throw new Error("Invalid Stats response: activity.sessions");
         return {
           rows: array(activity.sessions.rows, "activity.sessions.rows").map(
-            (item, index) => session(item, `activity.sessions.rows[${index}]`),
+            (item, index) =>
+              statsSessionAt(item, `activity.sessions.rows[${index}]`),
           ),
-          nextCursor: presence(
+          nextCursor: presenceAt(
             activity.sessions.nextCursor,
             "activity.sessions.nextCursor",
             (raw) => stringAt(raw, "activity.sessions.nextCursor.value"),
           ),
         };
       })(),
-      longestSession: presence(
+      longestSession: presenceAt(
         activity.longestSession,
         "activity.longestSession",
-        (raw) => session(raw, "activity.longestSession.value"),
+        (raw) => statsSessionAt(raw, "activity.longestSession.value"),
       ),
+      activeExclusions: array(
+        activity.activeExclusions,
+        "activity.activeExclusions",
+      ).map((item, index): ActiveExclusion => {
+        const name = `activity.activeExclusions[${index}]`;
+        expectExactRecord(
+          item,
+          [
+            "adjustmentHandle",
+            "mediaRef",
+            "title",
+            "modality",
+            "device",
+            "startedAt",
+            "endedAt",
+            "excludedActiveMs",
+          ],
+          name,
+        );
+        if (!isRecord(item)) {
+          throw new Error(`Invalid Stats response: ${name}`);
+        }
+        const modality = stringAt(item.modality, `${name}.modality`);
+        if (!MODALITIES.has(modality as ActivityModality)) {
+          throw new Error(`Invalid Stats response: ${name}.modality`);
+        }
+        return {
+          adjustmentHandle: activityAdjustmentHandleAt(
+            item.adjustmentHandle,
+            `${name}.adjustmentHandle`,
+          ),
+          mediaRef: mediaRefAt(item.mediaRef, `${name}.mediaRef`),
+          title: stringAt(item.title, `${name}.title`),
+          modality: modality as ActivityModality,
+          device: deviceSummaryAt(item.device, `${name}.device`),
+          startedAt: instantAt(item.startedAt, `${name}.startedAt`),
+          endedAt: instantAt(item.endedAt, `${name}.endedAt`),
+          excludedActiveMs: numberAt(
+            item.excludedActiveMs,
+            `${name}.excludedActiveMs`,
+          ),
+        };
+      }),
     },
     completion: {
       ...scoped(completion, "completion"),
@@ -1016,94 +1157,13 @@ export function decodeActivitySessionPage(value: unknown): {
   const page = dataEnvelope(value, "session page response");
   if (!isRecord(page)) throw new Error("Invalid session page");
   expectExactRecord(page, ["sessions", "nextCursor"], "session page");
-  const decodePresenceString = (input: unknown): Presence<string> => {
-    if (
-      !isRecord(input) ||
-      (input.kind !== "Absent" && input.kind !== "Present")
-    )
-      throw new Error("Invalid session page: nextCursor");
-    if (input.kind === "Absent" && Object.keys(input).length === 1)
-      return { kind: "Absent" };
-    if (input.kind === "Present" && Object.keys(input).length === 2)
-      return {
-        kind: "Present",
-        value: stringAt(input.value, "nextCursor.value"),
-      };
-    throw new Error("Invalid session page: nextCursor");
-  };
-  const decodeSession = (input: unknown, name: string): StatsSession => {
-    expectExactRecord(
-      input,
-      [
-        "mediaRef",
-        "title",
-        "modality",
-        "device",
-        "startedAt",
-        "endedAt",
-        "activeMs",
-        "forwardWordPosition",
-        "forwardMediaPositionMs",
-        "firstProgress",
-        "lastProgress",
-        "continuesBeforeRange",
-        "continuesAfterRange",
-      ],
-      name,
-    );
-    if (!isRecord(input) || !isRecord(input.device))
-      throw new Error(`Invalid session page: ${name}`);
-    expectExactRecord(
-      input.device,
-      ["deviceHandle", "label"],
-      `${name}.device`,
-    );
-    const modality = stringAt(input.modality, `${name}.modality`);
-    if (!MODALITIES.has(modality as ActivityModality))
-      throw new Error(`Invalid session page: ${name}.modality`);
-    const progress = (raw: unknown, field: string): Presence<number> => {
-      if (!isRecord(raw) || (raw.kind !== "Absent" && raw.kind !== "Present"))
-        throw new Error(`Invalid session page: ${field}`);
-      if (raw.kind === "Absent" && Object.keys(raw).length === 1)
-        return { kind: "Absent" };
-      if (raw.kind === "Present" && Object.keys(raw).length === 2)
-        return {
-          kind: "Present",
-          value: numberAt(raw.value, `${field}.value`),
-        };
-      throw new Error(`Invalid session page: ${field}`);
-    };
-    if (
-      typeof input.continuesBeforeRange !== "boolean" ||
-      typeof input.continuesAfterRange !== "boolean"
-    )
-      throw new Error(`Invalid session page: ${name}.continues`);
-    return {
-      ...metrics(input, name),
-      mediaRef: mediaRefAt(input.mediaRef, `${name}.mediaRef`),
-      title: stringAt(input.title, `${name}.title`),
-      modality: modality as ActivityModality,
-      device: {
-        deviceHandle: deviceHandleAt(
-          input.device.deviceHandle,
-          `${name}.device.deviceHandle`,
-        ),
-        label: stringAt(input.device.label, `${name}.device.label`),
-      },
-      startedAt: instantAt(input.startedAt, `${name}.startedAt`),
-      endedAt: instantAt(input.endedAt, `${name}.endedAt`),
-      activeMs: numberAt(input.activeMs, `${name}.activeMs`),
-      firstProgress: progress(input.firstProgress, `${name}.firstProgress`),
-      lastProgress: progress(input.lastProgress, `${name}.lastProgress`),
-      continuesBeforeRange: input.continuesBeforeRange,
-      continuesAfterRange: input.continuesAfterRange,
-    };
-  };
   return {
     sessions: array(page.sessions, "sessions").map((item, index) =>
-      decodeSession(item, `sessions[${index}]`),
+      statsSessionAt(item, `sessions[${index}]`),
     ),
-    nextCursor: decodePresenceString(page.nextCursor),
+    nextCursor: presenceAt(page.nextCursor, "nextCursor", (raw) =>
+      stringAt(raw, "nextCursor.value"),
+    ),
   };
 }
 

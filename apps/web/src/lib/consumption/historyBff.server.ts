@@ -5,6 +5,18 @@ import { NextResponse } from "next/server";
 import { privateNoStoreResponse } from "@/lib/api/privateNoStoreResponse.server";
 import { proxyToFastAPI } from "@/lib/api/proxy";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
+import { decodeActivityAdjustmentRequest } from "./activityAdjustments";
+import {
+  decodeActivityRequest,
+  type ActivityRequest,
+} from "./activityContract";
+
+const ACTIVITY_BATCH_MAX_BYTES = 48_000;
+
+interface ActivityRouteDependencies {
+  readonly deviceId: typeof consumptionDeviceId;
+  readonly proxy: typeof proxyToFastAPI;
+}
 
 function privateJson(
   body: { error: { code: string; message: string } },
@@ -71,5 +83,61 @@ export async function proxyConsumptionRead(
   });
   return privateNoStoreResponse(
     await proxyToFastAPI(forwarded, backendPath),
+  );
+}
+
+export async function postActivityWithDependencies(
+  request: Request,
+  dependencies: ActivityRouteDependencies,
+): Promise<Response> {
+  const raw = await request.text();
+  if (new TextEncoder().encode(raw).byteLength > ACTIVITY_BATCH_MAX_BYTES) {
+    return activityTooLargeResponse();
+  }
+
+  let decoded: ActivityRequest;
+  try {
+    decoded = decodeActivityRequest(JSON.parse(raw));
+  } catch {
+    return invalidConsumptionRequest("Invalid activity batch");
+  }
+
+  const device = await dependencies.deviceId();
+  if (device.kind === "Defect") return device.response;
+  const forwarded = new Request(request.url, {
+    method: "POST",
+    headers: request.headers,
+    body: JSON.stringify({
+      clientMutationId: decoded.clientMutationId,
+      mediaRef: decoded.mediaRef,
+      deviceId: device.value,
+      deviceClass: decoded.deviceClass,
+      batch: decoded.batch,
+    }),
+    signal: request.signal,
+  });
+  return privateNoStoreResponse(
+    await dependencies.proxy(forwarded, "/consumption/activity"),
+  );
+}
+
+export async function postActivityAdjustmentWithProxy(
+  request: Request,
+  proxy: typeof proxyToFastAPI,
+): Promise<Response> {
+  let decoded: ReturnType<typeof decodeActivityAdjustmentRequest>;
+  try {
+    decoded = decodeActivityAdjustmentRequest(await request.json());
+  } catch {
+    return invalidConsumptionRequest("Invalid activity adjustment");
+  }
+  const forwarded = new Request(request.url, {
+    method: "POST",
+    headers: request.headers,
+    body: JSON.stringify(decoded),
+    signal: request.signal,
+  });
+  return privateNoStoreResponse(
+    await proxy(forwarded, "/consumption/activity-adjustments"),
   );
 }

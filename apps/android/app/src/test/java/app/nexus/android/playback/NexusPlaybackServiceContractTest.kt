@@ -143,6 +143,9 @@ class NexusPlaybackServiceContractTest {
             setOf(
                 "Connect",
                 "GetSnapshot",
+                "RetryFailedActivity",
+                "DiscardFailedActivity",
+                "SetActivityPaused",
                 "LoadCanonical",
                 "LoadPreview",
                 "SetPlaybackRateState",

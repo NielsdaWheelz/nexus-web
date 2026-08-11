@@ -33,6 +33,7 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         "production-runtime-health",
         "oracle-publication",
         "production-release-test-control",
+        "durable-consumption-activity",
         "native-release-auth-handoff",
         "native-system-insets",
     }

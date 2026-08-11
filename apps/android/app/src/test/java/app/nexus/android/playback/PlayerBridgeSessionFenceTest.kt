@@ -1,5 +1,6 @@
 package app.nexus.android.playback
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -7,6 +8,25 @@ import org.junit.Test
 import java.util.UUID
 
 class PlayerBridgeSessionFenceTest {
+    @Test
+    fun `bridge accepts the activity sync field in an authoritative snapshot`() {
+        val raw = PlayerWire.snapshot(
+            REQUEST_ID,
+            PlayerSnapshot.Absent(
+                deviceDefaultPauseShorteningMode = PauseShorteningMode.Off,
+                pauseShorteningSavedOnDeviceMs = 0,
+                activitySync = PlayerActivitySyncSnapshot(
+                    capture = NativeActivityCapture.Idle,
+                    sync = NativeActivitySync.Pending(2, "2026-08-10T00:00:00Z"),
+                ),
+            ),
+            Presence.Absent,
+        )
+        val snapshot = JSONObject(raw).getJSONObject("snapshot")
+
+        assertEquals(null, playerSnapshotSessionKey(snapshot))
+    }
+
     @Test
     fun `stale snapshot event cannot roll command fence back after load B`() {
         val fence = PlayerBridgeSessionFence()

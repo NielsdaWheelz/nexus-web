@@ -3,16 +3,22 @@
 ## Scope
 
 Consumption Activity is Nexus's personal observed-history capability. It owns
-bounded reading, listening, and video-pane spans; first observed canonical
-completion facts; and the factual `/stats` and session reads. It does not own
-the reader cursor, current reader engagement, audio heartbeat state, queue, or
-explicit consumption state. The implementing cutover is
-[`consumption-activity-stats-hard-cutover.md`](../cutovers/consumption-activity-stats-hard-cutover.md).
+bounded reading, listening, and video-pane spans; durable client delivery;
+add/exclude/retract corrections; first observed canonical completion facts;
+capture/sync health; and the factual `/stats` and session reads. It does not
+own the reader cursor, current reader engagement, audio heartbeat state, or
+explicit consumption state. The current implementing cutover is
+[`durable-consumption-activity-hard-cutover.md`](../cutovers/durable-consumption-activity-hard-cutover.md).
 
 ## Facts and semantics
 
 - `consumption_activity_spans` stores bounded observed intervals. Active time
-  is their additive duration; it is not de-duplicated wall-clock time.
+  is their additive duration; it is not de-duplicated wall-clock time. Each
+  client-minted capture key identifies one semantic fact across regrouped
+  retries.
+- `consumption_activity_adjustments` stores additive manual time and exact
+  observed-session exclusions. Retraction restores the prior projection;
+  observed spans are never edited by correction.
 - `consumption_completion_facts` stores the first post-cutover canonical
   `Finished` transition for one viewer/media. Exact completion Undo may remove
   the fact it created; ordinary later Unread and `ResetProgress` do not rewrite
@@ -37,10 +43,15 @@ explicit consumption state. The implementing cutover is
 | Completion policy | `python/nexus/services/consumption/_policy.py` |
 | Strict transport shapes | `python/nexus/schemas/consumption_activity.py` and `apps/web/src/lib/consumption/activityContract.ts` |
 | Browser capture | `apps/web/src/lib/consumption/activityRecorder.ts` |
+| Browser durability and health | `apps/web/src/lib/consumption/activityOutbox.ts` and `activityRuntime.ts` |
 | Android listening capture | `apps/android/app/src/main/java/app/nexus/android/playback/NativeConsumptionRecorder.kt` |
+| Android listening durability | `apps/android/app/src/main/java/app/nexus/android/playback/NativeActivityOutbox.kt` |
 | Stats presentation | `apps/web/src/app/(authenticated)/stats/` |
 
-`POST /consumption/activity` is a replayable `Consumption.Activity` mutation.
+`POST /consumption/activity` is a replayable `Consumption.Activity` mutation;
+request identity remains `clientMutationId`, while each span's `captureKey`
+provides regroupable fact identity. `POST /consumption/activity-adjustments`
+owns replayable Add, Exclude, and Retract.
 `GET /consumption/stats` and `GET /consumption/sessions` are private,
 `no-store` factual reads. The BFF alone injects the httpOnly `nx_device` value;
 browser requests and responses never expose it. Reads use sealed device handles
@@ -49,37 +60,38 @@ and safe labels only.
 ## Boundaries
 
 The browser recorder has one tab-local owner. Reader, non-Android global-audio,
-and visible-video adapters publish observations to it; none sends its own
-request or writes operational telemetry. Android listening bypasses that
-adapter and is recorded only by the service-owned native recorder. Capture is
-bounded and best-effort: an unavailable or ambiguous interval is omitted
-rather than guessed or persisted for later retry.
+and visible-video adapters publish observations to it; none persists, retries,
+or sends its own request. Closed spans commit to an account-scoped IndexedDB
+outbox before delivery. Android listening bypasses the browser adapter and
+commits to the service-owned SQLite outbox. Both stores retain Pending or
+Failed rows across restart, enforce the same bounded capacity, and expose one
+merged health vocabulary. Neither has a memory fallback.
 
 Current state remains separate: `reader_media_state`,
 `reader_engagement_states`, and `podcast_listening_states` serve resume,
 progress, and heartbeat behavior. `ResetProgress` replaces only that current
 state; it preserves activity spans and completion facts. Historical fact reads
-re-check current media visibility and media teardown removes both fact families
-before parent deletion.
+re-check current media visibility and media teardown removes adjustments and
+both fact families before parent deletion.
 
 ## Operations
 
 Run `python -m nexus.ops.consumption_activity_counts` with the normal server
 database configuration to print global counts for activity spans, completion
-facts, and `Consumption.Activity` replay rows. It is read-only. The 500,000
-span and 100,000 activity-replay thresholds request an operator capacity review;
-they are advisory and never make the command fail. The command exits nonzero
-only when its count query fails.
+facts, adjustments, capture-key anomalies, and Consumption replay outcomes. It
+is read-only. Capacity thresholds request an operator review; they are advisory
+and never make the command fail. The command exits nonzero only when its count
+query fails.
 
-The one-user Stats read budget is 500 ms on the modest Postgres fixture covered
-by `python/tests/test_consumption_activity_operations.py`. The fixture runs
-`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` for the timeline, session, and
-completion relations. It detects query regressions before an index is justified;
-no speculative index is maintained for this prototype.
+Stats and session reads emit privacy-safe `activity_projection_read` latency
+and row-count fields. The real-Postgres ledger proof covers replay,
+corrections, filtering, and deterministic projections; the read-only operator
+command exposes cardinalities and observed query latency. No unverified latency
+budget or speculative index is claimed for this one-user prototype.
 
 ## Non-goals
 
-No backfill, rollup/cache, durable browser queue, raw interaction log, stored
-session, second device identity, sharing/export, genre taxonomy, badges, or LLM
-reflection exists in this capability. Year in Reading is deterministic
-presentation over the same living facts.
+No rollup/cache, raw interaction log, stored session, second device identity,
+sharing/export, generic timer, genre taxonomy, badges, or LLM reflection exists
+in this capability. Year in Reading is deterministic presentation over the
+same living facts.
