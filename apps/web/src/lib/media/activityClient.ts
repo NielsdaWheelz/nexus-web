@@ -23,11 +23,7 @@ import {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export type MediaActivityStatus =
-  | "Queued"
-  | "Processing"
-  | "Ready"
-  | "NeedsAttention";
+export type MediaActivityActiveStatus = "Queued" | "Processing";
 export type MediaActivityStage =
   | "Validate"
   | "Extract"
@@ -56,17 +52,29 @@ export type SourceProgress =
       readonly updatedAt: string;
     };
 
+export type MediaActivityState =
+  | {
+      readonly kind: "Active";
+      readonly status: MediaActivityActiveStatus;
+      readonly stage: MediaActivityStage;
+      readonly waitingReason: Presence<MediaActivityWaitingReason>;
+      readonly progress: Presence<SourceProgress>;
+      readonly statusCode: Presence<string>;
+    }
+  | {
+      readonly kind: "NeedsAttention";
+      readonly scope: MediaRepairScope;
+      readonly stage: MediaActivityStage;
+      readonly failureCode: Presence<string>;
+    };
+
 export interface MediaActivityItem {
   readonly mediaId: string;
   readonly title: string;
   readonly mediaKind: LibraryMediaKind;
   readonly sourceAttemptId: string;
-  readonly status: MediaActivityStatus;
-  readonly stage: Presence<MediaActivityStage>;
-  readonly waitingReason: Presence<MediaActivityWaitingReason>;
-  readonly failureCode: Presence<string>;
+  readonly state: MediaActivityState;
   readonly requestId: Presence<string>;
-  readonly progress: Presence<SourceProgress>;
   readonly runCount: number;
   readonly queueAttempts: number;
   readonly queueMaxAttempts: number;
@@ -81,7 +89,9 @@ export interface MediaActivityItem {
 }
 
 export interface MediaActivityResponse {
-  readonly nonterminalCount: number;
+  readonly needsAttentionCount: number;
+  readonly activeCount: number;
+  readonly hasMore: boolean;
   readonly items: readonly MediaActivityItem[];
 }
 
@@ -185,6 +195,78 @@ function sourceProgress(raw: unknown): SourceProgress {
   };
 }
 
+function activityState(
+  raw: unknown,
+  name: string,
+): MediaActivityState {
+  const rawKind =
+    typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).kind
+      : undefined;
+  if (rawKind === "Active") {
+    const state = expectExactRecord(
+      raw,
+      [
+        "kind",
+        "status",
+        "stage",
+        "waiting_reason",
+        "progress",
+        "status_code",
+      ],
+      name,
+    );
+    return {
+      kind: "Active",
+      status: expectOneOf(
+        state.status,
+        ["Queued", "Processing"] as const,
+        `${name}.status`,
+      ),
+      stage: expectOneOf(
+        state.stage,
+        ["Validate", "Extract", "Finalize", "Index"] as const,
+        `${name}.stage`,
+      ),
+      waitingReason: decodePresence(state.waiting_reason, (value) =>
+        expectOneOf(
+          value,
+          ["Queue", "Capacity", "RetryBackoff"] as const,
+          `${name}.waiting_reason.value`,
+        ),
+      ),
+      progress: decodePresence(state.progress, sourceProgress),
+      statusCode: decodePresence(state.status_code, (value) =>
+        nonemptyString(value, `${name}.status_code.value`),
+      ),
+    };
+  }
+  if (rawKind === "NeedsAttention") {
+    const state = expectExactRecord(
+      raw,
+      ["kind", "scope", "stage", "failure_code"],
+      name,
+    );
+    return {
+      kind: "NeedsAttention",
+      scope: expectOneOf(
+        state.scope,
+        ["Source", "Search"] as const,
+        `${name}.scope`,
+      ),
+      stage: expectOneOf(
+        state.stage,
+        ["Validate", "Extract", "Finalize", "Index"] as const,
+        `${name}.stage`,
+      ),
+      failureCode: decodePresence(state.failure_code, (value) =>
+        nonemptyString(value, `${name}.failure_code.value`),
+      ),
+    };
+  }
+  throw new TypeError(`${name}.kind must be Active or NeedsAttention`);
+}
+
 function activityItem(raw: unknown, index: number): MediaActivityItem {
   const name = `media Activity items[${index}]`;
   const item = expectExactRecord(
@@ -194,12 +276,8 @@ function activityItem(raw: unknown, index: number): MediaActivityItem {
       "title",
       "media_kind",
       "source_attempt_id",
-      "status",
-      "stage",
-      "waiting_reason",
-      "failure_code",
+      "state",
       "request_id",
-      "progress",
       "run_count",
       "queue_attempts",
       "queue_max_attempts",
@@ -226,32 +304,10 @@ function activityItem(raw: unknown, index: number): MediaActivityItem {
       item.source_attempt_id,
       `${name}.source_attempt_id`,
     ),
-    status: expectOneOf(
-      item.status,
-      ["Queued", "Processing", "Ready", "NeedsAttention"] as const,
-      `${name}.status`,
-    ),
-    stage: decodePresence(item.stage, (value) =>
-      expectOneOf(
-        value,
-        ["Validate", "Extract", "Finalize", "Index"] as const,
-        `${name}.stage.value`,
-      ),
-    ),
-    waitingReason: decodePresence(item.waiting_reason, (value) =>
-      expectOneOf(
-        value,
-        ["Queue", "Capacity", "RetryBackoff"] as const,
-        `${name}.waiting_reason.value`,
-      ),
-    ),
-    failureCode: decodePresence(item.failure_code, (value) =>
-      nonemptyString(value, `${name}.failure_code.value`),
-    ),
+    state: activityState(item.state, `${name}.state`),
     requestId: decodePresence(item.request_id, (value) =>
       nonemptyString(value, `${name}.request_id.value`),
     ),
-    progress: decodePresence(item.progress, sourceProgress),
     runCount: expectNonnegativeInteger(item.run_count, `${name}.run_count`),
     queueAttempts: expectNonnegativeInteger(
       item.queue_attempts,
@@ -284,15 +340,52 @@ export function decodeMediaActivityResponse(
   const envelope = expectExactRecord(raw, ["data"], "GET /api/media/activity");
   const data = expectExactRecord(
     envelope.data,
-    ["nonterminal_count", "items"],
+    ["needs_attention_count", "active_count", "has_more", "items"],
     "GET /api/media/activity.data",
   );
+  const needsAttentionCount = expectNonnegativeInteger(
+    data.needs_attention_count,
+    "GET /api/media/activity.data.needs_attention_count",
+  );
+  const activeCount = expectNonnegativeInteger(
+    data.active_count,
+    "GET /api/media/activity.data.active_count",
+  );
+  const hasMore = expectBoolean(
+    data.has_more,
+    "GET /api/media/activity.data.has_more",
+  );
+  const items = expectArray(data.items, activityItem, "media Activity items");
+  const total = needsAttentionCount + activeCount;
+  if (!Number.isSafeInteger(total)) {
+    throw new TypeError("media Activity total must be a safe integer");
+  }
+  if (items.length > total) {
+    throw new TypeError("media Activity items must not exceed its total");
+  }
+  if (hasMore !== (total > items.length)) {
+    throw new TypeError("media Activity has_more must match its total");
+  }
+  if (new Set(items.map((item) => item.mediaId)).size !== items.length) {
+    throw new TypeError("media Activity items must have unique media IDs");
+  }
+  const returnedAttentionCount = Math.min(needsAttentionCount, items.length);
+  if (
+    items.some(
+      (item, index) =>
+        (index < returnedAttentionCount) !==
+        (item.state.kind === "NeedsAttention"),
+    )
+  ) {
+    throw new TypeError(
+      "media Activity items must match attention-first count membership",
+    );
+  }
   return {
-    nonterminalCount: expectNonnegativeInteger(
-      data.nonterminal_count,
-      "GET /api/media/activity.data.nonterminal_count",
-    ),
-    items: expectArray(data.items, activityItem, "media Activity items"),
+    needsAttentionCount,
+    activeCount,
+    hasMore,
+    items,
   };
 }
 
@@ -345,13 +438,53 @@ export async function repairMediaActivity(
   return result;
 }
 
-const MEDIA_ACTIVITY_CHANGED_EVENT = "Media.ActivityChanged";
+const MEDIA_ACTIVITY_INVALIDATED_SIGNAL = "Media.ActivityInvalidated";
 
-export function publishAcceptedMediaActivity(): void {
-  window.dispatchEvent(new Event(MEDIA_ACTIVITY_CHANGED_EVENT));
+let activityBroadcastChannel: BroadcastChannel | null = null;
+let activityBroadcastSubscribers = 0;
+
+function acquireActivityBroadcastChannel(): BroadcastChannel | null {
+  if (typeof BroadcastChannel === "undefined") return null;
+  activityBroadcastChannel ??= new BroadcastChannel(
+    MEDIA_ACTIVITY_INVALIDATED_SIGNAL,
+  );
+  activityBroadcastSubscribers += 1;
+  return activityBroadcastChannel;
 }
 
-export function subscribeMediaActivityChanges(handler: () => void): () => void {
-  window.addEventListener(MEDIA_ACTIVITY_CHANGED_EVENT, handler);
-  return () => window.removeEventListener(MEDIA_ACTIVITY_CHANGED_EVENT, handler);
+function releaseActivityBroadcastChannel(): void {
+  activityBroadcastSubscribers -= 1;
+  if (activityBroadcastSubscribers !== 0 || activityBroadcastChannel === null) {
+    return;
+  }
+  activityBroadcastChannel.close();
+  activityBroadcastChannel = null;
+}
+
+export function publishMediaActivityInvalidation(): void {
+  window.dispatchEvent(new Event(MEDIA_ACTIVITY_INVALIDATED_SIGNAL));
+  if (activityBroadcastChannel !== null) {
+    // BroadcastChannel does not echo to the sending channel, so the window
+    // event is the one in-tab delivery and this message wakes other tabs.
+    activityBroadcastChannel.postMessage(null);
+    return;
+  }
+  if (typeof BroadcastChannel === "undefined") return;
+  const channel = new BroadcastChannel(MEDIA_ACTIVITY_INVALIDATED_SIGNAL);
+  channel.postMessage(null);
+  channel.close();
+}
+
+export function subscribeMediaActivityInvalidations(
+  handler: () => void,
+): () => void {
+  window.addEventListener(MEDIA_ACTIVITY_INVALIDATED_SIGNAL, handler);
+  const channel = acquireActivityBroadcastChannel();
+  channel?.addEventListener("message", handler);
+  return () => {
+    window.removeEventListener(MEDIA_ACTIVITY_INVALIDATED_SIGNAL, handler);
+    if (channel === null) return;
+    channel.removeEventListener("message", handler);
+    releaseActivityBroadcastChannel();
+  };
 }
