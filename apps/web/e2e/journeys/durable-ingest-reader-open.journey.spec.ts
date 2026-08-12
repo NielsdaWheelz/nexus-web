@@ -326,7 +326,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
     "Import activity from Account did not open the real Nexus Activity surface.",
   ).toBeVisible();
   await expect(
-    page.getByText("1 open item", { exact: true }),
+    page.getByText("1 in progress", { exact: true }),
     `Nexus Activity did not project the independently observed active import ${bounded.media_id}.`,
   ).toBeVisible();
 
