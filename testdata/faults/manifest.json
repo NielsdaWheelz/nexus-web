@@ -221,7 +221,7 @@
     {
       "id": "llm-tool-safety-prompt-bypass",
       "patch": "testdata/faults/llm-tool-safety-prompt-bypass.patch",
-      "sha256": "1122868373841a528ce08f55b5891dfd380b22dbb4d6f5c901c3d353b9e28468",
+      "sha256": "ec4e995b8aeb1b8aa5c17bece91e61f549f2c2b2e1f573baa311afd667be4b1d",
       "proofs": [
         "pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call"
       ],

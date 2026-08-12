@@ -64,8 +64,8 @@ class PromptPlan:
         }
 
 
-def render_system_prompt_block() -> str:
-    """Render invariant assistant instructions without per-turn evidence."""
+def render_system_prompt_block(*, tools: Sequence[CanonicalTool]) -> str:
+    """Render invariant assistant instructions for the exact published tool set."""
 
     return (
         "You are a reading assistant for the user's saved articles, books, podcasts, "
@@ -99,14 +99,14 @@ def render_system_prompt_block() -> str:
         "read the sections you need. "
         "To use a whole document, search it or inspect its map, then read the relevant "
         "parts."
-    ) + _render_write_tools_block()
+    ) + _render_write_tools_block(tools=tools)
 
 
-def _render_write_tools_block() -> str:
-    """The amanuensis 'hands' instructions, only when write tools are enabled."""
-    from nexus.config import get_settings
+def _render_write_tools_block(*, tools: Sequence[CanonicalTool]) -> str:
+    """Render the amanuensis instructions only for an actual published write tool."""
+    from nexus.services.agent_tools.writes import WRITE_TOOL_NAMES
 
-    if not get_settings().assistant_write_tools_enabled:
+    if not any(tool.name in WRITE_TOOL_NAMES for tool in tools):
         return ""
     return (
         " You can also act on the user's library when they explicitly ask you to file, "

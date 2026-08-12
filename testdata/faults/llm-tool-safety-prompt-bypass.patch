@@ -1,7 +1,7 @@
 diff --git a/python/nexus/services/chat_prompt.py b/python/nexus/services/chat_prompt.py
 --- a/python/nexus/services/chat_prompt.py
 +++ b/python/nexus/services/chat_prompt.py
-@@ -87,8 +87,6 @@ def render_system_prompt_block() -> str:
+@@ -87,8 +87,6 @@ def render_system_prompt_block(*, tools: Sequence[CanonicalTool]) -> str:
          "attributes in this turn. Cite distinct sources separately and adjacently when a "
          "claim draws on more than one (e.g. [2][4]); do not concatenate numbers. "
          "Cite only resource or tool-result facts, not world knowledge. "

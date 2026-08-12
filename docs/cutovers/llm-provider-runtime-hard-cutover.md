@@ -50,7 +50,7 @@ Non-goals:
 ## 3. Upstream prerequisite
 
 The pinned v2 revision is `llm-calling` commit
-`4fd23f661e3553875c57e282b138565ac64ec16e`, registry revision
+`f080686aee5889b341304108b796ed2b1de1d614`, registry revision
 `2026-08-11.1`. Its upstream contract includes:
 
 1. Change the current Flash registry row from `none | low | high | max` to
