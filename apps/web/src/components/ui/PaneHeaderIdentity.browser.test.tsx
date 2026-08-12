@@ -27,7 +27,6 @@ import {
   type PaneHeaderPublication,
 } from "@/lib/panes/paneHeaderModel";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
-import type { PaneViewMenuPublication } from "@/lib/panes/panePublications";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import PaneHeaderIdentity from "./PaneHeaderIdentity";
 import SurfaceHeader from "./SurfaceHeader";
@@ -93,7 +92,7 @@ const NARROW_VIEWPORT_WIDTHS = [320, 390] as const;
 const FIXED_CONTROLS = [
   { key: "back", accessibleName: "Go back in this pane" },
   { key: "forward", accessibleName: "Go forward in this pane" },
-  { key: "options", accessibleName: "Options" },
+  { key: "options", accessibleName: "More" },
 ] as const;
 
 /** Spec: "async replacement is not an `aria-live` announcement". */
@@ -112,21 +111,14 @@ const PANE_NAVIGATION = {
   onForward: () => {},
 };
 
-// The pane's third fixed control. In production this rail carries the canonical
-// resource dropdown ("Options"); here a synchronous non-resource menu with the
-// same accessible name stands in so layout tests need no snapshot fetch.
-const PANE_VIEW_MENU: PaneViewMenuPublication = {
-  label: "Options",
-  icon: <span aria-hidden="true">⋯</span>,
-  actions: [
-    {
-      kind: "command",
-      id: "Pane.Options.Example",
-      label: "Example action",
-      onSelect: () => {},
-    },
-  ],
-};
+const PANE_MENU_ACTIONS = [
+  {
+    kind: "command" as const,
+    id: "View.Example",
+    label: "Example action",
+    onSelect: () => {},
+  },
+];
 
 function raise(message: string): never {
   throw new Error(message);
@@ -200,7 +192,8 @@ function desktopHeader(model: PaneHeaderModel) {
       <SurfaceHeader
         header={model}
         identityId={PRIMARY_IDENTITY_ID}
-        viewMenu={PANE_VIEW_MENU}
+        paneActions={PANE_MENU_ACTIONS}
+        menuActions={[]}
         navigation={PANE_NAVIGATION}
       />
     </section>,
@@ -972,7 +965,8 @@ describe("Pane header identity projection", () => {
             <SurfaceHeader
               header={libraryDetailModel(leftTitle)}
               identityId={LEFT_IDENTITY_ID}
-              viewMenu={PANE_VIEW_MENU}
+              paneActions={PANE_MENU_ACTIONS}
+              menuActions={[]}
               navigation={PANE_NAVIGATION}
             />
           </section>
@@ -983,7 +977,8 @@ describe("Pane header identity projection", () => {
             <SurfaceHeader
               header={libraryDetailModel(rightTitle)}
               identityId={RIGHT_IDENTITY_ID}
-              viewMenu={PANE_VIEW_MENU}
+              paneActions={PANE_MENU_ACTIONS}
+              menuActions={[]}
               navigation={PANE_NAVIGATION}
             />
           </section>

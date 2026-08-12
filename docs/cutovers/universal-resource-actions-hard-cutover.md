@@ -16,3 +16,9 @@ named owners when their operand is not the resource.
 
 No projection adapter, compatibility alias, fallback, or legacy publication
 path survives.
+
+Resource descriptors may now be presented as the unchanged contiguous suffix
+of the one contextual menu defined by
+[`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md).
+That presentation composition does not revive this document's mixed policy or
+caller-built resource actions.

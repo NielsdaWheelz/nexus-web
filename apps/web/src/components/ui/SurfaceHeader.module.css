@@ -72,12 +72,14 @@
   gap: var(--space-2);
 }
 
-.optionsContainer {
-  position: relative;
-}
-
-.optionsContainer > button:focus-visible {
-  outline-color: var(--ring);
+.menuStatusMarker {
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-end: 4px;
+  inline-size: 5px;
+  block-size: 5px;
+  border-radius: 999px;
+  background: var(--accent);
 }
 
 @container primaryPane (max-width: 479px) {
@@ -113,8 +115,7 @@
     color: GrayText;
   }
 
-  .navigationButton:focus-visible,
-  .optionsContainer > button:focus-visible {
+  .navigationButton:focus-visible {
     outline-color: Highlight;
   }
 }

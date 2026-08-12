@@ -35,7 +35,7 @@ import {
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
-import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
+import type { PaneCompanionAction } from "@/lib/panes/panePublications";
 import {
   createDossierControllerStore,
   type DossierControllerStore,
@@ -73,9 +73,9 @@ export interface UseResourceInspectorParams {
 }
 
 export interface ResourceInspectorComposition {
-  /** The Companion header action to fold into the pane's own primary chrome
-   * `actions`, or null when the subject has no Inspector. */
-  companionAction: PaneHeaderAction | null;
+  /** The sole action eligible for direct promotion in primary pane chrome, or
+   * null when the subject has no Inspector. */
+  companionAction: PaneCompanionAction | null;
   /** Pure host projection used by `PaneSearchPublication.resultsExpanded`. */
   searchResultsExpanded: boolean;
   openSearchResults: (trigger: HTMLButtonElement | null) => void;
@@ -323,7 +323,7 @@ export function useResourceInspector({
     closeSecondaryPane?.();
   }, [closeSecondaryPane]);
 
-  const companion = useMemo<PaneHeaderAction | null>(
+  const companion = useMemo<PaneCompanionAction | null>(
     () =>
       eligible && publication !== null && paneId !== null
         ? companionAction({

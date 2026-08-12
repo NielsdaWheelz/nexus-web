@@ -10,7 +10,6 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { Plus } from "lucide-react";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import {
   ApiError,
@@ -1941,7 +1940,7 @@ export default function LibraryPaneBody() {
             execute: executeRefresh,
           }
         : undefined,
-    actions: companionAction ? [companionAction] : [],
+    companionAction: companionAction ?? undefined,
     actionSubject: currentLibrary
       ? {
           ref: canonicalResourceRef({
@@ -1950,16 +1949,7 @@ export default function LibraryPaneBody() {
           }),
         }
       : undefined,
-    // "Add content" is a pane view control, ejected from the resource menu into
-    // the pane's own dedicated menu under the resource-action taxonomy.
-    viewMenu:
-      addContentAction.length > 0
-        ? {
-            label: "Add content",
-            icon: <Plus size={16} aria-hidden="true" />,
-            actions: addContentAction,
-          }
-        : undefined,
+    menuActions: addContentAction,
     header: { kind: "Section", meta: entryMeta },
   });
 

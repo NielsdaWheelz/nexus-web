@@ -763,7 +763,7 @@ export default function AuthorPaneBody() {
       sourceKey: `Author.Works:${handle}`,
       execute: executeRefresh,
     },
-    actions: companionAction ? [companionAction] : [],
+    companionAction: companionAction ?? undefined,
     actionSubject: data ? data.detail.actionSubject : undefined,
     header: {
       kind: "Section",

@@ -206,17 +206,20 @@ test("restored reader input is durably projected as observed time in mounted Sta
 
   await restoredPassage.hover();
   await page.mouse.wheel(0, 480);
-  const recordingAction = page.getByRole("link", {
+  const readerMore = page.getByRole("button", { name: "More", exact: true });
+  await expect(
+    readerMore,
+    "The reader never exposed its contextual More control after trusted capture began.",
+  ).toBeVisible();
+  await readerMore.click();
+  const recordingAction = page.getByRole("menuitem", {
     name: "Activity: Recording",
     exact: true,
   });
   await expect(
     recordingAction,
-    "A trusted Chromium wheel inside the restored reader did not start capture.",
+    "A trusted Chromium wheel inside the restored reader did not publish Activity: Recording inside More.",
   ).toBeVisible();
-
-  const statsAction = page.getByRole("link", { name: "Stats", exact: true });
-  await expect(statsAction).toBeVisible();
   const readerDocumentTimeOrigin = await page.evaluate(
     () => performance.timeOrigin,
   );
@@ -230,7 +233,7 @@ test("restored reader input is durably projected as observed time in mounted Sta
     ) && response.status() === 204,
     { timeout: 15_000 },
   );
-  await statsAction.click();
+  await recordingAction.click();
   const captureResponse = await acceptedCapture;
   expect(
     captureResponse.status(),

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays } from "lucide-react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurfaceEditor";
@@ -522,7 +521,7 @@ function PageChrome({
 }
 
 function LatentPageChrome({ search }: { search: PaneSearchPublication }) {
-  usePanePrimaryChrome({ search, actions: [] });
+  usePanePrimaryChrome({ search });
   return null;
 }
 
@@ -561,18 +560,9 @@ function MaterializedPageChrome({
   });
   usePanePrimaryChrome({
     search,
-    actions: companionAction ? [companionAction] : [],
+    companionAction: companionAction ?? undefined,
     actionSubject: page.actionSubject,
-    // Yesterday / tomorrow date navigation is a pane view control, ejected from
-    // the resource menu into the pane's own dedicated menu.
-    viewMenu:
-      viewActions.length > 0
-        ? {
-            label: "Other days",
-            icon: <CalendarDays size={16} aria-hidden="true" />,
-            actions: viewActions,
-          }
-        : undefined,
+    menuActions: viewActions,
   });
   return null;
 }

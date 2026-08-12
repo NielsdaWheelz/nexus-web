@@ -141,7 +141,7 @@ export default function PodcastEpisodeList({
   );
 
   // Show notes changes only this occurrence's disclosure. Every standing
-  // episode action lives in CollectionRow's canonical ResourceActionMenu.
+  // episode action stays in CollectionRow's canonical contextual More menu.
   const episodeViewControls = episodes.reduce<Record<string, ReactNode>>(
     (controls, episode) => {
       const panelId = `episode-panel-${episode.id}`;

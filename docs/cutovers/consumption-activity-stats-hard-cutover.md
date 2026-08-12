@@ -13,6 +13,10 @@ The whole of [`docs/rules/index.md`](../rules/index.md) governs this cutover.
 > Its span/session/completion rationale remains historical context; active
 > behavior is documented in
 > [`../modules/consumption-activity.md`](../modules/consumption-activity.md).
+>
+> **Presentation superseded 2026-08-11:** Stats remains a destination and pane,
+> but its fixed-rail placement moved to the shared Account menu under
+> [`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md).
 The rules with the most direct design consequences are boundaries, cleanliness,
 codebase, concurrency, database, frontend, keys and identities, operation
 types, resource lifecycle, retries, simplicity, testing, and timing.
@@ -666,14 +670,11 @@ LLM boundary. Do not scaffold those decisions here.
 
 ## Frontend
 
-Add **Stats** to fixed navigation after Notes and before Atlas through
-`DESTINATION_REGISTRY`, `APP_NAVIGATION`, pane route model, route metadata,
-render registry, Launcher/keybinding projections, command-palette history
-allowlist, and parity tests. This intentionally changes the fixed-nav product
-contract: Stats is the feedback leg of the daily consume → think → reflect loop,
-not a feature directory entry. Its placement beside Notes makes that daily
-reflection loop one gesture away; the app-navigation module must record this
-rationale and exact new order. `/stats` is one pane route.
+**Presentation superseded 2026-08-11:** Stats remains a normal pane route and
+Nexus result, but now lives in the shared Account menu rather than fixed
+navigation. `APP_NAVIGATION.account` owns its destination identity and
+`AccountMenu` owns its placement before Import activity. See
+[`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md).
 
 ### URL and loading
 

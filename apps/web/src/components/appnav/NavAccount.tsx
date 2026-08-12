@@ -4,25 +4,33 @@ import { type MouseEvent } from "react";
 import { CircleUser } from "lucide-react";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import AccountMenu from "./AccountMenu";
-import type { NavItem } from "./navModel";
+import {
+  isAccountDestinationId,
+  type AccountNavigation,
+  type NavItem,
+} from "./navModel";
 import styles from "./AppNav.module.css";
 
-/** Rail account cluster: an avatar trigger opening a menu with Settings + Sign Out. */
+/** Rail account cluster: the shared contextual Account menu. */
 export default function NavAccount({
-  settings,
-  active,
+  account,
+  activeId,
   collapsed,
   onNavigate,
 }: {
-  settings: NavItem;
-  active: boolean;
+  account: AccountNavigation;
+  activeId: NavItem["id"] | null;
   collapsed: boolean;
-  onNavigate: (event: MouseEvent<HTMLElement>, href: string) => AppNavActivationResult;
+  onNavigate: (
+    event: MouseEvent<HTMLElement>,
+    destination: NavItem,
+  ) => AppNavActivationResult;
 }) {
+  const active = isAccountDestinationId(activeId);
   return (
     <AccountMenu
-      settings={settings}
-      active={active}
+      account={account}
+      activeId={activeId}
       placement="above"
       align="start"
       renderTrigger={(trigger) => (
@@ -30,7 +38,6 @@ export default function NavAccount({
           {...trigger}
           type="button"
           className={`${styles.accountTrigger} ${active ? styles.active : ""}`}
-          aria-label="Account"
           aria-current={active ? "page" : undefined}
         >
           <span className={styles.accountAvatar}>

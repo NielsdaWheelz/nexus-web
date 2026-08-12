@@ -1142,7 +1142,7 @@ export default function PodcastDetailPaneBody() {
     bodies: { linkedItems: connectionsBody },
   });
   usePanePrimaryChrome({
-    actions: companionAction ? [companionAction] : [],
+    companionAction: companionAction ?? undefined,
     refresh:
       podcastId && activeSubscription
         ? {

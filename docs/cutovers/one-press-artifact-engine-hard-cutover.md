@@ -443,7 +443,7 @@ delegate to the engine; they are the only new endpoints (net +2 routes).
 ```
 components/chat/Conversation.tsx  (mounts above <ChatSurface …/>)
  └─ ConversationDistillate (owner: conversation artifact + useArtifactStream + expand)
-     ├─ status unavailable & no content → nothing (silence) + Distill affordance in pane options
+     ├─ status unavailable & no content → nothing (silence) + Distill affordance in pane More
      ├─ status building                 → MachineText "Distillate" streaming summary
      └─ current revision present        → collapsed lede ──expand──▶ full summary_md + claim footnotes
 ```

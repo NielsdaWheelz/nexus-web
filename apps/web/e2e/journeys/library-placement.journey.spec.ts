@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Page, Request, Response } from "playwright/test";
 
-import { captureCanonicalArticle } from "../articleFixture";
+import { ARTICLE_TITLE, captureCanonicalArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -15,6 +15,8 @@ test.use({ journeyId: "library-placement" });
 
 const NAMED_LIBRARY = "Research vault";
 const CREATED_WHILE_UNSUBSCRIBED = "Unsubscribed destination";
+const PODCAST_TITLE = "Houston We Have a Podcast";
+const PODCAST_PANE_NAME = `${PODCAST_TITLE} — Podcasts`;
 
 function responseSummary(response: Response): string {
   return `${new URL(response.url()).pathname} -> ${response.status()}`;
@@ -28,13 +30,31 @@ async function requireSuccess(response: Response, context: string): Promise<void
   ).toBeTruthy();
 }
 
-async function openPlacement(page: Page) {
-  const options = page.getByRole("button", { name: "Options", exact: true });
-  await expect(options).toBeVisible({ timeout: 20_000 });
-  await expect(options).not.toHaveAttribute("aria-disabled", "true", {
+async function openPlacement(
+  page: Page,
+  activePaneName: string,
+  paneRegionName = activePaneName,
+) {
+  const activePaneActivator = page
+    .getByRole("toolbar", { name: "Workspace panes" })
+    .getByRole("button", {
+      name: `${activePaneName} Active pane.`,
+      exact: true,
+    });
+  await expect(activePaneActivator).toBeVisible({ timeout: 20_000 });
+  const activePane = page.getByRole("region", {
+    name: paneRegionName,
+    exact: true,
+  });
+  const more = activePane.getByRole("button", {
+    name: "More",
+    exact: true,
+  });
+  await expect(more).toBeVisible({ timeout: 20_000 });
+  await expect(more).not.toHaveAttribute("aria-disabled", "true", {
     timeout: 20_000,
   });
-  await options.click();
+  await more.click();
   const menu = page.getByRole("menu");
   await expect(menu).toBeVisible();
   await menu
@@ -201,7 +221,7 @@ test("canonical placement supports Saved and named Media destinations, awaits re
   });
 
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
-  const mediaPlacement = await openPlacement(page);
+  const mediaPlacement = await openPlacement(page, ARTICLE_TITLE);
   const saved = mediaPlacement.getByRole("option", {
     name: "Saved in Nexus",
     exact: true,
@@ -331,7 +351,7 @@ test("canonical placement supports Saved and named Media destinations, awaits re
   );
   await page
     .getByRole("link", {
-      name: "Houston We Have a Podcast",
+      name: PODCAST_TITLE,
       exact: true,
     })
     .click();
@@ -351,7 +371,11 @@ test("canonical placement supports Saved and named Media destinations, awaits re
   expect(podcastId).toMatch(/^[0-9a-f-]{36}$/i);
 
   const subscriptionCommands = observePodcastSubscriptionCommands(page);
-  const subscribedPlacement = await openPlacement(page);
+  const subscribedPlacement = await openPlacement(
+    page,
+    PODCAST_TITLE,
+    PODCAST_PANE_NAME,
+  );
   const subscribedNamed = subscribedPlacement.getByRole("option", {
     name: NAMED_LIBRARY,
     exact: true,
@@ -425,7 +449,11 @@ test("canonical placement supports Saved and named Media destinations, awaits re
   ).toBeTruthy();
 
   await gotoWithStrictCsp(page, `/podcasts/${podcastId}`);
-  const podcastPlacement = await openPlacement(page);
+  const podcastPlacement = await openPlacement(
+    page,
+    PODCAST_TITLE,
+    PODCAST_PANE_NAME,
+  );
   await expect(
     podcastPlacement.getByRole("option", { name: new RegExp(NAMED_LIBRARY) }),
   ).toHaveAttribute("aria-disabled", "true");

@@ -45,6 +45,7 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: [
+      "@testing-library/user-event",
       "next/navigation",
       "pdfjs-dist",
       "pdfjs-dist/web/pdf_viewer.mjs",

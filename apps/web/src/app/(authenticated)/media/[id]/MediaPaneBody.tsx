@@ -173,7 +173,6 @@ import {
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
-import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import type {
   PaneFindOccurrencesPublication,
   PaneFindResultKey,
@@ -306,7 +305,7 @@ import ResourceCreditsOverlay from "@/components/contributors/ResourceCreditsOve
 import ResourceThumb from "@/components/ui/ResourceThumb";
 import { buildMediaResourceHeader } from "./mediaFormatting";
 import { resolveEpubInternalLinkTarget } from "./epubHelpers";
-import { Activity, ChevronLeft, ChevronRight, Settings } from "lucide-react";
+import { Activity, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   dispatchReaderPulse,
   type ReaderPulseTarget,
@@ -6095,12 +6094,8 @@ export default function MediaPaneBody() {
       return null;
     }, [initialHeaderFailure, media]);
 
-  // Reader view controls (Credits, Reader settings, theme quick-switch, PDF
-  // source-colors status) are pane view actions, ejected from the resource menu
-  // into the pane's own dedicated "Reader settings" menu. The resource
-  // operations/relationships that this memo used to build are now derived by the
-  // app runtime from the media snapshot and rendered by the canonical
-  // ResourceActionMenu keyed by the pane's actionSubject.
+  // Reader view commands share the pane's contextual menu with the canonical
+  // resource runtime; Activity remains first within this published View group.
   const readerViewActions = useMemo<ActionDescriptor[]>(() => {
     if (!media) return [];
     const view: ActionDescriptor[] = [];
@@ -7679,7 +7674,7 @@ export default function MediaPaneBody() {
     [findPublicationBase, inspector.searchResultsExpanded],
   );
   const { companionAction } = inspector;
-  const activityHeaderAction = useMemo<PaneHeaderAction>(
+  const activityMenuAction = useMemo<ActionDescriptor>(
     () => ({
       kind: "link",
       id: "consumption-activity",
@@ -7704,24 +7699,17 @@ export default function MediaPaneBody() {
         : {}),
       ...(mediaInstrument ? { instrument: mediaInstrument } : {}),
       search: findPublication ?? undefined,
-      actions: companionAction
-        ? [activityHeaderAction, companionAction]
-        : [activityHeaderAction],
+      companionAction: companionAction ?? undefined,
       actionSubject: media
         ? { ref: canonicalResourceRef({ scheme: "media", id }) }
         : undefined,
-      viewMenu:
-        media && readerViewActions.length > 0
-          ? {
-              label: "Reader settings",
-              icon: <Settings size={16} aria-hidden="true" />,
-              actions: readerViewActions,
-            }
-          : undefined,
+      ...(media
+        ? { menuActions: [activityMenuAction, ...readerViewActions] }
+        : {}),
     }),
     [
       companionAction,
-      activityHeaderAction,
+      activityMenuAction,
       findPublication,
       id,
       media,

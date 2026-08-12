@@ -3,6 +3,11 @@
 import { useRef, type MouseEvent, type ReactNode } from "react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import {
+  isAccountDestinationId,
+  NAV_ACCOUNT,
+  type NavItem,
+} from "@/components/appnav/navModel";
+import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
@@ -20,7 +25,6 @@ import type {
   NexusManagedPane,
 } from "@/components/nexus/useNexusController";
 import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
-import { getDestination } from "@/lib/navigation/destinations";
 import type {
   MaterializedNexusTarget,
   NexusDispatchOutcome,
@@ -34,9 +38,11 @@ import type {
   NexusTarget,
   NexusTargetActivation,
 } from "@/lib/nexus/model";
-import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
+import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
+import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
+import { useWorkspaceStore } from "@/lib/workspace/store";
 import CreateLibraryPanel from "./CreateLibraryPanel";
 import MobileNexusActivationAdapter, {
   type MobileNexusActivationAdapterHandle,
@@ -158,13 +164,16 @@ export default function SwitchboardTask({
 }) {
   const activationAdapterRef =
     useRef<MobileNexusActivationAdapterHandle>(null);
-  const settingsDestination = getDestination("settings");
-  const accountSettings = {
-    ...settingsDestination,
-    icon:
-      settingsDestination.icon ?? getPaneRouteIcon(settingsDestination.href),
-    presentation: "default" as const,
-  };
+  const { state: workspaceState } = useWorkspaceStore();
+  const activePane = getWorkspacePrimaryPanes(workspaceState).find(
+    (pane) => pane.id === workspaceState.activePrimaryPaneId,
+  );
+  const activeDestinationId = activePane
+    ? sectionDestinationIdForHref(activePane.currentVisit.href)
+    : null;
+  const accountActiveId = isAccountDestinationId(activeDestinationId)
+    ? activeDestinationId
+    : null;
   const activate = (
     action: NexusAction,
     activation: NexusTargetActivation,
@@ -193,8 +202,8 @@ export default function SwitchboardTask({
   };
   const accountMenu = (
     <AccountMenu
-      settings={accountSettings}
-      active={false}
+      account={NAV_ACCOUNT}
+      activeId={accountActiveId}
       placement="below"
       align="end"
       renderTrigger={(trigger) => (
@@ -202,17 +211,20 @@ export default function SwitchboardTask({
           {...trigger}
           type="button"
           className={styles.textButton}
-          aria-label="Account"
+          aria-current={accountActiveId === null ? undefined : "page"}
         >
           Account
         </button>
       )}
-      onNavigate={(event: MouseEvent<HTMLElement>): AppNavActivationResult => {
+      onNavigate={(
+        event: MouseEvent<HTMLElement>,
+        destination: NavItem,
+      ): AppNavActivationResult => {
         event.preventDefault();
         controller.openTarget({
           kind: "InternalHref",
-          href: settingsDestination.href,
-          labelHint: settingsDestination.label,
+          href: destination.href,
+          labelHint: destination.label,
         });
         return "handled-destination-focus";
       }}

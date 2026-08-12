@@ -2,6 +2,13 @@
 
 **Status:** IMPLEMENTED + VERIFIED · 2026-08-05
 
+> **Presentation superseded 2026-08-11:**
+> [`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md)
+> preserves this document's subject, planner, membership, order, execution, and
+> parity contracts, but composes the canonical descriptors as the identical
+> contiguous suffix of one contextual menu. Separate pane/view/occurrence
+> ownership no longer requires separate visible triggers.
+
 **Type:** Coordinated hard cut. No flag, dual path, fallback, alias,
 compatibility decoder, or partial migration.
 

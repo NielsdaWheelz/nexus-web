@@ -306,6 +306,30 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
     )
     .toBe("active");
 
+  // The active Heavy import is real worker-owned state. Account is its only
+  // navigation owner: opening Import activity must present that same active work
+  // in Nexus, without inventing a pane route or relying on a component stub.
+  await gotoWithStrictCsp(page, "/");
+  const account = page.getByRole("button", { name: /^Account(?:,|$)/ });
+  await expect(
+    account,
+    `The active Heavy import ${bounded.media_id} did not surface through the Account menu.`,
+  ).toHaveAttribute("data-import-count", "1", { timeout: 15_000 });
+  await account.click();
+  const accountMenu = page.getByRole("menu");
+  await expect(accountMenu).toBeVisible();
+  await accountMenu
+    .getByRole("menuitem", { name: "Import activity", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Activity", exact: true }),
+    "Import activity from Account did not open the real Nexus Activity surface.",
+  ).toBeVisible();
+  await expect(
+    page.getByText("1 in progress", { exact: true }),
+    `Nexus Activity did not project the independently observed active import ${bounded.media_id}.`,
+  ).toBeVisible();
+
   const readiness = await directApi.get("/readyz");
   expect(
     readiness.ok(),

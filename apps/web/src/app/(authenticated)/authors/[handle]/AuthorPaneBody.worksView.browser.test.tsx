@@ -290,6 +290,11 @@ function sortControl(): HTMLElement {
   return screen.getByRole("combobox", { name: "Sort by" });
 }
 
+async function openFilter(): Promise<void> {
+  await userEvent.click(screen.getByRole("button", { name: "More" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: /^Filter/ }));
+}
+
 describe("Author works domain view", () => {
   it("replaces the pane URL with the selected sort, requests exactly that view, and keeps the filter text, open filter row, and prior rows until the new page commits", async () => {
     const titleAsc = deferred<Response>();
@@ -303,7 +308,7 @@ describe("Author works domain view", () => {
     await screen.findByRole("link", { name: "Meridian drift" });
     expect(workTitles()).toEqual(titles(PUBLISHED_NEWEST));
 
-    await userEvent.click(screen.getByRole("button", { name: "Filter" }));
+    await openFilter();
     const filterInput = await screen.findByRole("searchbox", {
       name: "Filter works",
     });
@@ -344,7 +349,7 @@ describe("Author works domain view", () => {
     );
 
     await screen.findByRole("link", { name: "Meridian drift" });
-    await userEvent.click(screen.getByRole("button", { name: "Filter" }));
+    await openFilter();
     await userEvent.selectOptions(sortControl(), "title-asc");
     await waitFor(() => expect(requests).toContain(TITLE_ASC_REQUEST));
 
@@ -389,9 +394,7 @@ describe("Author works domain view", () => {
     ]);
     expect(replaced).toEqual([]);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     expect(sortControl()).toHaveDisplayValue("Title — A–Z");
   });
 
@@ -428,9 +431,7 @@ describe("Author works domain view", () => {
     );
 
     await screen.findByRole("link", { name: "Aurora physics" });
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     await userEvent.type(
       await screen.findByRole("searchbox", { name: "Filter works" }),
       "aurora",
@@ -445,9 +446,7 @@ describe("Author works domain view", () => {
     expect(replaced).toEqual([]);
     expect(workTitles()).toEqual(titles(TITLE_ASC));
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     expect(
       await screen.findByRole("searchbox", { name: "Filter works" }),
     ).toHaveValue("");

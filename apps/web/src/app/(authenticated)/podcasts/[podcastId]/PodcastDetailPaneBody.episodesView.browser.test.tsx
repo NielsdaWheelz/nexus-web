@@ -296,6 +296,11 @@ function episodeTitles(): string[] {
     );
 }
 
+async function openFilter(): Promise<void> {
+  await userEvent.click(screen.getByRole("button", { name: "More" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: /^Filter/ }));
+}
+
 describe("Podcast episodes domain view", () => {
   it("replaces the pane URL with the selected sort and state, requests exactly those views, and keeps the filter text and prior rows until the new page commits", async () => {
     const shortest = deferred<Response>();
@@ -315,7 +320,7 @@ describe("Podcast episodes domain view", () => {
       `/api/podcasts/${PODCAST_ID}/episodes?state=all&sort=newest&limit=100`,
     ]);
 
-    await userEvent.click(screen.getByRole("button", { name: "Filter" }));
+    await openFilter();
     await userEvent.type(
       await screen.findByRole("searchbox", { name: "Filter podcast episodes" }),
       "o",
@@ -378,9 +383,7 @@ describe("Podcast episodes domain view", () => {
     ]);
     expect(replaced).toEqual([]);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 2 controls active" }),
-    );
+    await openFilter();
     expect(
       screen.getByRole("combobox", { name: "Sort by" }),
     ).toHaveDisplayValue("Oldest");
@@ -428,9 +431,7 @@ describe("Podcast episodes domain view", () => {
     await waitFor(() =>
       expect(episodeTitles()).toEqual(["Orbital Mechanics", "The Crew-4 Astronauts"]),
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     await userEvent.type(
       await screen.findByRole("searchbox", { name: "Filter podcast episodes" }),
       "orbital",
@@ -450,9 +451,7 @@ describe("Podcast episodes domain view", () => {
       "The Crew-4 Astronauts",
     ]);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 
     await waitFor(() => expect(replaced).toEqual([`/podcasts/${PODCAST_ID}`]));

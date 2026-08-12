@@ -381,7 +381,7 @@ test("reader progress resumes, completes, and resets through its product actions
     `Genuine reader navigation for ${mediaId} failed to persist: ${genuineWrite!.status()} ${genuineWriteText}`,
   ).toBeTruthy();
 
-  await page.getByRole("button", { name: "Options", exact: true }).click();
+  await page.getByRole("button", { name: "More", exact: true }).click();
   await expect(
     page.getByRole("menuitemcheckbox", {
       name: "Mark as finished",
@@ -409,7 +409,7 @@ test("reader progress resumes, completes, and resets through its product actions
     })
     .toBe("finished");
 
-  await page.getByRole("button", { name: "Options", exact: true }).click();
+  await page.getByRole("button", { name: "More", exact: true }).click();
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toBe(
       "Reset progress? This starts the item from the beginning. Notes and activity history are kept.",

@@ -7,7 +7,8 @@
 // `PaneShell`/`SurfaceHeader` render the correct pressed/disclosure state and
 // keep the secondary mounted while visibility settles.
 import { PanelRightOpen } from "lucide-react";
-import type { ActionSelectDetail, PaneHeaderAction } from "@/lib/ui/actionDescriptor";
+import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
+import type { PaneCompanionAction } from "@/lib/panes/panePublications";
 
 const COMPANION_MENU_LABELS = {
   collapsed: "Show Companion",
@@ -25,7 +26,7 @@ export function companionAction({
   regionId: string;
   onOpen: (trigger: HTMLButtonElement | null) => void;
   onClose: () => void;
-}): PaneHeaderAction {
+}): PaneCompanionAction {
   return {
     kind: "command",
     id: "resource-inspector-companion",

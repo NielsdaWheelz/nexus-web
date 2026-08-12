@@ -567,7 +567,7 @@ export default function ConversationsPaneBody() {
       sourceKey: "Conversations:mine",
       execute: executeRefresh,
     },
-    actions: NEW_CHAT_ACTIONS,
+    menuActions: NEW_CHAT_ACTIONS,
     header: {
       kind: "Section",
       meta: invalidView

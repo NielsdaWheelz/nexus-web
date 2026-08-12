@@ -140,10 +140,11 @@ interface StubbedNetwork {
   readonly commandBodies: string[];
 }
 
-// Each lectern row now renders the canonical `ResourceActionMenu`, keyed by the
-// row's `media:{mediaId}` subject. The runtime prefetches every ref's snapshot
-// from the resolve endpoint, so "Remove from Lectern" is a resolve-backed
-// resource capability (LecternMembership Present) rather than a merged menu item.
+// Each lectern row renders one contextual More menu keyed by the row's
+// `media:{mediaId}` subject. The runtime prefetches every ref's snapshot from
+// the resolve endpoint, so "Remove from Lectern" remains a canonical
+// resolve-backed resource capability (LecternMembership Present) after the
+// occurrence-owned reorder descriptors.
 const LECTERN_ITEM_BY_MEDIA_REF = new Map(
   SNAPSHOT_ITEMS.map((item) => [`media:${item.mediaId}`, item]),
 );
@@ -349,12 +350,6 @@ async function openRowMenu(title: string): Promise<void> {
   await userEvent.click(trigger);
 }
 
-async function openReorderMenu(title: string): Promise<void> {
-  await userEvent.click(
-    screen.getByRole("button", { name: `Reorder ${title}` }),
-  );
-}
-
 describe("Lectern pane refinement", () => {
   it("replaces the pane URL with the exact sort pair and reorders rows without commanding the Lectern", async () => {
     const network = stubLecternNetwork();
@@ -406,19 +401,16 @@ describe("Lectern pane refinement", () => {
   });
 
   it("offers reorder only in unfiltered Custom order while remove stays available in every view", async () => {
-    // Reorder is a SEPARATE affordance from the canonical resource menu: "Move
-    // up" lives in the row's "Reorder {title}" control (offered only over the
-    // whole authored order), while "Remove from Lectern" is a resource
-    // capability in the "More actions for {title}" menu, available in every view.
+    // The row has one More trigger. Occurrence-owned Move commands appear only
+    // for the whole authored order; the canonical resource suffix, including
+    // Remove from Lectern, remains available in every view.
     stubLecternNetwork();
     renderLectern();
     await waitFor(() => expect(renderedTitles()).toHaveLength(3));
 
     // Unfiltered Custom order: reorder is offered and remove is available.
-    await openReorderMenu(RUMOR);
-    expect(screen.getByRole("menuitem", { name: "Move up" })).toBeVisible();
-    await userEvent.keyboard("{Escape}");
     await openRowMenu(RUMOR);
+    expect(screen.getByRole("menuitem", { name: "Move up" })).toBeVisible();
     expect(
       screen.getByRole("menuitemcheckbox", { name: "Remove from Lectern" }),
     ).toBeVisible();

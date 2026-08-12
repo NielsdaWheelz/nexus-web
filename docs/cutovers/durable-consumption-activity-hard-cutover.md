@@ -1,5 +1,11 @@
 # Durable Consumption Activity — Hard Cutover
 
+> **Presentation superseded 2026-08-11:** reader Activity remains contextual
+> and opens Stats, but is now the first reader View descriptor inside the one
+> primary-pane More menu defined by
+> [`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md),
+> not a dedicated header button.
+
 **Status:** IMPLEMENTED IN SOURCE · 2026-08-10. Changed-tree, real-Postgres,
 real-Chromium, production-bundle, and Android host proofs pass. Android device
 instrumentation is registered for nightly but remains unexecuted without a
@@ -134,7 +140,7 @@ sync`, and `Needs attention`. Progress and completion never fabricate time.
 | Effective metrics and sessions | `_activity_stats.py` | Existing clipping, filtering, gap-and-island queries |
 | Strict schemas and handles | `consumption_activity.py` + `handles.py` | Existing BFF/API conventions |
 | Same-process freshness | `projectionRevision.ts` | Existing `useSyncExternalStore` owner |
-| Product surface | media pane chrome + Stats | Existing header actions, view menu, session rows, tokens |
+| Product surface | media pane chrome + Stats | Contextual More descriptors, session rows, tokens |
 
 Adapters publish observations only. They never persist, retry, upload, refresh
 Stats, or emit operational telemetry. HTTP/BFF code parses, injects, and calls
@@ -399,7 +405,7 @@ media, modality, contributor, time, visibility, and teardown rules apply.
 
 ### Media pane
 
-- Publish one existing `PaneHeaderAction`: `Activity: <state>`.
+- Publish one View `ActionDescriptor`: `Activity: <state>`.
 - Show the standard status marker only for Pending, Failed, or Blocked.
 - Activation opens `/stats` and preserves pane/focus conventions.
 - Add `Add reading/listening/viewing time…` to the existing reader/media view

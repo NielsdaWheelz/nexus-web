@@ -73,17 +73,19 @@ routes, or a typed `Ready`/`Unavailable`/`Failed` resource status with its
 structured credit groups. No publication carries a title.
 
 Pane bodies publish the orthogonal
-`{ header, search, instrument, actions, resourceTarget, viewMenu, refresh, filters }`
+`{ header, search, instrument, companionAction, menuActions, actionSubject, refresh }`
 capabilities through `usePanePrimaryChrome`. Each update carries the current
 `routeKey`; `PaneShell` rejects stale updates before validating the header kind.
 There is no route-level chrome descriptor, body-mode inference, or ambient title
 override.
 
 `refresh` publishes one source-fenced, abortable, awaitable owner operation.
-`PaneShell` renders the canonical `ResourceActionMenu` and owns the refresh
-control's mobile top-edge pull gesture, progress, and announcement; the pane
-owner resolves only after its canonical first page is installed. Only the six explicitly supported finite standard-scroll panes
-publish it. Refresh never reloads the route or polls for completion.
+`PaneShell` owns the refresh descriptor, mobile top-edge pull gesture, progress,
+and announcement; both activation paths invoke the same fenced operation. The
+pane owner resolves only after its canonical first page is installed. Only the
+six explicitly supported finite standard-scroll panes publish it. Refresh never
+reloads the route or polls for completion, and the gesture is never its only
+path.
 
 `search` is one closed pane-local capability: `FilterRows` derives local primary
 rows, while `FindOccurrences` delegates document matching and exact preview to
@@ -109,22 +111,29 @@ declares `queryNavigation: "in-place"` so its body is not remounted by the
 replacement, and `usePaneScrollRetention` restores the scrollport once the new
 view commits.
 
-A resource pane publishes only its canonical `resourceTarget`
-(`ResourceActionSubject`); `PaneShell` renders the one canonical
-`ResourceActionMenu` for it, identical to every other surface
+A resource pane publishes only its canonical `actionSubject`
+(`ResourceActionSubject`). `PaneShell` composes its pane commands and the body's
+`menuActions` through `ContextualActionMenu`; the unchanged canonical resource
+descriptors are one ordered contiguous suffix
 (`canonical-resource-action-menu-hard-cutover.md`). Membership, current verb,
-order, and danger-last come from the server action snapshot and the pure planner,
-so the pane menu includes `Open` (it is no longer projection-dropped for the
-already-open pane). Pane view/session controls (reader settings, add-content,
-date navigation) publish through a separate non-resource `viewMenu`; pane refresh
-and route-share are dedicated header controls. Pane bodies never build resource
-action arrays.
+order, and danger-last come from the server action snapshot and pure planner,
+so the pane menu includes `Open`. Pane bodies never build resource action
+arrays.
+
+Desktop and mobile primary headers keep stable Back and Forward positions,
+render the optional typed Companion action, and expose exactly one **More**
+trigger when contextual commands exist. Search/Return, Refresh, route Share,
+published view commands, and canonical resource actions appear in that order;
+empty groups disappear. Route Share is omitted for a resource pane because its
+canonical plan owns Share. A single marker on More represents hidden status.
+Owner separation never creates a second trigger.
 
 Every primary identity projection uses one 60px track. The mobile safe area is
 additive.
 
-Desktop promoted actions render through `ActionBar`; overflow publications
-render through `ActionMenu` in desktop and mobile chrome. PDF and EPUB publish
+The sole promoted action is typed Companion and renders through `ActionBar`;
+`ContextualActionMenu` projects every remaining command through the existing
+`ActionMenu` in desktop and mobile chrome. PDF and EPUB publish
 one labelled `instrument` containing control content only. `PaneShell` owns its
 40px desktop or 48px mobile contextual frame and renders it as an accessible
 group. Expanded Search takes exclusive occupancy of that same track.

@@ -1,26 +1,30 @@
 import {
   useLayoutEffect,
+  useMemo,
   useRef,
   type CSSProperties,
   type ReactNode,
 } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
-import { page } from "vitest/browser";
-import { afterEach, describe, expect, it } from "vitest";
+import { page, userEvent } from "vitest/browser";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import MobilePaneBar from "@/components/appnav/MobilePaneBar";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import {
   useMobileViewport,
   type MobileBottomSurfaceId,
 } from "@/lib/mobileViewport/MobileViewportProvider";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import PaneShell from "./PaneShell";
+import { usePanePrimaryChrome } from "./PanePrimaryChrome";
 
 // The active mobile pane body is the registered content surface, so its terminal
 // padding is the *local* projection of the protected band — the part that still
@@ -127,9 +131,11 @@ function withPaneProviders(children: ReactNode) {
 function PaneUnderTest({
   isMobile,
   isActive,
+  refresh,
 }: {
   isMobile: boolean;
   isActive: boolean;
+  refresh?: PaneRefreshPublication;
 }) {
   return (
     <PaneRuntimeProvider
@@ -177,11 +183,38 @@ function PaneUnderTest({
           isActive={isActive}
           isMobile={isMobile}
         >
+          {refresh ? <RefreshPublisher refresh={refresh} /> : null}
           <div style={{ minHeight: 1_200 }}>Terminal reader content</div>
         </PaneShell>
       </div>
     </PaneRuntimeProvider>
   );
+}
+
+function RefreshPublisher({ refresh }: { refresh: PaneRefreshPublication }) {
+  const publication = useMemo(() => ({ refresh }), [refresh]);
+  usePanePrimaryChrome(publication);
+  return null;
+}
+
+function dispatchTouches(
+  target: HTMLElement,
+  type: "touchstart" | "touchmove" | "touchend",
+  touches: readonly {
+    readonly identifier: number;
+    readonly clientX: number;
+    readonly clientY: number;
+  }[],
+) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "touches", { value: touches });
+  target.dispatchEvent(event);
+}
+
+function refreshPublication(
+  execute: PaneRefreshPublication["execute"],
+): PaneRefreshPublication {
+  return { sourceKey: "finite-collection", execute };
 }
 
 describe("PaneShell mobile content-surface clearance", () => {
@@ -392,4 +425,60 @@ describe("PaneShell mobile content-surface clearance", () => {
     expect(fullWindowBandPx).toBeGreaterThan(localProjectionPx);
     expect(paddingBottomPx(inactiveBody)).toBeCloseTo(fullWindowBandPx, 0);
   });
+});
+
+describe("PaneShell mobile refresh", () => {
+  it("uses one fenced refresh operation from More and a downward top-edge pull", async () => {
+    await page.viewport(390, 844);
+    const execute = vi.fn<PaneRefreshPublication["execute"]>(async () => ({
+      kind: "Complete",
+      announcement: "Collection refreshed",
+    }));
+    render(
+      withRenderEnvironment(
+        withPaneProviders(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <MobilePaneBar />
+            <PaneUnderTest
+              isMobile
+              isActive
+              refresh={refreshPublication(execute)}
+            />
+          </div>,
+        ),
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "More" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Refresh" }));
+
+    await waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
+    expect(execute.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal);
+    expect(execute.mock.calls[0]?.[0].reportProgress).toBeTypeOf("function");
+    expect(await screen.findByText("Collection refreshed")).toBeTruthy();
+    const body = await screen.findByTestId("pane-shell-body");
+    await waitFor(() =>
+      expect(body).toHaveAttribute("data-pane-refresh-eligible", "true"),
+    );
+
+    dispatchTouches(body, "touchstart", [
+      { identifier: 1, clientX: 20, clientY: 20 },
+    ]);
+    dispatchTouches(body, "touchmove", [
+      { identifier: 1, clientX: 20, clientY: 220 },
+    ]);
+    expect(await screen.findByText("Release to refresh")).toBeTruthy();
+    dispatchTouches(body, "touchend", []);
+
+    await waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+  });
+
 });

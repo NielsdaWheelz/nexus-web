@@ -23,7 +23,13 @@
 > supersedes every remaining `ActionPublication`, `ResourceMenuGroups`,
 > `composeResourceMenu`, and caller-published resource-action clause. A
 > resource-bearing row publishes only `actionSubject`; occurrence controls such
-> as reorder remain separate.
+> as reorder retain separate semantic ownership.
+>
+> **Contextual-presentation update (2026-08-11):**
+> [`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md)
+> places occurrence-owned reorder and Connections descriptors before the
+> unchanged canonical resource suffix in one row More menu. The More trigger is
+> also the drag activator; no separate reorder or Connections trigger survives.
 
 **Status:** Implemented and locally verified · 2026-07-21 · adversarially
 reviewed
@@ -431,10 +437,10 @@ Reorder has three layered paths on the reorderable Library and Lectern rows: two
 menu commands (the discoverable, single-pointer, voice- and touch-AT-reachable
 path), a pointer-drag accelerator, and a keyboard accelerator.
 
-- **Menu commands.** When `sortable` is eligible, the `…` menu’s `view` group
+- **Menu commands.** When `sortable` is eligible, the `…` menu’s occurrence group
   contains `Move up` and `Move down` (each disabled at the corresponding end of
-  the list). The universal composer places that group after resource operations
-  and relationships and before the final danger group. These are the WCAG 2.5.7
+  the list), followed by Connections when available and then the unchanged
+  canonical resource-action suffix. These are the WCAG 2.5.7
   single-pointer, non-drag alternative and the voice-control- and
   touch-screen-reader-reachable reorder path (touch AT intercepts
   long-press-drag, so drag alone is unreachable there). They are hidden until

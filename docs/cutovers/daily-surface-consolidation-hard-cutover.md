@@ -11,6 +11,11 @@ atomic dated capture, and deletes the retained daily locator variants. The
 ordinary-Page ontology and deletion of the old standalone Today surface remain
 authoritative.
 
+**Chrome contract update (2026-08-11):** primary pane commands publish through
+`usePanePrimaryChrome({ menuActions })` and appear in the one contextual More
+menu defined by
+[`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md).
+
 ## One-line
 
 Delete the Today surface (`DailyNotePaneBody`, the `daily`/`dailyDate` pane routes, the Today nav entry); keep `daily_note_pages` and the backend lookup; make "today" a verb — a Notes-pane button, a launcher command, a keybinding — that resolves-or-creates today's page then opens it in the ordinary Page pane.
@@ -332,7 +337,7 @@ Add `dailyNote: { localDate: string } | null` to the `NotePage` interface in `li
 Verification: unit test (`lib/notes/api.test.ts`) asserts `normalizePage` populates `dailyNote.localDate` when `daily_note` is present and that the `NotePageSummary` shape is not widened.
 
 **S2 — `PagePaneBody` date-nav chrome options**
-Read `page.dailyNote?.localDate` after page load. If set, use `usePanePrimaryChrome({ options })` to publish `"Open yesterday"` and `"Open tomorrow"` command descriptors, each calling `fetchDailyNotePage(shiftLocalDate(localDate, ±1))` then `router.push('/pages/{id}')`.
+Read `page.dailyNote?.localDate` after page load. If set, use `usePanePrimaryChrome({ menuActions })` to publish `"Open yesterday"` and `"Open tomorrow"` command descriptors, each calling `fetchDailyNotePage(shiftLocalDate(localDate, ±1))` then `router.push('/pages/{id}')`.
 Verification: browser test renders `PagePaneBody` with a page carrying `dailyNote: { localDate: "2026-07-07" }` and asserts the chrome options appear; renders without `dailyNote` and asserts they are absent.
 
 **S3 — `open-today` dispatch target + Notes pane button**

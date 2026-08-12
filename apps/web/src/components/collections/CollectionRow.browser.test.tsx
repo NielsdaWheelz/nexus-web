@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,18 +21,17 @@ import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
-import { absent } from "@/lib/api/presence";
+import { absent, present } from "@/lib/api/presence";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { CollectionRowView } from "@/lib/collections/types";
+import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import CollectionRow from "./CollectionRow";
 
-// The system under test is CollectionRow's resource dropdown wired to the REAL
-// runtime, planner, catalog, and ActionMenu — the row hub renders the
-// one canonical ResourceActionMenu, not any surface-local menu. Only the BFF
-// fetch boundary is stubbed: the snapshot-resolve endpoint serves a schema-valid
-// media snapshot whose capabilities arrive deliberately scrambled, so the
-// observed dropdown proves the planner — not the row — owns membership and order.
-// A second, external row proves a non-resource row renders no resource menu.
+// The system under test is CollectionRow's single contextual menu wired to the
+// real resource runtime, planner, catalog, and ActionMenu. Only the BFF fetch
+// boundary is stubbed: deliberately scrambled capabilities prove the canonical
+// resource suffix remains planner-owned. A second external row proves More is
+// absent when no row action exists.
 
 const ACCOUNT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
@@ -175,7 +175,7 @@ function baseRow(overrides: Partial<CollectionRowView>): CollectionRowView {
   };
 }
 
-function renderRow(row: CollectionRowView) {
+function renderInRuntime(node: ReactNode) {
   return render(
     withRenderEnvironment(
       <AuthenticatedAccountProvider
@@ -202,7 +202,7 @@ function renderRow(row: CollectionRowView) {
                           <ResourceOverlaysProvider>
                             <GlobalPlayerProvider>
                               <ResourceActionRuntimeProvider>
-                                <CollectionRow row={row} as="div" />
+                                {node}
                                 <ResourceActionOverlays />
                               </ResourceActionRuntimeProvider>
                             </GlobalPlayerProvider>
@@ -219,6 +219,32 @@ function renderRow(row: CollectionRowView) {
       </AuthenticatedAccountProvider>,
     ),
   );
+}
+
+function renderRow(
+  row: CollectionRowView,
+  reorder?: SortableActivatorProps,
+) {
+  return renderInRuntime(
+    <CollectionRow row={row} as="div" reorder={reorder} />,
+  );
+}
+
+function reorderActivator(
+  overrides: Partial<SortableActivatorProps> = {},
+): SortableActivatorProps {
+  return {
+    setActivatorNodeRef: vi.fn(),
+    listeners: {},
+    canMoveUp: true,
+    canMoveDown: true,
+    disabled: false,
+    isDragging: false,
+    moveUp: vi.fn(),
+    moveDown: vi.fn(),
+    consumeClickSuppression: vi.fn(() => false),
+    ...overrides,
+  };
 }
 
 function menuLabels(menu: HTMLElement): string[] {
@@ -244,29 +270,71 @@ describe("CollectionRow resource dropdown", () => {
     await page.viewport(1_024, 768);
   });
 
-  it("renders the canonical ResourceActionMenu for a media row's resource dropdown", async () => {
+  it("composes occurrence commands before the canonical resource suffix", async () => {
     const bff = installBff();
-    renderRow(baseRow({}));
+    const reorder = reorderActivator({ canMoveUp: false });
+    renderRow(
+      baseRow({
+        connections: present({
+          total: 1,
+          dominantKind: absent(),
+          topPeers: [
+            {
+              ref: "media:22222222-2222-4222-8222-222222222222",
+              scheme: "media",
+              id: "22222222-2222-4222-8222-222222222222",
+              label: "Connected essay",
+              description: null,
+              activation: {
+                resourceRef: "media:22222222-2222-4222-8222-222222222222",
+                kind: "route",
+                href: "/media/22222222-2222-4222-8222-222222222222",
+                unresolvedReason: null,
+              },
+              href: "/media/22222222-2222-4222-8222-222222222222",
+              missing: false,
+            },
+          ],
+        }),
+      }),
+      reorder,
+    );
 
-    // The row's dropdown is the canonical resource menu keyed by its subject.
     const trigger = await screen.findByRole("button", {
       name: "More actions for Field Guide",
     });
     await waitFor(() => expect(trigger).toBeEnabled());
+    expect(
+      screen.getAllByRole("button", { name: "More actions for Field Guide" }),
+      "a sortable resource row must have exactly one visible More trigger",
+    ).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: "Reorder Field Guide" }),
+      "reorder must not retain a separate row control",
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "Show connections and related for Field Guide",
+      }),
+      "connections must not retain a separate row control",
+    ).toBeNull();
     await userEvent.click(trigger);
     const menu = screen.getByRole("menu");
 
-    // The catalog-owned seven-group order with Danger terminal
-    // flows through CollectionRow -> ResourceActionMenu -> real planner, proving
-    // the row no longer owns membership or order.
     const names = menuLabels(menu);
     expect(
       names,
-      "collection row dropdown did not render the catalog-owned order with danger last",
-    ).toEqual(EXPECTED_MENU_ORDER);
+      "row occurrence commands must precede the unchanged canonical resource suffix",
+    ).toEqual([
+      "Move up",
+      "Move down",
+      "Show connections and related",
+      ...EXPECTED_MENU_ORDER,
+    ]);
+    const moveUp = screen.getByRole("menuitem", { name: "Move up" });
+    expect(moveUp).toHaveAttribute("aria-disabled", "true");
+    expect(moveUp).toHaveAccessibleDescription("This item is already first");
 
-    // Opening the menu performed no request: the snapshot was prefetched exactly
-    // once from the row's ResourceActionMenu mount, keyed by the row's ref.
     expect(bff.resolveCalls).toHaveLength(1);
     expect(bff.resolveCalls[0]).toEqual({ refs: [MEDIA_REF] });
   });

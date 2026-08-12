@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
@@ -22,16 +22,11 @@ import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
-import type { PaneViewMenuPublication } from "@/lib/panes/panePublications";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import SurfaceHeader from "./SurfaceHeader";
 
-// The system under test is the desktop pane header hub. It renders the ONE
-// canonical ResourceActionMenu (wired to the real runtime + planner) for the
-// pane's `actionSubject` (AC4), so the open pane's own menu INCLUDES Open (AC3),
-// while the pane refresh and the pane's view menu (reader settings) are ejected
-// into SEPARATE controls that never appear inside the resource dropdown by the
-// Scope/Taxonomy contract.
+// The system under test is the desktop pane header hub. It composes pane,
+// reader-view, and canonical resource actions into its single More menu.
 // Only the snapshot-resolve fetch boundary is stubbed.
 
 const ACCOUNT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -78,17 +73,11 @@ const sectionHeader: PaneHeaderModel = {
   meta: { kind: "None" },
 };
 
-const readerSettingsViewMenu: PaneViewMenuPublication = {
+const readerSettingsAction: ActionDescriptor = {
+  kind: "command",
+  id: "ViewAction.Reader.Settings",
   label: "Reader settings",
-  icon: <span aria-hidden="true">gear</span>,
-  actions: [
-    {
-      kind: "command",
-      id: "ViewAction.Reader.Settings",
-      label: "Reader settings",
-      onSelect: () => {},
-    } satisfies ActionDescriptor,
-  ],
+  onSelect: () => {},
 };
 
 function jsonResponse(body: unknown): Response {
@@ -173,16 +162,15 @@ function renderHeader() {
                                 header={sectionHeader}
                                 identityId="pane-identity"
                                 actionSubject={mediaSubject}
-                                viewMenu={readerSettingsViewMenu}
-                                controls={
-                                  <button
-                                    type="button"
-                                    aria-label="Refresh"
-                                    data-action-id="Pane.Refresh"
-                                  >
-                                    Refresh
-                                  </button>
-                                }
+                                paneActions={[
+                                  {
+                                    kind: "command",
+                                    id: "Pane.Refresh",
+                                    label: "Refresh",
+                                    onSelect: () => {},
+                                  },
+                                ]}
+                                menuActions={[readerSettingsAction]}
                                 navigation={{
                                   canGoBack: false,
                                   canGoForward: false,
@@ -222,68 +210,34 @@ describe("SurfaceHeader pane hub", () => {
     await page.viewport(1_280, 768);
   });
 
-  it("renders the complete pane-header dropdown (AC4) with Open retained (AC3) and separate control taxonomy", async () => {
+  it("composes pane, View, and canonical resource actions in exactly one More menu", async () => {
     installBff();
     renderHeader();
 
-    // The refresh affordance is a dedicated control on the header, NOT a menu
-    // item — present without opening any dropdown.
-    const refresh = await screen.findByRole("button", { name: "Refresh" });
-    expect(refresh.getAttribute("data-action-id")).toBe("Pane.Refresh");
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reader settings" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Share" })).toBeNull();
 
-    // The resource dropdown is the canonical ResourceActionMenu (label "Options"),
-    // appearing only after its snapshot prefetch resolves.
-    const optionsTrigger = await screen.findByRole("button", {
-      name: "Options",
-    });
-    await waitFor(() => expect(optionsTrigger).toBeEnabled());
-    await userEvent.click(optionsTrigger);
+    const moreButtons = await screen.findAllByRole("button", { name: "More" });
+    expect(moreButtons).toHaveLength(1);
+    const [more] = moreButtons;
+    if (!more) throw new Error("SurfaceHeader did not render More");
+    await userEvent.click(more);
     const menu = screen.getByRole("menu");
 
-    // AC3: Open remains present in the open pane's own complete menu.
     expect(
-      within(menu).getByRole("menuitem", { name: "Open" }),
-      "Open was not present in the open pane's own resource menu (AC3)",
-    ).toBeTruthy();
-    expect(
-      within(menu).getByRole("menuitem", { name: "Chat about this…" }),
-    ).toBeTruthy();
-
-    // Scope/Taxonomy: pane refresh is NOT inside the resource dropdown — it is
-    // a separate control (asserted above as a top-level button).
-    expect(
-      within(menu).queryByRole("menuitem", { name: "Refresh" }),
-      "the pane refresh leaked into the resource dropdown (Scope/Taxonomy)",
-    ).toBeNull();
-
-    // Scope/Taxonomy: the reader-view action is NOT inside the resource dropdown;
-    // it lives in the pane's own separate view menu.
-    expect(
-      within(menu).queryByRole("menuitem", { name: "Reader settings" }),
-      "a reader view action leaked into the resource dropdown (Scope/Taxonomy)",
-    ).toBeNull();
-  });
-
-  it("hosts reader-view actions in a separate view menu that never carries Open", async () => {
-    installBff();
-    renderHeader();
-
-    // Ensure the runtime has resolved (resource dropdown present) before probing
-    // the sibling view menu.
-    const options = await screen.findByRole("button", { name: "Options" });
-    await waitFor(() => expect(options).toBeEnabled());
-
-    const viewTrigger = screen.getByRole("button", { name: "Reader settings" });
-    await userEvent.click(viewTrigger);
-    const viewMenu = screen.getByRole("menu");
-
-    expect(
-      within(viewMenu).getByRole("menuitem", { name: "Reader settings" }),
-    ).toBeTruthy();
-    // The view menu is a NON-resource control: it must not carry resource core.
-    expect(
-      within(viewMenu).queryByRole("menuitem", { name: "Open" }),
-      "the pane view menu wrongly carried the resource Open action",
-    ).toBeNull();
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent?.trim()),
+    ).toEqual([
+      "Refresh",
+      "Reader settings",
+      "Open",
+      "Libraries…",
+      "Chat about this…",
+      "Share…",
+      "Remove from Nexus",
+    ]);
   });
 });

@@ -399,6 +399,8 @@ export default function ActionMenu({
                     role={control.menuRole}
                     {...semanticAttributes}
                     aria-checked={control.menuChecked}
+                    aria-expanded={control.barExpanded}
+                    aria-controls={control.barControls}
                     aria-disabled={option.disabled || undefined}
                     aria-describedby={disabledReasonId}
                     className={itemClassName}
