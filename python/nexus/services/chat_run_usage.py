@@ -2,13 +2,14 @@
 
 Operates on the runtime's normalized ``provider_runtime.TokenUsage`` (wrapped
 in ``Presence`` — a terminal's ``meta.usage`` is ``Absent`` unless the
-provider reported usage). There is no separate "provider_usage" JSON blob on
-this type any more: usage is normalized once at codec ingress.
+provider reported usage). There is no separate opaque provider JSON blob:
+usage is normalized once at codec ingress.
 """
 
 from __future__ import annotations
 
-from provider_runtime import Presence, Present, TokenUsage
+from provider_runtime import Present, TokenUsage
+from provider_runtime.types import Presence
 
 
 def _presence_or_none(presence: Presence[int]) -> int | None:

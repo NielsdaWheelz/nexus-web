@@ -10,11 +10,11 @@ mechanics are owned here once:
   :data:`INDEX_GROUNDING_RULE`; call sites whose prompts ground by index pass
   it (verbatim or extended) as their first domain rule.
 - :func:`build_synthesis_intent` — the shared two-block ``GenerateIntent``
-  shape: a ``Stable(GlobalScope())`` system block (the assembled prompt) plus
-  a ``Dynamic`` user block (the caller-rendered candidates/instruction), with
-  ``output=StrictJsonOutput`` derived from the caller's schema via the
-  canonical-subset parser. The caller wraps this in one ``GenerationRequest``
-  and calls the appropriate ``llm_execution`` generation boundary itself
+  shape: a text-only system block (the assembled prompt) plus a text-only user
+  block (the caller-rendered candidates/instruction), with
+  ``output=StrictJsonOutput`` derived from the caller's schema. The caller
+  wraps this in one ``GenerationRequest`` and calls the appropriate
+  ``llm_execution`` generation boundary itself
   (structured_synthesis is not a ledger caller).
 - :func:`ground_indices` — THE grounding invariant: a model-emitted integer
   index must denote an offered candidate.
@@ -43,26 +43,20 @@ from typing import Literal
 
 from provider_runtime import (
     Cancelled,
-    Dynamic,
     Failed,
     GenerateIntent,
-    GlobalScope,
     Incomplete,
-    InvalidToolArguments,
-    Present,
     PromptBlock,
     Refused,
-    Stable,
-    StrictJsonOutput,
     StructuredContent,
     Succeeded,
     SystemMessage,
     UserMessage,
-    failure_code,
-    parse_canonical_schema,
 )
+from provider_runtime.types import StrictJsonOutput
 from pydantic import BaseModel, ValidationError
 
+from nexus.services.llm_outcomes import outcome_failure_facts as runtime_outcome_failure_facts
 from nexus.services.llm_profiles import LlmProfile
 
 # The shared index-grounding rule. Call sites pass it as their first domain
@@ -130,9 +124,7 @@ def build_synthesis_intent(
 ) -> GenerateIntent:
     """Assemble the shared two-block structured-synthesis intent.
 
-    The system prompt is the sole ``Stable(GlobalScope())`` block (caching has
-    no off state — the planner requires a non-empty stable prefix); the
-    rendered candidates/instruction is one ``Dynamic`` user block.
+    The system prompt and rendered candidates are plain text prompt blocks.
     ``reasoning`` is always the profile's default (structured synthesis offers
     no reasoning choice); ``tools``/``tool_choice`` are empty — synthesis never
     calls tools.
@@ -140,10 +132,8 @@ def build_synthesis_intent(
     return GenerateIntent(
         target=profile.target,
         messages=(
-            SystemMessage(
-                blocks=(PromptBlock(text=system_prompt, stability=Stable(GlobalScope())),)
-            ),
-            UserMessage(blocks=(PromptBlock(text=user_content, stability=Dynamic()),)),
+            SystemMessage(blocks=(PromptBlock(text=system_prompt),)),
+            UserMessage(blocks=(PromptBlock(text=user_content),)),
         ),
         max_output_tokens=max_output_tokens,
         reasoning=profile.default_reasoning_option_id,
@@ -151,7 +141,7 @@ def build_synthesis_intent(
         tool_choice="none",
         output=StrictJsonOutput(
             name=schema.__name__,
-            schema=parse_canonical_schema(schema.model_json_schema()),
+            schema=schema.model_json_schema(),
         ),
     )
 
@@ -218,24 +208,12 @@ def outcome_failure_facts(
     terminal ``CallOutcome`` — shared across every background owner (structured-JSON
     or plain text), since the mapping from the runtime's closed outcome union to a
     domain error floor is the same everywhere. ``Failed`` (incl.
-    ``TransientExhausted``) uses the runtime's own fixed failure code; an owner that
+    ``TransientExhausted``) uses the shared fixed failure code; an owner that
     must distinguish a transient cause for a requeue-vs-skip decision matches
     ``outcome`` itself before calling this.
     """
-    if isinstance(outcome, Refused):
-        return "refused", outcome.safe_detail
-    if isinstance(outcome, Incomplete):
-        code = "refused" if outcome.status == "refused" else "incomplete"
-        detail = outcome.safe_detail.value if isinstance(outcome.safe_detail, Present) else None
-        return code, detail
     if isinstance(outcome, Cancelled):
         return "cancelled", None
-    if isinstance(outcome, Failed):
-        return failure_code(outcome.failure), _failure_detail(outcome.failure)
-    raise AssertionError(f"unhandled outcome variant: {outcome!r}")  # justify-defect: closed union
-
-
-def _failure_detail(failure: object) -> str | None:
-    if isinstance(failure, InvalidToolArguments):
-        return failure.safe_detail
-    return None
+    facts = runtime_outcome_failure_facts(outcome)
+    assert facts.error_code is not None
+    return facts.error_code, facts.error_detail

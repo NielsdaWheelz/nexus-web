@@ -19,13 +19,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import httpx
-from provider_runtime import ProviderRuntime
 from sqlalchemy.orm import Session
 
+from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
-from nexus.services.llm_execution import ExecutionRuntime, ProductionExecutionRuntime
-from nexus.services.provider_http import provider_request_event_hooks
+from nexus.services.llm_execution import (
+    ExecutionRuntime,
+    ProviderRetryMode,
+    build_execution_runtime,
+)
 
 logger = get_logger(__name__)
 
@@ -37,6 +40,7 @@ class LlmTaskSpec:
     label: str  # log-event prefix: "chat_run", "oracle_reading", ...
     http_timeout_s: float = 60.0  # LI uses 120.0
     http_limits: tuple[int, int] = (10, 5)  # (max_connections, max_keepalive); chat (100, 20)
+    retry_mode: ProviderRetryMode = ProviderRetryMode.Default
 
 
 def run_llm_task[R](
@@ -61,9 +65,13 @@ def run_llm_task[R](
                 max_connections=spec.http_limits[0],
                 max_keepalive_connections=spec.http_limits[1],
             ),
-            event_hooks=provider_request_event_hooks(),
+            trust_env=False,
         ) as client:
-            runtime: ExecutionRuntime = ProductionExecutionRuntime(ProviderRuntime(client))
+            runtime = build_execution_runtime(
+                get_settings(),
+                client,
+                retry_mode=spec.retry_mode,
+            )
             return await handler(db, runtime, client)
 
     loop = asyncio.new_event_loop()

@@ -34,6 +34,7 @@ from nexus_test_control.runner import (
     stream_first_failure,
 )
 from nexus_test_control.services import (
+    OpenAIProviderFixture,
     StartedProcess,
     SupabaseCredentials,
 )
@@ -1788,7 +1789,13 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             _environment: Mapping[str, str],
             _run: OwnedTestRun,
             role: str,
+            *,
+            overrides: Mapping[str, str] | None = None,
         ) -> StartedProcess:
+            if role in {"api", "worker-interactive", "worker-background"}:
+                assert overrides is not None
+                assert "NEXUS_TEST_STATIC_DNS" in overrides
+                assert "NEXUS_TEST_TLS_CA_CERT" in overrides
             process_roles.append(role)
             return StartedProcess(
                 role=role,
@@ -1798,6 +1805,21 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
                 owner_token="a" * 32,
                 log_path=f"{role}.log",
             )
+
+        def prepare_openai_provider_fixture(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run: OwnedTestRun,
+        ) -> OpenAIProviderFixture:
+            state = tmp_path / ".nexus-test/runs/0123456789abcdef/openai-provider"
+            state.mkdir(parents=True)
+            certificate = state / "ca.pem"
+            key = state / "server-key.pem"
+            audit = state / "requests.jsonl"
+            for path in (certificate, key, audit):
+                path.touch()
+            return OpenAIProviderFixture(state, certificate, key, audit, 19092)
 
         def start_web_process(
             self,
@@ -1823,7 +1845,11 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             _process: StartedProcess,
             _endpoint: runner.EndpointKind,
             _path: str,
+            *,
+            tls_ca: Path | None = None,
         ) -> None:
+            if _endpoint is runner.EndpointKind.PROVIDER_OPENAI:
+                assert tls_ca is not None
             return
 
         def create_supabase_user(
@@ -1883,6 +1909,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     assert build_calls == ["build"]
     assert process_roles == [
         "external",
+        "provider-openai",
         "api",
         "worker-interactive",
         "worker-background",
@@ -2479,15 +2506,26 @@ def test_paid_evidence_parser_accepts_only_typed_bounded_accounting(tmp_path: Pa
         path,
         json.dumps(
             {
-                "provider_calls": 9,
+                "provider_calls": 18,
                 "estimated_cost_usd": 0.031,
-                "limits": {"provider_calls": 9, "estimated_cost_usd": 0.10},
+                "runtime_revision": "a" * 40,
+                "registry_revision": "2026-08-11.1",
+                "run_id": "0123456789abcdef",
+                "limits": {"provider_calls": 18, "estimated_cost_usd": 0.18},
                 "results": [{"attempts": 1}],
             }
         ),
     )
 
-    assert runner._read_paid_evidence(path) == (9, 0.031, (9, 0.10), [{"attempts": 1}])
+    assert runner._read_paid_evidence(path) == (
+        18,
+        0.031,
+        (18, 0.18),
+        [{"attempts": 1}],
+        "a" * 40,
+        "2026-08-11.1",
+        "0123456789abcdef",
+    )
 
     _write(
         path,
@@ -2495,12 +2533,73 @@ def test_paid_evidence_parser_accepts_only_typed_bounded_accounting(tmp_path: Pa
             {
                 "provider_calls": True,
                 "estimated_cost_usd": 0,
-                "limits": {"provider_calls": 9, "estimated_cost_usd": 0.10},
+                "runtime_revision": "a" * 40,
+                "registry_revision": "2026-08-11.1",
+                "run_id": "0123456789abcdef",
+                "limits": {"provider_calls": 18, "estimated_cost_usd": 0.18},
                 "results": [],
             }
         ),
     )
     assert runner._read_paid_evidence(path) is None
+
+
+def test_provider_certification_requires_both_deepseek_ac4_probe_sets() -> None:
+    profile_ids = (
+        "fast",
+        "balanced",
+        "deep",
+        "claude",
+        "fable",
+        "gemini",
+        "kimi",
+        "deepseek-flash",
+        "deepseek-pro",
+    )
+    deepseek_ids = ("deepseek-flash", "deepseek-pro")
+    generation_index = 0
+
+    def nexus_result(**facts: object) -> dict[str, object]:
+        nonlocal generation_index
+        generation_index += 1
+        return {
+            **facts,
+            "status": "succeeded",
+            "nexus_generation_id": f"generation-{generation_index}",
+            "nexus_ledger_outcome": "succeeded",
+            "nexus_charged_tokens": 3,
+        }
+
+    results: list[dict[str, object]] = [
+        nexus_result(profile_id=profile_id, operation="generate") for profile_id in profile_ids
+    ]
+    for operation in (
+        "stream",
+        "strict_json",
+        "thinking_tool_initial",
+        "thinking_tool_continuation",
+    ):
+        results.extend(
+            nexus_result(
+                profile_id=profile_id,
+                operation=operation,
+                reasoning="high",
+            )
+            for profile_id in deepseek_ids
+        )
+    results.append({"operation": "embed"})
+
+    assert len(results) == 18
+    assert runner._provider_certification_results_are_complete(results)
+
+    results[-2]["reasoning"] = "none"
+    assert not runner._provider_certification_results_are_complete(results)
+    results[-2]["reasoning"] = "high"
+    results[0]["status"] = "incomplete"
+    assert not runner._provider_certification_results_are_complete(results)
+    results[0]["status"] = "succeeded"
+    results[0].pop("nexus_generation_id")
+    assert not runner._provider_certification_results_are_complete(results)
 
 
 def test_android_release_parsers_fail_closed_on_signer_and_manifest_contract() -> None:

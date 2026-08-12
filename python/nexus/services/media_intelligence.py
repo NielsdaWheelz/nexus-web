@@ -40,7 +40,6 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.config import get_settings
 from nexus.db.models import MediaSummary
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
@@ -62,7 +61,13 @@ from nexus.logging import get_logger
 from nexus.schemas.media import MediaUnitStatus
 from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
 from nexus.services import durable_step_journal as step_journal
-from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
+from nexus.services.llm_execution import (
+    DispatchAborted,
+    DispatchTransferred,
+    ExecutionRuntime,
+    GenerationRequest,
+    execute_generation,
+)
 from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.llm_profiles import operation_profile
 from nexus.services.rate_limit import get_rate_limiter
@@ -1045,42 +1050,42 @@ async def run_media_unit_build(
             if job is None:
                 return "ok"
 
-        if not _media_unit_attempt_active(
-            db,
-            media_id=media_id,
-            content_fingerprint=content_fingerprint,
-            ctx=ctx,
-        ):
-            db.rollback()
-            return "ok"
-        if not step_journal.checkpoint_step_state(
-            db,
-            ctx=ctx,
-            job=job,
-            step_path=_MEDIA_UNIT_STEP_PATH,
-            state=step_journal.StepReplayState(
-                generation_id=generation_id,
-                dispatch_phase=step_journal.Uncertain,
-                request_fingerprint=present(request_fingerprint),
-                terminal_result=absent(),
-            ),
-        ):
-            db.rollback()
-            return "ok"
-        db.commit()
-        may_dispatch = _media_unit_attempt_active(
-            db,
-            media_id=media_id,
-            content_fingerprint=content_fingerprint,
-            ctx=ctx,
-        )
-        db.commit()
-        if not may_dispatch:
-            return "ok"
+        def mark_dispatch_uncertain() -> None:
+            if not _media_unit_attempt_active(
+                db,
+                media_id=media_id,
+                content_fingerprint=content_fingerprint,
+                ctx=ctx,
+            ):
+                db.rollback()
+                if not running_job_claim_is_current(
+                    db,
+                    job_id=ctx.job_id,
+                    worker_id=ctx.worker_id,
+                    attempt_no=ctx.attempt_no,
+                ):
+                    raise DispatchTransferred
+                raise DispatchAborted("media unit became ineligible before dispatch")
+            if not step_journal.checkpoint_step_state(
+                db,
+                ctx=ctx,
+                job=job,
+                step_path=_MEDIA_UNIT_STEP_PATH,
+                state=step_journal.StepReplayState(
+                    generation_id=generation_id,
+                    dispatch_phase=step_journal.Uncertain,
+                    request_fingerprint=present(request_fingerprint),
+                    terminal_result=absent(),
+                ),
+            ):
+                db.rollback()
+                raise DispatchTransferred
+            db.commit()
 
         try:
             call = await execute_generation(
                 GenerationRequest(
+                    generation_id=generation_id,
                     owner=LlmCallOwner(kind="media_summary", id=summary_id, user_id=owner_user_id),
                     operation=MEDIA_UNIT_OPERATION,
                     profile=profile,
@@ -1089,8 +1094,10 @@ async def run_media_unit_build(
                 ),
                 session_factory=get_session_factory(),
                 runtime=runtime,
-                settings=get_settings(),
+                before_dispatch=mark_dispatch_uncertain,
             )
+        except (DispatchAborted, DispatchTransferred):
+            return "ok"
         except ApiError as exc:
             completed: _CompletedResult = _CompletedFailure(
                 error_code=exc.code.value,

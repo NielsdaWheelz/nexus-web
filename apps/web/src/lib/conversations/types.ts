@@ -280,11 +280,9 @@ export interface AssistantTrustTrail {
   } | null;
   prompt: {
     id: string;
-    cacheable_input_tokens_estimate: number;
     prompt_block_manifest: Record<string, unknown>;
     max_context_tokens: number;
     reserved_output_tokens: number;
-    reserved_reasoning_tokens: number;
     input_budget_tokens: number;
     estimated_input_tokens: number;
     included_message_ids: string[];
@@ -510,8 +508,8 @@ export interface ChatRun {
    * record has been fully hydrated. */
   profile_id: string | null;
   reasoning_option_id: string | null;
-  /** Resolved operator facts filled in from the plan at execution — null
-   * until then. Not selection controls. */
+  /** Resolved operator facts filled from runtime execution — null until then.
+   * Not selection controls. */
   provider: string | null;
   model_name: string | null;
   reasoning_effort: string | null;

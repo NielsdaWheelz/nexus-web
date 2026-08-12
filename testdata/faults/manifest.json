@@ -113,11 +113,20 @@
     {
       "id": "costly-effects-stream-interruption-misclassification",
       "patch": "testdata/faults/costly-effects-stream-interruption-misclassification.patch",
-      "sha256": "0490b6ab84b2492ff5eaa18d6ffd48ee7555acf9b2a9cee94db458363d647d40",
+      "sha256": "155cdd50150b12db727fbbfeae18c409a2352f3665b020de29115568d92578ea",
       "proofs": [
         "pytest:python/tests/service/test_costly_effects.py::test_generation_dispatches_once_and_settles_success_or_interruption_exactly_once"
       ],
       "expected_failure": "consumer cancellation was not durably terminalized"
+    },
+    {
+      "id": "llm-worker-ambient-proxy-bypass",
+      "patch": "testdata/faults/llm-worker-ambient-proxy-bypass.patch",
+      "sha256": "88e3b76835deffbce5f9d2f506a783e9b9a7df3e20034642a2d385756ffa4f08",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_transport_policy.py::test_llm_worker_ignores_environment_selected_http_proxies"
+      ],
+      "expected_failure": "assert 'proxy' == 'canonical'"
     },
     {
       "id": "reading-progress-cas-bypass",
@@ -171,7 +180,7 @@
       "proofs": [
         "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job"
       ],
-      "expected_failure": "the provider boundary did not observe the pre-dispatch Uncertain checkpoint"
+      "expected_failure": "the Uncertain checkpoint was not durably committed before dispatch"
     },
     {
       "id": "web-search-provider-identity-bypass",
@@ -219,15 +228,6 @@
       "expected_failure": "production prompt lost a reviewed tool-safety instruction"
     },
     {
-      "id": "provider-gateway-host-rewrite-bypass",
-      "patch": "testdata/faults/provider-gateway-host-rewrite-bypass.patch",
-      "sha256": "5717a99398eed954ef8a1314b19f58e17b7733005a67d57662d58ad9ea304ad8",
-      "proofs": [
-        "pytest:python/tests/kernel/test_provider_http.py::test_provider_gateway_rewrites_only_the_owned_openai_origin"
-      ],
-      "expected_failure": "provider gateway retained the upstream Host header"
-    },
-    {
       "id": "hosted-semantic-evidence-bypass",
       "patch": "testdata/faults/hosted-semantic-evidence-bypass.patch",
       "sha256": "1f2c986d88d1805b4a4439d98723f8521dcbd872f45a42d475fde03c2ac5e8b2",
@@ -244,6 +244,24 @@
         "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source"
       ],
       "expected_failure": "provider-runtime materialization followed developer HEAD instead of the lock pin"
+    },
+    {
+      "id": "deepseek-flash-reasoning-alias-bypass",
+      "patch": "testdata/faults/deepseek-flash-reasoning-alias-bypass.patch",
+      "sha256": "9ace18f4babb140eea22466858aa844ffde485d0af9fa12a7a70dd252b131eb3",
+      "proofs": [
+        "pytest:python/tests/kernel/test_llm_product_intent.py"
+      ],
+      "expected_failure": "DeepSeek Flash exposed a placebo reasoning alias"
+    },
+    {
+      "id": "deepseek-flash-profile-registry-drift",
+      "patch": "testdata/faults/deepseek-flash-reasoning-alias-bypass.patch",
+      "sha256": "9ace18f4babb140eea22466858aa844ffde485d0af9fa12a7a70dd252b131eb3",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_profiles.py::test_llm_profiles_returns_the_exact_ordered_nine_row_contract"
+      ],
+      "expected_failure": "do not exactly equal registry options"
     },
     {
       "id": "dossier-citation-disposition-bypass",

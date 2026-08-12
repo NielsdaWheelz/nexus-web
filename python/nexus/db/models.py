@@ -4533,43 +4533,31 @@ class LLMCall(Base):
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
     llm_operation: Mapped[str] = mapped_column(Text, nullable=False)
     streaming: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    reasoning_effort: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    native_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    registry_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cache_write_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cache_read_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
-    catalog_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
-    request_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
-    cache_strategy: Mapped[str | None] = mapped_column(Text, nullable=True)
-    cache_ttl: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    input_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    output_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    cache_write_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    cache_read_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    reasoning_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     total_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     cost_status: Mapped[str] = mapped_column(Text, nullable=False)
-    pricing_snapshot: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
+    cost_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cost_as_of: Mapped[date | None] = mapped_column(Date, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     terminal_attempt_status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'success'")
     )
     provider_attempts: Mapped[list[dict[str, object]] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    provider_usage: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -4587,16 +4575,6 @@ class LLMCall(Base):
         ),
         CheckConstraint("call_seq >= 1", name="ck_llm_calls_call_seq_positive"),
         CheckConstraint(
-            "input_tokens >= 0 AND output_tokens >= 0 AND total_tokens >= 0 "
-            "AND reasoning_tokens >= 0 AND cache_write_input_tokens >= 0 "
-            "AND cache_read_input_tokens >= 0 AND cached_input_tokens >= 0",
-            name="ck_llm_calls_token_counts_non_negative",
-        ),
-        CheckConstraint(
-            "provider_usage IS NULL OR jsonb_typeof(provider_usage) = 'object'",
-            name="ck_llm_calls_provider_usage_object",
-        ),
-        CheckConstraint(
             "attempt_count >= 1 AND retry_count >= 0 AND retry_count <= attempt_count - 1",
             name="ck_llm_calls_attempt_counts",
         ),
@@ -4609,36 +4587,8 @@ class LLMCall(Base):
             name="ck_llm_calls_provider_attempts_array",
         ),
         CheckConstraint(
-            "cost_status IN ('estimated', 'missing_pricing', 'missing_usage', 'not_token_priced')",
-            name="ck_llm_calls_cost_status",
-        ),
-        CheckConstraint(
-            "input_cost_usd_micros IS NULL OR input_cost_usd_micros >= 0",
-            name="ck_llm_calls_input_cost_non_negative",
-        ),
-        CheckConstraint(
-            "output_cost_usd_micros IS NULL OR output_cost_usd_micros >= 0",
-            name="ck_llm_calls_output_cost_non_negative",
-        ),
-        CheckConstraint(
-            "cache_write_cost_usd_micros IS NULL OR cache_write_cost_usd_micros >= 0",
-            name="ck_llm_calls_cache_write_cost_non_negative",
-        ),
-        CheckConstraint(
-            "cache_read_cost_usd_micros IS NULL OR cache_read_cost_usd_micros >= 0",
-            name="ck_llm_calls_cache_read_cost_non_negative",
-        ),
-        CheckConstraint(
-            "reasoning_cost_usd_micros IS NULL OR reasoning_cost_usd_micros >= 0",
-            name="ck_llm_calls_reasoning_cost_non_negative",
-        ),
-        CheckConstraint(
             "total_cost_usd_micros IS NULL OR total_cost_usd_micros >= 0",
             name="ck_llm_calls_total_cost_non_negative",
-        ),
-        CheckConstraint(
-            "pricing_snapshot IS NULL OR jsonb_typeof(pricing_snapshot) = 'object'",
-            name="ck_llm_calls_pricing_snapshot_object",
         ),
         UniqueConstraint("owner_kind", "owner_id", "call_seq", name="uq_llm_calls_owner_call_seq"),
         Index("ix_llm_calls_owner", "owner_kind", "owner_id"),
@@ -5200,7 +5150,8 @@ class ChatRun(Base):
     # frozen registry row in services/llm_profiles.py, not a mutable table).
     profile_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     reasoning_option_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Resolved operator/trust-trail facts, filled at execution from the plan.
+    # Resolved operator/trust-trail facts, filled from runtime target and
+    # terminal metadata.
     provider: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     reasoning_effort: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -5358,7 +5309,6 @@ class ChatPromptAssembly(Base):
         ForeignKey("messages.id"),
         nullable=False,
     )
-    cacheable_input_tokens_estimate: Mapped[int] = mapped_column(Integer, nullable=False)
     prompt_block_manifest: Mapped[dict[str, object]] = mapped_column(
         JSONB,
         nullable=False,
@@ -5366,7 +5316,6 @@ class ChatPromptAssembly(Base):
     )
     max_context_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     reserved_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
-    reserved_reasoning_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     input_budget_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     estimated_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     included_message_ids: Mapped[list[str]] = mapped_column(
@@ -5401,23 +5350,6 @@ class ChatPromptAssembly(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            """
-            max_context_tokens > 0
-            AND reserved_output_tokens >= 0
-            AND reserved_reasoning_tokens >= 0
-            AND input_budget_tokens >= 0
-            AND estimated_input_tokens >= 0
-            AND input_budget_tokens + reserved_output_tokens + reserved_reasoning_tokens
-                <= max_context_tokens
-            AND estimated_input_tokens <= input_budget_tokens
-            """,
-            name="ck_chat_prompt_assemblies_token_budget",
-        ),
-        CheckConstraint(
-            "cacheable_input_tokens_estimate >= 0",
-            name="ck_chat_prompt_assemblies_cacheable_tokens",
-        ),
         CheckConstraint(
             "jsonb_typeof(included_message_ids) = 'array'",
             name="ck_chat_prompt_assemblies_message_ids_array",

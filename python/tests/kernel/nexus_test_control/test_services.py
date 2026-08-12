@@ -25,6 +25,7 @@ from nexus_test_control.runtime import (
     initialize_runtime,
     migration_database_name,
     process_resource_identity,
+    provider_fixture_identity,
     read_ledger,
     record_created,
     record_planned,
@@ -44,6 +45,8 @@ from nexus_test_control.services import (
     clean_owned_runtime,
     clean_run,
     new_run_id,
+    prepare_openai_provider_fixture,
+    release_openai_provider_fixture,
     run_environment,
     start_python_process,
     start_web_process,
@@ -62,7 +65,7 @@ RUN_ID = "0123456789abcdef"
 
 
 def _ports() -> RuntimePorts:
-    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091)
+    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091, 19092)
 
 
 def _owned_run(tmp_path: Path, *, migration: bool = True) -> OwnedRun:
@@ -92,6 +95,81 @@ def _owned_run(tmp_path: Path, *, migration: bool = True) -> OwnedRun:
             "must-not-escape",
         ),
     )
+
+
+def _empty_owned_run(tmp_path: Path) -> OwnedRun:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    return OwnedRun(
+        run_id=RUN_ID,
+        database_url=_database_url(tmp_path, TEST_ENV, run_database_name(RUN_ID)),
+        migration_database_url=None,
+        bucket=run_bucket_name(RUN_ID),
+        supabase=SupabaseCredentials(
+            "http://127.0.0.1:25421", "public-anon-key", "must-not-escape"
+        ),
+    )
+
+
+def test_openai_provider_fixture_is_ledgered_before_state_and_cleaned_exactly(
+    tmp_path: Path,
+) -> None:
+    run = _empty_owned_run(tmp_path)
+
+    fixture = prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
+
+    entry = read_ledger(tmp_path, RUN_ID).entries[-1]
+    assert entry.resource == Resource(
+        ResourceKind.PROVIDER_FIXTURE, fixture.state.relative_to(tmp_path).as_posix()
+    )
+    assert fixture.certificate.is_file()
+    assert fixture.key.is_file()
+    assert fixture.audit.is_file()
+
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
+    assert not fixture.state.exists()
+
+
+def test_openai_provider_fixture_preserves_preexisting_unrecorded_state(tmp_path: Path) -> None:
+    run = _empty_owned_run(tmp_path)
+    state = tmp_path / ".nexus-test/runs" / RUN_ID / "openai-provider"
+    state.mkdir()
+    sentinel = state / "sentinel"
+    sentinel.write_text("preserve", encoding="utf-8")
+
+    with pytest.raises(RuntimeContractError, match="already exists"):
+        prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
+
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert read_ledger(tmp_path, RUN_ID).entries == ()
+
+
+def test_openai_provider_fixture_cleanup_recovers_partial_planned_state(tmp_path: Path) -> None:
+    _empty_owned_run(tmp_path)
+    resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(RUN_ID))
+    record_planned(tmp_path, TEST_ENV, RUN_ID, resource)
+    state = tmp_path / resource.identity
+    state.mkdir()
+    (state / "ca.pem").write_text("partial", encoding="utf-8")
+
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+    assert not state.exists()
+
+
+def test_idle_openai_provider_fixture_can_release_and_recreate_in_one_run(tmp_path: Path) -> None:
+    run = _empty_owned_run(tmp_path)
+    first = prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
+    first_certificate = first.certificate.read_bytes()
+
+    release_openai_provider_fixture(tmp_path, TEST_ENV, RUN_ID)
+    second = prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
+
+    assert second.certificate.read_bytes() != first_certificate
+    assert second.state.is_dir()
+    assert [entry.resource.kind for entry in read_ledger(tmp_path, RUN_ID).entries] == [
+        ResourceKind.PROVIDER_FIXTURE
+    ]
 
 
 def test_run_ids_are_exact_opaque_test_ownership_ids() -> None:
@@ -324,7 +402,6 @@ def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs()
         {"AWS_ENDPOINT_URL_S3": "https://production.example"},
         {"PGHOST": "production.example"},
         {"SUPABASE_ACCESS_TOKEN": "production-token"},
-        {"OPENAI_API_BASE_URL": "https://production.example/v1"},
         {"OUTBOUND_HTTP_PROXY_URL": "https://production.example"},
         {"PODCAST_INDEX_BASE_URL": "https://production.example"},
         {"NEXUS_TEST_STATIC_DNS": '{"production.example":"93.184.216.34"}'},
@@ -653,7 +730,6 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
     assert environment["R2_BUCKET"] == run.bucket
     assert environment["NEXT_PUBLIC_SUPABASE_URL"] == "http://127.0.0.1:25421"
     assert environment["NEXT_PUBLIC_SUPABASE_ANON_KEY"] == "public-anon-key"
-    assert environment["OPENAI_API_BASE_URL"] == "http://127.0.0.1:19091/v1"
     assert environment["OPENAI_API_KEY"] == "nexus-test-fixture-openai-key"
     assert environment["NEXUS_RUNTIME_IDENTITY_FILE"] == str(
         tmp_path / ".nexus-test/runtime-identity.json"
@@ -849,6 +925,37 @@ def test_clean_removes_only_the_exact_recorded_workspace_runtime(tmp_path: Path)
     ]
     assert not (tmp_path / ".nexus-test").exists()
     assert foreign.read_text(encoding="utf-8") == "preserve"
+
+
+def test_clean_upgrades_then_removes_the_exact_previous_runtime(
+    tmp_path: Path,
+) -> None:
+    runtime = initialize_runtime(tmp_path, TEST_ENV, _ports())
+    runtime_path = tmp_path / ".nexus-test/runtime.json"
+    previous = json.loads(runtime_path.read_text(encoding="utf-8"))
+    previous["version"] = 2
+    del previous["ports"]["provider_openai"]
+    runtime_path.write_text(json.dumps(previous), encoding="utf-8")
+    commands: list[tuple[str, ...]] = []
+
+    def run_command(command: tuple[str, ...], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+        assert cwd == tmp_path
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    assert (
+        clean_owned_runtime(
+            tmp_path,
+            TEST_ENV,
+            command_runner=run_command,
+            port_available=lambda port: port == 19092,
+        )
+        == ()
+    )
+
+    assert [command[0] for command in commands] == ["docker"]
+    assert not (tmp_path / ".nexus-test").exists()
+    assert runtime.compose_project in commands[0]
 
 
 def test_clean_attempts_compose_and_retains_ownership_when_supabase_stop_fails(

@@ -49,6 +49,7 @@ from nexus.schemas.llm import (
     StreamInterruptedChatFailure,
     TimeoutChatFailure,
 )
+from nexus.services.agent_tools.writes import WRITE_TOOL_NAMES
 from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.llm_profiles import reasoning_level as lookup_reasoning_level
 
@@ -337,15 +338,8 @@ def compute_has_write_tool_attempt(db: Session, run: ChatRun) -> bool:
     counts only committed, non-reverted rows for the per-run write cap — §10
     disqualifies rerun on any attempt at all, reverted or not.
 
-    Imports `WRITE_TOOL_NAMES` lazily: `agent_tools.writes` sits behind a
-    long, currently-broken (mid-cutover) import chain unrelated to failure
-    policy (through `schemas.conversation` -> the pre-cutover `llm_catalog`
-    module other Phase D slices are deleting), and this module must stay
-    importable on its own right now. Reuses the single write-tool-name source
-    rather than duplicating it once that chain is clean.
+    Reuses the write-tool owner's closed name set rather than duplicating it.
     """
-    from nexus.services.agent_tools.writes import WRITE_TOOL_NAMES
-
     return bool(
         db.execute(
             text("""
@@ -379,8 +373,6 @@ def write_tool_attempt_run_ids(db: Session, runs: Sequence[ChatRun]) -> set[UUID
     """
     if not runs:
         return set()
-    from nexus.services.agent_tools.writes import WRITE_TOOL_NAMES
-
     run_ids = [run.id for run in runs]
     assistant_message_ids = [run.assistant_message_id for run in runs]
     message_ids_with_attempts = set(

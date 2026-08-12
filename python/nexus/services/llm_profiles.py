@@ -1,9 +1,8 @@
 """Nexus product LLM profile registry.
 
-`provider_runtime.CATALOG` owns exact model contracts (context limits,
-reasoning levels, cache mechanics, certification). This module owns only
+`provider_runtime.registry` owns exact model contracts. This module owns only
 product labels, display order, operation eligibility, and the mapping from a
-profile to its certified runtime target. See
+profile to its runtime target. See
 `docs/cutovers/llm-provider-runtime-hard-cutover.md` §4 for the authoritative
 profile table and background policy this module reproduces.
 """
@@ -13,7 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from provider_runtime import CATALOG, DirectCertification, ProviderTarget, ReasoningLevel
+from provider_runtime import Present, ProviderTarget, ReasoningLevel
+from provider_runtime.registry import resolve_target
 
 type BackgroundLlmOperation = Literal[
     "oracle",
@@ -102,6 +102,12 @@ _FABLE_PRIVACY = ExceptionalRetentionPrivacy(
         "third party for model training."
     )
 )
+_DEEPSEEK_PRIVACY = StandardPrivacy(
+    notice=(
+        "Requests are sent directly to DeepSeek under the operator's API account and "
+        "DeepSeek's current terms."
+    )
+)
 
 PROFILES: tuple[LlmProfile, ...] = (
     LlmProfile(
@@ -181,6 +187,28 @@ PROFILES: tuple[LlmProfile, ...] = (
         default_reasoning_option_id="high",
         privacy=_STANDARD_PRIVACY,
     ),
+    LlmProfile(
+        id="deepseek-flash",
+        label="DeepSeek · V4 Flash",
+        description="Fast, cost-efficient reasoning for everyday questions",
+        provider_label="DeepSeek",
+        model_label="DeepSeek V4 Flash",
+        target=ProviderTarget(provider="deepseek", model="deepseek-v4-flash"),
+        reasoning_options=_reasoning_options("none", "high", "max"),
+        default_reasoning_option_id="high",
+        privacy=_DEEPSEEK_PRIVACY,
+    ),
+    LlmProfile(
+        id="deepseek-pro",
+        label="DeepSeek · V4 Pro",
+        description="DeepSeek's strongest model for harder reasoning.",
+        provider_label="DeepSeek",
+        model_label="DeepSeek V4 Pro",
+        target=ProviderTarget(provider="deepseek", model="deepseek-v4-pro"),
+        reasoning_options=_reasoning_options("none", "high", "max"),
+        default_reasoning_option_id="high",
+        privacy=_DEEPSEEK_PRIVACY,
+    ),
 )
 
 DEFAULT_PROFILE_ID = "balanced"
@@ -236,7 +264,7 @@ def operation_profile(operation: BackgroundLlmOperation) -> LlmProfile:
 
 
 def validate_profiles() -> None:
-    """Fail fast on any drift between the product portfolio and the runtime catalog.
+    """Fail fast on any drift between the product portfolio and runtime registry.
 
     Called at app and worker startup, and by the unit test. Raises
     `AssertionError` with a descriptive message on any violation.
@@ -252,20 +280,31 @@ def validate_profiles() -> None:
             )
 
     for entry in PROFILES:
-        contract = CATALOG.chat_contract(entry.target)
-        if not isinstance(contract.certification, DirectCertification):
+        row = resolve_target(entry.target)
+        if (
+            "text" not in row.modalities
+            or not row.tools
+            or not row.streaming
+            or row.structured not in {"native", "json_mode"}
+            or not row.continuation_codec
+        ):
             raise AssertionError(
                 f"profile {entry.id!r} targets {entry.target.provider}/{entry.target.model}, "
-                f"which is not DirectCertification-certified ({contract.certification!r})"
+                "which does not support Nexus chat capabilities"
             )
 
         option_ids = {option.id for option in entry.reasoning_options}
-        unsupported = option_ids - set(contract.reasoning.levels)
-        if unsupported:
+        if not isinstance(row.reasoning, Present):
             raise AssertionError(
-                f"profile {entry.id!r} offers reasoning options {sorted(unsupported)} "
-                f"not supported by {entry.target.provider}/{entry.target.model} "
-                f"(supported: {sorted(contract.reasoning.levels)})"
+                f"profile {entry.id!r} targets {entry.target.provider}/{entry.target.model}, "
+                "which has no selectable reasoning levels"
+            )
+        registry_option_ids = set(row.reasoning.value)
+        if option_ids != registry_option_ids:
+            raise AssertionError(
+                f"profile {entry.id!r} reasoning options {sorted(option_ids)} do not exactly "
+                f"equal registry options {sorted(registry_option_ids)} for "
+                f"{entry.target.provider}/{entry.target.model}"
             )
 
         if entry.default_reasoning_option_id not in option_ids:

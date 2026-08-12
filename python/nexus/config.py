@@ -115,10 +115,9 @@ class Settings(BaseSettings):
     )
     database_statement_timeout_ms: int = Field(default=30000, alias="DATABASE_STATEMENT_TIMEOUT_MS")
     database_lock_timeout_ms: int = Field(default=10000, alias="DATABASE_LOCK_TIMEOUT_MS")
-    # 60s, not aggressive: create_chat_run holds a transaction open across a
-    # BYOK key probe (an external call), so this must clear the slowest legit
-    # in-transaction wait while still reaping a leaked transaction (the recent
-    # pool-exhaustion deadlock idled for 180s+).
+    # 60s leaves legitimate long transactions room to finish while still
+    # reaping leaked transactions (the observed pool-exhaustion deadlock idled
+    # for 180s+).
     database_idle_in_tx_timeout_ms: int = Field(
         default=60000, alias="DATABASE_IDLE_IN_TX_TIMEOUT_MS"
     )
@@ -382,13 +381,10 @@ class Settings(BaseSettings):
     # Platform API keys for LLM providers.
     # If set, models from that provider are available to all users
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
-    openai_api_base_url: str = Field(
-        default="https://api.openai.com/v1",
-        alias="OPENAI_API_BASE_URL",
-    )
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     moonshot_api_key: str | None = Field(default=None, alias="MOONSHOT_API_KEY")
+    deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
 
     # Explicit RFC 3339 deployment assertion: Fable (the platform LLM runtime)
     # requires 30-day retention and is not ZDR-eligible, so a human operator
@@ -441,14 +437,6 @@ class Settings(BaseSettings):
 
     # Metadata enrichment settings
     metadata_enrichment_enabled: bool = Field(default=True, alias="METADATA_ENRICHMENT_ENABLED")
-    metadata_enrichment_provider: Literal["openai", "anthropic", "gemini"] = Field(
-        default="openai", alias="METADATA_ENRICHMENT_PROVIDER"
-    )
-    # The default is a catalog "light" tier model; select_enrichment_model asserts
-    # catalog membership for the configured provider at task use.
-    metadata_enrichment_model: str = Field(
-        default="gpt-5.4-mini", alias="METADATA_ENRICHMENT_MODEL"
-    )
     metadata_enrichment_max_content_chars: int = Field(
         default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"
     )
@@ -763,6 +751,8 @@ class Settings(BaseSettings):
                 missing_llm_keys.append("GEMINI_API_KEY")
             if not self.moonshot_api_key:
                 missing_llm_keys.append("MOONSHOT_API_KEY")
+            if not self.deepseek_api_key:
+                missing_llm_keys.append("DEEPSEEK_API_KEY")
             if missing_llm_keys:
                 raise ValueError(
                     "Platform LLM provider keys are required in staging/prod: "

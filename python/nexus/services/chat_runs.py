@@ -18,35 +18,31 @@ from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from provider_runtime import (
-    CATALOG,
     Absent,
     Cancelled,
-    CancelSignal,
     CanonicalTool,
-    ChatModelContract,
-    ContinuationArtifact,
     ContinuationDelta,
     Failed,
     Incomplete,
-    PossiblyBillable,
-    Presence,
     Present,
-    PromptMessage,
     ReasoningLevel,
     RuntimeStreamEvent,
     StreamStart,
     Succeeded,
     TerminalEvent,
     TextDelta,
-    ToolCall,
     ToolCallDelta,
     ToolCallDone,
     ToolCallStart,
-    TransientExhausted,
     UsageEvent,
-    failure_code,
-    failure_origin,
-    parse_canonical_schema,
+)
+from provider_runtime.registry import ModelRow, resolve_target
+from provider_runtime.types import (
+    CancelSignal,
+    ContinuationArtifact,
+    Presence,
+    PromptMessage,
+    ToolCall,
 )
 from pydantic import JsonValue
 from sqlalchemy import func, select, text
@@ -156,21 +152,19 @@ from nexus.services.chat_run_steps import (
     CancelledGeneration,
     ChatStepRuntime,
     ExpectedFailure,
-    GenerateIntentState,
+    LostChatJobLease,
     PreparedChatRun,
     PublicationRequest,
     PublicationStepResult,
     ToolModelOutput,
     ToolStepRequest,
     ToolStepResult,
-    UncertainChatStep,
     assistant_message_from_turn,
     assistant_turn_result,
     decode_generation,
     decode_prepared,
     decode_tool,
     step_fingerprint,
-    tool_call_from_state,
     tool_replay_policy,
     tool_result_message,
 )
@@ -195,11 +189,14 @@ from nexus.services.context_assembler import (
 from nexus.services.conversations import DEFAULT_CONVERSATION_TITLE
 from nexus.services.durable_step_journal import Completed, Prepared, ReplayPolicy, StepReplayState
 from nexus.services.llm_execution import (
+    DispatchTransferred,
     ExecutionRuntime,
     GenerationRequest,
     execute_generation_stream,
 )
+from nexus.services.llm_intent_state import GenerateIntentState, tool_call_from_state
 from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_outcomes import outcome_failure_facts
 from nexus.services.llm_profiles import LlmProfile
 from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.llm_profiles import reasoning_level as lookup_reasoning_level
@@ -336,9 +333,7 @@ def _log_chat_run_finished(
 
 
 def _chat_tool_specs() -> tuple[CanonicalTool, ...]:
-    """The read-only tools plus the assistant write tools when enabled (AC-6),
-    compiled to the runtime's canonical JSON-Schema subset exactly once here —
-    the sole LLM-boundary schema compile site for chat."""
+    """The read-only tools plus the assistant write tools when enabled (AC-6)."""
     definitions: list[tuple[str, str, Mapping[str, Any]]] = [
         (
             APP_SEARCH_TOOL_NAME,
@@ -369,7 +364,7 @@ def _chat_tool_specs() -> tuple[CanonicalTool, ...]:
         CanonicalTool(
             name=name,
             description=description,
-            parameters=parse_canonical_schema(parameters),
+            parameters=parameters,
         )
         for name, description, parameters in definitions
     )
@@ -417,10 +412,9 @@ def _app_search_string_array_from_tool_args(
     return (values or None), None
 
 
-def _max_output_tokens_for_reasoning(contract: ChatModelContract, reasoning: ReasoningLevel) -> int:
-    if reasoning != "none" and contract.pricing.reasoning_reserve_tokens > 0:
-        return min(REASONING_OUTPUT_TOKENS, contract.output_limit)
-    return min(DEFAULT_OUTPUT_TOKENS, contract.output_limit)
+def _max_output_tokens_for_reasoning(row: ModelRow, reasoning: ReasoningLevel) -> int:
+    cap = DEFAULT_OUTPUT_TOKENS if reasoning == "none" else REASONING_OUTPUT_TOKENS
+    return min(cap, row.max_output_tokens)
 
 
 def create_chat_run(
@@ -790,7 +784,6 @@ async def execute_chat_run(
             run_id=run_id,
             steps=steps,
             session_factory=session_factory,
-            settings=settings,
         )
     except Exception:
         db.rollback()
@@ -806,7 +799,6 @@ async def _execute_chat_run(
     run_id: UUID,
     steps: ChatStepRuntime,
     session_factory: sessionmaker[Session],
-    settings: Settings,
 ) -> ChatExecutionOutcome:
     run = db.get(ChatRun, run_id)
     if run is None:
@@ -827,8 +819,8 @@ async def _execute_chat_run(
     if reasoning is None:
         raise AssertionError("chat run reasoning_option_id is missing or unsupported")
 
-    contract = CATALOG.chat_contract(profile.target)
-    max_output_tokens = _max_output_tokens_for_reasoning(contract, reasoning)
+    row = resolve_target(profile.target)
+    max_output_tokens = _max_output_tokens_for_reasoning(row, reasoning)
     mark_running(
         db,
         run.id,
@@ -856,7 +848,6 @@ async def _execute_chat_run(
                 steps=steps,
                 profile=profile,
                 reasoning=reasoning,
-                contract=contract,
                 max_output_tokens=max_output_tokens,
                 tools=tools,
             )
@@ -932,6 +923,7 @@ async def _execute_chat_run(
                     steps=steps,
                     path=generation_path,
                     request=GenerationRequest(
+                        generation_id=steps.generation_id(generation_path),
                         owner=call_owner,
                         operation="chat",
                         profile=profile,
@@ -939,7 +931,6 @@ async def _execute_chat_run(
                         intent=iter_intent,
                     ),
                     session_factory=session_factory,
-                    settings=settings,
                     emitter=emitter,
                     content_prefix=full_content,
                     tool_call_index_next=tool_call_index_next,
@@ -1045,7 +1036,6 @@ def _prepare_chat_run(
     steps: ChatStepRuntime,
     profile: LlmProfile,
     reasoning: ReasoningLevel,
-    contract: ChatModelContract,
     max_output_tokens: int,
     tools: tuple[CanonicalTool, ...],
 ) -> PreparedChatRun:
@@ -1065,7 +1055,6 @@ def _prepare_chat_run(
         run=run,
         profile=profile,
         reasoning=reasoning,
-        contract=contract,
         max_output_tokens=max_output_tokens,
         tools=tools,
     )
@@ -1090,7 +1079,6 @@ async def _dispatch_generation_step(
     path: str,
     request: GenerationRequest,
     session_factory: sessionmaker[Session],
-    settings: Settings,
     emitter: ChatRunEventEmitter,
     content_prefix: str,
     tool_call_index_next: int,
@@ -1126,16 +1114,17 @@ async def _dispatch_generation_step(
     )
 
     def mark_dispatch_uncertain() -> None:
-        steps.mark_uncertain(path)
+        try:
+            steps.mark_uncertain(path)
+        except LostChatJobLease as exc:
+            raise DispatchTransferred from exc
 
     stream = execute_generation_stream(
         request,
         session_factory=session_factory,
         runtime=steps.llm_runtime,
-        settings=settings,
         cancel=cast(CancelSignal, cancel_signal),
         before_dispatch=mark_dispatch_uncertain,
-        single_dispatch=True,
     )
     terminal_outcome: object | None = None
     try:
@@ -1289,14 +1278,13 @@ async def _dispatch_generation_step(
             last_provider_event_seq=_owned_optional(last_provider_event_seq),
         )
     if isinstance(terminal_outcome, Failed):
-        if isinstance(terminal_outcome.meta.billability, PossiblyBillable) or isinstance(
-            terminal_outcome.failure, TransientExhausted
-        ):
-            raise UncertainChatStep(f"chat generation {path!r} has an ambiguous provider outcome")
+        facts = outcome_failure_facts(terminal_outcome)
+        assert facts.error_code is not None
+        assert facts.error_origin is not None
         return ExpectedFailure(
             assistant_content=full_content,
-            error_code=failure_code(terminal_outcome.failure),
-            error_origin=failure_origin(terminal_outcome.failure),
+            error_code=facts.error_code,
+            error_origin=facts.error_origin,
             usage=_owned_optional(usage),
             support_id=_owned_optional(support_id),
             last_provider_event_seq=_owned_optional(last_provider_event_seq),

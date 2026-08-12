@@ -105,9 +105,8 @@ scaffolding.
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
-   External: OpenAI / Anthropic / Gemini / Moonshot (LLM; OpenAI also
-             embeddings + transcription); OpenRouter is a hidden, uncertified
-             operator route only — no product profile targets it,
+   External: OpenAI / Anthropic / Gemini / Moonshot / DeepSeek (direct LLM;
+             OpenAI also embeddings); Deepgram (transcription),
              Brave (Browse + agent research), Podcast Index, Deepgram, YouTube Data API
              plus YouTube transcript/caption egress,
              Stripe (billing), Cloudflare R2.
@@ -642,14 +641,15 @@ rather than proposed and reconciled after the fact.
 `dossier_build`, `media_unit_build`, `enrich_metadata`) run their bodies inside
 one shared worker envelope,
 `tasks/llm_task.py:run_llm_task` — the sole owner of the event loop, `httpx`
-client, production `ExecutionRuntime` construction, and worker-exception
-boundary. Deterministic tests exercise a loopback provider protocol server
-through the same configured HTTP boundary; product code has no fixture mode.
-Every provider call inside a job goes through
+client, `ProviderRuntime` composition, and worker-exception boundary. Every
+provider call inside a job goes through
 `services/llm_execution.py:execute_generation`/`execute_generation_stream` —
-the sole caller of the ledger — leaving one `llm_calls` row on every terminal
-path (success, defect, or entitlement/budget denial), with the failure
-attributed to the layer that detected it. See [modules/llms.md](modules/llms.md).
+the durable execution boundary — atomically admitting one replay-stable
+`llm_calls` row plus reservation before dispatch, then atomically terminalizing
+and settling admission exactly once. `ProviderRuntime` owns
+provider retries; `BilledOnce` work selects its single-attempt mode. The existing
+Postgres queue, leases, and durable step journal remain unchanged. See
+[modules/llms.md](modules/llms.md).
 The worker installs the process-global rate limiter at startup so the first job
 of any kind has a working limiter. SERIALIZABLE retries everywhere (including
 the scheduler loop) go through the one helper `db/retries.py:retry_serializable`.
@@ -692,17 +692,13 @@ Other identity surfaces:
 
 ### 7.5 Platform LLM credentials, billing & entitlements
 
-- **Platform credentials** (`services/llm_credentials.py`): the sole platform-key
-  reader for every generation, embedding, and transcription call — no BYOK, no
-  per-user key, no DB lookup, no encryption. It reads `OPENAI_API_KEY` /
-  `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `MOONSHOT_API_KEY` straight off
-  `Settings`; a missing key at call time is a `RuntimeDefect` (broken deployment
-  invariant), never a product-facing failure, because presence is enforced at
-  startup by `config.validate_required_settings` for staging/prod (which also
-  requires an RFC 3339 `NEXUS_FABLE_RETENTION_ACCEPTED_AT` deployment
-  assertion — Fable requires 30-day retention and is not ZDR-eligible).
-  `OPENROUTER_API_KEY` is not part of the deployed app's required settings; it
-  belongs only to the separate paid provider-runtime certification command.
+- **Platform credentials** (`services/llm_credentials.py`): the sole reader for
+  direct-generation credentials — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+  `GEMINI_API_KEY`, `MOONSHOT_API_KEY`, and `DEEPSEEK_API_KEY` — plus the narrow
+  OpenAI embedding credential. There is no BYOK, per-user key, DB lookup, or
+  empty-key fallback. Staging/production startup requires all five direct keys;
+  a missing or rejected key never changes the profile list or route. Direct
+  provider execution is distinct from deferred native subscription execution.
   See [modules/llms.md](modules/llms.md).
 - **Billing** (`services/billing.py`): Stripe is the system of record;
   `billing_accounts` is a per-user snapshot synced by idempotent webhooks (deduped
@@ -1076,13 +1072,13 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
 - **Connection is not execution**: SSE only tails committed events. Unsequenced
   execution advisories (`Queued | Running | Recovering | Suspended`) report queue
   liveness without advancing the event cursor or starting work.
-- **Profiles, not a catalog** (`services/llm_profiles.py`): chat sends
-  `profile_id` + `reasoning_option_id` from seven code-defined, startup-validated
-  product profiles (`fast`/`balanced`/`deep`/`claude`/`fable`/`gemini`/`kimi`),
-  each mapped to one certified `provider_runtime.CATALOG` target. There is no
-  provider/model/key picker and no availability intersection to compute — every
-  listed profile is always usable on the platform key. See
-  [modules/llms.md](modules/llms.md).
+- **Profiles, not provider facts** (`services/llm_profiles.py`): chat sends
+  `profile_id` + `reasoning_option_id` from this fixed startup-validated order:
+  `fast`/`balanced`/`deep`/`claude`/`fable`/`gemini`/`kimi`/`deepseek-flash`/
+  `deepseek-pro`. Product profiles own labels and policy;
+  `provider_runtime.registry` owns limits, capabilities, reasoning fragments,
+  continuation codec, and revision. There is no provider/model/key picker,
+  availability intersection, or fallback. See [modules/llms.md](modules/llms.md).
 
 Frontend: `components/chat/*` (`useChatRunTail` is the SSE engine,
 `useChatMessageUpdates` folds events with RAF-batched deltas, `ForkTreeView`/
@@ -1916,7 +1912,7 @@ The things most likely to bite you, distilled:
 | Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
 | Resource grants / public sharing                                  | [`modules/resource-sharing.md`](modules/resource-sharing.md), `python/nexus/services/{resource_grants,resource_sharing,public_resource_sharing}.py`, `apps/web/src/{components,lib}/sharing/`, `apps/web/src/app/s/` |
 | Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
-| Auth / billing / keys / rate limit                                | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/`                                                                                                   |
+| Auth / billing / rate limit                                       | `python/nexus/services/{billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/`                                                                                                             |
 | Frontend BFF / auth / SSE                                         | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |
 | Workspace / panes / mobile viewport                               | `apps/web/src/lib/{workspace,panes,mobileViewport}/`, `apps/web/src/components/workspace/`                                                                                                             |
 | Desktop Nexus / mobile Nexus task                                 | `apps/web/src/components/{nexus,switchboard}/`, `apps/web/src/lib/{nexus,switchboard}/`                                                                                                                |

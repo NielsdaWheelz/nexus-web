@@ -15,16 +15,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from provider_runtime import (
-    Dynamic,
     GenerateIntent,
-    GlobalScope,
     PromptBlock,
-    Stable,
-    StrictJsonOutput,
     SystemMessage,
     UserMessage,
-    parse_canonical_schema,
 )
+from provider_runtime.types import StrictJsonOutput
 from pydantic import BaseModel, ConfigDict, ValidationError, ValidationInfo, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -80,10 +76,8 @@ class MetadataMergeResult:
     author_observation: ContributorObservationBatch = NOT_OBSERVED
 
 
-# Value constraints kept out of the emitted JSON schema (the canonical subset
-# carries no length/pattern keywords) and enforced by the field validators
-# below instead — behavior-identical to the former Field(...) / hand-written
-# schema constraints.
+# Domain value constraints stay in validators so the output contract remains
+# explicit and independently checked after provider decoding.
 _METADATA_STRING_MAX_LENGTHS = {
     "title": 255,
     "publisher": 255,
@@ -95,11 +89,8 @@ _METADATA_MAX_AUTHORS = 20
 _METADATA_MAX_AUTHOR_NAME_LENGTH = 255
 
 
-# Every field is required-nullable so model_json_schema() stays inside the
-# canonical structural subset (anyOf: [X, null] unions, required == all
-# properties, no value-constraint keywords). Length caps and the date/language
-# patterns live in the validators below, not the schema, because that subset
-# forbids range/length/pattern keywords outright.
+# Every field is required-nullable. Length caps and date/language patterns are
+# enforced by the validators below.
 class MetadataEnrichmentOutput(BaseModel):
     """Enriched bibliographic metadata for one media item. Use null for unknown fields."""
 
@@ -165,23 +156,16 @@ def build_metadata_enrichment_intent(
 ) -> GenerateIntent:
     """Return the ``GenerateIntent`` for one metadata-enrichment call.
 
-    The rules block is invariant across every call (``Stable(GlobalScope())``);
-    the per-media known-metadata/content-sample text is the ``Dynamic`` user
-    block. The output schema is derived from :class:`MetadataEnrichmentOutput`
-    so the wire schema and the decode contract have one owner; it conforms to
-    the canonical structural subset (rich value constraints run in the model's
-    validators post-decode).
+    The output schema is derived from :class:`MetadataEnrichmentOutput` so the
+    provider request and decode contract have one owner. Prompt blocks persist
+    as text only; validators retain domain value constraints after decode.
     """
     profile = operation_profile(METADATA_ENRICHMENT_OPERATION)
     return GenerateIntent(
         target=profile.target,
         messages=(
-            SystemMessage(
-                blocks=(
-                    PromptBlock(text=_ENRICHMENT_SYSTEM_PROMPT, stability=Stable(GlobalScope())),
-                )
-            ),
-            UserMessage(blocks=(PromptBlock(text=user_content, stability=Dynamic()),)),
+            SystemMessage(blocks=(PromptBlock(text=_ENRICHMENT_SYSTEM_PROMPT),)),
+            UserMessage(blocks=(PromptBlock(text=user_content),)),
         ),
         max_output_tokens=max_output_tokens,
         reasoning=profile.default_reasoning_option_id,
@@ -189,7 +173,7 @@ def build_metadata_enrichment_intent(
         tool_choice="none",
         output=StrictJsonOutput(
             name="media_metadata_enrichment",
-            schema=parse_canonical_schema(MetadataEnrichmentOutput.model_json_schema()),
+            schema=MetadataEnrichmentOutput.model_json_schema(),
         ),
     )
 
@@ -365,11 +349,7 @@ def build_enrichment_user_content(
     media: Media,
     content_sample: str,
 ) -> str:
-    """Build the per-media dynamic user-turn text for structured metadata extraction.
-
-    The invariant rules block lives in ``_ENRICHMENT_SYSTEM_PROMPT`` (the
-    ``Stable`` system block); this is every call-varying fact.
-    """
+    """Build the per-media user-turn text for structured metadata extraction."""
     kind_rule = {
         "epub": (
             "Saved item is an EPUB/book work. Prefer the work title and creators over "

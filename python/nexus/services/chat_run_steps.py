@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import replace
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from provider_runtime import (
@@ -14,28 +14,9 @@ from provider_runtime import (
 )
 from provider_runtime import (
     AssistantMessage,
-    CanonicalTool,
-    ContinuationArtifact,
-    ConversationScope,
-    Dynamic,
-    GenerateIntent,
-    GlobalScope,
-    OwnerScope,
-    PromptBlock,
-    ProviderTarget,
-    Stable,
-    StrictJsonOutput,
-    SystemMessage,
-    TextOutput,
-    ToolCall,
     ToolResultMessage,
-    UserMessage,
-    parse_canonical_schema,
-    to_json_schema,
 )
-from provider_runtime import (
-    Present as RuntimePresent,
-)
+from provider_runtime.types import ToolCall
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, RootModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -52,7 +33,7 @@ from nexus.jobs.queue import (
     update_running_job_payload,
 )
 from nexus.schemas.conversation import ChatRunToolResultEventPayload
-from nexus.schemas.presence import Absent, Presence, Present, absent, present
+from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.services.durable_step_journal import (
     AttachReconciledResult,
     Completed,
@@ -69,195 +50,18 @@ from nexus.services.durable_step_journal import (
     stable_generation_id,
 )
 from nexus.services.llm_execution import ExecutionRuntime
+from nexus.services.llm_intent_state import (
+    ContinuationState,
+    GenerateIntentState,
+    ToolCallState,
+    assistant_message_from_state,
+    continuation_state,
+    tool_call_state,
+)
 
 
 class _StateModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class ProviderTargetState(_StateModel):
-    provider: Literal["openai", "anthropic", "gemini", "moonshot", "openrouter"]
-    model: str = Field(min_length=1)
-
-
-class GlobalScopeState(_StateModel):
-    kind: Literal["Global"] = "Global"
-
-
-class OwnerScopeState(_StateModel):
-    kind: Literal["Owner"] = "Owner"
-    owner_id: UUID
-
-
-class ConversationScopeState(_StateModel):
-    kind: Literal["Conversation"] = "Conversation"
-    conversation_id: UUID
-
-
-type CacheScopeState = Annotated[
-    GlobalScopeState | OwnerScopeState | ConversationScopeState,
-    Field(discriminator="kind"),
-]
-
-
-class DynamicState(_StateModel):
-    kind: Literal["Dynamic"] = "Dynamic"
-
-
-class StableState(_StateModel):
-    kind: Literal["Stable"] = "Stable"
-    scope: CacheScopeState
-
-
-type BlockStabilityState = Annotated[
-    DynamicState | StableState,
-    Field(discriminator="kind"),
-]
-
-
-class PromptBlockState(_StateModel):
-    text: str
-    stability: BlockStabilityState
-
-
-class ContinuationState(_StateModel):
-    target: ProviderTargetState
-    codec_id: str = Field(min_length=1)
-    opaque_payload: dict[str, JsonValue]
-
-
-class ToolCallState(_StateModel):
-    id: str = Field(min_length=1)
-    name: str = Field(min_length=1)
-    arguments: dict[str, JsonValue]
-
-
-class SystemMessageState(_StateModel):
-    kind: Literal["System"] = "System"
-    blocks: tuple[PromptBlockState, ...]
-
-
-class UserMessageState(_StateModel):
-    kind: Literal["User"] = "User"
-    blocks: tuple[PromptBlockState, ...]
-
-
-class AssistantMessageState(_StateModel):
-    kind: Literal["Assistant"] = "Assistant"
-    text: str
-    tool_calls: tuple[ToolCallState, ...]
-    continuation: Presence[ContinuationState]
-
-
-class ToolResultMessageState(_StateModel):
-    kind: Literal["ToolResult"] = "ToolResult"
-    call_id: str = Field(min_length=1)
-    output: str
-    is_error: bool
-
-
-type PromptMessageState = Annotated[
-    SystemMessageState | UserMessageState | AssistantMessageState | ToolResultMessageState,
-    Field(discriminator="kind"),
-]
-
-
-class CanonicalToolState(_StateModel):
-    name: str = Field(min_length=1)
-    description: str
-    parameters: dict[str, JsonValue]
-
-
-class TextOutputState(_StateModel):
-    kind: Literal["Text"] = "Text"
-
-
-class StrictJsonOutputState(_StateModel):
-    kind: Literal["StrictJson"] = "StrictJson"
-    name: str = Field(min_length=1)
-    json_schema: dict[str, JsonValue]
-
-
-type OutputState = Annotated[
-    TextOutputState | StrictJsonOutputState,
-    Field(discriminator="kind"),
-]
-
-
-class GenerateIntentState(_StateModel):
-    target: ProviderTargetState
-    messages: tuple[PromptMessageState, ...]
-    max_output_tokens: int = Field(gt=0)
-    reasoning: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
-    tools: tuple[CanonicalToolState, ...]
-    tool_choice: Literal["auto", "none"]
-    output: OutputState
-
-    @classmethod
-    def from_intent(cls, intent: GenerateIntent) -> GenerateIntentState:
-        return cls(
-            target=_target_state(intent.target),
-            messages=tuple(_message_state(message) for message in intent.messages),
-            max_output_tokens=intent.max_output_tokens,
-            reasoning=intent.reasoning,
-            tools=tuple(
-                CanonicalToolState(
-                    name=tool.name,
-                    description=tool.description,
-                    parameters=cast(
-                        dict[str, JsonValue],
-                        to_json_schema(
-                            tool.parameters,
-                            inline_defs=False,
-                            include_annotations=True,
-                        ),
-                    ),
-                )
-                for tool in intent.tools
-            ),
-            tool_choice=intent.tool_choice,
-            output=(
-                TextOutputState()
-                if isinstance(intent.output, TextOutput)
-                else StrictJsonOutputState(
-                    name=intent.output.name,
-                    json_schema=cast(
-                        dict[str, JsonValue],
-                        to_json_schema(
-                            intent.output.schema,
-                            inline_defs=False,
-                            include_annotations=True,
-                        ),
-                    ),
-                )
-            ),
-        )
-
-    def to_intent(self) -> GenerateIntent:
-        output = (
-            TextOutput()
-            if isinstance(self.output, TextOutputState)
-            else StrictJsonOutput(
-                name=self.output.name,
-                schema=parse_canonical_schema(self.output.json_schema),
-            )
-        )
-        return GenerateIntent(
-            target=_target(self.target),
-            messages=tuple(_message(message) for message in self.messages),
-            max_output_tokens=self.max_output_tokens,
-            reasoning=self.reasoning,
-            tools=tuple(
-                CanonicalTool(
-                    name=tool.name,
-                    description=tool.description,
-                    parameters=parse_canonical_schema(tool.parameters),
-                )
-                for tool in self.tools
-            ),
-            tool_choice=self.tool_choice,
-            output=output,
-        )
 
 
 class PreparedChatRun(_StateModel):
@@ -669,96 +473,11 @@ def _validate_reconciled_domain_facts(
     raise ValueError("this chat step cannot accept an attached result")
 
 
-def _target_state(target: ProviderTarget) -> ProviderTargetState:
-    return ProviderTargetState(provider=target.provider, model=target.model)
-
-
-def _target(state: ProviderTargetState) -> ProviderTarget:
-    return ProviderTarget(provider=state.provider, model=state.model)
-
-
-def _scope_state(scope: Any) -> CacheScopeState:
-    if isinstance(scope, GlobalScope):
-        return GlobalScopeState()
-    if isinstance(scope, OwnerScope):
-        return OwnerScopeState(owner_id=scope.owner_id)
-    if isinstance(scope, ConversationScope):
-        return ConversationScopeState(conversation_id=scope.conversation_id)
-    raise AssertionError("unknown provider cache scope")
-
-
-def _scope(state: CacheScopeState) -> Any:
-    if isinstance(state, GlobalScopeState):
-        return GlobalScope()
-    if isinstance(state, OwnerScopeState):
-        return OwnerScope(owner_id=state.owner_id)
-    if isinstance(state, ConversationScopeState):
-        return ConversationScope(conversation_id=state.conversation_id)
-    raise AssertionError("unknown stored cache scope")
-
-
-def _block_state(block: PromptBlock) -> PromptBlockState:
-    stability = block.stability
-    return PromptBlockState(
-        text=block.text,
-        stability=(
-            DynamicState()
-            if isinstance(stability, Dynamic)
-            else StableState(scope=_scope_state(stability.scope))
-        ),
-    )
-
-
-def _block(state: PromptBlockState) -> PromptBlock:
-    stability = state.stability
-    return PromptBlock(
-        text=state.text,
-        stability=(
-            Dynamic() if isinstance(stability, DynamicState) else Stable(_scope(stability.scope))
-        ),
-    )
-
-
-def _continuation_state(value: ContinuationArtifact) -> ContinuationState:
-    return ContinuationState(
-        target=_target_state(value.target),
-        codec_id=value.codec_id,
-        opaque_payload=cast(
-            dict[str, JsonValue],
-            json.loads(json.dumps(value.opaque_payload, ensure_ascii=False)),
-        ),
-    )
-
-
-def _continuation(value: Presence[ContinuationState]) -> Any:
-    if isinstance(value, Absent):
-        return RuntimeAbsent()
-    return RuntimePresent(
-        ContinuationArtifact(
-            target=_target(value.value.target),
-            codec_id=value.value.codec_id,
-            opaque_payload=value.value.opaque_payload,
-        )
-    )
-
-
-def _tool_call_state(value: ToolCall) -> ToolCallState:
-    return ToolCallState(
-        id=value.id,
-        name=value.name,
-        arguments=cast(dict[str, JsonValue], dict(value.arguments)),
-    )
-
-
-def tool_call_from_state(value: ToolCallState) -> ToolCall:
-    return ToolCall(id=value.id, name=value.name, arguments=value.arguments)
-
-
 def assistant_message_from_turn(value: AssistantTurn) -> AssistantMessage:
-    return AssistantMessage(
+    return assistant_message_from_state(
         text=value.text,
-        tool_calls=tuple(tool_call_from_state(call) for call in value.tool_calls),
-        continuation=_continuation(value.continuation),
+        tool_calls=value.tool_calls,
+        continuation=value.continuation,
     )
 
 
@@ -773,11 +492,11 @@ def assistant_turn_result(
 ) -> AssistantTurn:
     return AssistantTurn(
         text=text,
-        tool_calls=tuple(_tool_call_state(call) for call in tool_calls),
+        tool_calls=tuple(tool_call_state(call) for call in tool_calls),
         continuation=(
             absent()
             if isinstance(continuation, RuntimeAbsent)
-            else present(_continuation_state(continuation.value))
+            else present(continuation_state(continuation.value))
         ),
         usage=absent() if usage is None else present(usage),
         support_id=absent() if support_id is None else present(support_id),
@@ -793,48 +512,3 @@ def tool_result_message(value: ToolStepResult) -> ToolResultMessage:
         output=value.model_output.output,
         is_error=value.model_output.is_error,
     )
-
-
-def _message_state(value: Any) -> PromptMessageState:
-    if isinstance(value, SystemMessage):
-        return SystemMessageState(blocks=tuple(_block_state(block) for block in value.blocks))
-    if isinstance(value, UserMessage):
-        return UserMessageState(blocks=tuple(_block_state(block) for block in value.blocks))
-    if isinstance(value, AssistantMessage):
-        continuation = (
-            absent()
-            if isinstance(value.continuation, RuntimeAbsent)
-            else present(_continuation_state(value.continuation.value))
-        )
-        return AssistantMessageState(
-            text=value.text,
-            tool_calls=tuple(_tool_call_state(call) for call in value.tool_calls),
-            continuation=continuation,
-        )
-    if isinstance(value, ToolResultMessage):
-        return ToolResultMessageState(
-            call_id=value.call_id,
-            output=value.output,
-            is_error=value.is_error,
-        )
-    raise AssertionError("unknown provider prompt message")
-
-
-def _message(value: PromptMessageState) -> Any:
-    if isinstance(value, SystemMessageState):
-        return SystemMessage(blocks=tuple(_block(block) for block in value.blocks))
-    if isinstance(value, UserMessageState):
-        return UserMessage(blocks=tuple(_block(block) for block in value.blocks))
-    if isinstance(value, AssistantMessageState):
-        return AssistantMessage(
-            text=value.text,
-            tool_calls=tuple(tool_call_from_state(call) for call in value.tool_calls),
-            continuation=_continuation(value.continuation),
-        )
-    if isinstance(value, ToolResultMessageState):
-        return ToolResultMessage(
-            call_id=value.call_id,
-            output=value.output,
-            is_error=value.is_error,
-        )
-    raise AssertionError("unknown stored prompt message")

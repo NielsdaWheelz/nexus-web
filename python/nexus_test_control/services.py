@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import ipaddress
 import json
 import os
 import re
@@ -9,11 +10,13 @@ import secrets
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
@@ -24,6 +27,10 @@ import httpx
 import psycopg
 from botocore.client import BaseClient, Config
 from botocore.exceptions import ClientError
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from psycopg import sql
 
 from nexus.release_artifact import (
@@ -50,7 +57,9 @@ from nexus_test_control.runtime import (
     local_docker_host,
     migration_database_name,
     process_resource_identity,
+    provider_fixture_identity,
     read_ledger,
+    read_previous_runtime_for_cleanup,
     read_runtime,
     record_created,
     record_planned,
@@ -70,6 +79,7 @@ from nexus_test_control.runtime import (
     template_database_name,
     template_fingerprint,
     template_lifecycle_lock,
+    upgrade_previous_runtime,
 )
 
 POSTGRES_IMAGE = (
@@ -92,7 +102,19 @@ SUPABASE_EXCLUDED_SERVICES = (
     "realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,postgrest"
 )
 
-_PORT_DEFAULTS = (15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091)
+_PORT_DEFAULTS = (
+    15432,
+    19000,
+    25421,
+    25422,
+    25423,
+    25424,
+    25425,
+    18000,
+    13000,
+    19091,
+    19092,
+)
 _EPHEMERAL_PORT_RANGE_PATH = Path("/proc/sys/net/ipv4/ip_local_port_range")
 _CONSERVATIVE_EPHEMERAL_PORT_RANGE = (32768, 65535)
 _SUPABASE_DIAGNOSTIC_TAIL_CHARS = 8192
@@ -115,8 +137,8 @@ _CALLER_RESOURCE_ENV = frozenset(
         "NEXT_PUBLIC_SUPABASE_URL",
         "NEXUS_TEST_PROCESS_OWNER",
         "NEXUS_TEST_STATIC_DNS",
+        "NEXUS_TEST_TLS_CA_CERT",
         "NODE_OPTIONS",
-        "OPENAI_API_BASE_URL",
         "OUTBOUND_HTTP_PROXY_URL",
         "PODCAST_INDEX_API_KEY",
         "PODCAST_INDEX_API_SECRET",
@@ -187,6 +209,54 @@ class StartedProcess:
     log_path: str
 
 
+@dataclass(frozen=True, slots=True)
+class OpenAIProviderFixture:
+    """Exact run-owned state for the canonical OpenAI protocol process."""
+
+    state: Path
+    certificate: Path
+    key: Path = field(repr=False)
+    audit: Path
+    port: int
+
+    def server_environment(self) -> dict[str, str]:
+        return {
+            "NEXUS_TEST_OPENAI_CERTIFICATE": str(self.certificate),
+            "NEXUS_TEST_OPENAI_KEY": str(self.key),
+            "NEXUS_TEST_OPENAI_AUDIT": str(self.audit),
+        }
+
+    def client_environment(self) -> dict[str, str]:
+        return {
+            "NEXUS_TEST_STATIC_DNS": json.dumps(
+                {
+                    "api.openai.com": {"address": "127.0.0.1", "port": self.port},
+                    "www.nasa.gov": "93.184.216.34",
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            "NEXUS_TEST_TLS_CA_CERT": str(self.certificate),
+        }
+
+    def worker_environment(self) -> dict[str, str]:
+        """Compatibility name for production-worker protocol proofs."""
+        return self.client_environment()
+
+    def requests(self) -> tuple[dict[str, object], ...]:
+        rows = tuple(
+            json.loads(line) for line in self.audit.read_text(encoding="utf-8").splitlines() if line
+        )
+        payloads = tuple(
+            row["payload"]
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("path") == "/v1/embeddings"
+            and isinstance(row.get("payload"), dict)
+        )
+        return cast(tuple[dict[str, object], ...], payloads)
+
+
 def run_environment(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -236,7 +306,6 @@ def run_environment(
         "NEXUS_RUNTIME_IDENTITY_FILE": str(_runtime_identity_path(root)),
         "NEXUS_TEST_RUN_ID": run.run_id,
         "PARSER_TEMP_ROOT": str(root / "test-results" / "runs" / run.run_id / "parser-tmp"),
-        "OPENAI_API_BASE_URL": (f"{runtime_endpoint(root, environment, EndpointKind.EXTERNAL)}/v1"),
         "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
         "R2_ACCESS_KEY_ID": MINIO_ACCESS_KEY,
         "R2_BUCKET": expected_bucket,
@@ -369,6 +438,7 @@ def ensure_services(repo_root: Path, environment: Mapping[str, str]) -> Supabase
                 initialize_runtime(root, environment, _allocate_ports())
                 _start_services(root)
         else:
+            _upgrade_previous_runtime_if_needed(root, environment)
             _start_services(root)
         _publish_runtime_identity(root)
     return read_supabase_credentials(root, environment)
@@ -743,6 +813,21 @@ def start_python_process(
             "--fixture-root",
             str(root / "python/tests/fixtures/real_media"),
         )
+    elif role == "provider-openai":
+        _require_loopback_port_available(runtime.ports.provider_openai, role)
+        values = _owned_provider_fixture_paths(root, run.run_id, overrides)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            str(root / "python/tests/testkit/openai_embedding_server.py"),
+            "--port",
+            str(runtime.ports.provider_openai),
+            "--certificate",
+            str(values["NEXUS_TEST_OPENAI_CERTIFICATE"]),
+            "--key",
+            str(values["NEXUS_TEST_OPENAI_KEY"]),
+            "--audit",
+            str(values["NEXUS_TEST_OPENAI_AUDIT"]),
+        )
     elif role == "api":
         _require_loopback_port_available(runtime.ports.api, role)
         command = (
@@ -769,7 +854,6 @@ def start_python_process(
         "NEXUS_TEST_STATIC_DNS": '{"www.nasa.gov":"93.184.216.34"}',
         "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
         "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
-        "OPENAI_API_BASE_URL": f"http://127.0.0.1:{runtime.ports.external}/v1",
         "OUTBOUND_HTTP_PROXY_URL": f"http://127.0.0.1:{runtime.ports.external}",
         "PODCAST_INDEX_API_KEY": "nexus-test-fixture-podcast-key",
         "PODCAST_INDEX_API_SECRET": "nexus-test-fixture-podcast-secret",
@@ -787,6 +871,146 @@ def start_python_process(
         cwd=root,
         process_environment=process_environment,
     )
+
+
+def prepare_openai_provider_fixture(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> OpenAIProviderFixture:
+    """Create the exact canonical-provider state owned by one persisted run."""
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    runtime = read_runtime(root)
+    if run.run_id not in runtime.owned_run_ids:
+        raise RuntimeContractError("OpenAI provider fixture requires an owned run")
+    resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run.run_id))
+    state = root / resource.identity
+    record_planned(root, environment, run.run_id, resource)
+    try:
+        state.mkdir(parents=False, exist_ok=False)
+    except FileExistsError as error:
+        forget_cleaned(root, environment, run.run_id, resource)
+        raise RuntimeContractError("OpenAI provider fixture already exists for this run") from error
+    certificate = state / "ca.pem"
+    key_path = state / "server-key.pem"
+    audit = state / "requests.jsonl"
+    try:
+        audit.touch(mode=0o600, exist_ok=False)
+        _write_openai_test_certificate(certificate, key_path)
+        record_created(root, environment, run.run_id, resource)
+    except Exception:
+        raise
+    return OpenAIProviderFixture(
+        state=state,
+        certificate=certificate,
+        key=key_path,
+        audit=audit,
+        port=runtime.ports.provider_openai,
+    )
+
+
+def _write_openai_test_certificate(certificate: Path, key_path: Path) -> None:
+    host = "api.openai.com"
+    key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
+    now = datetime.now(UTC)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
+    value = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [x509.DNSName(host), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+            ),
+            critical=False,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    certificate.write_bytes(value.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    key_path.chmod(0o600)
+
+
+def _clean_openai_provider_fixture(root: Path, identity: str) -> None:
+    state = root / identity
+    if not state.exists():
+        return
+    if state.is_symlink() or not state.is_dir():
+        raise RuntimeContractError("OpenAI provider fixture state is not an owned directory")
+    expected = {"ca.pem", "server-key.pem", "requests.jsonl"}
+    entries = {entry.name for entry in state.iterdir()}
+    if not entries.issubset(expected) or any(not (state / name).is_file() for name in entries):
+        raise RuntimeContractError("OpenAI provider fixture state has unexpected contents")
+    shutil.rmtree(state)
+
+
+def release_openai_provider_fixture(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> None:
+    """Release an idle exact provider fixture between workflow capabilities."""
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    with run_lifecycle_lock(root, environment, run_id):
+        ledger = read_ledger(root, run_id)
+        process = Resource(
+            ResourceKind.PROCESS, process_resource_identity(run_id, "provider-openai")
+        )
+        if any(entry.resource == process for entry in ledger.entries):
+            raise RuntimeContractError(
+                "OpenAI provider fixture cannot release while its process exists"
+            )
+        resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run_id))
+        matches = [entry for entry in ledger.entries if entry.resource == resource]
+        if len(matches) != 1:
+            raise RuntimeContractError("OpenAI provider fixture is not uniquely owned by this run")
+        _clean_openai_provider_fixture(root, resource.identity)
+        forget_cleaned(root, environment, run_id, resource)
+
+
+def _owned_provider_fixture_paths(
+    root: Path,
+    run_id: str,
+    overrides: Mapping[str, str] | None,
+) -> dict[str, Path]:
+    names = {
+        "NEXUS_TEST_OPENAI_CERTIFICATE",
+        "NEXUS_TEST_OPENAI_KEY",
+        "NEXUS_TEST_OPENAI_AUDIT",
+    }
+    if overrides is None or not names.issubset(overrides):
+        raise RuntimeContractError("OpenAI provider process requires its owned fixture paths")
+    owned_root = (runtime_state_dir(root) / "runs" / run_id).resolve(strict=True)
+    fixture_resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run_id))
+    fixture_entries = [
+        entry for entry in read_ledger(root, run_id).entries if entry.resource == fixture_resource
+    ]
+    if len(fixture_entries) != 1 or fixture_entries[0].phase is not ResourcePhase.CREATED:
+        raise RuntimeContractError("OpenAI provider process requires its created fixture owner")
+    values: dict[str, Path] = {}
+    for name in names:
+        path = Path(overrides[name]).resolve(strict=True)
+        if owned_root not in path.parents or not path.is_file():
+            raise RuntimeContractError("OpenAI provider fixture path is outside the exact run")
+        values[name] = path
+    return values
 
 
 def start_web_process(
@@ -839,6 +1063,7 @@ def wait_process_ready(
     path: str,
     *,
     timeout_seconds: float = 30,
+    tls_ca: Path | None = None,
 ) -> None:
     """Wait for an owned process at one exact recorded runtime endpoint."""
     require_test_environment(environment)
@@ -849,9 +1074,25 @@ def wait_process_ready(
     port = urlsplit(url).port
     if port is None:
         raise RuntimeContractError("process readiness endpoint has no port")
+    if endpoint is EndpointKind.PROVIDER_OPENAI:
+        expected_ca = (
+            runtime_state_dir(root) / "runs" / process.run_id / "openai-provider" / "ca.pem"
+        )
+        if tls_ca is None or tls_ca.resolve(strict=True) != expected_ca.resolve(strict=True):
+            raise RuntimeContractError("OpenAI provider readiness requires its exact owned CA")
+        verify: ssl.SSLContext | bool = ssl.create_default_context(cafile=str(expected_ca))
+    elif tls_ca is not None:
+        raise RuntimeContractError("TLS CA is only valid for provider readiness")
+    else:
+        verify = True
     deadline = time.monotonic() + timeout_seconds
     identity_deadline = min(deadline, time.monotonic() + 2)
-    with httpx.Client(trust_env=False, timeout=1, follow_redirects=False) as client:
+    with httpx.Client(
+        trust_env=False,
+        timeout=1,
+        follow_redirects=False,
+        verify=verify,
+    ) as client:
         while time.monotonic() < deadline:
             if not _owned_process_identity_matches(
                 process.process_group_id,
@@ -1021,6 +1262,8 @@ def clean_run(
                     )
                 elif resource.kind is ResourceKind.EXTENSION_PROFILE:
                     _delete_extension_profile(root, resource.identity)
+                elif resource.kind is ResourceKind.PROVIDER_FIXTURE:
+                    _clean_openai_provider_fixture(root, resource.identity)
                 else:
                     raise RuntimeContractError(f"clean has no owner for {resource.kind.value}")
                 forget_cleaned(root, environment, run_id, resource)
@@ -1060,6 +1303,7 @@ def clean_owned_runtime(
     environment: Mapping[str, str],
     *,
     command_runner: CommandRunner | None = None,
+    port_available: Callable[[int], bool] | None = None,
 ) -> tuple[str, ...]:
     """Delete the exact recorded runs, workspace services, volumes, and state."""
     require_test_environment(environment)
@@ -1067,6 +1311,7 @@ def clean_owned_runtime(
     if not runtime_record_path(root).exists():
         return ()
     run_command = command_runner or _run
+    _upgrade_previous_runtime_if_needed(root, environment, port_available=port_available)
     runtime = read_runtime(root)
     run_ids = runtime.owned_run_ids
     failures: list[str] = []
@@ -1126,6 +1371,31 @@ def _allocate_ports() -> RuntimePorts:
         else:
             raise RuntimeContractError(f"no local test port is available from {preferred}")
     return RuntimePorts(*ports)
+
+
+def _upgrade_previous_runtime_if_needed(
+    root: Path,
+    environment: Mapping[str, str],
+    *,
+    port_available: Callable[[int], bool] | None = None,
+) -> None:
+    is_port_available = port_available or _port_available
+    try:
+        read_runtime(root)
+        return
+    except RuntimeContractError as current_error:
+        with _port_allocation_lock():
+            try:
+                previous = read_previous_runtime_for_cleanup(root)
+            except RuntimeContractError:
+                raise current_error from None
+            used = set(previous.ports.as_dict().values()) - {previous.ports.provider_openai}
+            ephemeral_port_range = _local_ephemeral_port_range()
+            for port in _candidate_ports(19092, ephemeral_port_range):
+                if port not in used and is_port_available(port):
+                    upgrade_previous_runtime(root, environment, port)
+                    return
+    raise RuntimeContractError("no local provider test port is available")
 
 
 def _local_ephemeral_port_range() -> tuple[int, int]:

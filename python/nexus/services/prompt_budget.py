@@ -8,8 +8,6 @@ from dataclasses import dataclass, field
 from math import ceil
 from typing import Literal
 
-from provider_runtime import ReasoningLevel
-
 BudgetLane = Literal[
     "system",
     "scope",
@@ -71,7 +69,6 @@ class ContextBudgetError(ValueError):
 class PromptBudget:
     max_context_tokens: int
     reserved_output_tokens: int
-    reserved_reasoning_tokens: int
     input_budget_tokens: int
 
 
@@ -83,9 +80,6 @@ class PromptBlock:
     text: str
     estimated_tokens: int
     source_refs: tuple[Mapping[str, object], ...]
-    cache_policy: Mapping[str, object] | None = None
-    privacy_scope: str = "conversation"
-    required_provider_capability: str | None = None
 
     def manifest_entry(self, *, ordinal: int, included: bool) -> dict[str, object]:
         entry: dict[str, object] = {
@@ -96,11 +90,7 @@ class PromptBlock:
             "included": included,
             "estimated_tokens": self.estimated_tokens,
             "source_refs": [dict(ref) for ref in self.source_refs],
-            "cache_policy": dict(self.cache_policy) if self.cache_policy is not None else None,
-            "privacy_scope": self.privacy_scope,
         }
-        if self.required_provider_capability is not None:
-            entry["required_provider_capability"] = self.required_provider_capability
         return entry
 
 
@@ -176,9 +166,6 @@ def make_prompt_block(
     lane: BudgetLane,
     text: str,
     source_refs: Sequence[Mapping[str, object]] = (),
-    cache_policy: Mapping[str, object] | None = None,
-    privacy_scope: str = "conversation",
-    required_provider_capability: str | None = None,
 ) -> PromptBlock:
     """Create one structured prompt block."""
 
@@ -191,9 +178,6 @@ def make_prompt_block(
         text=text,
         estimated_tokens=estimated_tokens,
         source_refs=refs,
-        cache_policy=cache_policy,
-        privacy_scope=privacy_scope,
-        required_provider_capability=required_provider_capability,
     )
 
 
@@ -203,38 +187,24 @@ def estimate_block_tokens(blocks: Sequence[PromptBlock]) -> int:
     return sum(block.estimated_tokens for block in blocks)
 
 
-def estimate_reasoning_reserve(reasoning: ReasoningLevel, reasoning_reserve_tokens: int) -> int:
-    """Reserve hidden reasoning budget from the runtime contract's flat
-    ``pricing.reasoning_reserve_tokens`` fact, gated on the chosen reasoning
-    level actually engaging reasoning (``"none"`` never reserves)."""
-
-    if reasoning == "none":
-        return 0
-    return max(0, reasoning_reserve_tokens)
-
-
 def build_prompt_budget(
     *,
     max_context_tokens: int,
     max_output_tokens: int,
-    reasoning: ReasoningLevel,
-    reasoning_reserve_tokens: int,
 ) -> PromptBudget:
-    """Compute the model input budget after output and reasoning reserves."""
+    """Compute the model input budget after the requested output allowance."""
 
     reserved_output_tokens = max(0, max_output_tokens)
-    reserved_reasoning_tokens = estimate_reasoning_reserve(reasoning, reasoning_reserve_tokens)
-    input_budget_tokens = max_context_tokens - reserved_output_tokens - reserved_reasoning_tokens
+    input_budget_tokens = max_context_tokens - reserved_output_tokens
     if input_budget_tokens <= 0:
         raise ContextBudgetError(
-            "Model context window is exhausted by output and reasoning reserves",
-            requested_tokens=reserved_output_tokens + reserved_reasoning_tokens,
+            "Model context window is exhausted by the requested output allowance",
+            requested_tokens=reserved_output_tokens,
             remaining_tokens=max_context_tokens,
         )
     return PromptBudget(
         max_context_tokens=max_context_tokens,
         reserved_output_tokens=reserved_output_tokens,
-        reserved_reasoning_tokens=reserved_reasoning_tokens,
         input_budget_tokens=input_budget_tokens,
     )
 
@@ -318,6 +288,5 @@ def allocate_budget(items: Sequence[BudgetItem], budget: PromptBudget) -> Budget
             "remaining_tokens": remaining,
             "input_budget_tokens": budget.input_budget_tokens,
             "reserved_output_tokens": budget.reserved_output_tokens,
-            "reserved_reasoning_tokens": budget.reserved_reasoning_tokens,
         },
     )

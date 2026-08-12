@@ -23,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from provider_runtime import Succeeded
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -269,6 +269,7 @@ async def run_synapse_scan(
         try:
             call = await execute_generation(
                 GenerationRequest(
+                    generation_id=uuid4(),
                     owner=LlmCallOwner(kind="synapse_scan", id=ref.id, user_id=user_id),
                     operation=SYNAPSE_OPERATION,
                     profile=profile,
@@ -277,7 +278,6 @@ async def run_synapse_scan(
                 ),
                 session_factory=get_session_factory(),
                 runtime=runtime,
-                settings=get_settings(),
             )
         except ApiError as exc:
             # Only a limiter outage is transient here; budget/billing denials

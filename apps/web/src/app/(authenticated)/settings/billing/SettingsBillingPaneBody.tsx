@@ -87,7 +87,7 @@ function planDescription(planTier: BillingPlanTier): string {
   if (planTier === "plus") return "Sharing and collaboration.";
   if (planTier === "ai_plus") return "Sharing, platform AI, and transcription.";
   if (planTier === "ai_pro") return "Higher AI and transcription limits.";
-  return "Private solo use with BYOK only.";
+  return "Private solo reading and notes.";
 }
 
 function statusLabel(status: string, planTier: BillingPlanTier): string {

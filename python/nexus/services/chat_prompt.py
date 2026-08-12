@@ -10,20 +10,16 @@ from typing import Literal
 from provider_runtime import (
     Absent,
     AssistantMessage,
-    BlockStability,
     CanonicalTool,
-    Dynamic,
     GenerateIntent,
-    GlobalScope,
-    PromptMessage,
     ProviderTarget,
     ReasoningLevel,
-    Stable,
     SystemMessage,
     TextOutput,
     UserMessage,
 )
 from provider_runtime import PromptBlock as RuntimePromptBlock
+from provider_runtime.types import PromptMessage
 
 from nexus.services.prompt_budget import (
     ContextBudgetError,
@@ -52,7 +48,6 @@ class PromptTurn:
 @dataclass(frozen=True)
 class PromptPlan:
     turns: tuple[PromptTurn, ...]
-    cacheable_input_tokens_estimate: int
 
     def blocks(self) -> tuple[PromptBlock, ...]:
         return tuple(block for turn in self.turns for block in turn.blocks)
@@ -62,7 +57,6 @@ class PromptPlan:
 
     def manifest(self) -> dict[str, object]:
         return {
-            "cacheable_input_tokens_estimate": self.cacheable_input_tokens_estimate,
             "blocks": [
                 block.manifest_entry(ordinal=index, included=True)
                 for index, block in enumerate(self.blocks())
@@ -135,27 +129,21 @@ def _render_write_tools_block() -> str:
 
 def build_prompt_plan(
     *,
-    stable_blocks: Sequence[PromptBlock],
-    dynamic_system_blocks: Sequence[PromptBlock],
+    system_blocks: Sequence[PromptBlock],
     history_blocks: Sequence[PromptBlock],
     current_user_block: PromptBlock,
 ) -> PromptPlan:
     """Build the ordered prompt plan."""
 
-    stable = tuple(stable_blocks)
-    dynamic = tuple(dynamic_system_blocks)
     history = tuple(history_blocks)
-    system_blocks = stable + dynamic
+    system = tuple(system_blocks)
     turns: list[PromptTurn] = []
-    if system_blocks:
-        turns.append(PromptTurn(role="system", blocks=system_blocks))
+    if system:
+        turns.append(PromptTurn(role="system", blocks=system))
     turns.extend(PromptTurn(role=block.role, blocks=(block,)) for block in history)
     turns.append(PromptTurn(role="user", blocks=(current_user_block,)))
 
-    return PromptPlan(
-        turns=tuple(turns),
-        cacheable_input_tokens_estimate=estimate_block_tokens(stable),
-    )
+    return PromptPlan(turns=tuple(turns))
 
 
 def build_generate_intent_from_plan(
@@ -168,10 +156,8 @@ def build_generate_intent_from_plan(
 ) -> GenerateIntent:
     """Derive the runtime ``GenerateIntent`` from the prompt plan exactly once.
 
-    C1 stability table (adjudicated): the invariant system prompt block is
-    ``Stable(GlobalScope())`` (its ``privacy_scope="global"``); every other
-    block — subject, reader_selection, branch_anchor, resources, history,
-    current user — is ``Dynamic()``.
+    Prompt blocks are persisted as text only; provider engines own any
+    provider-native request shaping.
     """
     messages: list[PromptMessage] = []
     for turn in plan.turns:
@@ -202,10 +188,7 @@ def build_generate_intent_from_plan(
 
 
 def _runtime_block(block: PromptBlock) -> RuntimePromptBlock:
-    stability: BlockStability = (
-        Stable(GlobalScope()) if block.privacy_scope == "global" else Dynamic()
-    )
-    return RuntimePromptBlock(text=block.text, stability=stability)
+    return RuntimePromptBlock(text=block.text)
 
 
 def validate_prompt_plan_budget(plan: PromptPlan, input_budget_tokens: int) -> int:

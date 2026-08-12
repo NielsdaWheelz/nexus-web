@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/llm_profiles.py b/python/nexus/services/llm_profiles.py
+--- a/python/nexus/services/llm_profiles.py
++++ b/python/nexus/services/llm_profiles.py
+@@ -194,7 +194,7 @@ PROFILES: tuple[LlmProfile, ...] = (
+         provider_label="DeepSeek",
+         model_label="DeepSeek V4 Flash",
+         target=ProviderTarget(provider="deepseek", model="deepseek-v4-flash"),
+-        reasoning_options=_reasoning_options("none", "high", "max"),
++        reasoning_options=_reasoning_options("none", "low", "high", "max"),
+         default_reasoning_option_id="high",
+         privacy=_DEEPSEEK_PRIVACY,
+     ),

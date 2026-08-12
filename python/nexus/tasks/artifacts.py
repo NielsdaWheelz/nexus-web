@@ -33,7 +33,7 @@ from nexus.logging import get_logger
 from nexus.schemas.presence import Presence, absent, present
 from nexus.services.artifacts import engine
 from nexus.services.artifacts.coordination import DossierBuildRuntime
-from nexus.services.llm_execution import ExecutionRuntime
+from nexus.services.llm_execution import ExecutionRuntime, ProviderRetryMode
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
@@ -51,7 +51,11 @@ def dossier_build(
     applies (see module docstring).
     """
     build_id = UUID(str(payload["build_id"]))
-    spec = LlmTaskSpec(label="dossier_build", http_timeout_s=120.0)
+    spec = LlmTaskSpec(
+        label="dossier_build",
+        http_timeout_s=120.0,
+        retry_mode=ProviderRetryMode.SingleAttempt,
+    )
     settings = get_settings()
 
     async def _handler(

@@ -86,7 +86,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "8ee45d1f3c23a821a073ec12513f0b58c115a2b4705125b4d4d2cb5555154341"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "6aef29d5c04dcd08348cac767633ff142a4b825fb158098e38b0dbc5032ec966"
 
 
 class ResourceKind(StrEnum):
@@ -97,6 +97,7 @@ class ResourceKind(StrEnum):
     BUCKET = "bucket"
     SUPABASE_USER = "supabase-user"
     PROCESS = "process"
+    PROVIDER_FIXTURE = "provider-fixture"
     EXTENSION_PROFILE = "extension-profile"
     BUILD_ARTIFACT = "build-artifact"
     LOCK = "lock"

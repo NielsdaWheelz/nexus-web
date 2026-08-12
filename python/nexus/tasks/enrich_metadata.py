@@ -6,7 +6,7 @@ failures are recorded as `failure_stage='metadata'` on the media row
 """
 
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from provider_runtime import StructuredContent, Succeeded
@@ -142,6 +142,7 @@ def enrich_metadata(
             try:
                 call = await execute_generation(
                     GenerationRequest(
+                        generation_id=uuid4(),
                         owner=owner,
                         operation=METADATA_ENRICHMENT_OPERATION,
                         profile=profile,
@@ -150,7 +151,6 @@ def enrich_metadata(
                     ),
                     session_factory=get_session_factory(),
                     runtime=runtime,
-                    settings=settings,
                 )
             except ApiError as exc:
                 logger.warning(

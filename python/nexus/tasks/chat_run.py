@@ -25,12 +25,17 @@ from nexus.services.chat_runs import (
     SkippedChatExecution,
     execute_chat_run,
 )
-from nexus.services.llm_execution import ExecutionRuntime
+from nexus.services.llm_execution import ExecutionRuntime, ProviderRetryMode
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
 
-_CHAT_RUN_SPEC = LlmTaskSpec(label="chat_run", http_timeout_s=60.0, http_limits=(100, 20))
+_CHAT_RUN_SPEC = LlmTaskSpec(
+    label="chat_run",
+    http_timeout_s=60.0,
+    http_limits=(100, 20),
+    retry_mode=ProviderRetryMode.SingleAttempt,
+)
 
 
 def chat_run(run_id: str, *, context: JobExecutionContext) -> dict[str, Any]:

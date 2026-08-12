@@ -35,6 +35,34 @@ const PROFILES = {
       default_reasoning_option_id: "low",
       privacy: { kind: "Standard", notice: "Processed by Nexus AI." },
     },
+    {
+      id: "deepseek-flash",
+      label: "DeepSeek · V4 Flash",
+      description: "Fast, cost-efficient reasoning for everyday questions",
+      provider_label: "DeepSeek",
+      model_label: "DeepSeek V4 Flash",
+      reasoning_options: [
+        { id: "none", label: "None" },
+        { id: "high", label: "High" },
+        { id: "max", label: "Max" },
+      ],
+      default_reasoning_option_id: "high",
+      privacy: { kind: "Standard", notice: "Processed by DeepSeek." },
+    },
+    {
+      id: "deepseek-pro",
+      label: "DeepSeek · V4 Pro",
+      description: "DeepSeek's strongest model for harder reasoning.",
+      provider_label: "DeepSeek",
+      model_label: "DeepSeek V4 Pro",
+      reasoning_options: [
+        { id: "none", label: "None" },
+        { id: "high", label: "High" },
+        { id: "max", label: "Max" },
+      ],
+      default_reasoning_option_id: "high",
+      privacy: { kind: "Standard", notice: "Processed by DeepSeek." },
+    },
   ],
 };
 
@@ -119,8 +147,10 @@ describe("ChatComposer browser contract", () => {
     installBff(calls);
     const view = render(withRenderEnvironment(<Composer />));
     const model = await screen.findByRole("combobox", { name: "Model" });
-    await userEvent.selectOptions(model, "fast");
-    expect(screen.queryByRole("combobox", { name: "Effort" })).toBeNull();
+    await userEvent.selectOptions(model, "deepseek-flash");
+    expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Effort" }).value).toBe(
+      "high",
+    );
 
     const input = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
@@ -134,8 +164,8 @@ describe("ChatComposer browser contract", () => {
     ).toHaveLength(1);
     expect(calls[0].body).toMatchObject({
       content: "First\nSecond",
-      profile_id: "fast",
-      reasoning_option_id: "low",
+      profile_id: "deepseek-flash",
+      reasoning_option_id: "high",
     });
     view.unmount();
 
@@ -178,7 +208,8 @@ describe("ChatComposer browser contract", () => {
         <Composer conversationId={null} draftKey={draftKey} />,
       ),
     );
-    await screen.findByRole("combobox", { name: "Model" });
+    const model = await screen.findByRole("combobox", { name: "Model" });
+    await userEvent.selectOptions(model, "deepseek-pro");
     const input = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
     });
@@ -187,6 +218,10 @@ describe("ChatComposer browser contract", () => {
     await screen.findByRole("button", { name: "Retry send" });
     expect(calls).toHaveLength(1);
     expect(calls[0].body.destination).toEqual({ kind: "New" });
+    expect(calls[0].body).toMatchObject({
+      profile_id: "deepseek-pro",
+      reasoning_option_id: "high",
+    });
 
     // Simulate a full reload: unmount and remount a FRESH composer on the same
     // pane-visit draft key. The persisted in-flight command restores as a locked

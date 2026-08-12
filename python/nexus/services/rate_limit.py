@@ -242,46 +242,129 @@ class RateLimiter:
             )
 
         if monthly_usage["used"] + monthly_usage["reserved"] >= monthly_limit:
-            logger.warning("token_budget.exceeded", **safe_kv(key_mode="platform"))
+            logger.warning("token_budget.exceeded", **safe_kv(quota="platform_tokens"))
             raise ApiError(
                 ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
                 "Monthly AI token quota exceeded",
             )
 
-    def reserve_token_budget(
+    def reserve_token_budget_in_transaction(
         self,
+        db: Session,
+        *,
         user_id: UUID,
         reservation_id: UUID,
         est_tokens: int,
         ttl: int = 300,
     ) -> None:
-        """Reserve budget before streaming provider execution."""
-        if not self.backend_available:
-            logger.warning("token_budget_reserve_backend_unavailable")
-            raise ApiError(
-                ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
-                RATE_LIMITER_UNAVAILABLE_MESSAGE,
-            )
+        """Idempotently reserve budget inside the caller's open transaction."""
         if est_tokens <= 0:
             return
+        usage_date = self._db_utc_date(db)
+        self._load_budget_totals_for_update(db=db, user_id=user_id, usage_date=usage_date)
+        existing = db.execute(
+            text(
+                """
+                SELECT reservation_id
+                FROM token_budget_reservations
+                WHERE reservation_id = :reservation_id
+                  AND user_id = :user_id
+                FOR UPDATE
+                """
+            ),
+            {"reservation_id": reservation_id, "user_id": user_id},
+        ).first()
+        if existing is not None:
+            return
 
-        ttl_seconds = max(int(ttl), 1)
-
-        with self._db_strict(
-            "token_budget_reserve_failed",
-            raise_code=ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
-            raise_msg=RATE_LIMITER_UNAVAILABLE_MESSAGE,
-        ) as db:
-            usage_date = self._db_utc_date(db)
-            self._load_budget_totals_for_update(
-                db=db,
-                user_id=user_id,
-                usage_date=usage_date,
+        entitlements = get_effective_entitlements(db, user_id)
+        period_start = entitlements.usage_period_start.date()
+        period_end = entitlements.usage_period_end.date()
+        monthly_usage = get_platform_token_usage(db, user_id, period_start, period_end)
+        monthly_limit = entitlements.platform_token_limit_monthly
+        if not entitlements.can_use_platform_llm:
+            raise ApiError(
+                ApiErrorCode.E_BILLING_REQUIRED,
+                "Platform LLM access requires an AI tier.",
             )
-            existing = db.execute(
+
+        next_total = monthly_usage["used"] + monthly_usage["reserved"] + int(est_tokens)
+        if monthly_limit is not None and next_total > monthly_limit:
+            raise ApiError(
+                ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
+                (
+                    "Monthly AI token quota would be exceeded "
+                    f"(used={monthly_usage['used']}, "
+                    f"reserved={monthly_usage['reserved']}, "
+                    f"requested={int(est_tokens)}, limit={monthly_limit})"
+                ),
+            )
+
+        db.execute(
+            text(
+                """
+                INSERT INTO token_budget_reservations (
+                    reservation_id,
+                    user_id,
+                    usage_date,
+                    reserved_tokens,
+                    expires_at
+                )
+                VALUES (
+                    :reservation_id,
+                    :user_id,
+                    :usage_date,
+                    :reserved_tokens,
+                    now() + (CAST(:ttl_seconds AS integer) * interval '1 second')
+                )
+                """
+            ),
+            {
+                "reservation_id": reservation_id,
+                "user_id": user_id,
+                "usage_date": usage_date,
+                "reserved_tokens": int(est_tokens),
+                "ttl_seconds": max(int(ttl), 1),
+            },
+        )
+        db.execute(
+            text(
+                """
+                UPDATE token_budget_daily_usage
+                SET reserved_tokens = reserved_tokens + :reserved_tokens,
+                    updated_at = now()
+                WHERE user_id = :user_id
+                  AND usage_date = :usage_date
+                """
+            ),
+            {
+                "reserved_tokens": int(est_tokens),
+                "user_id": user_id,
+                "usage_date": usage_date,
+            },
+        )
+
+    def commit_token_budget_in_transaction(
+        self,
+        db: Session,
+        *,
+        user_id: UUID,
+        reservation_id: UUID,
+        actual_tokens: int,
+    ) -> None:
+        """Charge once inside the caller's open Postgres transaction."""
+        normalized_tokens = max(int(actual_tokens), 0)
+        usage_date = self._reservation_usage_date(
+            db=db,
+            user_id=user_id,
+            reservation_id=reservation_id,
+        ) or self._db_utc_date(db)
+        self._load_budget_totals_for_update(db=db, user_id=user_id, usage_date=usage_date)
+        reservation = (
+            db.execute(
                 text(
                     """
-                    SELECT reservation_id
+                    SELECT usage_date, reserved_tokens
                     FROM token_budget_reservations
                     WHERE reservation_id = :reservation_id
                       AND user_id = :user_id
@@ -289,213 +372,16 @@ class RateLimiter:
                     """
                 ),
                 {"reservation_id": reservation_id, "user_id": user_id},
-            ).first()
-            if existing is not None:
-                db.commit()
-                return
-
-            entitlements = get_effective_entitlements(db, user_id)
-            period_start = entitlements.usage_period_start.date()
-            period_end = entitlements.usage_period_end.date()
-            monthly_usage = get_platform_token_usage(db, user_id, period_start, period_end)
-            monthly_limit = entitlements.platform_token_limit_monthly
-            if not entitlements.can_use_platform_llm:
-                db.rollback()
-                raise ApiError(
-                    ApiErrorCode.E_BILLING_REQUIRED,
-                    "Platform LLM access requires an AI tier.",
-                )
-
-            next_total = monthly_usage["used"] + monthly_usage["reserved"] + int(est_tokens)
-            if monthly_limit is not None and next_total > monthly_limit:
-                db.rollback()
-                raise ApiError(
-                    ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
-                    (
-                        "Monthly AI token quota would be exceeded "
-                        f"(used={monthly_usage['used']}, "
-                        f"reserved={monthly_usage['reserved']}, "
-                        f"requested={int(est_tokens)}, limit={monthly_limit})"
-                    ),
-                )
-
-            db.execute(
-                text(
-                    """
-                    INSERT INTO token_budget_reservations (
-                        reservation_id,
-                        user_id,
-                        usage_date,
-                        reserved_tokens,
-                        expires_at
-                    )
-                    VALUES (
-                        :reservation_id,
-                        :user_id,
-                        :usage_date,
-                        :reserved_tokens,
-                        now() + (CAST(:ttl_seconds AS integer) * interval '1 second')
-                    )
-                    """
-                ),
-                {
-                    "reservation_id": reservation_id,
-                    "user_id": user_id,
-                    "usage_date": usage_date,
-                    "reserved_tokens": int(est_tokens),
-                    "ttl_seconds": ttl_seconds,
-                },
             )
-            db.execute(
-                text(
-                    """
-                    UPDATE token_budget_daily_usage
-                    SET reserved_tokens = reserved_tokens + :reserved_tokens,
-                        updated_at = now()
-                    WHERE user_id = :user_id
-                      AND usage_date = :usage_date
-                    """
-                ),
-                {
-                    "reserved_tokens": int(est_tokens),
-                    "user_id": user_id,
-                    "usage_date": usage_date,
-                },
-            )
-            db.commit()
-
-    def commit_token_budget(self, user_id: UUID, reservation_id: UUID, actual_tokens: int) -> None:
-        """Commit a reservation and charge actual usage once."""
-        if not self.backend_available:
-            return
-
-        normalized_tokens = max(int(actual_tokens), 0)
-
-        with self._db_swallow(
-            "token_budget_commit_failed",
-            user_id=str(user_id),
-            reservation_id=str(reservation_id),
-        ) as db:
-            reservation = (
-                db.execute(
-                    text(
-                        """
-                        SELECT usage_date, reserved_tokens
-                        FROM token_budget_reservations
-                        WHERE reservation_id = :reservation_id
-                          AND user_id = :user_id
-                        FOR UPDATE
-                        """
-                    ),
-                    {"reservation_id": reservation_id, "user_id": user_id},
-                )
-                .mappings()
-                .first()
-            )
-            usage_date = (
-                reservation["usage_date"] if reservation is not None else self._db_utc_date(db)
-            )
-            self._load_budget_totals_for_update(
-                db=db,
-                user_id=user_id,
-                usage_date=usage_date,
+            .mappings()
+            .first()
+        )
+        if reservation is not None and reservation["usage_date"] != usage_date:
+            raise AssertionError(
+                "token reservation usage date changed while acquiring budget locks"
             )
 
-            if reservation is not None:
-                db.execute(
-                    text(
-                        """
-                        DELETE FROM token_budget_reservations
-                        WHERE reservation_id = :reservation_id
-                          AND user_id = :user_id
-                        """
-                    ),
-                    {"reservation_id": reservation_id, "user_id": user_id},
-                )
-                db.execute(
-                    text(
-                        """
-                        UPDATE token_budget_daily_usage
-                        SET reserved_tokens = GREATEST(
-                                reserved_tokens - :reserved_tokens,
-                                0
-                            ),
-                            updated_at = now()
-                        WHERE user_id = :user_id
-                          AND usage_date = :usage_date
-                        """
-                    ),
-                    {
-                        "reserved_tokens": int(reservation["reserved_tokens"]),
-                        "user_id": user_id,
-                        "usage_date": usage_date,
-                    },
-                )
-
-            existing_charge = self._token_budget_charge_exists(db=db, reservation_id=reservation_id)
-            if not existing_charge:
-                self._insert_token_budget_charge(
-                    db=db,
-                    reservation_id=reservation_id,
-                    user_id=user_id,
-                    usage_date=usage_date,
-                    charged_tokens=normalized_tokens,
-                )
-            if not existing_charge and normalized_tokens > 0:
-                db.execute(
-                    text(
-                        """
-                        UPDATE token_budget_daily_usage
-                        SET spent_tokens = spent_tokens + :charged_tokens,
-                            updated_at = now()
-                        WHERE user_id = :user_id
-                          AND usage_date = :usage_date
-                        """
-                    ),
-                    {
-                        "charged_tokens": normalized_tokens,
-                        "user_id": user_id,
-                        "usage_date": usage_date,
-                    },
-                )
-            db.commit()
-
-    def release_token_budget(self, user_id: UUID, reservation_id: UUID) -> None:
-        """Release an outstanding reservation without spending."""
-        if not self.backend_available:
-            return
-
-        with self._db_swallow(
-            "token_budget_release_failed",
-            user_id=str(user_id),
-            reservation_id=str(reservation_id),
-        ) as db:
-            reservation = (
-                db.execute(
-                    text(
-                        """
-                        SELECT usage_date, reserved_tokens
-                        FROM token_budget_reservations
-                        WHERE reservation_id = :reservation_id
-                          AND user_id = :user_id
-                        FOR UPDATE
-                        """
-                    ),
-                    {"reservation_id": reservation_id, "user_id": user_id},
-                )
-                .mappings()
-                .first()
-            )
-            if reservation is None:
-                db.commit()
-                return
-
-            usage_date = reservation["usage_date"]
-            self._load_budget_totals_for_update(
-                db=db,
-                user_id=user_id,
-                usage_date=usage_date,
-            )
+        if reservation is not None:
             db.execute(
                 text(
                     """
@@ -510,10 +396,7 @@ class RateLimiter:
                 text(
                     """
                     UPDATE token_budget_daily_usage
-                    SET reserved_tokens = GREATEST(
-                            reserved_tokens - :reserved_tokens,
-                            0
-                        ),
+                    SET reserved_tokens = GREATEST(reserved_tokens - :reserved_tokens, 0),
                         updated_at = now()
                     WHERE user_id = :user_id
                       AND usage_date = :usage_date
@@ -525,7 +408,98 @@ class RateLimiter:
                     "usage_date": usage_date,
                 },
             )
-            db.commit()
+
+        existing_charge = self._token_budget_charge_exists(db=db, reservation_id=reservation_id)
+        if not existing_charge:
+            self._insert_token_budget_charge(
+                db=db,
+                reservation_id=reservation_id,
+                user_id=user_id,
+                usage_date=usage_date,
+                charged_tokens=normalized_tokens,
+            )
+        if not existing_charge and normalized_tokens > 0:
+            db.execute(
+                text(
+                    """
+                    UPDATE token_budget_daily_usage
+                    SET spent_tokens = spent_tokens + :charged_tokens,
+                        updated_at = now()
+                    WHERE user_id = :user_id
+                      AND usage_date = :usage_date
+                    """
+                ),
+                {
+                    "charged_tokens": normalized_tokens,
+                    "user_id": user_id,
+                    "usage_date": usage_date,
+                },
+            )
+
+    def release_token_budget_in_transaction(
+        self,
+        db: Session,
+        *,
+        user_id: UUID,
+        reservation_id: UUID,
+    ) -> None:
+        """Release one reservation inside the caller's open transaction."""
+        usage_date = self._reservation_usage_date(
+            db=db,
+            user_id=user_id,
+            reservation_id=reservation_id,
+        )
+        if usage_date is None:
+            return
+        self._load_budget_totals_for_update(db=db, user_id=user_id, usage_date=usage_date)
+        reservation = (
+            db.execute(
+                text(
+                    """
+                    SELECT usage_date, reserved_tokens
+                    FROM token_budget_reservations
+                    WHERE reservation_id = :reservation_id
+                      AND user_id = :user_id
+                    FOR UPDATE
+                    """
+                ),
+                {"reservation_id": reservation_id, "user_id": user_id},
+            )
+            .mappings()
+            .first()
+        )
+        if reservation is None:
+            return
+        if reservation["usage_date"] != usage_date:
+            raise AssertionError(
+                "token reservation usage date changed while acquiring budget locks"
+            )
+        db.execute(
+            text(
+                """
+                DELETE FROM token_budget_reservations
+                WHERE reservation_id = :reservation_id
+                  AND user_id = :user_id
+                """
+            ),
+            {"reservation_id": reservation_id, "user_id": user_id},
+        )
+        db.execute(
+            text(
+                """
+                UPDATE token_budget_daily_usage
+                SET reserved_tokens = GREATEST(reserved_tokens - :reserved_tokens, 0),
+                    updated_at = now()
+                WHERE user_id = :user_id
+                  AND usage_date = :usage_date
+                """
+            ),
+            {
+                "reserved_tokens": int(reservation["reserved_tokens"]),
+                "user_id": user_id,
+                "usage_date": usage_date,
+            },
+        )
 
     @contextmanager
     def _db_swallow(self, warn_msg: str, **warn_kw: object) -> Generator[Session, None, None]:
@@ -718,6 +692,26 @@ class RateLimiter:
             {"reservation_id": reservation_id},
         ).first()
         return row is not None
+
+    def _reservation_usage_date(
+        self,
+        *,
+        db: Session,
+        user_id: UUID,
+        reservation_id: UUID,
+    ) -> date | None:
+        value = db.execute(
+            text(
+                """
+                SELECT usage_date
+                FROM token_budget_reservations
+                WHERE reservation_id = :reservation_id
+                  AND user_id = :user_id
+                """
+            ),
+            {"reservation_id": reservation_id, "user_id": user_id},
+        ).scalar_one_or_none()
+        return value if isinstance(value, date) else None
 
     def _insert_token_budget_charge(
         self,

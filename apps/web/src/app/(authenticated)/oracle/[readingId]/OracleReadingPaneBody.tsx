@@ -489,19 +489,11 @@ function FleuronBreak() {
 
 function oracleFailureFeedback(errorCode: string | null): FeedbackContent {
   switch (errorCode) {
-    case "E_LLM_INVALID_KEY":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message:
-          "Add or fix a model API key before the oracle can complete a reading.",
-      };
     case "E_BILLING_REQUIRED":
       return {
         tone: "Danger",
         title: "The reading could not finish.",
-        message:
-          "Platform model access requires an AI tier — add an API key or upgrade.",
+        message: "Platform model access requires an AI tier. Upgrade to continue.",
       };
     case "E_TOKEN_BUDGET_EXCEEDED":
     case "budget_exceeded":
@@ -510,7 +502,6 @@ function oracleFailureFeedback(errorCode: string | null): FeedbackContent {
         title: "The reading could not finish.",
         message: "The platform AI allowance has been reached.",
       };
-    case "E_LLM_BAD_REQUEST":
     case "context_too_large":
       return {
         tone: "Danger",

@@ -20,7 +20,6 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.config import get_settings
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     OracleCorpusSource,
@@ -553,8 +552,6 @@ async def execute_reading(
     question = reading.question_text
     viewer_id = reading.user_id
     folio_number = reading.folio_number
-    settings = get_settings()
-
     rate_limiter = get_rate_limiter()
     inflight_acquired = False
 
@@ -673,6 +670,7 @@ async def execute_reading(
         try:
             call = await execute_generation(
                 GenerationRequest(
+                    generation_id=reading_id,
                     owner=LlmCallOwner(kind="oracle_reading", id=reading_id, user_id=viewer_id),
                     operation=ORACLE_OPERATION,
                     profile=profile,
@@ -681,7 +679,6 @@ async def execute_reading(
                 ),
                 session_factory=get_session_factory(),
                 runtime=runtime,
-                settings=settings,
             )
         except ApiError as exc:
             reading = _get_reading(db, reading_id)
