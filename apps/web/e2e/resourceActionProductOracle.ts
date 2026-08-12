@@ -887,6 +887,10 @@ export const NON_RESOURCE_COMMANDS = [
     commands: "Switch, rename, delete this fork",
   },
   {
+    owner: "Consumption session",
+    commands: "Exclude one exact observed session from factual Stats",
+  },
+  {
     owner: "Artifact build handle",
     commands: "Cancel active build; no ArtifactBuild ResourceRef is introduced",
   },

@@ -72,10 +72,10 @@ from nexus.schemas.consumption import (
 )
 from nexus.schemas.consumption_activity import (
     ActiveExclusionOut,
-    ActivityAdjustmentIn,
-    ActivityAdjustmentResultOut,
     ActivityBatchIn,
     ActivityDeviceClass,
+    ActivityExclusionIn,
+    ActivityExclusionResultOut,
     ActivityMetricsOut,
     ActivitySessionOut,
     ActivitySessionPageOut,
@@ -83,7 +83,6 @@ from nexus.schemas.consumption_activity import (
     ActivityStatsSectionOut,
     ActivityTimelineRowOut,
     ActivityTotalsOut,
-    AddActivityAdjustmentIn,
     CompletionDateOut,
     CompletionStatsSectionOut,
     CompletionTimelineRowOut,
@@ -93,14 +92,14 @@ from nexus.schemas.consumption_activity import (
     ContributorCompletionOut,
     DeviceActivityOut,
     DeviceSummaryOut,
-    ExcludeActivityAdjustmentIn,
+    ExcludeActivityIn,
     LocalDayOut,
     LocalHourOut,
     MediaActivityBreakdownOut,
     MediaActivityOut,
     MediaCompletionOut,
+    RestoreActivityExclusionIn,
     RetainedArtifactsOut,
-    RetractActivityAdjustmentIn,
 )
 from nexus.schemas.presence import Absent, Present, absent, nullable_from_presence, present
 from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot
@@ -127,10 +126,10 @@ from nexus.services.consumption._lectern_store import (
 )
 from nexus.services.consumption.handles import (
     CompletionHandle,
-    seal_activity_adjustment,
+    seal_activity_exclusion,
     seal_completion,
     seal_device,
-    unseal_activity_adjustment,
+    unseal_activity_exclusion,
     unseal_completion,
 )
 from nexus.services.resource_mutation_replay import (
@@ -142,7 +141,7 @@ from nexus.services.resource_mutation_replay import (
 LECTERN_SCOPE = "Lectern.Commands"
 CONSUMPTION_SCOPE = "Consumption.Commands"
 CONSUMPTION_ACTIVITY_SCOPE = "Consumption.Activity"
-CONSUMPTION_ACTIVITY_ADJUSTMENT_SCOPE = "Consumption.ActivityAdjustments"
+CONSUMPTION_ACTIVITY_EXCLUSION_SCOPE = "Consumption.ActivityExclusions"
 PREVIEW_POSITION_SCOPE = "Consumption.PreviewPosition"
 CONSUMPTION_STATS_LATENCY_BUDGET_MS = 500
 _ACTIVITY_MAX_AGE = timedelta(days=30)
@@ -313,28 +312,16 @@ def _session_out(
     ended_at = row["session_end"]
     if not isinstance(started_at, datetime) or not isinstance(ended_at, datetime):
         raise TypeError("session timestamps must be datetimes")
-    source = str(row["source"])
-    if source == "Observed":
-        device_id = str(row["device_id"])
-        device = devices.get(device_id)
-        if device is None:
-            raise RuntimeError("session device projection is missing")
-        device_out = present(device)
-        adjustment_handle = absent()
-    elif source == "Manual" and isinstance(row["adjustment_id"], UUID):
-        device_out = absent()
-        adjustment_handle = present(seal_activity_adjustment(row["adjustment_id"]))
-    else:
-        raise RuntimeError("session source projection is invalid")
+    device = devices.get(str(row["device_id"]))
+    if device is None:
+        raise RuntimeError("session device projection is missing")
     first_progress = row.get("first_progress")
     last_progress = row.get("last_progress")
     return ActivitySessionOut(
         media_ref=f"media:{row['media_id']}",
         title=str(row["title"]),
         modality=cast(Literal["Reading", "Listening", "Viewing"], row["modality"]),
-        source=cast(Literal["Observed", "Manual"], source),
-        device=device_out,
-        adjustment_handle=adjustment_handle,
+        device=device,
         started_at=started_at,
         ended_at=ended_at,
         active_ms=int(row["active_ms"]),
@@ -403,7 +390,7 @@ def get_activity_stats(
             raise RuntimeError("active exclusion device projection is missing")
         active_exclusions.append(
             ActiveExclusionOut(
-                adjustment_handle=seal_activity_adjustment(row["adjustment_id"]),
+                exclusion_handle=seal_activity_exclusion(row["exclusion_id"]),
                 media_ref=f"media:{row['media_id']}",
                 title=str(row["title"]),
                 modality=cast(Literal["Reading", "Listening", "Viewing"], row["modality"]),
@@ -441,13 +428,11 @@ def get_activity_stats(
     response = ConsumptionStatsOut(
         activity=ActivityStatsSectionOut(
             applied_filters=["time", *active_filters],
-            inapplicable_filters=["manual"] if query.device_id is not None else [],
+            inapplicable_filters=[],
             totals=ActivityTotalsOut(
                 **totals.model_dump(),
                 recorded_active_ms=sum(int(row["recorded_active_ms"]) for row in totals_rows),
                 excluded_active_ms=sum(int(row["excluded_active_ms"]) for row in totals_rows),
-                observed_active_ms=sum(int(row["observed_active_ms"]) for row in totals_rows),
-                manual_active_ms=sum(int(row["manual_active_ms"]) for row in totals_rows),
                 active_days=sum(int(row["active_ms"]) >= 300_000 for row in local_days),
                 streak=streak["streak"],
                 longest_streak=streak["longest_streak"],
@@ -1546,78 +1531,47 @@ def _validate_activity_batch(batch: ActivityBatchIn) -> None:
         previous_end = span.occurred_at + timedelta(milliseconds=span.duration_ms)
 
 
-def apply_activity_adjustment(
+def apply_activity_exclusion(
     viewer_id: UUID,
     *,
-    command: ActivityAdjustmentIn,
+    command: ActivityExclusionIn,
     media_id: UUID | None,
-) -> ActivityAdjustmentResultOut:
-    """Apply one replayable Add, Exclude, or Retract correction."""
+) -> ActivityExclusionResultOut:
+    """Exclude one exact observed session or restore that exclusion."""
     fresh = _fresh_session()
     try:
         return retry_serializable(
             fresh,
-            "apply_activity_adjustment",
-            partial(_apply_activity_adjustment_op, fresh, viewer_id, command, media_id),
+            "apply_activity_exclusion",
+            partial(_apply_activity_exclusion_op, fresh, viewer_id, command, media_id),
         )
     finally:
         fresh.close()
 
 
-def _apply_activity_adjustment_op(
+def _apply_activity_exclusion_op(
     db: Session,
     viewer_id: UUID,
-    command: ActivityAdjustmentIn,
+    command: ActivityExclusionIn,
     media_id: UUID | None,
-) -> ActivityAdjustmentResultOut:
+) -> ActivityExclusionResultOut:
     _lock_viewer(db, viewer_id)
     request_bytes = canonical_json_bytes(command.model_dump(mode="json", by_alias=True))
     stored = lookup_replay(
         db,
         viewer_id=viewer_id,
-        scope=CONSUMPTION_ACTIVITY_ADJUSTMENT_SCOPE,
+        scope=CONSUMPTION_ACTIVITY_EXCLUSION_SCOPE,
         client_mutation_id=str(command.client_mutation_id),
         request_bytes=request_bytes,
     )
     if stored is not None:
         db.rollback()
-        return ActivityAdjustmentResultOut.model_validate(stored)
+        return ActivityExclusionResultOut.model_validate(stored)
 
-    if isinstance(command, AddActivityAdjustmentIn):
+    if isinstance(command, ExcludeActivityIn):
         if media_id is None:
             raise AssertionError(
-                "Add adjustment is missing its parsed media identity"
-            )  # justify-service-invariant-check: the strict API boundary parses every mediaRef.
-        _require_aware_interval(command.occurred_at)
-        _require_activity_media_readable(db, viewer_id, media_id)
-        ended_at = command.occurred_at + timedelta(milliseconds=command.duration_ms)
-        if ended_at > db.scalar(text("SELECT now()")):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Added activity cannot end in the future",
-            )
-        kind = db.scalar(
-            text("SELECT kind FROM media WHERE id = :media_id"), {"media_id": media_id}
-        )
-        if kind is None:
-            raise AssertionError(
-                "visible adjustment media disappeared"
-            )  # justify-service-invariant-check: visibility and kind share one transaction.
-        adjustment_id = _activity_store.insert_adjustment_in_txn(
-            db,
-            viewer_id=viewer_id,
-            media_id=media_id,
-            kind="Add",
-            modality=_policy.completion_modality_for_kind(str(kind)),
-            device_id=None,
-            occurred_at=command.occurred_at,
-            duration_ms=command.duration_ms,
-        )
-        outcome: Literal["Added", "Excluded", "Retracted"] = "Added"
-    elif isinstance(command, ExcludeActivityAdjustmentIn):
-        if media_id is None:
-            raise AssertionError(
-                "Exclude adjustment is missing its parsed media identity"
+                "Exclude command is missing its parsed media identity"
             )  # justify-service-invariant-check: the strict API boundary parses every mediaRef.
         _require_aware_interval(command.started_at, command.ended_at)
         if command.started_at >= command.ended_at:
@@ -1633,7 +1587,7 @@ def _apply_activity_adjustment_op(
         )
         if device_id is None:
             raise AssertionError(
-                "Exclude adjustment did not resolve its required device"
+                "Exclude command did not resolve its required device"
             )  # justify-service-invariant-check: Exclude carries a required DeviceHandle.
         session = _activity_store.observed_session_in_txn(
             db,
@@ -1649,54 +1603,48 @@ def _apply_activity_adjustment_op(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Excluded activity must name one exact current observed session",
             )
-        duration_ms = int((session.ended_at - session.started_at).total_seconds() * 1000)
-        if session.started_at + timedelta(milliseconds=duration_ms) != session.ended_at:
-            raise AssertionError(
-                "observed session boundary is not millisecond-aligned"
-            )  # justify-service-invariant-check: stored spans use integer millisecond duration.
-        adjustment_id = _activity_store.insert_adjustment_in_txn(
+        exclusion_id = _activity_store.insert_exclusion_in_txn(
             db,
             viewer_id=viewer_id,
             media_id=media_id,
-            kind="Exclude",
             modality=command.modality,
             device_id=device_id,
-            occurred_at=session.started_at,
-            duration_ms=duration_ms,
+            started_at=session.started_at,
+            ended_at=session.ended_at,
         )
-        outcome = "Excluded"
-    elif isinstance(command, RetractActivityAdjustmentIn):
+        outcome: Literal["Excluded", "Restored"] = "Excluded"
+    elif isinstance(command, RestoreActivityExclusionIn):
         if media_id is not None:
             raise AssertionError(
-                "Retract adjustment unexpectedly received a media identity"
-            )  # justify-service-invariant-check: Retract has no mediaRef at the strict boundary.
-        adjustment_id = unseal_activity_adjustment(str(command.adjustment_handle))
-        result = _activity_store.retract_adjustment_in_txn(
+                "Restore command unexpectedly received a media identity"
+            )  # justify-service-invariant-check: Restore has no mediaRef at the strict boundary.
+        exclusion_id = unseal_activity_exclusion(str(command.exclusion_handle))
+        result = _activity_store.restore_exclusion_in_txn(
             db,
             viewer_id=viewer_id,
-            adjustment_id=adjustment_id,
+            exclusion_id=exclusion_id,
         )
         if result == "Missing":
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Activity adjustment not found")
-        if result == "AlreadyRetracted":
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Activity exclusion not found")
+        if result == "AlreadyRestored":
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT,
-                "Activity adjustment is already retracted",
+                "Activity exclusion is already restored",
             )
-        outcome = "Retracted"
+        outcome = "Restored"
     else:
         raise AssertionError(
-            "unknown activity adjustment variant"
+            "unknown activity exclusion variant"
         )  # justify-service-invariant-check: Pydantic owns the exhaustive tagged union.
 
-    response = ActivityAdjustmentResultOut(
+    response = ActivityExclusionResultOut(
         outcome=outcome,
-        adjustment_handle=present(seal_activity_adjustment(adjustment_id)),
+        exclusion_handle=seal_activity_exclusion(exclusion_id),
     )
     record_replay(
         db,
         viewer_id=viewer_id,
-        scope=CONSUMPTION_ACTIVITY_ADJUSTMENT_SCOPE,
+        scope=CONSUMPTION_ACTIVITY_EXCLUSION_SCOPE,
         client_mutation_id=str(command.client_mutation_id),
         request_bytes=request_bytes,
         response_json=response.model_dump(mode="json", by_alias=True),
@@ -1710,7 +1658,7 @@ def _require_aware_interval(*values: datetime) -> None:
     if any(value.tzinfo is None for value in values):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
-            "Activity adjustment instants must include a timezone",
+            "Activity exclusion instants must include a timezone",
         )
 
 

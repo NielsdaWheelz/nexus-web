@@ -2,11 +2,11 @@ import { expectExactRecord, isRecord } from "@/lib/validation";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { tryParseContributorHandle } from "@/lib/contributors/handle";
 import {
-  parseActivityAdjustmentHandle,
   parseActivityDeviceHandle,
-  type ActivityAdjustmentHandle,
   type ActivityDeviceHandle,
-} from "./activityAdjustments";
+  parseActivityExclusionHandle,
+  type ActivityExclusionHandle,
+} from "./activityExclusions";
 
 export type StatsPeriod = "day" | "week" | "month" | "year" | "all";
 export type StatsView = "stats" | "year";
@@ -68,12 +68,10 @@ export interface DeviceSummary {
 }
 
 export interface StatsSession extends Metrics {
-  source: "Observed" | "Manual";
   mediaRef: string;
   title: string;
   modality: ActivityModality;
-  device: Presence<DeviceSummary>;
-  adjustmentHandle: Presence<ActivityAdjustmentHandle>;
+  device: DeviceSummary;
   startedAt: string;
   endedAt: string;
   activeMs: number;
@@ -84,7 +82,7 @@ export interface StatsSession extends Metrics {
 }
 
 export interface ActiveExclusion {
-  adjustmentHandle: ActivityAdjustmentHandle;
+  exclusionHandle: ActivityExclusionHandle;
   mediaRef: string;
   title: string;
   modality: ActivityModality;
@@ -104,8 +102,6 @@ export interface ConsumptionStats {
     totals: Metrics & {
       recordedActiveMs: number;
       excludedActiveMs: number;
-      observedActiveMs: number;
-      manualActiveMs: number;
       activeDays: number;
       streak: number;
       longestStreak: number;
@@ -441,13 +437,13 @@ function deviceHandleAt(value: unknown, name: string): ActivityDeviceHandle {
   }
 }
 
-function activityAdjustmentHandleAt(
+function activityExclusionHandleAt(
   value: unknown,
   name: string,
-): ActivityAdjustmentHandle {
+): ActivityExclusionHandle {
   const raw = stringAt(value, name);
   try {
-    return parseActivityAdjustmentHandle(raw);
+    return parseActivityExclusionHandle(raw);
   } catch {
     throw new Error(`Invalid Stats response: ${name}`);
   }
@@ -544,12 +540,10 @@ function statsSessionAt(input: unknown, name: string): StatsSession {
   expectExactRecord(
     input,
     [
-      "source",
       "mediaRef",
       "title",
       "modality",
       "device",
-      "adjustmentHandle",
       "startedAt",
       "endedAt",
       "activeMs",
@@ -565,10 +559,6 @@ function statsSessionAt(input: unknown, name: string): StatsSession {
   if (!isRecord(input)) {
     throw new Error(`Invalid Stats response: ${name}`);
   }
-  const source = stringAt(input.source, `${name}.source`);
-  if (source !== "Observed" && source !== "Manual") {
-    throw new Error(`Invalid Stats response: ${name}.source`);
-  }
   const modality = stringAt(input.modality, `${name}.modality`);
   if (!MODALITIES.has(modality as ActivityModality)) {
     throw new Error(`Invalid Stats response: ${name}.modality`);
@@ -579,31 +569,12 @@ function statsSessionAt(input: unknown, name: string): StatsSession {
   ) {
     throw new Error(`Invalid Stats response: ${name}.continues`);
   }
-  const device = presenceAt(input.device, `${name}.device`, (raw) =>
-    deviceSummaryAt(raw, `${name}.device.value`),
-  );
-  const adjustmentHandle = presenceAt(
-    input.adjustmentHandle,
-    `${name}.adjustmentHandle`,
-    (raw) =>
-      activityAdjustmentHandleAt(raw, `${name}.adjustmentHandle.value`),
-  );
-  if (
-    (source === "Observed" &&
-      (device.kind !== "Present" || adjustmentHandle.kind !== "Absent")) ||
-    (source === "Manual" &&
-      (device.kind !== "Absent" || adjustmentHandle.kind !== "Present"))
-  ) {
-    throw new Error(`Invalid Stats response: ${name}.source identity`);
-  }
   return {
     ...metrics(input, name),
-    source,
     mediaRef: mediaRefAt(input.mediaRef, `${name}.mediaRef`),
     title: stringAt(input.title, `${name}.title`),
     modality: modality as ActivityModality,
-    device,
-    adjustmentHandle,
+    device: deviceSummaryAt(input.device, `${name}.device`),
     startedAt: instantAt(input.startedAt, `${name}.startedAt`),
     endedAt: instantAt(input.endedAt, `${name}.endedAt`),
     activeMs: numberAt(input.activeMs, `${name}.activeMs`),
@@ -688,8 +659,6 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
       "activeMs",
       "recordedActiveMs",
       "excludedActiveMs",
-      "observedActiveMs",
-      "manualActiveMs",
       "forwardWordPosition",
       "forwardMediaPositionMs",
       "activeDays",
@@ -911,14 +880,6 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
           activity.totals.excludedActiveMs,
           "totals.excludedActiveMs",
         ),
-        observedActiveMs: numberAt(
-          activity.totals.observedActiveMs,
-          "totals.observedActiveMs",
-        ),
-        manualActiveMs: numberAt(
-          activity.totals.manualActiveMs,
-          "totals.manualActiveMs",
-        ),
         activeDays: numberAt(activity.totals.activeDays, "totals.activeDays"),
         streak: numberAt(activity.totals.streak, "totals.streak"),
         longestStreak: numberAt(
@@ -1012,7 +973,7 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
         expectExactRecord(
           item,
           [
-            "adjustmentHandle",
+            "exclusionHandle",
             "mediaRef",
             "title",
             "modality",
@@ -1031,9 +992,9 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
           throw new Error(`Invalid Stats response: ${name}.modality`);
         }
         return {
-          adjustmentHandle: activityAdjustmentHandleAt(
-            item.adjustmentHandle,
-            `${name}.adjustmentHandle`,
+          exclusionHandle: activityExclusionHandleAt(
+            item.exclusionHandle,
+            `${name}.exclusionHandle`,
           ),
           mediaRef: mediaRefAt(item.mediaRef, `${name}.mediaRef`),
           title: stringAt(item.title, `${name}.title`),

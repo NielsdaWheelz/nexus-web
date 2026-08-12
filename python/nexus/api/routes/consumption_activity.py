@@ -13,10 +13,9 @@ from nexus.db.session import get_repeatable_read_db
 from nexus.errors import InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.consumption_activity import (
-    ActivityAdjustmentIn,
+    ActivityExclusionIn,
     ActivityRecordIn,
-    AddActivityAdjustmentIn,
-    ExcludeActivityAdjustmentIn,
+    ExcludeActivityIn,
 )
 from nexus.services.consumption import _activity_stats
 from nexus.services.consumption import service as consumption_service
@@ -51,19 +50,15 @@ def post_activity(
     return Response(status_code=204)
 
 
-@router.post("/consumption/activity-adjustments")
-def post_activity_adjustment(
-    body: ActivityAdjustmentIn,
+@router.post("/consumption/activity-exclusions")
+def post_activity_exclusion(
+    body: ActivityExclusionIn,
     viewer: Annotated[Viewer, Depends(get_viewer)],
 ) -> dict:
-    """Apply one strict factual activity correction."""
-    media_id = (
-        _media_id(body.media_ref)
-        if isinstance(body, AddActivityAdjustmentIn | ExcludeActivityAdjustmentIn)
-        else None
-    )
+    """Exclude one exact observed session or restore its exclusion."""
+    media_id = _media_id(body.media_ref) if isinstance(body, ExcludeActivityIn) else None
     return ok(
-        consumption_service.apply_activity_adjustment(
+        consumption_service.apply_activity_exclusion(
             viewer.user_id,
             command=body,
             media_id=media_id,

@@ -3051,48 +3051,47 @@ class ConsumptionActivitySpan(Base):
     )
 
 
-class ConsumptionActivityAdjustment(Base):
-    """One user-authored additive or excluding activity correction."""
+class ConsumptionActivityExclusion(Base):
+    """One exact observed activity session excluded by its viewer."""
 
-    __tablename__ = "consumption_activity_adjustments"
+    __tablename__ = "consumption_activity_exclusions"
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_consumption_activity_adjustments_user"),
+        ForeignKey("users.id", name="fk_consumption_activity_exclusions_user"),
         nullable=False,
     )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_consumption_activity_adjustments_media"),
+        ForeignKey("media.id", name="fk_consumption_activity_exclusions_media"),
         nullable=False,
     )
-    kind: Mapped[str] = mapped_column(Text, nullable=False)
     modality: Mapped[str] = mapped_column(Text, nullable=False)
-    device_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    duration_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    device_id: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    ended_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
-    retracted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    restored_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     __table_args__ = (
         Index(
-            "ix_consumption_activity_adjustments_user_occurred_id",
+            "ix_consumption_activity_exclusions_user_started_id",
             "user_id",
-            "occurred_at",
+            "started_at",
             "id",
         ),
         Index(
-            "ix_cons_activity_adj_user_media_device_time_id",
+            "ix_cons_activity_exclusions_user_media_device_started_id",
             "user_id",
             "media_id",
             "device_id",
-            "occurred_at",
+            "started_at",
             "id",
         ),
-        Index("ix_consumption_activity_adjustments_media_id", "media_id", "id"),
+        Index("ix_consumption_activity_exclusions_media_id", "media_id", "id"),
     )
 
 

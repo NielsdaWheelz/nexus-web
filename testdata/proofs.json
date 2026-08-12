@@ -349,6 +349,7 @@
       "id": "durable-consumption-activity",
       "source_globs": [
         "migrations/alembic/versions/0213_durable_consumption_activity.py",
+        "migrations/alembic/versions/0214_observed_consumption_activity.py",
         "python/nexus/services/consumption/**/*.py",
         "python/nexus/schemas/consumption_activity.py",
         "python/nexus/api/routes/consumption_activity.py",
@@ -369,11 +370,14 @@
       "proofs": [
         "pytest:python/tests/service/test_consumption_activity_ledger.py",
         "pytest:python/tests/migrations/test_durable_consumption_activity_migration.py",
+        "pytest:python/tests/migrations/test_observed_consumption_activity_migration.py",
+        "vitest:apps/web/src/lib/consumption/activityExclusions.unit.test.ts",
         "vitest:apps/web/src/lib/consumption/activityRecorder.unit.test.ts",
         "vitest:apps/web/src/lib/consumption/activityOutbox.unit.test.ts",
         "vitest:apps/web/src/lib/consumption/activityRuntime.browser.test.ts",
+        "vitest:apps/web/src/lib/consumption/statsContract.unit.test.ts",
+        "vitest:apps/web/src/app/api/consumption/activity-exclusions/route.unit.test.ts",
         "vitest:apps/web/src/app/(authenticated)/stats/StatsPaneBody.browser.test.tsx",
-        "vitest:apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.activity.browser.test.tsx",
         "vitest:apps/web/src/app/(authenticated)/media/[id]/ReaderActivityAdapter.browser.test.tsx",
         "gradle:apps/android/app/src/test/java/app/nexus/android/playback/NativeConsumptionRecorderTest.kt",
         "gradle:apps/android/app/src/androidTest/java/app/nexus/android/playback/NativeActivityOutboxInstrumentedTest.kt",

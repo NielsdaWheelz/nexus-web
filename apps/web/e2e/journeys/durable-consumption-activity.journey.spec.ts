@@ -23,8 +23,6 @@ interface ConsumptionStatsPayload {
         activeMs: number;
         recordedActiveMs: number;
         excludedActiveMs: number;
-        observedActiveMs: number;
-        manualActiveMs: number;
       };
       media: {
         rows: Array<{
@@ -33,6 +31,7 @@ interface ConsumptionStatsPayload {
           activeMs: number;
         }>;
       };
+      activeExclusions: Array<{ exclusionHandle: string }>;
     };
   };
 }
@@ -135,7 +134,7 @@ async function consumptionStats(
   )).data;
 }
 
-test("restored reader input is durably projected into mounted Stats", async ({
+test("restored reader input is durably projected as observed time in mounted Stats", async ({
   page,
   journeyUser,
 }) => {
@@ -248,7 +247,7 @@ test("restored reader input is durably projected into mounted Stats", async ({
     summary,
     "Mounted Stats did not refresh to the just-accepted reader activity.",
   ).toBeVisible({ timeout: 15_000 });
-  await expect(summary).toContainText("observed");
+  await expect(summary).toContainText("Observed time");
   await expect(
     page
       .getByRole("button", {
@@ -270,8 +269,6 @@ test("restored reader input is durably projected into mounted Stats", async ({
         return (
           totals.recordedActiveMs > 0 &&
           totals.excludedActiveMs === 0 &&
-          totals.observedActiveMs === totals.recordedActiveMs &&
-          totals.manualActiveMs === 0 &&
           totals.activeMs === totals.recordedActiveMs &&
           (work?.activeMs ?? 0) > 0
         );
@@ -285,9 +282,6 @@ test("restored reader input is durably projected into mounted Stats", async ({
 
   const projected = await consumptionStats(api, statsPath);
   expect(projected.activity.totals.recordedActiveMs).toBeGreaterThan(0);
-  expect(projected.activity.totals.observedActiveMs).toBe(
-    projected.activity.totals.recordedActiveMs,
-  );
   expect(projected.activity.totals.activeMs).toBe(
     projected.activity.totals.recordedActiveMs,
   );
@@ -296,4 +290,89 @@ test("restored reader input is durably projected into mounted Stats", async ({
       (row) => row.mediaRef === `media:${mediaId}`,
     )?.activeMs ?? 0,
   ).toBeGreaterThan(0);
+
+  const sessionActions = page
+    .getByRole("button", {
+      name: /^Actions for Canonical Reader Positions, Reading,/,
+    })
+    .first();
+  await expect(
+    sessionActions,
+    "The exact observed session did not expose its quiet correction action.",
+  ).toBeVisible();
+  await sessionActions.click();
+  const excluded = page.waitForResponse(
+    (response) =>
+      matchesResponse(
+        response,
+        webOrigin,
+        "POST",
+        "/api/consumption/activity-exclusions",
+      ) && response.status() === 200,
+    { timeout: 15_000 },
+  );
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page
+    .getByRole("menuitem", { name: "Don’t count this session", exact: true })
+    .click();
+  await excluded;
+  await expect(
+    page.getByRole("heading", { name: "Excluded activity", exact: true }),
+    "The mounted Stats view did not project the accepted exclusion.",
+  ).toBeVisible();
+  await expect
+    .poll(
+      async () => {
+        const afterExclusion = await consumptionStats(api, statsPath);
+        return (
+          afterExclusion.activity.totals.recordedActiveMs > 0 &&
+          afterExclusion.activity.totals.excludedActiveMs ===
+            afterExclusion.activity.totals.recordedActiveMs &&
+          afterExclusion.activity.totals.activeMs === 0 &&
+          afterExclusion.activity.activeExclusions.length === 1
+        );
+      },
+      {
+        message: `Expected exact exclusion for ${mediaId} in the public Stats projection.`,
+        timeout: 15_000,
+      },
+    )
+    .toBe(true);
+
+  const restored = page.waitForResponse(
+    (response) =>
+      matchesResponse(
+        response,
+        webOrigin,
+        "POST",
+        "/api/consumption/activity-exclusions",
+      ) && response.status() === 200,
+    { timeout: 15_000 },
+  );
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page
+    .getByRole("button", {
+      name: /^Restore Canonical Reader Positions session from/,
+    })
+    .click();
+  await restored;
+  await expect(sessionActions).toBeVisible();
+  await expect
+    .poll(
+      async () => {
+        const afterRestore = await consumptionStats(api, statsPath);
+        return (
+          afterRestore.activity.totals.recordedActiveMs > 0 &&
+          afterRestore.activity.totals.excludedActiveMs === 0 &&
+          afterRestore.activity.totals.activeMs ===
+            afterRestore.activity.totals.recordedActiveMs &&
+          afterRestore.activity.activeExclusions.length === 0
+        );
+      },
+      {
+        message: `Expected exact restore for ${mediaId} in the public Stats projection.`,
+        timeout: 15_000,
+      },
+    )
+    .toBe(true);
 });

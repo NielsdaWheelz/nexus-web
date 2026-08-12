@@ -578,6 +578,11 @@ const directActionMenuClassifications = [
     owners: ["Search filter"],
   },
   {
+    path: "src/app/(authenticated)/stats/StatsPaneBody.tsx",
+    occurrences: 1,
+    owners: ["Consumption session"],
+  },
+  {
     path: "src/components/appnav/AccountMenu.tsx",
     occurrences: 1,
     owners: ["Account session"],

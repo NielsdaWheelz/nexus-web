@@ -87,7 +87,7 @@ logger = get_logger(__name__)
 # private source capabilities and must never be retained by an intermediary.
 PRIVATE_NO_STORE_PATH_RE = re.compile(
     r"/media/activity|/media/[^/]+/(reader-state|offline-download-spec)"
-    r"|/me/reader-profile|/consumption/(activity|stats|sessions)"
+    r"|/me/reader-profile|/consumption/(activity|activity-exclusions|stats|sessions)"
 )
 
 

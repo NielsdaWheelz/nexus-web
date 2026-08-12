@@ -8,6 +8,13 @@ connected device.
 **Type:** Hard cutover — no legacy payload, in-memory delivery path, fallback,
 compatibility decoder, dual write, or feature flag.
 
+**Superseded correction contract:**
+[`observed-consumption-activity-hard-cutover.md`](observed-consumption-activity-hard-cutover.md)
+removes positive manual time and replaces adjustment Add/Exclude/Retract with
+observed-only Exclude/Restore. This document remains the historical authority
+for automatic capture and durable delivery; its correction sections are not
+the active product contract.
+
 The whole of [`docs/rules/index.md`](../rules/index.md) and
 [`docs/local-rules/testing-standards.md`](../local-rules/testing-standards.md)
 governs this cutover.

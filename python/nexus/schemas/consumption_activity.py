@@ -21,7 +21,6 @@ from nexus.schemas.presence import Absent, Presence
 _IN_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
 _INT64_MAX = 9_223_372_036_854_775_807
 _MAX_ACTIVITY_SPAN_MS = 30_000
-_MAX_ACTIVITY_ADDITION_MS = 86_400_000
 
 ActivityModality = Literal["Reading", "Listening", "Viewing"]
 ActivityDeviceClass = Literal["Desktop", "Mobile"]
@@ -30,7 +29,7 @@ _Progress = Annotated[float, Field(ge=0, le=1)]
 _DurationMs = Annotated[int, Field(gt=0, le=_MAX_ACTIVITY_SPAN_MS)]
 _COMPLETION_HANDLE_RE = re.compile(r"^ncc1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")
 _DEVICE_HANDLE_RE = re.compile(r"^ncd1\.[A-Za-z0-9_-]{22}$")
-_ADJUSTMENT_HANDLE_RE = re.compile(r"^nca1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")
+_EXCLUSION_HANDLE_RE = re.compile(r"^nce1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")
 
 
 class CompletionHandle(str):
@@ -65,13 +64,13 @@ class DeviceHandle(str):
         return core_schema.no_info_after_validator_function(cls._validate, core_schema.str_schema())
 
 
-class ActivityAdjustmentHandle(str):
-    """The sealed outward identity of one activity correction."""
+class ActivityExclusionHandle(str):
+    """The sealed outward identity of one observed activity exclusion."""
 
     @classmethod
-    def _validate(cls, value: str) -> ActivityAdjustmentHandle:
-        if not _ADJUSTMENT_HANDLE_RE.fullmatch(value):
-            raise ValueError("invalid activity adjustment handle")
+    def _validate(cls, value: str) -> ActivityExclusionHandle:
+        if not _EXCLUSION_HANDLE_RE.fullmatch(value):
+            raise ValueError("invalid activity exclusion handle")
         return cls(value)
 
     @classmethod
@@ -177,17 +176,7 @@ class ActivityRecordIn(BaseModel):
         return self
 
 
-class AddActivityAdjustmentIn(BaseModel):
-    model_config = _IN_CONFIG
-
-    kind: Literal["Add"]
-    client_mutation_id: UUID
-    media_ref: str = Field(min_length=1, max_length=100)
-    occurred_at: datetime
-    duration_ms: Annotated[int, Field(gt=0, le=_MAX_ACTIVITY_ADDITION_MS)]
-
-
-class ExcludeActivityAdjustmentIn(BaseModel):
+class ExcludeActivityIn(BaseModel):
     model_config = _IN_CONFIG
 
     kind: Literal["Exclude"]
@@ -199,16 +188,16 @@ class ExcludeActivityAdjustmentIn(BaseModel):
     ended_at: datetime
 
 
-class RetractActivityAdjustmentIn(BaseModel):
+class RestoreActivityExclusionIn(BaseModel):
     model_config = _IN_CONFIG
 
-    kind: Literal["Retract"]
+    kind: Literal["Restore"]
     client_mutation_id: UUID
-    adjustment_handle: ActivityAdjustmentHandle
+    exclusion_handle: ActivityExclusionHandle
 
 
-ActivityAdjustmentIn = Annotated[
-    AddActivityAdjustmentIn | ExcludeActivityAdjustmentIn | RetractActivityAdjustmentIn,
+ActivityExclusionIn = Annotated[
+    ExcludeActivityIn | RestoreActivityExclusionIn,
     Field(discriminator="kind"),
 ]
 
@@ -229,9 +218,7 @@ class ActivitySessionOut(BaseModel):
     media_ref: str
     title: str
     modality: ActivityModality
-    source: Literal["Observed", "Manual"]
-    device: Presence[DeviceSummaryOut]
-    adjustment_handle: Presence[ActivityAdjustmentHandle]
+    device: DeviceSummaryOut
     started_at: datetime
     ended_at: datetime
     active_ms: int = Field(ge=0)
@@ -261,8 +248,6 @@ class ActivityMetricsOut(BaseModel):
 class ActivityTotalsOut(ActivityMetricsOut):
     recorded_active_ms: int = Field(ge=0)
     excluded_active_ms: int = Field(ge=0)
-    observed_active_ms: int = Field(ge=0)
-    manual_active_ms: int = Field(ge=0)
     active_days: int = Field(ge=0)
     streak: int = Field(ge=0)
     longest_streak: int = Field(ge=0)
@@ -397,7 +382,7 @@ class RetainedArtifactsOut(ScopedSectionOut):
 class ActiveExclusionOut(BaseModel):
     model_config = _OUT_CONFIG
 
-    adjustment_handle: ActivityAdjustmentHandle
+    exclusion_handle: ActivityExclusionHandle
     media_ref: str
     title: str
     modality: ActivityModality
@@ -420,11 +405,11 @@ class ActivityStatsSectionOut(ScopedSectionOut):
     active_exclusions: list[ActiveExclusionOut]
 
 
-class ActivityAdjustmentResultOut(BaseModel):
+class ActivityExclusionResultOut(BaseModel):
     model_config = _OUT_CONFIG
 
-    outcome: Literal["Added", "Excluded", "Retracted"]
-    adjustment_handle: Presence[ActivityAdjustmentHandle]
+    outcome: Literal["Excluded", "Restored"]
+    exclusion_handle: ActivityExclusionHandle
 
 
 class ConsumptionStatsOut(BaseModel):

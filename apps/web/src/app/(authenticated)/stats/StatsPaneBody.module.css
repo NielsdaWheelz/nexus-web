@@ -266,6 +266,15 @@
   text-decoration: underline;
   text-underline-offset: 0.15em;
 }
+.sessionCell {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.sessionActions {
+  flex: none;
+}
 .muted {
   display: block;
   margin-top: 0.15rem;
