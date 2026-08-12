@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
+import { mediaActivityAttentionLabel } from "@/lib/status/mediaActivity";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import NavAccount from "./NavAccount";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
@@ -52,7 +53,7 @@ export default function NavRail({
   commandCombo: string;
   onOpenCommand: () => void;
   onOpenAdd: () => void;
-  activityCount: number;
+  activityCount: number | null;
   activityOpen: boolean;
   onOpenActivity: () => void;
   onNavigate: (event: MouseEvent<HTMLElement>, href: string) => AppNavActivationResult;
@@ -153,14 +154,14 @@ export default function NavRail({
               onClick={onOpenActivity}
               aria-haspopup="dialog"
               aria-pressed={activityOpen}
-              aria-label={`Activity, ${activityCount} open ${activityCount === 1 ? "item" : "items"}`}
+              aria-label={mediaActivityAttentionLabel(activityCount)}
               title={collapsed ? "Activity" : undefined}
             >
               <span className={styles.itemIcon}>
                 <ListTodo size={20} strokeWidth={2} aria-hidden="true" />
               </span>
               {!collapsed && <span className={styles.itemLabel}>Activity</span>}
-              {activityCount > 0 ? (
+              {activityCount !== null && activityCount > 0 ? (
                 <span className={styles.activityBadge} aria-hidden="true">
                   {activityCount > 99 ? "99+" : activityCount}
                 </span>

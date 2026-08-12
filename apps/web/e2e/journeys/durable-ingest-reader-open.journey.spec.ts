@@ -29,23 +29,32 @@ interface UploadInit {
 
 interface ActivityItem {
   media_id: string;
-  status: "Queued" | "Processing" | "Ready" | "NeedsAttention";
-  stage: { kind: "Absent" } | { kind: "Present"; value: string };
-  progress:
-    | { kind: "Absent" }
+  state:
     | {
-        kind: "Present";
-        value:
-          | { kind: "Stage"; stage: string }
+        kind: "Active";
+        status: "Queued" | "Processing";
+        stage: "Validate" | "Extract" | "Finalize" | "Index";
+        progress:
+          | { kind: "Absent" }
           | {
-              kind: "Counted";
-              stage: "Extract";
-              completed: number;
-              total: number;
-              unit: "Page" | "Chapter";
+              kind: "Present";
+              value:
+                | { kind: "Stage"; stage: string }
+                | {
+                    kind: "Counted";
+                    stage: "Extract";
+                    completed: number;
+                    total: number;
+                    unit: "Page" | "Chapter";
+                  };
             };
+      }
+    | {
+        kind: "NeedsAttention";
+        scope: "Source" | "Search";
+        stage: "Validate" | "Extract" | "Finalize" | "Index";
+        failure_code: { kind: "Absent" } | { kind: "Present"; value: string };
       };
-  failure_code: { kind: "Absent" } | { kind: "Present"; value: string };
 }
 
 async function readBody(response: APIResponse) {
@@ -276,8 +285,12 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
     .poll(
       async () => {
         const item = await activityItem(api, bounded.media_id);
-        const progress = item?.progress.kind === "Present" ? item.progress.value : undefined;
-        return item?.status === "Processing" &&
+        const progress =
+          item?.state.kind === "Active" && item.state.progress.kind === "Present"
+            ? item.state.progress.value
+            : undefined;
+        return item?.state.kind === "Active" &&
+          item.state.status === "Processing" &&
           progress?.kind === "Counted" &&
           progress.unit === "Page" &&
           progress.total === 712 &&
@@ -380,10 +393,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
 
   const duringLightCompletion = await activityItem(api, bounded.media_id);
   expect(
-    duringLightCompletion?.status === "Processing" ||
-      (duringLightCompletion?.status === "Ready" &&
-        duringLightCompletion.stage.kind === "Present" &&
-        duringLightCompletion.stage.value === "Index"),
+    duringLightCompletion?.state.kind === "Active",
     `Heavy work ${bounded.media_id} completed before the Light-worker outcome was observed: ${JSON.stringify(duringLightCompletion ?? null)}.`,
   ).toBeTruthy();
 
@@ -391,9 +401,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
     .poll(
       async () => {
         const item = await activityItem(api, bounded.media_id);
-        return item?.status === "Ready" && item.stage.kind === "Absent"
-          ? "complete"
-          : JSON.stringify(item ?? null);
+        return item === undefined ? "complete" : JSON.stringify(item);
       },
       {
         message: `Bounded source ${bounded.media_id} did not complete its Heavy content-index operation.`,
@@ -405,9 +413,9 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
     .poll(
       async () => {
         const item = await activityItem(api, rejected.media_id);
-        return item?.status === "NeedsAttention" &&
-          item.failure_code.kind === "Present"
-          ? item.failure_code.value
+        return item?.state.kind === "NeedsAttention" &&
+          item.state.failure_code.kind === "Present"
+          ? item.state.failure_code.value
           : JSON.stringify(item ?? null);
       },
       {

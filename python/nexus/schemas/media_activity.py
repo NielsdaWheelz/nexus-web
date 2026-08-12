@@ -21,16 +21,38 @@ class MediaActivityCapabilitiesOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class MediaActivityActiveStateOut(BaseModel):
+    kind: Literal["Active"] = "Active"
+    status: Literal["Queued", "Processing"]
+    stage: Literal["Validate", "Extract", "Finalize", "Index"]
+    waiting_reason: Presence[Literal["Queue", "Capacity", "RetryBackoff"]]
+    progress: Presence[SourceProgress]
+    status_code: Presence[NonemptyString]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaActivityNeedsAttentionStateOut(BaseModel):
+    kind: Literal["NeedsAttention"] = "NeedsAttention"
+    scope: Literal["Source", "Search"]
+    stage: Literal["Validate", "Extract", "Finalize", "Index"]
+    failure_code: Presence[NonemptyString]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+MediaActivityState = Annotated[
+    MediaActivityActiveStateOut | MediaActivityNeedsAttentionStateOut,
+    Field(discriminator="kind"),
+]
+
+
 class MediaActivityItemOut(BaseModel):
     media_id: UUID
     title: str
     media_kind: Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
     source_attempt_id: UUID
-    status: Literal["Queued", "Processing", "Ready", "NeedsAttention"]
-    stage: Presence[Literal["Validate", "Extract", "Finalize", "Index"]]
-    waiting_reason: Presence[Literal["Queue", "Capacity", "RetryBackoff"]]
-    progress: Presence[SourceProgress]
-    failure_code: Presence[NonemptyString]
+    state: MediaActivityState
     request_id: Presence[NonemptyString]
     run_count: int = Field(ge=0)
     queue_attempts: int = Field(ge=0)
@@ -43,7 +65,9 @@ class MediaActivityItemOut(BaseModel):
 
 
 class MediaActivityOut(BaseModel):
-    nonterminal_count: int = Field(ge=0)
+    needs_attention_count: int = Field(ge=0)
+    active_count: int = Field(ge=0)
+    has_more: bool
     items: list[MediaActivityItemOut]
 
     model_config = ConfigDict(extra="forbid")

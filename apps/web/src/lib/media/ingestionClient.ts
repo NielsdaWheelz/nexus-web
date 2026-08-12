@@ -14,7 +14,7 @@ import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import { type DocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import { isRecord } from "@/lib/validation";
-import { publishAcceptedMediaActivity } from "@/lib/media/activityClient";
+import { publishMediaActivityInvalidation } from "@/lib/media/activityClient";
 
 export type UploadFileKind = "Pdf" | "Epub";
 
@@ -207,7 +207,9 @@ export async function uploadIngestFile(args: {
   // (the upload-init identity is durable); publish once so a mounted All pane
   // reconciles. Aborts and defects throw past this point and never publish.
   publishLibraryPlacementChange([...args.libraryIds]);
-  publishAcceptedMediaActivity();
+  // Settlement is a second meaningful wake hint: a long signed upload may
+  // outlive the bounded Activity polling window started at acceptance.
+  publishMediaActivityInvalidation();
   return result;
 }
 
@@ -246,6 +248,10 @@ async function ingestUploadedFile({
       signal,
     }),
   );
+  // Upload init has already committed the accepted attempt, including the
+  // pre-enqueue job_id=NULL state. Wake Activity before caller callbacks,
+  // signed upload, or confirmation; its active-only polling owns convergence.
+  publishMediaActivityInvalidation();
   onAcceptedIdentity?.(
     init.kind === "Accepted"
       ? {
@@ -542,7 +548,7 @@ export async function addMediaFromUrl({
   // One acknowledged create-with-placement: publish this request's destinations
   // (an empty list still lands in Default) so a mounted All pane reconciles.
   publishLibraryPlacementChange([...libraryIds]);
-  publishAcceptedMediaActivity();
+  publishMediaActivityInvalidation();
   return result;
 }
 
@@ -560,7 +566,9 @@ export async function retryMediaSource(
       body: JSON.stringify({ from_stage: "source" }),
     },
   );
-  return mapSourceActionResponse(response);
+  const result = mapSourceActionResponse(response);
+  publishMediaActivityInvalidation();
+  return result;
 }
 
 export async function refreshMediaSource(
@@ -576,7 +584,9 @@ export async function refreshMediaSource(
       headers: { "Idempotency-Key": idempotencyKey },
     },
   );
-  return mapSourceActionResponse(response);
+  const result = mapSourceActionResponse(response);
+  publishMediaActivityInvalidation();
+  return result;
 }
 
 export function retryMediaMetadata<T = unknown>(mediaId: string): Promise<T> {
