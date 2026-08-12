@@ -170,6 +170,39 @@ function assertCanonicalMenu(path) {
   });
 }
 
+function assertContextualMenu(path) {
+  const parsed = parse(path);
+  const names = importedNames(
+    parsed,
+    "@/components/resources/ContextualActionMenu",
+    "default",
+  );
+  if (names.size === 0) {
+    fail(
+      `${path} must import ContextualActionMenu; the canonical composition boundary is missing.`,
+    );
+  }
+  let renders = 0;
+  visit(parsed.sourceFile, (node) => {
+    if (!ts.isJsxOpeningElement(node) && !ts.isJsxSelfClosingElement(node)) {
+      return;
+    }
+    if (
+      ts.isIdentifier(node.tagName) &&
+      names.has(node.tagName.text) &&
+      hasJsxAttribute(node.attributes, "sections") &&
+      hasJsxAttribute(node.attributes, "actionSubject")
+    ) {
+      renders += 1;
+    }
+  });
+  if (renders === 0) {
+    fail(
+      `${path} must render ContextualActionMenu with both sections and actionSubject; the canonical composition seam is incomplete.`,
+    );
+  }
+}
+
 function assertCanonicalMenuVariant(path, { requiredLabel, forbiddenLabel = [] }) {
   const parsed = parse(path);
   const names = importedNames(
@@ -298,7 +331,7 @@ function assertNoJsxAttribute(path, moduleName, attributeName) {
 }
 
 function assertRowHub() {
-  assertCanonicalMenu("src/components/collections/CollectionRow.tsx");
+  assertContextualMenu("src/components/collections/CollectionRow.tsx");
   const view = parse("src/components/collections/CollectionView.tsx");
   if (!view.text.includes("rowActionsAvailable = true")) {
     fail(
@@ -431,9 +464,9 @@ const directProofs = {
   "mobile-now-playing": () =>
     assertCanonicalMenu("src/components/player/MobileNowPlaying.tsx"),
   "desktop-pane-header": () =>
-    assertCanonicalMenu("src/components/ui/SurfaceHeader.tsx"),
+    assertContextualMenu("src/components/ui/SurfaceHeader.tsx"),
   "primary-mobile-pane-header": () =>
-    assertCanonicalMenu("src/components/appnav/MobilePaneBar.tsx"),
+    assertContextualMenu("src/components/appnav/MobilePaneBar.tsx"),
   "secondary-mobile-pane-header": () =>
     assertCanonicalMenu("src/components/workspace/MobileSecondaryPaneHost.tsx"),
   "media-activity-row": () =>
@@ -442,7 +475,7 @@ const directProofs = {
 
 const canonicalConsumerClassifications = [
   {
-    kind: "ResourceActionMenu",
+    kind: "ContextualActionMenu",
     path: "src/components/collections/CollectionRow.tsx",
     occurrences: 1,
     surfaceIds: Object.keys(rowProofs),
@@ -511,13 +544,13 @@ const canonicalConsumerClassifications = [
     surfaceIds: ["mobile-now-playing"],
   },
   {
-    kind: "ResourceActionMenu",
+    kind: "ContextualActionMenu",
     path: "src/components/ui/SurfaceHeader.tsx",
     occurrences: 1,
     surfaceIds: ["desktop-pane-header"],
   },
   {
-    kind: "ResourceActionMenu",
+    kind: "ContextualActionMenu",
     path: "src/components/appnav/MobilePaneBar.tsx",
     occurrences: 1,
     surfaceIds: ["primary-mobile-pane-header"],
@@ -559,6 +592,20 @@ const canonicalConsumerClassifications = [
     owner: "Canonical ResourceActionMenu renderer",
     surfaceIds: [],
   },
+  {
+    kind: "ResourceActionMenu",
+    path: "src/components/resources/ContextualActionMenu.tsx",
+    occurrences: 1,
+    owner: "Canonical ContextualActionMenu renderer",
+    surfaceIds: [],
+  },
+  {
+    kind: "useResourceActionMenuModel",
+    path: "src/components/resources/ContextualActionMenu.tsx",
+    occurrences: 1,
+    owner: "Canonical ContextualActionMenu renderer",
+    surfaceIds: [],
+  },
 ];
 
 const directActionMenuClassifications = [
@@ -586,16 +633,6 @@ const directActionMenuClassifications = [
     path: "src/components/appnav/AccountMenu.tsx",
     occurrences: 1,
     owners: ["Account session"],
-  },
-  {
-    path: "src/components/appnav/MobilePaneBar.tsx",
-    occurrences: 2,
-    owners: ["Reader/pane view"],
-  },
-  {
-    path: "src/components/collections/CollectionRow.tsx",
-    occurrences: 1,
-    owners: ["Collection occurrence"],
   },
   {
     path: "src/components/highlights/SelectionActionDock.tsx",
@@ -648,9 +685,9 @@ const directActionMenuClassifications = [
     owners: ["Canonical resource renderer", "Nexus non-resource result"],
   },
   {
-    path: "src/components/ui/SurfaceHeader.tsx",
-    occurrences: 1,
-    owners: ["Reader/pane view"],
+    path: "src/components/resources/ContextualActionMenu.tsx",
+    occurrences: 2,
+    owners: ["Collection occurrence", "Reader/pane view"],
   },
 ];
 
@@ -692,6 +729,11 @@ function productionSources(directory) {
 const RESOURCE_ACTION_MENU_IMPORT = {
   alias: "@/components/resources/ResourceActionMenu",
   targetPath: "src/components/resources/ResourceActionMenu",
+  importedName: "default",
+};
+const CONTEXTUAL_ACTION_MENU_IMPORT = {
+  alias: "@/components/resources/ContextualActionMenu",
+  targetPath: "src/components/resources/ContextualActionMenu",
   importedName: "default",
 };
 const RESOURCE_ACTION_MODEL_IMPORT = {
@@ -760,6 +802,17 @@ function discoverCanonicalConsumers(parsedSources) {
         kind: "ResourceActionMenu",
         path: parsed.relativePath,
         occurrences: menuOccurrences,
+      });
+    }
+    const contextualMenuOccurrences = countImportedJsxRenders(
+      parsed,
+      CONTEXTUAL_ACTION_MENU_IMPORT,
+    );
+    if (contextualMenuOccurrences !== null) {
+      discovered.push({
+        kind: "ContextualActionMenu",
+        path: parsed.relativePath,
+        occurrences: contextualMenuOccurrences,
       });
     }
     const modelOccurrences = countImportedHookCalls(
@@ -940,6 +993,27 @@ function assertDiscoverySensitivity() {
     fail(
       `direct ActionMenu discovery is insensitive to relative imports: ${JSON.stringify(
         direct,
+      )}.`,
+    );
+  }
+  const contextualFixture = parseText(
+    "src/policy-fixture/ContextualConsumer.tsx",
+    `
+      import Contextual from "@/components/resources/ContextualActionMenu";
+      export function Consumer({ subject, actions }) {
+        return <Contextual sections={[{ id: "Pane", actions }]} actionSubject={subject} />;
+      }
+    `,
+  );
+  const contextual = discoverCanonicalConsumers([contextualFixture]);
+  if (
+    contextual.length !== 1 ||
+    contextual[0].kind !== "ContextualActionMenu" ||
+    contextual[0].occurrences !== 1
+  ) {
+    fail(
+      `contextual menu discovery is insensitive to canonical composition: ${JSON.stringify(
+        contextual,
       )}.`,
     );
   }

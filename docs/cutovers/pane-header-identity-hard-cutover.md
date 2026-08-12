@@ -14,6 +14,12 @@ Date: 2026-07-20
 > [`pane-chrome-frame-hard-cutover.md`](pane-chrome-frame-hard-cutover.md).
 > The retained identity, route-gating, action, focus, and error-boundary clauses
 > remain authoritative.
+>
+> **Presentation superseded (2026-08-11):** every Options reference below is
+> historical. Companion is the sole promoted action; Credits, author commands,
+> Document Map, and reader commands appear in the one primary-header More menu
+> defined by
+> [`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md).
 
 ## Decision
 
@@ -386,7 +392,7 @@ combinations unrepresentable.
 |---|---|---|
 | command | named icon button | `menuitem` with descriptor label |
 | toggle | `aria-pressed` | `menuitemcheckbox` + `aria-checked` |
-| disclosure | `aria-expanded`; `aria-controls` only when expanded | ordinary `menuitem`; dynamic collapsed/expanded label; no disclosure/submenu ARIA |
+| disclosure | `aria-expanded`; `aria-controls` only when expanded | ordinary `menuitem`; dynamic collapsed/expanded label; `aria-expanded`, plus `aria-controls` only when expanded |
 
 This is the mobile stateful-Options subsystem. A Document Map menu item says
 `Show Document Map` or `Hide Document Map`; it never pretends to own a submenu.

@@ -15,6 +15,12 @@ Type: atomic hard cutover
 > clauses. Desktop and both mobile pane headers now consume the pane's sole
 > `actionSubject`; pane/view/session controls remain separate.
 
+> **Contextual-presentation update (2026-08-11):** pane/view/resource ownership
+> remains separate, but primary headers now present every non-Companion command
+> through one More trigger. All primary-header Options references below are
+> superseded by
+> [`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md).
+
 ## Questions And Locked Defaults
 
 Open questions: none.

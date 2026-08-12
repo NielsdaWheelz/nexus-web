@@ -49,32 +49,25 @@ export interface PaneInstrumentPublication {
   readonly content: ReactNode;
 }
 
-/**
- * An explicitly non-resource pane menu: the pane's own view/list controls
- * (reader settings, page date navigation, …) ejected from the resource menu
- * by the resource-action taxonomy. Rendered as a dedicated {@link ActionMenu}
- * beside — never merged into —
- * the canonical {@link ResourceActionMenu}.
- */
-export interface PaneViewMenuPublication {
-  readonly label: string;
-  readonly icon: ReactNode;
-  readonly actions: readonly ActionDescriptor[];
-}
+export type PaneCompanionAction = Extract<
+  PaneHeaderAction,
+  { readonly kind: "command" }
+> & {
+  readonly id: "resource-inspector-companion";
+};
 
 export interface PanePrimaryChromePublication {
   readonly header?: PaneHeaderPublication;
   readonly search?: PaneSearchPublication;
   readonly instrument?: PaneInstrumentPublication;
-  readonly actions?: readonly PaneHeaderAction[];
+  readonly companionAction?: PaneCompanionAction;
   /**
-   * The pane's resource IDENTITY. PaneShell renders the one canonical
-   * `<ResourceActionMenu actionSubject={actionSubject}/>` for the pane dropdown — the
-   * same menu every other surface renders, so Open is present in the open pane's
-   * own menu (AC3). The pane publishes identity, not menu groups.
+   * The pane's resource identity. PaneShell passes it to the contextual menu,
+   * which appends the unchanged canonical resource descriptors as its suffix.
+   * The pane publishes identity, never resource groups.
    */
   readonly actionSubject?: ResourceActionSubject;
-  readonly viewMenu?: PaneViewMenuPublication;
+  readonly menuActions?: readonly ActionDescriptor[];
   readonly refresh?: PaneRefreshPublication;
 }
 
@@ -157,19 +150,6 @@ function areResourceActionSubjectsEqual(
   return left.ref === right.ref;
 }
 
-function arePaneViewMenusEqual(
-  left: PaneViewMenuPublication | undefined,
-  right: PaneViewMenuPublication | undefined,
-): boolean {
-  if (left === right) return true;
-  if (!left || !right) return false;
-  return (
-    left.label === right.label &&
-    left.icon === right.icon &&
-    areActionDescriptorListsEqual(left.actions, right.actions)
-  );
-}
-
 function arePaneRefreshPublicationsEqual(
   left: PaneRefreshPublication | undefined,
   right: PaneRefreshPublication | undefined,
@@ -189,6 +169,15 @@ function areActionDescriptorListsEqual(
     const other = right[index];
     return other !== undefined && areActionDescriptorsEqual(descriptor, other);
   });
+}
+
+function arePaneCompanionActionsEqual(
+  left: PaneCompanionAction | undefined,
+  right: PaneCompanionAction | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return areActionDescriptorsEqual(left, right);
 }
 
 function areCreditGroupsEqual(
@@ -279,9 +268,12 @@ export function arePanePrimaryChromePublicationsEqual(
     arePaneHeaderPublicationsEqual(left.header, right.header) &&
     arePaneSearchPublicationsEqual(left.search, right.search) &&
     arePaneInstrumentPublicationsEqual(left.instrument, right.instrument) &&
-    areActionDescriptorListsEqual(left.actions, right.actions) &&
+    arePaneCompanionActionsEqual(
+      left.companionAction,
+      right.companionAction,
+    ) &&
     areResourceActionSubjectsEqual(left.actionSubject, right.actionSubject) &&
-    arePaneViewMenusEqual(left.viewMenu, right.viewMenu) &&
+    areActionDescriptorListsEqual(left.menuActions, right.menuActions) &&
     arePaneRefreshPublicationsEqual(left.refresh, right.refresh)
   );
 }

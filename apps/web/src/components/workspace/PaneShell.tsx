@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  RefreshCw,
-  RotateCcw,
-  Search,
-  Share2,
-} from "lucide-react";
+import { RefreshCw, RotateCcw, Search, Share2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -15,7 +10,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ReactNode,
 } from "react";
 import PaneSearchBar from "@/components/workspace/PaneSearchBar";
 import SurfaceHeader, {
@@ -53,12 +47,11 @@ import type {
   PaneRouteHeaderContract,
 } from "@/lib/panes/paneRouteModel";
 import type { PaneRouteShareIdentity } from "@/lib/panes/paneResourceLocator";
-import Button from "@/components/ui/Button";
 import { useShareController } from "@/lib/sharing/controller";
 import { present } from "@/lib/api/presence";
 import { usePaneSearchRequested } from "@/lib/panes/paneSearchEvents";
 import type { PaneSearchPublication } from "@/lib/panes/paneSearch";
-import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   useMobileChrome,
   useMobileChromeSurface,
@@ -85,7 +78,7 @@ import styles from "./PaneShell.module.css";
 const noopResizeSecondaryPane = () => {};
 const noopCloseSecondary = () => {};
 const noopSetActiveSecondarySurface = () => {};
-const EMPTY_HEADER_ACTIONS: readonly PaneHeaderAction[] = [];
+const EMPTY_ACTIONS: readonly ActionDescriptor[] = [];
 const PANE_REFRESH_ARM_DISTANCE_PX = 72;
 const PANE_REFRESH_MAX_OFFSET_PX = 96;
 const PANE_REFRESH_DRAG_RESISTANCE = 0.45;
@@ -682,10 +675,10 @@ export default function PaneShell({
     "PaneToolbar",
     isActive && hasMobileContextualSurface,
   );
-  const effectiveActions =
-    acceptedPrimaryChrome?.actions ?? EMPTY_HEADER_ACTIONS;
+  const effectiveCompanionAction = acceptedPrimaryChrome?.companionAction;
   const effectiveActionSubject = acceptedPrimaryChrome?.actionSubject;
-  const effectiveViewMenu = acceptedPrimaryChrome?.viewMenu;
+  const effectiveMenuActions =
+    acceptedPrimaryChrome?.menuActions ?? EMPTY_ACTIONS;
   const contextualSurfaceInteractive =
     motionPhase.kind === "Visible" || motionPhase.kind === "Pinned";
   const contextualSurfaceUnavailable =
@@ -706,8 +699,8 @@ export default function PaneShell({
   const secondaryRegionId = secondaryPresentation
     ? paneSecondaryRegionId(paneId, secondaryPresentation.publication.groupId)
     : null;
-  const actionsWithSearch = useMemo<readonly PaneHeaderAction[]>(() => {
-    if (!acceptedSearch) return effectiveActions;
+  const actionsWithSearch = useMemo<readonly ActionDescriptor[]>(() => {
+    if (!acceptedSearch) return EMPTY_ACTIONS;
     const activeDomainControlCount =
       acceptedSearch.kind === "FilterRows"
         ? acceptedSearch.activeDomainControlCount
@@ -718,8 +711,7 @@ export default function PaneShell({
       !searchExpanded && activeDomainControlCount > 0
         ? `${searchLabel}, ${activeDomainControlCount} ${activeDomainControlCount === 1 ? "control" : "controls"} active`
         : searchLabel;
-    const actions: PaneHeaderAction[] = [
-      ...effectiveActions,
+    const actions: ActionDescriptor[] = [
       {
         kind: "command",
         id: "Pane.Search",
@@ -785,12 +777,11 @@ export default function PaneShell({
   }, [
     acceptedSearch,
     closeSearch,
-    effectiveActions,
     openSearch,
     searchExpanded,
     searchRowId,
   ]);
-  const reconciledActions = useMemo(
+  const reconciledPaneActions = useMemo(
     () =>
       actionsWithSearch.filter((action) => {
         if (
@@ -829,60 +820,40 @@ export default function PaneShell({
     return () => observer.disconnect();
   }, [effectiveInstrument, isMobile, searchExpanded]);
 
-  // The pane's non-resource controls. Refresh and route-share are ejected from
-  // the resource menu: refresh is a dedicated affordance (never a menu
-  // item — the pane already owns pull-to-refresh + this button), and route-share
-  // is its own control. The resource dropdown itself is the canonical
-  // `ResourceActionMenu` keyed by `effectiveActionSubject`, rendered by
-  // SurfaceHeader / the mobile bar — so Open appears in the open pane's own menu.
-  const paneControls = useMemo<ReactNode>(() => {
-    const refreshControl = acceptedRefresh ? (
-      <Button
-        key="refresh"
-        variant="ghost"
-        size="sm"
-        iconOnly
-        aria-label="Refresh"
-        title="Refresh"
-        disabled={refreshState.kind === "Refreshing"}
-        data-action-id="Pane.Refresh"
-        onClick={startPaneRefresh}
-      >
-        <RefreshCw size={16} aria-hidden="true" />
-      </Button>
-    ) : null;
-    const routeShareControl = routeShareIdentity ? (
-      <Button
-        key="route-share"
-        variant="ghost"
-        size="sm"
-        iconOnly
-        aria-label="Share…"
-        title="Share…"
-        data-action-id="RouteAction.Share"
-        onClick={(event) => {
-          const triggerEl = event.currentTarget;
+  const paneActions = useMemo<readonly ActionDescriptor[]>(() => {
+    const actions = [...reconciledPaneActions];
+    if (acceptedRefresh) {
+      actions.push({
+        kind: "command",
+        id: "Pane.Refresh",
+        label: "Refresh",
+        icon: <RefreshCw size={16} aria-hidden="true" />,
+        disabled: refreshState.kind === "Refreshing",
+        onSelect: () => startPaneRefresh(),
+      });
+    }
+    if (routeShareIdentity && !effectiveActionSubject) {
+      actions.push({
+        kind: "command",
+        id: "RouteAction.Share",
+        label: "Share…",
+        icon: <Share2 size={16} aria-hidden="true" />,
+        onSelect: ({ triggerEl }) => {
           openShare(routeShareIdentity, {
             returnFocusTo: () => triggerEl,
             returnFocusFallback: present(resolvePaneReturnFocusFallback),
           });
-        }}
-      >
-        <Share2 size={16} aria-hidden="true" />
-      </Button>
-    ) : null;
-    if (!refreshControl && !routeShareControl) return null;
-    return (
-      <>
-        {routeShareControl}
-        {refreshControl}
-      </>
-    );
+        },
+      });
+    }
+    return actions;
   }, [
     acceptedRefresh,
     openShare,
+    reconciledPaneActions,
     refreshState.kind,
     resolvePaneReturnFocusFallback,
+    effectiveActionSubject,
     routeShareIdentity,
     startPaneRefresh,
   ]);
@@ -895,10 +866,6 @@ export default function PaneShell({
   }, [identityId, isMobile, paneId, routeKey, setPaneChrome]);
   useLayoutEffect(() => {
     if (!isMobile) return;
-    // Direct header actions (Companion, Search), dedicated pane controls
-    // (refresh, route-share), and the pane's own view menu travel on their own
-    // channels so the mobile bar renders them beside — never folded into — the
-    // canonical resource dropdown, which is keyed by `actionSubject` alone.
     setPaneChrome({
       paneId,
       routeKey,
@@ -906,9 +873,9 @@ export default function PaneShell({
       header,
       activateChromeAnchor,
       navigation,
-      actions: reconciledActions,
-      controls: paneControls,
-      viewMenu: effectiveViewMenu,
+      companionAction: effectiveCompanionAction,
+      paneActions,
+      menuActions: effectiveMenuActions,
       actionSubject: effectiveActionSubject,
     });
   }, [
@@ -919,15 +886,15 @@ export default function PaneShell({
     navigation,
     paneId,
     routeKey,
-    reconciledActions,
-    paneControls,
-    effectiveViewMenu,
+    effectiveCompanionAction,
+    paneActions,
+    effectiveMenuActions,
     effectiveActionSubject,
     setPaneChrome,
   ]);
 
   const bodyId = `${paneId}-body`;
-  const expandedActionRetainsSecondary = reconciledActions.some(
+  const expandedActionRetainsSecondary = reconciledPaneActions.some(
     (action) =>
       action.kind === "command" &&
       action.state?.kind === "disclosure" &&
@@ -1044,9 +1011,9 @@ export default function PaneShell({
             <SurfaceHeader
               header={header}
               identityId={identityId}
-              actions={reconciledActions}
-              controls={paneControls}
-              viewMenu={effectiveViewMenu}
+              companionAction={effectiveCompanionAction}
+              paneActions={paneActions}
+              menuActions={effectiveMenuActions}
               actionSubject={effectiveActionSubject}
               navigation={navigation}
             />

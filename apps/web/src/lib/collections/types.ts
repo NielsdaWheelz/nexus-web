@@ -112,15 +112,14 @@ export interface CollectionRowView {
   readonly connections: Presence<ConnectionSummaryView>;
   readonly relatedMediaId: Presence<string>;
   /**
-   * The one canonical resource this row's dropdown acts on. CollectionRow
-   * renders `<ResourceActionMenu actionSubject={actionSubject}/>` for the resource
-   * dropdown. `null` means an external / non-resource row: a plain link with no
-   * resource menu (a non-resource row may still carry `flatActions`).
+   * The canonical resource suffix for this row's one contextual More menu.
+   * `null` means a non-resource row, which may contribute only `flatActions`.
    */
   readonly actionSubject: ResourceActionSubject | null;
   /**
-   * Non-resource flat menu actions for rows that are not resources (e.g. the
-   * settings surfaces). Only consulted when `actionSubject` is `null`.
+   * Non-resource actions appended after row occurrence commands. These apply
+   * only when `actionSubject` is `null`; a resource row's canonical suffix is
+   * supplied by the resource-action runtime.
    */
   readonly flatActions?: readonly ActionDescriptor[];
   readonly selected: boolean;

@@ -1,14 +1,13 @@
 "use client";
 
-import { forwardRef, type ReactNode } from "react";
+import { forwardRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
-import type { PaneViewMenuPublication } from "@/lib/panes/panePublications";
+import type { PaneCompanionAction } from "@/lib/panes/panePublications";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import ActionBar from "./ActionBar";
-import ActionMenu from "./ActionMenu";
 import PaneHeaderIdentity from "./PaneHeaderIdentity";
 import styles from "./SurfaceHeader.module.css";
 
@@ -22,33 +21,27 @@ export interface SurfaceHeaderNavigation {
 interface SurfaceHeaderProps {
   header: PaneHeaderModel;
   identityId: string;
-  actions?: readonly PaneHeaderAction[];
-  /** Dedicated non-resource pane controls (refresh, route share) rendered as buttons. */
-  controls?: ReactNode;
-  /** The pane's own non-resource view menu (reader settings, date navigation). */
-  viewMenu?: PaneViewMenuPublication;
-  /** The pane's resource identity → the canonical resource dropdown. */
+  companionAction?: PaneCompanionAction;
+  paneActions?: readonly ActionDescriptor[];
+  menuActions?: readonly ActionDescriptor[];
   actionSubject?: ResourceActionSubject;
   navigation: SurfaceHeaderNavigation;
   className?: string;
 }
 
 /**
- * The pane-runtime chrome bar: back/forward navigation, dedicated pane controls,
- * the pane's own view menu, and the canonical resource dropdown are pane-runtime
- * furniture and stay here; identity is delegated to the typed
- * {@link PaneHeaderIdentity} projection. The resource dropdown is the one
- * {@link ResourceActionMenu} keyed by the pane's `actionSubject` — the same
- * menu every surface renders — so Open stays in the open pane's own menu (AC3).
+ * The pane-runtime chrome bar projects stable navigation, the one promoted
+ * Companion action, and one contextual More menu. Resource actions stay owned
+ * by their canonical runtime and are appended by ContextualActionMenu.
  */
 const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
   function SurfaceHeader(
     {
       header,
       identityId,
-      actions,
-      controls,
-      viewMenu,
+      companionAction,
+      paneActions = [],
+      menuActions = [],
       actionSubject,
       navigation,
       className,
@@ -56,6 +49,10 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
     ref,
   ) {
     const headerClassName = [styles.header, className].filter(Boolean).join(" ");
+    const hasMoreContent =
+      paneActions.length > 0 ||
+      menuActions.length > 0 ||
+      actionSubject !== undefined;
 
     return (
       <header
@@ -99,29 +96,37 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
         </div>
 
         <div className={styles.trailing}>
-          {actions && actions.length > 0 ? (
-            <ActionBar options={actions} label="Pane actions" className={styles.actions} />
-          ) : null}
-
-          {controls}
-
-          {viewMenu ? (
-            <ActionMenu
-              options={viewMenu.actions}
-              label={viewMenu.label}
-              className={styles.optionsContainer}
-              renderTrigger={(props) => (
-                <button {...props}>{viewMenu.icon}</button>
-              )}
+          {companionAction ? (
+            <ActionBar
+              options={[companionAction]}
+              label="Pane actions"
+              className={styles.actions}
             />
           ) : null}
 
-          {actionSubject ? (
-            <ResourceActionMenu
-              actionSubject={actionSubject}
-              label="Options"
+          {hasMoreContent ? (
+            <ContextualActionMenu
+              label="More"
               placement="below"
               align="end"
+              sections={[
+                { id: "Pane", actions: paneActions },
+                { id: "View", actions: menuActions },
+              ]}
+              actionSubject={actionSubject}
+              renderTrigger={(props) => (
+                <button {...props}>
+                  &hellip;
+                  {[...paneActions, ...menuActions].some(
+                    (action) => action.indicator?.kind === "Status",
+                  ) ? (
+                    <span
+                      className={styles.menuStatusMarker}
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                </button>
+              )}
             />
           ) : null}
         </div>

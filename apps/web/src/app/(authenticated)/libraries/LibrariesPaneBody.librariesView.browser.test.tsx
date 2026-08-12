@@ -273,6 +273,11 @@ function libraryNames(): string[] {
     );
 }
 
+async function openFilter(): Promise<void> {
+  await userEvent.click(screen.getByRole("button", { name: "More" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: /^Filter/ }));
+}
+
 describe("Libraries index domain view", () => {
   it("replaces the pane URL with the selected sort, requests exactly that view, and keeps the filter text, open filter row, and prior rows until the new page commits", async () => {
     const nameAsc = deferred<Response>();
@@ -284,7 +289,7 @@ describe("Libraries index domain view", () => {
     await screen.findByText(ZEBRA);
     expect(libraryNames()).toEqual([ZEBRA, AURORA]);
 
-    await userEvent.click(screen.getByRole("button", { name: "Filter" }));
+    await openFilter();
     await userEvent.type(
       await screen.findByRole("searchbox", { name: "Filter libraries" }),
       "r",
@@ -338,9 +343,7 @@ describe("Libraries index domain view", () => {
     ]);
     expect(replaced).toEqual([]);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     expect(
       screen.getByRole("combobox", { name: "Sort by" }),
     ).toHaveDisplayValue("Name — A–Z");
@@ -406,9 +409,7 @@ describe("Libraries index domain view", () => {
     );
 
     await screen.findByText(AURORA);
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     await userEvent.type(
       await screen.findByRole("searchbox", { name: "Filter libraries" }),
       "aurora",
@@ -423,9 +424,7 @@ describe("Libraries index domain view", () => {
     expect(replaced).toEqual([]);
     expect(libraryNames()).toEqual([AURORA, ZEBRA]);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     expect(
       await screen.findByRole("searchbox", { name: "Filter libraries" }),
     ).toHaveValue("");
@@ -454,7 +453,7 @@ describe("Libraries index domain view", () => {
     await screen.findByText(ZEBRA);
     expect(await screen.findByText("2 libraries")).toBeVisible();
 
-    await userEvent.click(screen.getByRole("button", { name: "Filter" }));
+    await openFilter();
     await userEvent.type(
       await screen.findByRole("searchbox", { name: "Filter libraries" }),
       "aurora",

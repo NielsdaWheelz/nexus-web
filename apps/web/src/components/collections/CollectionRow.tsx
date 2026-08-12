@@ -2,10 +2,7 @@
 
 import {
   Fragment,
-  useCallback,
-  useEffect,
   useId,
-  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -13,11 +10,12 @@ import {
 import { CheckCircle2, Waypoints } from "lucide-react";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
-import ActionMenu from "@/components/ui/ActionMenu";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import Pill from "@/components/ui/Pill";
 import ResourceRow from "@/components/ui/ResourceRow";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
+import ContextualActionMenu, {
+  type ContextActionSection,
+} from "@/components/resources/ContextualActionMenu";
 import type {
   CollectionContext,
   CollectionRowView,
@@ -26,7 +24,6 @@ import type {
 import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import { useRelatedMedia } from "@/lib/resonance/useRelatedMedia";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { useOptionalMobileChromeVisibleLocks } from "@/lib/workspace/mobileChrome";
 import ConnectionRail from "./ConnectionRail";
 import {
   collectionActivityText,
@@ -168,37 +165,22 @@ function localAvailabilityStatus(
   }
 }
 
-function RowActionMenu({
-  options,
+function RowContextualMenu({
+  sections,
+  actionSubject,
   label,
   reorder,
   reorderHintId,
 }: {
-  readonly options: readonly ActionDescriptor[];
+  readonly sections: readonly ContextActionSection[];
+  readonly actionSubject: CollectionRowView["actionSubject"];
   readonly label: string;
   readonly reorder?: SortableActivatorProps;
   readonly reorderHintId: string;
 }) {
-  const { acquire } = useOptionalMobileChromeVisibleLocks();
-  const releaseMenuLockRef = useRef<(() => void) | null>(null);
-  const releaseMenuLock = useCallback(() => {
-    releaseMenuLockRef.current?.();
-    releaseMenuLockRef.current = null;
-  }, []);
-  const handleOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open) {
-        releaseMenuLock();
-        return;
-      }
-      if (releaseMenuLockRef.current) return;
-      releaseMenuLockRef.current = acquire("action-menu");
-    },
-    [acquire, releaseMenuLock],
-  );
-  useEffect(() => releaseMenuLock, [releaseMenuLock]);
-
-  if (options.length === 0) return null;
+  if (!actionSubject && sections.every((section) => section.actions.length === 0)) {
+    return null;
+  }
   return (
     <>
       {reorder && !reorder.disabled ? (
@@ -207,10 +189,10 @@ function RowActionMenu({
           plus Arrow Up or Alt plus Arrow Down.
         </span>
       ) : null}
-      <ActionMenu
-        options={options}
+      <ContextualActionMenu
+        sections={sections}
+        actionSubject={actionSubject ?? undefined}
         label={label}
-        onOpenChange={handleOpenChange}
         triggerRef={reorder?.setActivatorNodeRef}
         renderTrigger={
           reorder
@@ -265,87 +247,6 @@ function RowActionMenu({
         }
       />
     </>
-  );
-}
-
-/**
- * The list reorder handle. It is a SEPARATE occurrence control from the resource menu:
- * reorder is not a resource action). It reuses RowActionMenu so the drag
- * activator, Alt+Arrow keyboard reorder, and the Move up / Move down affordances
- * for pointer/keyboard users all live together — never merged into the resource
- * dropdown.
- */
-function RowReorderControl({
-  reorder,
-  reorderHintId,
-  title,
-}: {
-  readonly reorder: SortableActivatorProps;
-  readonly reorderHintId: string;
-  readonly title: string;
-}) {
-  const options: ActionDescriptor[] = [
-    {
-      kind: "command",
-      id: "ViewAction.Collection.MoveUp",
-      label: "Move up",
-      disabled: !reorder.canMoveUp,
-      disabledReason: !reorder.canMoveUp
-        ? "This item is already first"
-        : undefined,
-      onSelect: reorder.moveUp,
-    },
-    {
-      kind: "command",
-      id: "ViewAction.Collection.MoveDown",
-      label: "Move down",
-      disabled: !reorder.canMoveDown,
-      disabledReason: !reorder.canMoveDown
-        ? "This item is already last"
-        : undefined,
-      onSelect: reorder.moveDown,
-    },
-  ];
-  return (
-    <RowActionMenu
-      options={options}
-      label={`Reorder ${title}`}
-      reorder={reorder}
-      reorderHintId={reorderHintId}
-    />
-  );
-}
-
-/**
- * The "Connections and related" disclosure. It is a SEPARATE row control (a
- * companion/inspector toggle), never a resource-menu item.
- */
-function RowRelatedToggle({
-  expanded,
-  controls,
-  title,
-  onToggle,
-}: {
-  readonly expanded: boolean;
-  readonly controls: string;
-  readonly title: string;
-  readonly onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={styles.relatedToggle}
-      aria-expanded={expanded}
-      aria-controls={expanded ? controls : undefined}
-      aria-label={
-        expanded
-          ? `Hide connections and related for ${title}`
-          : `Show connections and related for ${title}`
-      }
-      onClick={onToggle}
-    >
-      <Waypoints size={16} aria-hidden="true" />
-    </button>
   );
 }
 
@@ -483,53 +384,76 @@ export default function CollectionRow({
       </span>
     ) : undefined;
 
-  // The three row controls are SEPARATE affordances: reorder and the
-  // connections disclosure never live inside the resource dropdown. The resource
-  // dropdown is the one canonical `ResourceActionMenu` keyed only by the row's
-  // resource target; non-resource rows fall back to a plain flat menu (settings)
-  // or no menu at all (external links).
   const menuLabel = `More actions for ${row.title.text}`;
-  const reorderControl =
-    rowActionsAvailable && reorder ? (
-      <RowReorderControl
-        reorder={reorder}
-        reorderHintId={reorderHintId}
-        title={row.title.text}
-      />
-    ) : null;
-  const relatedControl =
-    rowActionsAvailable && hasPeerAffordance ? (
-      <RowRelatedToggle
-        expanded={showPeers}
-        controls={disclosureId}
-        title={row.title.text}
-        onToggle={() => setShowPeers((visible) => !visible)}
-      />
-    ) : null;
-  let resourceMenu: ReactNode = null;
-  if (rowActionsAvailable) {
-    if (row.actionSubject) {
-      resourceMenu = (
-        <ResourceActionMenu actionSubject={row.actionSubject} label={menuLabel} />
-      );
-    } else if (row.flatActions && row.flatActions.length > 0) {
-      resourceMenu = (
-        <RowActionMenu
-          options={row.flatActions}
-          label={menuLabel}
-          reorderHintId={reorderHintId}
-        />
-      );
-    }
+  const occurrenceActions: ActionDescriptor[] = [];
+  if (rowActionsAvailable && reorder) {
+    occurrenceActions.push(
+      {
+        kind: "command",
+        id: "ViewAction.Collection.MoveUp",
+        label: "Move up",
+        disabled: !reorder.canMoveUp,
+        disabledReason: !reorder.canMoveUp
+          ? "This item is already first"
+          : undefined,
+        onSelect: reorder.moveUp,
+      },
+      {
+        kind: "command",
+        id: "ViewAction.Collection.MoveDown",
+        label: "Move down",
+        disabled: !reorder.canMoveDown,
+        disabledReason: !reorder.canMoveDown
+          ? "This item is already last"
+          : undefined,
+        onSelect: reorder.moveDown,
+      },
+    );
   }
-  const actions =
-    reorderControl || relatedControl || resourceMenu ? (
-      <span className={styles.rowControls}>
-        {reorderControl}
-        {relatedControl}
-        {resourceMenu}
-      </span>
-    ) : undefined;
+  if (rowActionsAvailable && hasPeerAffordance) {
+    occurrenceActions.push({
+      kind: "command",
+      id: "ViewAction.Collection.Connections",
+      label: "Connections and related",
+      icon: <Waypoints size={16} aria-hidden="true" />,
+      state: showPeers
+        ? {
+            kind: "disclosure",
+            expanded: true,
+            controls: disclosureId,
+            menuLabels: {
+              collapsed: "Show connections and related",
+              expanded: "Hide connections and related",
+            },
+          }
+        : {
+            kind: "disclosure",
+            expanded: false,
+            menuLabels: {
+              collapsed: "Show connections and related",
+              expanded: "Hide connections and related",
+            },
+          },
+      onSelect: () => setShowPeers((visible) => !visible),
+    });
+  }
+  const sections: readonly ContextActionSection[] = [
+    { id: "Occurrence", actions: occurrenceActions },
+    {
+      id: "View",
+      actions:
+        rowActionsAvailable && !row.actionSubject ? (row.flatActions ?? []) : [],
+    },
+  ];
+  const actions = rowActionsAvailable ? (
+    <RowContextualMenu
+      sections={sections}
+      actionSubject={row.actionSubject}
+      label={menuLabel}
+      reorder={reorder}
+      reorderHintId={reorderHintId}
+    />
+  ) : undefined;
 
   const expanded =
     (showPeers && hasPeerAffordance) || panel ? (

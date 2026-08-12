@@ -455,8 +455,12 @@ test("mobile reader bottom geometry places the ribbon, counts the flow Player on
   // 2 — A real episode playback session mounts the flow MiniPlayer. Returning
   // through the pane's own history keeps that session and the reader route
   // mounted together; a fresh document would drop the session under test.
-  await page.getByRole("button", { name: "Pane options", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Go forward", exact: true }).click();
+  const forward = page.getByRole("button", { name: "Go forward", exact: true });
+  await expect(
+    forward,
+    "The mobile pane bar did not retain a direct stable Forward control.",
+  ).toBeEnabled();
+  await forward.click();
   const podcast = page.getByRole("link", {
     name: PODCAST_TITLE,
     exact: true,

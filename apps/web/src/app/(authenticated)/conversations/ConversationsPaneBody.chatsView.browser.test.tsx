@@ -266,6 +266,11 @@ function sortControl(): HTMLElement {
   return screen.getByRole("combobox", { name: "Sort by" });
 }
 
+async function openFilter(): Promise<void> {
+  await userEvent.click(screen.getByRole("button", { name: "More" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: /^Filter/ }));
+}
+
 describe("Chats index domain view", () => {
   it("replaces the pane URL with the selected sort, requests exactly that view, and keeps the filter text, open filter row, and prior rows until the new page commits", async () => {
     const titleAsc = deferred<Response>();
@@ -277,7 +282,7 @@ describe("Chats index domain view", () => {
     await screen.findByRole("link", { name: "Meridian drift" });
     expect(chatTitles()).toEqual(titles(UPDATED_NEWEST));
 
-    await userEvent.click(screen.getByRole("button", { name: "Filter" }));
+    await openFilter();
     const filterInput = await screen.findByRole("searchbox", {
       name: "Filter chats",
     });
@@ -313,7 +318,7 @@ describe("Chats index domain view", () => {
     render(<ChatsPane initialHref="/conversations" replaced={replaced} />);
 
     await screen.findByRole("link", { name: "Meridian drift" });
-    await userEvent.click(screen.getByRole("button", { name: "Filter" }));
+    await openFilter();
     await userEvent.selectOptions(sortControl(), "title-asc");
     await waitFor(() => expect(requests).toContain(TITLE_ASC_REQUEST));
 
@@ -353,9 +358,7 @@ describe("Chats index domain view", () => {
     expect(requests).toEqual([TITLE_ASC_REQUEST]);
     expect(replaced).toEqual([]);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     expect(sortControl()).toHaveDisplayValue("Title — A–Z");
   });
 
@@ -392,9 +395,7 @@ describe("Chats index domain view", () => {
     );
 
     await screen.findByRole("link", { name: "Aurora physics" });
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     await userEvent.type(
       await screen.findByRole("searchbox", { name: "Filter chats" }),
       "aurora",
@@ -409,9 +410,7 @@ describe("Chats index domain view", () => {
     expect(replaced).toEqual([]);
     expect(chatTitles()).toEqual(titles(TITLE_ASC));
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     expect(
       await screen.findByRole("searchbox", { name: "Filter chats" }),
     ).toHaveValue("");

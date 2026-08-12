@@ -29,7 +29,7 @@ export function findPaneChromeFocusTarget(
     document.querySelectorAll<HTMLElement>("[data-pane-chrome-for]"),
   ).find((candidate) => candidate.dataset.paneChromeFor === paneId);
   const mobileOptions = mobileProjection?.querySelector<HTMLElement>(
-    "[data-pane-options-trigger]",
+    "[data-pane-menu-trigger]",
   );
   if (mobileOptions?.isConnected && !mobileOptions.closest("[inert]")) {
     return mobileOptions;
@@ -37,7 +37,7 @@ export function findPaneChromeFocusTarget(
 
   const pane = findPane(paneId);
   const desktopOptions = pane?.querySelector<HTMLElement>(
-    "[data-pane-options-trigger]",
+    "[data-pane-menu-trigger]",
   );
   if (desktopOptions?.isConnected && !desktopOptions.closest("[inert]")) {
     return desktopOptions;

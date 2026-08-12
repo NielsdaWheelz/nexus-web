@@ -10,7 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 import Link from "next/link";
-import { Compass, MoreHorizontal } from "lucide-react";
+import { Compass } from "lucide-react";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import {
   decodeCollectionPage,
@@ -781,21 +781,15 @@ export default function PodcastsPaneBody() {
           ? { kind: "Pending" }
           : { kind: "Count", value: finalCount, unit: "show" },
     },
-    actions: PODCASTS_ACTIONS,
-    // Export OPML is a non-resource page action, so it rides the pane's own
-    // non-resource menu rather than the canonical resource menu.
-    viewMenu: {
-      label: "Podcast page actions",
-      icon: <MoreHorizontal size={16} aria-hidden="true" />,
-      actions: [
-        {
-          kind: "link",
-          id: "Podcasts.ExportOpml",
-          label: "Export OPML",
-          href: "/api/podcasts/export/opml",
-        },
-      ],
-    },
+    menuActions: [
+      ...PODCASTS_ACTIONS,
+      {
+        kind: "link",
+        id: "Podcasts.ExportOpml",
+        label: "Export OPML",
+        href: "/api/podcasts/export/opml",
+      },
+    ],
     search: subscriptionFilterRows.publication,
     refresh: {
       sourceKey: `Podcasts.Subscriptions:${subscriptionQueryIdentity}`,

@@ -16,14 +16,18 @@ Neither is a directory of every feature.
 - **Browse, Podcasts, and Chats remain primary.** Atlas and Oracle are present
   but do not displace discovery, listening, and conversation tasks.
 - **Desktop rail order is exact and flat:** Lectern, Libraries, Browse, Podcasts,
-  Chats, Notes, Stats, Atlas, Oracle.
+  Chats, Notes, Atlas, Oracle.
 - **Mobile Places order is exact:** Lectern, Libraries, Browse, Podcasts,
   Chats, Notes. Stats, Atlas, and Oracle remain retrievable through Nexus.
 - **Fixed navigation is not customizable.** Pinning is not part of this
   contract. Personalized retrieval belongs in the Lectern Reading Slate and
   Nexus, where it can scale without destabilizing spatial memory.
 
-On desktop, Account and Nexus remain rail actions. Quick Note and Today exist
+On desktop, Account and Nexus remain rail actions. The shared Account menu is
+exactly Stats, Import activity, Downloads when available, Settings, a separator,
+and danger-last Sign Out. Its trigger carries the import count; Import activity
+opens the existing Nexus task and does not navigate a pane. The mobile Nexus
+Account projection renders that same component and order. Quick Note and Today exist
 only in Nexus. Both Nexus projections expose the same commands, results,
 targets, workflows, history, and dispatch; the shared composer owns section
 membership, order, caps, and the declared desktop/mobile layout policy.
@@ -90,6 +94,7 @@ labels a warmed provider loop as cold. The p95 gates are respectively under
 | Authenticated home href                                           | `apps/web/src/lib/routes/defaults.ts`                                                                             |
 | Destination identity (`id`, label, href, keywords, optional icon) | `apps/web/src/lib/navigation/destinations.ts`                                                                     |
 | Fixed-nav membership, order, and decoration                       | `apps/web/src/components/appnav/navModel.ts`                                                                      |
+| Shared account membership, import status, and rendering           | `apps/web/src/components/appnav/AccountMenu.tsx`                                                                  |
 | Nexus commands and typed intent                                  | `apps/web/src/lib/nexus/commands.ts` and `apps/web/src/lib/nexus/intent.ts`                                        |
 | Nexus sections, Places projection, ranking, caps, and stability  | `apps/web/src/lib/nexus/results.ts` and `apps/web/src/lib/nexus/ranking.ts`                                        |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
@@ -121,7 +126,8 @@ declare `sectionDestinationId` because their header has no section identity:
 - `/podcasts/{id}` keeps **Podcasts** active;
 - chat detail and new-chat panes keep **Chats** active;
 - pages and note blocks keep **Notes** active;
-- Atlas, Oracle, Lectern, and settings map to their own destinations.
+- Atlas, Oracle, and Lectern map to their own destinations; Stats and Settings
+  mark Account current without creating a selected rail destination.
 
 Routes that are intentionally absent from fixed navigation, such as Search and
 Authors, do not fabricate a selected rail item. Section pane titles resolve
@@ -195,7 +201,7 @@ explicit `/lectern` request.
 When adding or changing a destination:
 
 1. Change identity once in `DESTINATION_REGISTRY`.
-2. Change fixed membership/order/presentation only in `APP_NAVIGATION`.
+2. Change fixed or Account membership/order only in `APP_NAVIGATION`.
 3. Give a section route one `header.destinationId`; give a resource route one
    `sectionDestinationId`.
 4. If the backend records Nexus history for the href, update its canonical

@@ -153,8 +153,8 @@ No feature owns a fixed secondary column, drawer, or mobile overlay.
   Forks, and adds `network` for Connections and `file-text` for Dossier.
 - The icon, position, tooltip, accessible name, active state, and behavior are
   identical on desktop and mobile.
-- On mobile it is immediately left of Options. Lower-priority route actions move
-  into Options when needed; Companion never does.
+- On mobile it is immediately left of More. Every other primary-pane command
+  composes into More; Companion never does.
 - One shared disclosure-action helper toggles the pane-local Inspector and
   produces the repository `ActionControlState`; `aria-controls` appears only in
   its expanded disclosure variant.
@@ -165,7 +165,7 @@ No feature owns a fixed secondary column, drawer, or mobile overlay.
   close leaves focus on the already-focused action. MobileSheet retains its
   existing return-focus ownership.
 - Header geometry is verified at 390 CSS pixels; identity truncates before the
-  Companion or Options controls collide.
+  Companion or More controls collide.
 
 ### Inspector interaction
 
@@ -401,8 +401,8 @@ input is owned above the panel by its route/controller and survives a tab
 switch; transient scan/render state may reset. No tab switch silently discards
 typed input.
 
-`MobilePaneChrome` accepts direct actions. `PaneShell` no longer folds the
-Companion action into Options, and `NavTopBar` renders it once in the agreed
+`MobilePaneChrome` accepts the typed direct Companion action. `PaneShell` never
+folds Companion into More, and `MobilePaneBar` renders it once in the agreed
 trailing position.
 
 `ConnectionsSurface` remains the graph controller and becomes the body for

@@ -2,32 +2,27 @@
 
 import {
   useCallback,
-  useEffect,
-  useMemo,
   useRef,
   type FocusEvent as ReactFocusEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { ChevronLeft, ChevronRight, ListTodo } from "lucide-react";
-import ActionMenu from "@/components/ui/ActionMenu";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
-import type {
-  ActionDescriptor,
-  PaneHeaderAction,
+import {
+  projectActionControlState,
+  type ActionDescriptor,
 } from "@/lib/ui/actionDescriptor";
 import {
   useMobileChrome,
   useMobileChromeSurface,
-  useMobileChromeVisibleLocks,
 } from "@/lib/workspace/mobileChrome";
-import { mediaActivityAttentionLabel } from "@/lib/status/mediaActivity";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
 import styles from "./AppNav.module.css";
 
 function activeCollapsedFilterAction(
-  actions: readonly PaneHeaderAction[],
-): PaneHeaderAction | null {
+  actions: readonly ActionDescriptor[],
+): ActionDescriptor | null {
   return (
     actions.find(
       (action) =>
@@ -40,75 +35,25 @@ function activeCollapsedFilterAction(
   );
 }
 
-export default function MobilePaneBar({
-  activityCount,
-  activityOpen,
-  onOpenActivity,
-}: {
-  activityCount: number | null;
-  activityOpen: boolean;
-  onOpenActivity(): void;
-}) {
+export default function MobilePaneBar() {
   const { motionPhase, paneChrome } = useMobileChrome();
-  const { acquire } = useMobileChromeVisibleLocks();
   const warmPane = usePaneWarm();
   const navigation = paneChrome?.navigation;
-  const releaseLockRef = useRef<(() => void) | null>(null);
   const topBarRef = useRef<HTMLElement>(null);
   useMobileChromeSurface(topBarRef, "AppBar", true);
 
-  useEffect(
-    () => () => {
-      releaseLockRef.current?.();
-      releaseLockRef.current = null;
-    },
-    [],
+  const paneActions = paneChrome?.paneActions ?? [];
+  const menuActions = paneChrome?.menuActions ?? [];
+  const activeFilterAction = activeCollapsedFilterAction(paneActions);
+  const hasHiddenStatus = [...paneActions, ...menuActions].some(
+    (action) => action.indicator?.kind === "Status",
   );
-
-  // The mobile "Pane options" menu carries ONLY non-resource pane furniture:
-  // forward navigation + promoted actions (Companion, Search). The resource
-  // dropdown is rendered separately as the canonical ResourceActionMenu — nav
-  // and actions are never folded into it by the resource-action taxonomy.
-  const menuOptions = useMemo<readonly ActionDescriptor[]>(() => {
-    const forward: ActionDescriptor[] = navigation?.canGoForward
-      ? [
-          {
-            kind: "command",
-            id: "pane-forward",
-            label: "Go forward",
-            icon: <ChevronRight size={18} aria-hidden="true" />,
-            onSelect: () => navigation.onForward("Pointer"),
-          },
-        ]
-      : [];
-    return [...forward, ...(paneChrome?.actions ?? [])];
-  }, [navigation, paneChrome?.actions]);
-  const viewMenu = paneChrome?.viewMenu;
-  const actionSubject = paneChrome?.actionSubject;
-  const activeFilterAction = activeCollapsedFilterAction(
-    paneChrome?.actions ?? [],
-  );
-  const optionsLabel = activeFilterAction
-    ? `Pane options, ${activeFilterAction.label}`
-    : "Pane options";
+  const hasMoreContent =
+    paneActions.length > 0 ||
+    menuActions.length > 0 ||
+    paneChrome?.actionSubject !== undefined;
   const interactive =
     motionPhase.kind === "Visible" || motionPhase.kind === "Pinned";
-  const handleActionMenuOpenChange = useCallback(
-    (open: boolean) => {
-      if (open) {
-        if (releaseLockRef.current) return;
-        releaseLockRef.current = acquire("action-menu");
-        return;
-      }
-      releaseLockRef.current?.();
-      releaseLockRef.current = null;
-    },
-    [acquire],
-  );
-  // Every anchor the active pane publishes into this bar — identity credits and
-  // header actions alike — must reach the workspace router. Portalled menu
-  // content still bubbles here through the React tree, and the desktop chrome
-  // gets the same treatment from `PaneRouteBoundary`.
   const handleChromeClickCapture = useCallback(
     (event: ReactMouseEvent<HTMLElement>) => {
       if (!(event.target instanceof Element)) return;
@@ -131,6 +76,10 @@ export default function MobilePaneBar({
     },
     [warmPane],
   );
+  const companionAction = paneChrome?.companionAction;
+  const companionState = companionAction
+    ? projectActionControlState(companionAction.label, companionAction.state)
+    : null;
 
   return (
     <header
@@ -145,22 +94,32 @@ export default function MobilePaneBar({
       onMouseOverCapture={handleChromeIntentCapture}
       onFocusCapture={handleChromeIntentCapture}
     >
-      <div
-        className={styles.topBarControls}
-        data-testid="top-bar-controls"
-      >
-        {navigation?.canGoBack ? (
-          <button
-            type="button"
-            className={styles.topBarButton}
-            onClick={(event) =>
-              navigation.onBack(event.detail === 0 ? "Keyboard" : "Pointer")
-            }
-            aria-label="Go back"
-          >
-            <ChevronLeft size={20} aria-hidden="true" />
-          </button>
-        ) : null}
+      <div className={styles.topBarControls} data-testid="top-bar-controls">
+        <button
+          type="button"
+          className={styles.topBarButton}
+          onClick={(event) =>
+            navigation?.onBack(event.detail === 0 ? "Keyboard" : "Pointer")
+          }
+          disabled={!navigation?.canGoBack}
+          aria-label="Go back"
+        >
+          <ChevronLeft size={20} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className={styles.topBarButton}
+          onClick={(event) => {
+            if (!navigation) return;
+            navigation.onForward(
+              event.detail === 0 ? "Keyboard" : "Pointer",
+            );
+          }}
+          disabled={!navigation?.canGoForward}
+          aria-label="Go forward"
+        >
+          <ChevronRight size={20} aria-hidden="true" />
+        </button>
       </div>
 
       <div className={styles.topBarTitle}>
@@ -173,66 +132,55 @@ export default function MobilePaneBar({
         ) : null}
       </div>
 
-      <div
-        className={styles.topBarControls}
-        data-testid="top-bar-controls"
-      >
-        <button
-          type="button"
-          className={styles.topBarButton}
-          onClick={onOpenActivity}
-          aria-haspopup="dialog"
-          aria-pressed={activityOpen}
-          aria-label={mediaActivityAttentionLabel(activityCount)}
-        >
-          <span className={styles.mobileActivityIcon}>
-            <ListTodo size={19} aria-hidden="true" />
-            {activityCount !== null && activityCount > 0 ? (
-              <span className={styles.mobileActivityBadge} aria-hidden="true">
-                {activityCount > 99 ? "99+" : activityCount}
-              </span>
-            ) : null}
-          </span>
-        </button>
-        {paneChrome?.controls}
-        {viewMenu ? (
-          <ActionMenu
-            options={viewMenu.actions}
-            label={viewMenu.label}
-            className={styles.topBarOptions}
-            onOpenChange={handleActionMenuOpenChange}
+      <div className={styles.topBarControls} data-testid="top-bar-controls">
+        {companionAction && companionState ? (
+          <button
+            type="button"
+            className={styles.topBarButton}
+            aria-label={companionAction.label}
+            aria-pressed={companionState.barPressed}
+            aria-expanded={companionState.barExpanded}
+            aria-controls={companionState.barControls}
+            disabled={companionAction.disabled}
+            onClick={(event) => {
+              if (!companionAction) return;
+              companionAction.onSelect({ triggerEl: event.currentTarget });
+            }}
+          >
+            {companionAction.icon}
+          </button>
+        ) : null}
+        {paneChrome && hasMoreContent ? (
+          <ContextualActionMenu
+            label={
+              activeFilterAction
+                ? `More, ${activeFilterAction.label}`
+                : "More"
+            }
+            sections={[
+              { id: "Pane", actions: paneActions },
+              { id: "View", actions: menuActions },
+            ]}
+            actionSubject={paneChrome.actionSubject}
+            triggerAttributes={{
+              "data-pane-menu-trigger": paneChrome.paneId,
+            }}
             renderTrigger={(props) => (
-              <button {...props}>{viewMenu.icon}</button>
+              <button
+                {...props}
+                className={`${props.className} ${styles.topBarButton}`}
+              >
+                &hellip;
+                {hasHiddenStatus ? (
+                  <span
+                    className={styles.topBarStatusMarker}
+                    data-testid="pane-menu-status-marker"
+                    aria-hidden="true"
+                  />
+                ) : null}
+              </button>
             )}
           />
-        ) : null}
-        {paneChrome ? (
-          <ActionMenu
-            options={menuOptions}
-            label={optionsLabel}
-            className={styles.topBarOptions}
-            triggerAttributes={{
-              "data-pane-options-trigger": paneChrome?.paneId,
-            }}
-            onOpenChange={handleActionMenuOpenChange}
-            renderTrigger={
-              activeFilterAction
-                ? (props) => (
-                    <button {...props}>
-                      &hellip;
-                      <span
-                        className={styles.topBarFilterMarker}
-                        data-testid="pane-filter-active-marker"
-                        aria-hidden="true"
-                      />
-                    </button>
-                  )
-                : undefined
-            }
-          />
-        ) : null}
-        {actionSubject ? (
-          <ResourceActionMenu actionSubject={actionSubject} label="Actions" />
         ) : null}
       </div>
     </header>

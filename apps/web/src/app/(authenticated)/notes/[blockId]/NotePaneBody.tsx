@@ -179,7 +179,7 @@ export default function NotePaneBody() {
   );
   usePanePrimaryChrome({
     search,
-    actions: companionAction ? [companionAction] : [],
+    companionAction: companionAction ?? undefined,
     actionSubject: ready
       ? {
           ref: canonicalResourceRef({ scheme: "note_block", id: blockId }),

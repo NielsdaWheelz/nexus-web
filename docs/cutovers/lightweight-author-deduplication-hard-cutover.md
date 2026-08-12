@@ -5,6 +5,11 @@
 > replaces Author-work `Load more`, append-focus repair, and the old work
 > cursor envelope. Author identity and work ordering remain owned here.
 >
+> **Presentation update (2026-08-11):** references below to author commands in
+> Options mean the one primary-pane More menu defined by
+> [`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md).
+> Author identity, authorization, and editor behavior remain owned here.
+
 **Status:** Implemented — merged and deployed (migration 0179) · 2026-07-16
 **Posture:** Irreversible coordinated cutover. No dual reads, dual writes,
 fallbacks, compatibility DTOs, legacy routes, or mixed-version deployment.

@@ -14,9 +14,11 @@ import {
   type RefObject,
 } from "react";
 import { flushSync } from "react-dom";
-import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
+import type {
+  ActionDescriptor,
+} from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
-import type { PaneViewMenuPublication } from "@/lib/panes/panePublications";
+import type { PaneCompanionAction } from "@/lib/panes/panePublications";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
@@ -72,12 +74,12 @@ export interface MobilePaneChrome {
     anchor: HTMLAnchorElement,
   ) => void;
   navigation: SurfaceHeaderNavigation;
-  /** Promoted, non-resource pane actions (Companion, Search). */
-  actions: readonly PaneHeaderAction[];
-  /** Dedicated non-resource pane controls (refresh, route share) as buttons. */
-  controls?: ReactNode;
-  /** The pane's own non-resource view menu (reader settings, date navigation). */
-  viewMenu?: PaneViewMenuPublication;
+  /** The only primary-header action permitted outside More. */
+  companionAction?: PaneCompanionAction;
+  /** PaneShell-owned commands such as search, refresh, and route share. */
+  paneActions: readonly ActionDescriptor[];
+  /** Route-published view commands. */
+  menuActions: readonly ActionDescriptor[];
   /** The pane's resource identity → the canonical resource dropdown. */
   actionSubject?: ResourceActionSubject;
 }
@@ -908,7 +910,7 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
           appBar?.isConnected &&
           appBar.dataset.paneChromeFor === paneId &&
           appBar.closest("[inert]") === null
-            ? appBar.querySelector<HTMLElement>("[data-pane-options-trigger]")
+            ? appBar.querySelector<HTMLElement>("[data-pane-menu-trigger]")
             : null;
         const landmark = findPaneLandmarkFocusTarget(paneId);
         const target =

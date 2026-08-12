@@ -16,6 +16,11 @@ Date: 2026-07-29
 > facet only. Type joins the existing server-owned domain controls; local text
 > remains visit-local and request-free.
 
+> **Chrome presentation update (2026-08-11):** Filter remains a pane-owned
+> descriptor but now appears inside the single primary-header More menu on
+> desktop and mobile. More is the collapsed focus target. See
+> [`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md).
+
 Open questions: none.
 
 Governing contracts:
@@ -261,9 +266,8 @@ infer query changes from row counts or identities.
 For a focused row removed by a mutation, its pane body captures the pre-mutation
 filtered row sequence. **Semantic neighbor** means the next visible row in that
 sequence, then the previous visible row. After commit, focus that row; if none,
-focus the Pane Search input while expanded, otherwise the mounted Filter action;
-on mobile, where Filter is folded into Options, focus that existing Options
-trigger. Add one exact helper beside `findPaneChromeFocusTarget` for those
+focus the Pane Search input while expanded, otherwise the mounted More trigger.
+Add one exact helper beside `findPaneChromeFocusTarget` for those
 canonical chrome targets; do not query row text or mint per-pane selectors.
 Query typing itself retains input focus and needs no row recovery.
 
@@ -416,8 +420,8 @@ Each surface lands atomically with its old search path removed.
 8. Query-key changes bypass `CollectionView` transitions; same-key mutations
    and domain commits retain current transition classification.
 9. Mutation focus recovery uses the exact visible semantic neighbor, then
-   Search input/mounted Filter action or mobile Options trigger. Newly appearing
-   rows never steal focus.
+   Search input or the mounted More trigger. Newly appearing rows never steal
+   focus.
 10. Complete filtered-empty and Partial-no-match states use exact Filter copy,
     never a domain-zero state.
 11. Page/Note searches one direct optimistic level, preserves authored order,

@@ -276,6 +276,11 @@ function showTitles(): string[] {
     );
 }
 
+async function openFilter(): Promise<void> {
+  await userEvent.click(screen.getByRole("button", { name: "More" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: /^Filter/ }));
+}
+
 describe("Podcast subscriptions domain view", () => {
   it("replaces the pane URL with the selected sort, requests exactly that view, and keeps the filter text, open filter row, and prior rows until the new page commits", async () => {
     const alpha = deferred<Response>();
@@ -290,7 +295,7 @@ describe("Podcast subscriptions domain view", () => {
       "/api/podcasts/subscriptions?sort=recent_episode&filter=all&limit=100",
     ]);
 
-    await userEvent.click(screen.getByRole("button", { name: "Filter" }));
+    await openFilter();
     const filterInput = await screen.findByRole("searchbox", {
       name: "Filter followed podcasts",
     });
@@ -340,9 +345,7 @@ describe("Podcast subscriptions domain view", () => {
     ]);
     expect(replaced).toEqual([]);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 2 controls active" }),
-    );
+    await openFilter();
     expect(
       screen.getByRole("combobox", { name: "Sort by" }),
     ).toHaveDisplayValue("Title — A–Z");
@@ -384,9 +387,7 @@ describe("Podcast subscriptions domain view", () => {
     );
 
     await waitFor(() => expect(showTitles()).toEqual(ALPHA_ORDER));
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     await userEvent.type(
       await screen.findByRole("searchbox", {
         name: "Filter followed podcasts",
@@ -403,9 +404,7 @@ describe("Podcast subscriptions domain view", () => {
     expect(replaced).toEqual([]);
     expect(showTitles()).toEqual(ALPHA_ORDER);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter, 1 control active" }),
-    );
+    await openFilter();
     await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 
     await waitFor(() => expect(replaced).toEqual(["/podcasts"]));

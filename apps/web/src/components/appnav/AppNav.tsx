@@ -9,12 +9,10 @@ import {
 } from "react";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
-import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
 import { requestNexusOpen } from "@/lib/nexus/events";
-import { useMediaActivity } from "@/lib/media/MediaActivityProvider";
 import { DEFAULT_KEYBINDINGS } from "@/lib/keybindings";
 import { useKeybinding, useKeybindingLabel } from "@/lib/keybindingsProvider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -22,7 +20,7 @@ import {
   NAV_ACCOUNT,
   NAV_HOME,
   NAV_MODEL,
-  type NavDestination,
+  isAccountDestinationId,
   type NavItem,
 } from "./navModel";
 import NavRail from "./NavRail";
@@ -30,24 +28,9 @@ import MobilePaneBar from "./MobilePaneBar";
 
 const COLLAPSE_KEY = "nexus.nav.collapsed";
 
-function toNavItem(destination: NavDestination): NavItem {
-  return {
-    id: destination.id,
-    label: destination.label,
-    href: destination.href,
-    icon: destination.icon ?? getPaneRouteIcon(destination.href),
-    presentation: destination.presentation,
-  };
-}
-
-const NAV_ITEMS = NAV_MODEL.map(toNavItem);
-const NAV_HOME_ITEM = toNavItem(NAV_HOME);
-const NAV_ACCOUNT_ITEM = toNavItem(NAV_ACCOUNT);
-
 export default function AppNav() {
   const isMobile = useIsMobileViewport();
   const { state, activateWorkspaceTarget } = useWorkspaceStore();
-  const { snapshot, activityOpen } = useMediaActivity();
 
   const [collapsed, setCollapsed] = useState(false);
   const commandCombo =
@@ -77,10 +60,12 @@ export default function AppNav() {
   )
     ? activeDestinationId
     : null;
-  const settingsActive = activeDestinationId === NAV_ACCOUNT.id;
+  const accountActiveId = isAccountDestinationId(activeDestinationId)
+    ? activeDestinationId
+    : null;
 
   const onNavigate = useCallback(
-    (event: MouseEvent<HTMLElement>, href: string) => {
+    (event: MouseEvent<HTMLElement>, destination: NavItem) => {
       const activation = { result: null as WorkspaceTargetActivationResult | null };
       const result = activateTargetLink({
         event,
@@ -94,7 +79,7 @@ export default function AppNav() {
             });
           },
         },
-        href,
+        href: destination.href,
       });
       if (result === "unhandled") {
         return result;
@@ -123,27 +108,16 @@ export default function AppNav() {
       }),
     [],
   );
-  const openActivity = useCallback(
-    () => requestNexusOpen({ kind: "Activity" }),
-    [],
-  );
-  const activityCount = snapshot === null ? null : snapshot.needsAttentionCount;
   if (isMobile) {
-    return (
-      <MobilePaneBar
-        activityCount={activityCount}
-        activityOpen={activityOpen}
-        onOpenActivity={openActivity}
-      />
-    );
+    return <MobilePaneBar />;
   }
 
   return (
     <NavRail
-      items={NAV_ITEMS}
-      home={NAV_HOME_ITEM}
-      account={NAV_ACCOUNT_ITEM}
-      settingsActive={settingsActive}
+      items={NAV_MODEL}
+      home={NAV_HOME}
+      account={NAV_ACCOUNT}
+      accountActiveId={accountActiveId}
       activeId={activeId}
       collapsed={collapsed}
       onToggleCollapse={toggleCollapse}
@@ -151,9 +125,6 @@ export default function AppNav() {
       commandCombo={commandCombo}
       onOpenCommand={openCommand}
       onOpenAdd={openAdd}
-      activityCount={activityCount}
-      activityOpen={activityOpen}
-      onOpenActivity={openActivity}
       onNavigate={onNavigate}
     />
   );

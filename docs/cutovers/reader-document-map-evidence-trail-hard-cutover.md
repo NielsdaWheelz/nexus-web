@@ -4,13 +4,18 @@
 
 **Type:** Hard cutover; one aggregate, one instrument, no compatibility lanes.
 
+> **Presentation update (2026-08-11):** references below to mobile Options mean
+> the primary pane's one contextual More menu. Companion is the only direct
+> contextual header action. See
+> [`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md).
+
 ## Scope
 
 This document owns the reader-local aggregate, marker projection, secondary
 surface vocabulary, and desktop overview rail. The final Evidence payload and
 presentation are specified by
 [`reader-evidence-scope-associations-hard-cutover.md`](reader-evidence-scope-associations-hard-cutover.md).
-Header placement, the one semantic action, mobile Options behavior, secondary
+Header placement, the one semantic action, mobile More behavior, secondary
 region ARIA, and focus return are specified by
 [`pane-header-identity-hard-cutover.md`](pane-header-identity-hard-cutover.md).
 
@@ -32,7 +37,7 @@ active format reader
 readable capability + reader-tools publication
   -> documentMapAction
        -> desktop resource-header icon
-       -> mobile Show/Hide Options item
+       -> mobile Show/Hide More item
 ```
 
 Document Map is the reader's single side instrument. Its complete surface
@@ -46,7 +51,7 @@ The overview rail is ambient, desktop-only fixed primary chrome. It receives
 the aggregate's exact-position markers and the current projected viewport band.
 Activating a marker invokes its contextual target; the rail has no generic
 list/open button.
-The semantic header/Options action is the only generic Document Map entrance.
+The semantic Companion/More action is the only generic Document Map entrance.
 
 ## Aggregate Contract
 
@@ -106,8 +111,8 @@ only `ReaderDocumentMap` and its tagged Evidence/marker types.
   publication. Every tab's `aria-controls` target remains mounted; only the
   active panel mounts its body.
 - The group-level region id is pane-local and exists only while expanded.
-  Collapsed desktop actions omit `aria-controls`; mobile Options never exposes
-  submenu/disclosure IDREFs.
+  Collapsed desktop and More-menu disclosures omit `aria-controls`; expanded
+  disclosures reference the mounted group region.
 - The overview rail is fixed primary chrome and never changes stored primary
   pane width. The secondary pane width remains independent.
 - The rail receives only `markers`, a projected `visibleRange`, and activation.

@@ -13,6 +13,8 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { MediaActivityProvider } from "@/lib/media/MediaActivityProvider";
+import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
@@ -82,6 +84,11 @@ function installBff() {
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
       }
+      if (url.pathname === "/api/media/activity") {
+        return jsonResponse({
+          data: { nonterminal_count: 0, items: [] },
+        });
+      }
       if (url.pathname === "/api/me/nexus-history") {
         return jsonResponse({
           data: { recent: [], frecency_by_href: {} },
@@ -149,12 +156,19 @@ function renderNexus(initialViewport: "desktop" | "mobile") {
                   workspacePrimaryMetrics={workspacePrimaryMetrics}
                 >
                   <LecternProvider>
-                    <GlobalPlayerProvider>
-                      <ShareControllerProvider>
-                        <WorkspaceProbe />
-                        <Nexus />
-                      </ShareControllerProvider>
-                    </GlobalPlayerProvider>
+                    <OfflineMediaProvider
+                      accountId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                      transport={null}
+                    >
+                      <GlobalPlayerProvider>
+                        <ShareControllerProvider>
+                          <MediaActivityProvider>
+                            <WorkspaceProbe />
+                            <Nexus />
+                          </MediaActivityProvider>
+                        </ShareControllerProvider>
+                      </GlobalPlayerProvider>
+                    </OfflineMediaProvider>
                   </LecternProvider>
                 </WorkspaceStoreProvider>
               </PaneReturnMementoProvider>

@@ -212,10 +212,10 @@ show notes, nested below the local section heading, use offset 2.
 The compact credit line renders the ordered first two credit items on desktop
 and the first one on mobile. Resolved visible credits are native pane links;
 unresolved credits are text; noninteractive `+N` counts the unmounted tail.
-Each visible name owns its ellipsis. `Credits…` in Options opens the complete,
+Each visible name owns its ellipsis. `Credits…` in More opens the complete,
 wrapping, linked credit list. Authorization-gated `Add author…` /
 `Edit authors…` opens `MediaAuthorsEditor` separately; author administration is
-not inline header content. Both overlays return focus to the exact Options
+not inline header content. Both overlays return focus to the exact More
 trigger, with pane chrome as the disconnected-trigger fallback.
 
 The canonical contract for explicit `Passages | Whole document` scope,
@@ -841,7 +841,7 @@ of its location-target writes uses.
 
 ### reader theme quick-switch
 
-- media Options exposes a reader theme quick-switch
+- media More exposes a reader theme quick-switch
 - available theme values are light and dark
 - it is shown for epub, web article, and transcript readers
 - pdf readers keep their existing appearance behavior and do not surface

@@ -12,15 +12,25 @@ import { READY_WEB_ARTICLE_PLAN } from "../resourceActionProductOracle";
 
 test.use({ journeyId: "resource-action-parity" });
 
-// The one canonical dropdown is keyed only by its resource + viewer, so its
-// trigger's accessible name differs per surface (presentation only) while the
-// menuitem SET it opens is identical everywhere. These are the surface triggers.
+// Resource-only surfaces project the canonical dropdown directly. Primary panes
+// and collection rows compose local commands before that unchanged suffix.
 const ROW_TRIGGER = `More actions for ${ARTICLE_TITLE}`;
 const NEXUS_TRIGGER = `Actions for ${ARTICLE_TITLE}`;
 const PODCAST_TITLE = "Houston We Have a Podcast";
-// The mobile pane bar renders the same canonical dropdown under the bare label
-// "Actions" (presentation only) — MobilePaneBar.tsx passes label="Actions".
-const MOBILE_PANE_TRIGGER = "Actions";
+const SECONDARY_RESOURCE_TRIGGER = "Actions";
+const MEDIA_PANE_LOCAL_PREFIX = [
+  "Pane.Search",
+  "consumption-activity",
+  "ViewAction.Consumption.AddTime",
+  "ViewAction.Resource.Credits",
+  "ViewAction.Reader.Settings",
+  "ViewAction.Reader.Theme.Light",
+  "ViewAction.Reader.Theme.Dark",
+] as const;
+const PODCAST_PANE_LOCAL_PREFIX = ["Pane.Search", "Pane.Refresh"] as const;
+const LIBRARY_ROW_LOCAL_PREFIX = [
+  "ViewAction.Collection.Connections",
+] as const;
 const DESKTOP_VIEWPORT = { width: 1_280, height: 900 } as const;
 // Far below any plausible mobile breakpoint (max-width lives well above phone
 // widths), so a fresh load renders the mobile pane chrome.
@@ -69,56 +79,50 @@ const EXPECTED_CANONICAL_MENU: readonly ResourceMenuSignatureItem[] =
     tone: action.tone,
   }));
 
-// Scope/Taxonomy guard: these are real, live control labels that belong to OTHER
-// owners (the reader view menu, the pane options menu, pane navigation, global
-// nav). None is a resource action, so none may ever appear inside the canonical
-// resource dropdown. A regression that folded any of them back into the resource
-// menu is exactly what the taxonomy split forbids.
-const NON_RESOURCE_LABELS: readonly string[] = [
-  "Reader settings",
-  "Pane options",
-  "Go back in this pane",
-  "Go forward",
-  "Add content",
-];
-
-/**
- * Open a resource dropdown, read its ordered public semantic signature, and
- * dismiss it. Confirmation and intent are deliberately absent: they are not DOM
- * semantics and are pinned independently by pure contract tests.
- */
-async function readResourceMenu(
+async function openActionMenu(
   page: Page,
   trigger: Locator,
   surface: string,
-  expectedCount?: number,
-): Promise<readonly ResourceMenuSignatureItem[]> {
+): Promise<{ readonly menu: Locator; readonly menuItems: Locator }> {
   await expect(
     trigger,
-    `${surface}: the canonical resource dropdown trigger never became available.`,
+    `${surface}: the action-menu trigger never became available.`,
   ).toBeVisible({ timeout: 15_000 });
   await expect(
     trigger,
-    `${surface}: the canonical resource dropdown stayed unavailable.`,
+    `${surface}: the action-menu trigger stayed unavailable.`,
   ).toBeEnabled({ timeout: 15_000 });
   await trigger.click();
   const menu = page.getByRole("menu");
-  await expect(menu, `${surface}: the resource dropdown did not open.`).toBeVisible();
+  await expect(menu, `${surface}: the action menu did not open.`).toBeVisible();
   const menuItems = menu
     .getByRole("menuitem")
     .or(menu.getByRole("menuitemcheckbox"));
   await expect(
     menuItems.first(),
-    `${surface}: the resource dropdown opened with no menuitems.`,
+    `${surface}: the action menu opened with no menuitems.`,
   ).toBeVisible();
-  if (expectedCount !== undefined) {
-    await expect(
-      menuItems,
-      `${surface}: the resource dropdown did not settle on ${expectedCount} actions.`,
-    ).toHaveCount(expectedCount);
-  }
-  const signature = await menuItems.evaluateAll((elements) =>
-    elements.map((element) => {
+  return { menu, menuItems };
+}
+
+async function dismissActionMenu(
+  page: Page,
+  menu: Locator,
+  surface: string,
+): Promise<void> {
+  await page.keyboard.press("Escape");
+  await expect(
+    menu,
+    `${surface}: the action menu did not dismiss on Escape.`,
+  ).toBeHidden();
+}
+
+async function readResourceSignature(
+  menuItems: Locator,
+  resourceStartIndex: number = 0,
+): Promise<readonly ResourceMenuSignatureItem[]> {
+  return menuItems.evaluateAll((elements, startIndex) =>
+    elements.slice(startIndex).map((element, index) => {
       const id = element.getAttribute("data-action-id");
       const tone = element.getAttribute("data-action-tone");
       const availabilityKind = element.getAttribute(
@@ -130,8 +134,7 @@ async function readResourceMenu(
       if (
         id === null ||
         iconClass === undefined ||
-        (availabilityKind !== "Available" &&
-          availabilityKind !== "Blocked")
+        (availabilityKind !== "Available" && availabilityKind !== "Blocked")
       ) {
         throw new Error(
           `Incomplete resource-action semantics for ${id ?? "unknown action"}.`,
@@ -175,9 +178,12 @@ async function readResourceMenu(
           .slice("lucide-".length)
           .replace(/([A-Za-z])([0-9])/g, "$1-$2")
           .toLowerCase(),
+        // The separator before a contextual suffix is presentation-only; it
+        // does not change the first resource descriptor's plan grouping.
         groupStart:
+          index > 0 &&
           element.parentElement?.previousElementSibling?.getAttribute("role") ===
-          "separator",
+            "separator",
         control,
         availability:
           availabilityKind === "Blocked"
@@ -186,13 +192,57 @@ async function readResourceMenu(
         tone: semanticTone,
       };
     }),
+    resourceStartIndex,
   );
-  await page.keyboard.press("Escape");
-  await expect(
-    menu,
-    `${surface}: the resource dropdown did not dismiss on Escape.`,
-  ).toBeHidden();
+}
+
+/** Resource-only menu: exact canonical signature. */
+async function readResourceMenu(
+  page: Page,
+  trigger: Locator,
+  surface: string,
+  expectedCount?: number,
+): Promise<readonly ResourceMenuSignatureItem[]> {
+  const { menu, menuItems } = await openActionMenu(page, trigger, surface);
+  if (expectedCount !== undefined) {
+    await expect(
+      menuItems,
+      `${surface}: the resource dropdown did not settle on ${expectedCount} actions.`,
+    ).toHaveCount(expectedCount);
+  }
+  const signature = await readResourceSignature(menuItems);
+  await dismissActionMenu(page, menu, surface);
   return signature;
+}
+
+/** Contextual surface: exact local prefix plus a canonical resource suffix. */
+async function readContextualResourceMenu(
+  page: Page,
+  trigger: Locator,
+  surface: string,
+  expectedLocalPrefix: readonly string[],
+  expectedCanonical?: readonly ResourceMenuSignatureItem[],
+): Promise<readonly ResourceMenuSignatureItem[]> {
+  const { menu, menuItems } = await openActionMenu(page, trigger, surface);
+  const actionIds = await menuItems.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute("data-action-id")),
+  );
+  expect(
+    actionIds.slice(0, expectedLocalPrefix.length),
+    `${surface}: its local prefix changed or leaked into the resource suffix.`,
+  ).toEqual(expectedLocalPrefix);
+  if (expectedCanonical) {
+    expect(
+      actionIds.slice(expectedLocalPrefix.length),
+      `${surface}: canonical resource descriptors were not one ordered contiguous suffix after the Pane/View prefix.`,
+    ).toEqual(expectedCanonical.map((action) => action.id));
+  }
+  const canonical = await readResourceSignature(
+    menuItems,
+    expectedLocalPrefix.length,
+  );
+  await dismissActionMenu(page, menu, surface);
+  return canonical;
 }
 
 test("canonical resources yield identical dropdown semantics across surfaces and reconcile a real mutation", async ({
@@ -306,11 +356,12 @@ test("canonical resources yield identical dropdown semantics across surfaces and
     `Seeded media ${mediaId} was ready but absent from default Library ${defaultLibraryId}.`,
   ).toBeVisible({ timeout: 15_000 });
   const rowTrigger = page.getByRole("button", { name: ROW_TRIGGER, exact: true });
-  const oracle = await readResourceMenu(
+  const oracle = await readContextualResourceMenu(
     page,
     rowTrigger,
     "library row",
-    EXPECTED_CANONICAL_MENU.length,
+    LIBRARY_ROW_LOCAL_PREFIX,
+    EXPECTED_CANONICAL_MENU,
   );
 
   // INDEPENDENT ORACLE FIRST: the row menu must equal the spec-derived literal
@@ -324,18 +375,6 @@ test("canonical resources yield identical dropdown semantics across surfaces and
     oracle,
     `The library-row canonical dropdown diverged from the spec-derived resource action set (AC1/AC3). got=${JSON.stringify(oracle)} expected=${JSON.stringify(EXPECTED_CANONICAL_MENU)}`,
   ).toEqual(EXPECTED_CANONICAL_MENU);
-
-  // ---- Scope/Taxonomy: non-resource controls stay outside this dropdown -----
-  // Reader settings, pane options, pane navigation, and global nav live on their
-  // own owners; a real regression folding any of them into the resource menu is
-  // what the taxonomy split forbids. (A bare "Refresh" check would be vacuous —
-  // no such menuitem exists, and "Refresh source" IS a legit resource action.)
-  for (const label of NON_RESOURCE_LABELS) {
-    expect(
-      oracle.map((action) => action.label),
-      `The non-resource control "${label}" leaked into the canonical resource dropdown (Scope/Taxonomy).`,
-    ).not.toContain(label);
-  }
 
   // ---- SURFACE 2: the NEXUS search-result row overflow ----------------------
   // Opened from the Library (the media is NOT the active tab), so Nexus projects
@@ -363,30 +402,29 @@ test("canonical resources yield identical dropdown semantics across surfaces and
     `the Nexus result-row overflow diverged from the row's canonical dropdown (AC1). nexus=${JSON.stringify(nexusItems)} oracle=${JSON.stringify(oracle)}`,
   ).toEqual(oracle);
 
-  // ---- SURFACE 3: the media PANE header "Options" ---------------------------
+  // ---- SURFACE 3: the media PANE header's one contextual More ---------------
   // Navigating to the pane replaces the primary pane and tears down the open
   // Nexus dialog, so no explicit dialog dismissal is required here.
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
-  const paneOptions = page.getByRole("button", { name: "Options", exact: true });
+  const paneMore = page.getByRole("button", { name: "More", exact: true });
   await expect(
-    paneOptions,
-    `Media pane for ${mediaId} never published its canonical resource dropdown.`,
+    paneMore,
+    `Media pane for ${mediaId} never published its one contextual More control.`,
   ).toBeVisible({ timeout: 20_000 });
-  const paneItems = await readResourceMenu(
+  const paneItems = await readContextualResourceMenu(
     page,
-    paneOptions,
+    paneMore,
     "media pane header",
-    oracle.length,
+    MEDIA_PANE_LOCAL_PREFIX,
+    oracle,
   );
   expect(
     paneItems,
-    "the media pane header Options dropdown diverged from the row's canonical dropdown (AC1/AC4).",
+    "the media pane header More suffix diverged from the row's canonical dropdown.",
   ).toEqual(oracle);
-  // Scope/Taxonomy positive: the pane's own navigation is a dedicated control OUTSIDE the
-  // resource dropdown — it is not folded into the canonical menu.
   await expect(
     page.getByRole("button", { name: "Go back in this pane" }),
-    "the pane navigation control was missing as a dedicated affordance (Scope/Taxonomy).",
+    "the pane back navigation control was missing as a dedicated affordance.",
   ).toBeVisible();
 
   // ---- SURFACE 4 (Browse negative): a NON-ACQUIRED preview has NO menu -------
@@ -411,12 +449,25 @@ test("canonical resources yield identical dropdown semantics across surfaces and
     page.getByRole("button", { name: "Subscribe", exact: true }),
     "the non-acquired Browse preview never rendered its acquisition control.",
   ).toBeVisible({ timeout: 20_000 });
-  // No canonical resource dropdown of ANY surface flavour is present. "Options"
-  // and "Actions" are the exact resource-dropdown trigger names, and every row
-  // /Nexus/specialist flavour is "More actions…"/"Actions for …"; none may exist
-  // on a non-acquired preview.
+  // A non-acquired preview may still expose route-owned commands in contextual
+  // More, but it must not acquire a canonical resource suffix.
+  const previewMenu = await openActionMenu(
+    page,
+    page.getByRole("button", { name: "More", exact: true }),
+    "non-acquired Browse preview",
+  );
+  expect(
+    await previewMenu.menuItems.evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute("data-action-id")),
+    ),
+    "the non-acquired Browse preview leaked resource actions or lost its route Share command.",
+  ).toEqual(["RouteAction.Share"]);
+  await dismissActionMenu(
+    page,
+    previewMenu.menu,
+    "non-acquired Browse preview",
+  );
   for (const missingTrigger of [
-    page.getByRole("button", { name: "Options", exact: true }),
     page.getByRole("button", { name: "Actions", exact: true }),
     page.getByRole("button", { name: /^(?:More actions|Actions for)\b/ }),
   ]) {
@@ -448,10 +499,11 @@ test("canonical resources yield identical dropdown semantics across surfaces and
   ).toBeTruthy();
   await expect(page).toHaveURL(/\/podcasts\/[0-9a-f-]{36}$/i);
 
-  const podcastPaneSignature = await readResourceMenu(
+  const podcastPaneSignature = await readContextualResourceMenu(
     page,
-    page.getByRole("button", { name: "Options", exact: true }),
+    page.getByRole("button", { name: "More", exact: true }),
     "acquired Podcast pane header",
+    PODCAST_PANE_LOCAL_PREFIX,
   );
   expect(
     podcastPaneSignature.find(
@@ -490,7 +542,7 @@ test("canonical resources yield identical dropdown semantics across surfaces and
   );
   expect(
     acquiredBrowseSignature,
-    "The acquired Podcast Browse row diverged from the same Podcast's pane menu (AC1/AC5).",
+    "The acquired Podcast Browse row diverged from the same Podcast's canonical pane suffix.",
   ).toEqual(podcastPaneSignature);
 
   // Specialist surfaces (Connections, Evidence, chat context refs) also render
@@ -510,56 +562,42 @@ test("canonical resources yield identical dropdown semantics across surfaces and
   // Mobile ROW: the same CollectionRow renders the same canonical dropdown.
   await gotoWithStrictCsp(page, `/libraries/${defaultLibraryId}`);
   const mobileRowTrigger = page.getByRole("button", { name: ROW_TRIGGER, exact: true });
-  const mobileRowItems = await readResourceMenu(
+  const mobileRowItems = await readContextualResourceMenu(
     page,
     mobileRowTrigger,
     "mobile library row",
-    oracle.length,
+    LIBRARY_ROW_LOCAL_PREFIX,
+    oracle,
   );
   expect(
     mobileRowItems,
     "the mobile row dropdown diverged from the desktop canonical dropdown (AC1 breakpoint parity).",
   ).toEqual(oracle);
 
-  // Mobile PANE: the mobile pane bar carries the SAME canonical resource dropdown
-  // ("Actions") that every other surface renders — and we read its menuitems and
-  // match the oracle DIRECTLY, not merely structurally. On a fresh /media load the
-  // top chrome is in its Visible (interactive, non-inert) phase and opening the
-  // dropdown acquires the "action-menu" visible-lock that pins the chrome open.
-  // Pointer activation is deliberate: the 390px mobile pane header must keep
-  // every separate chrome control, including this canonical dropdown, inside
-  // the interactive viewport. Keyboard reachability is covered independently
-  // by ActionMenu's exhaustive responsive behavior proof.
+  // Mobile PANE: one contextual More keeps local View commands before the same
+  // canonical resource suffix. The mobile header also promotes Companion as its
+  // own direct control.
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
-  const mobilePaneItems = await readResourceMenu(
+  const mobilePaneItems = await readContextualResourceMenu(
     page,
-    page.getByRole("button", { name: MOBILE_PANE_TRIGGER, exact: true }),
+    page.getByRole("button", { name: "More", exact: true }),
     "mobile pane bar",
-    oracle.length,
+    MEDIA_PANE_LOCAL_PREFIX,
+    oracle,
   );
   expect(
     mobilePaneItems,
-    "the mobile pane Actions dropdown diverged from the desktop canonical dropdown (AC1/AC4 breakpoint parity).",
+    "the mobile pane More suffix diverged from the desktop canonical dropdown.",
   ).toEqual(oracle);
-  // Scope/Taxonomy: the reader's own view menu ("Reader settings") and the pane's own
-  // options ("Pane options") stay SEPARATE controls on the bar — never folded
-  // into the resource dropdown that we just read above.
   await expect(
-    page.getByRole("button", { name: /Pane options/ }),
-    "the mobile pane's own options menu was folded into the resource dropdown (Scope/Taxonomy).",
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Reader settings" }),
-    "the mobile reader's view menu was folded into the resource dropdown (Scope/Taxonomy).",
+    page.getByRole("button", { name: "Companion", exact: true }),
+    "the mobile pane did not promote Companion as a direct header control.",
   ).toBeVisible();
 
   // The mobile secondary sheet is a second standing header for this SAME media
-  // ref. Open it through the public pane-options disclosure and compare the
-  // secondary header's Actions dropdown against the desktop/mobile oracle.
-  await page.getByRole("button", { name: /Pane options/ }).click();
-  await page
-    .getByRole("menuitem", { name: "Show Companion", exact: true })
-    .click();
+  // ref. Open it through direct Companion and compare the secondary header's
+  // resource-only Actions dropdown against the desktop/mobile oracle.
+  await page.getByRole("button", { name: "Companion", exact: true }).click();
   const secondarySheet = page.getByTestId("mobile-secondary-host");
   await expect(
     secondarySheet,
@@ -568,7 +606,7 @@ test("canonical resources yield identical dropdown semantics across surfaces and
   const secondaryHeaderSignature = await readResourceMenu(
     page,
     secondarySheet.getByRole("button", {
-      name: MOBILE_PANE_TRIGGER,
+      name: SECONDARY_RESOURCE_TRIGGER,
       exact: true,
     }),
     "mobile secondary-sheet header",
@@ -602,13 +640,13 @@ test("canonical resources yield identical dropdown semantics across surfaces and
     name: ARTICLE_TITLE,
     exact: true,
   });
-  const optionsAfter = activeMediaPane.getByRole("button", {
-    name: "Options",
+  const moreAfter = activeMediaPane.getByRole("button", {
+    name: "More",
     exact: true,
   });
-  await expect(optionsAfter).toBeVisible({ timeout: 20_000 });
-  await expect(optionsAfter).toBeEnabled({ timeout: 20_000 });
-  await optionsAfter.click();
+  await expect(moreAfter).toBeVisible({ timeout: 20_000 });
+  await expect(moreAfter).toBeEnabled({ timeout: 20_000 });
+  await moreAfter.click();
   const openMenu = page.getByRole("menu");
   await expect(openMenu).toBeVisible();
   const addToLectern = openMenu.getByRole("menuitemcheckbox", {
@@ -627,11 +665,12 @@ test("canonical resources yield identical dropdown semantics across surfaces and
     .poll(
       async () =>
         (
-          await readResourceMenu(
+          await readContextualResourceMenu(
             page,
-            optionsAfter,
+            moreAfter,
             "media pane after mutation",
-            oracle.length,
+            MEDIA_PANE_LOCAL_PREFIX,
+            oracle,
           )
         ).some((action) => action.label === "Remove from Lectern"),
       {
@@ -647,11 +686,12 @@ test("canonical resources yield identical dropdown semantics across surfaces and
   // agreement; AC7/AC8).
   await gotoWithStrictCsp(page, `/libraries/${defaultLibraryId}`);
   const reconciledRow = page.getByRole("button", { name: ROW_TRIGGER, exact: true });
-  const reconciledItems = await readResourceMenu(
+  const reconciledItems = await readContextualResourceMenu(
     page,
     reconciledRow,
     "library row after mutation",
-    oracle.length,
+    LIBRARY_ROW_LOCAL_PREFIX,
+    oracle,
   );
   expect(
     reconciledItems.map((action) => action.label),

@@ -500,6 +500,10 @@
         "python/nexus/tasks/chat_run.py",
         "apps/web/src/app/(authenticated)/media/**/*",
         "apps/web/src/app/api/media/activity/**/*",
+        "apps/web/src/components/appnav/AccountMenu.tsx",
+        "apps/web/src/components/nexus/MediaActivityPage.tsx",
+        "apps/web/src/components/nexus/Nexus.tsx",
+        "apps/web/src/lib/media/MediaActivityProvider.tsx",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
       "risks": [

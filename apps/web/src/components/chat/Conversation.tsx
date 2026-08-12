@@ -819,7 +819,7 @@ export default function Conversation() {
       !(conversationId !== null && convo.messages.length === 0 && convo.error)
         ? findPublication
         : undefined,
-    actions: inspector.companionAction ? [inspector.companionAction] : [],
+    companionAction: inspector.companionAction ?? undefined,
     actionSubject:
       convo.conversationId &&
       !convo.loading &&

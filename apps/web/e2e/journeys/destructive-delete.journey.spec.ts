@@ -47,7 +47,7 @@ test("confirming conversation deletion removes the exact resource and leaves no 
     page.getByRole("textbox", { name: /ask anything/i }),
     `Conversation ${conversationId} was not open before destructive confirmation.`,
   ).toBeVisible();
-  await page.getByRole("button", { name: "Options", exact: true }).click();
+  await page.getByRole("button", { name: "More", exact: true }).click();
   const deleteResponsePromise = page.waitForResponse((response) =>
     matchesResponse(
       response,

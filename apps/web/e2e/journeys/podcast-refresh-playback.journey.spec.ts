@@ -48,14 +48,24 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
   expect(podcastId, "Subscribed Podcast route omitted its canonical id.").toMatch(
     /^[0-9a-f-]{36}$/i,
   );
-  await page.getByRole("button", { name: "Options", exact: true }).click();
+  await expect(
+    page.getByText(/^Episode updates (?:pending|current)$/),
+  ).toBeVisible({ timeout: 25_000 });
+  const podcastPane = page.getByRole("region", {
+    name: "Houston We Have a Podcast — Podcasts",
+    exact: true,
+  });
+  await podcastPane.getByRole("button", { name: "More", exact: true }).click();
+  const refresh = page.getByRole("menuitem", {
+    name: "Refresh",
+    exact: true,
+  });
+  await expect(refresh).toBeVisible();
   const refreshAdmissionPromise = page.waitForResponse(
     (response) =>
       matchesResponse(response, webOrigin, "POST", "/api/podcasts/refresh-runs"),
   );
-  await page
-    .getByRole("menuitem", { name: "Check for new episodes", exact: true })
-    .click();
+  await refresh.click();
   const refreshAdmission = await refreshAdmissionPromise;
   const refreshText = await refreshAdmission.text();
   expect(
@@ -94,7 +104,8 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
   // The episode pane's domain view is pane-URL state. Only a real reload proves
   // that the URL survives the workspace bootstrap and re-requests the same view
   // through the BFF; a mounted component test supplies the href itself.
-  await page.getByRole("button", { name: "Filter", exact: true }).click();
+  await podcastPane.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Filter", exact: true }).click();
   const episodeSort = page.getByRole("combobox", { name: "Sort by", exact: true });
   await episodeSort.selectOption({ label: "Oldest" });
   await expect(page).toHaveURL(new RegExp(`/podcasts/${podcastId}\\?sort=oldest$`, "i"));
@@ -103,7 +114,9 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
     page.getByText("Invalid episodes view"),
     `Reloading podcast ${podcastId} at sort=oldest rejected its own URL.`,
   ).toHaveCount(0);
-  await page.getByRole("button", { name: /^Filter(?:,|$)/ }).click();
+  await expect(episode).toBeVisible({ timeout: 25_000 });
+  await podcastPane.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: /^Filter(?:,|$)/ }).click();
   await expect(
     page.getByRole("combobox", { name: "Sort by", exact: true }),
     `Podcast ${podcastId} did not restore its non-default episode view across a reload.`,
@@ -145,7 +158,6 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
   expect(durationMs).toBeGreaterThan(15_000);
   const targetMs = Math.min(30_000, Math.floor(durationMs / 3));
   await seek.fill(String(targetMs));
-  await controls.getByRole("button", { name: "Pause media player", exact: true }).click();
 
   await expect
     .poll(

@@ -12,24 +12,22 @@ import { createPortal } from "react-dom";
 import {
   ChevronLeft,
   ChevronRight,
-  ListTodo,
   Plus,
   Search,
 } from "lucide-react";
 import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
-import { mediaActivityAttentionLabel } from "@/lib/status/mediaActivity";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import NavAccount from "./NavAccount";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
-import type { NavItem } from "./navModel";
+import type { AccountNavigation, NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 
 export default function NavRail({
   items,
   home,
   account,
-  settingsActive,
+  accountActiveId,
   activeId,
   collapsed,
   onToggleCollapse,
@@ -37,15 +35,12 @@ export default function NavRail({
   commandCombo,
   onOpenCommand,
   onOpenAdd,
-  activityCount,
-  activityOpen,
-  onOpenActivity,
   onNavigate,
 }: {
   items: readonly NavItem[];
   home: NavItem;
-  account: NavItem;
-  settingsActive: boolean;
+  account: AccountNavigation;
+  accountActiveId: NavItem["id"] | null;
   activeId: NavItem["id"] | null;
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -53,10 +48,10 @@ export default function NavRail({
   commandCombo: string;
   onOpenCommand: () => void;
   onOpenAdd: () => void;
-  activityCount: number | null;
-  activityOpen: boolean;
-  onOpenActivity: () => void;
-  onNavigate: (event: MouseEvent<HTMLElement>, href: string) => AppNavActivationResult;
+  onNavigate: (
+    event: MouseEvent<HTMLElement>,
+    destination: NavItem,
+  ) => AppNavActivationResult;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -104,7 +99,7 @@ export default function NavRail({
           href={home.href}
           className={styles.brandLink}
           aria-label="Nexus — Home"
-          onClick={(event) => onNavigate(event, home.href)}
+          onClick={(event) => onNavigate(event, home)}
         >
           <AsterismMark size={20} className={styles.brandMark} />
           <span className={styles.brandText}>Nexus</span>
@@ -147,27 +142,6 @@ export default function NavRail({
           aria-hidden="true"
         />
         <ul className={styles.navList}>
-          <li>
-            <button
-              type="button"
-              className={`${styles.item} ${styles.activityItem} ${activityOpen ? styles.active : ""}`}
-              onClick={onOpenActivity}
-              aria-haspopup="dialog"
-              aria-pressed={activityOpen}
-              aria-label={mediaActivityAttentionLabel(activityCount)}
-              title={collapsed ? "Activity" : undefined}
-            >
-              <span className={styles.itemIcon}>
-                <ListTodo size={20} strokeWidth={2} aria-hidden="true" />
-              </span>
-              {!collapsed && <span className={styles.itemLabel}>Activity</span>}
-              {activityCount !== null && activityCount > 0 ? (
-                <span className={styles.activityBadge} aria-hidden="true">
-                  {activityCount > 99 ? "99+" : activityCount}
-                </span>
-              ) : null}
-            </button>
-          </li>
           {items.map((item) => {
             const Icon = item.icon;
             const active = item.id === activeId;
@@ -183,7 +157,7 @@ export default function NavRail({
                   data-presentation={item.presentation}
                   aria-label={item.label}
                   aria-current={active ? "page" : undefined}
-                  onClick={(event) => onNavigate(event, item.href)}
+                  onClick={(event) => onNavigate(event, item)}
                   onMouseEnter={() => setTip(item)}
                   onMouseLeave={() => setTip((current) => (current === item ? null : current))}
                   onFocus={() => setTip(item)}
@@ -214,8 +188,8 @@ export default function NavRail({
           {!collapsed && <span className={styles.itemLabel}>Add</span>}
         </button>
         <NavAccount
-          settings={account}
-          active={settingsActive}
+          account={account}
+          activeId={accountActiveId}
           collapsed={collapsed}
           onNavigate={onNavigate}
         />
