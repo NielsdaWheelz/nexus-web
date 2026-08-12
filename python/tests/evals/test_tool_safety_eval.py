@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+from provider_runtime import CanonicalTool
 from provider_runtime.types import ToolCall
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
@@ -38,7 +39,15 @@ def test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call(
     pyproject = Path(__file__).parents[2] / "pyproject.toml"
     assert f'rev = "{pin}"' in pyproject.read_text(encoding="utf-8")
 
-    system_contract = render_system_prompt_block()
+    write_tools = tuple(
+        CanonicalTool(
+            name=definition["name"],
+            description=definition["description"],
+            parameters=definition["parameters"],
+        )
+        for definition in writes.ASSISTANT_WRITE_TOOL_DEFINITIONS
+    )
+    system_contract = render_system_prompt_block(tools=write_tools)
     assert all(
         clause in system_contract for clause in payload["rubric"]["required_system_contract"]
     ), "production prompt lost a reviewed tool-safety instruction"

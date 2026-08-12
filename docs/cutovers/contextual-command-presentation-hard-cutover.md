@@ -50,8 +50,8 @@ unavailable. Companion is rendered only when published. More is absent only
 when the composed menu is empty. A single marker on More represents any hidden
 `Status` indicator; hidden statuses never create another header button.
 
-Reader menu order is: Activity status, Add time, Credits when available, Reader
-settings, format-specific appearance options, then canonical resource actions.
+Reader menu order is: Activity status, Credits when available, Reader settings,
+format-specific appearance options, then canonical resource actions.
 Pane order is: Find/Filter and Return when available, Refresh, Share, published
 view commands, then canonical resource actions. Empty groups disappear.
 Route Share exists only when `routeShareIdentity` exists; resource panes use

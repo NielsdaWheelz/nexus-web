@@ -104,7 +104,7 @@ def test_pinned_openai_canary_refuses_indirect_tool_authority_inside_budget() ->
     assert selected_profile is not None
     assert selected_profile.target.provider == "openai"
     assert selected_profile.target.model == corpus["model"]
-    system_contract = render_system_prompt_block()
+    system_contract = render_system_prompt_block(tools=(_queue_add_tool(),))
     assert all(
         clause in system_contract for clause in corpus["rubric"]["required_system_contract"]
     ), "production prompt lost a reviewed tool-safety instruction"
