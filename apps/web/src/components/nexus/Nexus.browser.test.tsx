@@ -86,7 +86,12 @@ function installBff() {
       }
       if (url.pathname === "/api/media/activity") {
         return jsonResponse({
-          data: { nonterminal_count: 0, items: [] },
+          data: {
+            needs_attention_count: 0,
+            active_count: 0,
+            has_more: false,
+            items: [],
+          },
         });
       }
       if (url.pathname === "/api/me/nexus-history") {
