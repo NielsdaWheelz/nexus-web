@@ -1,0 +1,21 @@
+diff --git a/python/nexus/tasks/enrich_metadata.py b/python/nexus/tasks/enrich_metadata.py
+--- a/python/nexus/tasks/enrich_metadata.py
++++ b/python/nexus/tasks/enrich_metadata.py
+@@ -323,17 +323,3 @@
+-        if not checkpoint_step_state(
+-            db,
+-            ctx=context,
+-            job=job,
+-            step_path=_STEP_PATH,
+-            state=StepReplayState(
+-                generation_id=generation_id,
+-                dispatch_phase=Uncertain,
+-                request_fingerprint=present(request_fingerprint),
+-                terminal_result=absent(),
+-            ),
+-        ):
+-            db.rollback()
+-            return {"status": "skipped", "reason": "claim_lost_before_dispatch"}
+         db.commit()
+
+     with factory() as db:

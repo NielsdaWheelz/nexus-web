@@ -89,7 +89,6 @@ def test_product_profiles_have_the_fixed_nine_row_chat_portfolio() -> None:
     assert llm_profiles.OPERATION_PROFILES == {
         "oracle": "fast",
         "media_summary": "fast",
-        "metadata_enrichment": "fast",
         "synapse": "fast",
         "dawn_write": "balanced",
         "dossier_media": "balanced",

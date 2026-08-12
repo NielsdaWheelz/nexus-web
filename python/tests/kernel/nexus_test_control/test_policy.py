@@ -185,6 +185,16 @@ def _minimal_repository(root: Path) -> None:
     )
     _write(
         root,
+        ".github/workflows/codex-personal-nightly.yml",
+        'NEXUS_CODEX_HOSTED_CANARY: "1"\n'
+        "runs-on: [self-hosted, linux, nexus-codex-nightly]\n"
+        "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor "
+        "/etc/apparmor.d/nexus-codex-nightly-bwrap\n"
+        "python/.venv/bin/python -m apps.codex_agent.sandbox_health\n"
+        "run: ./scripts/test codex-nightly\n",
+    )
+    _write(
+        root,
         ".github/workflows/release.yml",
         'NEXUS_PROVIDER_CERTIFICATION: "1"\n'
         "uses: reactivecircus/android-emulator-runner@example\n"
@@ -263,6 +273,10 @@ def test_repository_guard_rejects_resurrected_resource_action_module(
         (
             "apps/web/src/lib/search.ts",
             'if (process.env.NODE_ENV === "test") return cannedResults;\n',
+        ),
+        (
+            "apps/codex_agent/host.py",
+            'if os.environ.get("NEXUS_TEST_FAKE_AGENT"):\n    return canned_response\n',
         ),
     ],
 )
@@ -846,6 +860,20 @@ def test_empty_fault_manifest_is_valid() -> None:
     ("python/nexus_test_control/process.py", "python/nexus_test_control/runner.py"),
 )
 def test_fault_guard_allows_the_exact_controller_execution_owner(
+    tmp_path: Path,
+    owner: str,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    patch = f"diff --git a/{owner} b/{owner}\n".encode()
+    (tmp_path / "testdata/faults/example.patch").write_bytes(patch)
+    manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert not fault_manifest_violations(tmp_path)
+
+
+@pytest.mark.parametrize("owner", ("apps/api/main.py", "apps/codex_agent/host.py"))
+def test_fault_guard_allows_declared_python_app_product_owner(
     tmp_path: Path,
     owner: str,
 ) -> None:

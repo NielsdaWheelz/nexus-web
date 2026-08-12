@@ -261,6 +261,17 @@ reject_legacy_runtime_keys() {
   done
 }
 
+reject_codex_host_runtime_keys() {
+  local file="$1"
+  local key value
+
+  for key in CODEX_HOME NEXUS_CODEX_STATE_ROOT_BASE NEXUS_CODEX_WORKING_DIRECTORY NEXUS_CODEX_AGENT_SOCKET; do
+    if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
+      die "${key} is owned by the isolated Codex agent host and must not be captured in Nexus runtime env"
+    fi
+  done
+}
+
 reject_removed_x_env_keys() {
   local file="$1"
   local value
@@ -385,6 +396,7 @@ require_cloudflare_r2_s3_api_origin "$tmp_file"
 require_digest_image POSTGRES_IMAGE "$tmp_file"
 require_digest_image CADDY_IMAGE "$tmp_file"
 reject_legacy_runtime_keys "$tmp_file"
+reject_codex_host_runtime_keys "$tmp_file"
 reject_removed_x_env_keys "$tmp_file"
 reject_removed_llm_env_keys "$tmp_file"
 reject_removed_podcast_env_keys "$tmp_file"

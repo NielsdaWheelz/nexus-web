@@ -15,8 +15,7 @@ normalized outcomes, and provider telemetry. Nexus never plans a wire request,
 rewrites an endpoint, or implements provider retries.
 
 There is no BYOK, per-user key, model-browser UI, gateway route, fallback, or
-availability intersection. Native subscription/agent execution is a separate,
-deferred cutover; it is not a path through this module.
+availability intersection. This boundary excludes `metadata_enrichment`.
 
 Backend owners: `llm_profiles.py`, `llm_credentials.py`, `llm_execution.py`,
 `llm_intent_state.py`, `llm_outcomes.py`, `llm_ledger.py`,
@@ -54,8 +53,8 @@ background mapping must resolve through `provider_runtime.registry`, support
 text, tools, streaming, strict structured output, and a continuation codec,
 and exactly match its advertised reasoning options and default.
 
-`OPERATION_PROFILES` is unchanged: Oracle, Media Summary, Metadata Enrichment,
-and Synapse use `fast`; Dossier page, note, and idea-resolve use `fast`; other
+`OPERATION_PROFILES` maps direct operations only: Oracle, Media Summary, and
+Synapse use `fast`; Dossier page, note, and idea-resolve use `fast`; other
 Dossier bindings and Dawn Write use `balanced`. Chat is user-selected. Kimi and
 both DeepSeek profiles are chat choices only.
 
@@ -83,6 +82,24 @@ The only retry modes are:
 Every composition uses `Default` except durable `BilledOnce` work: `chat_run`,
 `dossier_build`, `media_unit_build`, and the API-owned Idea resolver use
 `SingleAttempt`. Nexus selects the mode; `ProviderRuntime` implements it.
+
+## Native subscription metadata
+
+`metadata_enrichment` is not a direct-provider operation. Its sole route is the
+private `nexus-codex-agent-host` over a Unix socket, through the pinned public
+`AgentRuntime` with `CredentialRef(local_account, codex-personal)`,
+`gpt-5.6-luna`, and low reasoning. The durable metadata owner snapshots its
+request, records `agent_turns`, and owns prepared/completed/uncertain replay;
+`llm_calls`, direct credentials, provider retry, admission, and price facts do
+not participate.
+
+The host has no API key, TCP listener, database credentials, MCP, web search,
+writable workspace, or approval path. The operation sets Codex
+`builtin_tools="disabled"`; any residual tool-use or permission-request event
+is a closed policy failure. A terminal stores the opaque session reference,
+usage, SDK/runtime versions, and bounded diagnostics. The ChatGPT-authenticated
+profile state is private to the host; re-enrollment, not credential export, is
+the recovery path.
 
 ## Durable intent, execution, and admission
 
@@ -159,4 +176,5 @@ record.
 - Missing credentials, usage, pricing, or capability is explicit and never a
   fallback.
 - Direct API execution and native subscription execution are different systems.
-- The repository has one v2 direct-provider path and no v1 integration path.
+- The repository has one v2 direct-provider path for non-metadata operations
+  and one exact native subscription metadata route.

@@ -277,6 +277,7 @@ def test_production_compose_declares_the_exact_resource_envelope() -> None:
         ("api", "192m", "320m", 256),
         ("worker-interactive", "128m", "256m", 256),
         ("worker-background", "128m", "448m", 256),
+        ("nexus-codex-agent-host", "128m", "384m", 64),
         ("migration", "256m", "512m", 256),
     )
     for index, (service, reservation, hard, pids) in enumerate(expected):
@@ -317,17 +318,23 @@ def test_the_declared_envelope_fits_the_committed_host_with_its_reserve() -> Non
     """
     controller = (REPO_ROOT / "deploy/hetzner/release.py").read_text(encoding="utf-8")
     namespace: dict[str, object] = {}
-    for name in ("_SERVICES", "_RESOURCE_LIMITS", "_MIN_HOST_MEMORY_BYTES"):
+    for name in (
+        "_SERVICES",
+        "_CODEX_AGENT_HOST",
+        "_CAPACITY_SERVICES",
+        "_RESOURCE_LIMITS",
+        "_MIN_HOST_MEMORY_BYTES",
+    ):
         start = controller.index(f"{name} = ")
         exec(controller[start : controller.index("\n_", start + 1)], namespace)  # noqa: S102
     reserved = 320 * 1024 * 1024
     limits = cast(dict[str, tuple[int, int, int]], namespace["_RESOURCE_LIMITS"])
-    services = cast(tuple[str, ...], namespace["_SERVICES"])
+    services = cast(tuple[str, ...], namespace["_CAPACITY_SERVICES"])
     host_floor = cast(int, namespace["_MIN_HOST_MEMORY_BYTES"])
 
-    hard_sum = sum(limits[service][1] for service in services)
-    assert host_floor - hard_sum >= reserved, (
-        f"declared envelope leaves {(host_floor - hard_sum) / 1048576:.2f} MiB "
+    reservation_sum = sum(limits[service][0] for service in services)
+    assert host_floor - reservation_sum >= reserved, (
+        f"declared reservation envelope leaves {(host_floor - reservation_sum) / 1048576:.2f} MiB "
         f"on a {host_floor / 1048576:.0f} MiB host; the reserve floor is "
         f"{reserved / 1048576:.0f} MiB"
     )

@@ -26,6 +26,7 @@ class Workflow(StrEnum):
     PR = "pr"
     FULL = "full"
     NIGHTLY = "nightly"
+    CODEX_NIGHTLY = "codex-nightly"
     RELEASE = "release"
     DOCTOR = "doctor"
     ANDROID_VISUAL = "android-visual"
@@ -55,6 +56,7 @@ class Capability(StrEnum):
     ANDROID_HOST = "android-host"
     AUDIT = "audit"
     HOSTED = "hosted"
+    CODEX_HOSTED = "codex-hosted"
     ANDROID_DEVICE = "android-device"
     PROVIDER_CERTIFICATION = "provider-certification"
     ANDROID_RELEASE = "android-release"
@@ -75,6 +77,7 @@ class PriorityRiskId(StrEnum):
     READING_PROGRESS = "reading-progress"
     CITATION_PROVENANCE_IDENTITY = "citation-provenance-identity"
     DURABLE_JOB_REPLAY = "durable-job-replay"
+    NATIVE_AGENT_HOST = "native-agent-host"
     DATABASE_OBJECT_CONVERGENCE = "database-object-convergence"
     LLM_TOOL_SAFETY = "llm-tool-safety"
     IMMUTABLE_PRODUCTION_RELEASE = "immutable-production-release"
@@ -87,7 +90,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "d87bafa4efa75cf695901b258f0fba24e22fe00ecd1a3f3290b3930e348d7aba"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "92ae7bcd523cc5f314032e4da13ebab0cd995333c14c6d5face187562e9fca33"
 
 
 class ResourceKind(StrEnum):
@@ -407,6 +410,10 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 ),
             ),
         ),
+        Workflow.CODEX_NIGHTLY: WorkflowDefinition(
+            Workflow.CODEX_NIGHTLY,
+            (CapabilityRequirement(Capability.CODEX_HOSTED, SelectionScope.COMPLETE),),
+        ),
         Workflow.RELEASE: WorkflowDefinition(
             Workflow.RELEASE,
             _requirements(
@@ -446,6 +453,7 @@ DEFERRED_CAPABILITY_OWNER: Mapping[Capability, Workflow] = MappingProxyType(
         Capability.ANDROID_HOST: Workflow.FULL,
         Capability.AUDIT: Workflow.NIGHTLY,
         Capability.HOSTED: Workflow.NIGHTLY,
+        Capability.CODEX_HOSTED: Workflow.CODEX_NIGHTLY,
         Capability.ANDROID_DEVICE: Workflow.NIGHTLY,
         Capability.PROVIDER_CERTIFICATION: Workflow.RELEASE,
         Capability.ANDROID_RELEASE: Workflow.RELEASE,

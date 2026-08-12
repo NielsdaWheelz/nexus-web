@@ -4569,8 +4569,7 @@ class LLMCall(Base):
     __table_args__ = (
         CheckConstraint(
             "owner_kind IN ('chat_run', 'oracle_reading', 'artifact_build', "
-            "'artifact_learn_request', 'media_summary', 'media_enrichment', "
-            "'synapse_scan', 'dawn_write')",
+            "'artifact_learn_request', 'media_summary', 'synapse_scan', 'dawn_write')",
             name="ck_llm_calls_owner_kind",
         ),
         CheckConstraint("call_seq >= 1", name="ck_llm_calls_call_seq_positive"),
@@ -4592,6 +4591,54 @@ class LLMCall(Base):
         ),
         UniqueConstraint("owner_kind", "owner_id", "call_seq", name="uq_llm_calls_owner_call_seq"),
         Index("ix_llm_calls_owner", "owner_kind", "owner_id"),
+    )
+
+
+class AgentTurn(Base):
+    """One native-agent turn in the durable audit ledger (sole writer: agent_turn_ledger)."""
+
+    __tablename__ = "agent_turns"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    operation: Mapped[str] = mapped_column(Text, nullable=False)
+    operation_revision: Mapped[str] = mapped_column(Text, nullable=False)
+    backend: Mapped[str] = mapped_column(Text, nullable=False)
+    transport: Mapped[str] = mapped_column(Text, nullable=False)
+    auth_profile: Mapped[str] = mapped_column(Text, nullable=False)
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_reasoning: Mapped[str] = mapped_column(Text, nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    policy_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    output_schema_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    session_ref: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_read_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sdk_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    runtime_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_kind",
+            "owner_id",
+            "turn_seq",
+            name="uq_agent_turns_owner_turn_seq",
+        ),
     )
 
 

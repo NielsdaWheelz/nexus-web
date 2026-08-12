@@ -194,6 +194,8 @@ class HostOracleReconcileHarness:
             "Caddyfile": b"test-caddy\n",
             "candidate-manifest.json": _canonical_json(candidate),
             "docker-compose.yml": b"name: nexus\n",
+            "nexus-codex-agent-host.apparmor": b"profile nexus-codex-agent-host {}\n",
+            "prove-codex-capacity.sh": b"#!/usr/bin/env bash\n# immutable capacity wrapper\n",
             "release.py": b"# immutable release controller\n",
             "python/nexus/__init__.py": b"",
             "python/nexus/release_artifact.py": b"# immutable artifact decoder\n",
@@ -208,6 +210,12 @@ class HostOracleReconcileHarness:
             "Caddyfile": b"test-repair-caddy\n",
             "candidate-manifest.json": _canonical_json(repair_candidate),
             "docker-compose.yml": b"name: nexus\n",
+            "nexus-codex-agent-host.apparmor": (
+                repo_root / "deploy/hetzner/nexus-codex-agent-host.apparmor"
+            ).read_bytes(),
+            "prove-codex-capacity.sh": (
+                repo_root / "deploy/hetzner/prove-codex-capacity.sh"
+            ).read_bytes(),
             "release.py": (repo_root / "deploy/hetzner/release.py").read_bytes(),
             "python/nexus/__init__.py": (repo_root / "python/nexus/__init__.py").read_bytes(),
             "python/nexus/release_artifact.py": (

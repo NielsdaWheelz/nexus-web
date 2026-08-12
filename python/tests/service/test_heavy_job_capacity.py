@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Generator
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine, text
@@ -19,12 +20,15 @@ from nexus.jobs.queue import (
     dead_letter_expired_job,
     enqueue_job,
     fail_job,
+    get_job,
     heartbeat_job,
     lock_and_renew_running_job_claim,
+    lock_job,
     requeue_dead_job,
     reschedule_running_job,
+    revoke_jobs_for_payload,
 )
-from nexus.jobs.registry import JobDefinition
+from nexus.jobs.registry import JobDefinition, get_default_registry
 from nexus.jobs.worker import JobWorker
 from tests.testkit.unreachable_state import (
     assign_dead_job_to_heavy_capacity,
@@ -42,6 +46,7 @@ _PROBE_KINDS = (
     "heavy_capacity_block_probe",
     "light_capacity_block_probe",
     "heavy_transition_probe",
+    "heavy_lock_order_probe",
     "heavy_dead_capacity_probe",
     "heavy_expiry_probe",
     "heavy_missing_holder_probe",
@@ -82,6 +87,24 @@ def _capacity_holder(engine: Engine) -> tuple[object, ...]:
                 )
             ).one()
         )
+
+
+def _wait_for_backend_blocked_by(
+    engine: Engine,
+    *,
+    waiting_pid: int,
+    blocking_pid: int,
+) -> bool:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        with Session(engine) as db:
+            blockers = db.scalar(
+                text("SELECT pg_blocking_pids(:waiting_pid)"),
+                {"waiting_pid": waiting_pid},
+            )
+        if blockers is not None and blocking_pid in blockers:
+            return True
+    return False
 
 
 def test_worker_threads_registry_resource_class_into_execution_context(engine: Engine) -> None:
@@ -223,6 +246,95 @@ def test_blocked_heavy_is_unchanged_and_light_work_proceeds(engine: Engine) -> N
         db.commit()
 
 
+@pytest.mark.parametrize("holder_kind", ["ingest_media_source", "media_content_reindex_job"])
+def test_metadata_is_heavy_and_excludes_parser_and_reindex_capacity(
+    engine: Engine,
+    holder_kind: str,
+) -> None:
+    registry = get_default_registry()
+    assert registry["enrich_metadata"].resource_class == "Heavy"
+    assert registry[holder_kind].resource_class == "Heavy"
+    heavy_kinds = tuple(
+        definition.kind for definition in registry.values() if definition.resource_class == "Heavy"
+    )
+    token = uuid4().hex
+    payload = {"capacity_probe": token}
+
+    try:
+        with Session(engine) as db:
+            holder = enqueue_job(db, kind=holder_kind, payload=payload, priority=0)
+            metadata = enqueue_job(
+                db,
+                kind="enrich_metadata",
+                payload={**payload, "capacity_wait_index": 0},
+                priority=1,
+                max_attempts=2,
+            )
+            db.commit()
+
+            admitted = claim_job(
+                db,
+                job_id=holder.id,
+                worker_id=f"{holder_kind}-capacity-holder",
+                lease_seconds=300,
+                allowed_kinds=(holder_kind, "enrich_metadata"),
+                heavy_kinds=heavy_kinds,
+            )
+            db.commit()
+            assert admitted is not None and admitted.id == holder.id
+
+            assert (
+                claim_job(
+                    db,
+                    job_id=metadata.id,
+                    worker_id="metadata-capacity-contender",
+                    lease_seconds=300,
+                    allowed_kinds=(holder_kind, "enrich_metadata"),
+                    heavy_kinds=heavy_kinds,
+                )
+                is None
+            )
+            unchanged = get_job(db, metadata.id)
+            assert unchanged is not None
+            assert (unchanged.status, unchanged.attempts, unchanged.claimed_by) == (
+                "pending",
+                0,
+                None,
+            )
+
+            assert complete_job(
+                db,
+                job_id=holder.id,
+                worker_id=f"{holder_kind}-capacity-holder",
+            )
+            db.commit()
+            metadata_claim = claim_job(
+                db,
+                job_id=metadata.id,
+                worker_id="metadata-capacity-worker",
+                lease_seconds=300,
+                allowed_kinds=(holder_kind, "enrich_metadata"),
+                heavy_kinds=heavy_kinds,
+            )
+            db.commit()
+            assert metadata_claim is not None and metadata_claim.id == metadata.id
+            assert complete_job(
+                db,
+                job_id=metadata.id,
+                worker_id="metadata-capacity-worker",
+            )
+            db.commit()
+    finally:
+        with Session(engine) as db:
+            revoke_jobs_for_payload(db, kind=holder_kind, expected_payload_match=payload)
+            revoke_jobs_for_payload(
+                db,
+                kind="enrich_metadata",
+                expected_payload_match=payload,
+            )
+            db.commit()
+
+
 def test_open_light_publication_does_not_block_concurrent_heavy_admission(
     engine: Engine,
 ) -> None:
@@ -285,6 +397,113 @@ def test_open_light_publication_does_not_block_concurrent_heavy_admission(
         assert complete_job(db, job_id=heavy.id, worker_id="heavy-admission-worker")
         assert complete_job(db, job_id=light.id, worker_id="light-publication-worker")
         db.commit()
+    assert _capacity_holder(engine) == (None, None, None, None)
+
+
+def test_heavy_heartbeat_waits_for_capacity_before_locking_job_transition(
+    engine: Engine,
+) -> None:
+    """Risk: inverse Heavy locks deadlock heartbeat against a queue transition."""
+    kind = "heavy_lock_order_probe"
+    worker_id = "heavy-lock-order-worker"
+    with Session(engine) as db:
+        job = enqueue_job(db, kind=kind, priority=0)
+        db.commit()
+        claimed = claim_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            lease_seconds=300,
+            allowed_kinds=(kind,),
+            heavy_kinds=(kind,),
+        )
+        db.commit()
+        assert claimed is not None
+
+    heartbeat_ready = threading.Event()
+    heartbeat_pids: list[int] = []
+    heartbeat_results: list[bool] = []
+    heartbeat_failures: list[BaseException] = []
+
+    def run_heartbeat() -> None:
+        try:
+            with Session(engine) as db:
+                heartbeat_pids.append(int(db.scalar(text("SELECT pg_backend_pid()"))))
+                heartbeat_ready.set()
+                heartbeat_results.append(
+                    heartbeat_job(
+                        db,
+                        job_id=job.id,
+                        worker_id=worker_id,
+                        lease_seconds=300,
+                        resource_class="Heavy",
+                    )
+                )
+                db.commit()
+        except BaseException as exc:
+            heartbeat_failures.append(exc)
+
+    capacity_blocker = Session(engine)
+    heartbeat_thread = threading.Thread(target=run_heartbeat)
+    heartbeat_started = False
+    job_was_lockable = False
+    try:
+        blocker = capacity_blocker.execute(
+            text(
+                """
+                SELECT pg_backend_pid(), resource_class
+                FROM background_job_capacity_leases
+                WHERE resource_class = 'Heavy'
+                FOR UPDATE
+                """
+            )
+        ).one()
+        blocker_pid = int(blocker[0])
+        assert blocker[1] == "Heavy"
+
+        heartbeat_thread.start()
+        heartbeat_started = True
+        assert heartbeat_ready.wait(timeout=5), "Heavy heartbeat did not start"
+        heartbeat_pid = heartbeat_pids[0]
+        assert _wait_for_backend_blocked_by(
+            engine,
+            waiting_pid=heartbeat_pid,
+            blocking_pid=blocker_pid,
+        ), (
+            "Heavy heartbeat did not reach the capacity-row lock wait; "
+            f"heartbeat_pid={heartbeat_pid}, blocker_pid={blocker_pid}, job_id={job.id}"
+        )
+
+        with Session(engine) as probe:
+            probe.execute(text("SET LOCAL statement_timeout = '250ms'"))
+            try:
+                job_was_lockable = lock_job(probe, job.id) is not None
+            except OperationalError as exc:
+                if getattr(exc.orig, "sqlstate", None) != "57014":
+                    raise
+                probe.rollback()
+            else:
+                probe.rollback()
+    finally:
+        capacity_blocker.rollback()
+        capacity_blocker.close()
+        if heartbeat_started:
+            heartbeat_thread.join(timeout=10)
+        if not heartbeat_thread.is_alive():
+            with Session(engine) as cleanup:
+                current = get_job(cleanup, job.id)
+                if current is not None and current.status == "running":
+                    assert complete_job(cleanup, job_id=job.id, worker_id=worker_id)
+                cleanup.commit()
+
+    assert heartbeat_started
+    assert not heartbeat_thread.is_alive(), "Heavy heartbeat did not finish after capacity release"
+    assert not heartbeat_failures, f"Heavy heartbeat failed: {heartbeat_failures!r}"
+    assert heartbeat_results == [True]
+    assert job_was_lockable, (
+        "Heavy heartbeat locked the job while waiting for capacity; heartbeat and "
+        f"reschedule/complete/fail can deadlock for job {job.id}"
+    )
     assert _capacity_holder(engine) == (None, None, None, None)
 
 

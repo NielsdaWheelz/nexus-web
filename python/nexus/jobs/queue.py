@@ -125,8 +125,19 @@ class RescheduleRequested:
     this marker is the one supported mechanism.
     """
 
-    available_at: datetime
+    available_at: datetime | None = None
     payload: Mapping[str, Any] | None = None
+    delay_seconds: int | None = None
+
+    def __post_init__(self) -> None:
+        if (self.available_at is None) == (self.delay_seconds is None):
+            raise ValueError(
+                "RescheduleRequested requires exactly one of available_at or delay_seconds"
+            )
+        if self.delay_seconds is not None and (
+            type(self.delay_seconds) is not int or self.delay_seconds < 0
+        ):
+            raise ValueError("RescheduleRequested.delay_seconds must be a non-negative integer")
 
 
 # The single definition of "the Heavy lease is occupied", for queue-owned SQL that
@@ -828,11 +839,11 @@ def heartbeat_job(
 ) -> bool:
     """Atomically extend one running job and its matching Heavy capacity lease.
 
-    The holder is verified with an unlocked read; the renewal below is a single
-    exact-holder conditional UPDATE, which is self-fencing, so no Light heartbeat
-    ever contends for the Heavy row.
+    Heavy work locks capacity before the job, matching every transition that
+    releases the holder. Light work keeps the unlocked verification read, so a
+    Light heartbeat never contends for the Heavy row.
     """
-    capacity = _read_heavy_capacity(db)
+    capacity = _lock_heavy_capacity(db) if resource_class == "Heavy" else _read_heavy_capacity(db)
     job = (
         db.execute(
             text(
@@ -896,9 +907,8 @@ def heartbeat_job(
                 "lease_expires_at": renewed,
             },
         ).first()
-        # justify-defect: every transition that clears this holder must first lock
-        # the job row this heartbeat still holds, so the verified holder cannot
-        # have been released in between.
+        # justify-defect: Heavy heartbeat holds the capacity row lock from
+        # verification through renewal, so the exact holder cannot move.
         if updated is None:
             raise AssertionError("Heavy capacity holder changed while locked")
     return True
@@ -1169,14 +1179,17 @@ def reschedule_running_job(
     job_id: UUID,
     worker_id: str,
     attempt_no: int,
-    available_at: datetime,
+    available_at: datetime | None = None,
+    delay_seconds: int | None = None,
     payload: Mapping[str, Any] | None = None,
 ) -> bool:
     """Self-reschedule a running job back to pending without burning its retry budget.
 
     CAS-fenced exactly like update_running_job_payload (exact running attempt,
-    claimant, and unexpired lease). Sets status='pending', the given
-    available_at, optionally a new payload, and clears the claim/lease.
+    claimant, and unexpired lease). Sets status='pending', optionally a new
+    payload, and clears the claim/lease. Absolute schedules preserve their owned
+    instant; relative schedules are computed from PostgreSQL ``now()`` in the
+    same statement that records ``updated_at``.
 
     attempts is compensated (attempts - 1, floored at 0) to undo the +1 that
     claim_next_job already applied when this attempt started, so time spent
@@ -1185,6 +1198,13 @@ def reschedule_running_job(
     request this by returning that marker, and the worker -- not the handler
     -- calls this function and skips complete_job/fail_job for that attempt.
     """
+    if (available_at is None) == (delay_seconds is None):
+        raise ValueError(
+            "reschedule_running_job requires exactly one of available_at or delay_seconds"
+        )
+    if delay_seconds is not None and (type(delay_seconds) is not int or delay_seconds < 0):
+        raise ValueError("delay_seconds must be a non-negative integer")
+
     capacity = _lock_heavy_capacity_for_job(db, job_id)
     updated = db.execute(
         text(
@@ -1192,7 +1212,11 @@ def reschedule_running_job(
             UPDATE background_jobs
             SET
                 status = 'pending',
-                available_at = :available_at,
+                available_at = CASE
+                    WHEN CAST(:delay_seconds AS integer) IS NULL
+                    THEN CAST(:available_at AS timestamptz)
+                    ELSE now() + (CAST(:delay_seconds AS integer) * interval '1 second')
+                END,
                 payload = COALESCE(CAST(:payload AS jsonb), payload),
                 attempts = GREATEST(attempts - 1, 0),
                 claimed_by = NULL,
@@ -1211,6 +1235,7 @@ def reschedule_running_job(
             "worker_id": worker_id,
             "attempt_no": int(attempt_no),
             "available_at": available_at,
+            "delay_seconds": delay_seconds,
             "payload": json.dumps(dict(payload)) if payload is not None else None,
         },
     ).first()

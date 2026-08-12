@@ -1,0 +1,12 @@
+diff --git a/python/nexus/tasks/enrich_metadata.py b/python/nexus/tasks/enrich_metadata.py
+--- a/python/nexus/tasks/enrich_metadata.py
++++ b/python/nexus/tasks/enrich_metadata.py
+@@ -566,7 +566,7 @@ def _failure_code(kind: NativeAgentFailureKind) -> ApiErrorCode:
+         case "quota_exhausted":
+             return ApiErrorCode.E_METADATA_AGENT_QUOTA_EXHAUSTED
+         case "turn_timeout" | "output_limit_exceeded":
+-            return ApiErrorCode.E_METADATA_AGENT_TIMEOUT
++            return ApiErrorCode.E_METADATA_AGENT_RUNTIME_FAILED
+         case "output_schema_violation":
+             return ApiErrorCode.E_METADATA_AGENT_INVALID_OUTPUT
+         case "credential_unavailable" | "credential_rejected":

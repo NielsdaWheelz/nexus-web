@@ -1,0 +1,14 @@
+diff --git a/python/nexus/services/native_agent_client.py b/python/nexus/services/native_agent_client.py
+--- a/python/nexus/services/native_agent_client.py
++++ b/python/nexus/services/native_agent_client.py
+@@ -118,10 +118,6 @@ class CodexAgentClient:
+                 "native agent request deadline expired before request acceptance"
+             ) from error
+         except httpx.HTTPError as error:
+-            if accepted:
+-                raise NativeAgentTransportAmbiguous(
+-                    "native agent transport was lost after request acceptance"
+-                ) from error
+             raise NativeAgentUnavailable("native agent host is unavailable") from error
+ 
+     async def _read_observation(

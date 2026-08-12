@@ -114,11 +114,11 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "enrich_metadata": JobDefinition(
             kind="enrich_metadata",
             handler=_run_enrich_metadata,
-            resource_class="Light",
-            max_attempts=1,
+            resource_class="Heavy",
+            max_attempts=2,
             retry_delays_seconds=(0,),
-            lease_seconds=120,
-            failed_result_statuses=("failed",),
+            lease_seconds=300,
+            never_prune_dead=True,
         ),
         "chat_run": JobDefinition(
             kind="chat_run",
@@ -370,12 +370,13 @@ def _run_media_content_reindex(
 
 def _run_enrich_metadata(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.enrich_metadata import enrich_metadata
 
     return enrich_metadata(
         media_id=str(payload["media_id"]),
         request_id=_optional_str(payload.get("request_id")),
+        context=context,
     )
 
 
