@@ -454,11 +454,9 @@ def build_assistant_trust_trails(
             prompt=(
                 TrustPromptAssemblyOut(
                     id=prompt.id,
-                    cacheable_input_tokens_estimate=prompt.cacheable_input_tokens_estimate,
                     prompt_block_manifest=cast(dict[str, Any], prompt.prompt_block_manifest),
                     max_context_tokens=prompt.max_context_tokens,
                     reserved_output_tokens=prompt.reserved_output_tokens,
-                    reserved_reasoning_tokens=prompt.reserved_reasoning_tokens,
                     input_budget_tokens=prompt.input_budget_tokens,
                     estimated_input_tokens=prompt.estimated_input_tokens,
                     included_message_ids=prompt.included_message_ids,

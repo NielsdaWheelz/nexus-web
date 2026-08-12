@@ -83,6 +83,7 @@ from nexus_test_control.runtime import (
 from nexus_test_control.services import (
     TEST_EXTENSION_PUBLIC_KEY,
     InvitedTestUser,
+    OpenAIProviderFixture,
     StartedProcess,
     SupabaseCredentials,
     TestRun,
@@ -94,6 +95,7 @@ from nexus_test_control.services import (
     grant_scenario_ai_entitlement,
     invite_supabase_user,
     new_run_id,
+    prepare_openai_provider_fixture,
     prepare_run,
     resolve_adb,
     run_environment,
@@ -555,8 +557,18 @@ class _RunnerPorts:
         environment: Mapping[str, str],
         run: TestRun,
         role: str,
+        *,
+        overrides: Mapping[str, str] | None = None,
     ) -> StartedProcess:
-        return start_python_process(repo_root, environment, run, role)
+        return start_python_process(repo_root, environment, run, role, overrides=overrides)
+
+    def prepare_openai_provider_fixture(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run: TestRun,
+    ) -> OpenAIProviderFixture:
+        return prepare_openai_provider_fixture(repo_root, environment, run)
 
     def start_web_process(
         self,
@@ -574,8 +586,10 @@ class _RunnerPorts:
         process: StartedProcess,
         endpoint: EndpointKind,
         path: str,
+        *,
+        tls_ca: Path | None = None,
     ) -> None:
-        wait_process_ready(repo_root, environment, process, endpoint, path)
+        wait_process_ready(repo_root, environment, process, endpoint, path, tls_ca=tls_ca)
 
 
 @dataclass(slots=True)
@@ -588,6 +602,7 @@ class _WorkflowExecution:
     run: TestRun | None = None
     build: StandaloneBuild | None = None
     external_protocol_started: bool = False
+    openai_protocol: OpenAIProviderFixture | None = None
     journey_runtime_started: bool = False
     preparation_attempted: bool = False
     preparation_failure: CapabilityResult | None = None
@@ -621,6 +636,44 @@ class _WorkflowExecution:
         except RuntimeContractError as error:
             return _fail(capability, f"owned external protocol failed: {error}")
         self.external_protocol_started = True
+        return None
+
+    def ensure_openai_protocol(
+        self,
+        capability: Capability,
+        prepared: TestRun,
+    ) -> CapabilityResult | None:
+        if self.openai_protocol is not None:
+            return None
+        try:
+            fixture = self.ports.prepare_openai_provider_fixture(
+                self.context.repo_root,
+                {"NEXUS_ENV": "test"},
+                prepared,
+            )
+            provider = self.ports.start_python_process(
+                self.context.repo_root,
+                {"NEXUS_ENV": "test"},
+                prepared,
+                "provider-openai",
+                overrides=fixture.server_environment(),
+            )
+            self.ports.wait_process_ready(
+                self.context.repo_root,
+                {"NEXUS_ENV": "test"},
+                provider,
+                EndpointKind.PROVIDER_OPENAI,
+                "/livez",
+                tls_ca=fixture.certificate,
+            )
+        except OSError as error:
+            return _not_run(
+                capability,
+                f"owned OpenAI protocol could not start: {error.strerror or error}",
+            )
+        except RuntimeContractError as error:
+            return _fail(capability, f"owned OpenAI protocol failed: {error}")
+        self.openai_protocol = fixture
         return None
 
     def prepare(self, capability: Capability) -> TestRun | CapabilityResult:
@@ -2260,7 +2313,14 @@ def _with_browser_process_logs(
     directory = context.repo_root / "test-results/runs" / execution.run_id
     process_logs = tuple(
         path.relative_to(context.repo_root).as_posix()
-        for role in ("external", "api", "worker-interactive", "worker-background", "web")
+        for role in (
+            "external",
+            "provider-openai",
+            "api",
+            "worker-interactive",
+            "worker-background",
+            "web",
+        )
         if (path := directory / f"{role}.log").is_file()
     )
     if not process_logs:
@@ -2283,11 +2343,18 @@ def _ensure_browser_processes(
         protocol_failure = execution.ensure_external_protocol(capability, prepared)
         if protocol_failure is not None:
             return protocol_failure
+        provider_failure = execution.ensure_openai_protocol(capability, prepared)
+        if provider_failure is not None:
+            return provider_failure
+        if execution.openai_protocol is None:
+            raise AssertionError("passing OpenAI protocol startup did not retain its fixture")
+        provider_environment = execution.openai_protocol.client_environment()
         api = execution.ports.start_python_process(
             context.repo_root,
             {"NEXUS_ENV": "test"},
             prepared,
             "api",
+            overrides=provider_environment,
         )
         execution.ports.wait_process_ready(
             context.repo_root,
@@ -2301,12 +2368,14 @@ def _ensure_browser_processes(
             {"NEXUS_ENV": "test"},
             prepared,
             "worker-interactive",
+            overrides=provider_environment,
         )
         execution.ports.start_python_process(
             context.repo_root,
             {"NEXUS_ENV": "test"},
             prepared,
             "worker-background",
+            overrides=provider_environment,
         )
         web = execution.ports.start_web_process(
             context.repo_root,
@@ -2942,6 +3011,7 @@ def _run_provider_certification(
         "ANTHROPIC_API_KEY",
         "GEMINI_API_KEY",
         "MOONSHOT_API_KEY",
+        "DEEPSEEK_API_KEY",
         "NEXUS_FABLE_RETENTION_ACCEPTED_AT",
     )
     missing = tuple(name for name in required if not environment.get(name))
@@ -2956,7 +3026,12 @@ def _run_provider_certification(
     evidence_path = context.repo_root / evidence_relative
     if evidence_path.exists():
         evidence_path.unlink()
-    child_environment = _child_environment(environment)
+    prepared = _prepared_run(execution, capability)
+    if isinstance(prepared, CapabilityResult):
+        return prepared
+    if execution is None:
+        raise AssertionError("prepared provider certification run lacks workflow execution")
+    child_environment = _heavy_environment(context, environment, prepared, execution.ports)
     child_environment.update({name: environment[name] for name in required})
     child_environment.update(
         {
@@ -2994,13 +3069,17 @@ def _run_provider_certification(
         if result.evidence.status is RunStatus.PASS:
             return _fail(capability, "provider certification emitted no valid bounded evidence")
         return result
-    calls, cost, limits, results = parsed
+    calls, cost, limits, results, runtime_revision, registry_revision, evidence_run_id = parsed
     contract_valid = (
-        limits == (9, 0.10)
-        and calls == 9
-        and 0 <= cost <= 0.10
-        and len(results) == 9
+        limits == (18, 0.18)
+        and calls == 18
+        and 0 <= cost <= 0.18
+        and runtime_revision == _provider_runtime_pin(context.repo_root)
+        and bool(registry_revision)
+        and evidence_run_id == execution.run_id
+        and len(results) == 18
         and all(item.get("attempts") == 1 for item in results)
+        and _provider_certification_results_are_complete(results)
     )
     status = result.evidence.status
     detail = result.detail
@@ -3021,15 +3100,82 @@ def _run_provider_certification(
     )
 
 
+def _provider_certification_results_are_complete(results: list[dict[str, object]]) -> bool:
+    profile_ids = (
+        "fast",
+        "balanced",
+        "deep",
+        "claude",
+        "fable",
+        "gemini",
+        "kimi",
+        "deepseek-flash",
+        "deepseek-pro",
+    )
+    deepseek_ids = ("deepseek-flash", "deepseek-pro")
+    required: set[tuple[str | None, str]] = {(profile_id, "generate") for profile_id in profile_ids}
+    for operation in (
+        "stream",
+        "strict_json",
+        "thinking_tool_initial",
+        "thinking_tool_continuation",
+    ):
+        required.update((profile_id, operation) for profile_id in deepseek_ids)
+    required.add((None, "embed"))
+    actual = {(item.get("profile_id"), item.get("operation")) for item in results}
+    generation_results = [item for item in results if item.get("operation") != "embed"]
+    generation_ids = [
+        generation_id
+        for item in generation_results
+        if isinstance(generation_id := item.get("nexus_generation_id"), str)
+    ]
+    return (
+        actual == required
+        and len(generation_results) == 17
+        and len(generation_ids) == 17
+        and len(set(generation_ids)) == 17
+        and all(
+            isinstance(item.get("nexus_generation_id"), str)
+            and bool(item["nexus_generation_id"])
+            and item.get("status") == "succeeded"
+            and item.get("nexus_ledger_outcome") == "succeeded"
+            and isinstance(charged_tokens := item.get("nexus_charged_tokens"), int)
+            and not isinstance(charged_tokens, bool)
+            and charged_tokens > 0
+            for item in generation_results
+        )
+        and all(
+            item.get("reasoning") == "high"
+            for item in results
+            if item.get("operation")
+            in {"stream", "strict_json", "thinking_tool_initial", "thinking_tool_continuation"}
+        )
+    )
+
+
 def _read_paid_evidence(
     path: Path,
-) -> tuple[int, float, tuple[int, float], list[dict[str, object]]] | None:
+) -> (
+    tuple[
+        int,
+        float,
+        tuple[int, float],
+        list[dict[str, object]],
+        str,
+        str,
+        str,
+    ]
+    | None
+):
     try:
         evidence = json.loads(path.read_text(encoding="utf-8"))
         calls = evidence["provider_calls"]
         cost = evidence["estimated_cost_usd"]
         limits = evidence["limits"]
         results = evidence["results"]
+        runtime_revision = evidence["runtime_revision"]
+        registry_revision = evidence["registry_revision"]
+        run_id = evidence["run_id"]
         call_limit = limits["provider_calls"]
         cost_limit = limits["estimated_cost_usd"]
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
@@ -3046,9 +3192,23 @@ def _read_paid_evidence(
         or not isinstance(cost_limit, (int, float))
         or not isinstance(results, list)
         or any(not isinstance(item, dict) for item in results)
+        or not isinstance(runtime_revision, str)
+        or re.fullmatch(r"[0-9a-f]{40}", runtime_revision) is None
+        or not isinstance(registry_revision, str)
+        or re.fullmatch(r"\d{4}-\d{2}-\d{2}\.\d+", registry_revision) is None
+        or not isinstance(run_id, str)
+        or re.fullmatch(r"[0-9a-f]{16}", run_id) is None
     ):
         return None
-    return calls, float(cost), (call_limit, float(cost_limit)), results
+    return (
+        calls,
+        float(cost),
+        (call_limit, float(cost_limit)),
+        results,
+        runtime_revision,
+        registry_revision,
+        run_id,
+    )
 
 
 def _provider_runtime_pin(repo_root: Path) -> str:
@@ -4185,6 +4345,7 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
                 "ANTHROPIC_API_KEY",
                 "GEMINI_API_KEY",
                 "MOONSHOT_API_KEY",
+                "DEEPSEEK_API_KEY",
                 "NEXUS_FABLE_RETENTION_ACCEPTED_AT",
             )
             if not environment.get(name)

@@ -2,47 +2,49 @@ from __future__ import annotations
 
 import json
 import os
-import struct
-import wave
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
-from decimal import ROUND_HALF_UP, Decimal
-from io import BytesIO
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 from provider_runtime import (
-    CATALOG,
-    CATALOG_REVISION,
     Absent,
     CallOutcome,
-    Dynamic,
+    Credentials,
     EmbeddingCall,
-    FinalizedProviderCall,
     GenerateIntent,
-    GlobalScope,
     Incomplete,
-    PlanRejected,
     Present,
     PromptBlock,
-    ProviderCredential,
     ProviderRuntime,
     ProviderTarget,
-    RetryPolicy,
-    Stable,
+    ReasoningLevel,
+    RuntimeStreamEvent,
+    StreamStart,
     Succeeded,
     SystemMessage,
+    TerminalEvent,
     TextOutput,
-    TranscriptionCall,
     UserMessage,
-    cost_from_accounting,
-    plan_generate,
+    estimate_cost,
 )
+from provider_runtime.registry import REGISTRY_REVISION, resolve_target
+from provider_runtime.types import RetryPolicy
 
 from nexus_test_control.provider_budget import PaidCallBudget
 
-USD_MICROS = Decimal(1_000_000)
+# Every release operation is a fixed, tiny request. The reservation is deliberately
+# much larger than its configured output ceiling without recreating the retired
+# Nexus provider-pricing/accounting path; terminal cost comes only from v2 CallMeta.
+CONSERVATIVE_OPERATION_EXPOSURE_USD_MICROS = 10_000
+SINGLE_ATTEMPT_RETRY = RetryPolicy(
+    max_attempts=1,
+    initial_delay_s=0,
+    max_delay_s=0,
+    jitter_s=0,
+    deadline_s=Absent(),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,49 +81,47 @@ class OneAttemptPerOperation:
             raise AssertionError(f"provider operation retried: {self._active}")
 
 
-def single_attempt_plan(
+def provider_credentials_from_environment() -> Credentials:
+    """Build the five product credentials once for the hosted runtime."""
+
+    return Credentials(
+        openai=os.environ["OPENAI_API_KEY"],
+        anthropic=os.environ["ANTHROPIC_API_KEY"],
+        gemini=os.environ["GEMINI_API_KEY"],
+        moonshot=os.environ["MOONSHOT_API_KEY"],
+        deepseek=os.environ["DEEPSEEK_API_KEY"],
+        openrouter=None,
+        xai=None,
+    )
+
+
+def single_attempt_runtime(
+    credentials: Credentials,
+    client: httpx.AsyncClient,
+) -> ProviderRuntime:
+    return ProviderRuntime(credentials, retry=SINGLE_ATTEMPT_RETRY, http_client=client)
+
+
+def certification_intent(
     target: ProviderTarget,
-    reasoning: str,
+    reasoning: ReasoningLevel,
     *,
     max_output_tokens: int,
-) -> FinalizedProviderCall:
-    intent = GenerateIntent(
+) -> GenerateIntent:
+    row = resolve_target(target)
+    if max_output_tokens <= 0 or max_output_tokens > row.max_output_tokens:
+        raise AssertionError(f"invalid hosted output ceiling for {row.ref!r}")
+    return GenerateIntent(
         target=target,
         messages=(
-            SystemMessage(
-                blocks=(
-                    PromptBlock(
-                        "Nexus release provider certification.",
-                        Stable(GlobalScope()),
-                    ),
-                )
-            ),
-            UserMessage(blocks=(PromptBlock("Reply with ok.", Dynamic()),)),
+            SystemMessage(blocks=(PromptBlock(text="Nexus release provider certification."),)),
+            UserMessage(blocks=(PromptBlock(text="Reply with ok."),)),
         ),
         max_output_tokens=max_output_tokens,
-        reasoning=reasoning,  # type: ignore[arg-type]  # runtime validates the catalog-owned level.
+        reasoning=reasoning,
         tools=(),
         tool_choice="none",
         output=TextOutput(),
-    )
-    plan = plan_generate(intent)
-    if isinstance(plan, PlanRejected):
-        raise AssertionError(f"tiny certification request was rejected: {plan.failure}")
-    return single_attempt_call(plan)
-
-
-def single_attempt_call(plan: FinalizedProviderCall) -> FinalizedProviderCall:
-    """Make retry-to-green impossible for one paid provider operation."""
-
-    return replace(
-        plan,
-        retry_policy=RetryPolicy(
-            max_attempts=1,
-            initial_delay_s=0,
-            max_delay_s=0,
-            jitter_s=0,
-            deadline_s=Absent(),
-        ),
     )
 
 
@@ -129,29 +129,67 @@ async def run_bounded_chat(
     runtime: ProviderRuntime,
     guard: OneAttemptPerOperation,
     budget: PaidCallBudget,
-    plan: FinalizedProviderCall,
-    key: str,
+    intent: GenerateIntent,
+    *,
+    operation: str = "generate",
 ) -> tuple[CallOutcome, ChatResult]:
-    """Dispatch one finalized chat plan under the shared attempt and cost oracle."""
+    """Dispatch one v2 intent under the shared attempt and terminal-cost oracle."""
 
-    target = plan.request.target
-    operation_id = f"generate:{target.provider}/{target.model}"
-    budget.reserve(operation_id, plan.accounting.maximum_cost_estimate_usd_micros)
+    target = intent.target
+    operation_id = f"{operation}:{target.provider}/{target.model}"
+    budget.reserve(operation_id, CONSERVATIVE_OPERATION_EXPOSURE_USD_MICROS)
     with guard.operation(operation_id):
-        outcome = await runtime.generate(
-            plan,
-            credential=ProviderCredential(provider=target.provider, key=key),
-        )
+        outcome = await runtime.generate(intent)
+    return outcome, terminal_result(outcome, intent, guard, budget, operation_id)
+
+
+async def run_bounded_stream(
+    runtime: ProviderRuntime,
+    guard: OneAttemptPerOperation,
+    budget: PaidCallBudget,
+    intent: GenerateIntent,
+) -> tuple[CallOutcome, ChatResult]:
+    """Consume one v2 stream through its terminal evidence under the shared guard."""
+
+    target = intent.target
+    operation_id = f"stream:{target.provider}/{target.model}"
+    budget.reserve(operation_id, CONSERVATIVE_OPERATION_EXPOSURE_USD_MICROS)
+    events: list[RuntimeStreamEvent] = []
+    with guard.operation(operation_id):
+        async for event in runtime.stream(intent):
+            events.append(event)
+    assert events, "live stream produced no runtime envelopes"
+    assert isinstance(events[0].event, StreamStart), "live stream did not begin with StreamStart"
+    assert all(event.seq == index for index, event in enumerate(events, start=1))
+    terminals = [event.event for event in events if isinstance(event.event, TerminalEvent)]
+    assert len(terminals) == 1 and isinstance(events[-1].event, TerminalEvent), (
+        "live stream did not end with exactly one TerminalEvent"
+    )
+    outcome = terminals[0].outcome
+    return outcome, terminal_result(outcome, intent, guard, budget, operation_id)
+
+
+def terminal_result(
+    outcome: CallOutcome,
+    intent: GenerateIntent,
+    guard: OneAttemptPerOperation,
+    budget: PaidCallBudget,
+    operation_id: str,
+) -> ChatResult:
+    """Validate one terminal v2 outcome and settle only its provider-owned estimate."""
+
+    target = intent.target
+    row = resolve_target(target)
     assert len(outcome.meta.attempt_trace) == 1
     assert guard.attempts[operation_id] == 1
     assert outcome.meta.provider == target.provider
     assert outcome.meta.model == target.model
-    contract = CATALOG.chat_contract(target)
-    if contract.provider_request_id_available:
+    assert outcome.meta.registry_revision == REGISTRY_REVISION
+    if row.correlation == "none":
+        assert isinstance(outcome.meta.provider_request_id, Absent)
+    else:
         assert isinstance(outcome.meta.provider_request_id, Present)
         assert outcome.meta.provider_request_id.value
-    else:
-        assert isinstance(outcome.meta.provider_request_id, Absent)
     assert isinstance(outcome.meta.usage, Present)
     usage = outcome.meta.usage.value
     if isinstance(outcome, Succeeded):
@@ -160,9 +198,13 @@ async def run_bounded_chat(
         assert isinstance(outcome, Incomplete)
         assert outcome.reason == "max_output_tokens"
         status = "incomplete_max_output_tokens"
-    cost = cost_from_accounting(plan.accounting, usage)
-    budget.settle(operation_id, cost.total_cost_usd_micros)
-    return outcome, ChatResult(
+
+    estimated_cost = estimate_cost(outcome.meta)
+    assert isinstance(estimated_cost, Present), (
+        "live product target lacks terminal v2 cost evidence"
+    )
+    budget.settle(operation_id, estimated_cost.value.amount_usd_micros)
+    return ChatResult(
         target=f"{target.provider}/{target.model}",
         status=status,
         attempts=1,
@@ -171,8 +213,8 @@ async def run_bounded_chat(
             "output_tokens": usage.output_tokens,
             "total_tokens": usage.total_tokens,
         },
-        estimated_cost_usd_micros=cost.total_cost_usd_micros,
-        conservative_exposure_usd_micros=plan.accounting.maximum_cost_estimate_usd_micros,
+        estimated_cost_usd_micros=estimated_cost.value.amount_usd_micros,
+        conservative_exposure_usd_micros=CONSERVATIVE_OPERATION_EXPOSURE_USD_MICROS,
     )
 
 
@@ -181,42 +223,13 @@ async def certify_chat(
     guard: OneAttemptPerOperation,
     budget: PaidCallBudget,
     target: ProviderTarget,
-    reasoning: str,
-    key: str,
+    reasoning: ReasoningLevel,
     *,
     max_output_tokens: int,
 ) -> ChatResult:
-    plan = single_attempt_plan(target, reasoning, max_output_tokens=max_output_tokens)
-    _, result = await run_bounded_chat(runtime, guard, budget, plan, key)
+    intent = certification_intent(target, reasoning, max_output_tokens=max_output_tokens)
+    _, result = await run_bounded_chat(runtime, guard, budget, intent)
     return result
-
-
-def non_generation_cost_usd_micros(
-    input_tokens: int,
-    output_tokens: int,
-    input_rate: int,
-    output_rate: int,
-) -> int:
-    value = (
-        Decimal(input_tokens) * Decimal(input_rate) + Decimal(output_tokens) * Decimal(output_rate)
-    ) / USD_MICROS
-    return int(value.quantize(Decimal(1), rounding=ROUND_HALF_UP))
-
-
-def usage_counts(usage: object) -> tuple[int, int]:
-    if not isinstance(usage, Present):
-        raise AssertionError("provider operation did not return usage")
-    return usage.value.input_tokens, usage.value.output_tokens
-
-
-def silent_wav() -> bytes:
-    output = BytesIO()
-    with wave.open(output, "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(8_000)
-        wav.writeframes(struct.pack("<" + "h" * 800, *([0] * 800)))
-    return output.getvalue()
 
 
 def atomic_evidence(path: Path, payload: dict[str, object]) -> None:
@@ -228,10 +241,10 @@ def atomic_evidence(path: Path, payload: dict[str, object]) -> None:
 
 def base_evidence(*, call_limit: int, cost_limit_usd: float) -> dict[str, object]:
     return {
-        "version": 1,
+        "version": 2,
         "run_id": os.environ["NEXUS_TEST_RUN_ID"],
         "runtime_revision": os.environ["NEXUS_PROVIDER_RUNTIME_REVISION"],
-        "catalog_revision": CATALOG_REVISION,
+        "registry_revision": REGISTRY_REVISION,
         "limits": {
             "provider_calls": call_limit,
             "estimated_cost_usd": cost_limit_usd,
@@ -244,19 +257,8 @@ def base_evidence(*, call_limit: int, cost_limit_usd: float) -> dict[str, object
 
 
 def embedding_call() -> EmbeddingCall:
-    contract = CATALOG.embeddings[0]
     return EmbeddingCall(
-        model=contract.target.model,
+        model="text-embedding-3-small",
         inputs=("nexus release provider certification",),
         dimensions=Absent(),
-    )
-
-
-def transcription_call() -> TranscriptionCall:
-    contract = CATALOG.transcriptions[0]
-    return TranscriptionCall(
-        model=contract.target.model,
-        filename="silence.wav",
-        content=silent_wav(),
-        media_type="audio/wav",
     )

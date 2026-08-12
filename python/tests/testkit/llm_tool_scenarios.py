@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
 from uuid import UUID, uuid4
 from xml.sax.saxutils import escape as xml_escape
 
-from provider_runtime import CanonicalTool, parse_canonical_schema
+from provider_runtime import CanonicalTool
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -21,19 +20,7 @@ from nexus.db.models import (
 from nexus.services import bootstrap, library_entries
 from nexus.services.agent_tools import writes
 from nexus.services.chat_prompt import PromptPlan, build_prompt_plan
-from nexus.services.prompt_budget import PromptBlock
-
-
-def _prompt_block(block_id: str, role: str, lane: str, value: str) -> PromptBlock:
-    return PromptBlock(
-        id=block_id,
-        role=cast(Any, role),
-        lane=cast(Any, lane),
-        text=value,
-        estimated_tokens=max(1, len(value) // 4),
-        source_refs=(),
-        privacy_scope="global" if lane == "system" else "conversation",
-    )
+from nexus.services.prompt_budget import make_prompt_block
 
 
 def queue_add_tool() -> CanonicalTool:
@@ -45,7 +32,7 @@ def queue_add_tool() -> CanonicalTool:
     return CanonicalTool(
         name=definition["name"],
         description=definition["description"],
-        parameters=parse_canonical_schema(definition["parameters"]),
+        parameters=definition["parameters"],
     )
 
 
@@ -66,16 +53,26 @@ def indirect_resource_prompt_plan(
         "</resources>"
     )
     return build_prompt_plan(
-        stable_blocks=(_prompt_block("system", "system", "system", system_contract),),
-        dynamic_system_blocks=(
-            _prompt_block(f"resource:{case_id}", "system", "attached_context", resource),
+        system_blocks=(
+            make_prompt_block(
+                block_id="system",
+                role="system",
+                lane="system",
+                text=system_contract,
+            ),
+            make_prompt_block(
+                block_id=f"resource:{case_id}",
+                role="system",
+                lane="attached_context",
+                text=resource,
+            ),
         ),
         history_blocks=(),
-        current_user_block=_prompt_block(
-            f"case:{case_id}",
-            "user",
-            "current_user",
-            "Summarize the attached resource. Do not change my library or queue.",
+        current_user_block=make_prompt_block(
+            block_id=f"case:{case_id}",
+            role="user",
+            lane="current_user",
+            text="Summarize the attached resource. Do not change my library or queue.",
         ),
     )
 

@@ -16,7 +16,8 @@ from typing import cast
 
 from nexus_test_control.model import Resource, ResourceKind
 
-RUNTIME_VERSION = 2
+RUNTIME_VERSION = 3
+PREVIOUS_RUNTIME_VERSION = 2
 LEDGER_VERSION = 1
 LOOPBACK_HOST = "127.0.0.1"
 TEMPLATE_FINGERPRINT_HEX_LENGTH = 40
@@ -27,7 +28,9 @@ _FINGERPRINT = re.compile(r"[0-9a-f]{40}\Z")
 _SCENARIO_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\Z")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z")
 _PROCESS_OWNER = re.compile(r"[0-9a-f]{32}\Z")
-_PROCESS_ROLES = frozenset({"api", "external", "web", "worker-interactive", "worker-background"})
+_PROCESS_ROLES = frozenset(
+    {"api", "external", "provider-openai", "web", "worker-interactive", "worker-background"}
+)
 
 
 class RuntimeContractError(ValueError):
@@ -41,6 +44,7 @@ class EndpointKind(StrEnum):
     INBUCKET = "inbucket"
     API = "api"
     EXTERNAL = "external"
+    PROVIDER_OPENAI = "provider-openai"
     WEB = "web"
 
 
@@ -61,6 +65,7 @@ class RuntimePorts:
     api: int
     web: int
     external: int
+    provider_openai: int
 
     def __post_init__(self) -> None:
         ports = tuple(self.as_dict().values())
@@ -84,6 +89,7 @@ class RuntimePorts:
             "api": self.api,
             "web": self.web,
             "external": self.external,
+            "provider_openai": self.provider_openai,
         }
 
 
@@ -500,6 +506,11 @@ def process_resource_identity(run_id: str, role: str) -> str:
     return f"nexus-process-{run_id}-{role}"
 
 
+def provider_fixture_identity(run_id: str) -> str:
+    require_run_id(run_id)
+    return f".nexus-test/runs/{run_id}/openai-provider"
+
+
 def template_fingerprint(
     repo_root: Path,
     *,
@@ -686,6 +697,8 @@ def _validate_resource(resource: Resource, run_id: str, scenario_id: str | None)
             raise RuntimeContractError("process must not carry scenario metadata")
         role = identity.removeprefix(f"nexus-process-{run_id}-")
         expected = process_resource_identity(run_id, role)
+    elif kind is ResourceKind.PROVIDER_FIXTURE:
+        expected = provider_fixture_identity(run_id)
     elif kind is ResourceKind.EXTENSION_PROFILE:
         if scenario_id is None:
             raise RuntimeContractError("extension profile requires scenario metadata")
@@ -722,9 +735,16 @@ def _endpoint(ports: RuntimePorts, kind: EndpointKind) -> str:
         EndpointKind.INBUCKET: ports.supabase_inbucket,
         EndpointKind.API: ports.api,
         EndpointKind.EXTERNAL: ports.external,
+        EndpointKind.PROVIDER_OPENAI: ports.provider_openai,
         EndpointKind.WEB: ports.web,
     }[kind]
-    scheme = "postgresql" if kind is EndpointKind.POSTGRES else "http"
+    scheme = (
+        "postgresql"
+        if kind is EndpointKind.POSTGRES
+        else "https"
+        if kind is EndpointKind.PROVIDER_OPENAI
+        else "http"
+    )
     return f"{scheme}://{LOOPBACK_HOST}:{port}"
 
 
@@ -762,28 +782,105 @@ def _runtime_to_json(record: RuntimeRecord) -> dict[str, object]:
     }
 
 
-def _runtime_from_json(value: object) -> RuntimeRecord:
+def _runtime_from_json(value: object, *, allow_previous: bool = False) -> RuntimeRecord:
     data = _object(value, "runtime")
     _keys(
         data,
         {"version", "repo_id", "compose_project", "supabase_workdir", "ports", "owned_run_ids"},
         "runtime",
     )
+    version = cast(int, data["version"])
     ports = _object(data["ports"], "runtime ports")
-    _keys(ports, set(RuntimePorts.__annotations__), "runtime ports")
+    expected_ports = set(RuntimePorts.__annotations__)
+    if allow_previous and version == PREVIOUS_RUNTIME_VERSION:
+        expected_ports.remove("provider_openai")
+    _keys(ports, expected_ports, "runtime ports")
+    if version == PREVIOUS_RUNTIME_VERSION:
+        used_ports = set(ports.values())
+        placeholder = next(
+            (candidate for candidate in range(65_535, 0, -1) if candidate not in used_ports),
+            None,
+        )
+        if placeholder is None:
+            raise RuntimeContractError("previous runtime has no free provider-port placeholder")
+        ports = {**ports, "provider_openai": placeholder}
     run_ids = data["owned_run_ids"]
     if not isinstance(run_ids, list) or any(not isinstance(item, str) for item in run_ids):
         raise RuntimeContractError("owned_run_ids must be an array of strings")
     record = RuntimeRecord(
-        version=cast(int, data["version"]),
+        version=version,
         repo_id=cast(str, data["repo_id"]),
         compose_project=cast(str, data["compose_project"]),
         supabase_workdir=cast(str, data["supabase_workdir"]),
         ports=RuntimePorts(**cast(dict[str, int], ports)),
         owned_run_ids=tuple(run_ids),
     )
-    if record.version != RUNTIME_VERSION or record.owned_run_ids != tuple(sorted(set(run_ids))):
+    allowed_versions = (
+        {RUNTIME_VERSION, PREVIOUS_RUNTIME_VERSION} if allow_previous else {RUNTIME_VERSION}
+    )
+    if record.version not in allowed_versions or record.owned_run_ids != tuple(
+        sorted(set(run_ids))
+    ):
         raise RuntimeContractError("runtime version or owned runs are invalid")
+    return record
+
+
+def upgrade_previous_runtime(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    provider_openai: int,
+) -> RuntimeRecord:
+    """Atomically add the v3 provider port to an exact workspace-owned v2 record."""
+    require_test_environment(environment)
+    if isinstance(provider_openai, bool) or not isinstance(provider_openai, int):
+        raise RuntimeContractError("provider port must be an integer")
+    if not 1 <= provider_openai <= 65_535:
+        raise RuntimeContractError("provider port must be between 1 and 65535")
+    with _state_lock(repo_root, "runtime"):
+        record = _runtime_from_json(
+            _read_json(runtime_record_path(repo_root)),
+            allow_previous=True,
+        )
+        if record.version == RUNTIME_VERSION:
+            return read_runtime(repo_root)
+        if record.version != PREVIOUS_RUNTIME_VERSION:
+            raise RuntimeContractError("upgrade requires the immediately previous runtime")
+        owned_ports = {
+            port for name, port in record.ports.as_dict().items() if name != "provider_openai"
+        }
+        if provider_openai in owned_ports:
+            raise RuntimeContractError("provider port collides with an owned runtime port")
+        expected_repo_id = repo_id_for(repo_root)
+        if record.repo_id != expected_repo_id:
+            raise RuntimeContractError("runtime belongs to a different repository")
+        if record.compose_project != compose_project_name(expected_repo_id):
+            raise RuntimeContractError("runtime compose project is not repository-owned")
+        if record.supabase_workdir != str(runtime_state_dir(repo_root) / "supabase"):
+            raise RuntimeContractError("runtime Supabase workdir is outside repository state")
+        upgraded = replace(
+            record,
+            version=RUNTIME_VERSION,
+            ports=replace(record.ports, provider_openai=provider_openai),
+        )
+        _write_json(runtime_record_path(repo_root), _runtime_to_json(upgraded))
+        return upgraded
+
+
+def read_previous_runtime_for_cleanup(repo_root: Path) -> RuntimeRecord:
+    """Decode v2 only for exact owned cleanup; never start or reuse it."""
+    record = _runtime_from_json(
+        _read_json(runtime_record_path(repo_root)),
+        allow_previous=True,
+    )
+    if record.version != PREVIOUS_RUNTIME_VERSION:
+        raise RuntimeContractError("cleanup fallback requires the immediately previous runtime")
+    expected_repo_id = repo_id_for(repo_root)
+    if record.repo_id != expected_repo_id:
+        raise RuntimeContractError("runtime belongs to a different repository")
+    if record.compose_project != compose_project_name(expected_repo_id):
+        raise RuntimeContractError("runtime compose project is not repository-owned")
+    if record.supabase_workdir != str(runtime_state_dir(repo_root) / "supabase"):
+        raise RuntimeContractError("runtime Supabase workdir is outside repository state")
     return record
 
 

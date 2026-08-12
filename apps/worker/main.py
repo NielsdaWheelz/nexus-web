@@ -28,6 +28,7 @@ from nexus.jobs.registry import get_default_registry, get_task_contract_digest
 from nexus.jobs.worker import JobWorker
 from nexus.logging import configure_logging, get_logger
 from nexus.runtime_health import get_runtime_identity
+from nexus.services.llm_profiles import validate_profiles
 from nexus.services.parser_temp import prune_stale_parser_temp
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 
@@ -49,6 +50,7 @@ def _register_signal_handlers(stop_event: threading.Event) -> None:
 
 def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None) -> JobWorker:
     settings = get_settings()
+    validate_profiles()
     registry = get_default_registry()
     if settings.worker_lane == "interactive":
         allowed_kinds = INTERACTIVE_WORKER_JOB_KINDS

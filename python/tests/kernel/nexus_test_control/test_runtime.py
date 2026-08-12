@@ -21,6 +21,7 @@ from nexus_test_control.runtime import (
     initialize_runtime,
     local_docker_host,
     process_resource_identity,
+    provider_fixture_identity,
     read_ledger,
     record_created,
     record_planned,
@@ -34,6 +35,7 @@ from nexus_test_control.runtime import (
     template_database_name,
     template_fingerprint,
     template_lifecycle_lock,
+    upgrade_previous_runtime,
     workspace_heavy_lock,
 )
 
@@ -113,7 +115,7 @@ def test_docker_host_accepts_only_a_real_local_unix_socket(tmp_path: Path) -> No
 
 
 def _ports() -> RuntimePorts:
-    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091)
+    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091, 19092)
 
 
 def _runtime(tmp_path: Path) -> None:
@@ -132,6 +134,9 @@ def test_runtime_exposes_only_recorded_loopback_endpoints_in_test_environment(
     assert runtime_endpoint(tmp_path, TEST_ENV, EndpointKind.MINIO) == "http://127.0.0.1:19000"
     assert runtime_endpoint(tmp_path, TEST_ENV, EndpointKind.SUPABASE) == ("http://127.0.0.1:25421")
     assert runtime_endpoint(tmp_path, TEST_ENV, EndpointKind.INBUCKET) == ("http://127.0.0.1:25424")
+    assert runtime_endpoint(tmp_path, TEST_ENV, EndpointKind.PROVIDER_OPENAI) == (
+        "https://127.0.0.1:19092"
+    )
     for environment in ({}, {"NEXUS_ENV": "development"}, {"NEXUS_ENV": "production"}):
         with pytest.raises(RuntimeContractError, match="NEXUS_ENV"):
             runtime_endpoint(tmp_path, environment, EndpointKind.MINIO)
@@ -150,10 +155,27 @@ def test_runtime_and_ledger_are_bound_to_the_exact_repository(tmp_path: Path) ->
 
 def test_runtime_ports_cannot_be_replaced_after_resource_ownership_exists(tmp_path: Path) -> None:
     _runtime(tmp_path)
-    changed = RuntimePorts(15433, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091)
+    changed = RuntimePorts(
+        15433, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091, 19092
+    )
 
     with pytest.raises(RuntimeContractError, match="cannot be replaced"):
         initialize_runtime(tmp_path, TEST_ENV, changed)
+
+
+def test_previous_runtime_adds_one_owned_provider_port_atomically(tmp_path: Path) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    runtime_path = tmp_path / ".nexus-test/runtime.json"
+    previous = json.loads(runtime_path.read_text(encoding="utf-8"))
+    previous["version"] = 2
+    del previous["ports"]["provider_openai"]
+    runtime_path.write_text(json.dumps(previous), encoding="utf-8")
+
+    upgraded = upgrade_previous_runtime(tmp_path, TEST_ENV, 19192)
+
+    assert upgraded.version == 3
+    assert upgraded.ports.provider_openai == 19192
+    assert json.loads(runtime_path.read_text(encoding="utf-8"))["ports"]["provider_openai"] == 19192
 
 
 def test_claim_restart_repairs_ownership_persisted_before_its_empty_ledger(
@@ -248,6 +270,7 @@ def test_cleanup_uses_only_persisted_exact_resources_and_never_discovers_sentine
         (ResourceKind.BUCKET, "nexus-production"),
         (ResourceKind.SUPABASE_USER, "owner@example.com"),
         (ResourceKind.PROCESS, f"nexus-process-{RUN_ID}-worker"),
+        (ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(OTHER_RUN_ID)),
         (ResourceKind.TEMPLATE, template_database_name("a" * 40)),
     ],
 )

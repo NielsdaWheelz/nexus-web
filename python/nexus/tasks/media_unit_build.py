@@ -8,11 +8,14 @@ import httpx
 from sqlalchemy.orm import Session
 
 from nexus.jobs.queue import JobExecutionContext
-from nexus.services.llm_execution import ExecutionRuntime
+from nexus.services.llm_execution import ExecutionRuntime, ProviderRetryMode
 from nexus.services.media_intelligence import run_media_unit_build
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
-_SPEC = LlmTaskSpec(label="media_unit_build")
+_SPEC = LlmTaskSpec(
+    label="media_unit_build",
+    retry_mode=ProviderRetryMode.SingleAttempt,
+)
 
 
 def media_unit_build(

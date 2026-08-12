@@ -95,11 +95,6 @@ class ApiErrorCode(str, Enum):
     E_MEDIA_NOT_READY = "E_MEDIA_NOT_READY"  # 409
     E_READER_APPARATUS_STATE_MISSING = "E_READER_APPARATUS_STATE_MISSING"  # 500
 
-    # User API Key errors (400/404)
-    E_KEY_PROVIDER_INVALID = "E_KEY_PROVIDER_INVALID"  # 400 - Unknown provider
-    E_KEY_INVALID_FORMAT = "E_KEY_INVALID_FORMAT"  # 400 - Key too short or contains whitespace
-    E_KEY_NOT_FOUND = "E_KEY_NOT_FOUND"  # 404 - Key doesn't exist or not owned by viewer
-
     # LLM errors
     E_APP_SEARCH_FAILED = "E_APP_SEARCH_FAILED"  # 500 - Required in-app retrieval failed
     E_MESSAGE_TOO_LONG = "E_MESSAGE_TOO_LONG"  # 400 - Message exceeds 20,000 char limit
@@ -282,10 +277,6 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_HIGHLIGHT_CONFLICT: 409,
     ApiErrorCode.E_MEDIA_NOT_READY: 409,
     ApiErrorCode.E_READER_APPARATUS_STATE_MISSING: 500,
-    # User API Key errors
-    ApiErrorCode.E_KEY_PROVIDER_INVALID: 400,
-    ApiErrorCode.E_KEY_INVALID_FORMAT: 400,
-    ApiErrorCode.E_KEY_NOT_FOUND: 404,
     # LLM errors
     ApiErrorCode.E_APP_SEARCH_FAILED: 500,
     ApiErrorCode.E_MESSAGE_TOO_LONG: 400,

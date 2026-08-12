@@ -73,10 +73,10 @@ Three shifts, all visible in embryo today:
    the only agent in the room. Your corpus — retrieval, graph, units, vault —
    exposed over MCP to *any* agent you run (your coding agent reads the book
    you highlighted last night; your research agent files evidence into your
-   graph under its own origin). Single-user + BYOK + origin discipline makes
-   this nearly free for Nexus: every capability is already a typed service
-   function one router away from being a tool. The hard part — provenance,
-   permissioning, citation — is already the house religion.
+   graph under its own origin). Single-user + platform credentials + origin
+   discipline makes this nearly free for Nexus: every capability is already a
+   typed service function one router away from being a tool. The hard part —
+   provenance, permissioning, citation — is already the house religion.
 2. **The personal canon.** Media claims + note assertions + stance edges
    aggregate into a living ledger of what you believe, what contradicts it,
    and what's unresolved. `supports`/`contradicts` stops being row metadata

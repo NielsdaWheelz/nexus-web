@@ -12,13 +12,10 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
 from provider_runtime import (
-    Dynamic,
     GenerateIntent,
-    GlobalScope,
     PromptBlock,
     ProviderTarget,
     ReasoningLevel,
-    Stable,
     Succeeded,
     SystemMessage,
     TextContent,
@@ -235,10 +232,8 @@ def _build_intent(
     return GenerateIntent(
         target=target,
         messages=(
-            SystemMessage(
-                blocks=(PromptBlock(text=_SYSTEM_PROMPT, stability=Stable(GlobalScope())),)
-            ),
-            UserMessage(blocks=(PromptBlock(text=user_content, stability=Dynamic()),)),
+            SystemMessage(blocks=(PromptBlock(text=_SYSTEM_PROMPT),)),
+            UserMessage(blocks=(PromptBlock(text=user_content),)),
         ),
         max_output_tokens=DAWN_WRITE_MAX_TOKENS,
         reasoning=reasoning,
@@ -288,6 +283,7 @@ async def generate_dawn_write(
     try:
         call = await execute_generation(
             GenerationRequest(
+                generation_id=row_id,
                 owner=LlmCallOwner(kind="dawn_write", id=row_id, user_id=user_id),
                 operation=DAWN_WRITE_OPERATION,
                 profile=profile,
@@ -296,7 +292,6 @@ async def generate_dawn_write(
             ),
             session_factory=get_session_factory(),
             runtime=runtime,
-            settings=settings,
         )
     except ApiError as exc:
         logger.info(

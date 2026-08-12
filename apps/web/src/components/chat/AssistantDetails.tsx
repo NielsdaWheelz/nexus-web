@@ -174,10 +174,7 @@ export default function AssistantDetails({
               </div>
               <div>
                 <dt>Reserved</dt>
-                <dd>
-                  {trustTrail.prompt.reserved_output_tokens} output /{" "}
-                  {trustTrail.prompt.reserved_reasoning_tokens} reasoning
-                </dd>
+                <dd>{trustTrail.prompt.reserved_output_tokens} output tokens</dd>
               </div>
               <div>
                 <dt>Included</dt>

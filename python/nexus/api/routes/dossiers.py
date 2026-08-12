@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, Header, Response
 from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_execution_runtime
+from nexus.api.deps import get_single_attempt_execution_runtime
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
@@ -312,7 +312,7 @@ def create_dossier_build(
 async def learn_dossier(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    runtime: Annotated[ExecutionRuntime, Depends(get_execution_runtime)],
+    runtime: Annotated[ExecutionRuntime, Depends(get_single_attempt_execution_runtime)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[LearnDossierRequest, Body()],
 ) -> dict:

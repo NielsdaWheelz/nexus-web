@@ -1,13 +1,11 @@
 diff --git a/python/nexus/services/llm_execution.py b/python/nexus/services/llm_execution.py
 --- a/python/nexus/services/llm_execution.py
 +++ b/python/nexus/services/llm_execution.py
-@@ -402,10 +402,5 @@ async def execute_generation_stream(
+@@ -337,8 +337,6 @@ async def execute_generation_stream(
                  )
+                 settled = True
              yield event
 -    except GeneratorExit:
--        # Async-generator closure is the normal consumer-interruption path.
--        # Leave ``defect`` empty so the durable terminal facts use the exact
--        # provider-stream interruption contract below.
 -        raise
      except BaseException as exc:
          defect = exc

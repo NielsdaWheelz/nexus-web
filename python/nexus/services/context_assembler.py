@@ -8,7 +8,8 @@ from typing import Any, Literal, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from provider_runtime import CanonicalTool, ChatModelContract, GenerateIntent, ReasoningLevel
+from provider_runtime import CanonicalTool, GenerateIntent, ReasoningLevel
+from provider_runtime.registry import resolve_target
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -68,8 +69,6 @@ from nexus.services.resource_items.capabilities import (
 from nexus.services.retrieval_citation import RetrievalCitation, citation_from_search_result
 from nexus.services.search import get_search_result
 
-CACHE_POLICY_5M: Mapping[str, object] = {"type": "ephemeral", "ttl_seconds": 300}
-
 
 @dataclass(frozen=True)
 class HistoryTurn:
@@ -88,11 +87,9 @@ class HistoryUnit:
 
 @dataclass(frozen=True)
 class AssemblyLedger:
-    cacheable_input_tokens_estimate: int
     prompt_block_manifest: Mapping[str, object]
     max_context_tokens: int
     reserved_output_tokens: int
-    reserved_reasoning_tokens: int
     input_budget_tokens: int
     estimated_input_tokens: int
     included_message_ids: tuple[UUID, ...]
@@ -124,7 +121,6 @@ def assemble_chat_context(
     run: ChatRun,
     profile: LlmProfile,
     reasoning: ReasoningLevel,
-    contract: ChatModelContract,
     max_output_tokens: int,
     tools: tuple[CanonicalTool, ...],
 ) -> ContextAssembly:
@@ -160,8 +156,6 @@ def assemble_chat_context(
         role="system",
         lane="system",
         text=render_system_prompt_block(),
-        cache_policy=CACHE_POLICY_5M,
-        privacy_scope="global",
     )
     mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
 
@@ -266,12 +260,10 @@ def assemble_chat_context(
         text=user_message.content,
         source_refs=[{"type": "message", "id": str(user_message.id)}],
     )
-    max_context_tokens = contract.context_limit
+    row = resolve_target(profile.target)
     budget = build_prompt_budget(
-        max_context_tokens=max_context_tokens,
+        max_context_tokens=row.context_window,
         max_output_tokens=max_output_tokens,
-        reasoning=reasoning,
-        reasoning_reserve_tokens=contract.pricing.reasoning_reserve_tokens,
     )
     budget_items: list[BudgetItem] = [
         BudgetItem(
@@ -339,16 +331,17 @@ def assemble_chat_context(
     )
     selected_history_units = [unit for unit in history_units if unit.key in included_keys]
     history = _history_turns_from_units(selected_history_units)
-    stable_blocks = (system_block,)
-    dynamic_system_blocks = _dynamic_system_blocks(
-        mandatory_blocks=mandatory_blocks,
-        resources_block=resources_block,
-        included_keys=included_keys,
+    system_blocks = (
+        system_block,
+        *_system_context_blocks(
+            mandatory_blocks=mandatory_blocks,
+            resources_block=resources_block,
+            included_keys=included_keys,
+        ),
     )
     history_blocks = _history_blocks(selected_history_units, selection)
     prompt_plan = build_prompt_plan(
-        stable_blocks=stable_blocks,
-        dynamic_system_blocks=dynamic_system_blocks,
+        system_blocks=system_blocks,
         history_blocks=history_blocks,
         current_user_block=current_user_block,
     )
@@ -395,11 +388,9 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         "chat_run_id": run.id,
         "conversation_id": run.conversation_id,
         "assistant_message_id": run.assistant_message_id,
-        "cacheable_input_tokens_estimate": ledger.cacheable_input_tokens_estimate,
         "prompt_block_manifest": dict(ledger.prompt_block_manifest),
         "max_context_tokens": ledger.max_context_tokens,
         "reserved_output_tokens": ledger.reserved_output_tokens,
-        "reserved_reasoning_tokens": ledger.reserved_reasoning_tokens,
         "input_budget_tokens": ledger.input_budget_tokens,
         "estimated_input_tokens": ledger.estimated_input_tokens,
         "included_message_ids": [str(message_id) for message_id in ledger.included_message_ids],
@@ -431,11 +422,9 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 chat_run_id,
                 conversation_id,
                 assistant_message_id,
-                cacheable_input_tokens_estimate,
                 prompt_block_manifest,
                 max_context_tokens,
                 reserved_output_tokens,
-                reserved_reasoning_tokens,
                 input_budget_tokens,
                 estimated_input_tokens,
                 included_message_ids,
@@ -448,11 +437,9 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 :chat_run_id,
                 :conversation_id,
                 :assistant_message_id,
-                :cacheable_input_tokens_estimate,
                 :prompt_block_manifest,
                 :max_context_tokens,
                 :reserved_output_tokens,
-                :reserved_reasoning_tokens,
                 :input_budget_tokens,
                 :estimated_input_tokens,
                 :included_message_ids,
@@ -585,7 +572,6 @@ def _build_resources_block(
         lane="attached_context",
         text="\n".join(lines),
         source_refs=source_refs,
-        cache_policy=None,
     )
     uris = [ctx.target.uri for ctx in refs]
     return (
@@ -864,7 +850,7 @@ def _selected_context_blocks(
     return blocks
 
 
-def _dynamic_system_blocks(
+def _system_context_blocks(
     *,
     mandatory_blocks: Sequence[tuple[str, PromptBlock, Mapping[str, object]]],
     resources_block: PromptBlock | None,
@@ -908,11 +894,9 @@ def _build_ledger(
     included_context_refs: Sequence[Mapping[str, object]],
 ) -> AssemblyLedger:
     return AssemblyLedger(
-        cacheable_input_tokens_estimate=prompt_plan.cacheable_input_tokens_estimate,
         prompt_block_manifest=prompt_plan.manifest(),
         max_context_tokens=selection.budget.max_context_tokens,
         reserved_output_tokens=selection.budget.reserved_output_tokens,
-        reserved_reasoning_tokens=selection.budget.reserved_reasoning_tokens,
         input_budget_tokens=selection.budget.input_budget_tokens,
         estimated_input_tokens=estimated_input_tokens,
         included_message_ids=tuple(

@@ -452,11 +452,9 @@ TRUST_TRAIL_VERSION = "assistant_trust_trail.v1"
 
 class TrustPromptAssemblyOut(BaseModel):
     id: UUID
-    cacheable_input_tokens_estimate: int
     prompt_block_manifest: dict[str, Any]
     max_context_tokens: int
     reserved_output_tokens: int
-    reserved_reasoning_tokens: int
     input_budget_tokens: int
     estimated_input_tokens: int
     included_message_ids: list[str]
@@ -818,8 +816,9 @@ class ChatRunOut(BaseModel):
 
     ``profile_id``/``reasoning_option_id`` are the product-selection snapshot
     taken at creation; ``provider``/``model_name``/``reasoning_effort`` are the
-    resolved operator facts filled in from the plan at execution (``None``
-    until then). ``failure`` is the one ``chat_failure_projection`` read —
+    resolved operator facts filled at execution from the runtime target and
+    terminal metadata (``None`` until then). ``failure`` is the one
+    ``chat_failure_projection`` read —
     ``None`` for a run that is not a card-bearing failure (still running, or a
     defect with no stored closed code).
     """

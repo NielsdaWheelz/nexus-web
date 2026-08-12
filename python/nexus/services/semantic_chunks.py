@@ -11,10 +11,10 @@ from typing import Any
 import httpx
 from provider_runtime import EmbeddingCall, Present, ProviderRuntime
 
-from nexus.config import get_settings
+from nexus.config import Settings, get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.llm_credentials import embedding_credential
+from nexus.services.llm_credentials import embedding_credential, provider_credentials
 
 logger = get_logger(__name__)
 
@@ -287,7 +287,13 @@ def _validate_embedding_vectors(
         ) from exc
 
 
-async def _embed_with_openai_async(texts: list[str], *, dimensions: int) -> list[list[float]]:
+async def _embed_with_openai_async(
+    texts: list[str],
+    *,
+    dimensions: int,
+    settings: Settings,
+    http_client: httpx.AsyncClient,
+) -> list[list[float]]:
     """Embed via the platform OpenAI credential.
 
     ``NonGenerationCallFailed`` (transient-exhausted or oversize input) and
@@ -296,42 +302,47 @@ async def _embed_with_openai_async(texts: list[str], *, dimensions: int) -> list
     sole catcher of ``NonGenerationCallFailed`` for the lexical-fallback
     classification (§ preserved). A malformed response is a hard failure.
     """
-    settings = get_settings()
-    credential = embedding_credential(settings, "openai")
+    credential = embedding_credential(settings)
 
     vectors: list[list[float]] = []
-    from nexus.services.provider_http import provider_request_event_hooks
-
-    async with httpx.AsyncClient(event_hooks=provider_request_event_hooks(settings)) as client:
-        runtime = ProviderRuntime(client)
-        for start in range(0, len(texts), 64):
-            batch = texts[start : start + 64]
-            call = EmbeddingCall(
-                model=settings.transcript_embedding_model_openai,
-                inputs=tuple(batch),
-                dimensions=Present(dimensions),
+    runtime = ProviderRuntime(provider_credentials(settings), http_client=http_client)
+    for start in range(0, len(texts), 64):
+        batch = texts[start : start + 64]
+        call = EmbeddingCall(
+            model=settings.transcript_embedding_model_openai,
+            inputs=tuple(batch),
+            dimensions=Present(dimensions),
+        )
+        response = await runtime.embed(call, credential=credential)
+        vectors.extend(
+            _validate_embedding_vectors(
+                response.embeddings,
+                dimensions=dimensions,
+                expected_count=len(batch),
             )
-            response = await runtime.embed(call, credential=credential)
-            vectors.extend(
-                _validate_embedding_vectors(
-                    response.embeddings,
-                    dimensions=dimensions,
-                    expected_count=len(batch),
-                )
-            )
+        )
     return vectors
 
 
 def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]]:
+    settings = get_settings()
+
+    async def embed() -> list[list[float]]:
+        async with httpx.AsyncClient(trust_env=False) as client:
+            return await _embed_with_openai_async(
+                texts,
+                dimensions=dimensions,
+                settings=settings,
+                http_client=client,
+            )
+
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(_embed_with_openai_async(texts, dimensions=dimensions))
+        return asyncio.run(embed())
 
     with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(
-            lambda: asyncio.run(_embed_with_openai_async(texts, dimensions=dimensions))
-        )
+        future = executor.submit(lambda: asyncio.run(embed()))
         return future.result()
 
 

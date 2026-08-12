@@ -12,7 +12,8 @@
       "proofs": [
         "pytest:python/tests/kernel/nexus_test_control/test_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run",
         "pytest:python/tests/kernel/nexus_test_control/test_port_allocation.py::test_port_candidates_exclude_the_host_ephemeral_client_range",
-        "pytest:python/tests/kernel/nexus_test_control/test_process.py::test_captured_child_output_is_drained_without_retaining_unbounded_logs"
+        "pytest:python/tests/kernel/nexus_test_control/test_process.py::test_captured_child_output_is_drained_without_retaining_unbounded_logs",
+        "pytest:python/tests/kernel/testkit/test_network_guard.py"
       ],
       "capabilities": [
         "kernel-python"
@@ -92,6 +93,7 @@
         "pytest:python/tests/migrations/test_note_body_substring_search_index_migration.py::test_0210_restarts_an_invalid_exact_index_and_plans_substring_search_at_head",
         "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head",
         "pytest:python/tests/migrations/test_epub_navigation_offsets_migration.py::test_0208_backfills_exact_offsets_and_0209_rejects_unrepaired_projection",
+        "pytest:python/tests/migrations/test_llm_provider_runtime_migration.py",
         "pytest:python/tests/kernel/test_epub_navigation_offsets_cutover.py::test_cutover_state_model_admits_only_resumable_media_and_owned_dead_work"
       ],
       "capabilities": [
@@ -114,17 +116,25 @@
         "apps/web/src/components/chat/AssistantMessage.tsx",
         "apps/web/src/lib/conversations/chatRunBody.ts",
         "apps/web/src/lib/conversations/chatDraftKey.ts",
+        "python/nexus/app.py",
         "python/nexus/services/llm_credentials.py",
         "python/nexus/services/llm_execution.py",
+        "python/nexus/services/llm_intent_state.py",
         "python/nexus/services/llm_ledger.py",
-        "python/nexus/services/provider_http.py",
+        "python/nexus/services/llm_profiles.py",
         "python/nexus/services/rate_limit.py",
-        "python/nexus/tasks/llm_task.py"
+        "python/nexus/services/semantic_chunks.py",
+        "python/nexus/tasks/llm_task.py",
+        "python/nexus/api/routes/llm_profiles.py"
       ],
       "proofs": [
+        "pytest:python/tests/kernel/test_llm_runtime_composition.py",
+        "pytest:python/tests/kernel/test_llm_product_intent.py",
+        "pytest:python/tests/kernel/test_semantic_chunks_embedding_runtime.py",
         "pytest:python/tests/service/test_costly_effects.py::test_generation_dispatches_once_and_settles_success_or_interruption_exactly_once",
         "pytest:python/tests/service/test_chat_run_candidates.py",
-        "pytest:python/tests/kernel/test_provider_http.py::test_provider_gateway_rewrites_only_the_owned_openai_origin",
+        "pytest:python/tests/service/test_llm_profiles.py::test_llm_profiles_returns_the_exact_ordered_nine_row_contract",
+        "pytest:python/tests/service/test_llm_transport_policy.py::test_llm_worker_ignores_environment_selected_http_proxies",
         "vitest:apps/web/src/components/chat/useChatDraft.unit.test.ts",
         "vitest:apps/web/src/lib/conversations/chatRunBody.unit.test.ts",
         "vitest:apps/web/src/lib/conversations/chatDraftKey.unit.test.ts",
@@ -189,11 +199,17 @@
       "source_globs": [
         "python/nexus/jobs/**/*.py",
         "python/nexus/services/chat_run*.py",
+        "python/nexus/services/content_indexing.py",
         "python/nexus/services/durable_step_journal.py",
-        "python/nexus/tasks/chat_run.py"
+        "python/nexus/services/semantic_chunks.py",
+        "python/nexus/tasks/chat_run.py",
+        "python/tests/testkit/network.py",
+        "python/tests/testkit/openai_embedding_server.py",
+        "python/tests/testkit/sitecustomize.py",
+        "python/tests/testkit/worker.py"
       ],
       "proofs": [
-        "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker",
+        "pytest:python/tests/service/test_durable_job_replay.py",
         "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job"
       ],
       "capabilities": [

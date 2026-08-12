@@ -100,7 +100,8 @@ def assert_production_worker(
     assert environment.get("NEXUS_TEST_RUN_ID") == run.run_id
 
 
-def kill_and_forget_worker(process: test_services.StartedProcess) -> None:
+def kill_and_forget_process(process: test_services.StartedProcess) -> None:
+    """Inject process death and release its exact controller ledger entry."""
     os.killpg(process.process_group_id, signal.SIGKILL)
     waited_pid, wait_status = os.waitpid(process.process_group_id, 0)
     assert waited_pid == process.process_group_id

@@ -18,6 +18,7 @@ from nexus.jobs.worker import JobWorker
 from nexus.services.auth_handoff_codes import create_auth_handoff_code
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus_test_control import services as test_services
+from tests.testkit.openai_embedding_server import running_openai_embedding_server
 from tests.testkit.unreachable_state import (
     expire_claim_and_handoff_code,
     expire_job_claim,
@@ -26,7 +27,7 @@ from tests.testkit.unreachable_state import (
 from tests.testkit.worker import (
     assert_production_worker,
     controller_run,
-    kill_and_forget_worker,
+    kill_and_forget_process,
     wait_for_job,
 )
 
@@ -184,69 +185,83 @@ def test_owned_worker_replays_committed_note_index_after_process_death(
     recovered: test_services.StartedProcess | None = None
     try:
         note_lock.execute(text("LOCK TABLE note_blocks IN ACCESS EXCLUSIVE MODE"))
-        crashed = test_services.start_python_process(
-            _REPO_ROOT, _TEST_ENV, run, "worker-background"
-        )
+        with running_openai_embedding_server(_REPO_ROOT) as provider:
+            crashed = test_services.start_python_process(
+                _REPO_ROOT,
+                _TEST_ENV,
+                run,
+                "worker-background",
+                overrides=provider.worker_environment(),
+            )
 
-        claimed = wait_for_job(
-            engine,
-            job_id,
-            status="running",
-            attempts=1,
-            minimum_lease_seconds=600,
-        )
-        assert_production_worker(crashed, run)
-        assert claimed[2] == f"{socket.gethostname()}:{crashed.process_group_id}", (
-            f"job was not claimed by the controller-owned production worker: {claimed!r}"
-        )
+            claimed = wait_for_job(
+                engine,
+                job_id,
+                status="running",
+                attempts=1,
+                minimum_lease_seconds=600,
+            )
+            assert_production_worker(crashed, run)
+            assert claimed[2] == f"{socket.gethostname()}:{crashed.process_group_id}", (
+                f"job was not claimed by the controller-owned production worker: {claimed!r}"
+            )
 
-        job_lock = engine.connect()
-        job_transaction = job_lock.begin()
-        locked_job_id = job_lock.execute(
-            text("SELECT id FROM background_jobs WHERE id = :job_id FOR UPDATE"),
-            {"job_id": job_id},
-        ).scalar_one()
-        assert locked_job_id == job_id
+            job_lock = engine.connect()
+            job_transaction = job_lock.begin()
+            locked_job_id = job_lock.execute(
+                text("SELECT id FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+                {"job_id": job_id},
+            ).scalar_one()
+            assert locked_job_id == job_id
 
-        note_transaction.rollback()
-        note_lock.close()
-        checkpoint = _wait_for_index_checkpoint(engine, note_block_id)
-        assert checkpoint == ("ready", 1, 1, 1, 1)
-        still_running = wait_for_job(engine, job_id, status="running", attempts=1)
-        assert still_running[4] is None, (
-            f"queue terminal result committed despite the held queue row: {still_running!r}"
-        )
+            note_transaction.rollback()
+            note_lock.close()
+            checkpoint = _wait_for_index_checkpoint(engine, note_block_id)
+            assert checkpoint == ("ready", 1, 1, 1, 1)
+            still_running = wait_for_job(engine, job_id, status="running", attempts=1)
+            assert still_running[4] is None, (
+                f"queue terminal result committed despite the held queue row: {still_running!r}"
+            )
 
-        kill_and_forget_worker(crashed)
-        job_transaction.rollback()
-        job_lock.close()
-        job_transaction = None
-        job_lock = None
+            kill_and_forget_process(crashed)
+            job_transaction.rollback()
+            job_lock.close()
+            job_transaction = None
+            job_lock = None
 
-        with Session(engine) as db:
-            expire_job_claim(db, job_id=job_id)
-            db.commit()
+            with Session(engine) as db:
+                expire_job_claim(db, job_id=job_id)
+                db.commit()
 
-        recovered = test_services.start_python_process(
-            _REPO_ROOT, _TEST_ENV, run, "worker-background"
-        )
-        terminal = wait_for_job(engine, job_id, status="succeeded", attempts=2)
-        assert_production_worker(recovered, run)
+            recovered = test_services.start_python_process(
+                _REPO_ROOT,
+                _TEST_ENV,
+                run,
+                "worker-background",
+                overrides=provider.worker_environment(),
+            )
+            terminal = wait_for_job(engine, job_id, status="succeeded", attempts=2)
+            assert_production_worker(recovered, run)
 
-        assert terminal == (
-            "succeeded",
-            2,
-            None,
-            None,
-            {
-                "owner": {"kind": "note_block", "id": str(note_block_id)},
-                "status": "ready",
-                "chunk_count": 1,
-            },
-        ), f"restarted production worker did not converge exactly: {terminal!r}"
-        assert _index_snapshot(engine, note_block_id) == ("ready", 1, 1, 1, 1), (
-            "replay duplicated or lost the committed note index materialization"
-        )
+            assert terminal == (
+                "succeeded",
+                2,
+                None,
+                None,
+                {
+                    "owner": {"kind": "note_block", "id": str(note_block_id)},
+                    "status": "ready",
+                    "chunk_count": 1,
+                },
+            ), f"restarted production worker did not converge exactly: {terminal!r}"
+            assert _index_snapshot(engine, note_block_id) == ("ready", 1, 1, 1, 1), (
+                "replay duplicated or lost the committed note index materialization"
+            )
+            assert len(provider.requests()) == 2, (
+                "each queue attempt must cross the canonical OpenAI embedding boundary once"
+            )
+            kill_and_forget_process(recovered)
+            recovered = None
     finally:
         if note_transaction.is_active:
             note_transaction.rollback()
@@ -256,4 +271,4 @@ def test_owned_worker_replays_committed_note_index_after_process_death(
         if job_lock is not None:
             job_lock.close()
         if recovered is not None:
-            kill_and_forget_worker(recovered)
+            kill_and_forget_process(recovered)

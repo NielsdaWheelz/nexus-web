@@ -9,7 +9,7 @@ platform credentials remain a deployment defect.
 
 from __future__ import annotations
 
-from provider_runtime.runtime import NonGenerationCallFailed
+from provider_runtime.errors import NonGenerationCallFailed
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 

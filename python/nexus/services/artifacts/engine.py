@@ -34,7 +34,6 @@ from provider_runtime import (
 )
 from provider_runtime import (
     Cancelled,
-    CancelSignal,
     ContinuationDelta,
     Incomplete,
     ReasoningLevel,
@@ -47,12 +46,12 @@ from provider_runtime import (
     TextDelta,
     UsageEvent,
 )
+from provider_runtime.types import CancelSignal
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import is_library_member
-from nexus.config import get_settings
 from nexus.db.models import ArtifactBuild
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
@@ -126,6 +125,8 @@ from nexus.services.artifacts.subject_policy import (
     visible_persisted_subject,
 )
 from nexus.services.llm_execution import (
+    DispatchAborted,
+    DispatchTransferred,
     ExecutionRuntime,
     GenerationRequest,
     execute_generation,
@@ -913,38 +914,28 @@ async def _run_idea_resolution_step(
     if state.dispatch_phase is not step_journal.Prepared:
         raise AssertionError(f"unexpected Idea-resolution phase {state.dispatch_phase!r}")
 
-    uncertain = step_journal.StepReplayState(
-        generation_id=generation_id,
-        dispatch_phase=step_journal.Uncertain,
-        request_fingerprint=present(fingerprint),
-        terminal_result=absent(),
-    )
-    claimed, claimed_dispatch = _transition_learn_step(
-        db,
-        request_id=request.request_id,
-        expected=step_journal.Prepared,
-        next_state=uncertain,
-    )
-    if not claimed_dispatch:
-        if claimed.dispatch_phase is step_journal.Completed:
-            if not isinstance(claimed.terminal_result, Present):
-                raise AssertionError("completed Idea-resolution step has no result")
-            envelope = learn_service.IdeaResolverEnvelope.model_validate_json(
-                claimed.terminal_result.value
-            )
-            return learn_service.decode_idea_resolver_output(envelope.model_dump_json())
-        return await _await_uncertain_idea_resolution(
+    def mark_dispatch_uncertain() -> None:
+        uncertain = step_journal.StepReplayState(
+            generation_id=generation_id,
+            dispatch_phase=step_journal.Uncertain,
+            request_fingerprint=present(fingerprint),
+            terminal_result=absent(),
+        )
+        claimed, claimed_dispatch = _transition_learn_step(
             db,
             request_id=request.request_id,
-            generation_id=generation_id,
-            fingerprint=fingerprint,
+            expected=step_journal.Prepared,
+            next_state=uncertain,
         )
-    if claimed.dispatch_phase is not step_journal.Uncertain:
-        raise AssertionError("Idea-resolution dispatch claim landed in the wrong phase")
+        if not claimed_dispatch:
+            raise DispatchTransferred
+        if claimed.dispatch_phase is not step_journal.Uncertain:
+            raise AssertionError("Idea-resolution dispatch claim landed in the wrong phase")
 
     try:
         call = await execute_generation(
             GenerationRequest(
+                generation_id=generation_id,
                 owner=LlmCallOwner(
                     kind="artifact_learn_request",
                     id=request.request_id,
@@ -957,7 +948,22 @@ async def _run_idea_resolution_step(
             ),
             session_factory=get_session_factory(),
             runtime=runtime,
-            settings=get_settings(),
+            before_dispatch=mark_dispatch_uncertain,
+        )
+    except DispatchTransferred:
+        claimed = _learn_step_state(request)
+        if claimed is not None and claimed.dispatch_phase is step_journal.Completed:
+            if not isinstance(claimed.terminal_result, Present):
+                raise AssertionError("completed Idea-resolution step has no result") from None
+            envelope = learn_service.IdeaResolverEnvelope.model_validate_json(
+                claimed.terminal_result.value
+            )
+            return learn_service.decode_idea_resolver_output(envelope.model_dump_json())
+        return await _await_uncertain_idea_resolution(
+            db,
+            request_id=request.request_id,
+            generation_id=generation_id,
+            fingerprint=fingerprint,
         )
     except BaseException:
         if not _expire_learn_resolver_lease(db, request_id=request.request_id):
@@ -1643,6 +1649,7 @@ async def _run_synthesis_step(
     terminal_outcome: ProviderCallOutcome | None = None
     guard = _StreamGuard(cancel_signal=asyncio.Event())
     request = GenerationRequest(
+        generation_id=gen_id,
         owner=LlmCallOwner(kind="artifact_build", id=build_id, user_id=requester),
         operation=binding.llm_operation,
         profile=profile,
@@ -1675,18 +1682,12 @@ async def _run_synthesis_step(
     if progress_result == "inactive":
         return None
 
-    stream = execute_generation_stream(
-        request,
-        session_factory=get_session_factory(),
-        runtime=runtime,
-        settings=get_settings(),
-        cancel=cast(CancelSignal, guard.cancel_signal),
-    )
-
-    try:
+    def mark_dispatch_uncertain() -> None:
         if not active():
             db.rollback()
-            return None
+            if not _running_claim_is_current(db, ctx):
+                raise DispatchTransferred
+            raise DispatchAborted("dossier build became terminal before dispatch")
         landed = step_journal.checkpoint_step_state(
             db,
             ctx=ctx,
@@ -1701,11 +1702,21 @@ async def _run_synthesis_step(
         )
         if not landed:
             db.rollback()
-            return None  # lease lost mid-checkpoint; a reclaim redoes Prepared
+            raise DispatchTransferred
         # A8: this is immediately before the first stream iteration/dispatch.
         # All fallible domain setup and the replay-idempotent Progress append
         # completed while the step was still provably Prepared.
         db.commit()
+
+    stream = execute_generation_stream(
+        request,
+        session_factory=get_session_factory(),
+        runtime=runtime,
+        cancel=cast(CancelSignal, guard.cancel_signal),
+        before_dispatch=mark_dispatch_uncertain,
+    )
+
+    try:
         cancel_watcher = asyncio.create_task(
             _watch_stream_guard(
                 build_id=build_id,
@@ -1740,6 +1751,8 @@ async def _run_synthesis_step(
                     await cancel_watcher
             finally:
                 await cast(AsyncGenerator[RuntimeStreamEvent, None], stream).aclose()
+    except (DispatchAborted, DispatchTransferred):
+        return None
     except ApiError as exc:
         if exc.code == ApiErrorCode.E_BILLING_REQUIRED:
             code = DossierBuildFailureCode.EntitlementDenied
@@ -1788,7 +1801,7 @@ async def _run_synthesis_step(
             failure_code, detail = outcome_failure_facts(terminal_outcome)
             if failure_code == "context_too_large":
                 code = DossierBuildFailureCode.ContextTooLarge
-            elif failure_code == "invalid_tool_arguments":
+            elif failure_code == "invalid_structured_output":
                 invalid = _SynthesisInvalid(
                     rejected_output="",
                     diagnostic=detail or "provider returned an invalid structured envelope",
@@ -2036,19 +2049,28 @@ async def _run_document_repair_step(
         return None
 
     uncertain = prepared.model_copy(update={"dispatch_phase": step_journal.Uncertain})
-    if not step_journal.checkpoint_step_state(
-        db,
-        ctx=ctx,
-        job=job,
-        step_path=path,
-        state=uncertain,
-    ):
-        db.rollback()
-        return None
-    db.commit()
+
+    def mark_dispatch_uncertain() -> None:
+        if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
+            db.rollback()
+            if not _running_claim_is_current(db, ctx):
+                raise DispatchTransferred
+            raise DispatchAborted("dossier repair became terminal before dispatch")
+        if not step_journal.checkpoint_step_state(
+            db,
+            ctx=ctx,
+            job=job,
+            step_path=path,
+            state=uncertain,
+        ):
+            db.rollback()
+            raise DispatchTransferred
+        db.commit()
+
     try:
         call = await execute_generation(
             GenerationRequest(
+                generation_id=generation_id,
                 owner=LlmCallOwner(
                     kind="artifact_build",
                     id=build_id,
@@ -2061,8 +2083,10 @@ async def _run_document_repair_step(
             ),
             session_factory=get_session_factory(),
             runtime=runtime,
-            settings=get_settings(),
+            before_dispatch=mark_dispatch_uncertain,
         )
+    except (DispatchAborted, DispatchTransferred):
+        return None
     except ApiError as exc:
         if exc.code == ApiErrorCode.E_BILLING_REQUIRED:
             code = DossierBuildFailureCode.EntitlementDenied
@@ -2126,7 +2150,7 @@ async def _run_document_repair_step(
         return None
     else:
         failure_code, detail = outcome_failure_facts(call.outcome)
-        if failure_code == "invalid_tool_arguments":
+        if failure_code == "invalid_structured_output":
             result = _SynthesisInvalid(
                 rejected_output="",
                 diagnostic=detail or "provider returned an invalid repaired envelope",

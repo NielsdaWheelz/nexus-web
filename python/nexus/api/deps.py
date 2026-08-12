@@ -3,13 +3,17 @@
 from uuid import UUID
 
 from fastapi import Request
-from provider_runtime import ProviderRuntime
 
 from nexus.auth.bearer import parse_bearer_token
+from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import set_stream_jti
 from nexus.services import stream_tokens
-from nexus.services.llm_execution import ExecutionRuntime, ProductionExecutionRuntime
+from nexus.services.llm_execution import (
+    ExecutionRuntime,
+    ProviderRetryMode,
+    build_execution_runtime,
+)
 
 
 def get_stream_viewer(request: Request) -> UUID:
@@ -28,6 +32,9 @@ def get_stream_viewer(request: Request) -> UUID:
     return verified.user_id
 
 
-def get_execution_runtime(request: Request) -> ExecutionRuntime:
-    """Build the request-scoped LLM runtime over the app's shared HTTP client."""
-    return ProductionExecutionRuntime(ProviderRuntime(request.app.state.httpx_client))
+def get_single_attempt_execution_runtime(request: Request) -> ExecutionRuntime:
+    return build_execution_runtime(
+        get_settings(),
+        request.app.state.httpx_client,
+        retry_mode=ProviderRetryMode.SingleAttempt,
+    )

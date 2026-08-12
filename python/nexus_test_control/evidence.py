@@ -61,6 +61,7 @@ _EXACT_EXECUTION_INPUTS = frozenset(
         "LC_ALL",
         "NO_COLOR",
         "MOONSHOT_API_KEY",
+        "DEEPSEEK_API_KEY",
         "OPENAI_API_KEY",
         "PATH",
         "PLAYWRIGHT_BROWSERS_PATH",
