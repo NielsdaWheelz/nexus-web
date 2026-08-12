@@ -25,7 +25,8 @@ Neither is a directory of every feature.
 
 On desktop, Account and Nexus remain rail actions. The shared Account menu is
 exactly Stats, Import activity, Downloads when available, Settings, a separator,
-and danger-last Sign Out. Its trigger carries the import count; Import activity
+and danger-last Sign Out. Its trigger carries the total open import count
+(active plus needs-attention work); Import activity
 opens the existing Nexus task and does not navigate a pane. The mobile Nexus
 Account projection renders that same component and order. Quick Note and Today exist
 only in Nexus. Both Nexus projections expose the same commands, results,

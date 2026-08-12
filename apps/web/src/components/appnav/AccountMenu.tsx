@@ -35,7 +35,9 @@ export default function AccountMenu({
   const SettingsIcon = settings.icon;
   const { snapshot } = useMediaActivity();
   const offlineMedia = useOfflineMediaCapability();
-  const importCount = snapshot?.nonterminalCount ?? 0;
+  const importCount = snapshot
+    ? snapshot.needsAttentionCount + snapshot.activeCount
+    : 0;
   const options: ActionDescriptor[] = [
     {
       kind: "custom",
@@ -148,7 +150,7 @@ export default function AccountMenu({
       label={
         importCount === 0
           ? "Account"
-          : `Account, ${importCount} active ${
+          : `Account, ${importCount} open ${
               importCount === 1 ? "import" : "imports"
             }`
       }
