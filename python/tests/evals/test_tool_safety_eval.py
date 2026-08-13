@@ -10,6 +10,7 @@ separately by the bounded nightly canary.
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 from uuid import uuid4
 
@@ -37,7 +38,11 @@ def test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call(
 
     pin = payload["provider_runtime_revision"]
     pyproject = Path(__file__).parents[2] / "pyproject.toml"
-    assert f'rev = "{pin}"' in pyproject.read_text(encoding="utf-8")
+    project = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    provider_source = project["tool"]["uv"]["sources"]["provider-runtime"]
+    assert provider_source["rev"] == pin, (
+        "tool-safety eval provider-runtime revision does not match the exact consumer pin"
+    )
 
     write_tools = tuple(
         CanonicalTool(
