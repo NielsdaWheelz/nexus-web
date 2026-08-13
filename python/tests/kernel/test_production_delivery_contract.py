@@ -275,7 +275,7 @@ def test_production_compose_declares_the_exact_resource_envelope() -> None:
         ("postgres", "256m", "512m", 256),
         ("caddy", "32m", "48m", 128),
         ("api", "192m", "320m", 256),
-        ("worker-interactive", "128m", "224m", 256),
+        ("worker-interactive", "128m", "256m", 256),
         ("worker-background", "128m", "448m", 256),
         ("migration", "256m", "512m", 256),
     )
@@ -296,6 +296,14 @@ def test_production_compose_declares_the_exact_resource_envelope() -> None:
 
     background = compose[compose.index("  worker-background:\n") : compose.index("  migration:\n")]
     assert "/var/lib/nexus/parser-tmp:/var/lib/nexus/parser-tmp" in background
+    assert (
+        'test: ["CMD", "python", "-S", "-m", "apps.worker.health", '
+        '"--lane", "interactive"]' in compose
+    )
+    assert (
+        'test: ["CMD", "python", "-S", "-m", "apps.worker.health", '
+        '"--lane", "background"]' in compose
+    )
 
 
 def test_the_declared_envelope_fits_the_committed_host_with_its_reserve() -> None:

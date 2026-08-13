@@ -11,14 +11,14 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.config import (
-    BACKGROUND_WORKER_JOB_KINDS,
-    INTERACTIVE_WORKER_JOB_KINDS,
-    get_settings,
-)
+from nexus.config import get_settings
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
+from nexus.job_topology import (
+    BACKGROUND_WORKER_JOB_KINDS,
+    INTERACTIVE_WORKER_JOB_KINDS,
+)
 from nexus.jobs.queue import (
     current_dead_job_for_payload,
     enqueue_job,

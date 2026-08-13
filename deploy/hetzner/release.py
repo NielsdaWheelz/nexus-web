@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import calendar
 import contextlib
 import dataclasses
 import fcntl
@@ -52,6 +53,12 @@ _HOST = re.compile(
     r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z"
 )
+_DOCKER_TIMESTAMP = re.compile(
+    r"(?P<seconds>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
+    r"(?:\.(?P<fraction>\d{1,9}))?"
+    r"(?:Z|(?P<offset_sign>[+-])(?P<offset_hours>[01]\d|2[0-3]):"
+    r"(?P<offset_minutes>[0-5]\d))\Z"
+)
 _SERVICES = (
     "postgres",
     "caddy",
@@ -64,7 +71,7 @@ _RESOURCE_LIMITS = {
     "postgres": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
     "caddy": (32 * 1024 * 1024, 48 * 1024 * 1024, 128),
     "api": (192 * 1024 * 1024, 320 * 1024 * 1024, 256),
-    "worker-interactive": (128 * 1024 * 1024, 224 * 1024 * 1024, 256),
+    "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
     "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
     "migration": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
 }
@@ -78,6 +85,7 @@ _MIGRATION_COMMAND = (
 # the measured value; sizing against the nominal one leaves the reserve short.
 _MIN_HOST_MEMORY_BYTES = 1919 * 1024 * 1024
 _HOST_RESERVED_MEMORY_BYTES = 320 * 1024 * 1024
+_WORKER_HEALTH_RECEIPT_MAX_AGE_SECONDS = 20.0
 _MIN_AVAILABLE_MEMORY_BYTES = 256 * 1024 * 1024
 _MIN_SWAP_BYTES = 1024 * 1024 * 1024
 _MIN_PARSER_TEMP_FREE_BYTES = 512 * 1024 * 1024
@@ -1716,6 +1724,27 @@ def _require_timestamp(value: str) -> None:
         raise ReleaseDefect("release timestamp must be canonical UTC seconds")
 
 
+def _docker_timestamp_seconds(value: object, label: str) -> float:
+    if not isinstance(value, str):
+        raise ReleaseDefect(f"{label} must be a Docker RFC3339 timestamp")
+    matched = _DOCKER_TIMESTAMP.fullmatch(value)
+    if matched is None:
+        raise ReleaseDefect(f"{label} must be a Docker RFC3339 timestamp")
+    fraction = (matched.group("fraction") or "")[:6].ljust(6, "0")
+    try:
+        parsed = time.strptime(matched.group("seconds"), "%Y-%m-%dT%H:%M:%S")
+    except ValueError as exc:
+        raise ReleaseDefect(f"{label} must be a Docker RFC3339 timestamp") from exc
+    offset_seconds = 0
+    if offset_sign := matched.group("offset_sign"):
+        offset_seconds = (
+            int(matched.group("offset_hours")) * 60 + int(matched.group("offset_minutes"))
+        ) * 60
+        if offset_sign == "-":
+            offset_seconds = -offset_seconds
+    return float(calendar.timegm(parsed) - offset_seconds) + int(fraction) / 1_000_000
+
+
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -2323,6 +2352,7 @@ class HostRelease:
         candidate: CandidateManifest,
         config_path: Path,
         writers_running: bool,
+        require_writer_health: bool,
     ) -> dict[str, ContainerEvidence]:
         evidence: dict[str, ContainerEvidence] = {}
         config_values = _read_env(config_path)
@@ -2348,7 +2378,7 @@ class HostRelease:
             if state.get("Running") is not expected_running:
                 state_name = "running" if expected_running else "stopped"
                 raise ReleaseDefect(f"{service} is not {state_name} before release")
-            if service in _WRITERS and expected_running:
+            if service in _WRITERS and expected_running and require_writer_health:
                 health = state.get("Health")
                 if not isinstance(health, dict) or health.get("Status") != "healthy":
                     raise ExternalCommandFailed(
@@ -2436,6 +2466,7 @@ class HostRelease:
             candidate=candidate,
             config_path=config.path,
             writers_running=forward_fix_sha is None,
+            require_writer_health=False,
         )
         if any(
             containers[service] != current_attempt.containers[service]
@@ -2466,9 +2497,10 @@ class HostRelease:
             observed = (
                 host_config.get("MemoryReservation"),
                 host_config.get("Memory"),
+                host_config.get("MemorySwap"),
                 host_config.get("PidsLimit"),
             )
-            if observed == expected:
+            if observed == (expected[0], expected[1], expected[1], expected[2]):
                 continue
             state = _mapping(inspected.get("State"), f"{service} convergence state")
             running = state.get("Running")
@@ -2858,6 +2890,7 @@ class HostRelease:
             candidate=candidate,
             config_path=config.path,
             writers_running=forward_fix_sha is None,
+            require_writer_health=True,
         )
         self._preflight_host_capacity(
             containers,
@@ -3431,24 +3464,50 @@ class HostRelease:
             ("interactive", "worker-interactive"),
             ("background", "worker-background"),
         ):
-            result = self._compose(
-                bundle=bundle,
-                candidate=candidate,
-                config_path=config_path,
-                arguments=(
-                    "exec",
-                    "-T",
-                    service,
-                    "python",
-                    "-m",
-                    "apps.worker.health",
-                    "--lane",
-                    lane,
-                ),
+            container_id = (
+                self._compose(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=config_path,
+                    arguments=("ps", "--quiet", service),
+                )
+                .stdout.decode()
+                .strip()
             )
+            _require_match(f"{service} container id", container_id, _CONTAINER_ID)
+            inspected = _inspect_one(container_id, f"{service} health inspect")
+            state = _mapping(inspected.get("State"), f"{service} health state")
+            health = _mapping(state.get("Health"), f"{service} health")
+            log = health.get("Log")
+            if (
+                state.get("Running") is not True
+                or state.get("Paused") is not False
+                or state.get("Restarting") is not False
+                or health.get("Status") != "healthy"
+                or health.get("FailingStreak") != 0
+                or not isinstance(log, list)
+                or not log
+            ):
+                raise PermanentReleaseFailure(f"{lane} worker health is not exact")
+            latest = _mapping(log[-1], f"{service} latest health result")
+            output = latest.get("Output")
+            started_at = _docker_timestamp_seconds(
+                latest.get("Start"), f"{service} health receipt start"
+            )
+            ended_at = _docker_timestamp_seconds(latest.get("End"), f"{service} health receipt end")
+            receipt_age = time.time() - ended_at
+            if (
+                latest.get("ExitCode") != 0
+                or not isinstance(output, str)
+                or len(output.encode("utf-8")) > 16_384
+                or ended_at < started_at
+                or receipt_age < -1.0
+                or receipt_age > _WORKER_HEALTH_RECEIPT_MAX_AGE_SECONDS
+            ):
+                raise PermanentReleaseFailure(f"{lane} worker health is not exact")
             try:
                 worker = _mapping(
-                    _read_json_output(result.stdout, f"{lane} worker health"),
+                    _read_json_output(output.encode("utf-8"), f"{lane} worker health"),
                     lane,
                 )
             except ReleaseDefect as exc:
@@ -4478,6 +4537,7 @@ class HostOracleReconcile:
             candidate=target.candidate,
             config_path=Path(target.record.config_path),
             writers_running=True,
+            require_writer_health=True,
         )
         containers = {service: all_containers[service] for service in _WRITERS}
         expected_images = {

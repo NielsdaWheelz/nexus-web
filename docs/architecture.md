@@ -601,8 +601,9 @@ same entrypoint with fixed `interactive` and `background` lanes:
   has no periodic kinds.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
-handler + policy. `config.py` owns the disjoint/exhaustive 20-kind production
-topology and separate three-kind maintenance declaration. The entrypoint rejects
+handler + policy. `job_topology.py` owns the disjoint/exhaustive 20-kind
+production topology and separate three-kind maintenance declaration without
+importing the application runtime graph. The entrypoint rejects
 missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
 `get_task_contract_digest()` fingerprints the registry's per-kind resource
 class and attempt/lease policy for API `/version` and worker release-health proof. See

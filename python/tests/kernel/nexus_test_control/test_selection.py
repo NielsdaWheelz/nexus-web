@@ -259,6 +259,20 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
                 Capability.SERVICE,
             },
             {
+                "pytest:python/tests/kernel/test_bounded_resource_worker_contract.py",
+                "pytest:python/tests/kernel/test_runtime_health.py",
+                "pytest:python/tests/kernel/test_worker_runtime_health.py",
+                "pytest:python/tests/service/test_runtime_health.py",
+            },
+        ),
+        (
+            "python/nexus/job_topology.py",
+            {
+                Capability.KERNEL_PYTHON,
+                Capability.SERVICE,
+            },
+            {
+                "pytest:python/tests/kernel/test_bounded_resource_worker_contract.py",
                 "pytest:python/tests/kernel/test_runtime_health.py",
                 "pytest:python/tests/kernel/test_worker_runtime_health.py",
                 "pytest:python/tests/service/test_runtime_health.py",

@@ -100,7 +100,8 @@ kind; queue completion is not a claim that the answer published.
 
 ## Worker lanes
 
-`config.py` declares one complete topology:
+`python/nexus/job_topology.py` declares one complete topology without importing
+the application runtime graph:
 
 - `INTERACTIVE_WORKER_JOB_KINDS`: chat, Dossier, subscription live sync, and
   Oracle generation;

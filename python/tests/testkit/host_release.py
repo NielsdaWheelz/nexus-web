@@ -12,6 +12,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -30,7 +31,7 @@ _RESOURCE_LIMITS = {
     "postgres": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
     "caddy": (32 * 1024 * 1024, 48 * 1024 * 1024, 128),
     "api": (192 * 1024 * 1024, 320 * 1024 * 1024, 256),
-    "worker-interactive": (128 * 1024 * 1024, 224 * 1024 * 1024, 256),
+    "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
     "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
     "migration": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
 }
@@ -805,14 +806,57 @@ def _container(state: dict[str, Any], container_id: str) -> dict[str, Any]:
 
 def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, object]:
     container = _container(state, container_id)
+    config = container["config"]
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    service = labels.get("com.docker.compose.service") if isinstance(labels, dict) else None
+    health: dict[str, object] = {"Status": "healthy"}
+    if service in {"worker-interactive", "worker-background"}:
+        active = bool(state["candidate_active"])
+        payload = {
+            "expected_database_revision": (
+                state["candidate_revision"] if active else state["current_revision"]
+            ),
+            "expected_oracle_manifest_digest": (
+                state["oracle_digest"] if active else state["current_oracle_digest"]
+            ),
+            "lane": service.removeprefix("worker-"),
+            "source_sha": state["candidate_source_sha"] if active else state["source_sha"],
+            "status": "ready",
+            "task_contract_digest": state["task_contract_digest"],
+        }
+        output = container.get("health_output_override")
+        ended_at = container.get("health_end_override")
+        if not isinstance(ended_at, str):
+            ended_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        health = {
+            "FailingStreak": 0,
+            "Log": [
+                {
+                    "End": ended_at,
+                    "ExitCode": 0,
+                    "Output": (
+                        output
+                        if isinstance(output, str)
+                        else _canonical_json(payload).decode("utf-8")
+                    ),
+                    "Start": ended_at,
+                }
+            ],
+            "Status": "healthy",
+        }
+        health_status = container.get("health_status_override")
+        if isinstance(health_status, str):
+            health["Status"] = health_status
     inspected: dict[str, object] = {
         "Config": container["config"],
         "HostConfig": container["host_config"],
         "Image": container["image_id"],
         "RestartCount": container["restart_count"],
         "State": {
-            "Health": {"Status": "healthy"},
+            "Health": health,
             "OOMKilled": container["oom_killed"],
+            "Paused": False,
+            "Restarting": False,
             "Running": container["running"],
         },
     }
@@ -998,40 +1042,6 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                 raise SystemExit(72)
         else:
             raise AssertionError(f"unsupported fake API command: {command}")
-        return
-    if operation[:3] == ["exec", "-T", "worker-interactive"]:
-        active = bool(state["candidate_active"])
-        _write_json(
-            {
-                "expected_database_revision": (
-                    state["candidate_revision"] if active else state["current_revision"]
-                ),
-                "expected_oracle_manifest_digest": (
-                    state["oracle_digest"] if active else state["current_oracle_digest"]
-                ),
-                "lane": "interactive",
-                "source_sha": state["candidate_source_sha"] if active else state["source_sha"],
-                "status": "ready",
-                "task_contract_digest": state["task_contract_digest"],
-            }
-        )
-        return
-    if operation[:3] == ["exec", "-T", "worker-background"]:
-        active = bool(state["candidate_active"])
-        _write_json(
-            {
-                "expected_database_revision": (
-                    state["candidate_revision"] if active else state["current_revision"]
-                ),
-                "expected_oracle_manifest_digest": (
-                    state["oracle_digest"] if active else state["current_oracle_digest"]
-                ),
-                "lane": "background",
-                "source_sha": state["candidate_source_sha"] if active else state["source_sha"],
-                "status": "ready",
-                "task_contract_digest": state["task_contract_digest"],
-            }
-        )
         return
     if operation[:2] == ["run", "--name"]:
         name = operation[2]

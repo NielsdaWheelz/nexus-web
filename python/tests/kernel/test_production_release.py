@@ -208,6 +208,9 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
             "services": ["api", "worker-interactive", "worker-background"],
         },
     ]
+    assert not any("apps.worker.health" in " ".join(command) for command in state["commands"]), (
+        "release proof must consume Docker's health receipt without forking another probe"
+    )
     migration = next(
         command
         for command in state["commands"]
@@ -223,6 +226,77 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
         "migration",
     ]
     assert not tuple(release.ReleasePaths.under(tmp_path).state_root.rglob("*.partial"))
+
+
+def test_host_apply_rejects_wrong_worker_health_identity_before_mutation(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    harness = host_release_harness
+    state = harness.state()
+    state["containers"]["worker-interactive"]["health_output_override"] = json.dumps(
+        {
+            "expected_database_revision": "0210",
+            "expected_oracle_manifest_digest": "sha256:" + "d" * 64,
+            "lane": "interactive",
+            "source_sha": "0" * 40,
+            "status": "ready",
+            "task_contract_digest": "f" * 64,
+        },
+        sort_keys=True,
+    )
+    harness.update_state(containers=state["containers"])
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "interactive worker runtime identity differs" in failed.stderr
+    state = harness.state()
+    assert state["resource_mutations"] == []
+    assert state["service_mutations"] == []
+    assert state["database_revision"] == "0210"
+    assert state["backup_dump_count"] == 0
+    assert state["backup_verify_count"] == 0
+    assert state["migration_count"] == 0
+    assert state["jobs"] == {}
+    assert not harness.attempt_path.exists()
+
+
+def test_host_apply_rejects_stale_worker_health_receipt_before_mutation(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    harness = host_release_harness
+    state = harness.state()
+    state["containers"]["worker-interactive"]["health_end_override"] = (
+        "2000-01-01T00:00:00.000000000Z"
+    )
+    harness.update_state(containers=state["containers"])
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "interactive worker health is not exact" in failed.stderr
+    state = harness.state()
+    assert state["database_revision"] == "0210"
+    assert state["backup_dump_count"] == 0
+    assert state["migration_count"] == 0
+    assert state["resource_mutations"] == []
+    assert state["service_mutations"] == []
+    assert not harness.attempt_path.exists()
+
+
+def test_docker_health_timestamp_accepts_rfc3339_numeric_offset() -> None:
+    release = _release_module()
+
+    with_offset = release._docker_timestamp_seconds(
+        "2026-08-13T14:29:43.895095772-07:00",
+        "worker health receipt end",
+    )
+    as_utc = release._docker_timestamp_seconds(
+        "2026-08-13T21:29:43.895095772Z",
+        "worker health receipt end",
+    )
+
+    assert with_offset == pytest.approx(as_utc)
 
 
 @pytest.mark.parametrize(
@@ -334,6 +408,64 @@ def test_host_apply_converges_predecessor_resource_limits_before_stopping_a_writ
         {"operation": "stop", "services": ["worker-background"]},
         {"operation": "stop", "services": ["worker-interactive", "api"]},
     ]
+
+
+def test_host_apply_converges_memoryswap_only_drift(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    harness = host_release_harness
+    containers = harness.state()["containers"]
+    interactive = containers["worker-interactive"]
+    interactive["host_config"]["MemorySwap"] = 224 * 1024 * 1024
+    harness.update_state(containers=containers)
+
+    completed = harness.run_apply()
+
+    assert completed.returncode == 0, completed.stderr
+    assert harness.state()["resource_mutations"] == [
+        {
+            "memory": 256 * 1024 * 1024,
+            "pids": 256,
+            "reservation": 128 * 1024 * 1024,
+            "service": "worker-interactive",
+        }
+    ]
+
+
+def test_host_apply_can_raise_the_exact_unhealthy_predecessor_limit_but_requires_recovery(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    harness = host_release_harness
+    containers = harness.state()["containers"]
+    interactive = containers["worker-interactive"]
+    interactive["host_config"] = {
+        "Memory": 224 * 1024 * 1024,
+        "MemoryReservation": 128 * 1024 * 1024,
+        "MemorySwap": 224 * 1024 * 1024,
+        "PidsLimit": 256,
+    }
+    interactive["health_status_override"] = "unhealthy"
+    harness.update_state(containers=containers)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "interactive worker health is not exact" in failed.stderr
+    state = harness.state()
+    assert state["resource_mutations"] == [
+        {
+            "memory": 256 * 1024 * 1024,
+            "pids": 256,
+            "reservation": 128 * 1024 * 1024,
+            "service": "worker-interactive",
+        }
+    ]
+    assert state["service_mutations"] == []
+    assert state["database_revision"] == "0210"
+    assert state["backup_dump_count"] == 0
+    assert state["migration_count"] == 0
+    assert state["jobs"] == {}
+    assert not harness.attempt_path.exists()
 
 
 def test_forward_fix_converges_stopped_writer_limits_without_requesting_live_stats(

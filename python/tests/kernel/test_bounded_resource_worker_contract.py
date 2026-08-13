@@ -6,12 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from nexus.config import (
+from nexus.config import Settings, clear_settings_cache
+from nexus.job_topology import (
     BACKGROUND_WORKER_JOB_KINDS,
     INTERACTIVE_WORKER_JOB_KINDS,
     MAINTENANCE_JOB_KINDS,
-    Settings,
-    clear_settings_cache,
 )
 from nexus.jobs.registry import get_default_registry, get_task_contract_digest
 
