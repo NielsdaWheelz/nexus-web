@@ -245,9 +245,11 @@ current only once. Application deploy captures but never changes either config.
 | Worker health | recent heartbeat, live PID, baked SHA, lane/kinds/task contract, DB, schema |
 
 Each worker's main polling/scheduler loop advances its lane-owned `/tmp`
-heartbeat only after a successful cycle (at least every 5 seconds while
-healthy); health rejects age over 20 seconds. Delete `/health`; all callers move
-with no alias.
+heartbeat only after a successful cycle and exact database/schema readiness (at
+least every 5 seconds while healthy). The recurring probe is a stdlib-only
+validator in the worker cgroup and rejects age over 20 seconds. Release proof
+consumes Docker's latest successful health receipt instead of forking a second
+probe. Delete `/health`; all callers move with no alias.
 
 ### Oracle publication
 

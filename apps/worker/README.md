@@ -86,8 +86,11 @@ bounded maintenance operation is complete.
 
 ## Contract
 
-`python/nexus/jobs/registry.py` owns job policy. `python/nexus/config.py` owns
-the production and maintenance topology. Only the background lane schedules
-production periodic jobs. Each lane atomically publishes successful-cycle
-progress; `python -m apps.worker.health --lane <lane>` rejects stale/dead
-progress, lane/kind/task identity drift, database failure, and schema drift.
+`python/nexus/jobs/registry.py` owns job policy.
+`python/nexus/job_topology.py` owns the production and maintenance topology
+without importing the application runtime graph. Only the background lane
+schedules production periodic jobs. After a successful database-backed cycle,
+the worker process proves the exact database revision and atomically publishes
+progress. The cgroup-local `python -S -m apps.worker.health --lane <lane>`
+probe rejects stale/dead progress and lane/kind drift without importing the
+database, ORM, provider, or task-registry graph.

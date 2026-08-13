@@ -304,11 +304,13 @@
         "python/nexus/config.py",
         "python/nexus/jobs/registry.py",
         "python/nexus/jobs/worker.py",
+        "python/nexus/job_topology.py",
         "python/nexus/release_artifact.py",
         "python/nexus/runtime_health.py",
         "python/tests/testkit/external_server.py"
       ],
       "proofs": [
+        "pytest:python/tests/kernel/test_bounded_resource_worker_contract.py",
         "pytest:python/tests/kernel/test_runtime_health.py",
         "pytest:python/tests/kernel/test_worker_runtime_health.py",
         "pytest:python/tests/service/test_runtime_health.py"
@@ -513,6 +515,7 @@
         "apps/worker/main.py",
         "python/nexus/api/routes/media_activity.py",
         "python/nexus/config.py",
+        "python/nexus/job_topology.py",
         "python/nexus/jobs/queue.py",
         "python/nexus/jobs/registry.py",
         "python/nexus/jobs/worker.py",

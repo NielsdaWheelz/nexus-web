@@ -9,6 +9,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -26,7 +27,7 @@ _RESOURCE_LIMITS = {
     "postgres": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
     "caddy": (32 * 1024 * 1024, 48 * 1024 * 1024, 128),
     "api": (192 * 1024 * 1024, 320 * 1024 * 1024, 256),
-    "worker-interactive": (128 * 1024 * 1024, 224 * 1024 * 1024, 256),
+    "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
     "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
 }
 _OWNER_USER_ID = "00000000-0000-4000-8000-000000000001"
@@ -517,12 +518,36 @@ def _container_for_id(state: dict[str, Any], container_id: str) -> dict[str, Any
 
 def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, object]:
     container = _container_for_id(state, container_id)
+    config = container["config"]
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    service = labels.get("com.docker.compose.service") if isinstance(labels, dict) else None
+    health: dict[str, object] = {"Status": "healthy"}
+    if service in {"worker-interactive", "worker-background"}:
+        ended_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        health = {
+            "FailingStreak": 0,
+            "Log": [
+                {
+                    "End": ended_at,
+                    "ExitCode": 0,
+                    "Output": _canonical_json(
+                        _worker_health(state, service.removeprefix("worker-"))
+                    ).decode("utf-8"),
+                    "Start": ended_at,
+                }
+            ],
+            "Status": "healthy",
+        }
     inspected: dict[str, object] = {
-        "Config": container["config"],
+        "Config": config,
         "HostConfig": container["host_config"],
         "Image": container["image_id"],
+        "RestartCount": 0,
         "State": {
-            "Health": {"Status": "healthy"},
+            "Health": health,
+            "OOMKilled": False,
+            "Paused": False,
+            "Restarting": False,
             "Running": container["running"],
         },
     }
@@ -740,12 +765,6 @@ def _handle_compose(
             )
         elif "127.0.0.1:8000/readyz" not in command:
             raise AssertionError(f"unsupported fake API command: {command}")
-        return
-    if operation[:3] == ["exec", "-T", "worker-interactive"]:
-        _write_json(_worker_health(state, "interactive"))
-        return
-    if operation[:3] == ["exec", "-T", "worker-background"]:
-        _write_json(_worker_health(state, "background"))
         return
     if operation[:3] == ["exec", "-T", "postgres"]:
         command = " ".join(operation[3:])

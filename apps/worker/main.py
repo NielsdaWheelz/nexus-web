@@ -15,19 +15,19 @@ from apps.worker.health import (
     WorkerLane,
 )
 
-from nexus.config import (
+from nexus.config import get_settings
+from nexus.db.session import get_session_factory
+from nexus.job_topology import (
     BACKGROUND_WORKER_JOB_KINDS,
     INTERACTIVE_WORKER_JOB_KINDS,
     MAINTENANCE_JOB_KINDS,
     PRODUCTION_ENABLED_JOB_KINDS,
-    get_settings,
 )
-from nexus.db.session import get_session_factory
 from nexus.jobs.queue import parser_operation_has_live_job
 from nexus.jobs.registry import get_default_registry, get_task_contract_digest
 from nexus.jobs.worker import JobWorker
 from nexus.logging import configure_logging, get_logger
-from nexus.runtime_health import get_runtime_identity
+from nexus.runtime_health import get_runtime_identity, is_database_ready
 from nexus.services.llm_profiles import validate_profiles
 from nexus.services.parser_temp import prune_stale_parser_temp
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
@@ -129,8 +129,14 @@ def main() -> None:
         publisher = WorkerHeartbeatPublisher(
             lane=lane,
             allowed_job_kinds=tuple(sorted(allowed_job_kinds)),
-            identity=identity,
+            source_sha=identity.source_sha,
+            expected_database_revision=identity.expected_database_revision,
+            expected_oracle_manifest_digest=identity.expected_oracle_manifest_digest,
             task_contract_digest=get_task_contract_digest(),
+            readiness_check=lambda: is_database_ready(
+                database_url=settings.database_url,
+                expected_revision=identity.expected_database_revision,
+            ),
         )
         if publisher is not None:
             publisher.clear()

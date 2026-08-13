@@ -336,18 +336,18 @@ Use non-Swarm Compose `mem_limit`, `mem_reservation`, and `pids_limit`:
 | Postgres | 256 MiB | 512 MiB | 256 |
 | Caddy | 32 MiB | 48 MiB | 128 |
 | API | 192 MiB | 320 MiB | 256 |
-| interactive worker | 128 MiB | 224 MiB | 256 |
+| interactive worker | 128 MiB | 256 MiB | 256 |
 | background worker | 128 MiB | 448 MiB | 256 |
 
-Hard sum: `1,552 MiB`; host reserve: at least `320 MiB`; swap is excluded.
+Hard sum: `1,584 MiB`; host reserve: at least `320 MiB`; swap is excluded.
 
 The envelope is sized against real `MemTotal`, not the host's nominal RAM. A
-nominal 2 GiB instance reports `1,919.6 MiB`, so a `1,600 MiB` sum leaves
-`319.65 MiB` and misses the reserve floor by 364 KiB. Caddy and the interactive
-worker carry the reduction because measured steady-state use is `24.4 MiB` and
-`139.3 MiB`; the background worker keeps `448 MiB` because that is the measured
-bounded-parser envelope. The result reserves `367.6 MiB`, so the floor survives
-a kernel change that shifts reserved memory.
+nominal 2 GiB instance reports `1,919.6 MiB`. The interactive worker's measured
+peak reached `223 MiB`; its former `224 MiB` limit plus the former full-runtime
+health subprocess caused a production cgroup OOM. The health subprocess is now
+stdlib-only, and the `256 MiB` limit leaves measured process margin while the
+complete service envelope still reserves `335.6 MiB`. The background worker
+keeps `448 MiB` because that is the measured bounded-parser envelope.
 Migration job: `512 MiB`, `256` PIDs after application writers stop.
 
 Before merge, isolated parser-process RSS probes validate representative bounded
@@ -369,12 +369,13 @@ Host requirements:
 
 Before a new release attempt exists, the immutable controller performs one
 replay-safe resource convergence pass. It first proves exact live container
-identity, project labels, mounts, health, host capacity/pressure/disk, absence
-of foreign containers, and that every container's current memory/PID use fits
-the target envelope. If any proof fails, it mutates nothing. Otherwise it
-idempotently applies the committed limits with `docker update`, inspects every
-result, and proceeds to the ordinary preflight. This is the sole first-cutover
-path; it is permanent release behavior, not an operator exception.
+identity, project labels, mounts, host capacity/pressure/disk, absence of
+foreign containers, and that every container's current memory/PID use fits the
+target envelope. It may apply only the committed limit update to an unhealthy
+exact predecessor with verified identity and safe current usage. It then
+stops before attempt creation until ordinary preflight freshly proves health;
+a replay after recovery continues. Every other failed proof mutates nothing.
+This is permanent release behavior, not an operator exception.
 
 Ordinary preflight before writer stop validates:
 
@@ -390,7 +391,8 @@ stands in for current pressure, disk, memory, swap, container state, or limits.
 
 Apply order:
 
-1. converge and prove exact resource limits while the predecessor is healthy;
+1. converge exact resource limits; if an exact writer was unhealthy, stop and
+   require a later replay after Docker health recovers;
 2. finish ordinary preflight while the predecessor is healthy;
 3. stop/prove stopped background first, preventing new Heavy claims;
 4. stop/prove stopped interactive and API;
@@ -449,7 +451,8 @@ Repository search must prove absence. Do not retain wrappers.
 ### A. Queue/schema/topology
 
 Owns migration `0212`, `db/models.py`, `jobs/{queue,registry,worker}.py`,
-`config.py`, `apps/worker/*`, and their tests. Delivers capacity and lane cut.
+`job_topology.py`, `config.py`, `apps/worker/*`, and their tests. Delivers
+capacity and lane cut.
 
 ### B. Extraction/progress
 
@@ -541,8 +544,9 @@ API/product:
 
 Host/release:
 
-- first-cut resource convergence is identity-proved, idempotent, and performs
-  no update when any container cannot safely fit its committed envelope;
+- first-cut resource convergence is identity-proved and idempotent; an
+  unhealthy exact predecessor may receive only its committed limit update,
+  then no attempt/writer/DB mutation occurs until a healthy replay;
 - `docker inspect` proves all limits and host reserve;
 - preflight blocks pressure, missing swap/cgroup, low disk/memory, and unknown
   containers before writer stop;

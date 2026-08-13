@@ -87,7 +87,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "14e81b9254bbae0b2635e9f2d9b1afdeffc3fc70540660b8b8acbd5dc3be5c8b"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "d87bafa4efa75cf695901b258f0fba24e22fe00ecd1a3f3290b3930e348d7aba"
 
 
 class ResourceKind(StrEnum):
