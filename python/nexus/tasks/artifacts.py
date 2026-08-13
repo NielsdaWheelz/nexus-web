@@ -22,9 +22,8 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+from llm_tools import BraveSearchProvider, WebSearchProvider
 from sqlalchemy.orm import Session
-from web_search_tool.brave import BraveSearchProvider
-from web_search_tool.types import WebSearchProvider
 
 from nexus.config import get_settings
 from nexus.db.models import ArtifactBuild

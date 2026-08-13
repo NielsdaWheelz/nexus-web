@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 from uuid import UUID, uuid5
 
+from llm_tools import WebSearchProvider
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
-from web_search_tool.types import WebSearchProvider
 
 from nexus.errors import InvalidRequestError
 from nexus.jobs.queue import JobRow

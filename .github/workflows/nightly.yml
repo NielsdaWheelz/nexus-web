@@ -32,6 +32,7 @@ jobs:
       - uses: ./.github/actions/setup-test
         with:
           android: "true"
+          llm-tools: "true"
           provider-runtime: "true"
 
       - name: Enable KVM

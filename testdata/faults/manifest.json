@@ -246,6 +246,15 @@
       "expected_failure": "provider-runtime materialization followed developer HEAD instead of the lock pin"
     },
     {
+      "id": "llm-tools-developer-head-bypass",
+      "patch": "testdata/faults/llm-tools-developer-head-bypass.patch",
+      "sha256": "4b95a2ec4f89b53060c99780158825769bd046cd935e7ba9e70c77c726365fb1",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization"
+      ],
+      "expected_failure": "llm-tools materialization followed developer HEAD instead of the lock pin"
+    },
+    {
       "id": "deepseek-flash-reasoning-alias-bypass",
       "patch": "testdata/faults/deepseek-flash-reasoning-alias-bypass.patch",
       "sha256": "9ace18f4babb140eea22466858aa844ffde485d0af9fa12a7a70dd252b131eb3",

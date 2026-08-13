@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Final
 from uuid import UUID
 
+from llm_tools import WebSearchProvider
 from sqlalchemy.orm import Session
-from web_search_tool.types import WebSearchProvider
 
 from nexus.jobs.queue import JobExecutionContext, JobRow
 from nexus.schemas.presence import Presence

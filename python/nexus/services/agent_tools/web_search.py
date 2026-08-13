@@ -10,16 +10,16 @@ from typing import Any
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from sqlalchemy import bindparam, text
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Session
-from web_search_tool.types import (
+from llm_tools import (
     WebSearchError,
     WebSearchProvider,
     WebSearchRequest,
     WebSearchResultItem,
     WebSearchResultType,
 )
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceExternalSnapshot
 from nexus.ids import new_uuid7
@@ -46,7 +46,7 @@ WEB_SEARCH_TOOL_NAME = "web_search"
 WEB_SEARCH_LIMIT = 6
 WEB_SEARCH_SELECTED_LIMIT = 5
 WEB_SEARCH_CONTEXT_CHARS = 12000
-# Mirror the web_search_tool.WebSearchRequest contract at our own boundary so an
+# Mirror the llm_tools.WebSearchRequest contract at our own boundary so an
 # out-of-range query is rejected as a typed WebSearchQueryError (one owner: see
 # normalize_web_search_query) before WebSearchRequest.__post_init__ can raise a bare
 # ValueError. Keep these in lockstep with the provider package's limits.

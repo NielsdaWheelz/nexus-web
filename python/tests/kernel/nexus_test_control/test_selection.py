@@ -282,8 +282,10 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
         ),
         (
             "python/nexus_test_control/runner.py",
-            {Capability.KERNEL_PYTHON},
+            {Capability.KERNEL_PYTHON, Capability.LLM_TOOLS},
             {
+                "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool",
+                "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization",
                 "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
