@@ -9,6 +9,7 @@ from dataclasses import replace
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+from llm_tools import WebSearchProvider
 from provider_runtime import (
     Absent as RuntimeAbsent,
 )
@@ -20,7 +21,6 @@ from provider_runtime.types import ToolCall
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, RootModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from web_search_tool.types import WebSearchProvider
 
 from nexus.db.models import ChatRun, ChatRunEvent, LLMCall, MessageToolCall
 from nexus.jobs.queue import (

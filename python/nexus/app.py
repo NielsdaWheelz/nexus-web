@@ -51,9 +51,9 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from llm_tools import BraveSearchProvider
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
-from web_search_tool.brave import BraveSearchProvider
 
 from nexus.api.routes import create_api_router
 from nexus.auth.middleware import AuthMiddleware

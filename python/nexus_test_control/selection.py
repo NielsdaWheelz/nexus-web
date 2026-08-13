@@ -174,6 +174,7 @@ def proof_target(repo_root: Path, proof: str) -> SelectionTarget:
         Capability.JOURNEYS_ALL: "playwright",
         Capability.KERNEL_PYTHON: "pytest",
         Capability.KERNEL_WEB: "vitest",
+        Capability.LLM_TOOLS: "pytest",
         Capability.LLM_EVAL: "pytest",
         Capability.MIGRATIONS: "pytest",
         Capability.PROVIDER_CERTIFICATION: "pytest",
@@ -485,6 +486,7 @@ def _direct_test_target(path: str) -> SelectionTarget | None:
         ("python/tests/evals/", Capability.LLM_EVAL),
         ("python/tests/audit/", Capability.AUDIT),
         ("python/tests/contract/", Capability.PROVIDER_RUNTIME),
+        ("python/tests/llm_tools_contract/", Capability.LLM_TOOLS),
         ("python/tests/hosted/release/", Capability.PROVIDER_CERTIFICATION),
         ("python/tests/hosted/nightly/", Capability.HOSTED),
     )

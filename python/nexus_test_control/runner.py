@@ -164,6 +164,7 @@ _PYTHON_POLICY_DIRS = (
     "python/tests/kernel",
     "python/tests/service",
     "python/tests/contract",
+    "python/tests/llm_tools_contract",
     "python/tests/migrations",
     "python/tests/evals",
     "python/tests/audit",
@@ -269,6 +270,7 @@ _HEAVY_CAPABILITIES = frozenset(
         Capability.JOURNEYS_CRITICAL,
         Capability.JOURNEYS_ALL,
         Capability.PROVIDER_RUNTIME,
+        Capability.LLM_TOOLS,
         Capability.LLM_EVAL,
         Capability.EXTENSION,
         Capability.ANDROID_HOST,
@@ -317,6 +319,66 @@ _CRITICAL_JOURNEY_IDS = frozenset(
 )
 
 type FixedCommand = tuple[tuple[str, ...], Path]
+
+
+@dataclass(frozen=True, slots=True)
+class _PinnedPythonSuite:
+    capability: Capability
+    package: str
+    source_directory: str
+    contract_directory: str
+    local_absent_detail: str
+    exact_proof_error: str
+    no_selection_detail: str
+    success_detail: str
+    verification_commands: tuple[tuple[str, ...], ...]
+
+    @property
+    def marker_name(self) -> str:
+        return f".nexus-{self.package}-revision"
+
+
+_PINNED_PYTHON_VERIFICATION = (
+    ("uv", "run", "--frozen", "--no-sync", "ruff", "check", "src", "tests"),
+    (
+        "uv",
+        "run",
+        "--frozen",
+        "--no-sync",
+        "ruff",
+        "format",
+        "--check",
+        "src",
+        "tests",
+    ),
+    ("uv", "run", "--frozen", "--no-sync", "pyright", "src", "tests"),
+    ("uv", "run", "--frozen", "--no-sync", "pytest", "-q", *_DETERMINISTIC_PYTEST),
+)
+_PROVIDER_RUNTIME_SUITE = _PinnedPythonSuite(
+    capability=Capability.PROVIDER_RUNTIME,
+    package="provider-runtime",
+    source_directory="llm-calling",
+    contract_directory="tests/contract",
+    local_absent_detail="local provider protocol contract owner is absent",
+    exact_proof_error="exact provider protocol proof must name one pytest node",
+    no_selection_detail="no selected local provider protocol proof",
+    success_detail="local provider protocol contract and pinned provider-runtime suite passed",
+    verification_commands=_PINNED_PYTHON_VERIFICATION,
+)
+_LLM_TOOLS_SUITE = _PinnedPythonSuite(
+    capability=Capability.LLM_TOOLS,
+    package="llm-tools",
+    source_directory="llm-tools",
+    contract_directory="tests/llm_tools_contract",
+    local_absent_detail="local llm-tools contract owner is absent",
+    exact_proof_error="exact llm-tools proof must name one pytest node",
+    no_selection_detail="no selected local llm-tools contract proof",
+    success_detail="local llm-tools contract and pinned llm-tools suite passed",
+    verification_commands=(
+        *_PINNED_PYTHON_VERIFICATION,
+        ("uv", "build", "--no-sources", "--offline"),
+    ),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1059,6 +1121,12 @@ def run_proof(
                     environment,
                     exact=True,
                 )
+            case Capability.LLM_TOOLS:
+                result = _run_llm_tools(
+                    proof_context,
+                    environment,
+                    exact=True,
+                )
             case Capability.COMPONENT:
                 result = _run_component(proof_context, environment, execution, exact=True)
             case Capability.JOURNEYS_ALL:
@@ -1240,6 +1308,8 @@ def _run_capability_unlocked(
             return _run_corpus(context)
         case Capability.PROVIDER_RUNTIME:
             return _run_provider_runtime(context, caller_environment)
+        case Capability.LLM_TOOLS:
+            return _run_llm_tools(context, caller_environment)
         case Capability.LLM_EVAL:
             return _run_python_heavy(
                 context,
@@ -2451,6 +2521,7 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
             ("python/tests/service/", Capability.SERVICE, Workflow.CHANGED),
             ("python/tests/migrations/", Capability.MIGRATIONS, Workflow.PR),
             ("python/tests/contract/", Capability.PROVIDER_RUNTIME, Workflow.FULL),
+            ("python/tests/llm_tools_contract/", Capability.LLM_TOOLS, Workflow.FULL),
             ("python/tests/evals/", Capability.LLM_EVAL, Workflow.FULL),
             ("python/tests/audit/", Capability.AUDIT, Workflow.NIGHTLY),
             (
@@ -3211,43 +3282,58 @@ def _read_paid_evidence(
     )
 
 
-def _provider_runtime_pin(repo_root: Path) -> str:
+def _pinned_python_suite_pin(repo_root: Path, suite: _PinnedPythonSuite) -> str:
     try:
         data = tomllib.loads((repo_root / "python/pyproject.toml").read_text(encoding="utf-8"))
-        revision = data["tool"]["uv"]["sources"]["provider-runtime"]["rev"]
+        revision = data["tool"]["uv"]["sources"][suite.package]["rev"]
     except (KeyError, OSError, TypeError, tomllib.TOMLDecodeError) as error:
-        raise RuntimeContractError("provider-runtime pin is invalid or absent") from error
+        raise RuntimeContractError(f"{suite.package} pin is invalid or absent") from error
     if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
-        raise RuntimeContractError("provider-runtime pin is not a full Git SHA")
+        raise RuntimeContractError(f"{suite.package} pin is not a full Git SHA")
     return revision
 
 
-def _ensure_provider_runtime_checkout(
+def _provider_runtime_pin(repo_root: Path) -> str:
+    return _pinned_python_suite_pin(repo_root, _PROVIDER_RUNTIME_SUITE)
+
+
+def _pinned_python_suite_checkout_ready(
+    repo_root: Path,
+    suite: _PinnedPythonSuite,
+) -> bool:
+    revision = _pinned_python_suite_pin(repo_root, suite)
+    checkout = repo_root / ".nexus-test" / suite.package / revision
+    recorded = (checkout / suite.marker_name).read_text(encoding="utf-8").strip()
+    return recorded == revision and (checkout / ".venv").is_dir()
+
+
+def _ensure_pinned_python_suite_checkout(
     repo_root: Path,
     environment: Mapping[str, str],
+    suite: _PinnedPythonSuite,
 ) -> Path:
-    """Materialize the pin without retargeting the developer checkout or venv."""
+    """Materialize one immutable suite without retargeting developer state."""
 
-    revision = _provider_runtime_pin(repo_root)
-    owner = repo_root / ".nexus-test/provider-runtime"
+    revision = _pinned_python_suite_pin(repo_root, suite)
+    owner = repo_root / ".nexus-test" / suite.package
     checkout = owner / revision
-    marker = checkout / ".nexus-provider-runtime-revision"
+    marker = checkout / suite.marker_name
     if checkout.is_dir():
         try:
             recorded = marker.read_text(encoding="utf-8").strip()
         except OSError as error:
-            raise RuntimeContractError("owned provider-runtime checkout is incomplete") from error
+            raise RuntimeContractError(f"owned {suite.package} checkout is incomplete") from error
         if recorded != revision or not (checkout / ".venv").is_dir():
-            raise RuntimeContractError("owned provider-runtime checkout is incomplete")
+            raise RuntimeContractError(f"owned {suite.package} checkout is incomplete")
         return checkout
 
-    source = repo_root.parent / "llm-calling"
+    source = repo_root.parent / suite.source_directory
     if not source.is_dir():
-        raise RuntimeContractError("local provider-runtime Git object source is absent")
+        raise RuntimeContractError(f"local {suite.package} Git object source is absent")
     child_environment = _child_environment(environment)
     path = child_environment.get("PATH")
     if shutil.which("git", path=path) is None or shutil.which("uv", path=path) is None:
-        raise RuntimeContractError("provider-runtime materialization requires git and uv")
+        raise RuntimeContractError(f"{suite.package} materialization requires git and uv")
 
     owner.mkdir(parents=True, exist_ok=True)
     build = owner / f".building-{new_run_id()}"
@@ -3270,7 +3356,7 @@ def _ensure_provider_runtime_checkout(
             check=False,
         )
         if archived.returncode != 0:
-            raise RuntimeContractError("pinned provider-runtime commit is unavailable offline")
+            raise RuntimeContractError(f"pinned {suite.package} commit is unavailable offline")
         with tarfile.open(archive, mode="r:") as bundle:
             bundle.extractall(build, filter="data")
         synced = run_command(
@@ -3287,7 +3373,7 @@ def _ensure_provider_runtime_checkout(
                 "--offline",
                 "--no-editable",
                 "--reinstall-package",
-                "provider-runtime",
+                suite.package,
             ),
             cwd=build,
             env=child_environment,
@@ -3295,8 +3381,8 @@ def _ensure_provider_runtime_checkout(
             check=False,
         )
         if synced.returncode != 0 or not (build / ".venv").is_dir():
-            raise RuntimeContractError("pinned provider-runtime environment is unavailable offline")
-        (build / ".nexus-provider-runtime-revision").write_text(revision + "\n", encoding="utf-8")
+            raise RuntimeContractError(f"pinned {suite.package} environment is unavailable offline")
+        (build / suite.marker_name).write_text(revision + "\n", encoding="utf-8")
         # uv writes each console-script launcher in .venv/bin with the absolute
         # build path of the interpreter; promotion renames the directory, so
         # rewrite those launchers to the promoted checkout before it is used.
@@ -3312,12 +3398,30 @@ def _ensure_provider_runtime_checkout(
                 script.write_text(text.replace(str(build), str(checkout)), encoding="utf-8")
         build.rename(checkout)
     except (OSError, tarfile.TarError) as error:
-        raise RuntimeContractError("provider-runtime materialization failed") from error
+        raise RuntimeContractError(f"{suite.package} materialization failed") from error
     finally:
         archive.unlink(missing_ok=True)
         if build.exists():
             shutil.rmtree(build)
     return checkout
+
+
+def _ensure_provider_runtime_checkout(
+    repo_root: Path,
+    environment: Mapping[str, str],
+) -> Path:
+    return _ensure_pinned_python_suite_checkout(
+        repo_root,
+        environment,
+        _PROVIDER_RUNTIME_SUITE,
+    )
+
+
+def _ensure_llm_tools_checkout(
+    repo_root: Path,
+    environment: Mapping[str, str],
+) -> Path:
+    return _ensure_pinned_python_suite_checkout(repo_root, environment, _LLM_TOOLS_SUITE)
 
 
 def _run_provider_runtime(
@@ -3326,23 +3430,47 @@ def _run_provider_runtime(
     *,
     exact: bool = False,
 ) -> CapabilityResult:
-    capability = Capability.PROVIDER_RUNTIME
+    return _run_pinned_python_suite(
+        context,
+        environment,
+        _PROVIDER_RUNTIME_SUITE,
+        exact=exact,
+    )
+
+
+def _run_llm_tools(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    *,
+    exact: bool = False,
+) -> CapabilityResult:
+    return _run_pinned_python_suite(context, environment, _LLM_TOOLS_SUITE, exact=exact)
+
+
+def _run_pinned_python_suite(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    suite: _PinnedPythonSuite,
+    *,
+    exact: bool,
+) -> CapabilityResult:
+    capability = suite.capability
     python_root = context.repo_root / "python"
-    contract_root = python_root / "tests/contract"
+    contract_root = python_root / suite.contract_directory
     owners = tuple(sorted(contract_root.rglob("test_*.py"))) if contract_root.is_dir() else ()
     if not owners or not (python_root / ".venv").is_dir():
-        return _not_run(capability, "local provider protocol contract owner is absent")
+        return _not_run(capability, suite.local_absent_detail)
     nodes, promoted = _selected_proof_nodes(context, capability, "pytest")
     if exact:
         if not nodes or promoted:
-            raise ValueError("exact provider protocol proof must name one pytest node")
-        targets = tuple(_python_heavy_node(node, "tests/contract") for node in nodes)
+            raise ValueError(suite.exact_proof_error)
+        targets = tuple(_python_heavy_node(node, suite.contract_directory) for node in nodes)
     elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
         targets = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in owners)
     elif nodes:
-        targets = tuple(_python_heavy_node(node, "tests/contract") for node in nodes)
+        targets = tuple(_python_heavy_node(node, suite.contract_directory) for node in nodes)
     else:
-        return _pass(capability, "no selected local provider protocol proof")
+        return _pass(capability, suite.no_selection_detail)
     local = _run_fixed_commands(
         capability,
         (
@@ -3367,45 +3495,16 @@ def _run_provider_runtime(
         return local
 
     try:
-        checkout = _ensure_provider_runtime_checkout(context.repo_root, environment)
+        checkout = _ensure_pinned_python_suite_checkout(
+            context.repo_root,
+            environment,
+            suite,
+        )
     except RuntimeContractError as error:
         return _not_run(capability, str(error))
-    commands: tuple[FixedCommand, ...] = (
-        (
-            ("uv", "run", "--frozen", "--no-sync", "ruff", "check", "src", "tests"),
-            checkout,
-        ),
-        (
-            (
-                "uv",
-                "run",
-                "--frozen",
-                "--no-sync",
-                "ruff",
-                "format",
-                "--check",
-                "src",
-                "tests",
-            ),
-            checkout,
-        ),
-        (("uv", "run", "--frozen", "--no-sync", "pyright", "src", "tests"), checkout),
-        (
-            (
-                "uv",
-                "run",
-                "--frozen",
-                "--no-sync",
-                "pytest",
-                "-q",
-                *_DETERMINISTIC_PYTEST,
-            ),
-            checkout,
-        ),
-    )
     pinned = _run_fixed_commands(
         capability,
-        commands,
+        tuple((command, checkout) for command in suite.verification_commands),
         environment,
         ("uv",),
         elapsed_ms=local.evidence.duration_ms,
@@ -3413,10 +3512,7 @@ def _run_provider_runtime(
     )
     if pinned.evidence.status is not RunStatus.PASS:
         return pinned
-    return CapabilityResult(
-        pinned.evidence,
-        "local provider protocol contract and pinned provider-runtime suite passed",
-    )
+    return CapabilityResult(pinned.evidence, suite.success_detail)
 
 
 def _run_android_host(
@@ -4224,7 +4320,7 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
             (
                 str(context.repo_root / "python/.venv/bin/python"),
                 "-c",
-                "import provider_runtime",
+                "import llm_tools, provider_runtime",
             ),
             context.repo_root,
         ),
@@ -4249,21 +4345,19 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
         if command[0] == "uv" and re.search(r"(?m)^Would (?:download|install|uninstall) ", output):
             return _fail(Capability.DOCTOR, "locked Python environment is stale")
 
-    try:
-        expected_provider_revision = _provider_runtime_pin(context.repo_root)
-        provider_checkout = (
-            context.repo_root / ".nexus-test/provider-runtime" / expected_provider_revision
-        )
-        provider_revision = (provider_checkout / ".nexus-provider-runtime-revision").read_text(
-            encoding="utf-8"
-        )
-    except (OSError, RuntimeContractError):
-        return _not_run(Capability.DOCTOR, "pinned provider-runtime checkout is unavailable")
-    if (
-        provider_revision.strip() != expected_provider_revision
-        or not (provider_checkout / ".venv").is_dir()
-    ):
-        return _not_run(Capability.DOCTOR, "pinned provider-runtime checkout is not ready")
+    for suite in (_PROVIDER_RUNTIME_SUITE, _LLM_TOOLS_SUITE):
+        try:
+            ready = _pinned_python_suite_checkout_ready(context.repo_root, suite)
+        except (OSError, RuntimeContractError):
+            return _not_run(
+                Capability.DOCTOR,
+                f"pinned {suite.package} checkout is unavailable",
+            )
+        if not ready:
+            return _not_run(
+                Capability.DOCTOR,
+                f"pinned {suite.package} checkout is not ready",
+            )
 
     if not _android_sdk_available(context.repo_root / "apps/android", environment):
         return _not_run(Capability.DOCTOR, "the Android SDK is absent")

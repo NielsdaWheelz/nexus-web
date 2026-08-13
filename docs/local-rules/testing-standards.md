@@ -428,7 +428,7 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
-<!-- nexus-test-routing-sha256: 5109c55f6ea0aeb9ce49d501cd530255edd76bfc1ffd421a7a4795a61ee85822 -->
+<!-- nexus-test-routing-sha256: 578da14bd8356eb0e10839e0dd30317d454686fdb1a4e2b3325801bdbf7dbb05 -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and
@@ -445,6 +445,7 @@ physical-device boundaries are excluded. The owning `full`, `nightly`, or
 | Shared local-real testkit | `python/tests/testkit/` and `python/tests/conftest.py` |
 | Real PostgreSQL/API/service | `python/tests/service/` |
 | Migration graph and convergence | `python/tests/migrations/` |
+| Pinned portable LLM tools | `python/tests/llm_tools_contract/` |
 | Deterministic LLM semantics | `python/tests/evals/` |
 | Property/random-order audit | `python/tests/audit/` |
 | Paid hosted proof | `python/tests/hosted/nightly/` and `python/tests/hosted/release/` |

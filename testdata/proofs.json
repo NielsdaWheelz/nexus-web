@@ -348,17 +348,29 @@
     {
       "id": "production-release-test-control",
       "source_globs": [
+        ".github/actions/setup-test/action.yml",
         ".github/workflows/ci.yml",
+        ".github/workflows/nightly.yml",
+        ".github/workflows/release.yml",
+        "docs/local-rules/testing-standards.md",
+        "python/pyproject.toml",
+        "python/nexus/services/browse/brave.py",
         "python/nexus_test_control/**/*.py",
+        "python/tests/kernel/nexus_test_control/test_llm_tools_capability.py",
+        "python/tests/llm_tools_contract/**/*.py",
+        "python/uv.lock",
         "testdata/proofs.json"
       ],
       "proofs": [
+        "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool",
+        "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization",
         "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
         "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
         "pytest:python/tests/kernel/test_ci_pr_recovery.py"
       ],
       "capabilities": [
-        "kernel-python"
+        "kernel-python",
+        "llm-tools"
       ]
     },
     {

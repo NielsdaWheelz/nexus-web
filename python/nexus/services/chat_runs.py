@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
+from llm_tools import WebSearchProvider
 from provider_runtime import (
     Absent,
     Cancelled,
@@ -47,7 +48,6 @@ from provider_runtime.types import (
 from pydantic import JsonValue
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
-from web_search_tool.types import WebSearchProvider
 
 from nexus.config import Settings
 from nexus.db.models import (

@@ -7,14 +7,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 from urllib.parse import quote, urljoin, urlsplit
 
-from lxml import html
-from web_search_tool.types import (
+from llm_tools import (
     WebSearchError,
     WebSearchErrorCode,
     WebSearchProvider,
     WebSearchRequest,
     WebSearchResultType,
 )
+from lxml import html
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.browse import (
@@ -72,6 +72,7 @@ class _BrowseWebSearchRequest:
     country: str = "US"
     search_lang: str = "en"
     safe_search: Literal["off", "moderate", "strict"] = "moderate"
+    max_attempts: int = 2
 
 
 async def search(
