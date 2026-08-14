@@ -968,6 +968,8 @@ def test_host_apply_rejects_a_runtime_identical_but_different_activated_image(
     ("drift", "message"),
     [
         ("security", "Codex agent host privilege isolation differs"),
+        ("systempaths_missing", "Codex agent host privilege isolation differs"),
+        ("systempaths_mutated", "Codex agent host privilege isolation differs"),
         ("network", "Codex agent host network isolation differs"),
         ("network_peer", "Codex agent host network peer isolation differs"),
     ],
@@ -988,6 +990,16 @@ def test_host_apply_rejects_codex_host_outer_sandbox_or_network_drift(
     attempt = _stored_attempt(release, harness.root)
     assert attempt is not None
     assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+
+
+def test_host_apply_accepts_the_exact_compose_systempaths_security_option(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    harness = host_release_harness
+
+    completed = harness.run_apply()
+
+    assert completed.returncode == 0, completed.stderr
 
 
 @pytest.mark.parametrize(

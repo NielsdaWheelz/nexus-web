@@ -75,6 +75,7 @@ _CODEX_AGENT_SECURITY_OPTIONS = {
     "apparmor=nexus-codex-agent-host",
     "no-new-privileges:true",
     "seccomp=unconfined",
+    "systempaths=unconfined",
 }
 _CODEX_AGENT_RUNTIME_ENVIRONMENT = {
     "NEXUS_CODEX_STATE_ROOT_BASE": "/var/lib/nexus-codex",
