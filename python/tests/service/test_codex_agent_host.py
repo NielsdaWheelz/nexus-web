@@ -7,6 +7,7 @@ import json
 import multiprocessing
 import os
 import socket
+import subprocess
 import sys
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
@@ -1395,6 +1396,41 @@ def test_bundled_cli_wrappers_are_exact_and_reject_api_key_auth(
         sandbox_health.check()
     with pytest.raises(RuntimeError, match="must not be inherited"):
         enroll.main()
+
+
+def test_sandbox_health_cli_fails_silently(tmp_path: Path) -> None:
+    """Risk: host-readiness diagnostics leak internal or credential context."""
+
+    fake_codex = tmp_path / "codex-failing-sandbox"
+    fake_codex.write_text(f"#!{sys.executable}\nraise SystemExit(17)\n", encoding="utf-8")
+    fake_codex.chmod(0o700)
+    environment = dict(os.environ)
+    environment.pop("OPENAI_API_KEY", None)
+    environment["FAKE_CODEX_PATH"] = str(fake_codex)
+    result = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            (
+                "import os\n"
+                "from pathlib import Path\n"
+                "import codex_cli_bin\n"
+                "codex_cli_bin.bundled_codex_path = "
+                "lambda: Path(os.environ['FAKE_CODEX_PATH'])\n"
+                "from apps.codex_agent import sandbox_health\n"
+                "sandbox_health.main()\n"
+            ),
+        ),
+        cwd=Path(__file__).parents[3],
+        env=environment,
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == b""
+    assert result.stderr == b""
 
 
 def _canonical_json(value: object) -> str:

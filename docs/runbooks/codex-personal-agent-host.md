@@ -149,6 +149,25 @@ wait exhausts or other service health/pressure evidence is abnormal.
 
 ## Hosted subscription canary preparation
 
+Do not register a Codex-authenticated repository runner while the repository is
+public. GitHub warns that public-repository pull requests can compromise a
+self-hosted runner, and a label or protected environment does not isolate the
+machine from other workflows. Before registration, use one of these reviewed
+boundaries:
+
+- make the repository private and dedicate the runner to it;
+- run the canary from a separate private orchestration repository; or
+- move the repository to an organization and use a runner group restricted to
+  this exact workflow on `refs/heads/main`.
+
+See GitHub's [secure-use guidance](https://docs.github.com/en/actions/reference/security/secure-use)
+and [runner-group access controls](https://docs.github.com/actions/hosting-your-own-runners/managing-self-hosted-runners/managing-access-to-self-hosted-runners-using-groups).
+The runner machine must have no unrelated SSH, GitHub, personal, or production
+credentials. Prefer disposable runner compute with the dedicated encrypted
+canary-state disk attached only for this job. Provision OS packages and the
+AppArmor profile outside Actions; the workflow has no Docker authority and no
+general job-time `sudo`.
+
 The protected self-hosted runner has the dedicated `nexus-codex-nightly` label
 and uses a separate pre-enrolled state base. It does not mount or inspect the
 production volume. As the runner account, create
@@ -170,10 +189,12 @@ stat -c '%u:%a %n' /var/lib/nexus-codex-nightly/state /var/lib/nexus-codex-night
 
 The output must show the runner uid and mode `700` for both directories; do not
 list or read profile files. The sandbox command must exit successfully; any
-output is a defect. The workflow repeats that real sandbox probe, verifies the
-empty cwd, clears the run-bound evidence path before its one turn, and accepts
-evidence only when its run id matches. Re-enroll this distinct canary state with
-the same command when its account credential expires.
+output is a defect. The workflow repeats that real sandbox probe, which is the
+behavioral proof that the installed AppArmor policy permits the intended inner
+sandbox while the global restriction remains active. It also verifies the empty
+cwd, clears the run-bound evidence path before its one turn, and accepts evidence
+only when its run id matches. Re-enroll this distinct canary state with the same
+command when its account credential expires.
 
 On that Ubuntu 24.04 runner, install and load the repository-owned path-scoped
 profile before running the silent sandbox check. The workflow compares the
@@ -189,8 +210,11 @@ sudo apparmor_parser -r /etc/apparmor.d/nexus-codex-nightly-bwrap
 ```
 
 Make this installation part of the runner's persistent host provisioning so it
-survives reboot. Do not substitute `--sandbox danger-full-access`, a setuid
-bwrap binary, or a global sysctl relaxation.
+survives reboot. Verify the loaded profile during provisioning with privileged
+operator access; the unprivileged workflow proves enforcement through the real
+sandbox probe rather than reading root-only securityfs state. Do not substitute
+`--sandbox danger-full-access`, a setuid bwrap binary, or a global sysctl
+relaxation.
 
 ## Dispatch and verify a hosted canary
 

@@ -452,6 +452,13 @@ green, then refactored without weakening the oracle. Use `./scripts/test` only.
 | deployment wiring | existing production deploy behavior/journey owner | measured 1,900 MiB fixture passes; low headroom/PSI blocks before mutation; exact cgroup/image/isolation/health/rollback |
 | existing-VPS qualification | `deploy/hetzner/prove-codex-capacity.sh <source-sha>` and immutable JSON evidence | exact image/profile/384 MiB cgroup; one cold plus two warm turns; peak/headroom/PSI/OOM/service-health assertions; no prose or credential evidence |
 
+The hosted runner is a credential boundary, not merely a label. Do not register
+it directly to a public repository. Use a private repository, a separate private
+orchestrator, or an organization runner group restricted to this exact workflow
+on `main`. The runner has no unrelated credentials, production reachability,
+Docker authority, or general job-time `sudo`; OS packages and AppArmor are
+pre-provisioned outside the workflow.
+
 The local fake runs behind the production UDS client boundary; product code has
 no fixture mode. Do not mock PostgreSQL, the queue, the worker, or the metadata
 publisher. Do not snapshot generated prose. The hosted proof is scheduled and

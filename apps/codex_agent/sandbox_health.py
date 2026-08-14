@@ -33,7 +33,10 @@ def check() -> None:
 
 
 def main() -> None:
-    check()
+    try:
+        check()
+    except RuntimeError:
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

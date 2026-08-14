@@ -140,6 +140,7 @@ def test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact(
 ) -> None:
     """Risk: the live workflow stages malformed or excess hosted output."""
 
+    _assert_runner_security_contract()
     stage = _workflow_step("Stage bounded Codex nightly artifact")
     _assert_artifact_delivery_contract(
         stage, _workflow_step("Upload bounded Codex nightly artifact")
@@ -191,13 +192,62 @@ def test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact(
 
 
 def _workflow_step(name: str) -> dict[str, object]:
-    workflow_path = Path(__file__).parents[3] / ".github/workflows/codex-personal-nightly.yml"
-    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["codex-personal-metadata"]["steps"]
+    steps = _workflow_job()["steps"]
+    if not isinstance(steps, list):
+        raise AssertionError("Codex nightly workflow steps are absent")
     for step in steps:
         if isinstance(step, dict) and step.get("name") == name:
             return cast(dict[str, object], step)
     raise AssertionError(f"Codex nightly workflow has no {name!r} step")
+
+
+def _workflow_job() -> dict[str, object]:
+    workflow_path = Path(__file__).parents[3] / ".github/workflows/codex-personal-nightly.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    return cast(dict[str, object], workflow["jobs"]["codex-personal-metadata"])
+
+
+def _assert_runner_security_contract() -> None:
+    """The subscription credential runner receives only its minimal toolchain."""
+
+    job = _workflow_job()
+    _require(
+        job.get("runs-on") == ["self-hosted", "linux", "nexus-codex-nightly"],
+        "Codex nightly no longer targets only its dedicated runner label",
+    )
+    steps = job.get("steps")
+    _require(isinstance(steps, list), "Codex nightly workflow steps are absent")
+    action_uses = tuple(
+        step["uses"]
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("uses"), str)
+    )
+    _require(
+        action_uses
+        == (
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+            "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9",
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        ),
+        "Codex nightly gained an unreviewed action or broad shared setup",
+    )
+    install = _workflow_step("Install locked Codex canary environment")
+    _require(
+        install.get("run")
+        == "uv sync --frozen --no-editable --extra codex-agent --extra dev --directory python",
+        "Codex nightly dependency installation is not the exact locked minimal environment",
+    )
+    commands = "\n".join(str(step.get("run", "")) for step in steps if isinstance(step, dict))
+    for forbidden in ("sudo", "apt-get", "docker", "playwright", "setup-test"):
+        _require(
+            forbidden not in commands and forbidden not in "\n".join(action_uses),
+            f"Codex nightly retained forbidden job-time authority: {forbidden}",
+        )
+    _require(
+        "/sys/kernel/security/apparmor/profiles" not in commands,
+        "Codex nightly requires privileged securityfs inspection from the runner account",
+    )
 
 
 def _staging_command(stage: dict[str, object]) -> str:
