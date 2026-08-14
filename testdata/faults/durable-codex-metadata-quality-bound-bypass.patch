@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/metadata_enrichment.py b/python/nexus/services/metadata_enrichment.py
+--- a/python/nexus/services/metadata_enrichment.py
++++ b/python/nexus/services/metadata_enrichment.py
+@@ -78,7 +78,7 @@ class MetadataMergeResult:
+ # explicit and independently checked after native-agent decoding.
+ _METADATA_STRING_MAX_LENGTHS = {
+-    "title": 255,
++    "title": 256,
+     "publisher": 255,
+     "description": 2000,
+     "published_date": 64,
+     "language": 32,

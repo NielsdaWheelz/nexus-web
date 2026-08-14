@@ -84,9 +84,11 @@ _RETIRED_RESOURCE_ACTION_PATHS = (
 _PRODUCT_SOURCE_ROOTS: tuple[tuple[str, frozenset[str]], ...] = (
     ("python/nexus", frozenset({".py"})),
     ("apps/api", frozenset({".py"})),
+    ("apps/codex_agent", frozenset({".py"})),
     ("apps/web/src", frozenset({".js", ".jsx", ".ts", ".tsx"})),
     ("apps/extension", frozenset({".js", ".jsx", ".ts", ".tsx"})),
     ("apps/android/app/src/main", frozenset({".java", ".kt", ".kts"})),
+    ("migrations/alembic", frozenset({".py"})),
 )
 _RETIRED_PRODUCT_TEST_SEAMS = (
     "REAL_MEDIA_PROVIDER_FIXTURES",
@@ -168,6 +170,17 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         ("make test",),
     ),
+    ".github/workflows/codex-personal-nightly.yml": (
+        (
+            'NEXUS_CODEX_HOSTED_CANARY: "1"',
+            "runs-on: [self-hosted, linux, nexus-codex-nightly]",
+            "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor ",
+            "/etc/apparmor.d/nexus-codex-nightly-bwrap",
+            "python/.venv/bin/python -m apps.codex_agent.sandbox_health",
+            "run: ./scripts/test codex-nightly",
+        ),
+        ("OPENAI_API_KEY", "make test", "pytest"),
+    ),
     ".github/workflows/release.yml": (
         ('NEXUS_PROVIDER_CERTIFICATION: "1"', "script: ./scripts/test release"),
         ("make test",),
@@ -234,6 +247,7 @@ _CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
     "pr": ".github/workflows/ci.yml",
     "full": ".github/workflows/ci.yml",
     "nightly": ".github/workflows/nightly.yml",
+    "codex-nightly": ".github/workflows/codex-personal-nightly.yml",
     "release": ".github/workflows/release.yml",
 }
 _INTERNAL_PACKAGE_RUNNERS: dict[tuple[str, str], str] = {
@@ -275,6 +289,12 @@ _OWNERSHIP_TOKENS: tuple[tuple[str, re.Pattern[str], frozenset[str], dict[str, i
         re.compile(r"\bNEXUS_HOSTED_CANARY\b"),
         frozenset({".github/workflows/nightly.yml"}),
         {".github/workflows/nightly.yml": 1},
+    ),
+    (
+        "codex-hosted-canary",
+        re.compile(r"\bNEXUS_CODEX_HOSTED_CANARY\b"),
+        frozenset({".github/workflows/codex-personal-nightly.yml"}),
+        {".github/workflows/codex-personal-nightly.yml": 1},
     ),
     (
         "android-emulator",
@@ -1639,8 +1659,10 @@ def _fault_changed_paths(patch: str) -> tuple[str, ...]:
 
 
 def _is_product_path(path: str) -> bool:
-    product = path.startswith(
-        ("python/nexus/", "apps/web/src/", "apps/android/app/src/", "migrations/alembic/")
+    product = any(
+        (path == source_root or path.startswith(f"{source_root}/"))
+        and Path(path).suffix in suffixes
+        for source_root, suffixes in _PRODUCT_SOURCE_ROOTS
     )
     test_runtime_product = path in {
         "python/nexus_test_control/build.py",

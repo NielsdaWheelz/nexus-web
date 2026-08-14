@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 jobs:
-  nightly:
+  nightly-direct:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment: nexus-nightly

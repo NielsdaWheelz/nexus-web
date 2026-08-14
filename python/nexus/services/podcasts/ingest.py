@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 
 from nexus.coerce import coerce_non_negative_int, coerce_positive_int
 from nexus.ids import new_uuid7
-from nexus.jobs.queue import enqueue_unique_job
 from nexus.logging import get_logger
 from nexus.services.collection_revisions import (
     CollectionFamily,
@@ -35,6 +34,7 @@ from nexus.services.contributor_taxonomy import (
 from nexus.services.library_entries import (
     ensure_subscription_episode_default_in_current_transaction,
 )
+from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
 from nexus.services.transcripts.current import ensure_media_transcript_state_row
 
 from ._normalize import (
@@ -409,12 +409,11 @@ def sync_subscription_ingest(
         # Queue enlistment is part of the caller's transaction. A queue write
         # failure aborts the batch; swallowing a database exception would leave
         # the Session unusable and falsely advance the backfill fence.
-        enqueue_unique_job(
+        enqueue_metadata_enrichment(
             db,
-            kind="enrich_metadata",
-            payload={"media_id": str(media_id), "request_id": None},
+            media_id=media_id,
+            request_id=None,
             dedupe_key=f"enrich-metadata:{media_id}",
-            max_attempts=1,
         )
 
     affected_viewers = tuple(

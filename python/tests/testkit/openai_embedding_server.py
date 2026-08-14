@@ -438,42 +438,9 @@ def _fixed(result: dict[str, Any]) -> Callable[[dict[str, Any]], dict[str, Any]]
     return lambda _payload: deepcopy(result)
 
 
-_METADATA_ENRICHMENT_UNKNOWN: dict[str, Any] = {
-    "title": "SOFIA Confirms Water on the Sunlit Moon",
-    "authors": ["NASA"],
-    "publisher": "NASA",
-    "description": (
-        "SOFIA detected a water signature in Clavius Crater, confirming that water "
-        "exists on the sunlit surface of the Moon."
-    ),
-    "published_date": "2020-10",
-    "language": "en",
-}
-_CURRENT_METADATA_LINE = re.compile(r"^- current_([a-z_]+): (.+)$", re.MULTILINE)
-
-
-def _media_metadata_enrichment(payload: dict[str, Any]) -> dict[str, Any]:
-    result = dict(_METADATA_ENRICHMENT_UNKNOWN)
-    for field, raw in _CURRENT_METADATA_LINE.findall(_input_text(payload)):
-        if field not in result:
-            continue
-        try:
-            declared = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if declared:
-            result[field] = declared
-    return result
-
-
 _STRICT_OUTPUTS: dict[
     str, tuple[frozenset[str], str, Callable[[dict[str, Any]], dict[str, Any]]]
 ] = {
-    "media_metadata_enrichment": (
-        frozenset({"title", "authors", "publisher", "description", "published_date", "language"}),
-        "extract bibliographic and descriptive metadata",
-        _media_metadata_enrichment,
-    ),
     "MediaUnitSynthesis": (
         frozenset({"summary_md", "claims"}),
         "building a reusable unit for one document",

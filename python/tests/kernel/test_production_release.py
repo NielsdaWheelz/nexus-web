@@ -14,6 +14,7 @@ from types import ModuleType
 
 import pytest
 
+from nexus.release_artifact import CandidateImages
 from tests.testkit.host_release import (
     CURRENT_SHA,
     HostReleaseHarness,
@@ -51,7 +52,7 @@ def _candidate(source_sha: str = SOURCE_SHA) -> dict[str, object]:
             "api": f"ghcr.io/nielsdawheelz/nexus-api@sha256:{IMAGE_DIGEST}",
             "worker": f"ghcr.io/nielsdawheelz/nexus-worker@sha256:{WORKER_DIGEST}",
         },
-        "expected_database_revision": "0215",
+        "expected_database_revision": "0216",
         "expected_oracle_manifest_digest": f"sha256:{ORACLE_DIGEST}",
     }
 
@@ -109,6 +110,152 @@ def _host_harness(tmp_path: Path) -> HostReleaseHarness:
         repo_root=REPO_ROOT,
         candidate=_candidate(),
     )
+
+
+def test_codex_host_is_required_only_after_its_immutable_schema_cutover() -> None:
+    """Risk: a legacy predecessor is rejected for a host it never shipped."""
+
+    release = _release_module()
+
+    def manifest(revision: str):
+        value = _candidate()
+        images = value["images"]
+        assert isinstance(images, dict)
+        return release.CandidateManifest(
+            **{
+                **value,
+                "images": CandidateImages(**images),
+                "expected_database_revision": revision,
+            }
+        )
+
+    predecessor = manifest("0215")
+    cutover = manifest("0216")
+
+    assert release._requires_codex_agent_host(predecessor) is False
+    assert release._requires_codex_agent_host(cutover) is True
+
+
+def test_existing_vps_capacity_uses_reservations_and_requires_qualification_before_0216(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a nominal 1.9 GiB VPS is rejected by summed hard caps or promoted unqualified."""
+
+    harness = host_release_harness
+    meminfo = harness.root / "proc/meminfo"
+    meminfo.write_text(
+        "MemTotal: 1945600 kB\nMemAvailable: 262144 kB\nSwapTotal: 1048576 kB\n",
+        encoding="ascii",
+    )
+    (harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json").unlink()
+
+    blocked = harness.run_apply()
+
+    assert blocked.returncode != 0
+    assert "Codex capacity qualification" in blocked.stderr
+    state = harness.state()
+    assert state["resource_mutations"] == []
+    assert state["service_mutations"] == []
+
+
+def test_existing_vps_capacity_qualification_writes_exact_immutable_candidate_evidence(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a hand-waved capacity check proves the client cgroup, not the host."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+
+    qualified = harness.run_qualify_codex_capacity()
+
+    assert qualified.returncode == 0, qualified.stderr
+    assert evidence.stat().st_uid == 0
+    assert evidence.stat().st_mode & 0o777 == 0o444
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    assert payload["source_sha"] == SOURCE_SHA
+    assert payload["worker_image_id"] == "sha256:" + "9" * 64
+    assert payload["cgroup_memory_max"] == 384 * 1024 * 1024
+    assert [turn["phase"] for turn in payload["turns"]] == ["cold", "warm_1", "warm_2"]
+    assert payload["services"] == [
+        "postgres",
+        "caddy",
+        "api",
+        "worker-interactive",
+        "worker-background",
+    ]
+    state = harness.state()
+    assert not any(
+        command[:5] == ["compose", "run", "--rm", "--no-deps", "--user"]
+        for command in state["commands"]
+    )
+    assert state["service_mutations"] == [
+        {"operation": "up", "services": ["nexus-codex-agent-host"]},
+        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+    ]
+
+
+def test_capacity_qualification_cleanup_failure_cannot_authorize_promotion(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: immutable passing evidence survives a failed ephemeral-client cleanup."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(codex_capacity_canary_removal_failure=True)
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    if evidence.exists():
+        payload = json.loads(evidence.read_text(encoding="utf-8"))
+        assert payload["status"] == "failed"
+        assert payload["turns"] == []
+    state = harness.state()
+    assert "capacity_canary" in state
+    assert state["service_mutations"] == [
+        {"operation": "up", "services": ["nexus-codex-agent-host"]},
+        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+    ]
+
+
+def test_capacity_qualification_rejects_a_credentialed_or_networked_client_container(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: the qualification client becomes a second Codex credential or egress owner."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(codex_capacity_canary_isolation_drift="credential_mount_and_network_peer")
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert "Codex capacity canary isolation" in refused.stderr
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+
+
+def test_existing_vps_capacity_startup_failure_is_retriable_without_failed_evidence(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a device-auth startup failure is irreversibly misclassified as capacity."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(codex_host_startup_failure=True)
+
+    failed = harness.run_qualify_codex_capacity()
+
+    assert failed.returncode != 0
+    assert not evidence.exists()
+    assert harness.state()["service_mutations"] == [
+        {"operation": "up", "services": ["nexus-codex-agent-host"]},
+        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+    ]
 
 
 def _stored_attempt(module: ModuleType, tmp_path: Path):
@@ -175,22 +322,36 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
     assert attempt.backup.sha256 == hashlib.sha256(backup_bytes).hexdigest()
 
     state = harness.state()
-    assert state["database_revision"] == "0215"
+    profile = tmp_path / "etc/apparmor.d/nexus-codex-agent-host"
+    bundled_profile = (
+        tmp_path / "opt/nexus/releases" / SOURCE_SHA / "nexus-codex-agent-host.apparmor"
+    )
+    assert profile.read_bytes() == bundled_profile.read_bytes()
+    profile_metadata = profile.stat()
+    assert (profile_metadata.st_uid, profile_metadata.st_gid) == (0, 0)
+    assert stat.S_IMODE(profile_metadata.st_mode) == 0o644
+    assert state["apparmor_profile_load_count"] == 1
+    assert state["apparmor_profile_preflight_count"] == 1
+    assert state["database_revision"] == "0216"
     assert state["backup_dump_count"] == 1
     assert state["backup_verify_count"] == 2
     assert state["migration_count"] == 1
+    assert not any(
+        command[:5] == ["compose", "run", "--rm", "--no-deps", "--user"]
+        for command in state["commands"]
+    )
     assert state["jobs"] == {}
     assert state["ancestry_proofs"] == [
         {
-            "candidate_head": "0215",
+            "candidate_head": "0216",
             "current_revision": "0210",
-            "heads": ["0215"],
+            "heads": ["0216"],
             "is_ancestor": True,
         },
         {
-            "candidate_head": "0215",
+            "candidate_head": "0216",
             "current_revision": "0210",
-            "heads": ["0215"],
+            "heads": ["0216"],
             "is_ancestor": True,
         },
     ]
@@ -205,7 +366,12 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
         },
         {
             "operation": "up",
-            "services": ["api", "worker-interactive", "worker-background"],
+            "services": [
+                "api",
+                "worker-interactive",
+                "worker-background",
+                "nexus-codex-agent-host",
+            ],
         },
     ]
     assert not any("apps.worker.health" in " ".join(command) for command in state["commands"]), (
@@ -304,18 +470,23 @@ def test_docker_health_timestamp_accepts_rfc3339_numeric_offset() -> None:
     [
         (
             "proc/meminfo",
-            "MemTotal: 2097152 kB\nMemAvailable: 262143 kB\nSwapTotal: 1048576 kB\n",
+            "MemTotal: 4194304 kB\nMemAvailable: 262143 kB\nSwapTotal: 1048576 kB\n",
             "available memory",
         ),
         (
             "proc/meminfo",
-            "MemTotal: 2097152 kB\nMemAvailable: 262144 kB\nSwapTotal: 1048575 kB\n",
+            "MemTotal: 4194304 kB\nMemAvailable: 262144 kB\nSwapTotal: 1048575 kB\n",
             "swap",
         ),
         (
             "proc/meminfo",
-            "MemTotal: 1916927 kB\nMemAvailable: 262144 kB\nSwapTotal: 1048576 kB\n",
-            "host memory reserve",
+            "MemTotal: 1945599 kB\nMemAvailable: 262144 kB\nSwapTotal: 1048576 kB\n",
+            "committed 1900 MiB floor",
+        ),
+        (
+            "proc/sys/kernel/apparmor_restrict_unprivileged_userns",
+            "0\n",
+            "AppArmor unprivileged-user-namespace restriction is not enabled",
         ),
         ("sys/fs/cgroup/cgroup.controllers", "cpu io pids\n", "cgroup v2 memory controller"),
         (
@@ -513,7 +684,7 @@ def test_forward_fix_converges_stopped_writer_limits_without_requesting_live_sta
         else:
             container["image_id"] = state["worker_image_id"]
             container["config"]["Image"] = state["worker_image"]
-    harness.update_state(containers=containers, database_revision="0215")
+    harness.update_state(containers=containers, database_revision="0216")
     successor_sha = harness.install_candidate(_candidate(NEXT_SHA))
 
     completed = harness.run_apply(source_sha=successor_sha)
@@ -554,7 +725,7 @@ def test_host_preflight_blocks_low_parser_temp_disk(
     paths.cgroup_controllers.write_text("cpu io memory pids\n", encoding="ascii")
     paths.meminfo.parent.mkdir(parents=True)
     paths.meminfo.write_text(
-        "MemTotal: 2097152 kB\nMemAvailable: 524288 kB\nSwapTotal: 1048576 kB\n",
+        "MemTotal: 4194304 kB\nMemAvailable: 524288 kB\nSwapTotal: 1048576 kB\n",
         encoding="ascii",
     )
     paths.memory_pressure.parent.mkdir(parents=True)
@@ -793,6 +964,90 @@ def test_host_apply_rejects_a_runtime_identical_but_different_activated_image(
     assert attempt.phase is release.ReleasePhase.ForwardFixRequired
 
 
+@pytest.mark.parametrize(
+    ("drift", "message"),
+    [
+        ("security", "Codex agent host privilege isolation differs"),
+        ("network", "Codex agent host network isolation differs"),
+        ("network_peer", "Codex agent host network peer isolation differs"),
+    ],
+)
+def test_host_apply_rejects_codex_host_outer_sandbox_or_network_drift(
+    host_release_harness: HostReleaseHarness,
+    drift: str,
+    message: str,
+) -> None:
+    release = _release_module()
+    harness = host_release_harness
+    harness.update_state(codex_host_isolation_drift=drift)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert message in failed.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "environment_credential_residue",
+        "mount_wrong_named_volume",
+        "mount_wrong_source",
+        "mount_readonly_docker_socket",
+        "mount_readonly_host_home",
+    ],
+)
+def test_host_apply_rejects_codex_host_environment_and_mount_contract_mutants(
+    host_release_harness: HostReleaseHarness,
+    mutation: str,
+) -> None:
+    """Risk: allow-list gaps expose credentials, Docker, or the host filesystem."""
+
+    release = _release_module()
+    harness = host_release_harness
+    harness.update_state(codex_host_contract_mutation=mutation)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "Codex agent host" in failed.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "network_driver",
+        "network_scope",
+        "network_internal",
+        "network_options",
+        "network_ipam",
+    ],
+)
+def test_host_apply_rejects_codex_egress_bridge_contract_mutants(
+    host_release_harness: HostReleaseHarness,
+    mutation: str,
+) -> None:
+    """Risk: a singleton network is not necessarily the local egress bridge we approved."""
+
+    release = _release_module()
+    harness = host_release_harness
+    harness.update_state(codex_host_contract_mutation=mutation)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "Codex agent host network" in failed.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+
+
 def test_host_apply_exhausts_retry_budget_for_the_same_semantic_operation(
     host_release_harness: HostReleaseHarness,
 ) -> None:
@@ -919,6 +1174,7 @@ def test_host_apply_replays_every_durable_phase_after_process_death(
     persisted = _stored_attempt(release, tmp_path)
     assert persisted is not None
     assert persisted.phase.value == phase
+    harness.update_state(commands=[])
 
     replayed = harness.run_apply(interrupt_phase=phase)
 
@@ -927,10 +1183,12 @@ def test_host_apply_replays_every_durable_phase_after_process_death(
     assert completed is not None
     assert completed.phase is release.ReleasePhase.AwaitingFrontendPromotion
     state = harness.state()
-    assert state["database_revision"] == "0215"
+    assert state["database_revision"] == "0216"
     assert state["migration_count"] == 1
     assert state["jobs"] == {}
     assert not tuple(release.ReleasePaths.under(tmp_path).state_root.rglob("*.partial"))
+    if phase == "AwaitingFrontendPromotion":
+        assert not any(command[:2] == ["image", "inspect"] for command in state["commands"])
 
 
 @pytest.mark.parametrize(
@@ -1099,7 +1357,7 @@ def test_host_apply_recovers_a_completed_migration_side_effect_without_reapplyin
     persisted = _stored_attempt(release, tmp_path)
     assert persisted is not None
     assert persisted.phase is release.ReleasePhase.DataMutationStarted
-    assert harness.state()["database_revision"] == "0215"
+    assert harness.state()["database_revision"] == "0216"
 
     replayed = harness.run_apply(interrupt_after_migration=True)
 
@@ -1187,7 +1445,7 @@ def test_forward_fix_accepts_advanced_schema_and_stopped_writers(
         else:
             container["image_id"] = state["worker_image_id"]
             container["config"]["Image"] = state["worker_image"]
-    harness.update_state(containers=containers, database_revision="0215")
+    harness.update_state(containers=containers, database_revision="0216")
 
     successor_sha = harness.install_candidate(_candidate(NEXT_SHA))
     completed = harness.run_apply(source_sha=successor_sha)

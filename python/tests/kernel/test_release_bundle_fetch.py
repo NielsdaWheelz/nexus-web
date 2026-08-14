@@ -41,6 +41,8 @@ def test_release_bundle_fetch_binds_unique_artifact_owner_and_source_ci(
         "Caddyfile",
         "candidate-manifest.json",
         "docker-compose.yml",
+        "nexus-codex-agent-host.apparmor",
+        "prove-codex-capacity.sh",
         "python/nexus/__init__.py",
         "python/nexus/release_artifact.py",
         "release.py",

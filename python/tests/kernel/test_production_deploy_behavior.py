@@ -75,6 +75,134 @@ def _assert_only_bound_candidate_mutates(state: dict[str, Any]) -> None:
     assert all(BOUND_DEPLOYMENT_ID in arguments for arguments in promotions)
 
 
+def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_isolation() -> None:
+    """Risk: agent credentials or a control endpoint escape the narrow host."""
+
+    compose = (REPO_ROOT / "deploy/hetzner/docker-compose.yml").read_text(encoding="utf-8")
+    cloud_init = (REPO_ROOT / "deploy/hetzner/cloud-init.yml").read_text(encoding="utf-8")
+    apparmor_profile = (REPO_ROOT / "deploy/hetzner/nexus-codex-agent-host.apparmor").read_text(
+        encoding="utf-8"
+    )
+    nightly_apparmor_profile = (
+        REPO_ROOT / "deploy/hetzner/nexus-codex-nightly-bwrap.apparmor"
+    ).read_text(encoding="utf-8")
+    release_workflow = (REPO_ROOT / ".github/workflows/backend-images.yml").read_text(
+        encoding="utf-8"
+    )
+    nightly_workflow = (REPO_ROOT / ".github/workflows/codex-personal-nightly.yml").read_text(
+        encoding="utf-8"
+    )
+    actionlint_config = (REPO_ROOT / ".github/actionlint.yaml").read_text(encoding="utf-8")
+    worker_image = (REPO_ROOT / "docker/Dockerfile.backend").read_text(encoding="utf-8")
+    controller = (REPO_ROOT / "deploy/hetzner/release.py").read_text(encoding="utf-8")
+    start = compose.index("  nexus-codex-agent-host:\n")
+    end = compose.index("  migration:\n", start)
+    host = compose[start:end]
+    background_start = compose.index("  worker-background:\n")
+    background_end = compose.index("\n  nexus-codex-agent-host:\n", background_start)
+    background = compose[background_start:background_end]
+
+    assert "image: ${WORKER_IMAGE:?set an immutable candidate digest}" in host
+    assert 'command: ["python", "-m", "apps.codex_agent.main"]' in host
+    assert "env_file:" not in host
+    assert "ports:" not in host
+    assert "expose:" not in host
+    assert "DATABASE_URL" not in host
+    assert "OPENAI_API_KEY" not in host
+    assert "NEXUS_CODEX_STATE_ROOT_BASE: /var/lib/nexus-codex" in host
+    assert "NEXUS_CODEX_WORKING_DIRECTORY: /var/empty/nexus-codex" in host
+    assert "NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock" in host
+    assert "read_only: true" in host
+    assert "mem_reservation: 128m" in host
+    assert "mem_limit: 384m" in host
+    assert "memswap_limit: 384m" in host
+    assert "cpus: 1.0" in host
+    assert "cap_drop:" in host and "- ALL" in host
+    assert "no-new-privileges:true" in host
+    assert "seccomp=unconfined" in host
+    assert "apparmor=nexus-codex-agent-host" in host
+    assert "systempaths=unconfined" in host
+    assert "networks:\n      - codex_egress" in host
+    assert "nexus_codex_state:/var/lib/nexus-codex" in host
+    assert "nexus_codex_run:/run/nexus-codex" in host
+    assert "nexus_codex_run:/run/nexus-codex:ro" in background
+    assert "NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock" in background
+    assert "nexus-codex-agent-host:" not in background
+    assert "python -m apps.codex_agent.health" in host
+    assert "apps.codex_agent.sandbox_health" not in host
+    assert '"nexus-codex-agent-host"' in controller
+    assert '"apps.codex_agent.sandbox_health"' in controller
+    assert '"apps.codex_agent.health"' in controller
+    assert 'host_config.get("NanoCpus") != 1_000_000_000' in controller
+    assert '"seccomp=unconfined"' in controller
+    assert '"apparmor=nexus-codex-agent-host"' in controller
+    assert 'host_config.get("MaskedPaths") != []' in controller
+    assert 'host_config.get("ReadonlyPaths") != []' in controller
+    assert 'set(networks) != {"nexus_codex_egress"}' in controller
+    assert "_prepare_codex_agent_host_state" not in controller
+    assert '"install -d -o 10001 -g 10001 -m 0700 /var/lib/nexus-codex"' not in controller
+    sync_env = (REPO_ROOT / "deploy/hetzner/sync-env.sh").read_text(encoding="utf-8")
+    assert "reject_codex_host_runtime_keys" in sync_env
+    assert (
+        "CODEX_HOME NEXUS_CODEX_STATE_ROOT_BASE NEXUS_CODEX_WORKING_DIRECTORY NEXUS_CODEX_AGENT_SOCKET"
+        in sync_env
+    )
+    assert "  codex_egress:\n    driver: bridge" in compose
+    assert "  - apparmor" in cloud_init
+    assert "kernel.apparmor_restrict_unprivileged_userns=1" in cloud_init
+    assert "apparmor_restrict_unprivileged_userns=0" not in cloud_init
+    assert "profile nexus-codex-agent-host flags=(unconfined)" in apparmor_profile
+    assert "userns," in apparmor_profile
+    assert "include if exists <local/" not in apparmor_profile
+    assert (
+        "profile nexus-codex-nightly-bwrap /usr/bin/bwrap flags=(unconfined)"
+        in nightly_apparmor_profile
+    )
+    assert "userns," in nightly_apparmor_profile
+    assert "nexus-codex-agent-host.apparmor" in release_workflow
+    assert "runs-on: [self-hosted, linux, nexus-codex-nightly]" in nightly_workflow
+    assert "- nexus-codex-nightly" in actionlint_config
+    assert "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor" in nightly_workflow
+    assert "/etc/apparmor.d/nexus-codex-nightly-bwrap" in nightly_workflow
+    assert "chmod u+s /usr/bin/bwrap" not in worker_image
+
+
+def test_existing_vps_capacity_qualification_is_immutable_and_exact_candidate_bound() -> None:
+    """Risk: first 0216 promotion runs without exact, immutable measured-host evidence."""
+
+    controller = (REPO_ROOT / "deploy/hetzner/release.py").read_text(encoding="utf-8")
+    capacity_probe = (REPO_ROOT / "deploy/hetzner/prove-codex-capacity.sh").read_text(
+        encoding="utf-8"
+    )
+    bundle_fetch = (REPO_ROOT / "deploy/hetzner/fetch-release-bundle.sh").read_text(
+        encoding="utf-8"
+    )
+    release_workflow = (REPO_ROOT / ".github/workflows/backend-images.yml").read_text(
+        encoding="utf-8"
+    )
+    capacity_canary = (REPO_ROOT / "apps/codex_agent/capacity_canary.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "_MIN_HOST_MEMORY_BYTES = 1900 * 1024 * 1024" in controller
+    assert "sum(_RESOURCE_LIMITS[service][0]forservicein_CAPACITY_SERVICES)" in "".join(
+        controller.split()
+    )
+    assert "Codex capacity qualification" in controller
+    assert "codex-capacity" in controller
+    assert "chmod(0o444)" in controller
+    assert "qualify-codex-capacity" in capacity_probe
+    assert " apply " not in capacity_probe
+    assert "install-bundle" in capacity_probe
+    assert '"apps.codex_agent.capacity_canary"' in controller
+    assert '("cold", UUID(' in capacity_canary
+    assert '("warm_1", UUID(' in capacity_canary
+    assert '("warm_2", UUID(' in capacity_canary
+    assert "client.observe_turn(command)" in capacity_canary
+    assert "prove-codex-capacity.sh" in release_workflow
+    assert "prove-codex-capacity.sh" in bundle_fetch
+
+
 def test_deploy_uses_existing_current_record_and_artifact_owner_publisher(
     tmp_path: Path,
 ) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from uuid import UUID
 
@@ -133,6 +134,82 @@ def make_failed_job_retryable(db: Session, *, job_id: UUID) -> None:
         {"job_id": job_id},
     ).scalar_one()
     db.execute(text("SELECT pg_notify('nexus_background_jobs', :kind)"), {"kind": updated})
+
+
+def lose_metadata_queue_completion_after_published_checkpoint(
+    db: Session,
+    *,
+    job_id: UUID,
+) -> None:
+    """Model a crash that lost queue success after exact metadata publication."""
+    before = (
+        db.execute(
+            text(
+                """
+                SELECT id, kind, status, attempts, claimed_by, lease_expires_at,
+                       result, payload
+                FROM background_jobs
+                WHERE id = :job_id
+                FOR UPDATE
+                """
+            ),
+            {"job_id": job_id},
+        )
+        .mappings()
+        .one()
+    )
+    assert before["id"] == job_id
+    assert before["kind"] == "enrich_metadata"
+    assert before["status"] == "succeeded"
+    assert before["attempts"] == 1
+    assert before["claimed_by"] is None
+    assert before["lease_expires_at"] is None
+    assert isinstance(before["result"], dict) and before["result"].get("status") == "success"
+    coordination = before["payload"].get("coordination")
+    assert isinstance(coordination, dict)
+    step = coordination.get("codex/metadata")
+    assert isinstance(step, dict) and step.get("dispatch_phase") == "Completed"
+    terminal_result = step.get("terminal_result")
+    assert isinstance(terminal_result, dict) and terminal_result.get("kind") == "Present"
+    decoded_terminal = json.loads(str(terminal_result.get("value")))
+    publication_result = decoded_terminal.get("publication_result")
+    assert isinstance(publication_result, dict)
+    assert {key: value for key, value in publication_result.items() if value is not None} == before[
+        "result"
+    ]
+
+    after = (
+        db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET status = 'failed',
+                    result = NULL,
+                    finished_at = NULL,
+                    available_at = now(),
+                    updated_at = now()
+                WHERE id = :job_id
+                  AND kind = 'enrich_metadata'
+                  AND status = 'succeeded'
+                  AND attempts = 1
+                  AND claimed_by IS NULL
+                  AND lease_expires_at IS NULL
+                RETURNING id, kind, status, attempts, claimed_by,
+                          lease_expires_at, result, finished_at, payload
+                """
+            ),
+            {"job_id": job_id},
+        )
+        .mappings()
+        .one()
+    )
+    assert after["id"] == before["id"] == job_id
+    assert after["kind"] == before["kind"] == "enrich_metadata"
+    assert after["status"] == "failed"
+    assert after["attempts"] == before["attempts"] == 1
+    assert after["claimed_by"] is None and after["lease_expires_at"] is None
+    assert after["result"] is None and after["finished_at"] is None
+    assert after["payload"] == before["payload"]
 
 
 def supersede_content_index_revision(

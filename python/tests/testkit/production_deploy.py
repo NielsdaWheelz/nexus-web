@@ -143,6 +143,8 @@ def _fake_gh(state: dict[str, Any], arguments: list[str]) -> None:
         for relative in (
             "deploy/hetzner/Caddyfile",
             "deploy/hetzner/docker-compose.yml",
+            "deploy/hetzner/nexus-codex-agent-host.apparmor",
+            "deploy/hetzner/prove-codex-capacity.sh",
             "deploy/hetzner/release.py",
             "python/nexus/__init__.py",
             "python/nexus/release_artifact.py",
@@ -154,6 +156,8 @@ def _fake_gh(state: dict[str, Any], arguments: list[str]) -> None:
                 target = destination / "python/nexus/release_artifact.py"
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(repo_root / relative, target)
+            if relative == "deploy/hetzner/prove-codex-capacity.sh":
+                target.chmod(0o444)
         (destination / "candidate-manifest.json").write_text(
             _canonical_json(_candidate(state)),
             encoding="utf-8",

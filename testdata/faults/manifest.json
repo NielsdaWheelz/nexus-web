@@ -183,6 +183,80 @@
       "expected_failure": "the Uncertain checkpoint was not durably committed before dispatch"
     },
     {
+      "id": "durable-codex-metadata-uncertain-checkpoint-bypass",
+      "patch": "testdata/faults/durable-codex-metadata-uncertain-checkpoint-bypass.patch",
+      "sha256": "16387f393484a2e919ccbd802264483247cf51c19b664bd3bbf1510e2b9d38de",
+      "proofs": [
+        "pytest:python/tests/service/test_codex_metadata_enrichment.py",
+        "pytest:python/tests/service/test_codex_metadata_enrichment.py::test_real_worker_publishes_authors_pins_and_exactly_replays_after_publication"
+      ],
+      "expected_failure": "the Uncertain checkpoint was not durably committed before native dispatch"
+    },
+    {
+      "id": "durable-codex-metadata-postaccept-loss-misclassification",
+      "patch": "testdata/faults/durable-codex-metadata-postaccept-loss-misclassification.patch",
+      "sha256": "5445d2891a6654748b3ae14b88df3d692ee00bd853021586bbc28d40cf6e526f",
+      "proofs": [
+        "pytest:python/tests/service/test_codex_metadata_transport_durability.py::test_postaccept_disconnect_stays_incomplete_and_never_redispatches"
+      ],
+      "expected_failure": "last row: ('succeeded', 1"
+    },
+    {
+      "id": "durable-codex-metadata-quality-bound-bypass",
+      "patch": "testdata/faults/durable-codex-metadata-quality-bound-bypass.patch",
+      "sha256": "ecc2a656f33f18b6170adf29d604772542c67e87298306503320d7777902e70a",
+      "proofs": [
+        "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets"
+      ],
+      "expected_failure": "metadata output schema lost reviewed constraints for title"
+    },
+    {
+      "id": "durable-codex-metadata-timeout-collapse",
+      "patch": "testdata/faults/durable-codex-metadata-timeout-collapse.patch",
+      "sha256": "ad8b9304ed85823fe2667bfe980ba122f29634dc8299eb00fdeb944b47fe5c75",
+      "proofs": [
+        "pytest:python/tests/service/test_codex_metadata_failure_mapping.py::test_native_timeout_persists_as_a_distinct_metadata_failure"
+      ],
+      "expected_failure": "native turn_timeout must persist as E_METADATA_AGENT_TIMEOUT"
+    },
+    {
+      "id": "durable-codex-host-capacity-admission-bypass",
+      "patch": "testdata/faults/durable-codex-host-capacity-admission-bypass.patch",
+      "sha256": "8baf068d649aa642c638e599ced2d4fb6aa5eaae6a75c0cf08aac8a7b03a9735",
+      "proofs": [
+        "pytest:python/tests/service/test_codex_agent_host.py",
+        "pytest:python/tests/service/test_codex_agent_host.py::test_host_refuses_non_admissible_capacity_before_runtime_construction"
+      ],
+      "expected_failure": "At index 0 diff: 200 != 503"
+    },
+    {
+      "id": "durable-codex-diagnostic-retention-bypass",
+      "patch": "testdata/faults/durable-codex-diagnostic-retention-bypass.patch",
+      "sha256": "0cd4b23a891db277fa9ce536c2713876f081f3c91e2b3794a616ac9630fcb4c9",
+      "proofs": [
+        "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence"
+      ],
+      "expected_failure": "provider diagnostic content crossed a retention boundary"
+    },
+    {
+      "id": "durable-codex-canary-output-validation-bypass",
+      "patch": "testdata/faults/durable-codex-canary-output-validation-bypass.patch",
+      "sha256": "228604b6329838793286cf43d5da2838961a0ca34695f45e017c7a62f6b568b5",
+      "proofs": [
+        "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object"
+      ],
+      "expected_failure": "invalid structured output authorized capacity qualification"
+    },
+    {
+      "id": "durable-codex-operation-revision-shadow",
+      "patch": "testdata/faults/durable-codex-operation-revision-shadow.patch",
+      "sha256": "9ce8521da17d1b66690bcd37234b6ac1d656d3799c72a53a148aeefd16955600",
+      "proofs": [
+        "pytest:python/tests/kernel/test_native_agent_operation_facts.py"
+      ],
+      "expected_failure": "metadata operation revision has a duplicate owner"
+    },
+    {
       "id": "web-search-provider-identity-bypass",
       "patch": "testdata/faults/web-search-provider-identity-bypass.patch",
       "sha256": "34daeb879b4c303f4969b25a93dc4b1eee498b2374dfb09003a9bbb4bdb19cdd",
@@ -253,6 +327,15 @@
         "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization"
       ],
       "expected_failure": "llm-tools materialization followed developer HEAD instead of the lock pin"
+    },
+    {
+      "id": "llm-tools-legacy-browse-owner-bypass",
+      "patch": "testdata/faults/llm-tools-legacy-browse-owner-bypass.patch",
+      "sha256": "84aa0fc3f93adf87b0584b2e02798be23fd8af63840472fca8f65dca01bbca91",
+      "proofs": [
+        "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool"
+      ],
+      "expected_failure": "Nexus Browse still imports web_search_tool"
     },
     {
       "id": "deepseek-flash-reasoning-alias-bypass",

@@ -94,6 +94,7 @@
         "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head",
         "pytest:python/tests/migrations/test_epub_navigation_offsets_migration.py::test_0208_backfills_exact_offsets_and_0209_rejects_unrepaired_projection",
         "pytest:python/tests/migrations/test_llm_provider_runtime_migration.py",
+        "pytest:python/tests/migrations/test_codex_personal_metadata.py::test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle",
         "pytest:python/tests/kernel/test_epub_navigation_offsets_cutover.py::test_cutover_state_model_admits_only_resumable_media_and_owned_dead_work"
       ],
       "capabilities": [
@@ -196,23 +197,60 @@
     },
     {
       "id": "durable-job-replay",
-      "source_globs": [
-        "python/nexus/jobs/**/*.py",
-        "python/nexus/services/chat_run*.py",
+    "source_globs": [
+      "python/nexus/jobs/**/*.py",
+      "python/nexus/errors.py",
+      "python/nexus/services/chat_run*.py",
         "python/nexus/services/content_indexing.py",
         "python/nexus/services/durable_step_journal.py",
+        "python/nexus/services/agent_turn_ledger.py",
+        "python/nexus/services/metadata_dispatch.py",
+        "python/nexus/services/metadata_enrichment.py",
+        "python/nexus/services/metadata_lifecycle.py",
+        "python/nexus/services/metadata_*.py",
+        "python/nexus/services/native_agent_client.py",
+        "python/nexus/services/podcasts/ingest.py",
         "python/nexus/services/semantic_chunks.py",
         "python/nexus/tasks/chat_run.py",
+        "python/nexus/tasks/enrich_metadata.py",
         "python/tests/testkit/network.py",
         "python/tests/testkit/openai_embedding_server.py",
         "python/tests/testkit/sitecustomize.py",
         "python/tests/testkit/worker.py"
       ],
+    "proofs": [
+      "pytest:python/tests/service/test_codex_metadata_failure_mapping.py::test_native_timeout_persists_as_a_distinct_metadata_failure",
+      "pytest:python/tests/service/test_codex_metadata_enrichment.py",
+      "pytest:python/tests/service/test_codex_metadata_transport_durability.py::test_postaccept_disconnect_stays_incomplete_and_never_redispatches",
+      "pytest:python/tests/service/test_durable_job_replay.py",
+      "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job",
+      "pytest:python/tests/service/test_heavy_job_capacity.py",
+      "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets"
+      ],
+    "capabilities": [
+      "service"
+    ]
+    },
+    {
+      "id": "native-agent-host",
+      "source_globs": [
+        "apps/codex_agent/**/*.py",
+        "python/pyproject.toml",
+        "python/nexus/services/native_agent_contract.py",
+        "python/nexus/services/native_agent_client.py",
+        "python/nexus/services/native_agent_operations.py",
+        "python/uv.lock"
+      ],
       "proofs": [
-        "pytest:python/tests/service/test_durable_job_replay.py",
-        "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job"
+      "pytest:python/tests/kernel/test_native_agent_contract.py",
+      "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
+      "pytest:python/tests/service/test_codex_agent_host.py",
+      "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
+      "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py"
       ],
       "capabilities": [
+        "codex-hosted",
+        "kernel-python",
         "service"
       ]
     },
@@ -235,7 +273,10 @@
       "source_globs": [
         "python/nexus/services/agent_tools/**/*.py",
         "python/nexus/services/chat_prompt.py",
-        "python/nexus/services/chat_run_tools.py"
+        "python/nexus/services/chat_run_tools.py",
+        "python/pyproject.toml",
+        "python/tests/evals/cases/tool_safety.v3.json",
+        "python/uv.lock"
       ],
       "proofs": [
         "pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo",
@@ -264,13 +305,16 @@
         "deploy/hetzner/docker-compose.yml",
         "deploy/hetzner/fetch-release-bundle.sh",
         "deploy/hetzner/provision.sh",
+        "deploy/hetzner/prove-codex-capacity.sh",
         "deploy/hetzner/release.py",
         "deploy/hetzner/sync-env.sh",
         "deploy/smoke/auth-smoke.sh",
         "deploy/vercel/firewall/resource-sharing.json",
         "deploy/vercel/sync-env.sh",
         "deploy/vercel/sync-resource-sharing-firewall.sh",
+        "python/pyproject.toml",
         "python/nexus/release_artifact.py",
+        "python/uv.lock",
         "python/tests/testkit/host_release.py",
         "python/tests/testkit/production_deploy.py",
         "python/tests/testkit/release_bundle.py"

@@ -402,12 +402,12 @@ class Settings(BaseSettings):
     )
 
     # Metadata enrichment settings
-    metadata_enrichment_enabled: bool = Field(default=True, alias="METADATA_ENRICHMENT_ENABLED")
     metadata_enrichment_max_content_chars: int = Field(
         default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"
     )
-    metadata_enrichment_max_output_tokens: int = Field(
-        default=1200, alias="METADATA_ENRICHMENT_MAX_OUTPUT_TOKENS"
+    codex_agent_socket: Path = Field(
+        default=Path("/run/nexus-codex/agent.sock"),
+        alias="NEXUS_CODEX_AGENT_SOCKET",
     )
 
     # Synapse resonance engine: SYNAPSE_ENABLED=false turns every scan trigger
@@ -748,6 +748,11 @@ class Settings(BaseSettings):
             raise ValueError("INGEST_SEMANTIC_REPAIR_BATCH_LIMIT must be >= 1.")
         if self.ingest_semantic_failed_retry_seconds < 1:
             raise ValueError("INGEST_SEMANTIC_FAILED_RETRY_SECONDS must be >= 1.")
+        if (
+            not self.codex_agent_socket.is_absolute()
+            or Path(os.path.normpath(str(self.codex_agent_socket))) != self.codex_agent_socket
+        ):
+            raise ValueError("NEXUS_CODEX_AGENT_SOCKET must be a normalized absolute path.")
         if not self.parser_temp_root.is_absolute():
             raise ValueError("PARSER_TEMP_ROOT must be an absolute path.")
         if self.worker_lane == "maintenance":

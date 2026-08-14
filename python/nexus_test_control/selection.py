@@ -171,6 +171,7 @@ def proof_target(repo_root: Path, proof: str) -> SelectionTarget:
         Capability.COMPONENT: "vitest",
         Capability.EXTENSION: "playwright",
         Capability.HOSTED: "pytest",
+        Capability.CODEX_HOSTED: "pytest",
         Capability.JOURNEYS_ALL: "playwright",
         Capability.KERNEL_PYTHON: "pytest",
         Capability.KERNEL_WEB: "vitest",
@@ -488,6 +489,10 @@ def _direct_test_target(path: str) -> SelectionTarget | None:
         ("python/tests/contract/", Capability.PROVIDER_RUNTIME),
         ("python/tests/llm_tools_contract/", Capability.LLM_TOOLS),
         ("python/tests/hosted/release/", Capability.PROVIDER_CERTIFICATION),
+        (
+            "python/tests/hosted/nightly/test_codex_personal_metadata.py",
+            Capability.CODEX_HOSTED,
+        ),
         ("python/tests/hosted/nightly/", Capability.HOSTED),
     )
     for prefix, capability in python_direct:

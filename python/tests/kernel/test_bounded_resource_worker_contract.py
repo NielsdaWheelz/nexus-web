@@ -42,7 +42,11 @@ def test_worker_topology_and_task_digest_cover_resource_class(
             definition.kind
             for definition in registry.values()
             if definition.resource_class == "Heavy"
-        } == {"ingest_media_source", "media_content_reindex_job"}
+        } == {
+            "enrich_metadata",
+            "ingest_media_source",
+            "media_content_reindex_job",
+        }
 
         payload = [
             {

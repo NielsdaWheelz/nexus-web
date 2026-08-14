@@ -1,0 +1,10 @@
+diff --git a/apps/codex_agent/capacity_canary.py b/apps/codex_agent/capacity_canary.py
+--- a/apps/codex_agent/capacity_canary.py
++++ b/apps/codex_agent/capacity_canary.py
+@@ -57,5 +57,5 @@ async def check(socket_path: Path) -> tuple[dict[str, object], int]:
+         terminal = observation.terminal
+         failure_kind = terminal.failure.kind if terminal.failure is not None else None
+-        structured_output_valid = False
++        structured_output_valid = True
+         if terminal.status == "succeeded":
+             try:
