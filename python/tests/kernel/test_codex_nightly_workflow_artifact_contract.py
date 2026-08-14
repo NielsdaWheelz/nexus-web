@@ -290,4 +290,4 @@ def _assert_artifact_delivery_contract(stage: dict[str, object], upload: dict[st
 
 def _require(condition: bool, message: str) -> None:
     if not condition:
-        pytest.fail(message, pytrace=False)
+        raise AssertionError(message)
