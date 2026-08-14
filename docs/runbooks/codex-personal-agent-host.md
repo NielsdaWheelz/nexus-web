@@ -192,6 +192,123 @@ Make this installation part of the runner's persistent host provisioning so it
 survives reboot. Do not substitute `--sandbox danger-full-access`, a setuid
 bwrap binary, or a global sysctl relaxation.
 
+## Dispatch and verify a hosted canary
+
+Dispatch only after confirming no previous canary run is queued or active. The
+workflow uploads one run-bound, bounded evidence artifact; it never uploads
+prompt text, structured output, terminal diagnostics, raw events, tool payloads,
+or credentials. Do not use `gh run view --log` to recover those facts.
+
+```sh
+set -euo pipefail
+readonly REPOSITORY='NielsdaWheelz/nexus-web'
+readonly WORKFLOW='Codex Personal Metadata Nightly'
+readonly REF='main'
+readonly HEAD_SHA="$(gh api "repos/$REPOSITORY/commits/$REF" --jq .sha)"
+test "$(gh run list --repo "$REPOSITORY" --workflow "$WORKFLOW" --limit 20 \
+  --json status --jq '[.[] | select(.status != "completed")] | length')" = 0
+readonly PREVIOUS_RUN_IDS="$(gh run list --repo "$REPOSITORY" --workflow "$WORKFLOW" \
+  --event workflow_dispatch --limit 100 --json databaseId --jq '[.[].databaseId]')"
+
+gh workflow run "$WORKFLOW" --repo "$REPOSITORY" --ref "$REF"
+RUN_ID=''
+for _ in $(seq 1 30); do
+  mapfile -t NEW_RUN_IDS < <(
+    gh run list --repo "$REPOSITORY" --workflow "$WORKFLOW" --branch "$REF" \
+      --event workflow_dispatch --limit 100 --json databaseId,event,headSha \
+      | jq -r --argjson previous "$PREVIOUS_RUN_IDS" --arg head_sha "$HEAD_SHA" '
+          .[]
+          | select(.event == "workflow_dispatch" and .headSha == $head_sha)
+          | .databaseId as $id
+          | select(($previous | index($id)) | not)
+          | $id
+        '
+  )
+  test "${#NEW_RUN_IDS[@]}" -le 1
+  if [ "${#NEW_RUN_IDS[@]}" = 1 ]; then
+    RUN_ID="${NEW_RUN_IDS[0]}"
+    break
+  fi
+  sleep 2
+done
+test -n "$RUN_ID"
+readonly RUN_ID
+readonly RUN_JSON="$(gh run view "$RUN_ID" --repo "$REPOSITORY" \
+  --json databaseId,event,headSha)"
+test "$(printf '%s' "$RUN_JSON" | jq -er .databaseId)" = "$RUN_ID"
+test "$(printf '%s' "$RUN_JSON" | jq -er .event)" = workflow_dispatch
+test "$(printf '%s' "$RUN_JSON" | jq -er .headSha)" = "$HEAD_SHA"
+
+set +e
+gh run watch "$RUN_ID" --repo "$REPOSITORY" --exit-status
+readonly WATCH_STATUS=$?
+set -e
+readonly ARTIFACT_DIRECTORY="$(mktemp -d)"
+trap 'rm -rf -- "$ARTIFACT_DIRECTORY"' EXIT
+gh run download "$RUN_ID" --repo "$REPOSITORY" \
+  --name "nexus-codex-nightly-$RUN_ID" --dir "$ARTIFACT_DIRECTORY"
+mapfile -t ARTIFACTS < <(find "$ARTIFACT_DIRECTORY" -type f -printf '%P\n' | LC_ALL=C sort)
+test "${#ARTIFACTS[@]}" = 1
+test "${ARTIFACTS[0]}" = "nexus-codex-nightly-$RUN_ID.json"
+readonly ARTIFACT="$ARTIFACT_DIRECTORY/${ARTIFACTS[0]}"
+test "$(wc -c < "$ARTIFACT")" -le 16384
+
+if [ "$WATCH_STATUS" = 0 ]; then
+  jq -e '
+    def json_safe_nonnegative_integer:
+      type == "number" and . == floor and . >= 0 and . <= 9007199254740991;
+    (keys | sort) == ["results", "run_id", "schema_version", "subscription_turns"] and
+    .schema_version == "nexus-hosted-codex-canary.v1" and
+    (.run_id | type == "string" and test("^[0-9a-f]{16}$")) and
+    (.subscription_turns | json_safe_nonnegative_integer) and
+    .subscription_turns == 1 and
+    (.results | type == "array" and length == 1) and
+    (.results[0] | keys | sort) == [
+      "auth_profile", "backend", "model", "permission_requests", "reasoning",
+      "runtime_version", "sdk_version", "session_ref_schema_version",
+      "structured_output_valid", "tool_events", "transport", "usage"
+    ] and
+    .results[0].backend == "codex" and
+    .results[0].transport == "sdk" and
+    .results[0].auth_profile == "codex-personal" and
+    .results[0].model == "gpt-5.6-luna" and
+    .results[0].reasoning == "low" and
+    .results[0].structured_output_valid == true and
+    .results[0].session_ref_schema_version == "agent-session-ref.v1" and
+    (.results[0].sdk_version | type == "string" and test("^[0-9][A-Za-z0-9.+-]{0,63}$")) and
+    (.results[0].runtime_version | type == "string" and test("^[0-9][A-Za-z0-9.+-]{0,63}$")) and
+    (.results[0].tool_events | json_safe_nonnegative_integer) and
+    .results[0].tool_events == 0 and
+    (.results[0].permission_requests | json_safe_nonnegative_integer) and
+    .results[0].permission_requests == 0 and
+    (.results[0].usage | type == "object") and
+    (.results[0].usage | keys | sort) == ["input_tokens", "output_tokens", "total_tokens"] and
+    (.results[0].usage.input_tokens | json_safe_nonnegative_integer) and
+    (.results[0].usage.output_tokens | json_safe_nonnegative_integer) and
+    (.results[0].usage.total_tokens | json_safe_nonnegative_integer)
+  ' "$ARTIFACT" >/dev/null
+  printf '%s\n' "verified bounded Codex canary artifact for GitHub run $RUN_ID"
+else
+  jq -e --argjson run_id "$RUN_ID" '
+    (keys | sort) == ["github_run_id", "schema_version", "status"] and
+    .schema_version == "nexus-hosted-codex-canary-failure.v1" and
+    .github_run_id == $run_id and
+    .status == "failed"
+  ' "$ARTIFACT" >/dev/null
+  printf '%s\n' "verified closed Codex canary failure marker for GitHub run $RUN_ID"
+  exit "$WATCH_STATUS"
+fi
+```
+
+The artifact inventory is exactly one fixed-name JSON bound to `RUN_ID`. A
+successful artifact's `run_id` is the controller's opaque 16-hex identity; a
+failed run has only the fixed GitHub-run-bound marker. If watch or schema
+verification fails, treat the canary as failed and repair the runner or
+workflow. The staging command and controller reject duplicate JSON keys before
+the staged byte copy; `jq` cannot make that duplicate-key decision. Do not
+print, edit, or re-upload the artifact. The provider-reported `total_tokens` is
+authoritative; do not infer it from the input and output counters.
+
 ## Re-enrollment
 
 When Codex authentication expires or is revoked, stop only

@@ -29,6 +29,7 @@ import psycopg
 from botocore.exceptions import BotoCoreError
 from sqlalchemy.exc import SQLAlchemyError
 
+from nexus.ops.codex_hosted_evidence import codex_hosted_evidence_is_valid
 from nexus_test_control import android_visual
 from nexus_test_control.build import StandaloneBuild, ensure_standalone_build
 from nexus_test_control.evidence import (
@@ -2774,6 +2775,7 @@ def _run_owned_commands(
     required_tools: tuple[str, ...],
     *,
     context: CapabilityContext | None,
+    content_free_failure_detail: str | None = None,
 ) -> CapabilityResult:
     if child_environment.get("NEXUS_ENV") != "test":
         raise ValueError("owned test command requires NEXUS_ENV=test")
@@ -2814,6 +2816,14 @@ def _run_owned_commands(
         if completed.returncode != 0:
             duration_ms = (time.monotonic_ns() - started) // 1_000_000
             interrupted_by = _command_interruption_signal(completed.returncode)
+            status = RunStatus.NOT_RUN if interrupted_by is not None else RunStatus.FAIL
+            if content_free_failure_detail is not None:
+                return _result(
+                    capability,
+                    status,
+                    duration_ms,
+                    content_free_failure_detail,
+                )
             detail = redact_text(
                 _command_result_detail(index, completed, interrupted_by),
                 environment_secrets(child_environment),
@@ -2827,7 +2837,7 @@ def _run_owned_commands(
             )
             return _result(
                 capability,
-                RunStatus.NOT_RUN if interrupted_by is not None else RunStatus.FAIL,
+                status,
                 duration_ms,
                 detail,
                 artifacts=artifacts,
@@ -2964,11 +2974,11 @@ def _run_hosted(
     if exact:
         if not nodes or promoted:
             raise ValueError("exact hosted proof must name one pytest node")
-        selected = tuple(_python_heavy_node(node, "tests/hosted/nightly") for node in nodes)
+        selected = tuple("./" + _python_heavy_node(node, "tests/hosted/nightly") for node in nodes)
     elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
         selected = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in available)
     elif nodes:
-        selected = tuple(_python_heavy_node(node, "tests/hosted/nightly") for node in nodes)
+        selected = tuple("./" + _python_heavy_node(node, "tests/hosted/nightly") for node in nodes)
     else:
         return _pass(capability, "no selected hosted canary")
 
@@ -3007,10 +3017,13 @@ def _run_hosted(
             plan.environment,
             ("uv",),
             context=context,
+            content_free_failure_detail=(
+                "Codex hosted canary command failed; child output was discarded"
+            ),
         )
         if result.evidence.status is not RunStatus.PASS:
             return result
-        if not _parse_codex_hosted_canary_evidence(evidence_path, run_id=execution.run_id):
+        if not codex_hosted_evidence_is_valid(evidence_path, run_id=execution.run_id):
             return _fail(
                 capability, "Codex hosted canary changed its declared subscription contract"
             )
@@ -3128,8 +3141,10 @@ def build_codex_hosted_canary_plan(
     if re.fullmatch(r"[0-9a-f]{16}", run_id) is None:
         raise ValueError("Codex hosted canary run identity is invalid")
     expected = "./tests/hosted/nightly/test_codex_personal_metadata.py"
-    normalized_target = _python_heavy_node(target, "tests/hosted/nightly")
-    if not normalized_target.startswith("./"):
+    if target.startswith("./"):
+        normalized_target = target
+    else:
+        normalized_target = _python_heavy_node(target, "tests/hosted/nightly")
         normalized_target = "./" + normalized_target
     if normalized_target.split("::", 1)[0] != expected:
         raise ValueError("Codex hosted canary requires its exact proof node")
@@ -3192,45 +3207,6 @@ def _hosted_codex_directory(
     if require_empty and any(path.iterdir()):
         raise ValueError(f"Codex hosted canary {name} must be empty")
     return path
-
-
-def _parse_codex_hosted_canary_evidence(evidence_path: Path, *, run_id: str) -> bool:
-    try:
-        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-        results = evidence["results"]
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
-        return False
-    if (
-        evidence.get("schema_version") != "nexus-hosted-codex-canary.v1"
-        or evidence.get("run_id") != run_id
-        or evidence.get("subscription_turns") != 1
-        or not isinstance(results, list)
-        or len(results) != 1
-        or not isinstance(results[0], dict)
-    ):
-        return False
-    result = results[0]
-    usage = result.get("usage")
-    return (
-        result.get("backend") == "codex"
-        and result.get("transport") == "sdk"
-        and result.get("auth_profile") == "codex-personal"
-        and result.get("model") == "gpt-5.6-luna"
-        and result.get("reasoning") == "low"
-        and result.get("structured_output_valid") is True
-        and result.get("session_ref_schema_version") == "agent-session-ref.v1"
-        and result.get("tool_events") == 0
-        and result.get("permission_requests") == 0
-        and isinstance(result.get("sdk_version"), str)
-        and bool(result["sdk_version"])
-        and isinstance(result.get("runtime_version"), str)
-        and bool(result["runtime_version"])
-        and isinstance(usage, dict)
-        and all(
-            type(usage.get(key)) is int and usage[key] >= 0
-            for key in ("input_tokens", "output_tokens", "total_tokens")
-        )
-    )
 
 
 def _parse_hosted_canary_evidence(evidence_path: Path) -> tuple[int, float] | None:
