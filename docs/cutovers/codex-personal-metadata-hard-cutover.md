@@ -200,6 +200,11 @@ The v1 operation catalog contains exactly one entry:
 | queue resource class | `Heavy` |
 | host memory | 128 MiB reservation; 384 MiB memory hard limit; cgroup swap disabled |
 
+`PermissionPolicy.allowed_tools=("*",)` remains the SDK's outer policy sentinel;
+it does not grant a Codex tool. `CodexNativeOptions(builtin_tools="disabled")`
+is the native capability boundary, and any residual tool or permission event
+still fails closed.
+
 Confinement comes from disabled built-in tools, the empty container, read-only
 filesystem, disabled tool network, denied approvals, absent mounts, and absent
 credentials. Any residual `AgentToolUse` or `AgentPermissionRequest` event is a

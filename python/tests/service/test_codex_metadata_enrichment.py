@@ -1180,24 +1180,24 @@ def test_quota_is_a_known_soft_terminal_and_manual_retry_is_allowed(engine: Engi
             "credential_unavailable",
         ),
         (
-            "host_loss",
+            "host_unavailable",
             ApiErrorCode.E_METADATA_AGENT_HOST_UNAVAILABLE,
             "failed",
             "host_unavailable",
         ),
     ],
-    ids=("schema", "timeout", "cancel", "auth", "host-loss"),
+    ids=("schema", "timeout", "cancel", "auth", "host-unavailable"),
 )
 def test_known_terminal_failures_are_distinct_and_never_retry(
     engine: Engine,
-    mode: _HostMode | Literal["host_loss"],
+    mode: _HostMode | Literal["host_unavailable"],
     expected_code: ApiErrorCode,
     expected_outcome: str,
     expected_audit_error: str | None,
 ) -> None:
     run = controller_run()
     seeded = _seed_media_job(engine)
-    if mode == "host_loss":
+    if mode == "host_unavailable":
         token = uuid4().hex
         socket_path = _short_socket_path(prefix="ncm-missing", token=token)
         audit_path = (
@@ -1240,7 +1240,7 @@ def test_known_terminal_failures_are_distinct_and_never_retry(
         ).one()
     assert media_code == expected_code.value
     assert audit == (expected_outcome, expected_audit_error)
-    assert len(_audit_requests(audit_path)) == (0 if mode == "host_loss" else 1)
+    assert len(_audit_requests(audit_path)) == (0 if mode == "host_unavailable" else 1)
 
 
 def test_publication_fault_rolls_back_scalars_authors_revisions_and_reuses_terminal(
