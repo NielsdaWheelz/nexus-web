@@ -150,13 +150,11 @@ def test_hosted_canary_rendered_failure_drops_provider_sentinels(
     )
     rendered = result.stdout + result.stderr
     if result.returncode != pytest.ExitCode.TESTS_FAILED:
-        pytest.fail(
-            "sentinel failure harness did not produce one failed pytest case", pytrace=False
-        )
+        raise AssertionError("sentinel failure harness did not produce one failed pytest case")
     if safe_message not in rendered:
-        pytest.fail("hosted canary did not render its fixed safe failure message", pytrace=False)
+        raise AssertionError("hosted canary did not render its fixed safe failure message")
     if sentinel in rendered:
-        pytest.fail("hosted canary rendered provider-owned sentinel content", pytrace=False)
+        raise AssertionError("hosted canary rendered provider-owned sentinel content")
 
 
 def _generated_failure_case(*, sentinel: str, body: str) -> str:
