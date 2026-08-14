@@ -48,7 +48,8 @@
         "supabase/config.toml",
         "supabase/templates/**/*",
         "node/ingest/**/*",
-        "python/nexus/services/node_ingest.py"
+        "python/nexus/services/node_ingest.py",
+        "python/nexus/services/web_article_ingest.py"
       ],
       "proofs": [
         "pytest:python/tests/kernel/test_auth_config_verifier.py",
