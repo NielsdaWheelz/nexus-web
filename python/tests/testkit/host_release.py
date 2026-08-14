@@ -503,6 +503,7 @@ class HostReleaseHarness:
                                 "no-new-privileges:true",
                                 "seccomp=unconfined",
                                 "apparmor=nexus-codex-agent-host",
+                                "systempaths=unconfined",
                             ],
                         }
                         if service == "nexus-codex-agent-host"
@@ -1169,6 +1170,7 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                             "no-new-privileges:true",
                             "seccomp=unconfined",
                             "apparmor=nexus-codex-agent-host",
+                            "systempaths=unconfined",
                         ],
                     }
                 )
@@ -1176,6 +1178,19 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                     container["host_config"]["SecurityOpt"] = [
                         "no-new-privileges:true",
                         "seccomp=unconfined",
+                    ]
+                if state["codex_host_isolation_drift"] == "systempaths_missing":
+                    container["host_config"]["SecurityOpt"] = [
+                        "no-new-privileges:true",
+                        "seccomp=unconfined",
+                        "apparmor=nexus-codex-agent-host",
+                    ]
+                if state["codex_host_isolation_drift"] == "systempaths_mutated":
+                    container["host_config"]["SecurityOpt"] = [
+                        "no-new-privileges:true",
+                        "seccomp=unconfined",
+                        "apparmor=nexus-codex-agent-host",
+                        "systempaths=confined",
                     ]
             if service == "api":
                 container["image_id"] = state["activation_api_image_id"]

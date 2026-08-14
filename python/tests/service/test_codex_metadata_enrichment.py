@@ -741,6 +741,24 @@ def test_real_worker_publishes_authors_pins_and_exactly_replays_after_publicatio
 
         assert _author_names(engine, same_scalars.media_id) == ["Frank Herbert"]
         assert _author_names(engine, pinned.media_id) == ["Manual Author"]
+        with Session(engine) as db:
+            for media_id in (same_scalars.media_id, pinned.media_id):
+                media = db.get(Media, media_id)
+                assert media is not None
+                assert {
+                    "title": media.title,
+                    "publisher": media.publisher,
+                    "description": media.description,
+                    "published_date": media.published_date,
+                    "language": media.language,
+                } == {
+                    "title": "Dune",
+                    "publisher": "Chilton Books",
+                    "description": "A science-fiction novel set on Arrakis.",
+                    "published_date": "1965",
+                    "language": "en",
+                }
+                assert media.metadata_enriched_at is not None
         # Collection revisions are global invalidation clocks: each of the two
         # committed publications advances every current viewer exactly once.
         assert _revisions(engine, same_scalars.user_id) == {
