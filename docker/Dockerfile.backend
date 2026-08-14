@@ -99,6 +99,7 @@ COPY --from=worker-python-builder /app/.venv /app/.venv
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-builder /app/node/ingest/node_modules ./node/ingest/node_modules
 COPY node/ingest/ingest.mjs ./node/ingest/ingest.mjs
+COPY node/ingest/accepted_url_egress.mjs ./node/ingest/accepted_url_egress.mjs
 COPY apps/worker ./apps/worker
 COPY apps/codex_agent ./apps/codex_agent
 COPY scripts/oracle ./scripts/oracle
@@ -106,7 +107,6 @@ COPY scripts/oracle ./scripts/oracle
 RUN node --version
 
 ENV NODE_ENV="production"
-ENV NODE_INGEST_SCRIPT="/app/node/ingest/ingest.mjs"
 
 USER nexus:nexus
 

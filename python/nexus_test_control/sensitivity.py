@@ -508,6 +508,10 @@ def isolated_worktree(
             repo_root / "apps/web/node_modules",
             checkout / "apps/web/node_modules",
         )
+        _link_dependency(
+            repo_root / "node/ingest/node_modules",
+            checkout / "node/ingest/node_modules",
+        )
         _clear_isolated_python_bytecode(checkout)
         yield checkout.resolve(strict=True)
     finally:
@@ -707,7 +711,7 @@ def _proof_path(proof: str) -> str:
     parsed = PurePosixPath(path)
     if (
         not separator
-        or runner not in {"gradle", "playwright", "pytest", "static", "vitest"}
+        or runner not in {"gradle", "node-test", "playwright", "pytest", "static", "vitest"}
         or not path
         or parsed.is_absolute()
         or ".." in parsed.parts

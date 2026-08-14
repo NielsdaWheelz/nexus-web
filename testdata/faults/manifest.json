@@ -552,6 +552,15 @@
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject"
       ],
       "expected_failure": "first Bearer [REDACTED] failed bootstrap"
+    },
+    {
+      "id": "accepted-url-private-redirect-bypass",
+      "patch": "testdata/faults/accepted-url-private-redirect-bypass.patch",
+      "sha256": "24bd3768d7e0cffbbd63b0ed46dc9cfcf0759da52a773717d0de5fb9ca623e83",
+      "proofs": [
+        "node-test:node/ingest/test/accepted_url_egress.test.mjs"
+      ],
+      "expected_failure": "expected UnsafeDestination before any request; CLI returned Success"
     }
   ]
 }

@@ -71,7 +71,7 @@ from nexus_test_control.sensitivity import (
 )
 from nexus_test_control.services import clean_owned_runtime, new_run_id, test_environment
 
-_PROOF_RUNNERS = frozenset({"gradle", "playwright", "pytest", "static", "vitest"})
+_PROOF_RUNNERS = frozenset({"gradle", "node-test", "playwright", "pytest", "static", "vitest"})
 _FAULT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _RUN_ID = re.compile(r"[0-9a-f]{16}\Z")
 _HEAD_SHA = re.compile(r"[0-9a-f]{40}\Z")

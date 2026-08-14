@@ -1042,8 +1042,8 @@ requires-dist = [
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.9.0" },
-    { name = "provider-runtime", extras = ["llm-tools"], git = "https://github.com/NielsdaWheelz/llm-calling?rev=da91e65836562f8367da239f8be5dd06719dc654" },
-    { name = "provider-runtime", extras = ["codex-sdk"], marker = "extra == 'codex-agent'", git = "https://github.com/NielsdaWheelz/llm-calling?rev=da91e65836562f8367da239f8be5dd06719dc654" },
+    { name = "provider-runtime", extras = ["codex-sdk"], marker = "extra == 'codex-agent'", git = "https://github.com/NielsdaWheelz/llm-calling?rev=e61330d5752e832ceefbf534d3386d6adca8105c" },
+    { name = "provider-runtime", extras = ["llm-tools"], git = "https://github.com/NielsdaWheelz/llm-calling?rev=e61330d5752e832ceefbf534d3386d6adca8105c" },
     { name = "psycopg-binary", specifier = ">=3.1.0" },
     { name = "pydantic-settings", specifier = ">=2.6.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.13.0" },
@@ -1298,7 +1298,7 @@ wheels = [
 [[package]]
 name = "provider-runtime"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-calling?rev=da91e65836562f8367da239f8be5dd06719dc654#da91e65836562f8367da239f8be5dd06719dc654" }
+source = { git = "https://github.com/NielsdaWheelz/llm-calling?rev=e61330d5752e832ceefbf534d3386d6adca8105c#e61330d5752e832ceefbf534d3386d6adca8105c" }
 dependencies = [
     { name = "anthropic" },
     { name = "google-genai" },
@@ -1309,12 +1309,12 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-llm-tools = [
-    { name = "llm-tools" },
-]
 codex-sdk = [
     { name = "openai-codex" },
     { name = "openai-codex-cli-bin" },
+]
+llm-tools = [
+    { name = "llm-tools" },
 ]
 
 [[package]]

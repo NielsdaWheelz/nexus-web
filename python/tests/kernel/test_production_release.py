@@ -1723,6 +1723,29 @@ def test_config_publication_creates_an_immutable_content_addressed_snapshot(
                 )
 
 
+def test_config_publication_rejects_even_blank_image_owned_node_ingest_script_before_mutation(
+    tmp_path: Path,
+) -> None:
+    """Risk: published production config substitutes the baked egress implementation."""
+    release = _release_module()
+    with _host_harness(tmp_path) as harness:
+        paths = release.ReleasePaths.under(harness.root)
+        source = tmp_path / "source.env"
+        source.write_text("ALPHA=first\nNODE_INGEST_SCRIPT=\n", encoding="utf-8")
+        before_config = {path.name for path in paths.config_root.iterdir()}
+        before_current = paths.current_config.readlink()
+
+        with pytest.raises(release.ReleaseDefect, match="NODE_INGEST_SCRIPT"):
+            release.publish_config(
+                source,
+                release.ReleaseStore(paths),
+                next_source_sha=SOURCE_SHA,
+            )
+
+        assert {path.name for path in paths.config_root.iterdir()} == before_config
+        assert paths.current_config.readlink() == before_current
+
+
 def test_inspect_resumes_when_current_publication_prefix_is_not_terminal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

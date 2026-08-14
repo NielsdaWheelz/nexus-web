@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.config import Environment, get_settings
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
@@ -29,7 +30,13 @@ from nexus.services.document_embeds import (
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.media_author_observation_seam import attach_author_observation
-from nexus.services.node_ingest import IngestError, IngestResult, run_node_ingest
+from nexus.services.node_ingest import (
+    IngestError,
+    IngestResult,
+    NodeIngestCommand,
+    local_node_ingest_command,
+    run_node_ingest,
+)
 from nexus.services.reader_apparatus import (
     attach_fragment_locators,
     replace_media_apparatus,
@@ -47,6 +54,14 @@ from nexus.services.web_article_structure import (
 )
 
 logger = get_logger(__name__)
+
+
+def _node_ingest_command_for_environment(environment: Environment) -> NodeIngestCommand | None:
+    """Compose the checked-out adapter only for local and test workers."""
+
+    if environment in {Environment.LOCAL, Environment.TEST}:
+        return local_node_ingest_command()
+    return None
 
 
 def materialize_web_article_source(
@@ -77,7 +92,10 @@ def materialize_web_article_source(
     finally:
         snapshot.close()
 
-    ingest_result = run_node_ingest(url)
+    ingest_result = run_node_ingest(
+        url,
+        command=_node_ingest_command_for_environment(get_settings().nexus_env),
+    )
 
     if isinstance(ingest_result, IngestError):
         logger.warning(

@@ -48,7 +48,6 @@ _CODEX_IMAGE_ENVIRONMENT = [
     "GPG_KEY=fake-gpg-key",
     "LANG=C.UTF-8",
     "NODE_ENV=production",
-    "NODE_INGEST_SCRIPT=/app/node/ingest/ingest.mjs",
     "PATH=/app/.venv/bin:/usr/local/bin:/usr/bin:/bin",
     "PYTHONPATH=/app",
     "PYTHON_SHA256=" + "f" * 64,

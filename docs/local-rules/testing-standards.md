@@ -429,7 +429,7 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
-<!-- nexus-test-routing-sha256: 4980bf99bca66fd56cce384cc79547e3baab82688711268c48cf9b511c7ccb00 -->
+<!-- nexus-test-routing-sha256: 74835a9ae089189d9a72daa7bbb3897a19f89022a7995d774e97274aa49cd164 -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and
@@ -447,6 +447,8 @@ physical-device boundaries are excluded. The owning `full`, `nightly`, or
 | Real PostgreSQL/API/service | `python/tests/service/` |
 | Migration graph and convergence | `python/tests/migrations/` |
 | Pinned portable LLM tools | `python/tests/llm_tools_contract/` |
+| Node accepted-URL ingest egress | `node/ingest/test/*.test.mjs` |
+| Release artifact/image binding | `python/tests/release_artifact/` |
 | Deterministic LLM semantics | `python/tests/evals/` |
 | Property/random-order audit | `python/tests/audit/` |
 | Paid hosted proof | `python/tests/hosted/nightly/` and `python/tests/hosted/release/` |
@@ -461,16 +463,17 @@ conventions do. Ordinary Python proof is socket-denied, including spawned
 Python workers through `sitecustomize`; only `tests/hosted/` with the
 controller's explicit socket flag may contact external providers. Browser
 component globals guard `fetch`, `EventSource`, and `WebSocket`; Playwright
-allows only controller-recorded loopback origins. No test may supply product or
-production resource endpoints.
+allows only controller-recorded loopback origins. Node ingest proof runs through
+the controller's `node-network-guard.mjs` and admits only loopback destinations.
+No test may supply product or production resource endpoints.
 
 ### Focused changed-proof commands
 
 Use `./scripts/test changed <repository-relative path or exact
 runner-qualified node>` for the supported inner loop. Direct pytest, Vitest,
-Playwright, or Gradle invocation is allowed for exact debugging (`--lf`, watch,
-`--headed`, `--debug`) only; checked-in configuration and network policy still
-apply. A direct invocation is not a workflow verdict.
+Node, Playwright, or Gradle invocation is allowed for exact debugging (`--lf`,
+watch, `--headed`, `--debug`) only; checked-in configuration and network policy
+still apply. A direct invocation is not a workflow verdict.
 
 ## 9. Current fixture and corpus contract
 

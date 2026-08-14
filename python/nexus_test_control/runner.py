@@ -12,6 +12,7 @@ import socket
 import stat
 import subprocess
 import tarfile
+import tempfile
 import threading
 import time
 import tomllib
@@ -73,6 +74,7 @@ from nexus_test_control.runtime import (
     EndpointKind,
     RuntimeContractError,
     extension_profile_identity,
+    local_docker_host,
     migration_database_name,
     read_runtime,
     record_created,
@@ -162,6 +164,8 @@ _SAFE_CHILD_ENV = (
     "UV_CACHE_DIR",
     "XDG_CACHE_HOME",
 )
+_RELEASE_ARTIFACT_WORKER_IMAGE_ENV = "NEXUS_TEST_CANDIDATE_WORKER_IMAGE"
+_LOCAL_IMAGE_ID_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _PYTHON_POLICY_DIRS = (
     "python/tests/kernel",
     "python/tests/service",
@@ -259,6 +263,8 @@ _PLATFORM_LOCAL_COMPOSE_ENV = (
     "NEXUS_ENV=test",
 )
 _ANDROID_HOST_PREFIX = "apps/android/app/src/test/"
+_INGEST_NODE_TEST_PREFIX = "node/ingest/test/"
+_INGEST_NODE_NETWORK_GUARD = "python/tests/testkit/node-network-guard.mjs"
 _DETERMINISTIC_PYTEST = ("-p", "no:randomly")
 _MIN_AVAILABLE_HEAVY_MIB = 2048
 _MEMORY_ADMISSION_TIMEOUT_SECONDS = 30.0
@@ -273,6 +279,7 @@ _HEAVY_CAPABILITIES = frozenset(
         Capability.JOURNEYS_ALL,
         Capability.PROVIDER_RUNTIME,
         Capability.LLM_TOOLS,
+        Capability.INGEST_NODE,
         Capability.LLM_EVAL,
         Capability.EXTENSION,
         Capability.ANDROID_HOST,
@@ -577,6 +584,9 @@ class _RunnerPorts:
 
     def browser_installed(self, repo_root: Path, environment: Mapping[str, str]) -> bool:
         return _browser_installed(repo_root, environment)
+
+    def local_docker_host(self) -> str:
+        return local_docker_host()
 
     def run_environment(
         self,
@@ -1143,6 +1153,15 @@ def run_proof(
                     environment,
                     exact=True,
                 )
+            case Capability.INGEST_NODE:
+                result = _run_ingest_node(proof_context, environment, exact=True)
+            case Capability.RELEASE_ARTIFACT:
+                result = _run_release_artifact_proofs(
+                    proof_context,
+                    environment,
+                    execution,
+                    exact=True,
+                )
             case Capability.COMPONENT:
                 result = _run_component(proof_context, environment, execution, exact=True)
             case Capability.JOURNEYS_ALL:
@@ -1331,6 +1350,8 @@ def _run_capability_unlocked(
             return _run_provider_runtime(context, caller_environment)
         case Capability.LLM_TOOLS:
             return _run_llm_tools(context, caller_environment)
+        case Capability.INGEST_NODE:
+            return _run_ingest_node(context, caller_environment)
         case Capability.LLM_EVAL:
             return _run_python_heavy(
                 context,
@@ -1981,6 +2002,151 @@ def _run_python_heavy(
     )
 
 
+def _run_release_artifact_proofs(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution,
+    *,
+    exact: bool = False,
+) -> CapabilityResult:
+    capability = Capability.RELEASE_ARTIFACT
+    python_root = context.repo_root / "python"
+    owner = "tests/release_artifact"
+    owner_path = python_root / owner
+    owner_files = tuple(sorted(owner_path.rglob("test_*.py"))) if owner_path.is_dir() else ()
+    if not owner_files or not (python_root / ".venv").is_dir():
+        return _not_run(capability, "release artifact Python proof owner is absent")
+    nodes, promoted = _selected_proof_nodes(context, capability, "pytest")
+    if exact:
+        if len(nodes) != 1 or promoted:
+            raise ValueError("exact release artifact proof must name one pytest node")
+        targets = tuple(_python_heavy_node(node, owner) for node in nodes)
+    elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
+        targets = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in owner_files)
+    elif nodes:
+        targets = tuple(_python_heavy_node(node, owner) for node in nodes)
+    else:
+        return _pass(capability, "no selected release artifact proof")
+    try:
+        source_sha = _git_commit(context.repo_root, "HEAD", environment)
+        docker_host = execution.ports.local_docker_host()
+        image_tag = f"nexus-test-worker-{repo_id_for(context.repo_root)}:{execution.run_id}"
+    except RuntimeContractError as error:
+        return _not_run(capability, f"candidate worker image setup is unavailable: {error}")
+
+    docker_prefix = (
+        "env",
+        f"DOCKER_HOST={docker_host}",
+        "DOCKER_CONTEXT=default",
+    )
+    with tempfile.TemporaryDirectory(prefix=f"nexus-test-worker-{execution.run_id}-") as temporary:
+        iidfile = Path(temporary) / "worker.iid"
+        build = _run_fixed_commands(
+            capability,
+            (
+                (
+                    (
+                        *docker_prefix,
+                        "docker",
+                        "buildx",
+                        "build",
+                        "--load",
+                        "--file",
+                        "./docker/Dockerfile.backend",
+                        "--target",
+                        "worker",
+                        "--build-arg",
+                        f"SOURCE_SHA={source_sha}",
+                        "--tag",
+                        image_tag,
+                        "--iidfile",
+                        str(iidfile),
+                        ".",
+                    ),
+                    context.repo_root,
+                ),
+            ),
+            environment,
+            ("docker", "env"),
+            context=context,
+        )
+        if build.evidence.status is not RunStatus.PASS:
+            return _release_artifact_setup_result(build, "candidate worker image build")
+
+        result: CapabilityResult | None = None
+        try:
+            try:
+                image_id = iidfile.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError) as error:
+                result = _result(
+                    capability,
+                    RunStatus.FAIL,
+                    build.evidence.duration_ms,
+                    "proof_result=setup_or_execution_failure|"
+                    f"candidate worker image ID is unreadable: {error}",
+                )
+            else:
+                if _LOCAL_IMAGE_ID_RE.fullmatch(image_id) is None:
+                    result = _result(
+                        capability,
+                        RunStatus.FAIL,
+                        build.evidence.duration_ms,
+                        "proof_result=setup_or_execution_failure|"
+                        "candidate worker image build did not produce an immutable image ID",
+                    )
+                else:
+                    result = _run_fixed_commands(
+                        capability,
+                        (
+                            (
+                                (
+                                    *docker_prefix,
+                                    f"{_RELEASE_ARTIFACT_WORKER_IMAGE_ENV}={image_id}",
+                                    "uv",
+                                    "run",
+                                    "--frozen",
+                                    "--no-sync",
+                                    "pytest",
+                                    *_DETERMINISTIC_PYTEST,
+                                    *targets,
+                                ),
+                                python_root,
+                            ),
+                        ),
+                        environment,
+                        ("docker", "env", "uv"),
+                        context=context,
+                        elapsed_ms=build.evidence.duration_ms,
+                    )
+        finally:
+            elapsed_ms = (
+                result.evidence.duration_ms if result is not None else build.evidence.duration_ms
+            )
+            cleanup = _run_fixed_commands(
+                capability,
+                (
+                    (
+                        (*docker_prefix, "docker", "image", "rm", image_tag),
+                        context.repo_root,
+                    ),
+                ),
+                environment,
+                ("docker", "env"),
+                context=context,
+                elapsed_ms=elapsed_ms,
+            )
+        if cleanup.evidence.status is not RunStatus.PASS:
+            return _release_artifact_setup_result(
+                cleanup,
+                "candidate worker image cleanup",
+            )
+        assert result is not None
+        return CapabilityResult(
+            replace(result.evidence, duration_ms=cleanup.evidence.duration_ms),
+            result.detail,
+        )
+
+
 def _run_component(
     context: CapabilityContext,
     environment: Mapping[str, str],
@@ -2543,6 +2709,7 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
             ("python/tests/migrations/", Capability.MIGRATIONS, Workflow.PR),
             ("python/tests/contract/", Capability.PROVIDER_RUNTIME, Workflow.FULL),
             ("python/tests/llm_tools_contract/", Capability.LLM_TOOLS, Workflow.FULL),
+            ("python/tests/release_artifact/", Capability.RELEASE_ARTIFACT, Workflow.RELEASE),
             ("python/tests/evals/", Capability.LLM_EVAL, Workflow.FULL),
             ("python/tests/audit/", Capability.AUDIT, Workflow.NIGHTLY),
             (
@@ -2559,6 +2726,13 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
         ):
             if path.startswith(prefix) and path.endswith(".py"):
                 return capability, workflow
+    elif (
+        runner_name == "node-test"
+        and "::" not in node
+        and path.startswith(_INGEST_NODE_TEST_PREFIX)
+        and path.endswith(".test.mjs")
+    ):
+        return Capability.INGEST_NODE, Workflow.FULL
     elif runner_name == "vitest" and "::" not in node:
         if path.startswith("apps/web/src/") and path.endswith((".unit.test.ts", ".unit.test.tsx")):
             return Capability.KERNEL_WEB, Workflow.CHANGED
@@ -2635,6 +2809,7 @@ def _classified_exact_result(result: CapabilityResult, proof_id: str) -> Capabil
     elif (
         "falsifying example:" in folded
         or "assertionerror:" in folded
+        or _is_node_tap_assertion(folded)
         or ("failed " in folded and "::" in folded and " - assertionerror" in folded)
         or "error: expect(" in folded
         or re.search(r"\bexpect\(received\)\.to[a-z]+\(", folded) is not None
@@ -2666,9 +2841,17 @@ def _is_timeout_failure(folded: str) -> bool:
     """A casefolded child failure that is a timeout, not a behavioral assertion."""
     return (
         "timed out in " in folded  # vitest: "Test timed out in 5000ms"
+        or "test timed out after " in folded  # Node test runner
         or "hook timed out" in folded  # vitest hook timeout
         or re.search(r"failed:\s*timeout\b", folded) is not None  # pytest-timeout
         or re.search(r"timeout of \d+\s*ms exceeded", folded) is not None  # playwright
+    )
+
+
+def _is_node_tap_assertion(folded: str) -> bool:
+    return re.search(r"failuretype:\s*['\"]testcodefailure['\"]", folded) is not None and (
+        re.search(r"code:\s*['\"]err_assertion['\"]", folded) is not None
+        or re.search(r"name:\s*['\"]assertionerror['\"]", folded) is not None
     )
 
 
@@ -3641,6 +3824,76 @@ def _run_llm_tools(
     return _run_pinned_python_suite(context, environment, _LLM_TOOLS_SUITE, exact=exact)
 
 
+def _run_ingest_node(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    *,
+    exact: bool = False,
+) -> CapabilityResult:
+    capability = Capability.INGEST_NODE
+    ingest_root = context.repo_root / "node/ingest"
+    test_root = context.repo_root / _INGEST_NODE_TEST_PREFIX
+    guard = context.repo_root / _INGEST_NODE_NETWORK_GUARD
+    owners = tuple(sorted(path for path in test_root.rglob("*.test.mjs") if path.is_file()))
+    if (
+        not (ingest_root / "package.json").is_file()
+        or not (ingest_root / "bun.lock").is_file()
+        or not (ingest_root / "node_modules").is_dir()
+        or not guard.is_file()
+        or not owners
+    ):
+        return _not_run(capability, "Node ingest test owner is absent")
+
+    nodes, promoted = _selected_proof_nodes(context, capability, "node-test")
+    if exact:
+        if len(nodes) != 1 or promoted:
+            raise ValueError("exact Node ingest proof must name one test file")
+        targets = _ingest_node_test_targets(context.repo_root, nodes)
+    elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
+        targets = tuple(path.relative_to(context.repo_root).as_posix() for path in owners)
+    elif nodes:
+        targets = _ingest_node_test_targets(context.repo_root, nodes)
+    else:
+        return _pass(capability, "no selected Node ingest proof")
+
+    guard_import = f"NODE_OPTIONS=--import={guard.resolve(strict=True)}"
+    return _run_fixed_commands(
+        capability,
+        (
+            (
+                (
+                    "env",
+                    guard_import,
+                    "node",
+                    "--test",
+                    "--test-concurrency=1",
+                    *targets,
+                ),
+                context.repo_root,
+            ),
+        ),
+        environment,
+        ("env", "node"),
+        context=context,
+    )
+
+
+def _ingest_node_test_targets(repo_root: Path, nodes: tuple[str, ...]) -> tuple[str, ...]:
+    targets: list[str] = []
+    for node in nodes:
+        if (
+            "::" in node
+            or not node.startswith(_INGEST_NODE_TEST_PREFIX)
+            or not node.endswith(".test.mjs")
+        ):
+            raise ValueError(f"Node ingest proof is outside its owner: {node}")
+        candidate = repo_root / node
+        if not candidate.is_file():
+            raise ValueError(f"Node ingest proof owner is absent: {node}")
+        targets.append(node)
+    return tuple(targets)
+
+
 def _run_pinned_python_suite(
     context: CapabilityContext,
     environment: Mapping[str, str],
@@ -4075,6 +4328,9 @@ def _run_release_artifact(
     if execution is None:
         return _not_run(capability, "release artifact requires a controller run identity")
     started = time.monotonic_ns()
+    proofs = _run_release_artifact_proofs(context, environment, execution)
+    if proofs.evidence.status is not RunStatus.PASS:
+        return proofs
     evidence_path = (
         context.repo_root / "test-results/runs" / execution.run_id / "android-release.json"
     )
@@ -4374,6 +4630,16 @@ def _release_failure(capability: Capability, started: int, detail: str) -> Capab
     )
 
 
+def _release_artifact_setup_result(
+    result: CapabilityResult,
+    phase: str,
+) -> CapabilityResult:
+    return CapabilityResult(
+        result.evidence,
+        f"proof_result=setup_or_execution_failure|{phase}: {result.detail}",
+    )
+
+
 def _apksigner_certificate(completed: subprocess.CompletedProcess[str]) -> str | None:
     match = re.search(
         r"(?im)^Signer #1 certificate SHA-256 digest:\s*([0-9a-f:]{64,95})\s*$",
@@ -4460,7 +4726,7 @@ def _gradle_assertion_passed(android_root: Path, target: str) -> bool:
 def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> CapabilityResult:
     started = time.monotonic_ns()
     child_environment = _child_environment(environment)
-    required_tools = ("actionlint", "bun", "docker", "git", "java", "supabase", "uv")
+    required_tools = ("actionlint", "bun", "docker", "git", "java", "node", "supabase", "uv")
     missing_tools = tuple(
         tool
         for tool in required_tools
@@ -4478,6 +4744,9 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
         "apps/web/node_modules",
         "apps/web/e2e/playwright.config.ts",
         "apps/android/gradlew",
+        "node/ingest/package.json",
+        "node/ingest/bun.lock",
+        "node/ingest/node_modules",
     )
     missing_paths = tuple(
         relative for relative in required_paths if not (context.repo_root / relative).exists()
@@ -4509,6 +4778,17 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
                 "--ignore-scripts",
             ),
             context.repo_root / "apps/web",
+        ),
+        (
+            (
+                "bun",
+                "install",
+                "--frozen-lockfile",
+                "--dry-run",
+                "--offline",
+                "--ignore-scripts",
+            ),
+            context.repo_root / "node/ingest",
         ),
         (
             (
@@ -5096,6 +5376,9 @@ def _decisive_output(value: str, limit: int = 1900) -> str:
     stripped = _ANSI_ESCAPE_RE.sub("", value).strip()
     if len(stripped) <= limit:
         return stripped
+    node_tap_assertion = _first_node_tap_assertion_block(stripped, limit)
+    if node_tap_assertion is not None:
+        return node_tap_assertion
     lines = stripped.splitlines()
     decisive_lines: set[int] = set()
     for index, line in enumerate(lines):
@@ -5111,6 +5394,51 @@ def _decisive_output(value: str, limit: int = 1900) -> str:
                 decisive_lines.update(range(max(0, index - 4), index))
     decisive = "\n".join(lines[index] for index in sorted(decisive_lines))
     return (decisive or stripped)[-limit:]
+
+
+def _first_node_tap_assertion_block(value: str, limit: int) -> str | None:
+    lines = value.splitlines()
+    for start, line in enumerate(lines):
+        if re.match(r"^\s*not ok \d+\s+-", line, re.IGNORECASE) is None:
+            continue
+        end = next(
+            (
+                index
+                for index in range(start + 1, len(lines))
+                if re.match(r"^\s*(?:not )?ok \d+\s+-", lines[index], re.IGNORECASE) is not None
+                or re.match(r"^\s*1\.\.\d+\s*$", lines[index]) is not None
+            ),
+            len(lines),
+        )
+        block = lines[start:end]
+        if not _is_node_tap_assertion("\n".join(block).casefold()):
+            continue
+        selected = [block[0][:384], "  ---"]
+        error_body = False
+        error_body_budget = min(1_024, limit // 2)
+        for candidate in block[1:]:
+            field = re.match(r"^\s{2}([A-Za-z][A-Za-z0-9_]*):", candidate)
+            if field is not None:
+                key = field.group(1).casefold()
+                error_body = key == "error" and candidate.rstrip().endswith(("|-", ">-"))
+                if key in {
+                    "failuretype",
+                    "error",
+                    "code",
+                    "name",
+                    "expected",
+                    "actual",
+                    "operator",
+                }:
+                    selected.append(candidate[:384])
+                continue
+            if error_body and candidate.startswith("    ") and error_body_budget > 0:
+                excerpt = candidate[:error_body_budget]
+                selected.append(excerpt)
+                error_body_budget -= len(excerpt) + 1
+        selected.append("  ...")
+        return "\n".join(selected)[:limit]
+    return None
 
 
 def _failed_command_detail(index: int, completed: subprocess.CompletedProcess[str]) -> str:

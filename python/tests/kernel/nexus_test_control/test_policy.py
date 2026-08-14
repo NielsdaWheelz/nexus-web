@@ -886,6 +886,29 @@ def test_fault_guard_allows_declared_python_app_product_owner(
     assert not fault_manifest_violations(tmp_path)
 
 
+def test_fault_guard_allows_node_ingest_product_modules_but_not_tests(
+    tmp_path: Path,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    patch_path = tmp_path / "testdata/faults/example.patch"
+
+    production_patch = (
+        b"diff --git a/node/ingest/accepted_url_egress.mjs b/node/ingest/accepted_url_egress.mjs\n"
+    )
+    patch_path.write_bytes(production_patch)
+    manifest["faults"][0]["sha256"] = hashlib.sha256(production_patch).hexdigest()
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert not fault_manifest_violations(tmp_path)
+
+    test_patch = b"diff --git a/node/ingest/test/accepted_url_egress.test.mjs b/node/ingest/test/accepted_url_egress.test.mjs\n"
+    patch_path.write_bytes(test_patch)
+    manifest["faults"][0]["sha256"] = hashlib.sha256(test_patch).hexdigest()
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert "fault-product-only" in _rules(fault_manifest_violations(tmp_path))
+
+
 @pytest.mark.parametrize(
     ("mutation", "rule"),
     [

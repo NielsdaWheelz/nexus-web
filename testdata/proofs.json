@@ -46,7 +46,9 @@
         "deploy/smoke/auth-smoke.sh",
         "deploy/supabase/**/*",
         "supabase/config.toml",
-        "supabase/templates/**/*"
+        "supabase/templates/**/*",
+        "node/ingest/**/*",
+        "python/nexus/services/node_ingest.py"
       ],
       "proofs": [
         "pytest:python/tests/kernel/test_auth_config_verifier.py",
@@ -56,12 +58,14 @@
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject",
         "vitest:apps/web/src/lib/auth/email-confirmation.unit.test.ts",
         "vitest:apps/web/src/lib/auth/identities.unit.test.ts",
-        "vitest:apps/web/src/lib/api/proxy.unit.test.ts"
+        "vitest:apps/web/src/lib/api/proxy.unit.test.ts",
+        "node-test:node/ingest/test/accepted_url_egress.test.mjs"
       ],
       "capabilities": [
         "kernel-python",
         "kernel-web",
-        "service"
+        "service",
+        "ingest-node"
       ]
     },
     {
@@ -412,18 +416,27 @@
         "python/tests/kernel/nexus_test_control/test_llm_tools_capability.py",
         "python/tests/llm_tools_contract/**/*.py",
         "python/uv.lock",
-        "testdata/proofs.json"
+        "testdata/proofs.json",
+        ".dockerignore",
+        "python/nexus/services/node_ingest.py",
+        "docker/Dockerfile.backend",
+        "deploy/env/env-prod-worker.example",
+        "deploy/hetzner/release.py",
+        "deploy/hetzner/sync-env.sh",
+        "python/tests/release_artifact/test_node_ingest_image_binding.py"
       ],
       "proofs": [
         "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool",
         "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization",
         "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
         "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
-        "pytest:python/tests/kernel/test_ci_pr_recovery.py"
+        "pytest:python/tests/kernel/test_ci_pr_recovery.py",
+        "pytest:python/tests/release_artifact/test_node_ingest_image_binding.py::test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint"
       ],
       "capabilities": [
         "kernel-python",
-        "llm-tools"
+        "llm-tools",
+        "release-artifact"
       ]
     },
     {

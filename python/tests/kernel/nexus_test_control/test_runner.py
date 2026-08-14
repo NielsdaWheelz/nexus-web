@@ -51,6 +51,7 @@ from nexus_test_control.services import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+_CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
 
 
 def test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source(
@@ -1485,6 +1486,181 @@ def test_exact_provider_protocol_proof_runs_only_its_local_contract_node(
     ]
 
 
+def test_exact_release_artifact_proof_materializes_an_owned_worker_image(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "nexus"
+    proof_path = "python/tests/release_artifact/test_image_binding.py"
+    _write(
+        repo_root / proof_path,
+        "def test_image_binding():\n    assert True\n\n"
+        "def test_other_release_artifact_contract():\n    assert True\n",
+    )
+    (repo_root / "python/.venv").mkdir(parents=True)
+    environment = _stub_tools(
+        repo_root,
+        "uv",
+        git_stdout="a" * 40,
+        exit_status=1,
+        diagnostic="FAILED exact binding - AssertionError: expected candidate image",
+    )
+    _write_passthrough_env(repo_root / "bin/env")
+    _write_release_artifact_docker(repo_root / "bin/docker")
+    ambient_image = "sha256:" + "f" * 64
+    environment["NEXUS_TEST_CANDIDATE_WORKER_IMAGE"] = ambient_image
+    run_context = RunContextRecorder()
+
+    result = run_proof(
+        CapabilityContext(repo_root, Workflow.RELEASE, (), run_context=run_context),
+        f"pytest:{proof_path}::test_image_binding",
+        environment,
+        _ports=_LocalDockerPorts(),
+        _available_memory=lambda: 8192,
+    )
+
+    assert result.evidence.id is Capability.RELEASE_ARTIFACT
+    assert result.evidence.status is RunStatus.FAIL
+    assert result.detail.startswith("proof_result=behavioral_assertion_failure|")
+    commands = _commands(repo_root)
+    assert [command["tool"] for command in commands] == ["git", "docker", "uv", "docker"]
+    build = commands[1]
+    assert build["argv"][:12] == [
+        "buildx",
+        "build",
+        "--load",
+        "--file",
+        "./docker/Dockerfile.backend",
+        "--target",
+        "worker",
+        "--build-arg",
+        f"SOURCE_SHA={'a' * 40}",
+        "--tag",
+        build["argv"][10],
+        "--iidfile",
+    ]
+    assert str(build["argv"][10]).startswith("nexus-test-worker-")
+    iidfile = Path(str(build["argv"][12]))
+    assert iidfile.name == "worker.iid"
+    assert build["argv"][13] == "."
+    assert not iidfile.exists()
+    proof = commands[2]
+    assert proof["argv"] == [
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "--maxfail=1",
+        "-p",
+        "no:randomly",
+        "tests/release_artifact/test_image_binding.py::test_image_binding",
+    ]
+    assert proof["candidate_worker_image"] == _CANDIDATE_WORKER_IMAGE_ID
+    assert proof["candidate_worker_image"] != ambient_image
+    assert proof["docker_host"] == "unix:///test/docker.sock"
+    assert proof["docker_context"] == "default"
+    assert commands[3]["argv"] == ["image", "rm", build["argv"][10]]
+    recorded = run_context.evidence().fixed_commands
+    assert (recorded[0].argv[3], recorded[1].argv[4], recorded[2].argv[3]) == (
+        "docker",
+        "uv",
+        "docker",
+    )
+    assert recorded[1].argv[3] == (
+        f"NEXUS_TEST_CANDIDATE_WORKER_IMAGE={_CANDIDATE_WORKER_IMAGE_ID}"
+    )
+
+
+def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "nexus"
+    run_id = "0123456789abcdef"
+    proof_path = "python/tests/release_artifact/test_image_binding.py"
+    _write(repo_root / proof_path, "def test_image_binding():\n    assert True\n")
+    (repo_root / "python/.venv").mkdir(parents=True)
+    apk = repo_root / "apps/android/app/build/outputs/apk/release/app-release.apk"
+    _write(apk, "signed release bytes\n")
+    sha256 = runner._sha256_file(apk)
+    signer = "ab" * 32
+    _write(
+        repo_root / f"test-results/runs/{run_id}/android-release.json",
+        json.dumps(
+            {
+                "run_id": run_id,
+                "tag": "android-v1.2.3",
+                "apk_path": apk.relative_to(repo_root).as_posix(),
+                "apk_sha256": sha256,
+                "signer_sha256": signer,
+                "version_code": 123,
+                "version_name": "1.2.3",
+                "git_sha": "a" * 40,
+            }
+        ),
+    )
+    environment = _stub_tools(repo_root, "uv", "git", git_stdout="a" * 40)
+    _write_passthrough_env(repo_root / "bin/env")
+    _write_release_artifact_docker(repo_root / "bin/docker")
+    android_home = tmp_path / "android-sdk"
+    _write_executable(android_home / "platform-tools/adb")
+    _write_executable(
+        android_home / "build-tools/35.0.1/apksigner",
+        stdout=f"Signer #1 certificate SHA-256 digest: {signer}",
+    )
+    _write_executable(android_home / "cmdline-tools/latest/bin/apkanalyzer")
+    environment["ANDROID_HOME"] = str(android_home)
+
+    result = runner._run_release_artifact(
+        CapabilityContext(repo_root, Workflow.RELEASE, ()),
+        environment,
+        SimpleNamespace(run_id=run_id, ports=_LocalDockerPorts()),
+    )
+
+    assert result.evidence.status is RunStatus.PASS
+    commands = _commands(repo_root)
+    proof_index = next(index for index, command in enumerate(commands) if command["tool"] == "uv")
+    cleanup_index = next(
+        index
+        for index, command in enumerate(commands)
+        if command["tool"] == "docker" and command["argv"][:2] == ["image", "rm"]
+    )
+    android_index = next(
+        index for index, command in enumerate(commands) if command["tool"] == "apksigner"
+    )
+    assert commands[proof_index]["argv"][-1] == "./tests/release_artifact/test_image_binding.py"
+    assert proof_index < cleanup_index < android_index
+    staged = repo_root / f"test-results/runs/{run_id}/release"
+    assert (staged / "nexus-android.apk").is_file()
+    assert (staged / "release-manifest.json").is_file()
+
+
+def test_release_artifact_image_build_failure_is_setup_and_skips_pytest(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "nexus"
+    proof_path = "python/tests/release_artifact/test_image_binding.py"
+    _write(repo_root / proof_path, "def test_image_binding():\n    assert True\n")
+    (repo_root / "python/.venv").mkdir(parents=True)
+    environment = _stub_tools(repo_root, "uv", git_stdout="a" * 40)
+    _write_passthrough_env(repo_root / "bin/env")
+    _write_release_artifact_docker(
+        repo_root / "bin/docker",
+        build_exit_status=17,
+        diagnostic="worker image build failed",
+    )
+
+    result = run_proof(
+        CapabilityContext(repo_root, Workflow.RELEASE, ()),
+        f"pytest:{proof_path}::test_image_binding",
+        environment,
+        _ports=_LocalDockerPorts(),
+        _available_memory=lambda: 8192,
+    )
+
+    assert result.evidence.status is RunStatus.FAIL
+    assert result.detail.startswith("proof_result=setup_or_execution_failure|")
+    assert [command["tool"] for command in _commands(repo_root)] == ["git", "docker"]
+
+
 def test_android_host_uses_the_fixed_synthetic_client_and_host_test_task(tmp_path: Path) -> None:
     android_root = tmp_path / "apps/android"
     sdk = tmp_path / "android-sdk"
@@ -2795,6 +2971,73 @@ def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behav
     assert f"proof_id={proof}|" in assertion.detail
 
 
+def test_exact_node_tap_assertion_retains_the_first_bounded_oracle() -> None:
+    evidence = CapabilityEvidence(Capability.INGEST_NODE, RunStatus.FAIL, 1, 0)
+    proof = "node-test:node/ingest/test/accepted_url_egress.test.mjs"
+    first_oracle = "expected UnsafeDestination before any request; CLI returned Success"
+    assertion_tap = (
+        "TAP version 13\n"
+        "# Subtest: public redirect to a private destination sends zero private requests\n"
+        "not ok 1 - public redirect to a private destination sends zero private requests\n"
+        "  ---\n"
+        "  duration_ms: 12.5\n"
+        "  type: 'test'\n"
+        "  location: '/workspace/node/ingest/test/accepted_url_egress.test.mjs:261:1'\n"
+        "  failureType: 'testCodeFailure'\n"
+        "  error: |-\n"
+        f"    {first_oracle}\n"
+        "  code: 'ERR_ASSERTION'\n"
+        "  name: 'AssertionError'\n"
+        "  expected: 'Failure'\n"
+        "  actual: 'Success'\n"
+        "  operator: 'strictEqual'\n"
+        "  stack: |-\n"
+        "    TestContext.<anonymous> (accepted_url_egress.test.mjs:289:16)\n"
+        "  ...\n"
+        "# Subtest: later assertion\n"
+        "not ok 2 - later assertion\n"
+        "  ---\n"
+        "  failureType: 'testCodeFailure'\n"
+        "  error: 'later assertion must not replace the first oracle'\n"
+        "  code: 'ERR_ASSERTION'\n"
+        "  name: 'AssertionError'\n"
+        "  ...\n" + "# trailing diagnostic\n" * 300
+    )
+    detail = runner._command_result_detail(
+        1,
+        subprocess.CompletedProcess(("node", "--test"), 1, assertion_tap, ""),
+    )
+    assertion = runner._classified_exact_result(CapabilityResult(evidence, detail), proof)
+
+    timeout_tap = (
+        "not ok 1 - bounded transport\n"
+        "  ---\n"
+        "  failureType: 'testTimeoutFailure'\n"
+        "  error: 'test timed out after 100ms'\n"
+        "  code: 'ERR_TEST_FAILURE'\n"
+        "  ..."
+    )
+    timeout = runner._classified_exact_result(CapabilityResult(evidence, timeout_tap), proof)
+    runtime_tap = (
+        "not ok 1 - bounded transport\n"
+        "  ---\n"
+        "  failureType: 'testCodeFailure'\n"
+        "  error: 'socket owner crashed'\n"
+        "  code: 'ERR_TEST_FAILURE'\n"
+        "  name: 'TypeError'\n"
+        "  ..."
+    )
+    runtime = runner._classified_exact_result(CapabilityResult(evidence, runtime_tap), proof)
+
+    assert len(detail) <= 2_000
+    assert "not ok 1 - public redirect" in detail
+    assert first_oracle in detail
+    assert "later assertion must not replace the first oracle" not in detail
+    assert assertion.detail.startswith("proof_result=behavioral_assertion_failure|")
+    assert timeout.detail.startswith("proof_result=setup_or_execution_failure|")
+    assert runtime.detail.startswith("proof_result=setup_or_execution_failure|")
+
+
 def test_long_command_diagnostic_preserves_the_behavioral_assertion() -> None:
     completed = subprocess.CompletedProcess(
         ("pytest",),
@@ -3171,6 +3414,11 @@ def _changed_context(repo_root: Path, selection: Selection) -> CapabilityContext
     return CapabilityContext(repo_root, Workflow.CHANGED, (selection,))
 
 
+class _LocalDockerPorts(runner._RunnerPorts):
+    def local_docker_host(self) -> str:
+        return "unix:///test/docker.sock"
+
+
 def _stub_tools(
     repo_root: Path,
     *tools: str,
@@ -3211,12 +3459,73 @@ def _write_executable(
         "    'cwd': os.getcwd(),\n"
         "    'environment': sorted(os.environ),\n"
         "    'google_client_id': os.environ.get('NEXUS_GOOGLE_WEB_CLIENT_ID'),\n"
+        "    'candidate_worker_image': "
+        "os.environ.get('NEXUS_TEST_CANDIDATE_WORKER_IMAGE'),\n"
+        "    'docker_host': os.environ.get('DOCKER_HOST'),\n"
+        "    'docker_context': os.environ.get('DOCKER_CONTEXT'),\n"
         "}\n"
         "with (Path(os.environ['HOME']) / 'commands.jsonl').open('a') as handle:\n"
         "    handle.write(json.dumps(record, sort_keys=True) + '\\n')\n"
         f"print({stdout!r})\n"
         f"print({diagnostic!r}, file=sys.stderr)\n"
         f"raise SystemExit({exit_status})\n",
+    )
+    path.chmod(0o755)
+
+
+def _write_passthrough_env(path: Path) -> None:
+    _write(
+        path,
+        "#!/usr/bin/python3\n"
+        "import os\n"
+        "import sys\n"
+        "arguments = sys.argv[1:]\n"
+        "while arguments and '=' in arguments[0]:\n"
+        "    key, value = arguments.pop(0).split('=', 1)\n"
+        "    os.environ[key] = value\n"
+        "if not arguments:\n"
+        "    raise SystemExit(125)\n"
+        "os.execvpe(arguments[0], arguments, os.environ)\n",
+    )
+    path.chmod(0o755)
+
+
+def _write_release_artifact_docker(
+    path: Path,
+    *,
+    build_exit_status: int = 0,
+    cleanup_exit_status: int = 0,
+    diagnostic: str = "",
+) -> None:
+    _write(
+        path,
+        "#!/usr/bin/python3\n"
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "arguments = sys.argv[1:]\n"
+        "record = {\n"
+        "    'tool': Path(sys.argv[0]).name,\n"
+        "    'argv': arguments,\n"
+        "    'cwd': os.getcwd(),\n"
+        "    'environment': sorted(os.environ),\n"
+        "    'candidate_worker_image': "
+        "os.environ.get('NEXUS_TEST_CANDIDATE_WORKER_IMAGE'),\n"
+        "    'docker_host': os.environ.get('DOCKER_HOST'),\n"
+        "    'docker_context': os.environ.get('DOCKER_CONTEXT'),\n"
+        "}\n"
+        "with (Path(os.environ['HOME']) / 'commands.jsonl').open('a') as handle:\n"
+        "    handle.write(json.dumps(record, sort_keys=True) + '\\n')\n"
+        "if arguments[:2] == ['buildx', 'build']:\n"
+        f"    print({diagnostic!r}, file=sys.stderr)\n"
+        f"    if {build_exit_status} == 0:\n"
+        "        iidfile = Path(arguments[arguments.index('--iidfile') + 1])\n"
+        f"        iidfile.write_text({_CANDIDATE_WORKER_IMAGE_ID!r} + '\\n')\n"
+        f"    raise SystemExit({build_exit_status})\n"
+        "if arguments[:2] == ['image', 'rm']:\n"
+        f"    raise SystemExit({cleanup_exit_status})\n"
+        "raise SystemExit(99)\n",
     )
     path.chmod(0o755)
 
