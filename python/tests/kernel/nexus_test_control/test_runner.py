@@ -1,16 +1,19 @@
 import json
 import os
 import subprocess
+import sys
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 import nexus_test_control.memory as memory
 import nexus_test_control.runner as runner
+from nexus.ops.codex_hosted_evidence import codex_hosted_evidence_is_valid
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.evidence import CapabilityEvidence
 from nexus_test_control.model import (
@@ -215,6 +218,350 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
                 "OPENAI_API_KEY": "",
             },
         )
+
+
+def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
+    tmp_path: Path,
+) -> None:
+    """Risk: uploaded evidence retains unbounded, ambiguous, or noncanonical data."""
+
+    evidence_path = tmp_path / "hosted-codex-personal-metadata.json"
+    run_id = "0123456789abcdef"
+    valid = _codex_hosted_canary_evidence(run_id)
+    canonical = json.dumps(valid, separators=(",", ":"))
+    _write(evidence_path, canonical)
+    assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id)
+
+    authoritative_total = _codex_hosted_canary_evidence(run_id)
+    authoritative_result = cast(list[dict[str, object]], authoritative_total["results"])[0]
+    authoritative_usage = cast(dict[str, object], authoritative_result["usage"])
+    authoritative_usage["total_tokens"] = 4
+    _write(evidence_path, json.dumps(authoritative_total, separators=(",", ":")))
+    assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), (
+        "provider-reported total tokens are authoritative, not a derived sum"
+    )
+
+    for version_field in ("sdk_version", "runtime_version"):
+        for valid_version in ("0", "1" * 64):
+            boundary = _codex_hosted_canary_evidence(run_id)
+            boundary_result = cast(list[dict[str, object]], boundary["results"])[0]
+            boundary_result[version_field] = valid_version
+            _write(evidence_path, json.dumps(boundary, separators=(",", ":")))
+            assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), (
+                f"valid {version_field} boundary {valid_version!r} was rejected"
+            )
+
+    token_boundary = _codex_hosted_canary_evidence(run_id)
+    token_boundary_result = cast(list[dict[str, object]], token_boundary["results"])[0]
+    token_boundary_usage = cast(dict[str, object], token_boundary_result["usage"])
+    token_boundary_usage.update(
+        {"input_tokens": (1 << 53) - 1, "output_tokens": 0, "total_tokens": (1 << 53) - 1}
+    )
+    _write(evidence_path, json.dumps(token_boundary, separators=(",", ":")))
+    assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), (
+        "the exact JSON-safe token ceiling was rejected"
+    )
+
+    invalid_artifacts = [
+        (
+            "evidence exceeds 16 KiB",
+            canonical + " " * (16 * 1024 - len(canonical) + 1),
+        ),
+        (
+            "duplicate top-level key",
+            canonical.replace('"run_id":', '"run_id":"wrong","run_id":', 1),
+        ),
+        (
+            "duplicate result key",
+            canonical.replace('"backend":', '"backend":"wrong","backend":', 1),
+        ),
+        (
+            "duplicate usage key",
+            canonical.replace('"input_tokens":', '"input_tokens":999,"input_tokens":', 1),
+        ),
+    ]
+
+    for unsafe_key in ("prompt", "output", "auth", "raw_frames"):
+        evidence = _codex_hosted_canary_evidence(run_id)
+        evidence[unsafe_key] = "must not be retained"
+        invalid_artifacts.append(
+            (
+                f"top-level undeclared key {unsafe_key!r}",
+                json.dumps(evidence, separators=(",", ":")),
+            )
+        )
+
+        result = cast(list[dict[str, object]], evidence["results"])[0]
+        result[unsafe_key] = "must not be retained"
+        del evidence[unsafe_key]
+        invalid_artifacts.append(
+            (
+                f"result undeclared key {unsafe_key!r}",
+                json.dumps(evidence, separators=(",", ":")),
+            )
+        )
+
+        usage = cast(dict[str, object], result["usage"])
+        usage[unsafe_key] = 0
+        del result[unsafe_key]
+        invalid_artifacts.append(
+            (
+                f"usage undeclared key {unsafe_key!r}",
+                json.dumps(evidence, separators=(",", ":")),
+            )
+        )
+
+    for version_field in ("sdk_version", "runtime_version"):
+        for invalid_version in ("", "v1", "1/2", "1" * 65):
+            evidence = _codex_hosted_canary_evidence(run_id)
+            result = cast(list[dict[str, object]], evidence["results"])[0]
+            result[version_field] = invalid_version
+            invalid_artifacts.append(
+                (
+                    f"invalid {version_field} {invalid_version!r}",
+                    json.dumps(evidence, separators=(",", ":")),
+                )
+            )
+
+    for token_field in ("input_tokens", "output_tokens", "total_tokens"):
+        for invalid_value in (True, 0.0, -1, 1 << 53):
+            evidence = _codex_hosted_canary_evidence(run_id)
+            result = cast(list[dict[str, object]], evidence["results"])[0]
+            usage = cast(dict[str, object], result["usage"])
+            usage[token_field] = invalid_value
+            invalid_artifacts.append(
+                (
+                    f"invalid {token_field} {invalid_value!r}",
+                    json.dumps(evidence, separators=(",", ":")),
+                )
+            )
+
+    for scalar_field, invalid_value in (
+        ("subscription_turns", True),
+        ("subscription_turns", 1.0),
+        ("tool_events", False),
+        ("tool_events", 0.0),
+        ("permission_requests", False),
+        ("permission_requests", 0.0),
+    ):
+        evidence = _codex_hosted_canary_evidence(run_id)
+        result = cast(list[dict[str, object]], evidence["results"])[0]
+        if scalar_field == "subscription_turns":
+            evidence[scalar_field] = invalid_value
+        else:
+            result[scalar_field] = invalid_value
+        invalid_artifacts.append(
+            (
+                f"non-strict {scalar_field} {invalid_value!r}",
+                json.dumps(evidence, separators=(",", ":")),
+            )
+        )
+
+    for case, artifact in invalid_artifacts:
+        _write(evidence_path, artifact)
+        assert not codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), case
+
+    _assert_codex_hosted_evidence_stage_is_atomic_and_run_bound(tmp_path)
+
+
+def _codex_hosted_canary_evidence(run_id: str) -> dict[str, object]:
+    return {
+        "schema_version": "nexus-hosted-codex-canary.v1",
+        "run_id": run_id,
+        "subscription_turns": 1,
+        "results": [
+            {
+                "backend": "codex",
+                "transport": "sdk",
+                "auth_profile": "codex-personal",
+                "model": "gpt-5.6-luna",
+                "reasoning": "low",
+                "structured_output_valid": True,
+                "session_ref_schema_version": "agent-session-ref.v1",
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 2,
+                    "total_tokens": 3,
+                },
+                "sdk_version": "1.2.3",
+                "runtime_version": "4.5.6",
+                "tool_events": 0,
+                "permission_requests": 0,
+            }
+        ],
+    }
+
+
+def _assert_codex_hosted_evidence_stage_is_atomic_and_run_bound(
+    tmp_path: Path,
+) -> None:
+    run_id = "0123456789abcdef"
+    source = tmp_path / "test-results/runs" / run_id / "hosted-codex-personal-metadata.json"
+    encoded = (
+        json.dumps(_codex_hosted_canary_evidence(run_id), separators=(",", ":")) + "\n"
+    ).encode()
+    source.parent.mkdir(parents=True)
+    source.write_bytes(encoded)
+    destination = tmp_path / "artifact.json"
+    fallback = b'{"status":"failed"}\n'
+    destination.write_bytes(fallback)
+    command = (
+        sys.executable,
+        "-m",
+        "nexus.ops.codex_hosted_evidence",
+        "stage",
+        str(source),
+        str(destination),
+    )
+
+    with destination.open("rb") as previous:
+        staged = subprocess.run(
+            command,
+            cwd=REPO_ROOT / "python",
+            check=False,
+            capture_output=True,
+        )
+        assert staged.returncode == 0
+        assert staged.stdout == b""
+        assert staged.stderr == b""
+        assert previous.read() == fallback
+        assert os.fstat(previous.fileno()).st_ino != destination.stat().st_ino
+    assert destination.read_bytes() == encoded
+    assert not tuple(tmp_path.glob(".artifact.json.*.partial"))
+
+    misbound = tmp_path / "test-results/runs/not-a-run" / source.name
+    misbound.parent.mkdir(parents=True)
+    misbound.write_bytes(encoded)
+    destination.write_bytes(fallback)
+    rejected = subprocess.run(
+        (*command[:4], str(misbound), str(destination)),
+        cwd=REPO_ROOT / "python",
+        check=False,
+        capture_output=True,
+    )
+    assert rejected.returncode != 0
+    assert rejected.stdout == b""
+    assert rejected.stderr == b""
+    assert destination.read_bytes() == fallback
+    assert not tuple(tmp_path.glob(".artifact.json.*.partial"))
+
+
+@pytest.mark.parametrize(
+    ("exact", "expected_target"),
+    [
+        (False, "./tests/hosted/nightly/test_codex_personal_metadata.py"),
+        (
+            True,
+            "./tests/hosted/nightly/test_codex_personal_metadata.py::"
+            "test_codex_personal_metadata_canary_uses_one_structured_subscription_turn",
+        ),
+    ],
+    ids=("complete-workflow", "exact-proof"),
+)
+def test_codex_nightly_workflow_normalizes_the_selected_hosted_target_once(
+    tmp_path: Path,
+    exact: bool,
+    expected_target: str,
+) -> None:
+    """Risk: the complete protected workflow rejects its own canonical proof path."""
+
+    result, repo_root, _results, _sentinel = _run_failing_codex_hosted_workflow(
+        tmp_path,
+        exact=exact,
+    )
+
+    assert result.id is Capability.CODEX_HOSTED
+    assert result.status is RunStatus.FAIL
+    commands = _commands(repo_root)
+    assert len(commands) == 1
+    assert commands[0]["tool"] == "uv"
+    assert commands[0]["argv"] == [
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "--maxfail=1",
+        "-q",
+        "-p",
+        "no:randomly",
+        "--force-enable-socket",
+        expected_target,
+    ]
+
+
+def test_codex_hosted_command_failure_discards_child_output_and_failure_artifact(
+    tmp_path: Path,
+) -> None:
+    """Risk: provider-authenticated output escapes through controller failure evidence."""
+
+    result, _repo_root, results, sentinel = _run_failing_codex_hosted_workflow(tmp_path)
+
+    assert result.id is Capability.CODEX_HOSTED
+    assert result.status is RunStatus.FAIL
+    assert result.detail == "Codex hosted canary command failed; child output was discarded"
+    assert sentinel not in result.detail
+    assert result.artifacts == ()
+    assert not (results / "codex-hosted-1.log").exists()
+    assert not tuple(results.iterdir()), "Codex failure evidence directory retained child output"
+
+
+def _run_failing_codex_hosted_workflow(
+    tmp_path: Path,
+    *,
+    exact: bool = False,
+) -> tuple[CapabilityEvidence, Path, Path, str]:
+    """Run the protected workflow against one real failing fake child executable."""
+
+    repo_root = tmp_path / "repo"
+    proof_path = "python/tests/hosted/nightly/test_codex_personal_metadata.py"
+    proof_node = "test_codex_personal_metadata_canary_uses_one_structured_subscription_turn"
+    _write(repo_root / proof_path, f"def {proof_node}():\n    pass\n")
+    (repo_root / "python/.venv").mkdir()
+
+    state_root = tmp_path / "state"
+    working_directory = tmp_path / "cwd"
+    state_root.mkdir(mode=0o700)
+    working_directory.mkdir(mode=0o700)
+    sentinel = "PRIVATE-CODEX-CHILD-CONTENT"
+    _write_executable(
+        repo_root / "bin/uv",
+        stdout=f"stdout:{sentinel}",
+        diagnostic=f"stderr:{sentinel}",
+        exit_status=7,
+    )
+    evidence_run_id = "0123456789abcdef"
+    results = repo_root / "test-results/runs" / evidence_run_id
+    results.mkdir(parents=True)
+    environment = {
+        **_tool_environment(repo_root),
+        "NEXUS_CODEX_HOSTED_CANARY": "1",
+        "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
+        "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
+        "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
+        "NEXUS_TEST_EVIDENCE_RUN_ID": evidence_run_id,
+        "NEXUS_TEST_RESULTS_DIR": str(results),
+    }
+
+    context = CapabilityContext(repo_root, Workflow.CODEX_NIGHTLY, ())
+    if exact:
+        proof = f"pytest:{proof_path}::{proof_node}"
+        result = run_proof(
+            context,
+            proof,
+            environment,
+            _available_memory=lambda: 8192,
+        ).evidence
+    else:
+        workflow = run_workflow(
+            context,
+            StringIO(),
+            environment,
+            run_id=evidence_run_id,
+            _available_memory=lambda: 8192,
+        )
+        assert len(workflow.capabilities) == 1
+        result = workflow.capabilities[0]
+    return result, repo_root, results, sentinel
 
 
 @pytest.mark.parametrize(

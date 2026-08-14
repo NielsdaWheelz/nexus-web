@@ -52,13 +52,38 @@ jobs:
         run: python/.venv/bin/python -m apps.codex_agent.sandbox_health
 
       - name: Run protected Codex subscription metadata canary
+        id: canary
         run: ./scripts/test codex-nightly
 
-      - name: Upload Codex nightly evidence
+      - name: Stage bounded Codex nightly artifact
+        if: always()
+        env:
+          CANARY_OUTCOME: ${{ steps.canary.outcome }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
+          umask 077
+          readonly ARTIFACT="${RUNNER_TEMP}/nexus-codex-nightly-${GITHUB_RUN_ID}.json"
+          printf '%s\n' \
+            "{\"schema_version\":\"nexus-hosted-codex-canary-failure.v1\",\"github_run_id\":${GITHUB_RUN_ID},\"status\":\"failed\"}" \
+            > "$ARTIFACT"
+          mapfile -t evidence_files < <(
+            find test-results/runs -type f -name hosted-codex-personal-metadata.json -print 2>/dev/null \
+              | LC_ALL=C sort
+          )
+          if [ "$CANARY_OUTCOME" = success ] && [ "${#evidence_files[@]}" = 1 ]; then
+            python/.venv/bin/python -m nexus.ops.codex_hosted_evidence \
+              stage "${evidence_files[0]}" "$ARTIFACT"
+            exit 0
+          fi
+          [ "$CANARY_OUTCOME" != success ] || exit 1
+
+      - name: Upload bounded Codex nightly artifact
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nexus-codex-nightly-${{ github.run_id }}
-          path: test-results/
-          if-no-files-found: ignore
+          path: ${{ runner.temp }}/nexus-codex-nightly-${{ github.run_id }}.json
+          if-no-files-found: error
           retention-days: 14

@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from uuid import UUID
 
+import pytest
 from provider_runtime import Present
 from provider_runtime.agent_runtime import (
     AgentPermissionRequest,
@@ -20,6 +21,7 @@ from provider_runtime.agent_runtime import (
     AgentToolUse,
     CodexNativeOptions,
 )
+from pydantic import ValidationError
 
 from nexus.services.metadata_enrichment import MetadataEnrichmentOutput
 from nexus.services.native_agent_operations import (
@@ -35,13 +37,16 @@ _PROFILE = "codex-personal"
 def test_codex_personal_metadata_canary_uses_one_structured_subscription_turn() -> None:
     """Risk: metadata silently routes through direct API credentials or unsafe tools."""
 
-    assert os.environ["NEXUS_CODEX_HOSTED_CANARY"] == "1"
-    assert "OPENAI_API_KEY" not in os.environ
-    assert "CODEX_HOME" not in os.environ
-    assert os.environ["NEXUS_CODEX_HOSTED_PROFILE"] == _PROFILE
+    _require(os.environ["NEXUS_CODEX_HOSTED_CANARY"] == "1", "Codex hosted canary is disabled")
+    _require("OPENAI_API_KEY" not in os.environ, "Codex hosted canary received an API key")
+    _require("CODEX_HOME" not in os.environ, "Codex hosted canary received ambient Codex state")
+    _require(
+        os.environ["NEXUS_CODEX_HOSTED_PROFILE"] == _PROFILE,
+        "Codex hosted canary profile differs",
+    )
     state_root = _persistent_owned_directory("NEXUS_CODEX_HOSTED_STATE_ROOT")
     working_directory = _persistent_owned_directory("NEXUS_CODEX_HOSTED_WORKING_DIRECTORY")
-    assert not tuple(working_directory.iterdir()), "Codex canary cwd must remain empty"
+    _require(not tuple(working_directory.iterdir()), "Codex canary cwd must remain empty")
 
     command = build_metadata_enrichment_command(
         request_id=_REQUEST_ID,
@@ -54,26 +59,32 @@ def test_codex_personal_metadata_canary_uses_one_structured_subscription_turn() 
         ),
     )
     operation = resolve_native_agent_operation(command, working_directory=working_directory)
-    assert operation.session.backend == "codex"
-    assert operation.session.transport == "sdk"
-    assert operation.session.auth.kind == "local_account"
-    assert operation.session.auth.profile_key == _PROFILE
-    assert operation.session.model == "gpt-5.6-luna"
-    assert operation.session.reasoning is not None
-    assert operation.session.reasoning.effort == "low"
-    assert isinstance(operation.session.native, CodexNativeOptions)
-    assert operation.session.native.builtin_tools == "disabled"
+    _require(operation.session.backend == "codex", "Codex hosted backend differs")
+    _require(operation.session.transport == "sdk", "Codex hosted transport differs")
+    _require(operation.session.auth.kind == "local_account", "Codex hosted auth kind differs")
+    _require(operation.session.auth.profile_key == _PROFILE, "Codex hosted profile differs")
+    _require(operation.session.model == "gpt-5.6-luna", "Codex hosted model differs")
+    reasoning = operation.session.reasoning
+    if reasoning is None:
+        _fail("Codex hosted reasoning policy is absent")
+    _require(reasoning.effort == "low", "Codex hosted reasoning differs")
+    _require(
+        isinstance(operation.session.native, CodexNativeOptions),
+        "Codex hosted native policy differs",
+    )
+    _require(operation.session.native.builtin_tools == "disabled", "Codex hosted tools are enabled")
 
     terminal = asyncio.run(_run_once(state_root, operation))
     structured = terminal.structured_output
-    assert terminal.status == "succeeded", terminal.diagnostics
-    assert terminal.failure is None
-    assert isinstance(structured, Mapping)
-    MetadataEnrichmentOutput.model_validate(structured)
-    assert terminal.session_ref.backend == "codex"
-    assert terminal.session_ref.transport == "sdk"
-    assert terminal.session_ref.profile_key == _PROFILE
-    assert isinstance(terminal.usage, Present)
+    _require(terminal.status == "succeeded", "Codex terminal was not successful")
+    _require(terminal.failure is None, "Codex terminal reported a failure")
+    if not isinstance(structured, Mapping):
+        _fail("Codex terminal omitted structured metadata")
+    _validate_metadata_output(structured)
+    _require(terminal.session_ref.backend == "codex", "Codex terminal backend differs")
+    _require(terminal.session_ref.transport == "sdk", "Codex terminal transport differs")
+    _require(terminal.session_ref.profile_key == _PROFILE, "Codex terminal profile differs")
+    _require(isinstance(terminal.usage, Present), "Codex terminal omitted usage")
 
     _write_evidence(
         terminal=terminal,
@@ -89,16 +100,41 @@ async def _run_once(state_root: Path, operation: ResolvedNativeAgentOperation) -
     try:
         session = await runtime.open_session(operation.session)
         events = [event async for event in runtime.stream_turn(session, operation.turn)]
+    except Exception:
+        _fail("Codex runtime did not complete the bounded subscription turn")
     finally:
-        await runtime.close()
-    assert events and isinstance(events[-1], AgentTerminal), "Codex emitted no terminal"
+        try:
+            await runtime.close()
+        except Exception:
+            _fail("Codex runtime cleanup failed")
+    if not events or not isinstance(events[-1], AgentTerminal):
+        _fail("Codex emitted no terminal")
     residual_privileged_events = tuple(
         event for event in events if isinstance(event, AgentToolUse | AgentPermissionRequest)
     )
-    assert not residual_privileged_events, residual_privileged_events
+    _require(
+        not residual_privileged_events,
+        "Codex emitted a prohibited tool or permission event",
+    )
     terminals = [event for event in events if isinstance(event, AgentTerminal)]
-    assert len(terminals) == 1, "Codex must emit exactly one terminal"
-    return terminals[0]
+    _require(len(terminals) == 1, "Codex must emit exactly one terminal")
+    return events[-1]
+
+
+def _validate_metadata_output(structured: Mapping[object, object]) -> None:
+    try:
+        MetadataEnrichmentOutput.model_validate(structured)
+    except ValidationError:
+        _fail("Codex terminal structured metadata did not satisfy the contract")
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        _fail(message)
+
+
+def _fail(message: str) -> None:
+    pytest.fail(message, pytrace=False)
 
 
 def _persistent_owned_directory(name: str) -> Path:
@@ -114,7 +150,8 @@ def _persistent_owned_directory(name: str) -> Path:
 
 
 def _write_evidence(*, terminal: AgentTerminal, sdk_version: str, runtime_version: str) -> None:
-    assert isinstance(terminal.usage, Present)
+    if not isinstance(terminal.usage, Present):
+        _fail("Codex terminal omitted usage before bounded evidence")
     usage = terminal.usage.value
     evidence_path = Path(os.environ["NEXUS_CODEX_HOSTED_EVIDENCE_PATH"])
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
