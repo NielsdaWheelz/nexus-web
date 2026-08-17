@@ -1309,12 +1309,21 @@ def test_host_apply_converges_predecessor_resource_limits_before_stopping_a_writ
 ) -> None:
     harness = host_release_harness
     containers = harness.state()["containers"]
-    for container in containers.values():
-        container["host_config"] = {
-            "Memory": 0,
-            "MemoryReservation": 0,
-            "PidsLimit": 0,
-        }
+    for service in (
+        "postgres",
+        "caddy",
+        "api",
+        "worker-interactive",
+        "worker-background",
+    ):
+        containers[service]["host_config"].update(
+            {
+                "Memory": 0,
+                "MemoryReservation": 0,
+                "MemorySwap": 0,
+                "PidsLimit": 0,
+            }
+        )
     harness.update_state(containers=containers)
 
     completed = harness.run_apply()
@@ -1332,6 +1341,26 @@ def test_host_apply_converges_predecessor_resource_limits_before_stopping_a_writ
         {"operation": "stop", "services": ["worker-background"]},
         {"operation": "stop", "services": ["worker-interactive", "api"]},
     ]
+
+
+def test_host_apply_reconstructs_codex_host_no_restart_privilege_contract(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: fake Compose preserves stale host privilege state instead of recreating it."""
+
+    harness = host_release_harness
+    containers = harness.state()["containers"]
+    containers["nexus-codex-agent-host"]["host_config"] = {}
+    harness.update_state(containers=containers)
+
+    completed = harness.run_apply()
+
+    assert completed.returncode == 0, completed.stderr
+    codex_host = harness.state()["containers"]["nexus-codex-agent-host"]
+    assert codex_host["host_config"]["RestartPolicy"] == {
+        "MaximumRetryCount": 0,
+        "Name": "no",
+    }
 
 
 def test_host_apply_converges_memoryswap_only_drift(

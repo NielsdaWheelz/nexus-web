@@ -90,6 +90,23 @@ _CODEX_IMAGE_ENVIRONMENT = [
 ]
 
 
+def _codex_host_privilege_config() -> dict[str, object]:
+    return {
+        "CapDrop": ["ALL"],
+        "MaskedPaths": [],
+        "NanoCpus": 1_000_000_000,
+        "ReadonlyRootfs": True,
+        "ReadonlyPaths": [],
+        "RestartPolicy": {"MaximumRetryCount": 0, "Name": "no"},
+        "SecurityOpt": [
+            "no-new-privileges:true",
+            "seccomp=unconfined",
+            "apparmor=nexus-codex-agent-host",
+            "systempaths=unconfined",
+        ],
+    }
+
+
 def _canonical_json(value: object) -> bytes:
     return (
         json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
@@ -599,20 +616,7 @@ class HostReleaseHarness:
                     "MemorySwap": _RESOURCE_LIMITS[service][1],
                     "PidsLimit": _RESOURCE_LIMITS[service][2],
                     **(
-                        {
-                            "CapDrop": ["ALL"],
-                            "MaskedPaths": [],
-                            "NanoCpus": 1_000_000_000,
-                            "ReadonlyRootfs": True,
-                            "ReadonlyPaths": [],
-                            "RestartPolicy": {"MaximumRetryCount": 0, "Name": "no"},
-                            "SecurityOpt": [
-                                "no-new-privileges:true",
-                                "seccomp=unconfined",
-                                "apparmor=nexus-codex-agent-host",
-                                "systempaths=unconfined",
-                            ],
-                        }
+                        _codex_host_privilege_config()
                         if service == "nexus-codex-agent-host"
                         else {}
                     ),
@@ -1336,21 +1340,7 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                 }
             )
             if service == "nexus-codex-agent-host":
-                container["host_config"].update(
-                    {
-                        "CapDrop": ["ALL"],
-                        "MaskedPaths": [],
-                        "NanoCpus": 1_000_000_000,
-                        "ReadonlyRootfs": True,
-                        "ReadonlyPaths": [],
-                        "SecurityOpt": [
-                            "no-new-privileges:true",
-                            "seccomp=unconfined",
-                            "apparmor=nexus-codex-agent-host",
-                            "systempaths=unconfined",
-                        ],
-                    }
-                )
+                container["host_config"].update(_codex_host_privilege_config())
                 if state["codex_host_isolation_drift"] == "security":
                     container["host_config"]["SecurityOpt"] = [
                         "no-new-privileges:true",
@@ -1775,12 +1765,14 @@ def fake_docker_main() -> int:
             )
             return 1
         memory_swap = int(arguments[arguments.index("--memory-swap") + 1])
-        container["host_config"] = {
-            "MemoryReservation": reservation,
-            "Memory": memory,
-            "MemorySwap": memory_swap,
-            "PidsLimit": pids,
-        }
+        container["host_config"].update(
+            {
+                "MemoryReservation": reservation,
+                "Memory": memory,
+                "MemorySwap": memory_swap,
+                "PidsLimit": pids,
+            }
+        )
         service = next(name for name, item in state["containers"].items() if item is container)
         state["resource_mutations"].append(
             {
