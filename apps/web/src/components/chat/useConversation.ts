@@ -34,6 +34,7 @@ import {
   apiFetch,
   isApiError,
   isSameSystemApiDefect,
+  isToolProjectionReloadRequired,
   type ApiError,
   type ApiPath,
 } from "@/lib/api/client";
@@ -189,6 +190,8 @@ interface UseConversation {
   loadOlder: () => Promise<void>;
   loading: boolean;
   error: FeedbackContent | null;
+  /** Fail-closed browser/server tool-contract mismatch; cleared only by reload. */
+  projectionReloadRequestId: string | null;
   /** Complete assistant leaf — the default reply/continuation parent. */
   replyParentMessageId: string | null;
   /** Product selection inherited from the causal assistant parent, if any. */
@@ -259,11 +262,19 @@ export function useConversation(
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(initialConversationId));
   const [error, setError] = useState<FeedbackContent | null>(null);
+  const [projectionReloadRequestId, setProjectionReloadRequestId] = useState<
+    string | null
+  >(null);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
     null,
   );
   const reportAsyncDefect = useCallback((error: unknown) => {
     setAsyncDefect({ error });
+  }, []);
+  const reportProjectionReload = useCallback((operationError: unknown) => {
+    if (!isToolProjectionReloadRequired(operationError)) return false;
+    setProjectionReloadRequestId(operationError.requestId ?? "");
+    return true;
   }, []);
   const reportOperationError = useCallback(
     (
@@ -276,13 +287,14 @@ export function useConversation(
         | "Delete"
         | "SwitchFork",
     ) => {
+      if (reportProjectionReload(operationError)) return;
       try {
         setError(conversationOperationErrorMessage(operationError, operation));
       } catch (defect) {
         reportAsyncDefect(defect);
       }
     },
-    [reportAsyncDefect],
+    [reportAsyncDefect, reportProjectionReload],
   );
   const conversationIdRef = useRef(conversationId);
   conversationIdRef.current = conversationId;
@@ -377,6 +389,7 @@ export function useConversation(
           setForkOptionsByParentId,
           onContextRefAdded,
           onConversationAvailable: onConversationCreated,
+          onProjectionReloadRequired: reportProjectionReload,
           shouldStartRun: shouldStartRunForCurrentConversation,
           shouldApplyRun: shouldApplyRunToSelectedPath,
         }
@@ -384,6 +397,7 @@ export function useConversation(
           dispatch: dispatchMessages,
           onContextRefAdded,
           onConversationAvailable: onConversationCreated,
+          onProjectionReloadRequired: reportProjectionReload,
           shouldStartRun: shouldStartRunForCurrentConversation,
         },
   );
@@ -443,11 +457,12 @@ export function useConversation(
           void tailChatRunRef.current(runData);
         }
       } catch (err) {
+        if (reportProjectionReload(err)) return;
         if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to load active chat runs:", err);
       }
     },
-    [conversationId, loadVisibleActiveRuns],
+    [conversationId, loadVisibleActiveRuns, reportProjectionReload],
   );
 
   const applyConversationTree = useCallback(
@@ -500,6 +515,7 @@ export function useConversation(
         setError(null);
         return true;
       } catch (err) {
+        if (reportProjectionReload(err)) return false;
         if (handleUnauthenticatedApiError(err)) return false;
         if (!isApiError(err) || isSameSystemApiDefect(err)) {
           reportAsyncDefect(err);
@@ -518,6 +534,7 @@ export function useConversation(
       loadConversationTree,
       reportAsyncDefect,
       reportOperationError,
+      reportProjectionReload,
     ],
   );
 
@@ -542,6 +559,7 @@ export function useConversation(
           );
         } catch (err) {
           if (isAbortError(err) || signal.aborted) throw err;
+          if (isToolProjectionReloadRequired(err)) throw err;
           if (handleUnauthenticatedApiError(err)) throw err;
           console.error("Failed to load active chat runs:", err);
         }
@@ -744,10 +762,11 @@ export function useConversation(
       });
       setOlderCursor(response.page.before_cursor ?? null);
     } catch (err) {
+      if (reportProjectionReload(err)) return;
       if (handleUnauthenticatedApiError(err)) return;
       console.error("Failed to load older messages:", err);
     }
-  }, [branching, conversationId, olderCursor]);
+  }, [branching, conversationId, olderCursor, reportProjectionReload]);
 
   // --------------------------------------------------------------------------
   // Run created (optimistic seed + tail)
@@ -1263,6 +1282,7 @@ export function useConversation(
     loadOlder,
     loading,
     error,
+    projectionReloadRequestId,
     replyParentMessageId,
     inheritedProfileSelection,
     sendCapability,

@@ -2,24 +2,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
-from typing import cast
-from uuid import uuid4
 
 import pytest
-from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import Environment
-from nexus.db.models import ProcessingStatus
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.errors import ApiErrorCode
 from nexus.services import node_ingest, web_article_ingest
 from nexus.services.node_ingest import (
     IngestError,
     NodeIngestCommand,
     NodeIngestProtocolDefect,
+    local_node_ingest_command,
     run_node_ingest,
 )
-from nexus.services.source_publication import SourcePublicationFence
 
 
 def test_local_web_article_worker_composition_supplies_the_explicit_repo_node_command(
@@ -27,54 +22,16 @@ def test_local_web_article_worker_composition_supplies_the_explicit_repo_node_co
 ) -> None:
     """Risk: local workers select the missing image path or an ambient override."""
 
-    class Snapshot:
-        def get(self, _model: object, _media_id: object) -> object:
-            return SimpleNamespace(
-                processing_status=ProcessingStatus.extracting,
-                requested_url="http://127.0.0.1/private",
-            )
-
-        def rollback(self) -> None:
-            pass
-
-        def close(self) -> None:
-            pass
-
-    commands: list[NodeIngestCommand | None] = []
     monkeypatch.setenv("NODE_INGEST_SCRIPT", "/tmp/ambient-override.mjs")
-    monkeypatch.setattr(
-        web_article_ingest,
-        "get_settings",
-        lambda: SimpleNamespace(nexus_env=Environment.TEST),
-        raising=False,
+    result = web_article_ingest.run_web_article_node_ingest(
+        "http://127.0.0.1/private",
+        environment=Environment.TEST,
     )
-
-    def capture_run_node_ingest(
-        url: str,
-        timeout_ms: int = node_ingest.DEFAULT_NODE_TIMEOUT_MS,
-        *,
-        command: NodeIngestCommand | None = None,
-    ) -> node_ingest.IngestResult | IngestError:
-        assert url == "http://127.0.0.1/private"
-        commands.append(command)
-        return run_node_ingest(url, timeout_ms, command=command)
-
-    monkeypatch.setattr(web_article_ingest, "run_node_ingest", capture_run_node_ingest)
-
-    with pytest.raises(ApiError) as raised:
-        web_article_ingest.materialize_web_article_source(
-            cast(sessionmaker[Session], lambda: Snapshot()),
-            uuid4(),
-            uuid4(),
-            source_attempt_id=uuid4(),
-            extract_embeds=False,
-            publication_fence=cast(SourcePublicationFence, object()),
-        )
-
-    assert raised.value.code == ApiErrorCode.E_SSRF_BLOCKED
-    assert len(commands) == 1
-    command = commands[0]
-    assert command is not None
+    assert result == IngestError(
+        error_code=ApiErrorCode.E_SSRF_BLOCKED,
+        message="Source cannot be fetched safely.",
+    )
+    command = local_node_ingest_command()
     assert command.executable == "node"
     assert command.script == (Path(__file__).resolve().parents[3] / "node/ingest/ingest.mjs")
     assert web_article_ingest._node_ingest_command_for_environment(Environment.STAGING) is None

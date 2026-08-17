@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { TOOL_PROJECTION_HEADER } from "./client";
+import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import {
   sseClientDirect,
   type SseBackoffConfig,
@@ -54,6 +56,7 @@ export async function openGenerationRunStream<TEvent>(
   >,
 ): Promise<() => void> {
   return sseClientDirect<TEvent>({
+    ...sseArgs,
     initialConnection: async () => {
       const connection = await fetchStreamToken();
       return {
@@ -61,7 +64,10 @@ export async function openGenerationRunStream<TEvent>(
         token: connection.token,
       };
     },
-    ...sseArgs,
+    requestHeaders:
+      kind === "chat-runs"
+        ? { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION }
+        : undefined,
   });
 }
 

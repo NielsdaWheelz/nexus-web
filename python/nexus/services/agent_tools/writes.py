@@ -25,16 +25,18 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 from uuid import UUID, uuid5
 
-from sqlalchemy import text
+from llm_tools import ToolEffect
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
-from nexus.db.models import ChatRun
+from nexus.db.models import ChatRun, Conversation, MessageToolCall
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.notes import DailyCaptureRequest
 from nexus.services import highlights, library_entries, notes, text_quote, users
 from nexus.services.chat_run_tools import (
     assistant_write_tool_call_count,
+    decode_persisted_tool_record,
     persist_write_tool_call,
 )
 from nexus.services.consumption import service as consumption_service
@@ -695,36 +697,36 @@ def undo_tool_call(
     already-absent target (the user may have deleted it manually, R-5). Returns
     the ``assistant_message_id`` so the route can rebuild the trail.
     """
-    row = (
-        db.execute(
-            text(
-                """
-            SELECT mtc.id, mtc.tool_name, mtc.result_refs, mtc.reverted_at,
-                   mtc.assistant_message_id
-            FROM message_tool_calls mtc
-            JOIN conversations c ON c.id = mtc.conversation_id
-            WHERE mtc.id = :tool_call_id
-              AND mtc.conversation_id = :conversation_id
-              AND c.owner_user_id = :viewer_id
-            """
-            ),
-            {
-                "tool_call_id": tool_call_id,
-                "conversation_id": conversation_id,
-                "viewer_id": viewer_id,
-            },
+    row = db.scalar(
+        select(MessageToolCall)
+        .join(Conversation, Conversation.id == MessageToolCall.conversation_id)
+        .where(
+            MessageToolCall.id == tool_call_id,
+            MessageToolCall.conversation_id == conversation_id,
+            Conversation.owner_user_id == viewer_id,
         )
-        .mappings()
-        .fetchone()
     )
-    if row is None or row["tool_name"] not in WRITE_TOOL_NAMES:
+    if row is None:
+        raise ApiError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
+    record = decode_persisted_tool_record(row)
+    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
+
+    declaration = next(
+        (
+            entry
+            for entry in CHAT_TOOL_DECLARATIONS
+            if str(entry.spec.id) == record.canonical_tool_id
+        ),
+        None,
+    )
+    if declaration is None or declaration.spec.effect is not ToolEffect.Write:
         raise ApiError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
 
-    assistant_message_id: UUID = row["assistant_message_id"]
-    if row["reverted_at"] is not None:
+    assistant_message_id = row.assistant_message_id
+    if row.reverted_at is not None:
         return assistant_message_id
 
-    for ref in row["result_refs"] or []:
+    for ref in row.result_refs or []:
         _revert_ref(db, viewer_id=viewer_id, ref=ref)
 
     db.execute(

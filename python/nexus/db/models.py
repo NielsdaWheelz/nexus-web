@@ -4880,9 +4880,14 @@ class MessageToolCall(Base):
         ForeignKey("messages.id"),
         nullable=False,
     )
-    tool_name: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_tool_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    record_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_wire_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    canonical_input_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tool_contract_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    binding_policy_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool_call_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    query_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    search_query_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
     requested_types: Mapped[list[str]] = mapped_column(
         JSONB,
@@ -4924,16 +4929,21 @@ class MessageToolCall(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "char_length(tool_name) BETWEEN 1 AND 128",
-            name="ck_message_tool_calls_tool_name_length",
+            "canonical_tool_id IS NULL OR char_length(canonical_tool_id) BETWEEN 1 AND 128",
+            name="ck_message_tool_calls_canonical_tool_id_length",
+        ),
+        CheckConstraint(
+            "provider_wire_name IS NULL OR char_length(provider_wire_name) BETWEEN 1 AND 128",
+            name="ck_message_tool_calls_provider_wire_name_length",
         ),
         CheckConstraint(
             "tool_call_index >= 0",
             name="ck_message_tool_calls_index_non_negative",
         ),
         CheckConstraint(
-            "query_hash IS NULL OR char_length(query_hash) BETWEEN 1 AND 128",
-            name="ck_message_tool_calls_query_hash_length",
+            "search_query_fingerprint IS NULL "
+            "OR char_length(search_query_fingerprint) BETWEEN 1 AND 128",
+            name="ck_message_tool_calls_search_query_fingerprint_length",
         ),
         CheckConstraint(
             "char_length(scope) BETWEEN 1 AND 256",
@@ -4984,8 +4994,8 @@ class MessageToolCall(Base):
             "tool_call_index",
         ),
         Index(
-            "idx_message_tool_calls_tool_status",
-            "tool_name",
+            "idx_message_tool_calls_canonical_tool_status",
+            "canonical_tool_id",
             "status",
         ),
     )
@@ -5197,6 +5207,9 @@ class ChatRun(Base):
     # frozen registry row in services/llm_profiles.py, not a mutable table).
     profile_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     reasoning_option_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tool_profile_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tool_profile_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tool_profile_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     # Resolved operator/trust-trail facts, filled from runtime target and
     # terminal metadata.
     provider: Mapped[str | None] = mapped_column(Text, nullable=True)

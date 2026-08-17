@@ -21,8 +21,10 @@ from nexus.db.models import (
     Conversation,
     Message,
     MessageRetrieval,
+    MessageToolCall,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.schemas.conversation import tool_projection_from_persisted_record
 from nexus.services.chat_prompt import (
     PromptPlan,
     build_generate_intent_from_plan,
@@ -38,6 +40,7 @@ from nexus.services.chat_reader_selection import (
     render_reader_selection_prompt_block,
     render_subject_metadata_block,
 )
+from nexus.services.chat_run_tools import decode_persisted_tool_record
 from nexus.services.llm_profiles import LlmProfile
 from nexus.services.prompt_budget import (
     BudgetItem,
@@ -105,7 +108,6 @@ class ContextAssembly:
     prompt_plan: PromptPlan
     history: tuple[HistoryTurn, ...]
     context_blocks: tuple[str, ...]
-    context_types: frozenset[str]
     tool_call_events: tuple[Mapping[str, object], ...]
     retrieval_result_events: tuple[Mapping[str, object], ...]
     ledger: AssemblyLedger
@@ -150,7 +152,6 @@ def assemble_chat_context(
         path_message_ids=path_message_ids,
     )
 
-    context_types: set[str] = set()
     system_block = make_prompt_block(
         block_id="system",
         role="system",
@@ -246,13 +247,6 @@ def assemble_chat_context(
         db,
         assistant_message_id=run.assistant_message_id,
     )
-    for event in tool_call_events:
-        tool_name = event.get("tool_name")
-        if tool_name == "app_search":
-            context_types.add("app_search")
-        elif tool_name == "web_search":
-            context_types.add("web_search")
-
     current_user_block = make_prompt_block(
         block_id=f"current_user:{user_message.id}",
         role="user",
@@ -374,7 +368,6 @@ def assemble_chat_context(
         prompt_plan=prompt_plan,
         history=tuple(history),
         context_blocks=tuple(context_blocks),
-        context_types=frozenset(context_types),
         tool_call_events=tuple(tool_call_events),
         retrieval_result_events=tuple(retrieval_result_events),
         ledger=ledger,
@@ -766,45 +759,41 @@ def _load_tool_events(
     *,
     assistant_message_id: UUID,
 ) -> tuple[list[Mapping[str, object]], list[Mapping[str, object]]]:
-    rows = db.execute(
-        text(
-            """
-            SELECT id, assistant_message_id, tool_name, tool_call_index, scope,
-                   requested_types, status, error_code, latency_ms
-            FROM message_tool_calls
-            WHERE assistant_message_id = :assistant_message_id
-            ORDER BY tool_call_index ASC
-            """
-        ),
-        {"assistant_message_id": assistant_message_id},
-    ).fetchall()
+    rows = list(
+        db.scalars(
+            select(MessageToolCall)
+            .where(MessageToolCall.assistant_message_id == assistant_message_id)
+            .order_by(MessageToolCall.tool_call_index.asc())
+        )
+    )
     call_events: list[Mapping[str, object]] = []
     result_events: list[Mapping[str, object]] = []
     for row in rows:
-        retrievals = _tool_retrieval_refs(db, row[0])
+        persisted = decode_persisted_tool_record(row)
+        projection = tool_projection_from_persisted_record(persisted).model_dump(mode="json")
+        retrievals = _tool_retrieval_refs(db, row.id)
         selected = [retrieval for retrieval in retrievals if bool(retrieval.get("selected"))]
         call_events.append(
             {
-                "tool_call_id": str(row[0]),
-                "assistant_message_id": str(row[1]),
-                "tool_name": row[2],
-                "tool_call_index": row[3],
-                "status": row[6],
-                "scope": row[4],
-                "types": row[5] or [],
+                **projection,
+                "tool_call_id": str(row.id),
+                "assistant_message_id": str(row.assistant_message_id),
+                "tool_call_index": row.tool_call_index,
+                "status": row.status,
+                "scope": row.scope,
+                "types": row.requested_types or [],
             }
         )
         result_events.append(
             {
-                "tool_call_id": str(row[0]),
-                "assistant_message_id": str(row[1]),
-                "tool_name": row[2],
-                "tool_call_index": row[3],
-                "status": row[6],
-                "error_code": row[7],
+                **projection,
+                "tool_call_id": str(row.id),
+                "assistant_message_id": str(row.assistant_message_id),
+                "tool_call_index": row.tool_call_index,
+                "status": row.status,
                 "result_count": len(retrievals),
                 "selected_count": len(selected),
-                "latency_ms": row[8],
+                "latency_ms": row.latency_ms,
                 "citations": [retrieval["result_ref"] for retrieval in selected],
             }
         )

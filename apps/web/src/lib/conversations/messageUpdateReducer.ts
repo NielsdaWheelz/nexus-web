@@ -150,7 +150,6 @@ function retrievalFromSearchCitation(
   data: {
     tool_call_id?: string | null;
     tool_call_index?: number | null;
-    tool_name?: string;
   },
   index: number,
 ): MessageRetrieval {
@@ -246,7 +245,13 @@ function applyToolCall(
       ...(previous ?? {}),
       id: data.tool_call_id ?? previous?.id,
       assistant_message_id: data.assistant_message_id,
-      tool_name: data.tool_name,
+      record_kind: data.record_kind,
+      canonical_tool_id: data.canonical_tool_id,
+      provider_wire_name: data.provider_wire_name,
+      effect: data.effect,
+      result_kind: data.result_kind,
+      activity_label: data.activity_label,
+      error_type: data.error_type,
       tool_call_index: data.tool_call_index,
       status:
         patch.kind === "lifecycle" ? (patch.data.status ?? "running") : "running",
@@ -306,12 +311,17 @@ function applyToolResult(
       ...(previous ?? {}),
       id: data.tool_call_id ?? previous?.id,
       assistant_message_id: data.assistant_message_id,
-      tool_name: data.tool_name,
+      record_kind: data.record_kind,
+      canonical_tool_id: data.canonical_tool_id,
+      provider_wire_name: data.provider_wire_name,
+      effect: data.effect,
+      result_kind: data.result_kind,
+      activity_label: data.activity_label,
+      error_type: data.error_type,
       tool_call_index: data.tool_call_index,
       status: data.status,
       scope: data.scope,
       requested_types: data.types,
-      error_code: data.error_code ?? null,
       latency_ms: data.latency_ms,
       result_count: data.result_count ?? 0,
       selected_count: data.selected_count ?? 0,

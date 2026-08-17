@@ -20,6 +20,7 @@ from fastapi import APIRouter, Body, Depends, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
+from nexus.api.deps import require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
@@ -134,7 +135,10 @@ def get_conversation(
     return ok(result)
 
 
-@router.post("/conversations/{conversation_id}/tool-calls/{tool_call_id}/undo")
+@router.post(
+    "/conversations/{conversation_id}/tool-calls/{tool_call_id}/undo",
+    dependencies=[Depends(require_tool_projection_revision)],
+)
 def undo_tool_call(
     conversation_id: UUID,
     tool_call_id: UUID,

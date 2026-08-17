@@ -64,6 +64,19 @@ def _node_ingest_command_for_environment(environment: Environment) -> NodeIngest
     return None
 
 
+def run_web_article_node_ingest(
+    url: str,
+    *,
+    environment: Environment,
+) -> IngestResult | IngestError:
+    """Run the environment-owned Node composition for one accepted URL."""
+
+    return run_node_ingest(
+        url,
+        command=_node_ingest_command_for_environment(environment),
+    )
+
+
 def materialize_web_article_source(
     session_factory: sessionmaker[Session],
     media_id: UUID,
@@ -92,9 +105,9 @@ def materialize_web_article_source(
     finally:
         snapshot.close()
 
-    ingest_result = run_node_ingest(
+    ingest_result = run_web_article_node_ingest(
         url,
-        command=_node_ingest_command_for_environment(get_settings().nexus_env),
+        environment=get_settings().nexus_env,
     )
 
     if isinstance(ingest_result, IngestError):

@@ -301,12 +301,13 @@ function ToolRow({ tool }: { tool: MessageToolCall }) {
       <div className={styles.trustLine}>
         <Wrench size={13} aria-hidden="true" />
         <span>
-          #{tool.tool_call_index} {tool.tool_name} - {tool.status}
-          {tool.error_code ? ` - ${tool.error_code}` : ""}
+          #{tool.tool_call_index} {tool.activity_label} - {tool.status}
+          {tool.error_type ? ` - ${tool.error_type}` : ""}
         </span>
       </div>
       <div className={styles.trustCode}>
-        tool {tool.id ? shortId(tool.id) : "pending"} - {tool.scope ?? "all"} -{" "}
+        {tool.canonical_tool_id ?? tool.provider_wire_name ?? tool.record_kind} - tool{" "}
+        {tool.id ? shortId(tool.id) : "pending"} - {tool.scope ?? "all"} -{" "}
         {tool.result_count ?? tool.result_refs.length} results /{" "}
         {tool.selected_count ?? tool.selected_context_refs.length} selected
         {typeof tool.latency_ms === "number" ? ` - ${tool.latency_ms}ms` : ""}

@@ -302,6 +302,24 @@
       "expected_failure": "production prompt lost a reviewed tool-safety instruction"
     },
     {
+      "id": "llm-tool-projection-gate-bypass",
+      "patch": "testdata/faults/llm-tool-projection-gate-bypass.patch",
+      "sha256": "2acf35eff78d0638f7b2ada603b4384105bbe10f89928d93d912a43f5db7bae3",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_tool_projection_protocol.py::test_revision_gates_every_changed_chat_projection_boundary"
+      ],
+      "expected_failure": "fresh send with missing revision crossed the public Chat boundary"
+    },
+    {
+      "id": "llm-tools-cutover-migration-bypass",
+      "patch": "testdata/faults/llm-tools-cutover-migration-bypass.patch",
+      "sha256": "644fed427d54de6dbc93c5621e6eca955e9b16e852cdeaba7e20562936911f45",
+      "proofs": [
+        "pytest:python/tests/migrations/test_llm_tools_cutover_migration.py::test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_malformed_state"
+      ],
+      "expected_failure": "Using attached resources"
+    },
+    {
       "id": "codex-hosted-evidence-size-bound-bypass",
       "patch": "testdata/faults/codex-hosted-evidence-size-bound-bypass.patch",
       "sha256": "69faddfd0ed0537a6c5b6eaa143e605abdc1bb0ba29d3f210c5d9ce06de409e1",
