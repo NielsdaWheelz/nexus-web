@@ -264,7 +264,7 @@
       "pytest:python/tests/service/test_codex_metadata_failure_mapping.py::test_native_timeout_persists_as_a_distinct_metadata_failure",
       "pytest:python/tests/service/test_codex_metadata_enrichment.py",
       "pytest:python/tests/service/test_codex_metadata_transport_durability.py::test_postaccept_disconnect_stays_incomplete_and_never_redispatches",
-      "pytest:python/tests/service/test_durable_job_replay.py",
+      "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker",
       "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job",
       "pytest:python/tests/service/test_heavy_job_capacity.py",
       "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets",

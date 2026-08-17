@@ -290,7 +290,7 @@
       "proofs": [
         "pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo"
       ],
-      "expected_failure": "At index 4 diff:"
+      "expected_failure": "foreign mutating tool crossed owner authorization"
     },
     {
       "id": "llm-tool-safety-prompt-bypass",

@@ -474,7 +474,9 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
             )
             for index, (tool_id, arguments) in enumerate(foreign_cases, start=6)
         )
-        assert denied == (_failure("ResourceUnavailable"),) * len(foreign_cases)
+        assert denied == (_failure("ResourceUnavailable"),) * len(foreign_cases), (
+            "foreign mutating tool crossed owner authorization"
+        )
         assert _owned_effect_counts(
             db,
             owner_id=owner_id,
