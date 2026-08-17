@@ -222,7 +222,7 @@ def test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle(
                     2,
                     {"media_id": str(owner_id), "capacity_wait_index": 0},
                 ),
-            ]
+            ], "0216 did not canonicalize retained metadata capacity jobs"
 
         from nexus.jobs.queue import claim_job, complete_job
 

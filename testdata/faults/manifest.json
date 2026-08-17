@@ -219,6 +219,15 @@
       "expected_failure": "metadata prompt exceeded wire input bound"
     },
     {
+      "id": "durable-codex-metadata-migration-retry-bypass",
+      "patch": "testdata/faults/durable-codex-metadata-migration-retry-bypass.patch",
+      "sha256": "5f9d1a6e9378327f2136bba7327f0c83f04e9219f53153ce5b24b4a7d332fd0c",
+      "proofs": [
+        "pytest:python/tests/migrations/test_codex_personal_metadata.py::test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle"
+      ],
+      "expected_failure": "0216 did not canonicalize retained metadata capacity jobs"
+    },
+    {
       "id": "durable-codex-metadata-timeout-collapse",
       "patch": "testdata/faults/durable-codex-metadata-timeout-collapse.patch",
       "sha256": "ad8b9304ed85823fe2667bfe980ba122f29634dc8299eb00fdeb944b47fe5c75",
