@@ -11,7 +11,6 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, MessageToolCall
-from nexus.errors import NotFoundError
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
 from nexus.services.chat_run_tools import (
     decode_persisted_tool_record,
@@ -37,10 +36,8 @@ from nexus.services.resource_graph.schemas import CitationInput, CitationSnapsho
 from nexus.services.resource_items.capabilities import resource_citation_result_type
 from nexus.services.retrieval_citation import (
     RetrievalCitation,
-    citation_from_search_result,
     insert_retrieval_row,
 )
-from nexus.services.search import get_search_result
 
 CitationPublicationWarningCode = Literal["CitationsUnavailable"]
 
@@ -50,6 +47,7 @@ class NumberedCitationCandidate:
     retrieval_id: UUID
     retrieval_ordinal: int
     candidate_ordinal: int | None
+    result_ref: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +159,7 @@ def number_tool_citation_candidates(
                 retrieval_id=row["id"],
                 retrieval_ordinal=row["ordinal"],
                 candidate_ordinal=candidate_ordinal,
+                result_ref=dict(row["result_ref"]),
             )
         )
     return CitationCandidateNumbering(rows=tuple(numbered), next_ordinal=next_ordinal)
@@ -337,54 +336,6 @@ def prune_tool_call_retrievals(
         params,
     )
     graph_cleanup.delete_orphaned_external_snapshots(db, snapshot_ids=web_snapshot_ids)
-
-
-def persist_read_evidence_candidate(
-    db: Session,
-    *,
-    run: ChatRun,
-    tool_call_id: UUID,
-    result: Any,
-    start_ordinal: int,
-) -> CitationCandidateNumbering | None:
-    """Persist and number one citable read result for provider tool output."""
-    if result.is_error or result.citation_result_type is None or result.citation_source_id is None:
-        return None
-    try:
-        search_result = get_search_result(
-            db,
-            run.owner_user_id,
-            result.citation_result_type,
-            result.citation_source_id,
-        )
-        citation = citation_from_search_result(search_result, filters={})
-        citation.selected = True
-        insert_retrieval_row(
-            db,
-            tool_call_id=tool_call_id,
-            ordinal=0,
-            citation=citation,
-            selected=True,
-            scope="read_resource",
-            retrieval_status="selected",
-            included_in_prompt=True,
-        )
-    except (NotFoundError, ValueError):
-        # justify-ignore-error: an unanchored read still returns its body, but it
-        # is not exposed as a citation candidate.
-        return None
-    numbering = number_tool_citation_candidates(
-        db,
-        tool_call_id=tool_call_id,
-        start_ordinal=start_ordinal,
-    )
-    # justify-service-invariant-check: one read tool call owns at most one
-    # retrieval row, an invariant spanning two persisted tables.
-    if len(numbering.rows) != 1:
-        raise AssertionError(
-            f"read tool call {tool_call_id} must own exactly one selected retrieval"
-        )
-    return numbering
 
 
 def publish_chat_citations(

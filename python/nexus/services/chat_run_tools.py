@@ -8,12 +8,11 @@ already-admitted canonical identity; raw SQL elsewhere may only read rows.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from llm_tools import canonical_json_bytes
@@ -24,9 +23,6 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, MessageToolCall
 from nexus.schemas.conversation import ChatRunToolResultEventPayload
-
-if TYPE_CHECKING:
-    from nexus.services.chat_run_citations import CitationCandidateNumbering
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -261,36 +257,6 @@ class ToolStepResult(_ToolStepModel):
 
 def tool_step_fingerprint(value: ToolStepRequest) -> str:
     return hashlib.sha256(canonical_json_bytes(value.model_dump(mode="json"))).hexdigest()
-
-
-def app_search_tool_output(
-    run_result: Any,
-    numbering: CitationCandidateNumbering,
-) -> str:
-    results = []
-    for citation, numbered in zip(
-        run_result.selected_citations,
-        numbering.rows,
-        strict=True,
-    ):
-        item: dict[str, object] = {
-            "title": citation.title,
-            "snippet": citation.snippet,
-            "kind": citation.result_type,
-            "source_label": citation.source_label,
-        }
-        if numbered.candidate_ordinal is not None:
-            item["n"] = numbered.candidate_ordinal
-        results.append(item)
-    return json.dumps(
-        {
-            "results": results,
-            "total_candidates": len(run_result.citations),
-            "status": run_result.status,
-            "error_code": run_result.error_code,
-        },
-        default=str,
-    )
 
 
 def _prune_tool_call_retrievals(

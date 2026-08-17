@@ -9,6 +9,22 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.schemas.presence import Presence, Present, present
+from nexus.services.durable_step_journal import (
+    Completed,
+    ToolExecutionState,
+    decode_step_states,
+    payload_with_step_state,
+)
+
+_DOSSIER_WEB_STEP_PATHS = frozenset(
+    {
+        "research/web-search/0",
+        "research/web-search/1",
+        "research/web-search/2",
+    }
+)
+
 
 def prioritize_job_for_worker_proof(db: Session, *, job_id: UUID) -> None:
     """Make one known synthetic job precede unrelated rows in a shared test database."""
@@ -159,6 +175,51 @@ def set_pending_job_max_attempts(
     assert updated == job_id
 
 
+def replace_dead_dossier_step_tool_execution(
+    db: Session,
+    *,
+    job_id: UUID,
+    step_path: str,
+    tool_execution: Presence[ToolExecutionState],
+) -> Presence[ToolExecutionState]:
+    """Replace one known dead Dossier Web position's stored binding metadata."""
+
+    if step_path not in _DOSSIER_WEB_STEP_PATHS:
+        raise AssertionError(f"not a Dossier Web position: {step_path!r}")
+    row = (
+        db.execute(
+            text("SELECT kind, status, payload FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+            {"job_id": job_id},
+        )
+        .mappings()
+        .one()
+    )
+    if row["kind"] != "dossier_build" or row["status"] != "dead":
+        raise AssertionError("tool metadata mutation requires one dead Dossier job")
+    payload = dict(row["payload"])
+    states = decode_step_states(payload)
+    state = states.get(step_path)
+    if state is None:
+        raise AssertionError(f"dead Dossier job lacks step {step_path!r}")
+    previous = state.tool_execution
+    changed = state.model_copy(update={"tool_execution": tool_execution})
+    next_payload = payload_with_step_state(
+        payload,
+        step_path=step_path,
+        state=changed,
+    )
+    updated = db.execute(
+        text(
+            "UPDATE background_jobs SET payload = CAST(:payload AS jsonb) "
+            "WHERE id = :job_id AND kind = 'dossier_build' AND status = 'dead' "
+            "RETURNING id"
+        ),
+        {"job_id": job_id, "payload": json.dumps(next_payload)},
+    ).scalar_one()
+    assert updated == job_id
+    return previous
+
+
 def replace_completed_chat_tool_arguments(
     db: Session,
     *,
@@ -190,6 +251,98 @@ def replace_completed_chat_tool_arguments(
         text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
         {"job_id": job_id, "payload": json.dumps(changed)},
     )
+
+
+def replace_completed_chat_tool_terminal(
+    db: Session,
+    *,
+    job_id: UUID,
+    step_path: str,
+    terminal_result: str,
+) -> str:
+    """Model a policy-invalid completed terminal with internally exact accounting."""
+
+    if (
+        json.dumps(
+            json.loads(terminal_result),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        != terminal_result
+    ):
+        raise AssertionError("replacement Chat tool terminal must be canonical JSON")
+    row = (
+        db.execute(
+            text("SELECT kind, status, payload FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+            {"job_id": job_id},
+        )
+        .mappings()
+        .one()
+    )
+    if row["kind"] != "chat_run" or row["status"] not in {"failed", "pending", "running"}:
+        raise AssertionError("tool terminal mutation requires one replayable Chat job")
+    payload = dict(row["payload"])
+    states = decode_step_states(payload)
+    state = states.get(step_path)
+    if (
+        state is None
+        or state.dispatch_phase is not Completed
+        or not isinstance(state.terminal_result, Present)
+        or not isinstance(state.tool_execution, Present)
+        or not isinstance(state.tool_execution.value.settlement, Present)
+    ):
+        raise AssertionError("tool terminal mutation requires one settled completed position")
+    previous = state.terminal_result.value
+    settlement = state.tool_execution.value.settlement.value.model_copy(
+        update={"actual_output_bytes": len(terminal_result.encode("utf-8"))}
+    )
+    execution = state.tool_execution.value.model_copy(update={"settlement": present(settlement)})
+    changed = state.model_copy(
+        update={
+            "terminal_result": present(terminal_result),
+            "tool_execution": present(execution),
+        }
+    )
+    next_payload = payload_with_step_state(payload, step_path=step_path, state=changed)
+    updated = db.execute(
+        text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
+        {"job_id": job_id, "payload": json.dumps(next_payload)},
+    ).rowcount
+    assert updated == 1
+    return previous
+
+
+def replace_completed_chat_prepare_admitted_resource_uris(
+    db: Session,
+    *,
+    job_id: UUID,
+    admitted_resource_uris: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Model a tampered authority snapshot behind an unchanged prepare fingerprint."""
+
+    payload = db.execute(
+        text("SELECT payload FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+        {"job_id": job_id},
+    ).scalar_one()
+    changed = json.loads(json.dumps(payload))
+    prepare = changed["coordination"]["prepare"]
+    terminal = prepare["terminal_result"]
+    assert terminal["kind"] == "Present"
+    prepared = json.loads(terminal["value"])
+    original = tuple(prepared["admitted_resource_uris"])
+    prepared["admitted_resource_uris"] = list(admitted_resource_uris)
+    terminal["value"] = json.dumps(
+        prepared,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    db.execute(
+        text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
+        {"job_id": job_id, "payload": json.dumps(changed)},
+    )
+    return original
 
 
 def make_pending_job_due(db: Session, *, job_id: UUID) -> None:

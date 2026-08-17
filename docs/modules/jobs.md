@@ -223,14 +223,17 @@ operator reconciliation without redispatch.
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
 Contributor, Page, Note, and internal Idea subjects. Its binding registry
 selects collection, prompt, operation/profile, coverage, and freshness policy.
-The build job payload also owns typed per-step coordination: billed synthesis
-and document repair are never redispatched from an uncertain state, while
-bounded search/read/ingest observations may be replayed and pages awaiting
-ingestion yield the worker. The artifact head is the database serialization
-point; the build is the replay identity. Build success, modeled failure, and
-cancellation are terminal children, while exhausted or unreconciled execution
-remains a visible, operator-repairable suspended build. Dead `dossier_build`
-rows are never pruned.
+The Idea binding receives one frozen HostTable operation whose sole grant is
+`web.search`; it never inherits Chat's Native catalogue. Stored binding metadata
+owns its BilledOnce replay policy, so an uncertain public-Web search is never
+automatically redispatched. Billed synthesis and document repair likewise stay
+suspended after uncertainty, while direct Nexus-search and page
+accept/readiness/read observations are ReDispatchable and pages awaiting ingest
+yield the worker. The artifact head is the database serialization point; the
+build is the replay identity. Build success, modeled failure, and cancellation
+are terminal children, while exhausted or unreconciled execution remains a
+visible, operator-repairable suspended build. Dead `dossier_build` rows are
+never pruned.
 
 `services/durable_step_journal.py` owns the shared strict replay-state codec,
 stable step identity, lease-fenced queue-payload checkpoint, and durable

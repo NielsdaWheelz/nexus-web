@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
+from threading import Event
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from llm_tools import EffectId, ToolEffect, ToolId
-from sqlalchemy import Engine, func, select
+from llm_tools import DeclaredToolFailure, EffectId, ToolEffect, ToolId
+from sqlalchemy import Engine, event, func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -17,15 +20,24 @@ from nexus.db.models import (
     ConsumptionQueueItem,
     Highlight,
     LibraryEntry,
+    Media,
+    MediaKind,
+    Membership,
     MessageToolCall,
     NoteBlock,
+    Podcast,
+    PodcastEpisode,
+    PodcastSubscription,
+    ProcessingStatus,
     ResourceEdge,
 )
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.library import CreateLibraryRequest
 from nexus.schemas.notes import CreatePageRequest
-from nexus.services import bootstrap, library_governance, notes
-from nexus.services.agent_tools.writes import undo_tool_call
+from nexus.services import bootstrap, library_entries, library_governance, notes
+from nexus.services.agent_tools.writes import add_to_queue, undo_tool_call
+from nexus.services.billing_entitlements import revoke_entitlement_override
+from nexus.services.consumption import service as consumption_service
 from nexus.services.durable_step_journal import Completed, read_step_states, stable_generation_id
 from nexus.services.message_trust_trails import build_assistant_trust_trail
 from tests.testkit.chat import create_entitled_chat
@@ -76,6 +88,22 @@ def _execute_write(
 
 def _failure(error_type: str) -> dict[str, object]:
     return {"type": "Failure", "error": {"type": error_type}}
+
+
+def _assert_rare_owner_refusals_are_closed() -> None:
+    # These owner outcomes require a transaction race or the 2,000-row Lectern
+    # ceiling. The public scenarios below cover the common mappings; this small
+    # pure table proves the remaining closed adapter cases without a huge fixture.
+    from nexus.services.tool_runtime.execution import _write_refusal
+
+    for tool_id, code in (
+        ("nexus.library.add", ApiErrorCode.E_MEDIA_DELETING),
+        ("nexus.queue.add", ApiErrorCode.E_MEDIA_DELETING),
+        ("nexus.queue.add", ApiErrorCode.E_LIMIT),
+    ):
+        with pytest.raises(DeclaredToolFailure) as raised:
+            _write_refusal(ApiError(code, "owner refused the write"), tool_id=tool_id)
+        assert raised.value.error.model_dump(mode="json") == {"type": "ResourceUnavailable"}
 
 
 def _owned_effect_counts(
@@ -151,6 +179,7 @@ def _active_write_count(rows: Sequence[MessageToolCall]) -> int:
 def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
     engine: Engine,
 ) -> None:
+    _assert_rare_owner_refusals_are_closed()
     owner_id = uuid4()
     foreign_id = uuid4()
     with Session(engine, expire_on_commit=False) as db:
@@ -309,7 +338,7 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
             for index, (tool_id, arguments) in enumerate(successful_cases, start=1)
         )
 
-        assert all(result["type"] == "Success" for result in successes)
+        assert all(result["type"] == "Success" for result in successes), successes
         assert successes[0]["value"] == {
             "already_present": False,
             "library_name": "Filed by assistant",
@@ -514,6 +543,11 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
                 "QuoteAmbiguous",
             ),
             (
+                "nexus.highlight.create",
+                successful_cases[2][1],
+                "Conflict",
+            ),
+            (
                 "nexus.edge.create",
                 successful_cases[3][1],
                 "Conflict",
@@ -536,6 +570,12 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
             )
         )
         assert refusals == tuple(_failure(error_type) for _, _, error_type in refusal_cases)
+        assert (
+            db.scalar(
+                select(func.count()).select_from(Highlight).where(Highlight.user_id == owner_id)
+            )
+            == 1
+        )
 
         fill_arguments = {
             "resource_uri": quote_uri,
@@ -553,7 +593,7 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
                 arguments=fill_arguments,
                 admitted_resource_uris=admitted,
             )
-            for index in range(18, 21)
+            for index in range(19, 22)
         )
         assert all(result["type"] == "Success" for result in fill_results)
         assert all(result["value"]["already_present"] is True for result in fill_results)
@@ -565,7 +605,7 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
             run=run,
             job_context=job_context,
             tool_id="nexus.library.add",
-            tool_call_index=21,
+            tool_call_index=22,
             arguments=fill_arguments,
             admitted_resource_uris=admitted,
         )
@@ -615,7 +655,7 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
             run=run,
             job_context=job_context,
             tool_id="nexus.library.add",
-            tool_call_index=22,
+            tool_call_index=23,
             arguments=fill_arguments,
             admitted_resource_uris=admitted,
         )
@@ -626,7 +666,7 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
         rows_by_index = {
             row.tool_call_index: row for row in _tool_rows(db, run.assistant_message_id)
         }
-        for row in (*first_success_rows[1:], rows_by_index[22]):
+        for row in (*first_success_rows[1:], rows_by_index[23]):
             first = undo_tool_call(
                 db,
                 viewer_id=owner_id,
@@ -655,7 +695,7 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
         reverted = {
             tool.tool_call_index for tool in final_trust.tool_calls if tool.reverted_at is not None
         }
-        assert {1, 2, 3, 4, 5, 22} <= reverted
+        assert {1, 2, 3, 4, 5, 23} <= reverted
 
         final_rows = _tool_rows(db, run.assistant_message_id)
         final_events = list(
@@ -666,6 +706,233 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
                 )
             )
         )
-        assert len(final_rows) == len(final_events) == 22
+        assert len(final_rows) == len(final_events) == 23
         assert {row.record_kind for row in final_rows} == {"current_execution"}
         assert all("tool_name" not in event.payload for event in final_events)
+
+    _assert_library_add_closes_podcast_owner_refusals(engine)
+    _assert_concurrent_queue_insertion_is_not_claimed_for_undo(engine)
+
+
+def _assert_library_add_closes_podcast_owner_refusals(engine: Engine) -> None:
+    owner_id = uuid4()
+    foreign_id = uuid4()
+    with Session(engine, expire_on_commit=False) as db:
+        chat = create_entitled_chat(
+            db,
+            content="File only podcasts whose placement owner authorizes the change.",
+            user_id=owner_id,
+        )
+        bootstrap.ensure_user_and_default_library(
+            db,
+            foreign_id,
+            f"write-tool-foreign-member-{foreign_id}@example.invalid",
+        )
+        run = db.get(ChatRun, chat.run_id)
+        assert run is not None
+
+        source_library_id = uuid4()
+        unsubscribed_target_id = uuid4()
+        replacement_target_id = uuid4()
+        billing_target_id = uuid4()
+        for library_id, name in (
+            (source_library_id, "Visible podcast source"),
+            (unsubscribed_target_id, "Subscription required"),
+            (replacement_target_id, "Episode replacement"),
+            (billing_target_id, "Shared destination"),
+        ):
+            library_governance.create_library(
+                db,
+                owner_id,
+                CreateLibraryRequest(library_id=library_id, name=name),
+            )
+        db.add(Membership(library_id=billing_target_id, user_id=foreign_id, role="member"))
+
+        unsubscribed_id = uuid4()
+        replacement_id = uuid4()
+        billing_id = uuid4()
+        for podcast_id, title in (
+            (unsubscribed_id, "Unsubscribed podcast"),
+            (replacement_id, "Replacement podcast"),
+            (billing_id, "Shared podcast"),
+        ):
+            db.add(
+                Podcast(
+                    id=podcast_id,
+                    provider="test",
+                    provider_podcast_id=str(podcast_id),
+                    title=title,
+                    feed_url=f"https://feeds.example.invalid/{podcast_id}.xml",
+                )
+            )
+        db.flush()
+        library_entries.ensure_entry(
+            db,
+            source_library_id,
+            library_entries.podcast_target(unsubscribed_id),
+        )
+        for podcast_id in (replacement_id, billing_id):
+            db.add(
+                PodcastSubscription(
+                    id=uuid4(),
+                    user_id=owner_id,
+                    podcast_id=podcast_id,
+                    next_sync_at=datetime.now(UTC),
+                )
+            )
+
+        episode_id = uuid4()
+        db.add(
+            Media(
+                id=episode_id,
+                kind=MediaKind.podcast_episode.value,
+                title="Directly filed episode",
+                processing_status=ProcessingStatus.ready_for_reading,
+                created_by_user_id=owner_id,
+            )
+        )
+        db.flush()
+        db.add(PodcastEpisode(media_id=episode_id, podcast_id=replacement_id))
+        library_entries.ensure_entry(
+            db,
+            replacement_target_id,
+            library_entries.media_target(episode_id),
+        )
+        db.flush()
+        revoke_entitlement_override(
+            db,
+            user_id=owner_id,
+            reason="exercise closed library-add billing refusal",
+            actor_label="nexus-test",
+        )
+        db.commit()
+
+        runtime = compose_keyless_tool_runtime()
+        operation = runtime.operations["chat"]
+        job_context = claim_chat_tool_job(
+            db,
+            job_id=chat.job_id,
+            worker_id=f"podcast-write-refusal-{uuid4()}",
+        )
+        cases = (
+            (unsubscribed_id, unsubscribed_target_id, "ResourceUnavailable"),
+            (replacement_id, replacement_target_id, "TargetAmbiguous"),
+            (billing_id, billing_target_id, "ResourceUnavailable"),
+        )
+        results = tuple(
+            _execute_write(
+                db,
+                operation=operation,
+                run=run,
+                job_context=job_context,
+                tool_id="nexus.library.add",
+                tool_call_index=index,
+                arguments={
+                    "resource_uri": f"podcast:{podcast_id}",
+                    "library_id": str(library_id),
+                    "library_name": None,
+                },
+                admitted_resource_uris=(f"podcast:{podcast_id}",),
+            )
+            for index, (podcast_id, library_id, _error_type) in enumerate(cases, start=1)
+        )
+
+        assert results == tuple(_failure(error_type) for _, _, error_type in cases)
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(LibraryEntry)
+                .where(
+                    LibraryEntry.podcast_id.in_([unsubscribed_id, replacement_id, billing_id]),
+                    LibraryEntry.library_id.in_(
+                        [unsubscribed_target_id, replacement_target_id, billing_target_id]
+                    ),
+                )
+            )
+            == 0
+        )
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(LibraryEntry)
+                .where(
+                    LibraryEntry.library_id == replacement_target_id,
+                    LibraryEntry.media_id == episode_id,
+                )
+            )
+            == 1
+        )
+
+
+def _assert_concurrent_queue_insertion_is_not_claimed_for_undo(engine: Engine) -> None:
+    owner_id = uuid4()
+    with Session(engine, expire_on_commit=False) as setup:
+        default_library_id = bootstrap.ensure_user_and_default_library(
+            setup,
+            owner_id,
+            f"queue-race-owner-{owner_id}@example.invalid",
+        )
+        media_id = create_readable_media(
+            setup,
+            user_id=owner_id,
+            default_library_id=default_library_id,
+            title="Concurrent queue target",
+            canonical_text="A manually queued item must remain user-owned.",
+        )
+
+    media_uri = f"media:{media_id}"
+    lock_attempted = Event()
+
+    def execute_blocked_queue_add() -> Any:
+        with engine.connect() as connection:
+
+            def observe_viewer_lock(
+                _connection: Any,
+                _cursor: Any,
+                statement: str,
+                _parameters: Any,
+                _context: Any,
+                _executemany: bool,
+            ) -> None:
+                normalized = " ".join(statement.upper().split())
+                if "FROM USERS" in normalized and "FOR UPDATE" in normalized:
+                    lock_attempted.set()
+
+            event.listen(connection, "before_cursor_execute", observe_viewer_lock)
+            try:
+                with Session(bind=connection, expire_on_commit=False) as worker:
+                    effect = add_to_queue(worker, owner_id, {"media_uri": media_uri})
+                    worker.commit()
+                    return effect
+            finally:
+                event.remove(connection, "before_cursor_execute", observe_viewer_lock)
+
+    with Session(engine) as blocker:
+        blocker.execute(
+            text("SELECT 1 FROM users WHERE id = :viewer_id FOR UPDATE"),
+            {"viewer_id": owner_id},
+        )
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            execution = pool.submit(execute_blocked_queue_add)
+            assert lock_attempted.wait(timeout=10), "queue add never attempted its owner lock"
+            assert not execution.done(), "queue add did not wait for its owner lock"
+            inserted = consumption_service.ensure_missing_items_in_txn(
+                blocker,
+                viewer_id=owner_id,
+                media_ids=[media_id],
+                source="Manual",
+            )
+            assert len(inserted) == 1
+            blocker.commit()
+            result = execution.result(timeout=10)
+
+    assert result.output["already_present"] is True
+    assert result.created_refs == []
+    with Session(engine, expire_on_commit=False) as oracle:
+        queue_row = oracle.scalar(
+            select(ConsumptionQueueItem).where(
+                ConsumptionQueueItem.user_id == owner_id,
+                ConsumptionQueueItem.media_id == media_id,
+            )
+        )
+        assert queue_row is not None and queue_row.source == "manual"

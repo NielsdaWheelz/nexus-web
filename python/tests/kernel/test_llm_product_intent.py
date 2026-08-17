@@ -38,7 +38,7 @@ from provider_runtime.types import ContinuationArtifact, StrictJsonOutput, ToolC
 from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.services import llm_profiles
-from nexus.services.chat_prompt import build_prompt_plan, render_system_prompt_block
+from nexus.services.chat_prompt import build_prompt_plan
 from nexus.services.llm_intent_state import (
     GenerateIntentState,
     conservative_token_admission_bound,
@@ -198,26 +198,6 @@ def test_product_profiles_have_the_fixed_nine_row_chat_portfolio() -> None:
 
 def test_product_profiles_validate_against_the_runtime_registry() -> None:
     llm_profiles.validate_profiles()
-
-
-def test_system_prompt_describes_write_authority_only_when_a_write_tool_is_published() -> None:
-    read_tool = CanonicalTool(
-        name="app_search",
-        description="Search the user's readable resources.",
-        parameters={"type": "object", "properties": {}},
-    )
-    write_tool = CanonicalTool(
-        name="queue_add",
-        description="Add a media item to the queue.",
-        parameters={"type": "object", "properties": {}},
-    )
-
-    read_only_prompt = render_system_prompt_block(tools=(read_tool,))
-    write_prompt = render_system_prompt_block(tools=(read_tool, write_tool))
-
-    assert "You can also act on the user's library" not in read_only_prompt
-    assert "You can also act on the user's library" in write_prompt
-    assert "only when the user's words ask for the action" in write_prompt
 
 
 def test_intent_state_round_trips_plain_json_and_reserves_every_persisted_byte() -> None:

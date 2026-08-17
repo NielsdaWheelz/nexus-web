@@ -9,13 +9,16 @@ owners, then returns a body only in memory.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Literal
-from uuid import UUID
+from urllib.parse import urlparse
+from uuid import UUID, uuid5
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from llm_tools import WEB_SEARCH_SPEC, canonical_json_bytes
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
 from nexus.db.models import MediaSourceAttempt, MediaSourceAttemptStatus
@@ -24,12 +27,12 @@ from nexus.jobs.queue import JobRow, current_dead_job_for_payload, get_job
 from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.services.durable_step_journal import (
     Completed,
-    decode_step_result,
     read_step_states,
 )
 from nexus.services.media_read_map import DocumentRead, load_media_document
 from nexus.services.media_source_ingest import accept_url_source
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 _AWAIT_READY_LIMIT = timedelta(minutes=10)
 
@@ -108,6 +111,62 @@ class WebSearchResult(_StrictStepResult):
     items: list[WebSearchItem]
 
 
+_WEB_SEARCH_SUCCESS_ADAPTER = TypeAdapter(WEB_SEARCH_SPEC.success_type)
+
+
+def dossier_web_search_items_from_tool_result(
+    raw: str,
+    *,
+    build_id: UUID,
+) -> tuple[WebSearchItem, ...]:
+    """Strictly project one portable ``web.search`` Success for Dossier ownership."""
+
+    try:
+        terminal = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise AssertionError("Dossier Web search has a malformed tool result") from exc
+    if canonical_json_bytes(terminal).decode("utf-8") != raw:
+        raise AssertionError("Dossier Web search tool result is not canonical JSON")
+    if (
+        not isinstance(terminal, dict)
+        or set(terminal) != {"type", "value"}
+        or terminal.get("type") != "Success"
+    ):
+        raise AssertionError("Dossier Web search did not complete successfully")
+    try:
+        success = _WEB_SEARCH_SUCCESS_ADAPTER.validate_json(
+            canonical_json_bytes(terminal["value"]), strict=True
+        )
+        projected = _WEB_SEARCH_SUCCESS_ADAPTER.dump_python(success, mode="json")
+    except ValidationError as exc:
+        raise AssertionError("Dossier Web search Success is malformed") from exc
+    if canonical_json_bytes(projected) != canonical_json_bytes(terminal["value"]):
+        raise AssertionError("Dossier Web search Success differs from its strict projection")
+    items: list[WebSearchItem] = []
+    for hit in success.results:
+        try:
+            validate_requested_url(hit.url)
+        except (InvalidRequestError, ValueError):
+            # Preserve invalid provider output for the acceptance owner to reject.
+            canonical_url = hit.url
+        else:
+            canonical_url = normalize_url_for_display(hit.url)
+        try:
+            domain = (urlparse(canonical_url).hostname or "").lower()
+        except ValueError:
+            domain = ""
+        items.append(
+            WebSearchItem(
+                result_id=uuid5(build_id, canonical_url).hex,
+                title=hit.title,
+                canonical_url=canonical_url,
+                domain=domain,
+                rank=hit.rank,
+            )
+        )
+    return tuple(items)
+
+
 @dataclass(frozen=True, slots=True)
 class ReadWebPage:
     receipt: PageReadReceipt
@@ -128,7 +187,7 @@ def accept_web_search_result(
 ) -> PageAcceptResult:
     """Accept the exact URL resolved from one build-owned search receipt."""
 
-    item = _resolve_build_search_result(job, result_id=result_id)
+    item = _resolve_build_search_result(job, build_id=build_id, result_id=result_id)
     try:
         accepted = accept_url_source(
             db=db,
@@ -164,7 +223,12 @@ def accept_web_search_result(
     )
 
 
-def _resolve_build_search_result(job: JobRow, *, result_id: str) -> WebSearchItem:
+def _resolve_build_search_result(
+    job: JobRow,
+    *,
+    build_id: UUID,
+    result_id: str,
+) -> WebSearchItem:
     matches: list[WebSearchItem] = []
     states = read_step_states(job)
     for index in range(3):
@@ -173,8 +237,11 @@ def _resolve_build_search_result(job: JobRow, *, result_id: str) -> WebSearchIte
             continue
         if state.dispatch_phase is not Completed or not isinstance(state.terminal_result, Present):
             raise AssertionError("Web page read observed an incomplete search step")
-        result = decode_step_result(state.terminal_result.value, WebSearchResult)
-        matches.extend(item for item in result.items if item.result_id == result_id)
+        items = dossier_web_search_items_from_tool_result(
+            state.terminal_result.value,
+            build_id=build_id,
+        )
+        matches.extend(item for item in items if item.result_id == result_id)
     if not matches:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,

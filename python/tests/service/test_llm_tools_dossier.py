@@ -16,6 +16,7 @@ from llm_tools import (
     WebSearchRequest,
     WebSearchResponse,
     WebSearchResultItem,
+    canonical_json_bytes,
 )
 from provider_runtime.testing import ScriptedRuntime
 from sqlalchemy import Engine, select
@@ -33,7 +34,10 @@ from nexus.db.models import (
     SynthesisArtifact,
 )
 from nexus.db.session import create_session_factory
+from nexus.errors import InvalidRequestError
 from nexus.jobs.queue import (
+    DEAD,
+    PENDING,
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
@@ -44,7 +48,10 @@ from nexus.jobs.queue import (
     get_job,
     reschedule_running_job,
 )
-from nexus.schemas.presence import Present, absent
+from nexus.schemas.presence import Present, absent, present
+from nexus.services.agent_tools.web_page_read import (
+    dossier_web_search_items_from_tool_result,
+)
 from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.engine import (
     reconcile_uncertain_build,
@@ -64,17 +71,21 @@ from nexus.services.artifacts.subject_policy import (
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.durable_step_journal import (
+    AttachReconciledResult,
     Completed,
     ProveNotDispatched,
+    ToolExecutionSettlement,
     Uncertain,
     read_step_states,
     stable_generation_id,
 )
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
+from nexus.tasks.artifacts import compose_dossier_tool_runtime
 from tests.testkit.unreachable_state import (
     make_failed_job_retryable,
     make_pending_job_due,
     remove_dossier_nexus_research_steps,
+    replace_dead_dossier_step_tool_execution,
     set_pending_job_max_attempts,
 )
 
@@ -144,6 +155,41 @@ class _NeverSearch:
     async def search(self, request: WebSearchRequest) -> WebSearchResponse:
         self.calls += 1
         raise AssertionError(f"Dossier automatically reissued a durable search: {request!r}")
+
+
+def _reconciled_web_search_result(*, result_count: int = 1) -> str:
+    request_id = "dossier-reconciled-search"
+    return canonical_json_bytes(
+        {
+            "type": "Success",
+            "value": {
+                "results": [
+                    {
+                        "result_ref": f"proof:{request_id}-{rank}",
+                        "title": f"Reconciled Dossier evidence {rank}",
+                        "url": f"{_WEB_URL}?result={rank}",
+                        "display_url": f"example.com/durable-dossier-evidence?result={rank}",
+                        "snippet": "A recovered normalized result with exact usage.",
+                        "extra_snippets": [],
+                        "published_at": None,
+                        "source_name": "Example",
+                        "rank": rank,
+                        "provider": "brave",
+                        "provider_request_id": request_id,
+                    }
+                    for rank in range(1, result_count + 1)
+                ],
+                "provider": "brave",
+                "provider_request_id": request_id,
+                "observed_at": "2026-08-17T12:00:00Z",
+                "evidence": {
+                    "type": "web.search",
+                    "provider": "brave",
+                    "provider_request_id": request_id,
+                },
+            },
+        }
+    ).decode("utf-8")
 
 
 def _create_idea_build(
@@ -248,7 +294,9 @@ def _runtime(
         job=job,
         execution_context=context,
         llm_runtime=ScriptedRuntime(),
-        web_search_provider=Present(value=web_search_provider),
+        research_tool_operation=compose_dossier_tool_runtime(web_search_provider).operations[
+            "idea_dossier_research"
+        ],
     )
 
 
@@ -392,7 +440,7 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
     set_rate_limiter(RateLimiter(session_factory=session_factory))
     try:
         with Session(engine, expire_on_commit=False) as db:
-            crossed = _create_idea_build(db, title="Crossed paid search")
+            crossed = _create_idea_build(db, title="Crossed paid search", max_attempts=2)
             crossed_job, crossed_context = _claim_build(
                 db,
                 build=crossed,
@@ -467,9 +515,119 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
                     error_message="operator evidence is required",
                     retry_delays_seconds=(0,),
                 )
-                == "failed"
+                == "dead"
             )
             db.commit()
+            crossed_dead = get_job(db, crossed.job_id)
+            assert crossed_dead is not None and crossed_dead.status == DEAD
+            original_execution = read_step_states(crossed_dead)[
+                "research/web-search/0"
+            ].tool_execution
+            assert isinstance(original_execution, Present)
+            wrong_execution = original_execution.value.model_copy(
+                update={
+                    "identity": original_execution.value.identity.model_copy(
+                        update={"policy_revision": "f" * 64}
+                    )
+                }
+            )
+            assert (
+                replace_dead_dossier_step_tool_execution(
+                    db,
+                    job_id=crossed.job_id,
+                    step_path="research/web-search/0",
+                    tool_execution=present(wrong_execution),
+                )
+                == original_execution
+            )
+            db.commit()
+            with pytest.raises(AssertionError, match="differs from frozen web.search authority"):
+                reconcile_uncertain_build(
+                    db,
+                    build_id=crossed.build_id,
+                    resolution=ProveNotDispatched(),
+                )
+            db.rollback()
+            replace_dead_dossier_step_tool_execution(
+                db,
+                job_id=crossed.job_id,
+                step_path="research/web-search/0",
+                tool_execution=original_execution,
+            )
+            db.commit()
+            replace_dead_dossier_step_tool_execution(
+                db,
+                job_id=crossed.job_id,
+                step_path="research/web-search/0",
+                tool_execution=absent(),
+            )
+            db.commit()
+            with pytest.raises(AssertionError, match="lacks bound tool metadata"):
+                reconcile_uncertain_build(
+                    db,
+                    build_id=crossed.build_id,
+                    resolution=ProveNotDispatched(),
+                )
+            db.rollback()
+            replace_dead_dossier_step_tool_execution(
+                db,
+                job_id=crossed.job_id,
+                step_path="research/web-search/0",
+                tool_execution=original_execution,
+            )
+            db.commit()
+            overwide_result = _reconciled_web_search_result(result_count=7)
+            with pytest.raises(InvalidRequestError, match="result or settlement is invalid"):
+                reconcile_uncertain_build(
+                    db,
+                    build_id=crossed.build_id,
+                    resolution=AttachReconciledResult(
+                        terminal_result=overwide_result,
+                        tool_settlement=present(
+                            ToolExecutionSettlement(
+                                actual_attempts=1,
+                                actual_output_bytes=len(overwide_result.encode("utf-8")),
+                            )
+                        ),
+                    ),
+                )
+            db.rollback()
+            rejected_job = get_job(db, crossed.job_id)
+            assert rejected_job is not None and rejected_job.status == DEAD
+            assert (
+                read_step_states(rejected_job)["research/web-search/0"].dispatch_phase is Uncertain
+            )
+            reconciled_result = _reconciled_web_search_result()
+            reconcile_uncertain_build(
+                db,
+                build_id=crossed.build_id,
+                resolution=AttachReconciledResult(
+                    terminal_result=reconciled_result,
+                    tool_settlement=present(
+                        ToolExecutionSettlement(
+                            actual_attempts=1,
+                            actual_output_bytes=len(reconciled_result.encode("utf-8")),
+                        )
+                    ),
+                ),
+            )
+            reconciled_job = get_job(db, crossed.job_id)
+            assert reconciled_job is not None and reconciled_job.status == PENDING
+            reconciled_state = read_step_states(reconciled_job)["research/web-search/0"]
+            assert reconciled_state.dispatch_phase is Completed
+            assert reconciled_state.terminal_result == present(reconciled_result)
+            assert isinstance(reconciled_state.tool_execution, Present)
+            assert reconciled_state.tool_execution.value.settlement == present(
+                ToolExecutionSettlement(
+                    actual_attempts=1,
+                    actual_output_bytes=len(reconciled_result.encode("utf-8")),
+                )
+            )
+            assert not isinstance(
+                reconciled_state.tool_execution.value.dispatch_claim,
+                Present,
+            )
+            assert forbidden_retry.calls == 0
 
             replay = _create_idea_build(db, title="Replayable research plan", max_attempts=1)
             replay_job, replay_context = _claim_build(
@@ -551,6 +709,20 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
             search_receipts_before = tuple(
                 pending_states[f"research/web-search/{index}"].terminal_result for index in range(3)
             )
+            first_search_receipt = search_receipts_before[0]
+            assert isinstance(first_search_receipt, Present)
+            with pytest.raises(AssertionError, match="not canonical JSON"):
+                dossier_web_search_items_from_tool_result(
+                    json.dumps(json.loads(first_search_receipt.value), indent=2),
+                    build_id=replay.build_id,
+                )
+            malformed_success = json.loads(first_search_receipt.value)
+            malformed_success["value"]["results"][0]["rank"] = "1"
+            with pytest.raises(AssertionError, match="Success is malformed"):
+                dossier_web_search_items_from_tool_result(
+                    json.dumps(malformed_success, sort_keys=True, separators=(",", ":")),
+                    build_id=replay.build_id,
+                )
             accept_before = pending_states["research/page-accept/0"]
             accepted_attempt_id = _mark_accepted_page_ready(db, build=replay)
             assert reschedule_running_job(

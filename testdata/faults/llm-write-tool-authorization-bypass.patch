@@ -1,10 +1,10 @@
 diff --git a/python/nexus/services/agent_tools/writes.py b/python/nexus/services/agent_tools/writes.py
 --- a/python/nexus/services/agent_tools/writes.py
 +++ b/python/nexus/services/agent_tools/writes.py
-@@ -628,6 +628,5 @@ def _queue_add(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerRe
- def _queue_add(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerResult:
+@@ -378,6 +378,5 @@ def add_to_queue(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteEff
+ def add_to_queue(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteEffect:
      media_ref = _parse_ref(_require_str(args, "media_uri"), allowed=("media",))
 -    assert_ref_visible(db, viewer_id=viewer_id, ref=media_ref)
      # Trusted ensure: append the row at Last if absent, never move an existing row
-     # (idempotent re-add). The item echoed for undo is the resulting Lectern row,
-     # whether newly ensured or already present.
+     # (idempotent re-add). Only its lock-owned inserted receipt grants Undo
+     # ownership; an unlocked pre-read can race a concurrent manual insertion.

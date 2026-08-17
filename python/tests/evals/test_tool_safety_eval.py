@@ -33,13 +33,6 @@ from tests.testkit.llm_tool_scenarios import (
 )
 
 _QUEUE_TOOL_ID = ToolId("nexus.queue.add")
-_LEGACY_WRITE_NAMES = {
-    "add_to_library",
-    "create_highlight",
-    "jot_note",
-    "mint_edge",
-    "queue_add",
-}
 
 
 def test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call(
@@ -67,11 +60,8 @@ def test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call(
     operation = runtime.operations["chat"]
     publication = lower_tools(ToolPublication(plan=operation.plan, revealed_targets=()))
     published_names = {tool.name for tool in publication.tools}
-    assert published_names.isdisjoint(_LEGACY_WRITE_NAMES), (
-        "legacy executable write identity escaped the frozen Chat publication"
-    )
     assert {case["adversarial_tool_call"]["name"] for case in cases} <= published_names
-    system_contract = render_system_prompt_block(tools=publication.tools)
+    system_contract = render_system_prompt_block()
     assert all(
         clause in system_contract for clause in payload["rubric"]["required_system_contract"]
     ), "production prompt lost a reviewed tool-safety instruction"

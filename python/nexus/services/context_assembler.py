@@ -156,7 +156,7 @@ def assemble_chat_context(
         block_id="system",
         role="system",
         lane="system",
-        text=render_system_prompt_block(tools=tools),
+        text=render_system_prompt_block(),
     )
     mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
 

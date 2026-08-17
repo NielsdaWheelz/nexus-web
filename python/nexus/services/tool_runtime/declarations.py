@@ -386,7 +386,9 @@ type DocumentSearchError = ResourceUnavailable | Unreadable
 type ResourceInspectError = ResourceUnavailable | Uninspectable
 type LibraryAddError = ResourceUnavailable | TargetAmbiguous | WriteCapReached
 type NoteCreateError = ResourceUnavailable | WriteCapReached
-type HighlightCreateError = QuoteAmbiguous | QuoteNotFound | ResourceUnavailable | WriteCapReached
+type HighlightCreateError = (
+    Conflict | QuoteAmbiguous | QuoteNotFound | ResourceUnavailable | WriteCapReached
+)
 type EdgeCreateError = Conflict | ResourceUnavailable | WriteCapReached
 type QueueAddError = ResourceUnavailable | WriteCapReached
 

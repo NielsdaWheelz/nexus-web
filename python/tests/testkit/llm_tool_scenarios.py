@@ -20,7 +20,6 @@ from llm_tools import (
     ToolResult,
     Unavailable,
 )
-from provider_runtime import CanonicalTool
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -33,7 +32,6 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.services import bootstrap, library_entries
-from nexus.services.agent_tools import writes
 from nexus.services.chat_prompt import PromptPlan, build_prompt_plan
 from nexus.services.prompt_budget import make_prompt_block
 
@@ -101,9 +99,8 @@ def execute_chat_tool(
 ) -> ToolResult:
     """Run one canonical invocation through the real Chat recorder and executor."""
 
-    from nexus.services.tool_runtime.execution import make_chat_execution_context
-
     from nexus.jobs.queue import get_job
+    from nexus.services.tool_runtime.execution import make_chat_execution_context
 
     claimed_job = get_job(db, job_context.job_id)
     if claimed_job is None:
@@ -132,19 +129,6 @@ def execute_chat_tool(
             ParsedJson(cast(Any, arguments)),
             context,
         )
-    )
-
-
-def queue_add_tool() -> CanonicalTool:
-    definition = next(
-        candidate
-        for candidate in writes.ASSISTANT_WRITE_TOOL_DEFINITIONS
-        if candidate["name"] == writes.QUEUE_ADD_TOOL_NAME
-    )
-    return CanonicalTool(
-        name=definition["name"],
-        description=definition["description"],
-        parameters=definition["parameters"],
     )
 
 

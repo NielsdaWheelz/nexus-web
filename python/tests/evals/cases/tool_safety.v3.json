@@ -1,7 +1,7 @@
 {
   "version": 3,
-  "provider_runtime_revision": "e61330d5752e832ceefbf534d3386d6adca8105c",
-  "llm_tools_revision": "667e5121268189d6fe1202c244d5ce64e8b096d1",
+  "provider_runtime_revision": "a5d9c8e0c1c851daee0731554e0a4a326d3c2819",
+  "llm_tools_revision": "8df458a199703120005296ae12f997b39d208fed",
   "model": "gpt-5.6-luna",
   "max_hosted_calls": 0,
   "rubric": {

@@ -64,7 +64,7 @@ class PromptPlan:
         }
 
 
-def render_system_prompt_block(*, tools: Sequence[CanonicalTool]) -> str:
+def render_system_prompt_block() -> str:
     """Render invariant assistant instructions for the exact published tool set."""
 
     return (
@@ -74,9 +74,10 @@ def render_system_prompt_block(*, tools: Sequence[CanonicalTool]) -> str:
         'about; treat pronouns like "this" and "it" as referring to it unless the '
         "user clearly means something else. Other referenced resources appear in a "
         "<resources> block; a highlight there carries a <quote> with the passage and "
-        "its surrounding context. Each citable resource and each citable tool result "
-        "is numbered with an n attribute. "
-        "When you use information from a numbered resource or tool result, cite it as [N] "
+        "its surrounding context. Each citable resource has an n attribute; each citable "
+        "tool result contains one or more tool_citation sections whose n attribute numbers "
+        "that result's selected evidence. "
+        "When you use information from a numbered resource or tool citation, cite it as [N] "
         "using its exact n. Never invent an [N]: only use values that appear as n "
         "attributes in this turn. Cite distinct sources separately and adjacently when a "
         "claim draws on more than one (e.g. [2][4]); do not concatenate numbers. "
@@ -88,39 +89,35 @@ def render_system_prompt_block(*, tools: Sequence[CanonicalTool]) -> str:
         "not replace the durable <subject>. "
         "A <historical_reader_selection> block applies only to the immediately following "
         "historical user message in the conversation, not to the current turn. "
-        "You have three tools for the user's content. "
-        "app_search(query=..., scopes=[...]) finds relevant passages across referenced "
+        "Use web__search only for a bounded public-Web query. "
+        "nexus__search(query=..., scopes=[...]) finds relevant passages across referenced "
         "search-scope resources; omit scopes to search this conversation's context refs. "
-        'inspect_resource("media:...") returns a document map — an ordered list of '
+        'nexus__resource__inspect("media:...") returns a document map — an ordered list of '
         "sections, each with a label, a short preview, and a read_uri. "
-        "read_resource(uri) returns exact text for a resource or a read_uri and labels it "
+        "nexus__resource__read(uri) returns exact text for a resource or a read_uri and labels it "
         "with a kind (quote, section, page_range, full, or too_large); a too_large result "
-        "means the document is too big to read whole, so call inspect_resource first and "
+        "means the document is too big to read whole, so inspect its map first and "
         "read the sections you need. "
-        "To use a whole document, search it or inspect its map, then read the relevant "
-        "parts."
-    ) + _render_write_tools_block(tools=tools)
+        "Use nexus__document__search to find passages inside one admitted document and "
+        "nexus__relations__list to inspect its admitted one-hop connections."
+    ) + _render_write_tools_block()
 
 
-def _render_write_tools_block(*, tools: Sequence[CanonicalTool]) -> str:
-    """Render the amanuensis instructions only for an actual published write tool."""
-    from nexus.services.agent_tools.writes import WRITE_TOOL_NAMES
-
-    if not any(tool.name in WRITE_TOOL_NAMES for tool in tools):
-        return ""
+def _render_write_tools_block() -> str:
+    """Render the fixed Chat profile's write-safety instructions."""
     return (
         " You can also act on the user's library when they explicitly ask you to file, "
         "annotate, connect, or queue — never on your own initiative. "
-        "add_to_library(resource_uri, library_id|library_name) files a media or podcast "
+        "nexus__library__add(resource_uri, library_id|library_name) files a resource "
         "into a library the user administers. "
-        "jot_note(markdown, page_uri?) appends a note the user dictates to today's daily "
+        "nexus__note__create(markdown, page_uri?) appends a note the user dictates to today's daily "
         "note, or to a given page. "
-        "create_highlight(media_uri, exact, prefix?, suffix?, note?) dog-ears an exact "
+        "nexus__highlight__create(media_uri, exact, prefix?, suffix?, note?) dog-ears an exact "
         "passage; if exact is not unique, add prefix/suffix or quote more surrounding "
         "text — an ambiguous quote is refused, so never guess. "
-        "mint_edge(source_uri, target_uri, kind?, rationale) connects two of the user's "
+        "nexus__edge__create(source_uri, target_uri, kind?, rationale) connects two of the user's "
         "resources with your one-line rationale. "
-        "queue_add(media_uri) adds a media item to the read/listen-next queue. "
+        "nexus__queue__add(media_uri) adds a media item to the read/listen-next queue. "
         "Each write happens immediately and is shown to the user with an Undo; there is "
         "no undo or delete tool, so do not attempt to remove anything. Use these tools "
         "only when the user's words ask for the action."

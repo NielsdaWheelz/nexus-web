@@ -34,6 +34,7 @@ class ApiErrorCode(str, Enum):
 
     # Billing availability errors (503)
     E_BILLING_DISABLED = "E_BILLING_DISABLED"
+    E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED = "E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED"
 
     # Not found errors (404)
     E_NOT_FOUND = "E_NOT_FOUND"
@@ -232,6 +233,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN: 403,
     ApiErrorCode.E_BILLING_REQUIRED: 402,
     ApiErrorCode.E_BILLING_DISABLED: 503,
+    ApiErrorCode.E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED: 503,
     # Not found errors
     ApiErrorCode.E_NOT_FOUND: 404,
     ApiErrorCode.E_LIBRARY_NOT_FOUND: 404,

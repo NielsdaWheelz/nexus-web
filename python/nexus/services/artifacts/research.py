@@ -5,16 +5,23 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
-from urllib.parse import urlparse
-from uuid import UUID, uuid5
+from typing import TYPE_CHECKING, Any, Literal
+from uuid import UUID
 
-from llm_tools import WebSearchProvider
+from llm_tools import (
+    HostTable,
+    ParsedJson,
+    PositionConflictDefect,
+    Principal,
+    Scope,
+    ToolExecutor,
+    ToolId,
+)
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from nexus.errors import InvalidRequestError
 from nexus.jobs.queue import JobRow
+from nexus.logging import get_logger
 from nexus.schemas.presence import Present, absent, present
 from nexus.services.agent_tools.web_page_read import (
     PageAcceptResult,
@@ -24,17 +31,17 @@ from nexus.services.agent_tools.web_page_read import (
     WebSearchItem,
     WebSearchResult,
     accept_web_search_result,
+    dossier_web_search_items_from_tool_result,
     observe_web_page,
     read_web_page,
 )
-from nexus.services.agent_tools.web_search import search_web_readonly
-from nexus.services.artifacts.coordination import DossierBuildRuntime
+from nexus.services.artifacts.coordination import DossierBuildRuntime, ResearchLeaseLost
+from nexus.services.artifacts.dossier_types import WebResearchNotConfigured
 from nexus.services.artifacts.idea_seeds import list_idea_seed_highlight_ids
 from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
 from nexus.services.durable_step_journal import (
     Completed,
     Prepared,
-    ReplayPolicy,
     StepReplayState,
     Uncertain,
     decode_step_result,
@@ -53,16 +60,23 @@ from nexus.services.resource_items.capabilities import resource_read_policy
 from nexus.services.search import search
 from nexus.services.search.kinds import SearchKind
 from nexus.services.search.query import SearchQuery
-from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
+from nexus.services.tool_runtime.composition import (
+    encode_tool_plan_snapshot,
+    validate_tool_plan_snapshot,
+)
+from nexus.services.tool_runtime.execution import make_durable_execution_context
 
 if TYPE_CHECKING:
     from nexus.services.artifacts.bindings._shared import Candidate
 
+logger = get_logger(__name__)
+
 _SOURCE_TEXT_BUDGET = 120_000
 _MAX_NEXUS_RESULTS_PER_QUERY = 6
-_MAX_WEB_RESULTS_PER_QUERY = 6
 _MAX_NEXUS_SOURCES = 6
 _MAX_WEB_SOURCES = 6
+_WEB_SEARCH_TOOL_ID = ToolId("web.search")
+_TOOL_PLAN_STEP_PATH = "research/tool-plan"
 _NEXUS_RESEARCH_KINDS: frozenset[SearchKind] = frozenset(
     {"documents", "notes", "highlights", "people"}
 )
@@ -139,8 +153,19 @@ class ResearchInputsChanged(Exception):
     """A completed read receipt no longer resolves to the same visible content."""
 
 
-class ResearchLeaseLost(Exception):
-    """The Dossier job lost its lease while checkpointing a research step."""
+class _DossierToolCancellation:
+    @property
+    def cancelled(self) -> bool:
+        return False
+
+
+class _DossierToolTelemetry:
+    def event(self, name: str, attributes: dict[str, Any]) -> None:
+        logger.info(
+            "dossier_tool_runtime_event",
+            tool_event=name,
+            attributes=attributes,
+        )
 
 
 async def collect_idea_evidence(
@@ -237,20 +262,15 @@ async def collect_idea_evidence(
         )
         include(source)
 
-    provider = _web_search_provider(runtime)
+    _ensure_research_tool_plan(db, runtime=runtime)
     web_results = [
-        await _redispatchable_step(
+        await _web_search_tool_step(
             db,
             runtime=runtime,
             path=f"research/web-search/{index}",
+            principal=Principal(str(resolved.user_id)),
+            query=query,
             request_fingerprint=query_fingerprints[index],
-            schema=WebSearchResult,
-            dispatch=lambda query=query, fingerprint=query_fingerprints[index]: _web_search(
-                provider,
-                build_id=runtime.build_id,
-                query=query,
-                query_fingerprint=fingerprint,
-            ),
         )
         for index, query in enumerate(queries)
     ]
@@ -379,7 +399,7 @@ async def _redispatchable_step[T: BaseModel](
     schema: type[T],
     dispatch: Callable[[], Awaitable[T]],
 ) -> T:
-    state = runtime.read_step(path, ReplayPolicy.ReDispatchable)
+    state = runtime.read_step(path)
     generation_id = stable_generation_id(runtime.build_id, path)
     if state is not None:
         if state.generation_id != generation_id:
@@ -455,38 +475,103 @@ async def _nexus_search(
     return NexusSearchResult(query_fingerprint=query_fingerprint, items=items)
 
 
-async def _web_search(
-    provider: WebSearchProvider,
+def _ensure_research_tool_plan(
+    db: Session,
     *,
-    build_id: UUID,
-    query: str,
-    query_fingerprint: str,
-) -> WebSearchResult:
-    result = await search_web_readonly(provider, query, freshness_days=None)
-    items: list[WebSearchItem] = []
-    for citation in result.citations[:_MAX_WEB_RESULTS_PER_QUERY]:
-        try:
-            validate_requested_url(citation.url)
-        except (InvalidRequestError, ValueError):
-            # Preserve invalid provider output for the acceptance owner to reject
-            # and model as Unsupported/SSRFBlocked; never repair it into a URL.
-            canonical_url = citation.url
-        else:
-            canonical_url = normalize_url_for_display(citation.url)
-        try:
-            domain = (urlparse(canonical_url).hostname or "").lower()
-        except ValueError:
-            domain = ""
-        items.append(
-            WebSearchItem(
-                result_id=uuid5(build_id, canonical_url).hex,
-                title=citation.title,
-                canonical_url=canonical_url,
-                domain=domain,
-                rank=citation.rank,
-            )
+    runtime: DossierBuildRuntime,
+) -> None:
+    operation = runtime.research_tool_operation
+    if not isinstance(operation.plan.exposure, HostTable):
+        raise AssertionError("Idea Dossier research requires a HostTable tool plan")
+    snapshot = encode_tool_plan_snapshot(operation)
+    state = runtime.read_step(_TOOL_PLAN_STEP_PATH)
+    generation_id = stable_generation_id(runtime.build_id, _TOOL_PLAN_STEP_PATH)
+    if state is not None:
+        if (
+            state.generation_id != generation_id
+            or state.dispatch_phase is not Completed
+            or not isinstance(state.request_fingerprint, Present)
+            or state.request_fingerprint.value != operation.plan.plan_revision
+            or not isinstance(state.terminal_result, Present)
+        ):
+            raise AssertionError("Dossier research tool-plan snapshot changed identity")
+        validate_tool_plan_snapshot(
+            state.terminal_result.value,
+            operation=operation,
         )
-    return WebSearchResult(query_fingerprint=query_fingerprint, items=items)
+        return
+    completed = StepReplayState(
+        generation_id=generation_id,
+        dispatch_phase=Completed,
+        request_fingerprint=present(operation.plan.plan_revision),
+        terminal_result=present(snapshot),
+    )
+    if not runtime.checkpoint_step(db, path=_TOOL_PLAN_STEP_PATH, state=completed):
+        db.rollback()
+        raise ResearchLeaseLost
+    db.commit()
+
+
+async def _web_search_tool_step(
+    db: Session,
+    *,
+    runtime: DossierBuildRuntime,
+    path: str,
+    principal: Principal,
+    query: str,
+    request_fingerprint: str,
+) -> WebSearchResult:
+    operation = runtime.research_tool_operation
+    context = make_durable_execution_context(
+        db=db,
+        operation=operation,
+        operation_id=runtime.build_id,
+        claimed_job=runtime.job,
+        job_context=runtime.execution_context,
+        durable_step_path=path,
+        tool_id=_WEB_SEARCH_TOOL_ID,
+        principal=principal,
+        scope=Scope("idea_dossier_research"),
+        effect_id=None,
+        cancellation=_DossierToolCancellation(),
+        telemetry=_DossierToolTelemetry(),
+    )
+    try:
+        result = await ToolExecutor.execute(
+            operation.plan.catalog_view.binding(_WEB_SEARCH_TOOL_ID),
+            ParsedJson({"query": query, "freshness_days": None}),
+            context,
+        )
+    except PositionConflictDefect as exc:
+        # With the exact frozen plan already validated, a conflict at this fixed
+        # position means the Idea-derived query changed after durable occupation.
+        raise ResearchInputsChanged from exc
+
+    runtime.refresh_job(db)
+    if result.get("type") != "Success":
+        error = result.get("error")
+        error_type = error.get("type") if isinstance(error, dict) else None
+        if error_type == "ToolUnavailable":
+            raise WebResearchNotConfigured()
+        raise RuntimeError(f"Dossier Web search failed: {error_type or 'InvalidToolResult'}")
+
+    state = runtime.read_step(path)
+    if (
+        state is None
+        or state.generation_id != stable_generation_id(runtime.build_id, path)
+        or state.dispatch_phase is not Completed
+        or not isinstance(state.terminal_result, Present)
+    ):
+        raise AssertionError("Dossier Web search did not persist one completed tool result")
+    return WebSearchResult(
+        query_fingerprint=request_fingerprint,
+        items=list(
+            dossier_web_search_items_from_tool_result(
+                state.terminal_result.value,
+                build_id=runtime.build_id,
+            )
+        ),
+    )
 
 
 async def _read_nexus_receipt(
@@ -559,7 +644,7 @@ def _observe_page_step(
 ) -> PageReadyResult:
     path = f"research/page-ready/{index}"
     fingerprint = _fingerprint(encode_step_result(accepted))
-    state = runtime.read_step(path, ReplayPolicy.ReDispatchable)
+    state = runtime.read_step(path)
     if state is not None and state.dispatch_phase is Completed:
         if (
             not isinstance(state.request_fingerprint, Present)
@@ -706,14 +791,6 @@ def _select_web_items(results: list[WebSearchResult]) -> list[WebSearchItem]:
             if len(selected) == _MAX_WEB_SOURCES:
                 return selected
     return selected
-
-
-def _web_search_provider(runtime: DossierBuildRuntime) -> WebSearchProvider:
-    if not isinstance(runtime.web_search_provider, Present):
-        # justify-defect: Idea research requires the configured Web-search
-        # dependency; absence is process wiring failure, not a softer lesson.
-        raise AssertionError("Idea Dossier research has no Web search provider")
-    return runtime.web_search_provider.value
 
 
 def _parse_owned_ref(uri: str) -> ResourceRef:

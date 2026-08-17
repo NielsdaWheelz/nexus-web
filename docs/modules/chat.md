@@ -69,8 +69,17 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 
 `chat_runs.py` composes one claimed `ChatStepRuntime`; it does not own queue
 payload JSON. `chat_run_steps.py` owns deterministic paths, strict result codecs,
-fingerprints, and tool replay policy. `durable_step_journal.py` owns the shared
-`Prepared -> Uncertain -> Completed` kernel and execution-phase projection.
+and fingerprints. `services/tool_runtime/` owns the immutable catalogue,
+declarations, grants, binding policy, replay policy, and durable tool executor.
+`durable_step_journal.py` owns the shared `Prepared -> Uncertain -> Completed`
+kernel and execution-phase projection.
+
+Chat admission freezes one Native plan with exactly eleven grants:
+`web.search`, `nexus.search`, `nexus.resource.read`, `nexus.document.search`,
+`nexus.resource.inspect`, `nexus.relations.list`, `nexus.library.add`,
+`nexus.note.create`, `nexus.highlight.create`, `nexus.edge.create`, and
+`nexus.queue.add`. These canonical IDs are the only executable identities; the
+domain-adapter module names under `services/agent_tools/` are not aliases.
 
 Completed preparation, generation, and tool results are replay input, never
 cache hints. An ambiguous paid call or write remains `Uncertain` and exhausts to

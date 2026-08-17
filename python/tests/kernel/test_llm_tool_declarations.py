@@ -131,7 +131,13 @@ EXPECTED_DECLARATIONS: dict[str, dict[str, Any]] = {
         "input_keys": ("color", "exact", "media_uri", "note", "prefix", "suffix"),
         "success_keys": ("exact", "highlight_uri", "note_uri"),
         "errors": COMMON_ERRORS
-        | {"QuoteAmbiguous", "QuoteNotFound", "ResourceUnavailable", "WriteCapReached"},
+        | {
+            "Conflict",
+            "QuoteAmbiguous",
+            "QuoteNotFound",
+            "ResourceUnavailable",
+            "WriteCapReached",
+        },
         "limits": ToolLimits(286720, 139264, 0, 30.0),
     },
     "nexus.edge.create": {

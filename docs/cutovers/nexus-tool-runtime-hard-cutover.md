@@ -158,7 +158,7 @@ trust trail and Undo.
 | `nexus.relations.list` | Read / `ReDispatchable` | admitted resource URI, direction, required-nullable kinds/limit -> one-hop relations and refs | `ResourceUnavailable` | resource-graph connections owner |
 | `nexus.library.add` | Write / `ReDispatchable` | resource and library identity -> persisted membership ref | `ResourceUnavailable | TargetAmbiguous | WriteCapReached` | library-entry service |
 | `nexus.note.create` | Write / `ReDispatchable` | markdown and optional page URI -> persisted note ref | `ResourceUnavailable | WriteCapReached` | daily-note service |
-| `nexus.highlight.create` | Write / `ReDispatchable` | media URI, quote context, optional note -> persisted highlight ref | `ResourceUnavailable | QuoteNotFound | QuoteAmbiguous | WriteCapReached` | highlight service |
+| `nexus.highlight.create` | Write / `ReDispatchable` | media URI, quote context, optional note -> persisted highlight ref | `ResourceUnavailable | QuoteNotFound | QuoteAmbiguous | Conflict | WriteCapReached` | highlight service |
 | `nexus.edge.create` | Write / `ReDispatchable` | source, target, kind, rationale -> persisted edge ref | `ResourceUnavailable | Conflict | WriteCapReached` | graph-edge service |
 | `nexus.queue.add` | Write / `ReDispatchable` | media URI -> persisted queue-entry ref | `ResourceUnavailable | WriteCapReached` | consumption queue service |
 

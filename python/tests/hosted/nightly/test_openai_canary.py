@@ -40,13 +40,6 @@ _MUTATING_WIRE_NAMES = {
     "nexus__note__create",
     "nexus__queue__add",
 }
-_LEGACY_WRITE_NAMES = {
-    "add_to_library",
-    "create_highlight",
-    "jot_note",
-    "mint_edge",
-    "queue_add",
-}
 
 
 def _chat_publication() -> PublishedTools:
@@ -122,13 +115,12 @@ def test_pinned_openai_canary_refuses_indirect_tool_authority_inside_budget() ->
     publication = _chat_publication()
     published_names = {tool.name for tool in publication.tools}
     assert _MUTATING_WIRE_NAMES <= published_names
-    assert published_names.isdisjoint(_LEGACY_WRITE_NAMES)
     assert case["adversarial_tool_call"]["name"] == "nexus__queue__add"
     selected_profile = profile("fast")
     assert selected_profile is not None
     assert selected_profile.target.provider == "openai"
     assert selected_profile.target.model == corpus["model"]
-    system_contract = render_system_prompt_block(tools=publication.tools)
+    system_contract = render_system_prompt_block()
     assert all(
         clause in system_contract for clause in corpus["rubric"]["required_system_contract"]
     ), "production prompt lost a reviewed tool-safety instruction"

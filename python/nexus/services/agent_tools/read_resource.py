@@ -10,28 +10,25 @@ presents the result, labelling every read with an explicit ``kind``:
 - ``section``     — a fragment (article/epub section, transcript segment).
 - ``page_range``  — a PDF page slice (``page_range:<media>:<a>-<b>``, read-only).
 - ``full``        — a short media document, whole.
-- ``too_large``   — an over-budget media document; redirect to ``inspect_resource``.
+- ``too_large``   — an over-budget media document; redirect to the document-map binding.
 
 Non-citable bodies (``artifact`` synthesis, ``oracle_reading``) carry
 their prose but no citation target: their inline chips are owned by their own pane.
 
 A media-derived pointer (``fragment``/``page_range``/``evidence_span``/
 ``content_chunk``) is readable when its parent ``media:`` is referenced, even if
-the sub-URI itself is not — this is what lets the model open sections a
-``document_map`` handed it. Authorization is unchanged: the loaders/core still
+the sub-URI itself is not. Authorization is unchanged: the loaders/core still
 gate every read.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
-from xml.sax.saxutils import escape as xml_escape
 
 from sqlalchemy.orm import Session
 
-from nexus.services.chat_quote import render_quote_block
 from nexus.services.media_read_map import (
     READ_DOCUMENT_MAX_CHARS,
     load_media_document,
@@ -54,39 +51,13 @@ from nexus.services.resource_items.capabilities import (
     resource_read_policy,
 )
 
-READ_RESOURCE_TOOL_NAME = "read_resource"
-
-READ_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
-    "name": READ_RESOURCE_TOOL_NAME,
-    "description": (
-        "Fetch the exact text of a resource from <subject> or <resources> in your "
-        "system context, or a read_uri that inspect_resource returned. Scope resources are not "
-        "readable; use app_search with scopes=[...] for those. Every result is "
-        "labelled with a kind attribute."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "uri": {"type": "string", "description": "Resource URI or read_uri to read."},
-        },
-        "required": ["uri"],
-        "additionalProperties": False,
-    },
-}
-
-
-def _xml_attr(value: object) -> str:
-    return xml_escape(str(value), {'"': "&quot;"})
-
 
 @dataclass(slots=True)
 class ReadResourceResult:
     """Executed read-resource tool call.
 
-    ``body`` carries the exact text on success or a model-readable error
-    description on failure. ``quote`` is set for highlights (rendered as an
-    enriched ``<quote>``); ``kind`` labels the result for the model.
-    ``tool_output`` renders every case into the XML returned to the LLM.
+    ``body`` carries exact text on success or the domain refusal on failure.
+    The canonical tool-runtime binding owns the model-facing JSON projection.
     """
 
     uri: str
@@ -109,45 +80,6 @@ class ReadResourceResult:
     def is_error(self) -> bool:
         return self.status == "error"
 
-    def tool_output(self, n: int | None = None) -> str:
-        if self.status == "error":
-            return (
-                f'<resource_error uri="{_xml_attr(self.uri)}" '
-                f'code="{_xml_attr(self.error_code or "")}">'
-                f"{xml_escape(self.body)}"
-                f"</resource_error>"
-            )
-        n_attr = f' n="{n}"' if n is not None else ""
-        kind_attr = f' kind="{_xml_attr(self.kind)}"' if self.kind else ""
-        metadata_attrs = []
-        if self.subject_ref is not None:
-            metadata_attrs.append(f'subject_ref="{_xml_attr(self.subject_ref)}"')
-        if self.artifact_ref is not None:
-            metadata_attrs.append(f'artifact_ref="{_xml_attr(self.artifact_ref)}"')
-        if self.revision_ref is not None:
-            metadata_attrs.append(f'revision_ref="{_xml_attr(self.revision_ref)}"')
-        if self.revision_is_current is not None:
-            metadata_attrs.append(f'revision_is_current="{str(self.revision_is_current).lower()}"')
-        metadata_attr = f" {' '.join(metadata_attrs)}" if metadata_attrs else ""
-        if self.quote is not None:
-            inner = render_quote_block(
-                "quote",
-                exact=self.quote.exact,
-                prefix=self.quote.prefix,
-                suffix=self.quote.suffix,
-                source_label=self.quote.source_label,
-                note=self.quote.note,
-            )
-            return (
-                f'<resource uri="{_xml_attr(self.uri)}"{n_attr}{kind_attr}{metadata_attr}>'
-                f"\n{inner}\n</resource>"
-            )
-        return (
-            f'<resource uri="{_xml_attr(self.uri)}"{n_attr}{kind_attr}{metadata_attr}>'
-            f"<body>{xml_escape(self.body)}</body>"
-            f"</resource>"
-        )
-
 
 def execute_read_resource(
     db: Session,
@@ -164,7 +96,7 @@ def execute_read_resource(
             status="error",
             body=(
                 f"Resource {uri} is not in this conversation's context refs. "
-                "Use app_search to find new sources first."
+                "Search for an admitted source first."
             ),
             error_code="not_in_context_refs",
         )
@@ -196,7 +128,7 @@ def execute_read_resource(
             status="error",
             body=(
                 f"Resource {uri} is a search scope, not a readable resource. "
-                f'Call app_search(query=..., scopes=["{uri}"]) instead.'
+                f'Call nexus__search(query=..., scopes=["{uri}"]) instead.'
             ),
             error_code="scope_not_readable",
         )
@@ -205,7 +137,7 @@ def execute_read_resource(
         return ReadResourceResult(
             uri=uri,
             status="error",
-            body=f"Resource {uri} has no readable body for read_resource.",
+            body=f"Resource {uri} has no readable body for nexus__resource__read.",
             error_code="not_readable",
         )
 
@@ -235,7 +167,7 @@ def _read_media(db: Session, viewer_id: UUID, media_id: UUID, uri: str) -> ReadR
             status="complete",
             body=(
                 f"This document is {document.char_count:,} characters — too large to read whole. "
-                f'Call inspect_resource("{uri}") for its section map, then read the sections you need.'
+                f'Call nexus__resource__inspect("{uri}") for its section map, then read the sections you need.'
             ),
             kind="too_large",
         )

@@ -26,6 +26,7 @@ from nexus.services.resource_items.capabilities import (
     app_search_scope_schemes,
 )
 from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
+from nexus.services.tool_runtime.execution import NexusToolExecution
 
 
 class NexusToolExecutionService(Protocol):
@@ -38,20 +39,6 @@ class NexusToolExecutionService(Protocol):
         value: object,
         context: ExecutionContext,
     ) -> HandlerSuccess[Any]: ...
-
-
-class _UncomposedNexusToolExecution:
-    async def execute(
-        self,
-        *,
-        tool_id: ToolId,
-        value: object,
-        context: ExecutionContext,
-    ) -> HandlerSuccess[Any]:
-        del value, context
-        raise ExecutorConfigurationDefect(
-            f"Nexus execution service is not composed for {tool_id!s}"
-        )
 
 
 def _resource_modes(field: str, absent: str) -> dict[str, object]:
@@ -178,9 +165,7 @@ def bind_nexus_tools(
     return tuple(bindings)
 
 
-# The declaration/profile boundary is executable-shaped but deliberately cannot
-# dispatch until the application composes its explicit execution service.
-NEXUS_TOOL_BINDINGS = bind_nexus_tools(_UncomposedNexusToolExecution())
+NEXUS_TOOL_BINDINGS = bind_nexus_tools(NexusToolExecution())
 
 
 __all__ = [
