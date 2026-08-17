@@ -390,7 +390,7 @@ def build_enrichment_user_content(
     # carry. Labels and prompt framing remain intact; values consume the
     # remaining byte budget in this order. Per-hint and aggregate budgets keep
     # meaningful capacity for extracted source text.
-    metadata_entries = [
+    metadata_entries: list[tuple[str, object]] = [
         ("kind", str(media.kind)),
         ("current_title", media.title),
     ]
