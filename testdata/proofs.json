@@ -225,8 +225,9 @@
         "pytest:python/tests/service/test_durable_job_replay.py",
         "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job",
         "pytest:python/tests/service/test_heavy_job_capacity.py",
-        "pytest:python/tests/service/test_metadata_content_contract.py",
-        "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets"
+        "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets",
+        "pytest:python/tests/service/test_metadata_prompt_framing.py",
+        "pytest:python/tests/service/test_metadata_prompt_framing.py::test_metadata_prompt_preserves_envelope_and_delimiter_at_utf8_input_ceiling"
       ],
       "capabilities": [
         "service"

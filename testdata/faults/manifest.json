@@ -210,6 +210,15 @@
       "expected_failure": "metadata output schema lost reviewed constraints for title"
     },
     {
+      "id": "durable-codex-metadata-prompt-budget-bypass",
+      "patch": "testdata/faults/durable-codex-metadata-prompt-budget-bypass.patch",
+      "sha256": "ac548dea6b0a3652861cf0eb25fe95a8ed42d9363aa7660e5eee3db197dcec06",
+      "proofs": [
+        "pytest:python/tests/service/test_metadata_prompt_framing.py::test_metadata_prompt_preserves_envelope_and_delimiter_at_utf8_input_ceiling"
+      ],
+      "expected_failure": "metadata prompt exceeded wire input bound"
+    },
+    {
       "id": "durable-codex-metadata-timeout-collapse",
       "patch": "testdata/faults/durable-codex-metadata-timeout-collapse.patch",
       "sha256": "ad8b9304ed85823fe2667bfe980ba122f29634dc8299eb00fdeb944b47fe5c75",

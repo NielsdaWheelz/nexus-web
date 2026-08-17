@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/metadata_enrichment.py b/python/nexus/services/metadata_enrichment.py
+--- a/python/nexus/services/metadata_enrichment.py
++++ b/python/nexus/services/metadata_enrichment.py
+@@ -468,7 +468,7 @@ def build_enrichment_user_content(
+         tuple(value for _, value in metadata_entries),
+         metadata_budget,
+     )
+-    source_budget = untrusted_budget - metadata_bytes
++    source_budget = untrusted_budget
+     metadata_block = "\n".join(
+         f"{prefix}{value}"
+         for prefix, value in zip(metadata_line_prefixes, metadata_values, strict=True)

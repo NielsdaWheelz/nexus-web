@@ -364,9 +364,11 @@ def test_durable_metadata_sources_route_all_high_risk_boundary_proofs() -> None:
             "test_native_timeout_persists_as_a_distinct_metadata_failure",
             "pytest:python/tests/service/test_codex_metadata_enrichment.py",
             "pytest:python/tests/service/test_heavy_job_capacity.py",
-            "pytest:python/tests/service/test_metadata_content_contract.py",
             "pytest:python/tests/service/test_metadata_content_contract.py::"
             "test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets",
+            "pytest:python/tests/service/test_metadata_prompt_framing.py",
+            "pytest:python/tests/service/test_metadata_prompt_framing.py::"
+            "test_metadata_prompt_preserves_envelope_and_delimiter_at_utf8_input_ceiling",
         }
     )
 
