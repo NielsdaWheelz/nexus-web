@@ -474,7 +474,8 @@ def test_position_replay_settles_once_and_does_not_automatically_reissue_uncerta
             )
 
             changed_input_provider = _NeverSearch()
-            with pytest.raises(PositionConflictDefect, match="different invocation"):
+            changed_input_error: Exception | None = None
+            try:
                 asyncio.run(
                     execute_chat_run(
                         db,
@@ -487,7 +488,13 @@ def test_position_replay_settles_once_and_does_not_automatically_reissue_uncerta
                         web_search_provider=changed_input_provider,
                     )
                 )
-            assert changed_input_provider.calls == 0
+            except Exception as exc:  # noqa: BLE001 - assert the exact public defect below.
+                changed_input_error = exc
+            assert changed_input_provider.calls == 0, (
+                "changed invocation crossed the provider dispatch boundary"
+            )
+            assert isinstance(changed_input_error, PositionConflictDefect)
+            assert "different invocation" in str(changed_input_error)
 
             rows_after = _tool_rows(db, assistant_message_id=run.assistant_message_id)
             assert tuple(row.id for row in rows_after[:5]) == completed_ids_before

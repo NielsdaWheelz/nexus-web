@@ -317,7 +317,7 @@
       "proofs": [
         "pytest:python/tests/service/test_llm_tool_replay.py::test_position_replay_settles_once_and_does_not_automatically_reissue_uncertain_billed_search"
       ],
-      "expected_failure": "uncertain billed search was automatically reissued"
+      "expected_failure": "changed invocation crossed the provider dispatch boundary"
     },
     {
       "id": "llm-tool-projection-gate-bypass",
