@@ -136,6 +136,98 @@ def make_failed_job_retryable(db: Session, *, job_id: UUID) -> None:
     db.execute(text("SELECT pg_notify('nexus_background_jobs', :kind)"), {"kind": updated})
 
 
+def set_pending_job_max_attempts(
+    db: Session,
+    *,
+    job_id: UUID,
+    max_attempts: int,
+) -> None:
+    """Give one pending synthetic job the exact retry budget required by a replay proof."""
+
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET max_attempts = :max_attempts
+            WHERE id = :job_id
+              AND status = 'pending'
+            RETURNING id
+            """
+        ),
+        {"job_id": job_id, "max_attempts": max_attempts},
+    ).scalar_one()
+    assert updated == job_id
+
+
+def replace_completed_chat_tool_arguments(
+    db: Session,
+    *,
+    job_id: UUID,
+    tool_call_index: int,
+    arguments: dict[str, object],
+) -> None:
+    """Model a changed provider invocation inside one completed Chat generation."""
+
+    payload = db.execute(
+        text("SELECT payload FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+        {"job_id": job_id},
+    ).scalar_one()
+    changed = json.loads(json.dumps(payload))
+    generation = changed["coordination"]["turn/0/generation"]
+    terminal = generation["terminal_result"]
+    assert terminal["kind"] == "Present"
+    assistant_turn = json.loads(terminal["value"])
+    calls = assistant_turn["tool_calls"]
+    assert len(calls) >= tool_call_index
+    calls[tool_call_index - 1]["arguments"] = arguments
+    terminal["value"] = json.dumps(
+        assistant_turn,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    db.execute(
+        text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
+        {"job_id": job_id, "payload": json.dumps(changed)},
+    )
+
+
+def make_pending_job_due(db: Session, *, job_id: UUID) -> None:
+    """Advance only one synthetic pending job past its scheduler deadline."""
+
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET available_at = now()
+            WHERE id = :job_id
+              AND status = 'pending'
+            RETURNING id
+            """
+        ),
+        {"job_id": job_id},
+    ).scalar_one()
+    assert updated == job_id
+
+
+def remove_dossier_nexus_research_steps(db: Session, *, job_id: UUID) -> None:
+    """Preserve occupied Web positions while modeling changed Dossier host inputs."""
+
+    payload = db.execute(
+        text("SELECT payload FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+        {"job_id": job_id},
+    ).scalar_one()
+    changed = json.loads(json.dumps(payload))
+    coordination = changed["coordination"]
+    for path in tuple(coordination):
+        if path.startswith("research/nexus-"):
+            del coordination[path]
+    db.execute(
+        text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
+        {"job_id": job_id, "payload": json.dumps(changed)},
+    )
+
+
 def lose_metadata_queue_completion_after_published_checkpoint(
     db: Session,
     *,

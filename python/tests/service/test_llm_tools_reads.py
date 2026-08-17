@@ -1,0 +1,378 @@
+"""Priority proof: Nexus read tools preserve scope, evidence, and privacy."""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from uuid import uuid4
+
+from llm_tools import ToolId
+from sqlalchemy import Engine, select
+from sqlalchemy.orm import Session
+
+from nexus.auth.permissions import can_read_media
+from nexus.db.models import (
+    ChatRun,
+    ChatRunEvent,
+    ContentBlock,
+    ContentIndexState,
+    Fragment,
+    MessageToolCall,
+    ResourceEdge,
+)
+from nexus.services import bootstrap
+from nexus.services.resource_graph.context import (
+    add_context_ref_without_commit,
+    admits_resource_for_conversation_read,
+)
+from nexus.services.resource_graph.edges import create_edge
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.schemas import EdgeCreate
+from tests.testkit.chat import create_entitled_chat
+from tests.testkit.llm_tool_scenarios import (
+    claim_chat_tool_job,
+    compose_keyless_tool_runtime,
+    create_readable_media,
+    execute_chat_tool,
+)
+
+_EVIDENCE_KEYS = {
+    "admission_scope",
+    "citation_target",
+    "content_sha256",
+    "context_ref",
+    "excerpt_id",
+    "locator",
+    "observed_at",
+    "resource_uri",
+    "snapshot_revision",
+}
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def _search_arguments(uri: str) -> dict[str, object]:
+    # The whitespace query is schema-valid while the format supplies the
+    # structured search predicate. This keeps the proof on deterministic
+    # PostgreSQL retrieval rather than an external embedding boundary.
+    return {
+        "query": " ",
+        "kinds": ["documents"],
+        "formats": ["article"],
+        "authors": None,
+        "roles": None,
+        "scopes": [uri],
+        "limit": 2,
+    }
+
+
+def _read_arguments(tool_id: str, uri: str) -> dict[str, object]:
+    if tool_id == "nexus.search":
+        return _search_arguments(uri)
+    if tool_id == "nexus.document.search":
+        return {"uri": uri, "query": "singular nebula", "limit": 1}
+    if tool_id == "nexus.relations.list":
+        return {"uri": uri, "direction": "both", "kinds": ["supports"], "limit": 1}
+    return {"uri": uri}
+
+
+def _assert_canonical_evidence(evidence: object, *, expected_resource_uri: str) -> None:
+    assert isinstance(evidence, dict), "read success omitted its typed evidence receipt"
+    assert set(evidence) == _EVIDENCE_KEYS, "read evidence escaped its closed Nexus schema"
+    assert evidence["resource_uri"] == expected_resource_uri
+    assert isinstance(evidence["admission_scope"], str) and evidence["admission_scope"]
+    assert isinstance(evidence["citation_target"], str) and evidence["citation_target"]
+    revision = evidence["content_sha256"] or evidence["snapshot_revision"]
+    assert isinstance(revision, str) and _SHA256.fullmatch(revision), (
+        "read evidence was not tied to an immutable content or snapshot revision"
+    )
+
+
+def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
+    owner_id = uuid4()
+    foreign_id = uuid4()
+    with Session(engine, expire_on_commit=False) as db:
+        owner_default = bootstrap.ensure_user_and_default_library(
+            db,
+            owner_id,
+            f"read-tool-owner-{owner_id}@example.invalid",
+        )
+        foreign_default = bootstrap.ensure_user_and_default_library(
+            db,
+            foreign_id,
+            f"read-tool-foreign-{foreign_id}@example.invalid",
+        )
+        chat = create_entitled_chat(
+            db,
+            content="Read the admitted evidence only.",
+            user_id=owner_id,
+        )
+        run = db.get(ChatRun, chat.run_id)
+        assert run is not None
+
+        body = "First section. A singular nebula appears only in this admitted document."
+        media_id = create_readable_media(
+            db,
+            user_id=owner_id,
+            default_library_id=owner_default,
+            title="Admitted evidence atlas",
+            canonical_text=body,
+        )
+        related_media_id = create_readable_media(
+            db,
+            user_id=owner_id,
+            default_library_id=owner_default,
+            title="Related evidence atlas",
+            canonical_text="A second owner-visible source.",
+        )
+        foreign_media_id = create_readable_media(
+            db,
+            user_id=foreign_id,
+            default_library_id=foreign_default,
+            title="Foreign private atlas",
+            canonical_text="The other user's private evidence.",
+        )
+        missing_media_id = uuid4()
+        media_uri = f"media:{media_id}"
+        related_uri = f"media:{related_media_id}"
+        foreign_uri = f"media:{foreign_media_id}"
+        missing_uri = f"media:{missing_media_id}"
+
+        fragment_id = db.scalar(select(Fragment.id).where(Fragment.media_id == media_id))
+        assert fragment_id is not None
+        db.add(
+            ContentIndexState(
+                owner_kind="media",
+                owner_id=media_id,
+                revision=1,
+                status="ready",
+            )
+        )
+        db.add(
+            ContentBlock(
+                owner_kind="media",
+                owner_id=media_id,
+                block_idx=0,
+                block_kind="heading",
+                canonical_text="First section",
+                extraction_confidence=1.0,
+                source_start_offset=0,
+                source_end_offset=len(body),
+                parent_block_id=None,
+                heading_path=["First section"],
+                locator={
+                    "section_id": "first-section",
+                    "fragment_id": str(fragment_id),
+                    "fragment_idx": 0,
+                    "heading_level": 1,
+                    "start_offset": 0,
+                    "end_offset": len(body),
+                },
+                selector={"kind": "heading"},
+                metadata_json={"depth": 1, "ordinal": 1},
+            )
+        )
+        for target in (
+            ResourceRef(scheme="media", id=media_id),
+            ResourceRef(scheme="media", id=related_media_id),
+        ):
+            add_context_ref_without_commit(
+                db,
+                viewer_id=owner_id,
+                conversation_id=chat.conversation_id,
+                target=target,
+                origin="user",
+            )
+        relation = create_edge(
+            db,
+            viewer_id=owner_id,
+            input=EdgeCreate(
+                source=ResourceRef(scheme="media", id=media_id),
+                target=ResourceRef(scheme="media", id=related_media_id),
+                kind="supports",
+                origin="user",
+            ),
+        )
+
+        # Deliberately unreachable fixture: both refs pass conversation
+        # admission, so the binding must still apply ViewerRead and collapse a
+        # real foreign row with a nonexistent row. The assertions immediately
+        # below independently verify the fixture's intended state.
+        db.add_all(
+            [
+                ResourceEdge(
+                    user_id=owner_id,
+                    source_scheme="conversation",
+                    source_id=chat.conversation_id,
+                    target_scheme="media",
+                    target_id=target_id,
+                    kind="context",
+                    origin="system",
+                    source_order_key=f"proof-{ordinal}",
+                )
+                for ordinal, target_id in enumerate(
+                    (foreign_media_id, missing_media_id),
+                    start=1,
+                )
+            ]
+        )
+        db.commit()
+
+        for target_id in (foreign_media_id, missing_media_id):
+            target = ResourceRef(scheme="media", id=target_id)
+            assert admits_resource_for_conversation_read(
+                db,
+                conversation_id=chat.conversation_id,
+                target=target,
+            )
+            assert not can_read_media(db, owner_id, target_id)
+
+        runtime = compose_keyless_tool_runtime()
+        operation = runtime.operations["chat"]
+        job_context = claim_chat_tool_job(
+            db,
+            job_id=chat.job_id,
+            worker_id=f"read-tools-{uuid4()}",
+        )
+        admitted = (media_uri, related_uri, foreign_uri, missing_uri)
+        tool_ids = (
+            "nexus.search",
+            "nexus.resource.read",
+            "nexus.document.search",
+            "nexus.resource.inspect",
+            "nexus.relations.list",
+        )
+
+        successes = {
+            tool_id: execute_chat_tool(
+                db,
+                operation=operation,
+                run=run,
+                job_context=job_context,
+                tool_id=tool_id,
+                tool_call_index=index,
+                arguments=_read_arguments(tool_id, media_uri),
+                admitted_resource_uris=admitted,
+                effect_id=None,
+            )
+            for index, tool_id in enumerate(tool_ids, start=1)
+        }
+        assert all(result["type"] == "Success" for result in successes.values())
+
+        search_value = successes["nexus.search"]["value"]
+        assert 1 <= len(search_value["matches"]) <= 2
+        search_match = next(item for item in search_value["matches"] if item["uri"] == media_uri)
+        assert search_value["total_candidates"] >= len(search_value["matches"])
+        _assert_canonical_evidence(search_match["evidence"], expected_resource_uri=media_uri)
+
+        read_value = successes["nexus.resource.read"]["value"]
+        assert read_value == {
+            "evidence": read_value["evidence"],
+            "kind": "full",
+            "text": body,
+            "uri": media_uri,
+        }
+        _assert_canonical_evidence(read_value["evidence"], expected_resource_uri=media_uri)
+        assert (
+            read_value["evidence"]["content_sha256"]
+            == hashlib.sha256(body.encode("utf-8")).hexdigest()
+        )
+
+        document_value = successes["nexus.document.search"]["value"]
+        assert document_value["uri"] == media_uri
+        assert len(document_value["matches"]) == 1
+        document_match = document_value["matches"][0]
+        assert "singular nebula" in document_match["text"].casefold()
+        _assert_canonical_evidence(
+            document_match["evidence"],
+            expected_resource_uri=document_match["uri"],
+        )
+
+        inspect_value = successes["nexus.resource.inspect"]["value"]
+        assert inspect_value["uri"] == media_uri
+        assert inspect_value["total_sections"] == 1
+        assert inspect_value["sections"] == [
+            {
+                "fragment_id": str(fragment_id),
+                "label": "First section",
+                "ordinal": 1,
+                "page_end": None,
+                "page_start": None,
+                "parent_label": None,
+                "preview": body,
+                "read_uri": f"fragment:{fragment_id}",
+                "section_kind": "heading",
+                "t_end_ms": None,
+                "t_start_ms": None,
+            }
+        ]
+        _assert_canonical_evidence(inspect_value["evidence"], expected_resource_uri=media_uri)
+
+        relations_value = successes["nexus.relations.list"]["value"]
+        assert relations_value["uri"] == media_uri
+        assert relations_value["relations"] == [
+            {
+                "direction": "outgoing",
+                "edge_id": str(relation.id),
+                "kind": "supports",
+                "rationale": None,
+                "source_label": "Admitted evidence atlas",
+                "source_uri": media_uri,
+                "target_label": "Related evidence atlas",
+                "target_uri": related_uri,
+            }
+        ]
+        _assert_canonical_evidence(relations_value["evidence"], expected_resource_uri=media_uri)
+
+        denied: dict[tuple[str, str], dict[str, object]] = {}
+        next_index = len(tool_ids) + 1
+        for inaccessible_uri in (foreign_uri, missing_uri):
+            for tool_id in tool_ids:
+                denied[(tool_id, inaccessible_uri)] = execute_chat_tool(
+                    db,
+                    operation=operation,
+                    run=run,
+                    job_context=job_context,
+                    tool_id=tool_id,
+                    tool_call_index=next_index,
+                    arguments=_read_arguments(tool_id, inaccessible_uri),
+                    admitted_resource_uris=admitted,
+                    effect_id=None,
+                )
+                next_index += 1
+
+        closed_unavailable = {
+            "type": "Failure",
+            "error": {"type": "ResourceUnavailable"},
+        }
+        assert tuple(denied.values()) == (closed_unavailable,) * len(denied), (
+            "a foreign or nonexistent read exposed a distinguishable failure envelope"
+        )
+
+        rows = list(
+            db.scalars(
+                select(MessageToolCall)
+                .where(MessageToolCall.assistant_message_id == run.assistant_message_id)
+                .order_by(MessageToolCall.tool_call_index)
+            )
+        )
+        assert len(rows) == 15
+        assert {row.record_kind for row in rows} == {"current_execution"}
+        assert all(row.provider_wire_name is None for row in rows)
+        assert [row.canonical_tool_id for row in rows[:5]] == list(tool_ids)
+        assert all(row.canonical_input_sha256 for row in rows)
+        for row in rows:
+            assert row.canonical_tool_id is not None
+            binding = operation.plan.catalog_view.binding(ToolId(row.canonical_tool_id))
+            assert row.tool_contract_revision == binding.spec.tool_contract_revision
+            assert row.binding_policy_revision == binding.policy_revision
+
+        result_events = list(
+            db.scalars(
+                select(ChatRunEvent)
+                .where(ChatRunEvent.run_id == run.id, ChatRunEvent.event_type == "tool_result")
+                .order_by(ChatRunEvent.seq)
+            )
+        )
+        assert len(result_events) == len(rows)
+        assert all(event.payload["record_kind"] == "current_execution" for event in result_events)
+        assert all("tool_name" not in event.payload for event in result_events)
