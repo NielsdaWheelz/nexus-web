@@ -474,7 +474,7 @@ def test_position_replay_settles_once_and_does_not_automatically_reissue_uncerta
             )
 
             changed_input_provider = _NeverSearch()
-            changed_input_error: Exception | None = None
+            changed_input_error: BaseException | None = None
             try:
                 asyncio.run(
                     execute_chat_run(
@@ -488,7 +488,7 @@ def test_position_replay_settles_once_and_does_not_automatically_reissue_uncerta
                         web_search_provider=changed_input_provider,
                     )
                 )
-            except Exception as exc:  # noqa: BLE001 - assert the exact public defect below.
+            except BaseException as exc:  # noqa: BLE001 - assert the exact public defect below.
                 changed_input_error = exc
             assert changed_input_provider.calls == 0, (
                 "changed invocation crossed the provider dispatch boundary"
