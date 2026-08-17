@@ -99,9 +99,53 @@ _CODEX_AGENT_IMAGE_ENVIRONMENT_NAMES = frozenset(
     }
 )
 _CODEX_AGENT_VOLUME_MOUNTS = {
-    "/var/lib/nexus-codex": "nexus_nexus_codex_state",
     "/run/nexus-codex": "nexus_nexus_codex_run",
 }
+_CODEX_STATE_CONTAINER_SIZE_BYTES = 1024 * 1024 * 1024
+_CODEX_STATE_MINIMUM_FREE_BYTES = 128 * 1024 * 1024
+_CODEX_STATE_MAPPER_NAME = "nexus-codex-state"
+_CODEX_STATE_MAPPER = Path(f"/dev/mapper/{_CODEX_STATE_MAPPER_NAME}")
+_CODEX_STATE_REQUIRED_MOUNT_OPTIONS = frozenset({"rw", "nosuid", "nodev", "noexec"})
+_CODEX_STATE_BOOT_GUARD_NAME = "nexus-codex-state-boot-guard.service"
+_CODEX_STATE_BOOT_GUARD = b"""#!/bin/sh
+set -eu
+state=/srv/nexus/codex-state
+if /usr/bin/mountpoint --quiet -- "$state"; then
+    exit 0
+fi
+if [ -L "$state" ] || { [ -e "$state" ] && [ ! -d "$state" ]; }; then
+    echo "refusing unsafe Codex state underlay: $state" >&2
+    exit 1
+fi
+/usr/bin/install -d -o root -g root -m 000 -- "$state"
+/usr/bin/chown --no-dereference root:root -- "$state"
+/usr/bin/chmod 000 -- "$state"
+"""
+_CODEX_STATE_BOOT_GUARD_UNIT = b"""[Unit]
+Description=Protect the unmounted Nexus Codex credential-state underlay
+DefaultDependencies=no
+After=local-fs.target
+Before=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nexus-codex-state-boot-guard
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+"""
+_CODEX_STATE_DOCKER_DROP_IN = b"""[Unit]
+Requires=nexus-codex-state-boot-guard.service
+After=nexus-codex-state-boot-guard.service
+"""
+_CADDY_READINESS_COMMAND = (
+    "wget",
+    "-q",
+    "-O",
+    "/dev/null",
+    "http://127.0.0.1:2019/config/",
+)
 _CODEX_CAPACITY_CLIENT_ENVIRONMENT = {
     "NEXUS_CODEX_AGENT_SOCKET": "/run/nexus-codex/agent.sock",
 }
@@ -372,22 +416,22 @@ class CodexCapacityBreach(PermanentReleaseFailure):
     """A measured Codex capacity breach the candidate can never take back.
 
     Only the breaches the cutover §11 enumerates — cgroup peak, OOM, memory
-    pressure, service health, policy, canary protocol, and structured output,
-    plus the shape of the evidence that states one — are this class. Policy is
+    pressure, host policy, canary protocol, and structured output, plus the
+    shape of the evidence that states one — are this class. Policy is
     the canary and host isolation contract: those validators are shared with the
     ordinary release paths, where a difference measures nothing, so qualification
     converts what they prove into this class at its own call sites. A breach the
     background sampler observes during the turns is a measurement like any other
     and is re-raised from the joining thread.
 
-    Everything else measured nothing about the envelope and stays retriable, so
-    it must never be raised as a breach: Docker, transport, sampler and cleanup
-    failures, and a canary that never stated one of its own contract terminals —
-    a crashed, OOM-killed or cut-off canary observed nothing, whether it left
-    stdout empty, unparseable, or carrying an undefined exit code. Only stdout
-    that parses as the canary's evidence contract can state a breach. A breach
-    writes immutable failed evidence that permanently disqualifies its source
-    SHA.
+    Everything else measured nothing about the candidate envelope and stays
+    retriable, so it must never be raised as a breach: predecessor-service
+    readiness, Docker, transport, sampler and cleanup failures, and a canary
+    that never stated one of its own contract terminals — a crashed, OOM-killed
+    or cut-off canary observed nothing, whether it left stdout empty,
+    unparseable, or carrying an undefined exit code. Only stdout that parses as
+    the canary's evidence contract can state a breach. A breach writes immutable
+    failed evidence that permanently disqualifies its source SHA.
     """
 
 
@@ -502,6 +546,17 @@ class ReleasePaths:
     memory_pressure: Path = Path("/proc/pressure/memory")
     cgroup_controllers: Path = Path("/sys/fs/cgroup/cgroup.controllers")
     codex_apparmor_profile: Path = Path("/etc/apparmor.d/nexus-codex-agent-host")
+    codex_state_container: Path = Path("/var/lib/nexus/codex-state.luks")
+    codex_state_mount: Path = Path("/srv/nexus/codex-state")
+    codex_state_boot_guard: Path = Path("/usr/local/sbin/nexus-codex-state-boot-guard")
+    codex_state_boot_guard_unit: Path = Path(
+        "/etc/systemd/system/nexus-codex-state-boot-guard.service"
+    )
+    codex_state_docker_drop_in: Path = Path(
+        "/etc/systemd/system/docker.service.d/20-nexus-codex-state-guard.conf"
+    )
+    crypttab: Path = Path("/etc/crypttab")
+    codex_state_forbidden_key: Path = Path("/var/lib/nexus/codex-state.key")
     apparmor_userns_restriction: Path = Path(
         "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
     )
@@ -523,6 +578,17 @@ class ReleasePaths:
             memory_pressure=root / "proc/pressure/memory",
             cgroup_controllers=root / "sys/fs/cgroup/cgroup.controllers",
             codex_apparmor_profile=root / "etc/apparmor.d/nexus-codex-agent-host",
+            codex_state_container=root / "var/lib/nexus/codex-state.luks",
+            codex_state_mount=root / "srv/nexus/codex-state",
+            codex_state_boot_guard=(root / "usr/local/sbin/nexus-codex-state-boot-guard"),
+            codex_state_boot_guard_unit=(
+                root / "etc/systemd/system/nexus-codex-state-boot-guard.service"
+            ),
+            codex_state_docker_drop_in=(
+                root / "etc/systemd/system/docker.service.d/20-nexus-codex-state-guard.conf"
+            ),
+            crypttab=root / "etc/crypttab",
+            codex_state_forbidden_key=root / "var/lib/nexus/codex-state.key",
             apparmor_userns_restriction=(
                 root / "proc/sys/kernel/apparmor_restrict_unprivileged_userns"
             ),
@@ -2884,6 +2950,235 @@ class HostRelease:
                 "host AppArmor unprivileged-user-namespace restriction is not enabled"
             )
 
+    def _require_codex_state_storage(self) -> None:
+        """Prove the credential filesystem is the dedicated live LUKS2 mount."""
+
+        failure = "Codex credential state storage is not the dedicated encrypted mount"
+        try:
+            container = self.paths.codex_state_container.lstat()
+            mount = self.paths.codex_state_mount.lstat()
+            if (
+                not stat.S_ISREG(container.st_mode)
+                or container.st_uid != 0
+                or container.st_gid != 0
+                or stat.S_IMODE(container.st_mode) != 0o600
+                or container.st_nlink != 1
+                or container.st_size != _CODEX_STATE_CONTAINER_SIZE_BYTES
+                or not stat.S_ISDIR(mount.st_mode)
+                or mount.st_uid != 10001
+                or mount.st_gid != 10001
+                or stat.S_IMODE(mount.st_mode) != 0o700
+                or self.paths.codex_state_forbidden_key.exists()
+            ):
+                raise ReleaseBlocked(failure)
+
+            if self.paths.crypttab.exists():
+                crypttab = self.paths.crypttab.read_text(encoding="utf-8")
+                configured = tuple(
+                    line.split("#", 1)[0].split()
+                    for line in crypttab.splitlines()
+                    if line.split("#", 1)[0].split()
+                )
+                if any(
+                    fields[0] == _CODEX_STATE_MAPPER_NAME
+                    or (len(fields) > 1 and fields[1] == str(self.paths.codex_state_container))
+                    for fields in configured
+                ):
+                    raise ReleaseBlocked(failure)
+
+            environment = {**os.environ, "LC_ALL": "C"}
+            luks = _run_observed(
+                (
+                    "cryptsetup",
+                    "isLuks",
+                    "--type",
+                    "luks2",
+                    str(self.paths.codex_state_container),
+                ),
+                environment=environment,
+                timeout_seconds=10,
+            )
+            if luks.returncode != 0 or luks.stdout or luks.stderr:
+                raise ReleaseBlocked(failure)
+
+            status = _run_observed(
+                ("cryptsetup", "status", _CODEX_STATE_MAPPER_NAME),
+                environment=environment,
+                timeout_seconds=10,
+            )
+            if status.returncode != 0 or status.stderr:
+                raise ReleaseBlocked(failure)
+            status_lines = status.stdout.decode("ascii").splitlines()
+            if not status_lines or status_lines[0].strip() not in {
+                f"{_CODEX_STATE_MAPPER} is active.",
+                f"{_CODEX_STATE_MAPPER} is active and is in use.",
+            }:
+                raise ReleaseBlocked(failure)
+            status_fields: dict[str, str] = {}
+            for line in status_lines[1:]:
+                key, separator, value = line.strip().partition(":")
+                if not separator:
+                    continue
+                key = key.strip().lower()
+                if key in status_fields:
+                    raise ReleaseBlocked(failure)
+                status_fields[key] = value.strip()
+            loop_device = status_fields.get("device")
+            if status_fields.get("type") != "LUKS2" or not isinstance(loop_device, str):
+                raise ReleaseBlocked(failure)
+            if re.fullmatch(r"/dev/loop[0-9]+", loop_device) is None:
+                raise ReleaseBlocked(failure)
+
+            backing = _run_observed(
+                ("losetup", "--noheadings", "--output", "BACK-FILE", loop_device),
+                environment=environment,
+                timeout_seconds=10,
+            )
+            if (
+                backing.returncode != 0
+                or backing.stderr
+                or backing.stdout.decode("utf-8").strip() != str(self.paths.codex_state_container)
+            ):
+                raise ReleaseBlocked(failure)
+
+            mounted = _run_observed(
+                (
+                    "findmnt",
+                    "--json",
+                    "--mountpoint",
+                    str(self.paths.codex_state_mount),
+                    "--output",
+                    "SOURCE,TARGET,FSTYPE,OPTIONS",
+                ),
+                environment=environment,
+                timeout_seconds=10,
+            )
+            if mounted.returncode != 0 or mounted.stderr:
+                raise ReleaseBlocked(failure)
+            mount_value = _mapping(
+                _read_json_output(mounted.stdout, "Codex state mount"),
+                "Codex state mount",
+            )
+            filesystems = mount_value.get("filesystems")
+            if (
+                not isinstance(filesystems, list)
+                or len(filesystems) != 1
+                or not isinstance(filesystems[0], dict)
+            ):
+                raise ReleaseBlocked(failure)
+            filesystem = filesystems[0]
+            options = filesystem.get("options")
+            if (
+                set(filesystem) != {"source", "target", "fstype", "options"}
+                or filesystem.get("source") != str(_CODEX_STATE_MAPPER)
+                or filesystem.get("target") != str(self.paths.codex_state_mount)
+                or filesystem.get("fstype") != "ext4"
+                or not isinstance(options, str)
+                or not _CODEX_STATE_REQUIRED_MOUNT_OPTIONS.issubset(options.split(","))
+            ):
+                raise ReleaseBlocked(failure)
+
+            available = _run_observed(
+                (
+                    "df",
+                    "--output=avail",
+                    "--block-size=1",
+                    "--",
+                    str(self.paths.codex_state_mount),
+                ),
+                environment=environment,
+                timeout_seconds=10,
+            )
+            available_lines = available.stdout.decode("ascii").splitlines()
+            if (
+                available.returncode != 0
+                or available.stderr
+                or len(available_lines) != 2
+                or available_lines[0].strip() != "Avail"
+                or re.fullmatch(r"[0-9]+", available_lines[1].strip()) is None
+            ):
+                raise ReleaseBlocked(failure)
+            if int(available_lines[1].strip()) < _CODEX_STATE_MINIMUM_FREE_BYTES:
+                raise ReleaseBlocked("Codex credential state has less than 128 MiB free")
+
+        except (OSError, UnicodeDecodeError, ReleaseDefect, ExternalCommandFailed) as exc:
+            raise ReleaseBlocked(failure) from exc
+
+    def _validate_codex_state_boot_guard(self) -> None:
+        failure = "Codex credential state boot guard differs from release contract"
+        for path, expected, mode in (
+            (self.paths.codex_state_boot_guard, _CODEX_STATE_BOOT_GUARD, 0o755),
+            (
+                self.paths.codex_state_boot_guard_unit,
+                _CODEX_STATE_BOOT_GUARD_UNIT,
+                0o644,
+            ),
+            (
+                self.paths.codex_state_docker_drop_in,
+                _CODEX_STATE_DOCKER_DROP_IN,
+                0o644,
+            ),
+        ):
+            try:
+                metadata = path.lstat()
+                content = path.read_bytes()
+            except OSError as exc:
+                raise ReleaseBlocked(failure) from exc
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != 0
+                or metadata.st_gid != 0
+                or stat.S_IMODE(metadata.st_mode) != mode
+                or content != expected
+            ):
+                raise ReleaseBlocked(failure)
+        enabled = _run_observed(
+            ("systemctl", "is-enabled", "--quiet", _CODEX_STATE_BOOT_GUARD_NAME),
+            timeout_seconds=10,
+        )
+        if enabled.returncode != 0 or enabled.stdout or enabled.stderr:
+            raise ReleaseBlocked(failure)
+
+    def _prepare_codex_state_boot_guard(self) -> None:
+        for path, content, mode in (
+            (self.paths.codex_state_boot_guard, _CODEX_STATE_BOOT_GUARD, 0o755),
+            (
+                self.paths.codex_state_boot_guard_unit,
+                _CODEX_STATE_BOOT_GUARD_UNIT,
+                0o644,
+            ),
+            (
+                self.paths.codex_state_docker_drop_in,
+                _CODEX_STATE_DOCKER_DROP_IN,
+                0o644,
+            ),
+        ):
+            _atomic_bytes(path, content, mode=mode)
+            os.chown(path, 0, 0)
+        _run(("systemctl", "daemon-reload"), timeout_seconds=10)
+        _run(
+            ("systemctl", "enable", _CODEX_STATE_BOOT_GUARD_NAME),
+            timeout_seconds=10,
+        )
+        self._validate_codex_state_boot_guard()
+
+    def install_codex_state_boot_guard(self, source_sha: str) -> dict[str, str]:
+        """Install the boot guard from one exact admissible Codex candidate."""
+
+        self.store.assert_no_oracle_attempt()
+        self.store.assert_candidate_admissible(source_sha)
+        bundle = self.bundle(source_sha)
+        candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
+        if not _requires_codex_agent_host(candidate):
+            raise ReleaseBlocked("candidate has no Codex agent host")
+        self._require_codex_state_storage()
+        self._prepare_codex_state_boot_guard()
+        return {
+            "schema_version": "nexus-codex-state-boot-guard.v1",
+            "source_sha": source_sha,
+            "status": "installed",
+        }
+
     def _preflight_codex_agent_host_security(self, bundle: Path) -> None:
         self._require_codex_agent_host_kernel_boundary()
         _run(
@@ -3958,9 +4253,48 @@ class HostRelease:
         authentication readiness.
         """
 
+        self._require_codex_state_storage()
+        self._validate_codex_state_boot_guard()
         self._validate_codex_agent_host_profile(bundle)
         image_environment = self._codex_agent_image_environment(candidate.images.worker)
-
+        image_id = self._container_image_id(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config_path,
+            service=_CODEX_AGENT_HOST,
+        )
+        if image_id != expected_worker_image_id:
+            raise PermanentReleaseFailure(
+                "Codex agent host image differs from candidate worker digest"
+            )
+        container_id = (
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=("ps", "--quiet", _CODEX_AGENT_HOST),
+            )
+            .stdout.decode()
+            .strip()
+        )
+        _require_match("Codex agent host container id", container_id, _CONTAINER_ID)
+        self._validate_codex_agent_host_isolation(
+            _inspect_one(container_id, "Codex agent host isolation inspect"),
+            image_environment=image_environment,
+        )
+        # The direct Compose bind is attested in the inspected host mount and
+        # `_require_codex_state_storage` immediately below refreshes the host
+        # mapper/mount proof after startup.
+        self._require_codex_state_storage()
+        self._validate_codex_agent_host_network_peers(
+            container_id,
+            _inspect_network_one(
+                "nexus_codex_egress",
+                "Codex agent host network inspect",
+            ),
+        )
+        # Do not exec a credential-bearing process until the just-created
+        # container proves its direct bind and the host mapper are still exact.
         self._compose(
             bundle=bundle,
             candidate=candidate,
@@ -3992,38 +4326,6 @@ class HostRelease:
             "auth_profile": "codex-personal",
         }:
             raise PermanentReleaseFailure("Codex agent host is not ready with exact auth contract")
-        image_id = self._container_image_id(
-            bundle=bundle,
-            candidate=candidate,
-            config_path=config_path,
-            service=_CODEX_AGENT_HOST,
-        )
-        if image_id != expected_worker_image_id:
-            raise PermanentReleaseFailure(
-                "Codex agent host image differs from candidate worker digest"
-            )
-        container_id = (
-            self._compose(
-                bundle=bundle,
-                candidate=candidate,
-                config_path=config_path,
-                arguments=("ps", "--quiet", _CODEX_AGENT_HOST),
-            )
-            .stdout.decode()
-            .strip()
-        )
-        _require_match("Codex agent host container id", container_id, _CONTAINER_ID)
-        self._validate_codex_agent_host_isolation(
-            _inspect_one(container_id, "Codex agent host isolation inspect"),
-            image_environment=image_environment,
-        )
-        self._validate_codex_agent_host_network_peers(
-            container_id,
-            _inspect_network_one(
-                "nexus_codex_egress",
-                "Codex agent host network inspect",
-            ),
-        )
 
     def _codex_agent_image_environment(self, image: str) -> dict[str, str]:
         inspected = _read_json_output(
@@ -4079,6 +4381,7 @@ class HostRelease:
             or set(security_options) != _CODEX_AGENT_SECURITY_OPTIONS
             or host_config.get("MaskedPaths") != []
             or host_config.get("ReadonlyPaths") != []
+            or host_config.get("RestartPolicy") != {"MaximumRetryCount": 0, "Name": "no"}
         ):
             raise PermanentReleaseFailure("Codex agent host privilege isolation differs")
         self._validate_codex_agent_host_mounts(inspected)
@@ -4092,7 +4395,7 @@ class HostRelease:
 
     def _validate_codex_agent_host_mounts(self, inspected: dict[str, Any]) -> None:
         mounts = inspected.get("Mounts")
-        if not isinstance(mounts, list) or len(mounts) != len(_CODEX_AGENT_VOLUME_MOUNTS):
+        if not isinstance(mounts, list) or len(mounts) != len(_CODEX_AGENT_VOLUME_MOUNTS) + 1:
             raise PermanentReleaseFailure("Codex agent host mounts differ from isolated contract")
         observed: dict[str, dict[str, Any]] = {}
         for mount in mounts:
@@ -4106,7 +4409,18 @@ class HostRelease:
                     "Codex agent host mounts differ from isolated contract"
                 )
             observed[destination] = mount
-        if set(observed) != set(_CODEX_AGENT_VOLUME_MOUNTS):
+        if set(observed) != {"/var/lib/nexus-codex", *_CODEX_AGENT_VOLUME_MOUNTS}:
+            raise PermanentReleaseFailure("Codex agent host mounts differ from isolated contract")
+        state_mount = observed["/var/lib/nexus-codex"]
+        if (
+            state_mount.get("Destination") != "/var/lib/nexus-codex"
+            or state_mount.get("Type") != "bind"
+            or state_mount.get("Source") != str(self.paths.codex_state_mount)
+            or state_mount.get("RW") is not True
+            or state_mount.get("Propagation") != "rprivate"
+            or state_mount.get("Mode", "rw") not in {"", "rw"}
+            or set(state_mount) - {"Destination", "Mode", "RW", "Source", "Type", "Propagation"}
+        ):
             raise PermanentReleaseFailure("Codex agent host mounts differ from isolated contract")
         for destination, volume_name in _CODEX_AGENT_VOLUME_MOUNTS.items():
             _require_named_volume_mount(
@@ -4387,6 +4701,13 @@ class HostRelease:
         candidate: CandidateManifest,
         config_path: Path,
     ) -> tuple[str, ...]:
+        def refuse_readiness(service: str) -> None:
+            # Qualification starts only the isolated Codex host.  Every
+            # long-lived application service observed here is the current
+            # predecessor, so its readiness can block measurement but cannot
+            # permanently disqualify the candidate SHA.
+            raise ReleaseBlocked(f"Codex capacity {service} is not healthy")
+
         for service in _CODEX_CAPACITY_SERVICES:
             container_id = (
                 self._compose(
@@ -4402,14 +4723,41 @@ class HostRelease:
             inspected = _inspect_one(container_id, f"Codex capacity {service} inspect")
             self._validate_resource_limits(service, inspected)
             state = _mapping(inspected.get("State"), f"Codex capacity {service} state")
+            if state.get("Running") is not True:
+                refuse_readiness(service)
+            if service == "caddy":
+                self._require_caddy_admin_ready(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=config_path,
+                    failure="Codex capacity caddy is not healthy",
+                )
+                continue
             health = state.get("Health")
-            if (
-                state.get("Running") is not True
-                or not isinstance(health, dict)
-                or health.get("Status") != "healthy"
-            ):
-                raise CodexCapacityBreach(f"Codex capacity {service} is not healthy")
+            if not isinstance(health, dict) or health.get("Status") != "healthy":
+                refuse_readiness(service)
         return _CODEX_CAPACITY_SERVICES
+
+    def _require_caddy_admin_ready(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+        failure: str,
+    ) -> None:
+        """Run the canonical live-process probe owned by Caddy readiness."""
+
+        try:
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=("exec", "-T", "caddy", *_CADDY_READINESS_COMMAND),
+                timeout_seconds=10,
+            )
+        except ExternalCommandFailed as exc:
+            raise ReleaseBlocked(failure) from exc
 
     def _read_codex_capacity_qualification(
         self,
@@ -4823,6 +5171,12 @@ class HostRelease:
         config = self._config_snapshot()
         host_may_be_started = False
         try:
+            # Credential storage is operator-provisioned. Prove the LUKS2 ->
+            # mapper -> ext4 chain and the locked-boot guard before starting
+            # the host. The direct bind itself is attested immediately after
+            # Docker creates the container and before any controller-owned exec.
+            self._require_codex_state_storage()
+            self._validate_codex_state_boot_guard()
             self._preflight_codex_agent_host_security(bundle)
             self._prepare_codex_agent_host_security(bundle)
             # `up --wait` can fail after creating the host (for example while
@@ -5185,6 +5539,20 @@ class HostRelease:
             source_sha,
             existing=existing,
         )
+        candidate = load_candidate_manifest(self.bundle(source_sha) / "candidate-manifest.json")
+        if _requires_codex_agent_host(candidate):
+            self._require_codex_state_storage()
+            self._validate_codex_state_boot_guard()
+        if existing is None or existing.phase is ReleasePhase.Prepared:
+            pre_mutation_config = (
+                self._config_snapshot().path if existing is None else Path(existing.config_path)
+            )
+            self._require_caddy_admin_ready(
+                bundle=self.bundle(source_sha),
+                candidate=candidate,
+                config_path=pre_mutation_config,
+                failure="Caddy is not ready before release mutation",
+            )
         if existing is None:
             self._converge_resource_limits(source_sha)
             preflight = self.preflight(source_sha)
@@ -5370,33 +5738,57 @@ class HostRelease:
             self.store.replace_attempt(attempt)
 
         if attempt.phase is ReleasePhase.BackendActivationStarted:
+            # Recheck immediately before host activation: qualification and
+            # preflight evidence cannot authorize a later mount substitution.
+            self._require_codex_state_storage()
+            self._validate_codex_state_boot_guard()
             self._prepare_codex_agent_host_security(bundle)
             # `--no-deps` pins each start to the exact named services, so the
             # writers' declared dependency on the Codex host is honored here by
             # starting and awaiting the host first. Otherwise the background
             # lane could claim a metadata job before the socket exists and take
             # the terminal host-unavailable outcome, which never auto-retries.
-            for services in ((_CODEX_AGENT_HOST,), _WRITERS):
-                self._compose(
-                    bundle=bundle,
-                    candidate=candidate,
-                    config_path=Path(attempt.config_path),
-                    arguments=(
-                        "up",
-                        "--detach",
-                        "--no-deps",
-                        "--wait",
-                        "--wait-timeout",
-                        "90",
-                        *services,
-                    ),
-                    timeout_seconds=120,
-                )
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=Path(attempt.config_path),
+                arguments=(
+                    "up",
+                    "--detach",
+                    "--no-deps",
+                    "--wait",
+                    "--wait-timeout",
+                    "90",
+                    _CODEX_AGENT_HOST,
+                ),
+                timeout_seconds=120,
+            )
+            self._prove_codex_agent_host(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=Path(attempt.config_path),
+                expected_worker_image_id=attempt.candidate_worker_image_id,
+            )
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=Path(attempt.config_path),
+                arguments=(
+                    "up",
+                    "--detach",
+                    "--no-deps",
+                    "--wait",
+                    "--wait-timeout",
+                    "90",
+                    *_WRITERS,
+                ),
+                timeout_seconds=120,
+            )
             self._prove_backend(
                 bundle=bundle,
                 candidate=candidate,
                 attempt=attempt,
-                require_codex_agent_host=True,
+                require_codex_agent_host=False,
             )
             attempt = attempt.advance(
                 ReleasePhase.AwaitingFrontendPromotion,
@@ -5775,6 +6167,84 @@ class HostRelease:
         if record != expected_record:
             raise ReleaseDefect("current release record differs from the proven vector")
         self.store.clear_forward_fix_after_success(source_sha)
+
+    def resume_codex_agent_host(self, source_sha: str) -> dict[str, str]:
+        """Resume only the exact current Codex host after an interactive unlock."""
+
+        self.store.assert_no_oracle_attempt()
+        _require_match("resume source SHA", source_sha, _SHA)
+        record = self.store.require_current_record()
+        if record.source_sha != source_sha:
+            raise ReleaseBlocked(f"release {source_sha} is not current")
+        attempt = self.store.load_attempt(source_sha)
+        if attempt is None or attempt.phase is not ReleasePhase.Succeeded:
+            raise ReleaseDefect("current release is not a complete immutable publication")
+        bundle = self.bundle(source_sha)
+        candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
+        if not _requires_codex_agent_host(candidate):
+            raise ReleaseBlocked("current release has no Codex agent host")
+        self._validate_release_inputs(
+            bundle=bundle,
+            candidate=candidate,
+            attempt=attempt,
+        )
+        self._require_codex_state_storage()
+        self._validate_codex_state_boot_guard()
+
+        container_id = (
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=Path(attempt.config_path),
+                arguments=("ps", "--all", "--quiet", _CODEX_AGENT_HOST),
+            )
+            .stdout.decode("ascii")
+            .strip()
+        )
+        if container_id:
+            _require_match("Codex agent host container id", container_id, _CONTAINER_ID)
+            state = _mapping(
+                _inspect_one(container_id, "Codex stopped agent host inspect").get("State"),
+                "Codex stopped agent host state",
+            )
+            if state.get("Running") is not False:
+                raise ReleaseBlocked("Codex agent host is not stopped")
+
+        host_may_be_started = False
+        try:
+            host_may_be_started = True
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=Path(attempt.config_path),
+                arguments=(
+                    "up",
+                    "--detach",
+                    "--no-deps",
+                    "--wait",
+                    "--wait-timeout",
+                    "90",
+                    _CODEX_AGENT_HOST,
+                ),
+                timeout_seconds=120,
+            )
+            self.verify_current(source_sha)
+        except BaseException as exc:
+            cleanup_failures = self._cleanup_codex_capacity_runtime(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=Path(attempt.config_path),
+                canary_name=None,
+                stop_host=host_may_be_started,
+            )
+            for cleanup_failure in cleanup_failures:
+                exc.add_note(f"Codex host stop after failed resume also failed: {cleanup_failure}")
+            raise
+        return {
+            "schema_version": "nexus-codex-agent-host-resume.v1",
+            "source_sha": source_sha,
+            "status": "ready",
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -6430,6 +6900,9 @@ def _parser() -> argparse.ArgumentParser:
     qualify_capacity = commands.add_parser("qualify-codex-capacity")
     qualify_capacity.add_argument("--source-sha", required=True)
 
+    install_codex_state_boot_guard = commands.add_parser("install-codex-state-boot-guard")
+    install_codex_state_boot_guard.add_argument("--source-sha", required=True)
+
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--source-sha", required=True)
     finalize.add_argument("--deployment-id", required=True)
@@ -6445,6 +6918,9 @@ def _parser() -> argparse.ArgumentParser:
     verify = commands.add_parser("verify-current")
     verify.add_argument("--source-sha", required=True)
 
+    resume_codex_agent_host = commands.add_parser("resume-codex-agent-host")
+    resume_codex_agent_host.add_argument("--source-sha", required=True)
+
     config = commands.add_parser("publish-config")
     config.add_argument("--source", type=Path, required=True)
     config.add_argument("--next-source-sha", required=True)
@@ -6455,9 +6931,13 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    paths: ReleasePaths | None = None,
+) -> int:
     args = _parser().parse_args(argv)
-    paths = ReleasePaths()
+    paths = ReleasePaths() if paths is None else paths
     if args.command == "validate-candidate":
         candidate = load_candidate_manifest(args.manifest)
         sys.stdout.buffer.write(_canonical_json({"source_sha": candidate.source_sha}))
@@ -6555,6 +7035,10 @@ def main(argv: list[str] | None = None) -> int:
                 _canonical_json({"source_sha": args.source_sha, "status": "passed"})
             )
             return 0
+        if args.command == "install-codex-state-boot-guard":
+            receipt = controller.install_codex_state_boot_guard(args.source_sha)
+            sys.stdout.buffer.write(_canonical_json(receipt))
+            return 0
         if args.command == "finalize":
             attempt = controller.finalize(
                 source_sha=args.source_sha,
@@ -6587,6 +7071,10 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.buffer.write(
                 _canonical_json({"source_sha": args.source_sha, "status": "current"})
             )
+            return 0
+        if args.command == "resume-codex-agent-host":
+            receipt = controller.resume_codex_agent_host(args.source_sha)
+            sys.stdout.buffer.write(_canonical_json(receipt))
             return 0
         if args.command == "publish-config":
             digest = publish_config(

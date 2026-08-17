@@ -48,6 +48,12 @@ services:
       - /etc/nexus/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
     logging: *default-logging
 
   api:
@@ -143,7 +149,9 @@ services:
 
   nexus-codex-agent-host:
     image: ${WORKER_IMAGE:?set an immutable candidate digest}
-    restart: unless-stopped
+    # The encrypted credential filesystem is unlocked manually after reboot.
+    # Never let Docker restart this container against the protected underlay.
+    restart: "no"
     mem_reservation: 128m
     mem_limit: 384m
     memswap_limit: 384m
@@ -178,7 +186,12 @@ services:
       fsize: 1048576
       nofile: 64
     volumes:
-      - nexus_codex_state:/var/lib/nexus-codex
+      - type: bind
+        source: /srv/nexus/codex-state
+        target: /var/lib/nexus-codex
+        bind:
+          create_host_path: false
+          propagation: rprivate
       - nexus_codex_run:/run/nexus-codex
     healthcheck:
       test:
@@ -211,7 +224,6 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
-  nexus_codex_state:
   nexus_codex_run:
 
 networks:

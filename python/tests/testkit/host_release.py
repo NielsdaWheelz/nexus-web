@@ -46,6 +46,38 @@ CURRENT_DEPLOYMENT_ID = "dpl_Current123"
 _PUBLIC_HOSTS = frozenset({"api.example.test:443", "web.example.test:443"})
 _CODEX_HOST_PID = 4242
 _CODEX_CAPACITY_CANARY_LABEL = "nexus.release.codex-capacity-canary"
+_CODEX_STATE_BOOT_GUARD = b"""#!/bin/sh
+set -eu
+state=/srv/nexus/codex-state
+if /usr/bin/mountpoint --quiet -- "$state"; then
+    exit 0
+fi
+if [ -L "$state" ] || { [ -e "$state" ] && [ ! -d "$state" ]; }; then
+    echo "refusing unsafe Codex state underlay: $state" >&2
+    exit 1
+fi
+/usr/bin/install -d -o root -g root -m 000 -- "$state"
+/usr/bin/chown --no-dereference root:root -- "$state"
+/usr/bin/chmod 000 -- "$state"
+"""
+_CODEX_STATE_BOOT_GUARD_UNIT = b"""[Unit]
+Description=Protect the unmounted Nexus Codex credential-state underlay
+DefaultDependencies=no
+After=local-fs.target
+Before=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nexus-codex-state-boot-guard
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+"""
+_CODEX_STATE_DOCKER_DROP_IN = b"""[Unit]
+Requires=nexus-codex-state-boot-guard.service
+After=nexus-codex-state-boot-guard.service
+"""
 _CODEX_IMAGE_ENVIRONMENT = [
     "GPG_KEY=fake-gpg-key",
     "LANG=C.UTF-8",
@@ -431,6 +463,31 @@ class HostReleaseHarness:
         parser_temp_root = root / "var/lib/nexus/parser-tmp"
         parser_temp_root.mkdir(parents=True)
         _nexus_worker_own(parser_temp_root)
+        codex_state_container = root / "var/lib/nexus/codex-state.luks"
+        codex_state_container.parent.mkdir(parents=True, exist_ok=True)
+        codex_state_container.touch()
+        codex_state_container.chmod(0o600)
+        os.truncate(codex_state_container, 1024 * 1024 * 1024)
+        codex_state_mount = root / "srv/nexus/codex-state"
+        codex_state_mount.mkdir(parents=True)
+        _nexus_worker_own(codex_state_mount)
+        crypttab = root / "etc/crypttab"
+        crypttab.write_text("# no automatic Codex credential unlock\n", encoding="utf-8")
+        crypttab.chmod(0o644)
+        boot_guard = root / "usr/local/sbin/nexus-codex-state-boot-guard"
+        boot_guard.parent.mkdir(parents=True)
+        boot_guard.write_bytes(_CODEX_STATE_BOOT_GUARD)
+        boot_guard.chmod(0o755)
+        boot_guard_unit = root / "etc/systemd/system/nexus-codex-state-boot-guard.service"
+        boot_guard_unit.parent.mkdir(parents=True)
+        boot_guard_unit.write_bytes(_CODEX_STATE_BOOT_GUARD_UNIT)
+        boot_guard_unit.chmod(0o644)
+        docker_drop_in = (
+            root / "etc/systemd/system/docker.service.d/20-nexus-codex-state-guard.conf"
+        )
+        docker_drop_in.parent.mkdir(parents=True)
+        docker_drop_in.write_bytes(_CODEX_STATE_DOCKER_DROP_IN)
+        docker_drop_in.chmod(0o644)
         meminfo = root / "proc/meminfo"
         meminfo.parent.mkdir(parents=True)
         meminfo.write_text(
@@ -466,7 +523,17 @@ class HostReleaseHarness:
             "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
             encoding="ascii",
         )
-        immutable_inputs = (*candidate_bundle, *current_bundle, config_path, caddy_path)
+        immutable_inputs = (
+            *candidate_bundle,
+            *current_bundle,
+            config_path,
+            caddy_path,
+            codex_state_container,
+            crypttab,
+            boot_guard,
+            boot_guard_unit,
+            docker_drop_in,
+        )
 
         current_api_image_id = "sha256:" + "5" * 64
         current_worker_image_id = "sha256:" + "6" * 64
@@ -538,6 +605,7 @@ class HostReleaseHarness:
                             "NanoCpus": 1_000_000_000,
                             "ReadonlyRootfs": True,
                             "ReadonlyPaths": [],
+                            "RestartPolicy": {"MaximumRetryCount": 0, "Name": "no"},
                             "SecurityOpt": [
                                 "no-new-privileges:true",
                                 "seccomp=unconfined",
@@ -590,7 +658,17 @@ class HostReleaseHarness:
                 "codex_capacity_canary_status": "passed",
                 "codex_capacity_canary_delay_seconds": 0.0,
                 "codex_capacity_during_canary_host_writes": {},
+                "codex_state_storage_kind": "encrypted",
+                "codex_state_free_bytes": 512 * 1024 * 1024,
+                "codex_state_live_bind_kind": "exact",
+                "codex_state_boot_guard_enabled": True,
                 "codex_host_startup_failure": False,
+                # The deployed predecessor Caddy predates a Docker-native
+                # healthcheck.  Keep the fake boundary honest: qualification
+                # must execute the candidate's canonical in-container probe,
+                # not depend on a Health object that production does not have.
+                "caddy_docker_health_present": False,
+                "caddy_health_probe_failure": False,
                 "candidate_health_wait_seconds": 0.0,
                 "candidate_revision": str(candidate["expected_database_revision"]),
                 "current_revision": "0210",
@@ -700,7 +778,15 @@ class HostReleaseHarness:
         fake_bin = root / "fake-bin"
         fake_bin.mkdir()
         helper = Path(__file__).resolve()
-        for command in ("apparmor_parser", "docker"):
+        for command in (
+            "apparmor_parser",
+            "cryptsetup",
+            "df",
+            "docker",
+            "findmnt",
+            "losetup",
+            "systemctl",
+        ):
             executable = fake_bin / command
             executable.write_text(
                 f"#!{sys.executable}\n"
@@ -855,6 +941,42 @@ class HostReleaseHarness:
                 self.source_sha,
             ),
             environment=self._environment(),
+        )
+
+    def run_install_codex_state_boot_guard(
+        self,
+        *,
+        source_sha: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        attempted_source = self.source_sha if source_sha is None else source_sha
+        return self._run_controller(
+            (
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "install-codex-state-boot-guard",
+                str(self.repo_root / "deploy/hetzner/release.py"),
+                str(self.root),
+                attempted_source,
+            ),
+            environment=self._environment(source_sha=attempted_source),
+        )
+
+    def run_resume_codex_agent_host(
+        self,
+        *,
+        source_sha: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        attempted_source = self.source_sha if source_sha is None else source_sha
+        return self._run_controller(
+            (
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "resume-codex-agent-host",
+                str(self.repo_root / "deploy/hetzner/release.py"),
+                str(self.root),
+                attempted_source,
+            ),
+            environment=self._environment(source_sha=attempted_source),
         )
 
     def install_candidate(self, candidate: dict[str, object]) -> str:
@@ -1024,22 +1146,25 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
             ],
             "Status": "healthy",
         }
-        health_status = container.get("health_status_override")
-        if isinstance(health_status, str):
-            health["Status"] = health_status
+    health_status = container.get("health_status_override")
+    if isinstance(health_status, str):
+        health["Status"] = health_status
+    state_value: dict[str, object] = {
+        "Health": health,
+        "OOMKilled": container["oom_killed"],
+        "Paused": False,
+        "Restarting": False,
+        "Running": container["running"],
+        "Pid": _CODEX_HOST_PID if service == "nexus-codex-agent-host" else 1,
+    }
+    if service == "caddy" and state["caddy_docker_health_present"] is False:
+        state_value.pop("Health")
     inspected: dict[str, object] = {
         "Config": container["config"],
         "HostConfig": container["host_config"],
         "Image": container["image_id"],
         "RestartCount": container["restart_count"],
-        "State": {
-            "Health": health,
-            "OOMKilled": container["oom_killed"],
-            "Paused": False,
-            "Restarting": False,
-            "Running": container["running"],
-            "Pid": _CODEX_HOST_PID if service == "nexus-codex-agent-host" else 1,
-        },
+        "State": state_value,
     }
     if container_id == state["containers"]["postgres"]["id"]:
         inspected["Mounts"] = [
@@ -1073,13 +1198,14 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
             },
         ]
     if container_id == state["containers"]["nexus-codex-agent-host"]["id"]:
+        root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
         mounts: list[dict[str, object]] = [
             {
                 "Destination": "/var/lib/nexus-codex",
-                "Name": "nexus_nexus_codex_state",
                 "RW": True,
-                "Source": "/var/lib/docker/volumes/nexus_nexus_codex_state/_data",
-                "Type": "volume",
+                "Source": str(root / "srv/nexus/codex-state"),
+                "Type": "bind",
+                "Propagation": "rprivate",
             },
             {
                 "Destination": "/run/nexus-codex",
@@ -1090,9 +1216,20 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
             },
         ]
         mutation = state["codex_host_contract_mutation"]
+        live_bind = state["codex_state_live_bind_kind"]
+        if live_bind == "wrong_source":
+            mounts[0]["Source"] = "/srv/nexus/foreign-codex-state"
+        elif live_bind == "wrong_type":
+            mounts[0]["Type"] = "volume"
+            mounts[0]["Name"] = "nexus_unapproved_state"
+        elif live_bind == "readonly":
+            mounts[0]["RW"] = False
+        elif live_bind == "shared_propagation":
+            mounts[0]["Propagation"] = "rshared"
         if mutation == "environment_credential_residue":
             container["config"]["Env"].append("AWS_SESSION_TOKEN=credential-residue")
         elif mutation == "mount_wrong_named_volume":
+            mounts[0]["Type"] = "volume"
             mounts[0]["Name"] = "nexus_unapproved_state"
         elif mutation == "mount_wrong_source":
             mounts[1]["Source"] = "/var/lib/docker/volumes/nexus_unapproved_run/_data"
@@ -1190,7 +1327,8 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
         "90",
     ]:
         services = operation[6:]
-        state["candidate_active"] = any(service in _WRITERS for service in services)
+        if any(service in _WRITERS for service in services):
+            state["candidate_active"] = True
         for service in services:
             container = state["containers"][service]
             container["running"] = True
@@ -1327,6 +1465,19 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
         else:
             raise AssertionError(f"unsupported fake API command: {command}")
         return
+    if operation[:3] == ["exec", "-T", "caddy"]:
+        command = operation[3:]
+        if command != [
+            "wget",
+            "-q",
+            "-O",
+            "/dev/null",
+            "http://127.0.0.1:2019/config/",
+        ]:
+            raise AssertionError(f"unsupported fake Caddy command: {command!r}")
+        if state["caddy_health_probe_failure"] is True:
+            raise SystemExit(72)
+        return
     if operation[:3] == ["exec", "-T", "nexus-codex-agent-host"]:
         command = operation[3:]
         if command == ["python", "-m", "apps.codex_agent.sandbox_health"]:
@@ -1453,7 +1604,6 @@ def fake_docker_main() -> int:
     elif arguments[:2] == ["volume", "inspect"]:
         volume = arguments[2]
         mountpoints = {
-            "nexus_nexus_codex_state": "/var/lib/docker/volumes/nexus_nexus_codex_state/_data",
             "nexus_nexus_codex_run": "/var/lib/docker/volumes/nexus_nexus_codex_run/_data",
         }
         mountpoint = mountpoints.get(volume)
@@ -1782,10 +1932,9 @@ def fake_docker_main() -> int:
                                 [
                                     {
                                         "Destination": "/var/lib/nexus-codex",
-                                        "Name": "nexus_nexus_codex_state",
                                         "RW": True,
-                                        "Source": "/var/lib/docker/volumes/nexus_nexus_codex_state/_data",
-                                        "Type": "volume",
+                                        "Source": "/srv/nexus/codex-state",
+                                        "Type": "bind",
                                     },
                                     {
                                         "Destination": "/run/nexus-codex",
@@ -1956,6 +2105,109 @@ def fake_apparmor_parser_main() -> int:
     return 0
 
 
+def fake_cryptsetup_main() -> int:
+    state = _load_state(Path(os.environ["NEXUS_FAKE_DOCKER_STATE"]))
+    root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
+    container = root / "var/lib/nexus/codex-state.luks"
+    arguments = sys.argv[2:]
+    storage_kind = state["codex_state_storage_kind"]
+    if arguments == ["isLuks", "--type", "luks2", str(container)]:
+        return 1 if storage_kind in {"plain_unmounted", "luks1"} else 0
+    if arguments == ["status", "nexus-codex-state"]:
+        mapper = (
+            "/dev/mapper/foreign-codex-state"
+            if storage_kind == "wrong_mapper"
+            else "/dev/mapper/nexus-codex-state"
+        )
+        luks_type = "LUKS1" if storage_kind == "luks1" else "LUKS2"
+        sys.stdout.write(
+            f"{mapper} is active and is in use.\n  type:    {luks_type}\n  device:  /dev/loop7\n"
+        )
+        return 0
+    raise AssertionError(f"unsupported fake cryptsetup command: {arguments!r}")
+
+
+def fake_losetup_main() -> int:
+    state = _load_state(Path(os.environ["NEXUS_FAKE_DOCKER_STATE"]))
+    arguments = sys.argv[2:]
+    if arguments != ["--noheadings", "--output", "BACK-FILE", "/dev/loop7"]:
+        raise AssertionError(f"unsupported fake losetup command: {arguments!r}")
+    root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
+    backing = (
+        root / "var/lib/nexus/wrong-codex-state.luks"
+        if state["codex_state_storage_kind"] == "wrong_mount_source"
+        else root / "var/lib/nexus/codex-state.luks"
+    )
+    sys.stdout.write(f"{backing}\n")
+    return 0
+
+
+def fake_findmnt_main() -> int:
+    state = _load_state(Path(os.environ["NEXUS_FAKE_DOCKER_STATE"]))
+    root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
+    arguments = sys.argv[2:]
+    if (
+        len(arguments) != 5
+        or arguments[:2] != ["--json", "--mountpoint"]
+        or arguments[3] != "--output"
+        or arguments[4] != "SOURCE,TARGET,FSTYPE,OPTIONS"
+    ):
+        raise AssertionError(f"unsupported fake findmnt command: {arguments!r}")
+    target = arguments[2]
+    state_mount = str(root / "srv/nexus/codex-state")
+    if target != state_mount:
+        raise AssertionError(f"unsupported fake findmnt target: {target!r}")
+    options = (
+        "rw,nosuid,nodev"
+        if state["codex_state_storage_kind"] == "wrong_mount_flags"
+        else "rw,nosuid,nodev,noexec,relatime"
+    )
+    source = "/dev/mapper/nexus-codex-state"
+    filesystem = {
+        "fstype": "ext4",
+        "options": options,
+        "source": source,
+        "target": target,
+    }
+    _write_json({"filesystems": [filesystem]})
+    return 0
+
+
+def fake_df_main() -> int:
+    state = _load_state(Path(os.environ["NEXUS_FAKE_DOCKER_STATE"]))
+    root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
+    arguments = sys.argv[2:]
+    expected = [
+        "--output=avail",
+        "--block-size=1",
+        "--",
+        str(root / "srv/nexus/codex-state"),
+    ]
+    if arguments != expected:
+        raise AssertionError(f"unsupported fake df command: {arguments!r}")
+    sys.stdout.write(f"Avail\n{state['codex_state_free_bytes']}\n")
+    return 0
+
+
+def fake_systemctl_main() -> int:
+    state_path = Path(os.environ["NEXUS_FAKE_DOCKER_STATE"])
+    state = _load_state(state_path)
+    arguments = sys.argv[2:]
+    if arguments == ["daemon-reload"]:
+        return 0
+    if arguments == ["enable", "nexus-codex-state-boot-guard.service"]:
+        state["codex_state_boot_guard_enabled"] = True
+        _save_state(state_path, state)
+        return 0
+    if arguments == [
+        "is-enabled",
+        "--quiet",
+        "nexus-codex-state-boot-guard.service",
+    ]:
+        return 0 if state["codex_state_boot_guard_enabled"] is True else 1
+    raise AssertionError(f"unsupported fake systemctl command: {arguments!r}")
+
+
 def _drop_to_test_group() -> None:
     test_gid = os.environ.pop("NEXUS_FAKE_TEST_GID", None)
     if test_gid is not None:
@@ -2020,6 +2272,26 @@ def qualify_codex_capacity_main(arguments: list[str]) -> int:
     return 0
 
 
+def resume_codex_agent_host_main(arguments: list[str]) -> int:
+    _drop_to_test_group()
+    release_path, root, source_sha = arguments
+    release = _load_release(Path(release_path), "nexus_host_release_resume_codex_driver")
+    return release.main(
+        ["resume-codex-agent-host", "--source-sha", source_sha],
+        paths=release.ReleasePaths.under(Path(root)),
+    )
+
+
+def install_codex_state_boot_guard_main(arguments: list[str]) -> int:
+    _drop_to_test_group()
+    release_path, root, source_sha = arguments
+    release = _load_release(Path(release_path), "nexus_host_release_install_codex_guard_driver")
+    return release.main(
+        ["install-codex-state-boot-guard", "--source-sha", source_sha],
+        paths=release.ReleasePaths.under(Path(root)),
+    )
+
+
 def fail_bound_frontend_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id = arguments
@@ -2053,6 +2325,16 @@ def main() -> int:
         return fake_docker_main()
     if sys.argv[1] == "apparmor_parser":
         return fake_apparmor_parser_main()
+    if sys.argv[1] == "cryptsetup":
+        return fake_cryptsetup_main()
+    if sys.argv[1] == "df":
+        return fake_df_main()
+    if sys.argv[1] == "findmnt":
+        return fake_findmnt_main()
+    if sys.argv[1] == "losetup":
+        return fake_losetup_main()
+    if sys.argv[1] == "systemctl":
+        return fake_systemctl_main()
     if sys.argv[1] == "apply":
         return apply_main(sys.argv[2:])
     if sys.argv[1] == "finalize":
@@ -2061,6 +2343,10 @@ def main() -> int:
         return verify_current_main(sys.argv[2:])
     if sys.argv[1] == "qualify-codex-capacity":
         return qualify_codex_capacity_main(sys.argv[2:])
+    if sys.argv[1] == "resume-codex-agent-host":
+        return resume_codex_agent_host_main(sys.argv[2:])
+    if sys.argv[1] == "install-codex-state-boot-guard":
+        return install_codex_state_boot_guard_main(sys.argv[2:])
     if sys.argv[1] == "fail-bound-frontend":
         return fail_bound_frontend_main(sys.argv[2:])
     if sys.argv[1] == "fail-auth-smoke":

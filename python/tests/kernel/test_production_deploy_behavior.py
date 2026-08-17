@@ -122,7 +122,12 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     assert "apparmor=nexus-codex-agent-host" in host
     assert "systempaths=unconfined" in host
     assert "networks:\n      - codex_egress" in host
-    assert "nexus_codex_state:/var/lib/nexus-codex" in host
+    assert "nexus_codex_state" not in compose
+    assert "- type: bind" in host
+    assert "source: /srv/nexus/codex-state" in host
+    assert "target: /var/lib/nexus-codex" in host
+    assert "create_host_path: false" in host
+    assert "propagation: rprivate" in host
     assert "nexus_codex_run:/run/nexus-codex" in host
     assert "nexus_codex_run:/run/nexus-codex:ro" in background
     assert "NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock" in background

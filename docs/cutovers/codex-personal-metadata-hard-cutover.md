@@ -330,8 +330,8 @@ Host requirements:
 
 - dedicated non-root uid; `cap_drop: ALL`; `no-new-privileges`; read-only root;
   bounded tmpfs, memory, CPU, PIDs, output, and timeout;
-- persistent `0700` state volume mounted only by the host; shared run directory
-  contains only the `0660` Unix socket;
+- persistent `0700` state filesystem directly bind-mounted only by the host;
+  shared run directory contains only the `0660` Unix socket;
 - no Nexus `env_file`, database URL, provider keys, object-store keys, Docker
   socket, source/library mounts, or host home;
 - a fixed empty cwd and no caller-selected paths;
@@ -345,8 +345,11 @@ Host requirements:
 - the host uses a dedicated internet-egress bridge with no database or
   application-service peers, and release inspects the bridge's exact live
   membership rather than trusting only the host container's network name;
-- VM storage/backups are encrypted; ordinary backup excludes `auth.json` and
-  re-enrollment is the recovery path;
+- production credential state is a dedicated LUKS2 container; the
+  release-owned PostgreSQL backup neither mounts nor reads it, provider
+  snapshots may contain only its ciphertext, and every other backup or unlock
+  secret remains explicit operator evidence; re-enrollment is the recovery
+  path;
 - graceful shutdown interrupts the active turn and reaps descendants before the
   container exits.
 
@@ -450,7 +453,7 @@ green, then refactored without weakening the oracle. Use `./scripts/test` only.
 | accepted transport loss | `python/tests/service/test_codex_metadata_transport_durability.py` | real worker observes HTTP acceptance followed by disconnect; ledger stays incomplete and replay stays suspended |
 | live subscription wire | `python/tests/hosted/nightly/test_codex_personal_metadata.py` | one bounded real Luna structured turn from a dedicated test profile; ChatGPT auth, usage, versions, no tools |
 | deployment wiring | existing production deploy behavior/journey owner | measured 1,900 MiB fixture passes; low headroom/PSI blocks before mutation; exact cgroup/image/isolation/health/rollback |
-| existing-VPS qualification | `deploy/hetzner/prove-codex-capacity.sh <source-sha>` and immutable JSON evidence | exact image/profile/384 MiB cgroup; one cold plus two warm turns; peak/headroom/PSI/OOM/service-health assertions; no prose or credential evidence |
+| existing-VPS qualification | `deploy/hetzner/prove-codex-capacity.sh <source-sha>` and immutable JSON evidence | exact image/profile/384 MiB cgroup; one cold plus two warm turns; peak/headroom/PSI/OOM assertions plus evidence-free predecessor-health admission; no prose or credential evidence |
 
 The hosted runner is a credential boundary, not merely a label. Do not register
 it directly to a public repository. Use a private repository, a separate private
@@ -495,9 +498,11 @@ Insufficient pre-admission headroom produces `not_run`; auth or quota
 unavailability produces `provider_blocked`; pre-accept unavailability or
 accepted transport loss produces `transport_retriable`. None writes qualifying
 evidence, and the unchanged SHA may be repeated only after the corresponding
-pressure, account, or transport fault is resolved. A cgroup peak, OOM, PSI,
-service-health, policy, protocol, or structured-output breach writes failed
-evidence and blocks this cutover; rerunning cannot replace it.
+pressure, account, or transport fault is resolved. PostgreSQL, Caddy, API, and
+worker health are observations of the unchanged predecessor: unhealthy state
+blocks measurement without evidence and remains retriable for the same SHA. A
+cgroup peak, OOM, PSI, host-policy, protocol, or structured-output breach writes
+failed evidence and blocks this cutover; rerunning cannot replace it.
 
 Register `durable-codex-host-capacity-admission-bypass`, which changes only the
 host admission result from refused to admitted. Bind it to the exact real-UDS

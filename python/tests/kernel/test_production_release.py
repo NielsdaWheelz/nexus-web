@@ -204,7 +204,7 @@ def test_existing_vps_capacity_qualification_writes_exact_immutable_candidate_ev
     assert state["service_mutations"] == [
         {"operation": "up", "services": ["nexus-codex-agent-host"]},
         {"operation": "stop", "services": ["nexus-codex-agent-host"]},
-    ]
+    ], "qualification may start and stop only its isolated Codex host"
 
     # A fresh pass is final for its validity window: a rerun refuses to
     # remeasure over it instead of silently replacing the record.
@@ -212,6 +212,331 @@ def test_existing_vps_capacity_qualification_writes_exact_immutable_candidate_ev
     assert rerun.returncode != 0
     assert "Codex capacity qualification evidence already exists" in rerun.stderr
     assert json.loads(evidence.read_text(encoding="utf-8")) == payload
+
+
+@pytest.mark.parametrize(
+    ("admission_kind", "expected_error"),
+    (
+        ("plain_unmounted", "Codex credential state storage is not the dedicated encrypted mount"),
+        ("wrong_mapper", "Codex credential state storage is not the dedicated encrypted mount"),
+        ("luks1", "Codex credential state storage is not the dedicated encrypted mount"),
+        (
+            "wrong_mount_flags",
+            "Codex credential state storage is not the dedicated encrypted mount",
+        ),
+        (
+            "wrong_mount_source",
+            "Codex credential state storage is not the dedicated encrypted mount",
+        ),
+        (
+            "undersized_container",
+            "Codex credential state storage is not the dedicated encrypted mount",
+        ),
+        ("forbidden_key", "Codex credential state storage is not the dedicated encrypted mount"),
+        ("crypttab_entry", "Codex credential state storage is not the dedicated encrypted mount"),
+        ("boot_guard_disabled", "Codex credential state boot guard differs from release contract"),
+        ("boot_guard_tampered", "Codex credential state boot guard differs from release contract"),
+    ),
+)
+def test_codex_capacity_requires_exact_encrypted_state_before_starting_runtime(
+    host_release_harness: HostReleaseHarness,
+    admission_kind: str,
+    expected_error: str,
+) -> None:
+    """Risk: credentials start without the exact storage or locked-boot admission."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    if admission_kind == "undersized_container":
+        subprocess.run(
+            (
+                "sudo",
+                "--non-interactive",
+                "truncate",
+                "--size",
+                "256M",
+                str(harness.root / "var/lib/nexus/codex-state.luks"),
+            ),
+            check=True,
+        )
+    elif admission_kind == "forbidden_key":
+        key = harness.root / "var/lib/nexus/codex-state.key"
+        subprocess.run(
+            ("sudo", "--non-interactive", "touch", str(key)),
+            check=True,
+        )
+    elif admission_kind == "crypttab_entry":
+        crypttab = harness.root / "etc/crypttab"
+        subprocess.run(
+            (
+                "sudo",
+                "--non-interactive",
+                "sh",
+                "-c",
+                'printf "%s\\n" "nexus-codex-state /var/lib/nexus/codex-state.luks none luks" > "$1"',
+                "nexus-test-crypttab",
+                str(crypttab),
+            ),
+            check=True,
+        )
+    elif admission_kind == "boot_guard_disabled":
+        harness.update_state(codex_state_boot_guard_enabled=False)
+    elif admission_kind == "boot_guard_tampered":
+        subprocess.run(
+            (
+                "sudo",
+                "--non-interactive",
+                "chmod",
+                "0700",
+                str(harness.root / "usr/local/sbin/nexus-codex-state-boot-guard"),
+            ),
+            check=True,
+        )
+    if admission_kind not in {"boot_guard_disabled", "boot_guard_tampered"}:
+        harness.update_state(codex_state_storage_kind=admission_kind)
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0, "unencrypted Codex state reached runtime admission"
+    assert expected_error in refused.stderr
+    assert not evidence.exists()
+    state = harness.state()
+    assert state["service_mutations"] == []
+
+
+def test_codex_boot_guard_install_is_exact_candidate_bound_and_public(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: an unbound/private setup seam can overwrite the locked-boot guard."""
+
+    harness = host_release_harness
+    guard = harness.root / "usr/local/sbin/nexus-codex-state-boot-guard"
+    subprocess.run(
+        ("sudo", "--non-interactive", "chmod", "0700", str(guard)),
+        check=True,
+    )
+    harness.update_state(codex_state_boot_guard_enabled=False)
+
+    refused = harness.run_install_codex_state_boot_guard(source_sha=CURRENT_SHA)
+
+    assert refused.returncode != 0
+    assert "candidate has no Codex agent host" in refused.stderr
+    assert guard.stat().st_mode & 0o777 == 0o700
+    assert harness.state()["codex_state_boot_guard_enabled"] is False
+
+    installed = harness.run_install_codex_state_boot_guard()
+
+    assert installed.returncode == 0, installed.stderr
+    assert json.loads(installed.stdout) == {
+        "schema_version": "nexus-codex-state-boot-guard.v1",
+        "source_sha": SOURCE_SHA,
+        "status": "installed",
+    }
+    assert guard.stat().st_uid == 0
+    assert guard.stat().st_gid == 0
+    assert guard.stat().st_mode & 0o777 == 0o755
+    assert harness.state()["codex_state_boot_guard_enabled"] is True
+
+
+@pytest.mark.parametrize("operation", ("qualification", "apply", "resume"))
+@pytest.mark.parametrize("guard_fault", ("disabled", "tampered"))
+def test_codex_boot_guard_rejects_every_host_start_owner_before_service_mutation(
+    host_release_harness: HostReleaseHarness,
+    operation: str,
+    guard_fault: str,
+) -> None:
+    """Risk: an owner repairs or bypasses a disabled/tampered locked-boot guard."""
+
+    harness = host_release_harness
+    if operation == "qualification":
+        (harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json").unlink()
+    elif operation == "resume":
+        applied = harness.run_apply()
+        assert applied.returncode == 0, applied.stderr
+        finalized = harness.run_finalize()
+        assert finalized.returncode == 0, finalized.stderr
+        state = harness.state()
+        containers = state["containers"]
+        assert isinstance(containers, dict)
+        host = containers["nexus-codex-agent-host"]
+        assert isinstance(host, dict)
+        host["running"] = False
+        harness.update_state(
+            commands=[],
+            containers=containers,
+            public_requests=[],
+            resource_mutations=[],
+            service_mutations=[],
+        )
+
+    if guard_fault == "disabled":
+        harness.update_state(codex_state_boot_guard_enabled=False)
+    else:
+        subprocess.run(
+            (
+                "sudo",
+                "--non-interactive",
+                "chmod",
+                "0700",
+                str(harness.root / "usr/local/sbin/nexus-codex-state-boot-guard"),
+            ),
+            check=True,
+        )
+
+    refused = (
+        harness.run_qualify_codex_capacity()
+        if operation == "qualification"
+        else harness.run_apply()
+        if operation == "apply"
+        else harness.run_resume_codex_agent_host()
+    )
+
+    assert refused.returncode != 0
+    assert "Codex credential state boot guard differs from release contract" in refused.stderr
+    state = harness.state()
+    assert state["service_mutations"] == []
+
+
+def test_codex_state_requires_recovery_headroom_before_starting_runtime(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: auth/session state fills completely and cannot refresh or recover safely."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(codex_state_free_bytes=128 * 1024 * 1024 - 1)
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert "Codex credential state has less than 128 MiB free" in refused.stderr
+    assert not evidence.exists()
+    assert harness.state()["service_mutations"] == []
+
+
+def test_codex_capacity_uses_container_native_caddy_health_when_docker_health_is_absent(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: the fake supplies Docker health that the deployed Caddy does not expose."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(caddy_docker_health_present=False)
+
+    qualified = harness.run_qualify_codex_capacity()
+
+    assert qualified.returncode == 0, qualified.stderr
+    state = harness.state()
+    assert any(
+        command[-8:]
+        == [
+            "exec",
+            "-T",
+            "caddy",
+            "wget",
+            "-q",
+            "-O",
+            "/dev/null",
+            "http://127.0.0.1:2019/config/",
+        ]
+        for command in state["commands"]
+    ), "qualification must execute the canonical probe inside the live Caddy container"
+
+
+def test_release_rechecks_caddy_before_any_candidate_or_writer_mutation(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a stale capacity pass lets a dead predecessor proxy cross commitment."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    original_evidence = evidence.read_bytes()
+    harness.update_state(caddy_health_probe_failure=True)
+
+    refused = harness.run_apply()
+
+    assert refused.returncode != 0
+    assert "Caddy is not ready before release mutation" in refused.stderr
+    assert harness.state()["service_mutations"] == []
+    assert not harness.attempt_path.exists()
+    assert evidence.read_bytes() == original_evidence
+
+
+def test_prepared_release_replay_rechecks_caddy_before_any_further_mutation(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a replay trusts an earlier proxy observation after Prepared commits."""
+
+    release = _release_module()
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    original_evidence = evidence.read_bytes()
+    interrupted = harness.run_apply(interrupt_phase="Prepared")
+    assert interrupted.returncode == -signal.SIGKILL, interrupted.stderr
+    before = harness.state()
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.Prepared
+    harness.update_state(caddy_health_probe_failure=True)
+
+    refused = harness.run_apply()
+
+    assert refused.returncode != 0
+    assert "Caddy is not ready before release mutation" in refused.stderr
+    after = harness.state()
+    assert after["resource_mutations"] == before["resource_mutations"]
+    assert after["service_mutations"] == before["service_mutations"]
+    assert after["backup_dump_count"] == before["backup_dump_count"]
+    assert after["migration_count"] == before["migration_count"]
+    persisted = _stored_attempt(release, harness.root)
+    assert persisted is not None
+    assert persisted.phase is release.ReleasePhase.Prepared
+    assert evidence.read_bytes() == original_evidence
+
+
+@pytest.mark.parametrize(
+    "service",
+    (
+        "postgres",
+        "caddy",
+        "api",
+        "worker-interactive",
+        "worker-background",
+    ),
+)
+def test_codex_capacity_service_readiness_failure_follows_ownership(
+    host_release_harness: HostReleaseHarness,
+    service: str,
+) -> None:
+    """Risk: a predecessor service outage permanently poisons a new candidate SHA."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    if service == "caddy":
+        harness.update_state(
+            caddy_docker_health_present=False,
+            caddy_health_probe_failure=True,
+        )
+    else:
+        state = harness.state()
+        containers = state["containers"]
+        assert isinstance(containers, dict)
+        container = containers[service]
+        assert isinstance(container, dict)
+        container["health_status_override"] = "unhealthy"
+        harness.update_state(containers=containers)
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert not evidence.exists(), (
+        f"unchanged {service} readiness is retriable operational state, "
+        "not immutable candidate evidence"
+    )
 
 
 def test_capacity_cleanup_failure_writes_no_evidence_and_the_canary_is_reclaimed(
@@ -410,7 +735,6 @@ def _restore_healthy_capacity_host(harness: HostReleaseHarness) -> None:
         ("host-headroom", "Codex capacity qualification headroom is below 256 MiB"),
         ("sampler-observed-pressure", "Codex capacity qualification memory pressure"),
         ("oom-kill-delta", "Codex capacity qualification cgroup envelope differs"),
-        ("service-health", "Codex capacity worker-background is not healthy"),
         ("canary-reported-failure", "Codex capacity canary failed"),
         ("client-isolation", "Codex capacity canary isolation"),
     ],
@@ -449,10 +773,6 @@ def test_each_enumerated_capacity_breach_writes_immutable_failed_evidence(
                 )
             }
         )
-    elif scenario == "service-health":
-        containers = harness.state()["containers"]
-        containers["worker-background"]["health_status_override"] = "unhealthy"
-        harness.update_state(containers=containers)
     elif scenario == "canary-reported-failure":
         harness.update_state(codex_capacity_canary_status="failed")
     else:
@@ -1524,6 +1844,184 @@ def test_host_finalize_proves_public_tls_and_publishes_record_and_current(
             ("api.example.test", "/readyz"),
         )
     ]
+
+
+def test_current_release_resumes_only_the_codex_host_and_rejects_live_bind_drift(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: reboot recovery bypasses the release owner or starts on plaintext state."""
+
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    finalized = harness.run_finalize()
+    assert finalized.returncode == 0, finalized.stderr
+
+    state = harness.state()
+    containers = state["containers"]
+    assert isinstance(containers, dict)
+    host = containers["nexus-codex-agent-host"]
+    assert isinstance(host, dict)
+    host["running"] = False
+    harness.update_state(
+        commands=[],
+        containers=containers,
+        public_requests=[],
+        service_mutations=[],
+    )
+
+    resumed = harness.run_resume_codex_agent_host()
+
+    assert resumed.returncode == 0, resumed.stderr
+    assert json.loads(resumed.stdout) == {
+        "schema_version": "nexus-codex-agent-host-resume.v1",
+        "source_sha": SOURCE_SHA,
+        "status": "ready",
+    }
+    state = harness.state()
+    assert state["service_mutations"] == [
+        {"operation": "up", "services": ["nexus-codex-agent-host"]}
+    ]
+    assert state["public_requests"] == [
+        {"host": host, "path": path}
+        for host, path in (
+            ("web.example.test", "/version"),
+            ("api.example.test", "/version"),
+            ("api.example.test", "/readyz"),
+        )
+    ]
+
+    state = harness.state()
+    containers = state["containers"]
+    assert isinstance(containers, dict)
+    host_container = containers["nexus-codex-agent-host"]
+    assert isinstance(host_container, dict)
+    host_container["running"] = False
+    harness.update_state(
+        codex_state_live_bind_kind="wrong_source",
+        commands=[],
+        containers=containers,
+        public_requests=[],
+        service_mutations=[],
+    )
+
+    refused = harness.run_resume_codex_agent_host()
+
+    assert refused.returncode != 0
+    assert "Codex agent host mounts differ from isolated contract" in refused.stderr
+    state = harness.state()
+    assert state["service_mutations"] == [
+        {"operation": "up", "services": ["nexus-codex-agent-host"]},
+        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+    ]
+    containers = state["containers"]
+    assert isinstance(containers, dict)
+    stopped_host = containers["nexus-codex-agent-host"]
+    assert isinstance(stopped_host, dict)
+    assert stopped_host["running"] is False
+
+
+def test_resume_codex_agent_host_rejects_noncurrent_and_running_state(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: reboot recovery operates a foreign release or an already-live host."""
+
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    finalized = harness.run_finalize()
+    assert finalized.returncode == 0, finalized.stderr
+    harness.update_state(public_requests=[], service_mutations=[])
+
+    noncurrent = harness.run_resume_codex_agent_host(source_sha=CURRENT_SHA)
+
+    assert noncurrent.returncode != 0
+    assert noncurrent.stdout == ""
+    assert f"release {CURRENT_SHA} is not current" in noncurrent.stderr
+    assert harness.state()["service_mutations"] == []
+
+    running = harness.run_resume_codex_agent_host()
+
+    assert running.returncode != 0
+    assert running.stdout == ""
+    assert "Codex agent host is not stopped" in running.stderr
+    assert harness.state()["service_mutations"] == []
+
+
+def test_resume_codex_agent_host_startup_failure_stops_without_a_receipt(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a failed Compose wait leaves an unaudited authenticated host running."""
+
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    finalized = harness.run_finalize()
+    assert finalized.returncode == 0, finalized.stderr
+    state = harness.state()
+    containers = state["containers"]
+    assert isinstance(containers, dict)
+    host = containers["nexus-codex-agent-host"]
+    assert isinstance(host, dict)
+    host["running"] = False
+    harness.update_state(
+        codex_host_startup_failure=True,
+        containers=containers,
+        public_requests=[],
+        service_mutations=[],
+    )
+
+    refused = harness.run_resume_codex_agent_host()
+
+    assert refused.returncode != 0
+    assert refused.stdout == ""
+    assert harness.state()["service_mutations"] == [
+        {"operation": "up", "services": ["nexus-codex-agent-host"]},
+        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+    ]
+    stopped = harness.state()["containers"]["nexus-codex-agent-host"]
+    assert isinstance(stopped, dict)
+    assert stopped["running"] is False
+
+
+def test_resume_codex_agent_host_rejects_every_malformed_direct_bind_and_stops(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: Docker's live bind drifts from the immutable direct-bind declaration."""
+
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    finalized = harness.run_finalize()
+    assert finalized.returncode == 0, finalized.stderr
+
+    for live_kind in ("wrong_source", "wrong_type", "readonly", "shared_propagation"):
+        state = harness.state()
+        containers = state["containers"]
+        assert isinstance(containers, dict)
+        host = containers["nexus-codex-agent-host"]
+        assert isinstance(host, dict)
+        host["running"] = False
+        harness.update_state(
+            codex_state_live_bind_kind=live_kind,
+            containers=containers,
+            public_requests=[],
+            service_mutations=[],
+        )
+
+        refused = harness.run_resume_codex_agent_host()
+
+        assert refused.returncode != 0, live_kind
+        assert refused.stdout == "", live_kind
+        assert "Codex agent host mounts differ from isolated contract" in refused.stderr, live_kind
+        state = harness.state()
+        assert state["service_mutations"] == [
+            {"operation": "up", "services": ["nexus-codex-agent-host"]},
+            {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+        ], live_kind
+        stopped = state["containers"]["nexus-codex-agent-host"]
+        assert isinstance(stopped, dict)
+        assert stopped["running"] is False, live_kind
 
 
 @pytest.mark.parametrize(

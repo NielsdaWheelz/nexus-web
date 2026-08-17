@@ -307,6 +307,83 @@ def test_production_compose_declares_the_exact_resource_envelope() -> None:
     )
 
 
+def test_codex_production_boundary_declares_real_caddy_health_and_encrypted_state() -> None:
+    """Risk: operator docs claim gates that Compose and host provisioning never enforce."""
+
+    compose = (REPO_ROOT / "deploy/hetzner/docker-compose.yml").read_text(encoding="utf-8")
+    cloud_init = (REPO_ROOT / "deploy/hetzner/cloud-init.yml").read_text(encoding="utf-8")
+    runbook = (REPO_ROOT / "docs/runbooks/codex-personal-agent-host.md").read_text(encoding="utf-8")
+    caddy_start = compose.index("  caddy:\n")
+    caddy_end = compose.index("\n  api:\n", caddy_start)
+    caddy = compose[caddy_start:caddy_end]
+    host_start = compose.index("  nexus-codex-agent-host:\n")
+    host_end = compose.index("\n  migration:\n", host_start)
+    host = compose[host_start:host_end]
+    enrollment_start = runbook.index('readonly ENROLLMENT_NETWORK="nexus-codex-enrollment-$$"')
+    enrollment_end = runbook.index("```", enrollment_start)
+    enrollment = runbook[enrollment_start:enrollment_end]
+    initialization_start = runbook.index("docker run --rm --network none --user 0:0 --read-only")
+    initialization_end = runbook.index("```", initialization_start)
+    initialization = runbook[initialization_start:initialization_end]
+    verification_start = runbook.index("sudo stat -c '%u:%g:%a %n'")
+    verification_end = runbook.index("```", verification_start)
+    verification = runbook[verification_start:verification_end]
+
+    assert (
+        'test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]' in caddy
+    )
+    assert 'restart: "no"' in host
+    assert "nexus_codex_state:" not in compose
+    assert "- type: bind" in host
+    assert "source: /srv/nexus/codex-state" in host
+    assert "target: /var/lib/nexus-codex" in host
+    assert "create_host_path: false" in host
+    assert "propagation: rprivate" in host
+    assert "- cryptsetup" in cloud_init
+    assert "LUKS2" in runbook
+    assert "/var/lib/nexus/codex-state.luks" in runbook
+    assert "/dev/mapper/nexus-codex-state" in runbook
+    assert "/srv/nexus/codex-state" in runbook
+    assert "fixed 1 GiB LUKS2 container" in runbook
+    assert "Docker must remain stopped until the mapping is unlocked" in runbook
+    assert 'install-codex-state-boot-guard --source-sha "$SOURCE_SHA"' in runbook
+    assert "resume-codex-agent-host --source-sha" in runbook
+    assert "--network none" in initialization
+    assert "--cap-drop ALL --cap-add CHOWN" in initialization
+    assert "--security-opt no-new-privileges:true" in initialization
+    assert "nexus_nexus_codex_run" in initialization
+    assert initialization.count("--mount ") == 1
+    assert "/srv/nexus/codex-state" not in initialization
+    assert "/var/lib/nexus-codex" not in initialization
+    assert 'readonly ENROLLMENT_NETWORK="nexus-codex-enrollment-$$"' in enrollment
+    assert "trap cleanup_codex_enrollment_network EXIT HUP INT TERM" in enrollment
+    assert 'docker network rm "$ENROLLMENT_NETWORK"' in enrollment
+    assert "docker network create --driver bridge" in enrollment
+    assert "--opt com.docker.network.bridge.enable_icc=false" in enrollment
+    assert '--network "$ENROLLMENT_NETWORK"' in enrollment
+    assert "--cap-drop ALL --security-opt no-new-privileges:true" in enrollment
+    assert "--memory 384m --memory-swap 384m" in enrollment
+    assert "--pids-limit 64 --cpus 1.0" in enrollment
+    assert "OPENAI_API_KEY" not in enrollment
+    assert "/srv/nexus/codex-state" in verification
+    assert "/srv/nexus/codex-state/codex/codex-personal/auth.json" in verification
+    assert "docker run" not in verification
+    assert "WORKER_IMAGE" not in verification
+    assert "/var/lib/nexus-codex" not in verification
+    assert (
+        "The release-owned PostgreSQL backup neither mounts nor reads the Codex state filesystem."
+        in runbook
+    )
+    assert "Automated admission proves only the repository-owned secret locations:" in runbook
+    assert "/var/lib/nexus/codex-state.key" in runbook
+    assert "Disposable-VM locked-reboot acceptance (live evidence pending)" in runbook
+    assert "CI fakes do not satisfy this live acceptance procedure." in runbook
+    assert "systemctl show docker.service --property=After --property=Requires" in runbook
+    assert "less than 128 MiB free" in runbook
+    assert "Logical backups exclude the entire mounted state filesystem" not in runbook
+    assert "passphrase must never be stored on the VPS" not in runbook
+
+
 def test_the_declared_envelope_fits_the_committed_host_with_its_reserve() -> None:
     """The long-lived services must fit the smallest committed host and still
     leave the host reserve free.
