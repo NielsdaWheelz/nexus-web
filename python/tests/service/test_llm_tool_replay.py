@@ -492,9 +492,11 @@ def test_position_replay_settles_once_and_does_not_automatically_reissue_uncerta
             except BaseException as exc:  # noqa: BLE001 - assert the exact public defect below.
                 changed_input_error_type = type(exc)
                 changed_input_error_message = str(exc)
-            assert changed_input_provider.calls == 0, (
-                "changed invocation crossed the provider dispatch boundary"
-            )
+            if changed_input_provider.calls != 0:
+                pytest.fail(
+                    "changed invocation crossed the provider dispatch boundary",
+                    pytrace=False,
+                )
             assert changed_input_error_type is PositionConflictDefect
             assert "different invocation" in changed_input_error_message
 
