@@ -848,11 +848,10 @@ def heartbeat_job(
 ) -> bool:
     """Atomically extend one running job and its matching Heavy capacity lease.
 
-    Heavy work locks capacity before the job, matching every transition that
-    releases the holder. Light work keeps the unlocked verification read, so a
-    Light heartbeat never contends for the Heavy row.
+    Every running-job transition locks the exact job before its Heavy capacity
+    holder. Light work uses only an unlocked verification read, so a Light
+    heartbeat never contends for the Heavy row.
     """
-    capacity = _lock_heavy_capacity(db) if resource_class == "Heavy" else _read_heavy_capacity(db)
     job = (
         db.execute(
             text(
@@ -872,6 +871,13 @@ def heartbeat_job(
         .first()
     )
     if job is None:
+        return False
+    capacity = (
+        _lock_heavy_capacity_for_job(db, job_id)
+        if resource_class == "Heavy"
+        else _read_heavy_capacity(db)
+    )
+    if capacity is None:
         return False
     if not _capacity_matches_running_job(
         capacity,
@@ -916,8 +922,8 @@ def heartbeat_job(
                 "lease_expires_at": renewed,
             },
         ).first()
-        # justify-defect: Heavy heartbeat holds the capacity row lock from
-        # verification through renewal, so the exact holder cannot move.
+        # justify-defect: Heavy heartbeat holds the exact job and capacity rows
+        # from verification through renewal, so the holder cannot move.
         if updated is None:
             raise AssertionError("Heavy capacity holder changed while locked")
     return True

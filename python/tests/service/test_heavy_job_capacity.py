@@ -23,7 +23,6 @@ from nexus.jobs.queue import (
     get_job,
     heartbeat_job,
     lock_and_renew_running_job_claim,
-    lock_job,
     requeue_dead_job,
     reschedule_running_job,
     revoke_jobs_by_dedupe_keys,
@@ -817,7 +816,7 @@ def test_open_heavy_publication_retains_capacity_until_its_commit(engine: Engine
     assert _capacity_holder(engine) == (None, None, None, None)
 
 
-def test_heavy_heartbeat_waits_for_capacity_before_locking_job_transition(
+def test_heavy_heartbeat_waits_for_job_before_locking_capacity_transition(
     engine: Engine,
 ) -> None:
     """Risk: inverse Heavy locks deadlock heartbeat against a queue transition."""
@@ -860,23 +859,24 @@ def test_heavy_heartbeat_waits_for_capacity_before_locking_job_transition(
         except BaseException as exc:
             heartbeat_failures.append(exc)
 
-    capacity_blocker = Session(engine)
+    job_blocker = Session(engine)
     heartbeat_thread = threading.Thread(target=run_heartbeat)
     heartbeat_started = False
-    job_was_lockable = False
+    capacity_was_lockable = False
     try:
-        blocker = capacity_blocker.execute(
+        blocker = job_blocker.execute(
             text(
                 """
-                SELECT pg_backend_pid(), resource_class
-                FROM background_job_capacity_leases
-                WHERE resource_class = 'Heavy'
+                SELECT pg_backend_pid(), id
+                FROM background_jobs
+                WHERE id = :job_id
                 FOR UPDATE
                 """
-            )
+            ),
+            {"job_id": job.id},
         ).one()
         blocker_pid = int(blocker[0])
-        assert blocker[1] == "Heavy"
+        assert blocker[1] == job.id
 
         heartbeat_thread.start()
         heartbeat_started = True
@@ -887,14 +887,26 @@ def test_heavy_heartbeat_waits_for_capacity_before_locking_job_transition(
             waiting_pid=heartbeat_pid,
             blocking_pid=blocker_pid,
         ), (
-            "Heavy heartbeat did not reach the capacity-row lock wait; "
+            "Heavy heartbeat did not reach the job-row lock wait; "
             f"heartbeat_pid={heartbeat_pid}, blocker_pid={blocker_pid}, job_id={job.id}"
         )
 
         with Session(engine) as probe:
             probe.execute(text("SET LOCAL statement_timeout = '250ms'"))
             try:
-                job_was_lockable = lock_job(probe, job.id) is not None
+                capacity_was_lockable = (
+                    probe.execute(
+                        text(
+                            """
+                            SELECT resource_class
+                            FROM background_job_capacity_leases
+                            WHERE resource_class = 'Heavy'
+                            FOR UPDATE
+                            """
+                        )
+                    ).scalar_one()
+                    == "Heavy"
+                )
             except OperationalError as exc:
                 if getattr(exc.orig, "sqlstate", None) != "57014":
                     raise
@@ -902,8 +914,8 @@ def test_heavy_heartbeat_waits_for_capacity_before_locking_job_transition(
             else:
                 probe.rollback()
     finally:
-        capacity_blocker.rollback()
-        capacity_blocker.close()
+        job_blocker.rollback()
+        job_blocker.close()
         if heartbeat_started:
             heartbeat_thread.join(timeout=10)
         if not heartbeat_thread.is_alive():
@@ -914,12 +926,12 @@ def test_heavy_heartbeat_waits_for_capacity_before_locking_job_transition(
                 cleanup.commit()
 
     assert heartbeat_started
-    assert not heartbeat_thread.is_alive(), "Heavy heartbeat did not finish after capacity release"
+    assert not heartbeat_thread.is_alive(), "Heavy heartbeat did not finish after job release"
     assert not heartbeat_failures, f"Heavy heartbeat failed: {heartbeat_failures!r}"
     assert heartbeat_results == [True]
-    assert job_was_lockable, (
-        "Heavy heartbeat locked the job while waiting for capacity; heartbeat and "
-        f"reschedule/complete/fail can deadlock for job {job.id}"
+    assert capacity_was_lockable, (
+        "Heavy heartbeat locked capacity while waiting for its job; heartbeat and "
+        f"claim/reschedule/complete/fail can deadlock for job {job.id}"
     )
     assert _capacity_holder(engine) == (None, None, None, None)
 
