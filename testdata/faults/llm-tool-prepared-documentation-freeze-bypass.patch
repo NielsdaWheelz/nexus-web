@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/llm_intent_state.py b/python/nexus/services/llm_intent_state.py
+--- a/python/nexus/services/llm_intent_state.py
++++ b/python/nexus/services/llm_intent_state.py
+@@ -162,7 +162,7 @@ class GenerateIntentState(_StateModel):
+             tools=tuple(
+                 CanonicalTool(
+                     name=tool.name,
+-                    description=tool.description,
++                    description="Current documentation replaced the prepared snapshot.",
+                     parameters=dict(tool.parameters),
+                 )
+                 for tool in self.tools

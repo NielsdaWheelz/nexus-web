@@ -546,7 +546,7 @@ def test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contr
         tool_id = str(entry.spec.id)
         expected = EXPECTED_DECLARATIONS[tool_id]
         spec = entry.spec
-        assert spec.effect is expected["effect"]
+        assert spec.effect is expected["effect"], f"{tool_id} declaration effect drifted"
         assert entry.result_kind == expected["result_kind"]
         assert entry.activity_label == expected["activity_label"]
         assert spec.limits == expected["limits"]

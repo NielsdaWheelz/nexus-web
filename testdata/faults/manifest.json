@@ -302,6 +302,15 @@
       "expected_failure": "production prompt lost a reviewed tool-safety instruction"
     },
     {
+      "id": "llm-tool-prepared-documentation-freeze-bypass",
+      "patch": "testdata/faults/llm-tool-prepared-documentation-freeze-bypass.patch",
+      "sha256": "025853bae37ae9487a6e02b2a2a0e6cdc4070302fd88b212451233ba6f6f6aae",
+      "proofs": [
+        "pytest:python/tests/kernel/test_llm_product_intent.py::test_product_intent_freezes_tool_documentation_at_first_prepare"
+      ],
+      "expected_failure": "prepared tool documentation was not frozen in durable intent"
+    },
+    {
       "id": "nexus-tool-profile-scope-bypass",
       "patch": "testdata/faults/nexus-tool-profile-scope-bypass.patch",
       "sha256": "c90e15734f9dad587bb98d4f700e6098ec0f1fa6529c5862f1e66030c6b583d0",
@@ -311,6 +320,24 @@
       "expected_failure": "Left contains one more item: 'nexus.search'"
     },
     {
+      "id": "nexus-tool-declaration-effect-bypass",
+      "patch": "testdata/faults/nexus-tool-declaration-effect-bypass.patch",
+      "sha256": "2fdc521e390593abb3625d14e29bf2b6c19a9ea2b7a4ceff97059bde274c6e34",
+      "proofs": [
+        "pytest:python/tests/kernel/test_llm_tool_declarations.py::test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract"
+      ],
+      "expected_failure": "nexus.resource.read declaration effect drifted"
+    },
+    {
+      "id": "nexus-read-empty-admission-scope-bypass",
+      "patch": "testdata/faults/nexus-read-empty-admission-scope-bypass.patch",
+      "sha256": "a8eb7894808809513331627494136e95f4e3bd3938082c28870b445edf72c957",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed"
+      ],
+      "expected_failure": "an empty admission set fell through to viewer-global search"
+    },
+    {
       "id": "llm-tool-position-replay-bypass",
       "patch": "testdata/faults/llm-tool-position-replay-bypass.patch",
       "sha256": "b9dc387a15df3238039f387afed21524173deff4fa323fd7021b55e32cb4f49c",
@@ -318,6 +345,15 @@
         "pytest:python/tests/service/test_llm_tool_replay.py::test_position_replay_settles_once_and_does_not_automatically_reissue_uncertain_billed_search"
       ],
       "expected_failure": "changed invocation crossed the provider dispatch boundary"
+    },
+    {
+      "id": "dossier-uncertain-search-redispatch-bypass",
+      "patch": "testdata/faults/dossier-uncertain-search-redispatch-bypass.patch",
+      "sha256": "928a884a21f1bd98b17cda32f2f1e0913a09c8b9b3c5bd2c3cd8e505d7232b1b",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search"
+      ],
+      "expected_failure": "Dossier automatically reissued a durable search"
     },
     {
       "id": "llm-tool-projection-gate-bypass",

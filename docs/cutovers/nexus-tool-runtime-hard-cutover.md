@@ -1,12 +1,13 @@
 # Nexus Tool Runtime Hard Cutover
 
-**Status:** APPROVED FOR IMPLEMENTATION; RELEASE BLOCKED ON §7
+**Status:** IMPLEMENTED IN SOURCE; FINAL CONFIDENCE/PR/FULL/RELEASE GATES PENDING
 **Date:** 2026-08-13
 **Type:** atomic Nexus consumer/runtime hard cutover; no compatibility period
 **Prerequisite:** [LLM Tools Library Hard Cutover](llm-tools-library-hard-cutover.md)
-**Release prerequisite:** the separately landed **E0 Accepted-URL Ingest Egress
-Hardening** work package in §§7, 11, and 12 must be green at an exact recorded
-SHA before Idea Dossier adoption or production reopening.
+**E0 prerequisite:** SATISFIED BEFORE N3 — hardened source `1c4c60c0` and the
+E0 R0/N0d checkpoint `325a8eb1` preceded N1–N3; the §7 connection-seam proof
+and `accepted-url-private-redirect-bypass` sensitivity are green. Candidate-image
+binding remains required by the final protected release gate.
 
 ## 1. Decision
 
@@ -51,8 +52,8 @@ Non-goals:
 
 - granting all tools to every job or rewriting background algorithms;
 - Nexus page reading, arbitrary-URL fetching, source-ingest redesign, Browse
-  behavior, or Dossier coordination redesign; §7's existing egress defect is a
-  release prerequisite, not permission to redesign that workflow here;
+  behavior, or Dossier coordination redesign; E0's §7 egress hardening was a
+  separate prerequisite, not permission to redesign that workflow here;
 - PTC, provider-native Tool Search, a guest code runtime, or provider engine,
   model-registry, continuation, or retry changes;
 - remote Nexus tool transport, credentials, authorization, or client product;
@@ -316,15 +317,15 @@ separately reviewed `nexus.source.accept` Write/durable capability.
 
 Idea Dossier accepts only an exact build-owned `web.search` result reference;
 the model cannot supply an arbitrary URL. This first-party host policy requires
-no human approval, but a search result does not make its URL trusted. The
-current production transport in `node/ingest/ingest.mjs` follows redirects
-without the required destination enforcement. **E0 Accepted-URL Ingest Egress
-Hardening** is therefore a separately landed release-prerequisite work package
-with exclusive ownership of `node/ingest/**`, its lock/package metadata,
-`.dockerignore`, `python/nexus/services/{node_ingest,web_article_ingest}.py`, `docker/Dockerfile.backend`,
-`deploy/env/env-prod-worker.example`, the release publisher/config validator,
-and its test-control routing. Before this cutover may adopt or reopen Idea
-research, E0 must prove at the actual Node connection seam:
+no human approval, but a search result does not make its URL trusted. The pre-E0
+production transport in `node/ingest/ingest.mjs` followed redirects without the
+required destination enforcement. **E0 Accepted-URL Ingest Egress Hardening**
+therefore landed as a separately committed prerequisite work package with
+exclusive ownership of `node/ingest/**`, its lock/package metadata,
+`.dockerignore`, `python/nexus/services/{node_ingest,web_article_ingest}.py`,
+`docker/Dockerfile.backend`, `deploy/env/env-prod-worker.example`, the release
+publisher/config validator, and its test-control routing. At the final E0
+checkpoint, the actual Node connection seam proved:
 
 - HTTP(S)-only normalized URLs, no userinfo, credentials, cookies, ambient
   proxy, or cross-hop authorization forwarding;
@@ -342,9 +343,9 @@ Node-owned path. E0 owns exactly
 controller as `node-test:node/ingest/test/accepted_url_egress.test.mjs` and
 registered under `auth-privacy-secrets`; the proof uses test-owned HTTP/DNS
 fixtures while exercising the production resolver/connected-transport policy.
-E0 records target-proof red, green, the representative
-`accepted-url-private-redirect-bypass` fault and fingerprint, its exact SHA, and
-the protected release verdict before N3 starts. Production always launches the
+E0 recorded target-proof red and green, the representative
+`accepted-url-private-redirect-bypass` fault and fingerprint, and its exact
+source SHA before N3 began. Production always launches the
 image-baked `/app/node/ingest/ingest.mjs`; published config containing
 `NODE_INGEST_SCRIPT` is rejected, and the production adapter has no environment
 override. Local/test composition may inject an explicit owned script path
@@ -648,10 +649,14 @@ ever edits `testdata/proofs.json`; only N0d edits the matching digest. E0 owns i
 fault object/patch/hash. N2 owns the new
 `llm-tools-cutover-migration-bypass` and
 `llm-tool-projection-gate-bypass` objects/patches/hashes. N3 owns
-`llm-write-tool-authorization-bypass`, `llm-tool-safety-prompt-bypass`,
-`web-search-provider-identity-bypass`, the new
-`nexus-tool-profile-scope-bypass`, `llm-tool-position-replay-bypass`, and any
-required adaptation of
+`llm-write-tool-authorization-bypass`,
+`llm-tool-safety-prompt-bypass`, `web-search-provider-identity-bypass`,
+`llm-tools-legacy-browse-owner-bypass`,
+`nexus-tool-profile-scope-bypass`, `llm-tool-position-replay-bypass`,
+`llm-tool-prepared-documentation-freeze-bypass`,
+`nexus-tool-declaration-effect-bypass`,
+`nexus-read-empty-admission-scope-bypass`,
+`dossier-uncertain-search-redispatch-bypass`, and the required adaptation of
 `durable-job-fence-bypass`, each at fault-manifest object granularity. N4 never
 edits either registry or a fault patch. Any implementation discovery that
 changes a frozen proof id/source glob reopens R0 and invalidates all later
@@ -780,8 +785,8 @@ testing standard; this spec does not create exceptions.
 
 ## 14. Acceptance criteria
 
-1. Nexus pins one exact final `llm-tools` commit and contains no executable old
-   package/import path.
+1. Nexus pins exact final commits for `llm-tools` and `provider-runtime` and
+   contains no executable old package/import path.
 2. All ten Nexus tools are declared locally with strict semantic/presentation
    schemas, closed errors, replay policy, measured limits, and existing domain
    owners; no global `ApiErrorCode` leaks through the tool boundary.

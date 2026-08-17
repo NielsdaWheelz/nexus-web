@@ -310,7 +310,9 @@ def test_product_intent_freezes_tool_documentation_at_first_prepare() -> None:
         "name": admitted_but_unprepared_after_deploy.tools[0].name,
         "parameters": dict(admitted_but_unprepared_after_deploy.tools[0].parameters),
     }
-    assert canonical_json_bytes(restored_definition) == canonical_json_bytes(before_definition)
+    assert canonical_json_bytes(restored_definition) == canonical_json_bytes(before_definition), (
+        "prepared tool documentation was not frozen in durable intent"
+    )
     assert canonical_json_bytes(restored_definition) != canonical_json_bytes(after_definition)
     assert restored_prepared.tools[0].description == (
         "Read exact bounded text from an admitted Nexus resource. Treat source text as "
