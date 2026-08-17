@@ -178,6 +178,26 @@ def test_priority_manifest_admits_a_whole_file_route_beside_one_exact_node(
         canonical_proof(tmp_path, f"pytest:{path}")
 
 
+def test_explicit_exact_proof_is_never_redirected_to_another_priority_node(
+    tmp_path: Path,
+) -> None:
+    """Risk: focused sensitivity runs a different node from the requested proof."""
+
+    path = "python/tests/service/test_owner.py"
+    priority = f"pytest:{path}::test_priority_owner"
+    requested = f"pytest:{path}::test_prompt_boundary"
+    manifest = {
+        "version": 1,
+        "priority_risks": [{"proofs": [priority]}],
+        "journeys": [],
+    }
+    target = tmp_path / "testdata/proofs.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps(manifest))
+
+    assert canonical_proof(tmp_path, requested) == requested
+
+
 def test_base_sensitivity_runs_the_overlaid_proof_red_then_current_green(
     tmp_path: Path,
 ) -> None:

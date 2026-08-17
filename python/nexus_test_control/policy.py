@@ -1157,6 +1157,7 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             )
         )
     proof_owners: dict[str, str] = {}
+    exact_nodes_by_path: dict[str, list[str]] = {}
     for risk in data["priority_risks"]:
         location = f"testdata/proofs.json#{risk['id']}"
         if not risk["proofs"]:
@@ -1174,6 +1175,10 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 )
         proof_capabilities: set[str] = set()
         for proof in risk["proofs"]:
+            proof_spec = proof.partition(":")[2]
+            proof_path, exact_separator, _exact_node = proof_spec.partition("::")
+            if exact_separator:
+                exact_nodes_by_path.setdefault(proof_path, []).append(proof)
             try:
                 proof_capabilities.add(proof_target(repo_root, proof).capability.value)
             except (OSError, UnicodeDecodeError, ValueError):
@@ -1199,6 +1204,15 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     "proof-capability-owner",
                     location,
                     "declared capabilities require an executable proof or direct static gate owner",
+                )
+            )
+    for proof_path, exact_nodes in sorted(exact_nodes_by_path.items()):
+        if len(exact_nodes) > 1:
+            violations.append(
+                PolicyViolation(
+                    "proof-sensitivity-owner",
+                    "testdata/proofs.json",
+                    f"proof path has multiple exact priority nodes: {proof_path}",
                 )
             )
     if not 10 <= len(data["journeys"]) <= 15:

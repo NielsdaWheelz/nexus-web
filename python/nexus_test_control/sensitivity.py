@@ -472,6 +472,12 @@ def declared_fault_for_proof(repo_root: Path, proof: str) -> str | None:
 
 
 def canonical_proof(repo_root: Path, proof: str) -> str:
+    # An explicit node is already the caller's exact proof identity. Never
+    # redirect it to a different priority node merely because both live in the
+    # same file. Whole-file selections alone need a canonical sensitivity
+    # owner.
+    if "::" in proof.partition(":")[2]:
+        return proof
     path = _proof_path(proof)
     manifest_path = repo_root / "testdata/proofs.json"
     if not manifest_path.is_file():

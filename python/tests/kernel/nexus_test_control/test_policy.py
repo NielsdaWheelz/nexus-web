@@ -641,6 +641,22 @@ def test_proof_contract_rejects_a_nonexistent_exact_node(tmp_path: Path) -> None
     assert "proof-node" in _rules(proof_contract_violations(tmp_path))
 
 
+def test_proof_contract_rejects_multiple_exact_sensitivity_owners_per_file(
+    tmp_path: Path,
+) -> None:
+    manifest = _complete_proof_repository(tmp_path)
+    native_agent_host = next(
+        risk for risk in manifest["priority_risks"] if risk["id"] == "native-agent-host"
+    )
+    native_agent_host["proofs"].append(
+        "pytest:python/tests/service/test_codex_capacity_canary_contract.py::"
+        "test_release_controller_mirrors_the_canary_exit_and_phase_contract"
+    )
+    _dump(tmp_path, "testdata/proofs.json", manifest)
+
+    assert "proof-sensitivity-owner" in _rules(proof_contract_violations(tmp_path))
+
+
 def test_proof_contract_rejects_declared_capability_without_a_proof_owner(
     tmp_path: Path,
 ) -> None:

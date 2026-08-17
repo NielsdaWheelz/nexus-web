@@ -225,6 +225,7 @@
         "pytest:python/tests/service/test_durable_job_replay.py",
         "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job",
         "pytest:python/tests/service/test_heavy_job_capacity.py",
+        "pytest:python/tests/service/test_metadata_content_contract.py",
         "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets"
       ],
       "capabilities": [
@@ -254,8 +255,8 @@
         "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
         "pytest:python/tests/service/test_codex_agent_host.py",
         "pytest:python/tests/service/test_codex_agent_host.py::test_host_refuses_non_admissible_capacity_before_runtime_construction",
+        "pytest:python/tests/service/test_codex_capacity_canary_contract.py",
         "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
-        "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_release_controller_mirrors_the_canary_exit_and_phase_contract",
         "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py"
       ],
       "capabilities": [
