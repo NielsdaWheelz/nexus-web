@@ -187,9 +187,10 @@ require_stable_android_release() {
     --pattern "release-manifest.json" \
     --dir "$ANDROID_RELEASE_DIR" >/dev/null || \
     die "latest stable Android release manifest could not be retrieved"
-  [ -f "$ANDROID_RELEASE_DIR/release-manifest.json" ] && \
-    [ ! -L "$ANDROID_RELEASE_DIR/release-manifest.json" ] || \
+  if [ ! -f "$ANDROID_RELEASE_DIR/release-manifest.json" ] || \
+    [ -L "$ANDROID_RELEASE_DIR/release-manifest.json" ]; then
     die "latest stable Android release manifest is absent or unsafe"
+  fi
   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${ROOT_DIR}/python" \
     python3 -B "${ROOT_DIR}/deploy/hetzner/release.py" validate-android-release-manifest \
       --manifest "$ANDROID_RELEASE_DIR/release-manifest.json" \
