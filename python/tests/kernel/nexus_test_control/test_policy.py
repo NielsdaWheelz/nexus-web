@@ -672,6 +672,30 @@ def test_populated_proof_inventory_has_valid_paths_and_owners(tmp_path: Path) ->
     assert not proof_contract_violations(tmp_path)
 
 
+def test_proof_contract_rejects_different_nodes_from_one_file_across_priority_risks(
+    tmp_path: Path,
+) -> None:
+    manifest = _complete_proof_repository(tmp_path)
+    proof_path = "python/tests/kernel/test_split_priority_owner.py"
+    _write(
+        tmp_path,
+        proof_path,
+        "def test_first_owner():\n    assert 1 == 1\n\n"
+        "def test_second_owner():\n    assert 2 == 2\n",
+    )
+    manifest["priority_risks"][0]["proofs"] = [f"pytest:{proof_path}::test_first_owner"]
+    manifest["priority_risks"][1]["proofs"] = [f"pytest:{proof_path}::test_second_owner"]
+    _dump(tmp_path, "testdata/proofs.json", manifest)
+
+    violations = proof_contract_violations(tmp_path)
+    assert any(
+        violation.rule == "proof-unique-owner"
+        and violation.path == f"testdata/proofs.json#{manifest['priority_risks'][1]['id']}"
+        and proof_path in violation.message
+        for violation in violations
+    ), violations
+
+
 def test_proof_schema_rejects_risk_floor_deletion(tmp_path: Path) -> None:
     manifest = _complete_proof_repository(tmp_path)
     manifest["priority_risks"].pop()

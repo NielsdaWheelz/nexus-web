@@ -323,7 +323,8 @@ bypasses the production identity comparison, and prove the registered test
 rejects it:
 
 ```sh
-./scripts/test prove --proof android-player-protocol-skew \
+./scripts/test prove \
+  --proof pytest:python/tests/kernel/test_production_release.py \
   --against fault:android-player-protocol-skew-bypass
 ```
 

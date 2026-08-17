@@ -263,8 +263,7 @@ def test_android_player_protocol_sources_route_the_cross_release_skew_proofs(
             ),
             (
                 Capability.KERNEL_PYTHON,
-                "pytest:python/tests/kernel/test_production_deploy_behavior.py::"
-                "test_stable_android_manifest_preflight_uses_the_update_page_latest_pointer",
+                "pytest:python/tests/kernel/test_production_deploy_behavior.py",
             ),
             (
                 Capability.ANDROID_HOST,
@@ -272,15 +271,14 @@ def test_android_player_protocol_sources_route_the_cross_release_skew_proofs(
             ),
             (
                 Capability.KERNEL_PYTHON,
-                "pytest:python/tests/kernel/test_production_release.py::"
-                "test_android_player_protocol_preflight_accepts_only_the_matching_stable_manifest",
+                "pytest:python/tests/kernel/test_production_release.py",
             ),
         }
     )
 
 
 @pytest.mark.parametrize("path", ["python/pyproject.toml", "python/uv.lock"])
-def test_codex_dependency_changes_route_release_proofs_without_duplicate_host_ownership(
+def test_codex_dependency_changes_keep_android_release_proof_in_its_priority_owner(
     path: str,
 ) -> None:
     selections = select_changed(
@@ -289,7 +287,8 @@ def test_codex_dependency_changes_route_release_proofs_without_duplicate_host_ow
     )
     proofs = {selection.proof for selection in selections}
 
-    assert "pytest:python/tests/kernel/test_production_release.py" in proofs
+    assert "pytest:python/tests/kernel/test_successor_release_contract.py" in proofs
+    assert "pytest:python/tests/kernel/test_production_release.py" not in proofs
     assert (
         "pytest:python/tests/kernel/test_production_release.py::"
         "test_capacity_qualification_rejects_a_credentialed_or_networked_client_container"
@@ -426,7 +425,7 @@ def test_durable_metadata_sources_route_all_high_risk_boundary_proofs() -> None:
         ),
         (
             "deploy/hetzner/prove-codex-capacity.sh",
-            "pytest:python/tests/kernel/test_production_release.py",
+            "pytest:python/tests/kernel/test_successor_release_contract.py",
         ),
     ],
 )
@@ -465,11 +464,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_successor_release_contract.py",
                 "pytest:python/tests/kernel/test_production_delivery_contract.py",
                 "pytest:python/tests/kernel/test_production_deploy_behavior.py",
-                "pytest:python/tests/kernel/test_production_deploy_behavior.py::"
-                "test_stable_android_manifest_preflight_uses_the_update_page_latest_pointer",
                 "pytest:python/tests/kernel/test_production_release.py",
-                "pytest:python/tests/kernel/test_production_release.py::"
-                "test_android_player_protocol_preflight_accepts_only_the_matching_stable_manifest",
                 "pytest:python/tests/kernel/test_release_bundle_fetch.py",
                 "vitest:apps/web/src/app/android/page.unit.test.tsx",
                 "vitest:apps/web/src/components/player/GlobalPlayerSurfaces.browser.test.tsx",
@@ -536,10 +531,8 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
-                "pytest:python/tests/kernel/test_production_deploy_behavior.py::"
-                "test_stable_android_manifest_preflight_uses_the_update_page_latest_pointer",
-                "pytest:python/tests/kernel/test_production_release.py::"
-                "test_android_player_protocol_preflight_accepts_only_the_matching_stable_manifest",
+                "pytest:python/tests/kernel/test_production_deploy_behavior.py",
+                "pytest:python/tests/kernel/test_production_release.py",
                 "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::test_hosted_canary_rendered_failure_drops_provider_sentinels",
                 "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",

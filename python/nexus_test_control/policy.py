@@ -1151,7 +1151,7 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 "priority risk ownership differs from the independently frozen floor",
             )
         )
-    proof_owners: dict[str, str] = {}
+    proof_file_owners: dict[str, str] = {}
     for risk in data["priority_risks"]:
         location = f"testdata/proofs.json#{risk['id']}"
         if not risk["proofs"]:
@@ -1177,13 +1177,17 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                         "proof-node", location, f"invalid or missing proof node: {proof}"
                     )
                 )
-            previous = proof_owners.setdefault(proof, risk["id"])
-            if previous != risk["id"]:
-                violations.append(
-                    PolicyViolation(
-                        "proof-unique-owner", location, f"proof is already owned by {previous}"
+            else:
+                proof_file = proof.partition(":")[2].partition("::")[0]
+                previous = proof_file_owners.setdefault(proof_file, risk["id"])
+                if previous != risk["id"]:
+                    violations.append(
+                        PolicyViolation(
+                            "proof-unique-owner",
+                            location,
+                            f"physical proof file is already owned by {previous}: {proof_file}",
+                        )
                     )
-                )
         declared_capabilities = set(risk["capabilities"])
         direct_capabilities = declared_capabilities.intersection(
             capability.value for capability in PRIORITY_RISK_DIRECT_CAPABILITY_OWNERS
