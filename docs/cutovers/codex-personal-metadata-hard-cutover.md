@@ -476,23 +476,26 @@ The existing-VPS qualification runs only after operator enrollment and before
 the first 0216 promotion. It sends three bounded synthetic metadata commands
 through the real UDS host without database or application credentials. Its
 run-bound evidence contains only source SHA, worker digest, SDK/runtime
-versions, cgroup limit/current/peak, minimum host available memory, maximum PSI,
-OOM counter deltas, terminal status/usage presence, tool-event count, and named
-service health. The command, not the operator, validates every §8 threshold,
-three successful structured turns, zero tool/permission events, zero new OOM
-events, and healthy PostgreSQL, API, Caddy, and workers.
+versions, a `measured_at` timestamp, cgroup limit/current/peak, minimum host
+available memory, maximum PSI, OOM counter deltas, terminal status/usage
+presence, tool-event count, and named service health. The command, not the
+operator, validates every §8 threshold, three successful structured turns,
+zero tool/permission events, zero new OOM events, and healthy PostgreSQL, API,
+Caddy, and workers.
 
 The command deletes neither application data nor Codex state and never records
 prompt, output, auth, or raw SDK frames. A failed or stale proof cannot authorize
 promotion. It asks the immutable release controller to write root-owned `0444`
 evidence at `/var/lib/nexus/releases/codex-capacity/<source-sha>.json`; the first
-0216 promotion refuses absent, malformed, stale, or wrong-image evidence. The
-command cleans only its named ephemeral canary container and socket.
+0216 promotion refuses absent, malformed, stale (`measured_at` older than 72
+hours), or wrong-image evidence. The command cleans only its named ephemeral
+canary container and socket.
 
 Insufficient pre-admission headroom produces `not_run`; auth or quota
-unavailability produces `provider_blocked`. Neither writes qualifying evidence,
-and the unchanged SHA may be repeated only after natural pressure recovery or
-documented re-enrollment/quota recovery. A cgroup peak, OOM, PSI,
+unavailability produces `provider_blocked`; pre-accept unavailability or
+accepted transport loss produces `transport_retriable`. None writes qualifying
+evidence, and the unchanged SHA may be repeated only after the corresponding
+pressure, account, or transport fault is resolved. A cgroup peak, OOM, PSI,
 service-health, policy, protocol, or structured-output breach writes failed
 evidence and blocks this cutover; rerunning cannot replace it.
 
@@ -560,6 +563,7 @@ state. Nothing in metadata v1 pre-decides those product semantics.
 Authoritative references:
 
 - [`docs/modules/llms.md`](../modules/llms.md)
+- [`docs/runbooks/codex-personal-agent-host.md`](../runbooks/codex-personal-agent-host.md)
 - [`llm-calling/docs/agent-runtime.md`](../../../llm-calling/docs/agent-runtime.md)
 - [Official Codex SDK](https://learn.chatgpt.com/docs/codex-sdk)
 - [Official Codex authentication](https://learn.chatgpt.com/docs/auth)

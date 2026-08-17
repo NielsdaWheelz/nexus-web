@@ -130,17 +130,51 @@ exist, run:
 ./deploy/hetzner/prove-codex-capacity.sh "$(git rev-parse HEAD)"
 ```
 
+If a run is interrupted after the canary container starts (SSH drop, the
+script's own remote timeout), the next attempt for the unchanged SHA
+automatically reclaims and removes it by its
+`nexus.release.codex-capacity-canary` ownership label; no manual step is
+needed. If the fixed canary name is instead held by a container that does not
+carry that label (a foreign or manually created container), the run blocks
+with `Codex capacity canary name is held by a foreign container`. The fixed
+name is not deletion authority: identify the owning deployment or operator,
+inspect the exact container ID and labels, and retire that exact owner through
+its own lifecycle before retrying. Never resolve this refusal with a name-only
+`docker rm`.
+
 Evidence contains no prompt, output, raw frame, account identifier, device code,
 or credential fact. The immutable release controller stores root-owned `0444`
 evidence at `/var/lib/nexus/releases/codex-capacity/<source-sha>.json`; do not
-open or edit it manually. `not_run` from pre-admission headroom and
-`provider_blocked` from auth/quota write no qualifying evidence; repeat the
-unchanged SHA only after natural pressure recovery or documented
-re-enrollment/quota recovery. Resource, service-health, policy, protocol, or
+open or edit it manually. `not_run` from pre-admission headroom,
+`provider_blocked` from auth/quota, and `transport_retriable` from pre-accept
+unavailability or accepted transport loss write no qualifying evidence; repeat
+the unchanged SHA only after the corresponding pressure, account, or transport
+fault is resolved. Resource, service-health, policy, protocol, or
 structured-output failure blocks the cutover. Do not raise the Codex limit,
 lower the reserve, reduce an existing service limit, manipulate production
 memory, or rerun to replace failed evidence. Remediation requires a separately
 specified memory reduction or resize.
+
+A run that measured nothing is retriable and writes no evidence. The controller
+classifies the canary by the evidence it stated, never by its exit status alone:
+only output that parses as the canary's own contract statement can produce
+failed evidence. If the canary crashed, was OOM-killed, or was cut off before
+stating that contract, the run fails with `Codex capacity canary did not state
+its contract` (empty or unparseable output) or `Codex capacity canary did not
+reach a terminal` (a complete statement carrying an exit status the contract
+does not define); nothing was observed about the measured envelope, so rerun the
+unchanged SHA. The same holds for Docker, transport, cleanup, and sampler
+faults. A breach the host sampler observes during the turns is the opposite: it
+is a measurement, so it writes failed evidence and ends this cutover for that
+SHA exactly like a breach in the assembled evidence.
+
+Passing evidence expires after 72 hours: promotion then blocks with `Codex
+capacity qualification is stale`, because the measurement no longer describes
+the host the promotion would run on. Rerun the same command for the unchanged
+SHA — it replaces the expired file in place with a fresh root-owned `0444`
+measurement. Nothing else is replaceable: a still-fresh pass refuses with
+`Codex capacity qualification evidence already exists`, and failed evidence
+refuses with `Codex capacity qualification failed evidence is immutable`.
 
 After qualification, routine turn admission remains automatic. The host reads
 its cgroup and host memory pressure before HTTP acceptance. Capacity refusal
@@ -196,10 +230,20 @@ cwd, clears the run-bound evidence path before its one turn, and accepts evidenc
 only when its run id matches. Re-enroll this distinct canary state with the same
 command when its account credential expires.
 
+The profile below is path-scoped to the system `/usr/bin/bwrap`; it never
+attaches to Codex's own bundled `codex-resources/bwrap` fallback. Install the
+`bubblewrap` package first, so the pinned Codex CLI execs the profiled system
+binary instead of silently falling back to its unconfined bundled copy:
+
+```sh
+sudo apt-get update
+sudo apt-get install --yes --no-install-recommends bubblewrap
+test -x /usr/bin/bwrap
+```
+
 On that Ubuntu 24.04 runner, install and load the repository-owned path-scoped
 profile before running the silent sandbox check. The workflow compares the
-installed bytes, owner/mode, loaded profile, OS version, and global restriction
-on every run:
+installed bytes, owner/mode, OS version, and global restriction on every run:
 
 ```sh
 sudo install -o root -g root -m 0644 \
@@ -209,10 +253,17 @@ sudo apparmor_parser -Q /etc/apparmor.d/nexus-codex-nightly-bwrap
 sudo apparmor_parser -r /etc/apparmor.d/nexus-codex-nightly-bwrap
 ```
 
-Make this installation part of the runner's persistent host provisioning so it
-survives reboot. Verify the loaded profile during provisioning with privileged
-operator access; the unprivileged workflow proves enforcement through the real
-sandbox probe rather than reading root-only securityfs state. Do not substitute
+Make both the package and the profile part of the runner's persistent host
+provisioning so they survive reboot. Verify the loaded profile during
+provisioning with privileged operator access, the same way the production
+host is verified:
+
+```sh
+sudo apparmor_status | grep -Fx '   nexus-codex-nightly-bwrap'
+```
+
+The unprivileged workflow proves enforcement through the real sandbox probe
+rather than reading root-only securityfs state. Do not substitute
 `--sandbox danger-full-access`, a setuid bwrap binary, or a global sysctl
 relaxation.
 
@@ -332,6 +383,37 @@ workflow. The staging command and controller reject duplicate JSON keys before
 the staged byte copy; `jq` cannot make that duplicate-key decision. Do not
 print, edit, or re-upload the artifact. The provider-reported `total_tokens` is
 authoritative; do not infer it from the input and output counters.
+
+## Background-lane coupling
+
+Compose orders `worker-background` after `nexus-codex-agent-host` with
+`condition: service_started`, deliberately **not** `service_healthy`. The
+ordering exists only so a metadata job cannot be claimed before the host
+container and its `/run/nexus-codex` socket volume exist. Readiness is not a
+dependency, because the background lane also runs ingest, podcast sync,
+reindex, and media teardown: making all of that wait on Codex readiness would
+let one expired ChatGPT credential stop every background job on the box. Do not
+restore `service_healthy`.
+
+The accepted consequence is that an unhealthy host degrades metadata alone. The
+host probes ChatGPT authentication before it binds its socket, so an expired or
+revoked credential leaves the container starting and restarting without ever
+becoming healthy. While that lasts:
+
+- metadata enrichment turns take the spec's terminal
+  `E_METADATA_AGENT_HOST_UNAVAILABLE` (or `E_METADATA_AGENT_AUTH_UNAVAILABLE`
+  once the socket is serving but the account is rejected). These are terminal
+  soft failures: they never auto-retry, so re-request enrichment for affected
+  resources after remediation;
+- every other background job continues normally, and the interactive lane, API,
+  and Caddy are untouched.
+
+Confirm the shape of the incident before touching anything else, then follow
+**Re-enrollment**:
+
+```sh
+docker compose --project-name nexus ps nexus-codex-agent-host
+```
 
 ## Re-enrollment
 

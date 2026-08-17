@@ -119,10 +119,11 @@ Production deploys exactly `worker-interactive` and `worker-background`; there
 is no undifferentiated `worker` service.
 
 Every registry definition owns one closed `Light | Heavy` resource class, and
-that class is part of the task-contract digest. `ingest_media_source` and
-`media_content_reindex_job` are Heavy; all other kinds are Light. Queue-owned
-capacity admission permits one Heavy running attempt globally while leaving
-eligible Light work claimable. Domain handlers never touch capacity state.
+that class is part of the task-contract digest. `ingest_media_source`,
+`media_content_reindex_job`, and `enrich_metadata` are Heavy; all other kinds
+are Light. Queue-owned capacity admission permits one Heavy running attempt
+globally while leaving eligible Light work claimable. Domain handlers never
+touch capacity state.
 
 Normal workers require `WORKER_LANE=interactive|background`; they never accept
 a raw allowlist. A bounded maintenance process requires
