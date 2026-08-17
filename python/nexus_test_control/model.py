@@ -26,6 +26,7 @@ class Workflow(StrEnum):
     PR = "pr"
     FULL = "full"
     NIGHTLY = "nightly"
+    CODEX_NIGHTLY = "codex-nightly"
     RELEASE = "release"
     DOCTOR = "doctor"
     ANDROID_VISUAL = "android-visual"
@@ -49,11 +50,13 @@ class Capability(StrEnum):
     JOURNEYS_ALL = "journeys-all"
     CORPUS = "corpus"
     PROVIDER_RUNTIME = "provider-runtime"
+    LLM_TOOLS = "llm-tools"
     LLM_EVAL = "llm-eval"
     EXTENSION = "extension"
     ANDROID_HOST = "android-host"
     AUDIT = "audit"
     HOSTED = "hosted"
+    CODEX_HOSTED = "codex-hosted"
     ANDROID_DEVICE = "android-device"
     PROVIDER_CERTIFICATION = "provider-certification"
     ANDROID_RELEASE = "android-release"
@@ -74,6 +77,7 @@ class PriorityRiskId(StrEnum):
     READING_PROGRESS = "reading-progress"
     CITATION_PROVENANCE_IDENTITY = "citation-provenance-identity"
     DURABLE_JOB_REPLAY = "durable-job-replay"
+    NATIVE_AGENT_HOST = "native-agent-host"
     DATABASE_OBJECT_CONVERGENCE = "database-object-convergence"
     DOCUMENT_IMPORT_RELIABILITY = "document-import-reliability"
     LLM_TOOL_SAFETY = "llm-tool-safety"
@@ -87,7 +91,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "81bdc7bebfeed9e3f2b935753ee3248a9f00ff523239742e08993ddb1a592349"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "538468322381710814e3e3ecaf70164a2f19db07b5a679bfe5f08fcc0e9dd12f"
 
 
 class ResourceKind(StrEnum):
@@ -337,6 +341,7 @@ _FULL_NON_BROWSER = (
     *_PR_COMPLETE[:-1],
     Capability.CORPUS,
     Capability.PROVIDER_RUNTIME,
+    Capability.LLM_TOOLS,
     Capability.LLM_EVAL,
     Capability.ANDROID_HOST,
 )
@@ -406,6 +411,10 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 ),
             ),
         ),
+        Workflow.CODEX_NIGHTLY: WorkflowDefinition(
+            Workflow.CODEX_NIGHTLY,
+            (CapabilityRequirement(Capability.CODEX_HOSTED, SelectionScope.COMPLETE),),
+        ),
         Workflow.RELEASE: WorkflowDefinition(
             Workflow.RELEASE,
             _requirements(
@@ -439,11 +448,13 @@ DEFERRED_CAPABILITY_OWNER: Mapping[Capability, Workflow] = MappingProxyType(
         Capability.JOURNEYS_ALL: Workflow.FULL,
         Capability.CORPUS: Workflow.FULL,
         Capability.PROVIDER_RUNTIME: Workflow.FULL,
+        Capability.LLM_TOOLS: Workflow.FULL,
         Capability.LLM_EVAL: Workflow.FULL,
         Capability.EXTENSION: Workflow.FULL,
         Capability.ANDROID_HOST: Workflow.FULL,
         Capability.AUDIT: Workflow.NIGHTLY,
         Capability.HOSTED: Workflow.NIGHTLY,
+        Capability.CODEX_HOSTED: Workflow.CODEX_NIGHTLY,
         Capability.ANDROID_DEVICE: Workflow.NIGHTLY,
         Capability.PROVIDER_CERTIFICATION: Workflow.RELEASE,
         Capability.ANDROID_RELEASE: Workflow.RELEASE,

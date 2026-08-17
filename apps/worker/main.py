@@ -16,19 +16,23 @@ from apps.worker.health import (
 )
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import (
+from nexus.config import Environment, Settings, get_settings
+from nexus.db.engine import get_engine
+from nexus.job_topology import (
     BACKGROUND_WORKER_JOB_KINDS,
     INTERACTIVE_WORKER_JOB_KINDS,
     MAINTENANCE_JOB_KINDS,
     PRODUCTION_ENABLED_JOB_KINDS,
-    get_settings,
 )
-from nexus.db.engine import get_engine
-from nexus.jobs.process_executor import BackgroundProcessExecutor, ValidatedCgroup
+from nexus.jobs.process_executor import (
+    BackgroundProcessExecutor,
+    BackgroundProcessProtocolDefect,
+    ValidatedCgroup,
+)
 from nexus.jobs.registry import get_default_registry, get_task_contract_digest
 from nexus.jobs.worker import JobWorker
 from nexus.logging import configure_logging, get_logger
-from nexus.runtime_health import get_runtime_identity
+from nexus.runtime_health import get_runtime_identity, is_database_ready
 
 logger = get_logger(__name__)
 
@@ -40,6 +44,33 @@ def _get_worker_session_factory() -> sessionmaker[Session]:
         autocommit=False,
         autoflush=False,
         expire_on_commit=False,
+    )
+
+
+def _worker_readiness_check(
+    *,
+    lane: WorkerLane,
+    settings: Settings,
+    expected_database_revision: str,
+) -> bool:
+    """Verify the lane-owned runtime contract before publishing progress."""
+    if lane == "background":
+        try:
+            ValidatedCgroup.for_current_process(
+                settings.background_process_cgroup_root,
+                expected_memory_limit_bytes=settings.background_process_memory_limit_bytes,
+            )
+        except BackgroundProcessProtocolDefect:
+            return False
+    reconciler_max_age_seconds = (
+        2 * int(settings.ingest_reconcile_schedule_seconds)
+        if settings.nexus_env in (Environment.STAGING, Environment.PROD)
+        else None
+    )
+    return is_database_ready(
+        database_url=settings.database_url,
+        expected_revision=expected_database_revision,
+        reconciler_max_age_seconds=reconciler_max_age_seconds,
     )
 
 
@@ -56,7 +87,9 @@ def _register_signal_handlers(stop_event: threading.Event) -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
 
 
-def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None) -> JobWorker:
+def create_worker(
+    *, successful_cycle_callback: Callable[[], None] | None = None
+) -> JobWorker:
     settings = get_settings()
     registry = get_default_registry()
     if settings.worker_lane == "interactive":
@@ -86,7 +119,9 @@ def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None
 
     unknown_kinds = set(allowed_kinds) - registered_kinds
     if unknown_kinds:
-        raise RuntimeError(f"Unknown worker job kinds: {', '.join(sorted(unknown_kinds))}")
+        raise RuntimeError(
+            f"Unknown worker job kinds: {', '.join(sorted(unknown_kinds))}"
+        )
 
     session_factory = _get_worker_session_factory()
     process_executor: BackgroundProcessExecutor | None = None
@@ -147,13 +182,22 @@ def main() -> None:
     if settings.worker_lane in ("interactive", "background"):
         lane = cast(WorkerLane, settings.worker_lane)
         allowed_job_kinds = (
-            INTERACTIVE_WORKER_JOB_KINDS if lane == "interactive" else BACKGROUND_WORKER_JOB_KINDS
+            INTERACTIVE_WORKER_JOB_KINDS
+            if lane == "interactive"
+            else BACKGROUND_WORKER_JOB_KINDS
         )
         publisher = WorkerHeartbeatPublisher(
             lane=lane,
             allowed_job_kinds=tuple(sorted(allowed_job_kinds)),
-            identity=identity,
+            source_sha=identity.source_sha,
+            expected_database_revision=identity.expected_database_revision,
+            expected_oracle_manifest_digest=identity.expected_oracle_manifest_digest,
             task_contract_digest=get_task_contract_digest(),
+            readiness_check=lambda: _worker_readiness_check(
+                lane=lane,
+                settings=settings,
+                expected_database_revision=identity.expected_database_revision,
+            ),
         )
         if publisher is not None:
             publisher.clear()

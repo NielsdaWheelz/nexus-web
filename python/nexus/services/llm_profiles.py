@@ -18,7 +18,6 @@ from provider_runtime.registry import resolve_target
 type BackgroundLlmOperation = Literal[
     "oracle",
     "media_summary",
-    "metadata_enrichment",
     "synapse",
     "dawn_write",
     "dossier_media",
@@ -218,7 +217,6 @@ _PROFILES_BY_ID: dict[str, LlmProfile] = {profile.id: profile for profile in PRO
 OPERATION_PROFILES: dict[BackgroundLlmOperation, str] = {
     "oracle": "fast",
     "media_summary": "fast",
-    "metadata_enrichment": "fast",
     "synapse": "fast",
     "dawn_write": "balanced",
     # Universal dossier generation (CONTRACTS.md A4): one operation per subject

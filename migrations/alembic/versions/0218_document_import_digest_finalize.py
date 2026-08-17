@@ -1,7 +1,7 @@
 """Backfill immutable source digests and remove the provisional-upload schema.
 
-Revision ID: 0217
-Revises: 0216
+Revision ID: 0218
+Revises: 0217
 Create Date: 2026-08-14
 """
 
@@ -17,8 +17,8 @@ from alembic import op
 from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
-revision: str = "0217"
-down_revision: str | Sequence[str] | None = "0216"
+revision: str = "0218"
+down_revision: str | Sequence[str] | None = "0217"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -29,7 +29,7 @@ _CHUNK_BYTES = 8 * 1024 * 1024
 def _required_environment(name: str) -> str:
     value = os.environ.get(name)
     if not value:
-        raise RuntimeError(f"0217 backfill requires {name}")
+        raise RuntimeError(f"0218 backfill requires {name}")
     return value
 
 
@@ -54,13 +54,13 @@ def _storage_client():
 def _measure_source(*, client, bucket: str, media_id: object, path: str, kind: str, size: int) -> str:
     expected_signature = _SIGNATURES.get(kind)
     if expected_signature is None:
-        raise RuntimeError(f"0217 backfill: media_file {media_id} has unsupported kind {kind!r}")
+        raise RuntimeError(f"0218 backfill: media_file {media_id} has unsupported kind {kind!r}")
     try:
         metadata = client.head_object(Bucket=bucket, Key=path)
         stored_size = int(metadata.get("ContentLength") or 0)
         if stored_size != size:
             raise RuntimeError(
-                f"0217 backfill: media_file {media_id} size changed "
+                f"0218 backfill: media_file {media_id} size changed "
                 f"(database={size}, storage={stored_size})"
             )
         response = client.get_object(Bucket=bucket, Key=path)
@@ -78,16 +78,16 @@ def _measure_source(*, client, bucket: str, media_id: object, path: str, kind: s
             body.close()
     except (BotoCoreError, ClientError, OSError) as exc:
         raise RuntimeError(
-            f"0217 backfill: failed to read media_file {media_id} object {path!r}"
+            f"0218 backfill: failed to read media_file {media_id} object {path!r}"
         ) from exc
     if measured_size != size:
         raise RuntimeError(
-            f"0217 backfill: media_file {media_id} stream size changed "
+            f"0218 backfill: media_file {media_id} stream size changed "
             f"(database={size}, storage={measured_size})"
         )
     if bytes(prefix) != expected_signature:
         raise RuntimeError(
-            f"0217 backfill: media_file {media_id} object {path!r} has an invalid {kind} signature"
+            f"0218 backfill: media_file {media_id} object {path!r} has an invalid {kind} signature"
         )
     return digest.hexdigest()
 
@@ -164,14 +164,14 @@ def _assert_no_active_source_publication_defects() -> None:
     ).scalars().all()
     if defects:
         raise RuntimeError(
-            "0217 preflight: active source publication defects require exact operator cleanup: "
+            "0218 preflight: active source publication defects require exact operator cleanup: "
             + ", ".join(str(attempt_id) for attempt_id in defects)
         )
 
 
 def upgrade() -> None:
     # Each measured row is committed independently. If one object is missing or
-    # changed, the revision remains at 0216 and a rerun skips completed rows.
+    # changed, the revision remains at 0217 and a rerun skips completed rows.
     with op.get_context().autocommit_block():
         _backfill_source_digests()
 
@@ -189,7 +189,7 @@ def upgrade() -> None:
     ).scalars().all()
     if invalid:
         raise RuntimeError(
-            "0217 preflight: media_file source_sha256 backfill is incomplete: "
+            "0218 preflight: media_file source_sha256 backfill is incomplete: "
             + ", ".join(str(media_id) for media_id in invalid)
         )
 
@@ -215,4 +215,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0217 is an irreversible document-import hard cutover")
+    raise NotImplementedError("0218 is an irreversible document-import hard cutover")

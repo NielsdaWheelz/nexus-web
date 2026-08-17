@@ -1,0 +1,9 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# Docker applies this named profile only to the private Codex host. The host is
+# otherwise non-root, capability-free, read-only, and release-gated on Codex's
+# stricter nested bwrap+seccomp sandbox.
+profile nexus-codex-agent-host flags=(unconfined) {
+  userns,
+}

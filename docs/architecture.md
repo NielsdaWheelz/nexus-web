@@ -601,8 +601,9 @@ same entrypoint with fixed `interactive` and `background` lanes:
   has no periodic kinds.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
-handler + policy. `config.py` owns the disjoint/exhaustive 20-kind production
-topology and separate three-kind maintenance declaration. The entrypoint rejects
+handler + policy. `job_topology.py` owns the disjoint/exhaustive 20-kind
+production topology and separate three-kind maintenance declaration without
+importing the application runtime graph. The entrypoint rejects
 missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
 `get_task_contract_digest()` fingerprints the registry's per-kind resource
 class and attempt/lease policy for API `/version` and worker release-health proof. See
@@ -630,15 +631,15 @@ resolver keyed on exact stable key → confirmed alias → new contributor
 lane's observed role slice, so duplicate identity is prevented at write time
 rather than proposed and reconciled after the fact.
 
-> Gotcha: only `enrich_metadata` and `media_unit_build` declare
-> `failed_result_statuses`. Other ingest tasks that _return_ `{"status":"failed"}`
+> Gotcha: `media_unit_build` declares `failed_result_statuses`. Other ingest
+> tasks that _return_ `{"status":"failed"}`
 > still mark the **queue** row succeeded — the failure is recorded on the domain
 > row, and recovery relies on the stale reconciler + manual API retry, not
 > queue-level retries.
 
-**Generation boundary in the worker.** Seven LLM generation kinds (`chat_run`,
+**Generation boundary in the worker.** Six direct LLM generation kinds (`chat_run`,
 `oracle_reading_generate`, `synapse_scan`, `dawn_write`,
-`dossier_build`, `media_unit_build`, `enrich_metadata`) run their bodies inside
+`dossier_build`, `media_unit_build`) run their bodies inside
 one shared worker envelope,
 `tasks/llm_task.py:run_llm_task` — the sole owner of the event loop, `httpx`
 client, `ProviderRuntime` composition, and worker-exception boundary. Every
@@ -650,6 +651,13 @@ and settling admission exactly once. `ProviderRuntime` owns
 provider retries; `BilledOnce` work selects its single-attempt mode. The existing
 Postgres queue, leases, and durable step journal remain unchanged. See
 [modules/llms.md](modules/llms.md).
+`enrich_metadata` is deliberately outside this direct-provider envelope. It
+uses the private UDS Codex host with the ChatGPT-authenticated `codex-personal`
+profile, records the exact native terminal/session/usage/runtime provenance in
+`agent_turns`, and lets its durable checkpoint own prepared/completed/uncertain
+replay. It has no direct provider request, `llm_calls` row, API credential, or
+provider fallback.
+
 The worker installs the process-global rate limiter at startup so the first job
 of any kind has a working limiter. SERIALIZABLE retries everywhere (including
 the scheduler loop) go through the one helper `db/retries.py:retry_serializable`.
@@ -698,7 +706,8 @@ Other identity surfaces:
   OpenAI embedding credential. There is no BYOK, per-user key, DB lookup, or
   empty-key fallback. Staging/production startup requires all five direct keys;
   a missing or rejected key never changes the profile list or route. Direct
-  provider execution is distinct from deferred native subscription execution.
+  provider execution is distinct from the shipped native subscription metadata
+  route, which has its own ChatGPT account state and no API key.
   See [modules/llms.md](modules/llms.md).
 - **Billing** (`services/billing.py`): Stripe is the system of record;
   `billing_accounts` is a per-user snapshot synced by idempotent webhooks (deduped

@@ -290,7 +290,7 @@ media deletion
 | Source-specific fetch/extraction | source adapters |
 | HTML document parsing | `html_tree.py` |
 | Error-to-action presentation | one frontend media-error presenter |
-| Worker topology | `config.py` lane constants + deployment entry points |
+| Worker topology | `job_topology.py` lane constants + deployment entry points |
 
 ## Capability contract
 
@@ -791,7 +791,7 @@ claim or schedule its kind.
 Rules:
 
 - define `PRODUCTION_ENABLED_JOB_KINDS`, both lane lists, and
-  `MAINTENANCE_JOB_KINDS` once as typed constants in `config.py`;
+  `MAINTENANCE_JOB_KINDS` once as typed constants in `job_topology.py`;
 - the deployed lane sets are non-empty, disjoint, and their union equals
   `PRODUCTION_ENABLED_JOB_KINDS` exactly;
 - production-enabled and maintenance sets are disjoint, are subsets of the

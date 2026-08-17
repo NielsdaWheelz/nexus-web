@@ -13,7 +13,6 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import ORACLE_RECONCILE_JOB_KINDS
 from nexus.db.models import (
     ContentIndexState,
     Media,
@@ -23,6 +22,7 @@ from nexus.db.models import (
 )
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError
+from nexus.job_topology import ORACLE_RECONCILE_JOB_KINDS
 from nexus.jobs.queue import get_job
 from nexus.jobs.worker import JobWorker
 from nexus.oracle.manifest import (

@@ -232,6 +232,172 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
     assert {selection.reason for selection in selections} == {SelectionReason.PRIORITY_RISK}
 
 
+@pytest.mark.parametrize("path", ["python/pyproject.toml", "python/uv.lock"])
+def test_codex_dependency_changes_route_release_proofs_without_duplicate_host_ownership(
+    path: str,
+) -> None:
+    selections = select_changed(
+        parse_git_name_status(f"M\0{path}\0".encode()),
+        load_selection_index(REPO_ROOT),
+    )
+    proofs = {selection.proof for selection in selections}
+
+    assert "pytest:python/tests/kernel/test_production_release.py" in proofs
+    assert (
+        "pytest:python/tests/kernel/test_production_release.py::"
+        "test_capacity_qualification_rejects_a_credentialed_or_networked_client_container"
+        not in proofs
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "python/pyproject.toml",
+        "python/uv.lock",
+        "python/tests/evals/cases/tool_safety.v3.json",
+    ],
+)
+def test_provider_runtime_pin_and_tool_safety_corpus_route_to_deterministic_eval(
+    path: str,
+) -> None:
+    proof = (
+        "pytest:python/tests/evals/test_tool_safety_eval.py::"
+        "test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call"
+    )
+
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+
+    assert any(
+        selection.capability is Capability.LLM_EVAL
+        and selection.proof == proof
+        and selection.reason is SelectionReason.PRIORITY_RISK
+        for selection in selections
+    ), f"{path} did not select the deterministic llm-tool-safety proof"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/codex-personal-nightly.yml",
+        "apps/codex_agent/host.py",
+        "apps/codex_agent/nested/future.py",
+        "python/pyproject.toml",
+        "python/nexus/services/native_agent_contract.py",
+        "python/nexus/services/native_agent_client.py",
+        "python/nexus/services/native_agent_operations.py",
+        "python/nexus/ops/codex_hosted_evidence.py",
+        "python/uv.lock",
+    ],
+)
+def test_native_agent_sources_route_to_the_exact_contract_and_host_proofs(path: str) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+    owned = {
+        (selection.capability, selection.proof)
+        for selection in selections
+        if selection.reason is SelectionReason.PRIORITY_RISK
+    }
+
+    assert owned.issuperset(
+        {
+            (
+                Capability.KERNEL_PYTHON,
+                "pytest:python/tests/kernel/nexus_test_control/test_runner.py::"
+                "test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
+            ),
+            (
+                Capability.KERNEL_PYTHON,
+                "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::"
+                "test_hosted_canary_rendered_failure_drops_provider_sentinels",
+            ),
+            (
+                Capability.KERNEL_PYTHON,
+                "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::"
+                "test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
+            ),
+            (
+                Capability.KERNEL_PYTHON,
+                "pytest:python/tests/kernel/test_native_agent_contract.py",
+            ),
+            (
+                Capability.SERVICE,
+                "pytest:python/tests/service/test_codex_agent_host.py",
+            ),
+            (
+                Capability.SERVICE,
+                "pytest:python/tests/service/test_codex_agent_content_privacy.py::"
+                "test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
+            ),
+            (
+                Capability.SERVICE,
+                "pytest:python/tests/service/test_codex_capacity_canary_contract.py::"
+                "test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
+            ),
+            (
+                Capability.CODEX_HOSTED,
+                "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py",
+            ),
+        }
+    )
+
+
+def test_durable_metadata_sources_route_all_high_risk_boundary_proofs() -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, "python/nexus/errors.py"),),
+        load_selection_index(REPO_ROOT),
+    )
+    proofs = {
+        selection.proof
+        for selection in selections
+        if selection.reason is SelectionReason.PRIORITY_RISK
+    }
+
+    assert proofs.issuperset(
+        {
+            "pytest:python/tests/service/test_codex_metadata_failure_mapping.py::"
+            "test_native_timeout_persists_as_a_distinct_metadata_failure",
+            "pytest:python/tests/service/test_codex_metadata_enrichment.py",
+            "pytest:python/tests/service/test_heavy_job_capacity.py",
+            "pytest:python/tests/service/test_metadata_content_contract.py::"
+            "test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets",
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_proof"),
+    [
+        (
+            "python/nexus/services/podcasts/ingest.py",
+            "pytest:python/tests/service/test_codex_metadata_enrichment.py",
+        ),
+        (
+            "deploy/hetzner/prove-codex-capacity.sh",
+            "pytest:python/tests/kernel/test_production_release.py",
+        ),
+    ],
+)
+def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
+    path: str,
+    expected_proof: str,
+) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+
+    assert any(
+        selection.proof == expected_proof and selection.reason is SelectionReason.PRIORITY_RISK
+        for selection in selections
+    )
+
+
 @pytest.mark.parametrize(
     ("path", "expected_capabilities", "expected_proofs"),
     [
@@ -261,9 +427,23 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
                 Capability.SERVICE,
             },
             {
+                "pytest:python/tests/kernel/test_bounded_resource_worker_contract.py",
                 "pytest:python/tests/kernel/test_runtime_health.py",
                 "pytest:python/tests/kernel/test_worker_runtime_health.py",
-                "pytest:python/tests/migrations/test_document_import_reliability_migration.py::test_0216_0217_backfill_is_resumable_fail_closed_and_hard_contracts_schema",
+                "pytest:python/tests/service/test_runtime_health.py",
+            },
+        ),
+        (
+            "python/nexus/job_topology.py",
+            {
+                Capability.KERNEL_PYTHON,
+                Capability.SERVICE,
+            },
+            {
+                "pytest:python/tests/kernel/test_bounded_resource_worker_contract.py",
+                "pytest:python/tests/kernel/test_runtime_health.py",
+                "pytest:python/tests/kernel/test_worker_runtime_health.py",
+                "pytest:python/tests/migrations/test_document_import_reliability_migration.py::test_0217_0218_backfill_is_resumable_fail_closed_and_hard_contracts_schema",
                 "pytest:python/tests/service/test_background_worker_process_containment.py::test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child",
                 "pytest:python/tests/service/test_bounded_media_extraction.py",
                 "pytest:python/tests/service/test_ingest_reconciliation_readiness.py",
@@ -291,11 +471,26 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
         ),
         (
             "python/nexus_test_control/runner.py",
-            {Capability.KERNEL_PYTHON},
             {
+                Capability.CODEX_HOSTED,
+                Capability.KERNEL_PYTHON,
+                Capability.LLM_TOOLS,
+                Capability.SERVICE,
+            },
+            {
+                "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool",
+                "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization",
                 "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
+                "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
+                "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::test_hosted_canary_rendered_failure_drops_provider_sentinels",
+                "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
+                "pytest:python/tests/kernel/test_native_agent_contract.py",
+                "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
+                "pytest:python/tests/service/test_codex_agent_host.py",
+                "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
+                "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py",
             },
         ),
     ],

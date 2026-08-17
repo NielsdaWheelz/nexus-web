@@ -27,46 +27,12 @@ from urllib.parse import urlparse
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
+from nexus.job_topology import MAINTENANCE_JOB_KINDS
+
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
 # Cross-runtime upload safety contract. Keep this equal to
 # `DIRECT_UPLOAD_PUT_TIMEOUT_MS` in `apps/web/src/lib/media/ingestionClient.ts`.
 DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS = 240
-INTERACTIVE_WORKER_JOB_KINDS: tuple[str, ...] = (
-    "chat_run",
-    "dossier_build",
-    "podcast_sync_subscription_job",
-    "oracle_reading_generate",
-)
-BACKGROUND_WORKER_JOB_KINDS: tuple[str, ...] = (
-    "ingest_media_source",
-    "media_content_reindex_job",
-    "enrich_metadata",
-    "media_unit_build",
-    "note_reindex_job",
-    "podcast_backfill_subscription",
-    "podcast_refresh_due_job",
-    "podcast_refresh_run_prune_job",
-    "podcast_reindex_semantic_job",
-    "synapse_scan",
-    "dawn_write_job",
-    "atlas_project_job",
-    "media_teardown",
-    "storage_object_cleanup",
-    "storage_orphan_sweep",
-    "reconcile_stale_ingest_media_job",
-)
-PRODUCTION_ENABLED_JOB_KINDS: tuple[str, ...] = (
-    INTERACTIVE_WORKER_JOB_KINDS + BACKGROUND_WORKER_JOB_KINDS
-)
-MAINTENANCE_JOB_KINDS: tuple[str, ...] = (
-    "sync_gutenberg_catalog_job",
-    "prune_background_jobs_job",
-    "purge_expired_auth_handoff_codes",
-)
-ORACLE_RECONCILE_JOB_KINDS: tuple[str, ...] = (
-    "ingest_media_source",
-    "media_content_reindex_job",
-)
 
 
 def _database_url_looks_like_supabase(database_url: str) -> bool:
@@ -461,12 +427,12 @@ class Settings(BaseSettings):
     )
 
     # Metadata enrichment settings
-    metadata_enrichment_enabled: bool = Field(default=True, alias="METADATA_ENRICHMENT_ENABLED")
     metadata_enrichment_max_content_chars: int = Field(
         default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"
     )
-    metadata_enrichment_max_output_tokens: int = Field(
-        default=1200, alias="METADATA_ENRICHMENT_MAX_OUTPUT_TOKENS"
+    codex_agent_socket: Path = Field(
+        default=Path("/run/nexus-codex/agent.sock"),
+        alias="NEXUS_CODEX_AGENT_SOCKET",
     )
 
     # Synapse resonance engine: SYNAPSE_ENABLED=false turns every scan trigger
@@ -817,6 +783,11 @@ class Settings(BaseSettings):
             raise ValueError("INGEST_SEMANTIC_REPAIR_BATCH_LIMIT must be >= 1.")
         if self.ingest_semantic_failed_retry_seconds < 1:
             raise ValueError("INGEST_SEMANTIC_FAILED_RETRY_SECONDS must be >= 1.")
+        if (
+            not self.codex_agent_socket.is_absolute()
+            or Path(os.path.normpath(str(self.codex_agent_socket))) != self.codex_agent_socket
+        ):
+            raise ValueError("NEXUS_CODEX_AGENT_SOCKET must be a normalized absolute path.")
         if not self.parser_temp_root.is_absolute():
             raise ValueError("PARSER_TEMP_ROOT must be an absolute path.")
         if self.worker_lane == "maintenance":

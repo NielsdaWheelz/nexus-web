@@ -8,7 +8,11 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import Media, ProcessingStatus
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
-from nexus.jobs.queue import enqueue_job
+from nexus.jobs.queue import lock_jobs_for_payload
+from nexus.services.durable_step_journal import Uncertain, decode_step_states
+from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
+
+_STEP_PATH = "codex/metadata"
 
 
 def retry_metadata_for_viewer(
@@ -40,11 +44,30 @@ def retry_metadata_for_viewer(
             "Media must be readable before metadata can be re-enriched.",
         )
 
-    enqueue_job(
+    jobs = lock_jobs_for_payload(
         db,
         kind="enrich_metadata",
-        payload={"media_id": str(media.id), "request_id": request_id},
-        max_attempts=1,
+        expected_payload_match={"media_id": str(media_id)},
+    )
+    if any(
+        (state := decode_step_states(job.payload).get(_STEP_PATH)) is not None
+        and state.dispatch_phase is Uncertain
+        for job in jobs
+    ):
+        raise ConflictError(
+            ApiErrorCode.E_RETRY_NOT_ALLOWED,
+            "Metadata enrichment has an unresolved native-agent turn.",
+        )
+    if any(job.status in {"pending", "running"} for job in jobs):
+        raise ConflictError(
+            ApiErrorCode.E_RETRY_NOT_ALLOWED,
+            "Metadata enrichment is already in progress.",
+        )
+
+    enqueue_metadata_enrichment(
+        db,
+        media_id=media.id,
+        request_id=request_id,
     )
     db.commit()
 

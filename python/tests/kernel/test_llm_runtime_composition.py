@@ -39,7 +39,6 @@ _TASK_RUNTIME_RETRY_MODES = {
     ("tasks/artifacts.py", "dossier_build"): ProviderRetryMode.SingleAttempt,
     ("tasks/chat_run.py", "chat_run"): ProviderRetryMode.SingleAttempt,
     ("tasks/dawn_write.py", "dawn_write_sweep"): ProviderRetryMode.Default,
-    ("tasks/enrich_metadata.py", "enrich_metadata"): ProviderRetryMode.Default,
     ("tasks/media_unit_build.py", "media_unit_build"): ProviderRetryMode.SingleAttempt,
     ("tasks/oracle_reading.py", "oracle_reading"): ProviderRetryMode.Default,
     ("tasks/synapse_scan.py", "synapse_scan"): ProviderRetryMode.Default,

@@ -1,0 +1,17 @@
+diff --git a/apps/codex_agent/host.py b/apps/codex_agent/host.py
+--- a/apps/codex_agent/host.py
++++ b/apps/codex_agent/host.py
+@@ -332,11 +332,11 @@ def _terminal_to_wire(
+     return NativeAgentTerminal(
+         status=terminal.status,
+         failure=failure,
+-        final_text=terminal.final_text if terminal.status == "succeeded" else "",
++        final_text=terminal.final_text,
+         structured_output=structured if isinstance(structured, dict) else None,
+         session_ref=_session_ref(terminal.session_ref),
+         usage=_optional_usage(terminal.usage),
+-        diagnostics=(),
++        diagnostics=terminal.diagnostics,
+         sdk_version=sdk_version,
+         runtime_version=runtime_version,
+     )

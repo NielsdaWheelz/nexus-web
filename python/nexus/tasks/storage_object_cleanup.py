@@ -390,7 +390,7 @@ def storage_object_cleanup(
     elif owner_kind == _UPLOAD_SESSION_OWNER:
         owner_id = UUID(str(payload["uploadSessionId"]))
     else:
-        # justify-defect: 0217 hard-cuts every durable payload to this union.
+        # justify-defect: 0218 hard-cuts every durable payload to this union.
         raise RuntimeError(f"unknown storage_object_cleanup owner {owner_kind!r}")
     session_factory = get_session_factory()
     db = session_factory()

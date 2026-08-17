@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 
+import apps.worker.health as worker_health
+import apps.worker.main as worker_main
 import pytest
 from apps.worker.health import (
     WorkerHeartbeatError,
@@ -196,18 +198,90 @@ def test_worker_heartbeat_file_failure_does_not_change_queue_progress(engine: En
     assert attempted_cycles == ["database_cycle"]
 
 
-def test_worker_health_binds_live_process_release_contract_and_database(
+def test_worker_publishes_health_only_for_the_exact_database_revision(
+    runtime_identity_file: tuple[Path, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity_path, revision = runtime_identity_file
+    heartbeat_path = tmp_path / "interactive-heartbeat.json"
+    monkeypatch.setenv("WORKER_LANE", "interactive")
+    monkeypatch.setattr(
+        worker_health,
+        "WORKER_HEARTBEAT_PATHS",
+        {
+            "interactive": heartbeat_path,
+            "background": tmp_path / "background-heartbeat.json",
+        },
+    )
+    monkeypatch.setattr(worker_main, "configure_logging", lambda: None)
+    monkeypatch.setattr(worker_main, "_register_signal_handlers", lambda _stop: None)
+    expected_ready = [True]
+    observations: list[str] = []
+
+    class OneCycleWorker:
+        worker_id = "entrypoint-health-proof"
+        allowed_kinds = expected_job_kinds("interactive")
+
+        def __init__(self, callback: Callable[[], None]) -> None:
+            self._callback = callback
+
+        def run_forever(self, *, stop_event: threading.Event) -> None:
+            del stop_event
+            self._callback()
+            if expected_ready[0]:
+                heartbeat = check_worker_health(lane="interactive", heartbeat_path=heartbeat_path)
+                observations.append(heartbeat.expected_database_revision)
+            else:
+                with pytest.raises(WorkerHeartbeatError) as caught:
+                    check_worker_health(lane="interactive", heartbeat_path=heartbeat_path)
+                observations.append(caught.value.code)
+
+    def create_one_cycle_worker(
+        *, successful_cycle_callback: Callable[[], None] | None = None
+    ) -> OneCycleWorker:
+        assert successful_cycle_callback is not None
+        return OneCycleWorker(successful_cycle_callback)
+
+    monkeypatch.setattr(worker_main, "create_worker", create_one_cycle_worker)
+    clear_settings_cache()
+    try:
+        worker_main.main()
+
+        write_runtime_identity_value(
+            RuntimeIdentity(
+                source_sha=SOURCE_SHA,
+                expected_database_revision="0000",
+                expected_oracle_manifest_digest=ORACLE_DIGEST,
+            ),
+            identity_path,
+        )
+        clear_runtime_identity_cache()
+        expected_ready[0] = False
+        worker_main.main()
+    finally:
+        clear_settings_cache()
+        clear_runtime_identity_cache()
+
+    assert observations == [revision, "heartbeat_invalid"]
+    assert not heartbeat_path.exists()
+
+
+def test_worker_health_binds_live_process_release_contract(
     runtime_identity_file: tuple[Path, str],
     tmp_path: Path,
 ) -> None:
-    identity_path, _revision = runtime_identity_file
+    _identity_path, _revision = runtime_identity_file
     heartbeat_path = tmp_path / "interactive-heartbeat.json"
     identity = get_runtime_identity()
     publisher = WorkerHeartbeatPublisher(
         lane="interactive",
         allowed_job_kinds=expected_job_kinds("interactive"),
-        identity=identity,
+        source_sha=identity.source_sha,
+        expected_database_revision=identity.expected_database_revision,
+        expected_oracle_manifest_digest=identity.expected_oracle_manifest_digest,
         task_contract_digest=get_task_contract_digest(),
+        readiness_check=lambda: True,
         heartbeat_path=heartbeat_path,
         pid=os.getpid(),
     )
@@ -221,28 +295,8 @@ def test_worker_health_binds_live_process_release_contract_and_database(
         check_worker_health(lane="interactive", heartbeat_path=heartbeat_path)
     assert noncanonical.value.code == "heartbeat_invalid"
 
-    mismatched_identity = RuntimeIdentity(
-        source_sha=SOURCE_SHA,
-        expected_database_revision="0000",
-        expected_oracle_manifest_digest=ORACLE_DIGEST,
-    )
-    write_runtime_identity_value(mismatched_identity, identity_path)
-    clear_runtime_identity_cache()
-    WorkerHeartbeatPublisher(
-        lane="interactive",
-        allowed_job_kinds=expected_job_kinds("interactive"),
-        identity=mismatched_identity,
-        task_contract_digest=get_task_contract_digest(),
-        heartbeat_path=heartbeat_path,
-        pid=os.getpid(),
-    ).publish()
 
-    with pytest.raises(WorkerHeartbeatError) as caught:
-        check_worker_health(lane="interactive", heartbeat_path=heartbeat_path)
-    assert caught.value.code == "database_not_ready"
-
-
-def test_background_worker_health_revalidates_the_live_cgroup_contract(
+def test_background_worker_refuses_to_publish_health_without_the_live_cgroup_contract(
     runtime_identity_file: tuple[Path, str],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -250,15 +304,6 @@ def test_background_worker_health_revalidates_the_live_cgroup_contract(
     del runtime_identity_file
     heartbeat_path = tmp_path / "background-heartbeat.json"
     identity = get_runtime_identity()
-    WorkerHeartbeatPublisher(
-        lane="background",
-        allowed_job_kinds=expected_job_kinds("background"),
-        identity=identity,
-        task_contract_digest=get_task_contract_digest(),
-        heartbeat_path=heartbeat_path,
-        pid=os.getpid(),
-    ).publish()
-
     memberships = [
         line.removeprefix("0::")
         for line in Path("/proc/self/cgroup").read_text(encoding="ascii").splitlines()
@@ -275,8 +320,33 @@ def test_background_worker_health_revalidates_the_live_cgroup_contract(
     monkeypatch.setenv("BACKGROUND_PROCESS_CGROUP_ROOT", str(cgroup_root))
     clear_settings_cache()
     try:
+        settings = get_settings()
+
+        assert not worker_main._worker_readiness_check(
+            lane="background",
+            settings=settings,
+            expected_database_revision=identity.expected_database_revision,
+        )
+
+        WorkerHeartbeatPublisher(
+            lane="background",
+            allowed_job_kinds=expected_job_kinds("background"),
+            source_sha=identity.source_sha,
+            expected_database_revision=identity.expected_database_revision,
+            expected_oracle_manifest_digest=identity.expected_oracle_manifest_digest,
+            task_contract_digest=get_task_contract_digest(),
+            readiness_check=lambda: worker_main._worker_readiness_check(
+                lane="background",
+                settings=settings,
+                expected_database_revision=identity.expected_database_revision,
+            ),
+            heartbeat_path=heartbeat_path,
+            pid=os.getpid(),
+        ).publish()
+
+        assert not heartbeat_path.exists()
         with pytest.raises(WorkerHeartbeatError) as caught:
             check_worker_health(lane="background", heartbeat_path=heartbeat_path)
-        assert caught.value.code == "cgroup_not_ready"
+        assert caught.value.code == "heartbeat_invalid"
     finally:
         clear_settings_cache()

@@ -12,6 +12,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -30,8 +31,9 @@ _RESOURCE_LIMITS = {
     "postgres": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
     "caddy": (32 * 1024 * 1024, 48 * 1024 * 1024, 128),
     "api": (192 * 1024 * 1024, 320 * 1024 * 1024, 256),
-    "worker-interactive": (128 * 1024 * 1024, 224 * 1024 * 1024, 256),
+    "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
     "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
+    "nexus-codex-agent-host": (128 * 1024 * 1024, 384 * 1024 * 1024, 64),
     "migration": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
 }
 _MIGRATION_COMMAND = [
@@ -42,6 +44,16 @@ _MIGRATION_COMMAND = [
 CURRENT_SHA = "a" * 40
 CURRENT_DEPLOYMENT_ID = "dpl_Current123"
 _PUBLIC_HOSTS = frozenset({"api.example.test:443", "web.example.test:443"})
+_CODEX_IMAGE_ENVIRONMENT = [
+    "GPG_KEY=fake-gpg-key",
+    "LANG=C.UTF-8",
+    "NODE_ENV=production",
+    "NODE_INGEST_SCRIPT=/app/node/ingest/ingest.mjs",
+    "PATH=/app/.venv/bin:/usr/local/bin:/usr/bin:/bin",
+    "PYTHONPATH=/app",
+    "PYTHON_SHA256=" + "f" * 64,
+    "PYTHON_VERSION=3.12.13",
+]
 
 
 def _canonical_json(value: object) -> bytes:
@@ -111,6 +123,14 @@ def _write_bundle(root: Path, source_sha: str, manifest: dict[str, object]) -> t
         "Caddyfile": b"test-caddy\n",
         "candidate-manifest.json": _canonical_json(manifest),
         "docker-compose.yml": b"name: nexus\n",
+        "nexus-codex-agent-host.apparmor": (
+            b"abi <abi/4.0>,\n"
+            b"include <tunables/global>\n"
+            b"profile nexus-codex-agent-host flags=(unconfined) {\n"
+            b"  userns,\n"
+            b"}\n"
+        ),
+        "prove-codex-capacity.sh": b"#!/usr/bin/env bash\n# immutable capacity wrapper\n",
         "release.py": b"# immutable release controller\n",
         "python/nexus/__init__.py": b"",
         "python/nexus/release_artifact.py": b"# immutable artifact decoder\n",
@@ -123,6 +143,53 @@ def _write_bundle(root: Path, source_sha: str, manifest: dict[str, object]) -> t
         path.chmod(0o444)
         paths.append(path)
     return tuple(paths)
+
+
+def _write_codex_capacity_qualification(
+    root: Path, *, source_sha: str, worker_image_id: str
+) -> Path:
+    path = root / "var/lib/nexus/releases/codex-capacity" / f"{source_sha}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        _canonical_json(
+            {
+                "schema_version": "nexus-codex-capacity.v1",
+                "source_sha": source_sha,
+                "worker_image_id": worker_image_id,
+                "status": "passed",
+                "turns": [
+                    {
+                        "phase": phase,
+                        "terminal_status": "succeeded",
+                        "failure_kind": None,
+                        "usage_present": True,
+                        "sdk_version": "0.1.0",
+                        "runtime_version": "0.1.0",
+                        "tool_event_count": 0,
+                        "permission_event_count": 0,
+                    }
+                    for phase in ("cold", "warm_1", "warm_2")
+                ],
+                "cgroup_memory_max": 384 * 1024 * 1024,
+                "cgroup_memory_current": 32 * 1024 * 1024,
+                "cgroup_memory_peak": 64 * 1024 * 1024,
+                "minimum_mem_available": 256 * 1024 * 1024,
+                "maximum_memory_psi_some": 0.0,
+                "maximum_memory_psi_full": 0.0,
+                "oom_kill_delta": 0,
+                "services": [
+                    "postgres",
+                    "caddy",
+                    "api",
+                    "worker-interactive",
+                    "worker-background",
+                ],
+            }
+        )
+    )
+    path.chmod(0o444)
+    _root_own((path,))
+    return path
 
 
 def _read_http_headers(stream: Any) -> bytes:
@@ -344,7 +411,7 @@ class HostReleaseHarness:
         meminfo = root / "proc/meminfo"
         meminfo.parent.mkdir(parents=True)
         meminfo.write_text(
-            "MemTotal: 2097152 kB\nMemAvailable: 524288 kB\nSwapTotal: 1048576 kB\n",
+            "MemTotal: 4194304 kB\nMemAvailable: 524288 kB\nSwapTotal: 1048576 kB\n",
             encoding="ascii",
         )
         pressure = root / "proc/pressure/memory"
@@ -357,6 +424,9 @@ class HostReleaseHarness:
         controllers = root / "sys/fs/cgroup/cgroup.controllers"
         controllers.parent.mkdir(parents=True)
         controllers.write_text("cpu io memory pids\n", encoding="ascii")
+        userns_restriction = root / "proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+        userns_restriction.parent.mkdir(parents=True, exist_ok=True)
+        userns_restriction.write_text("1\n", encoding="ascii")
         immutable_inputs = (*candidate_bundle, *current_bundle, config_path, caddy_path)
 
         current_api_image_id = "sha256:" + "5" * 64
@@ -382,33 +452,69 @@ class HostReleaseHarness:
                 "7",
                 current_worker_image,
             ),
+            (
+                "nexus-codex-agent-host",
+                "a",
+                current_worker_image,
+            ),
         ):
             containers[service] = {
                 "id": character * 64,
                 "image_id": (
                     current_worker_image_id
-                    if service.startswith("worker-")
+                    if service.startswith("worker-") or service == "nexus-codex-agent-host"
                     else "sha256:" + character * 64
                 ),
                 "config": {
-                    "Env": [],
+                    "Env": (
+                        [
+                            "NEXUS_CODEX_STATE_ROOT_BASE=/var/lib/nexus-codex",
+                            "NEXUS_CODEX_WORKING_DIRECTORY=/var/empty/nexus-codex",
+                            "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
+                            *_CODEX_IMAGE_ENVIRONMENT,
+                        ]
+                        if service == "nexus-codex-agent-host"
+                        else []
+                    ),
                     "Image": image,
                     "Labels": {
                         "com.docker.compose.project": "nexus",
                         "com.docker.compose.service": service,
                     },
+                    **(
+                        {"User": "10001:10001", "WorkingDir": "/var/empty/nexus-codex"}
+                        if service == "nexus-codex-agent-host"
+                        else {}
+                    ),
                 },
                 "host_config": {
                     "MemoryReservation": _RESOURCE_LIMITS[service][0],
                     "Memory": _RESOURCE_LIMITS[service][1],
                     "MemorySwap": _RESOURCE_LIMITS[service][1],
                     "PidsLimit": _RESOURCE_LIMITS[service][2],
+                    **(
+                        {
+                            "CapDrop": ["ALL"],
+                            "MaskedPaths": [],
+                            "NanoCpus": 1_000_000_000,
+                            "ReadonlyRootfs": True,
+                            "ReadonlyPaths": [],
+                            "SecurityOpt": [
+                                "no-new-privileges:true",
+                                "seccomp=unconfined",
+                                "apparmor=nexus-codex-agent-host",
+                                "systempaths=unconfined",
+                            ],
+                        }
+                        if service == "nexus-codex-agent-host"
+                        else {}
+                    ),
                 },
                 "memory_usage": 16 * 1024 * 1024,
                 "oom_killed": False,
                 "pids": 8,
                 "restart_count": 0,
-                "running": True,
+                "running": service != "nexus-codex-agent-host",
             }
 
         state_path = root / "fake-docker-state.json"
@@ -428,12 +534,19 @@ class HostReleaseHarness:
                 "activation_api_image_id": api_image_id,
                 "activation_worker_image_id": worker_image_id,
                 "alembic_table_exists": True,
+                "apparmor_profile_load_count": 0,
+                "apparmor_profile_preflight_count": 0,
                 "ancestry_proofs": [],
                 "backup_dump_count": 0,
                 "backup_verify_count": 0,
                 "candidate_health_failures_remaining": 0,
                 "candidate_health_failure_delay_seconds": 0.0,
                 "candidate_health_probe_count": 0,
+                "codex_host_contract_mutation": None,
+                "codex_host_isolation_drift": None,
+                "codex_capacity_canary_isolation_drift": None,
+                "codex_capacity_canary_removal_failure": False,
+                "codex_host_startup_failure": False,
                 "candidate_health_wait_seconds": 0.0,
                 "candidate_revision": str(candidate["expected_database_revision"]),
                 "current_revision": "0210",
@@ -470,6 +583,11 @@ class HostReleaseHarness:
         release = _load_release(
             repo_root / "deploy/hetzner/release.py",
             "nexus_host_release_behavior_setup",
+        )
+        _write_codex_capacity_qualification(
+            root,
+            source_sha=source_sha,
+            worker_image_id=worker_image_id,
         )
         current_manifest_path = (
             root / "opt/nexus/releases" / CURRENT_SHA / "candidate-manifest.json"
@@ -537,16 +655,17 @@ class HostReleaseHarness:
 
         fake_bin = root / "fake-bin"
         fake_bin.mkdir()
-        executable = fake_bin / "docker"
         helper = Path(__file__).resolve()
-        executable.write_text(
-            f"#!{sys.executable}\n"
-            "import runpy, sys\n"
-            "sys.argv.insert(1, 'docker')\n"
-            f"runpy.run_path({str(helper)!r}, run_name='__main__')\n",
-            encoding="utf-8",
-        )
-        executable.chmod(0o755)
+        for command in ("apparmor_parser", "docker"):
+            executable = fake_bin / command
+            executable.write_text(
+                f"#!{sys.executable}\n"
+                "import runpy, sys\n"
+                f"sys.argv.insert(1, {command!r})\n"
+                f"runpy.run_path({str(helper)!r}, run_name='__main__')\n",
+                encoding="utf-8",
+            )
+            executable.chmod(0o755)
 
         tls_root = root / "tls"
         tls_root.mkdir()
@@ -681,6 +800,19 @@ class HostReleaseHarness:
         )
         return self._run_controller(driver, environment=environment)
 
+    def run_qualify_codex_capacity(self) -> subprocess.CompletedProcess[str]:
+        return self._run_controller(
+            (
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "qualify-codex-capacity",
+                str(self.repo_root / "deploy/hetzner/release.py"),
+                str(self.root),
+                self.source_sha,
+            ),
+            environment=self._environment(),
+        )
+
     def install_candidate(self, candidate: dict[str, object]) -> str:
         source_sha = str(candidate["source_sha"])
         source = self.root / "opt/nexus/releases" / self.source_sha
@@ -712,6 +844,11 @@ class HostReleaseHarness:
             worker_image=str(images["worker"]),
             candidate_worker_image=str(images["worker"]),
             candidate_active=False,
+        )
+        _write_codex_capacity_qualification(
+            self.root,
+            source_sha=source_sha,
+            worker_image_id=str(self.state()["candidate_worker_image_id"]),
         )
         return source_sha
 
@@ -805,14 +942,57 @@ def _container(state: dict[str, Any], container_id: str) -> dict[str, Any]:
 
 def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, object]:
     container = _container(state, container_id)
+    config = container["config"]
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    service = labels.get("com.docker.compose.service") if isinstance(labels, dict) else None
+    health: dict[str, object] = {"Status": "healthy"}
+    if service in {"worker-interactive", "worker-background"}:
+        active = bool(state["candidate_active"])
+        payload = {
+            "expected_database_revision": (
+                state["candidate_revision"] if active else state["current_revision"]
+            ),
+            "expected_oracle_manifest_digest": (
+                state["oracle_digest"] if active else state["current_oracle_digest"]
+            ),
+            "lane": service.removeprefix("worker-"),
+            "source_sha": state["candidate_source_sha"] if active else state["source_sha"],
+            "status": "ready",
+            "task_contract_digest": state["task_contract_digest"],
+        }
+        output = container.get("health_output_override")
+        ended_at = container.get("health_end_override")
+        if not isinstance(ended_at, str):
+            ended_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        health = {
+            "FailingStreak": 0,
+            "Log": [
+                {
+                    "End": ended_at,
+                    "ExitCode": 0,
+                    "Output": (
+                        output
+                        if isinstance(output, str)
+                        else _canonical_json(payload).decode("utf-8")
+                    ),
+                    "Start": ended_at,
+                }
+            ],
+            "Status": "healthy",
+        }
+        health_status = container.get("health_status_override")
+        if isinstance(health_status, str):
+            health["Status"] = health_status
     inspected: dict[str, object] = {
         "Config": container["config"],
         "HostConfig": container["host_config"],
         "Image": container["image_id"],
         "RestartCount": container["restart_count"],
         "State": {
-            "Health": {"Status": "healthy"},
+            "Health": health,
             "OOMKilled": container["oom_killed"],
+            "Paused": False,
+            "Restarting": False,
             "Running": container["running"],
         },
     }
@@ -847,6 +1027,57 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
                 "Type": "volume",
             },
         ]
+    if container_id == state["containers"]["nexus-codex-agent-host"]["id"]:
+        mounts: list[dict[str, object]] = [
+            {
+                "Destination": "/var/lib/nexus-codex",
+                "Name": "nexus_nexus_codex_state",
+                "RW": True,
+                "Source": "/var/lib/docker/volumes/nexus_nexus_codex_state/_data",
+                "Type": "volume",
+            },
+            {
+                "Destination": "/run/nexus-codex",
+                "Name": "nexus_nexus_codex_run",
+                "RW": True,
+                "Source": "/var/lib/docker/volumes/nexus_nexus_codex_run/_data",
+                "Type": "volume",
+            },
+        ]
+        mutation = state["codex_host_contract_mutation"]
+        if mutation == "environment_credential_residue":
+            container["config"]["Env"].append("AWS_SESSION_TOKEN=credential-residue")
+        elif mutation == "mount_wrong_named_volume":
+            mounts[0]["Name"] = "nexus_unapproved_state"
+        elif mutation == "mount_wrong_source":
+            mounts[1]["Source"] = "/var/lib/docker/volumes/nexus_unapproved_run/_data"
+        elif mutation == "mount_readonly_docker_socket":
+            mounts.append(
+                {
+                    "Destination": "/var/run/docker.sock",
+                    "RW": False,
+                    "Source": "/var/run/docker.sock",
+                    "Type": "bind",
+                }
+            )
+        elif mutation == "mount_readonly_host_home":
+            mounts.append(
+                {
+                    "Destination": "/host-home",
+                    "RW": False,
+                    "Source": "/home/nexus",
+                    "Type": "bind",
+                }
+            )
+        inspected["Mounts"] = mounts
+        inspected["NetworkSettings"] = {
+            "Networks": (
+                {"nexus_default": {}}
+                if state["codex_host_isolation_drift"] == "network"
+                else {"nexus_codex_egress": {}}
+            ),
+            "Ports": {},
+        }
     return inspected
 
 
@@ -914,10 +1145,53 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
         "90",
     ]:
         services = operation[6:]
-        state["candidate_active"] = True
+        state["candidate_active"] = any(service in _WRITERS for service in services)
         for service in services:
             container = state["containers"][service]
             container["running"] = True
+            reservation, memory, pids = _RESOURCE_LIMITS[service]
+            container["host_config"].update(
+                {
+                    "MemoryReservation": reservation,
+                    "Memory": memory,
+                    "MemorySwap": memory,
+                    "PidsLimit": pids,
+                }
+            )
+            if service == "nexus-codex-agent-host":
+                container["host_config"].update(
+                    {
+                        "CapDrop": ["ALL"],
+                        "MaskedPaths": [],
+                        "NanoCpus": 1_000_000_000,
+                        "ReadonlyRootfs": True,
+                        "ReadonlyPaths": [],
+                        "SecurityOpt": [
+                            "no-new-privileges:true",
+                            "seccomp=unconfined",
+                            "apparmor=nexus-codex-agent-host",
+                            "systempaths=unconfined",
+                        ],
+                    }
+                )
+                if state["codex_host_isolation_drift"] == "security":
+                    container["host_config"]["SecurityOpt"] = [
+                        "no-new-privileges:true",
+                        "seccomp=unconfined",
+                    ]
+                if state["codex_host_isolation_drift"] == "systempaths_missing":
+                    container["host_config"]["SecurityOpt"] = [
+                        "no-new-privileges:true",
+                        "seccomp=unconfined",
+                        "apparmor=nexus-codex-agent-host",
+                    ]
+                if state["codex_host_isolation_drift"] == "systempaths_mutated":
+                    container["host_config"]["SecurityOpt"] = [
+                        "no-new-privileges:true",
+                        "seccomp=unconfined",
+                        "apparmor=nexus-codex-agent-host",
+                        "systempaths=confined",
+                    ]
             if service == "api":
                 container["image_id"] = state["activation_api_image_id"]
                 container["config"]["Image"] = state["candidate_api_image"]
@@ -925,6 +1199,9 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                 container["image_id"] = state["activation_worker_image_id"]
                 container["config"]["Image"] = state["candidate_worker_image"]
         state["service_mutations"].append({"operation": "up", "services": services})
+        if services == ["nexus-codex-agent-host"] and state["codex_host_startup_failure"] is True:
+            _save_state(Path(os.environ["NEXUS_FAKE_DOCKER_STATE"]), state)
+            raise SystemExit(72)
         remaining = state["candidate_health_failures_remaining"]
         if remaining < 0:
             state["candidate_health_probe_count"] += 1
@@ -999,40 +1276,22 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
         else:
             raise AssertionError(f"unsupported fake API command: {command}")
         return
-    if operation[:3] == ["exec", "-T", "worker-interactive"]:
-        active = bool(state["candidate_active"])
-        _write_json(
-            {
-                "expected_database_revision": (
-                    state["candidate_revision"] if active else state["current_revision"]
-                ),
-                "expected_oracle_manifest_digest": (
-                    state["oracle_digest"] if active else state["current_oracle_digest"]
-                ),
-                "lane": "interactive",
-                "source_sha": state["candidate_source_sha"] if active else state["source_sha"],
-                "status": "ready",
-                "task_contract_digest": state["task_contract_digest"],
-            }
-        )
-        return
-    if operation[:3] == ["exec", "-T", "worker-background"]:
-        active = bool(state["candidate_active"])
-        _write_json(
-            {
-                "expected_database_revision": (
-                    state["candidate_revision"] if active else state["current_revision"]
-                ),
-                "expected_oracle_manifest_digest": (
-                    state["oracle_digest"] if active else state["current_oracle_digest"]
-                ),
-                "lane": "background",
-                "source_sha": state["candidate_source_sha"] if active else state["source_sha"],
-                "status": "ready",
-                "task_contract_digest": state["task_contract_digest"],
-            }
-        )
-        return
+    if operation[:3] == ["exec", "-T", "nexus-codex-agent-host"]:
+        command = operation[3:]
+        if command == ["python", "-m", "apps.codex_agent.sandbox_health"]:
+            return
+        if command == ["python", "-m", "apps.codex_agent.health"]:
+            _write_json(
+                {
+                    "auth_profile": "codex-personal",
+                    "backend": "codex",
+                    "schema_version": "nexus-agent-health.v1",
+                    "status": "ready",
+                    "transport": "sdk",
+                }
+            )
+            return
+        raise AssertionError(f"unsupported fake Codex agent host command: {command!r}")
     if operation[:2] == ["run", "--name"]:
         name = operation[2]
         service = operation[5]
@@ -1128,15 +1387,83 @@ def fake_docker_main() -> int:
         _write_json(
             [
                 {
-                    "Config": {"Labels": {"org.opencontainers.image.revision": source_sha}},
+                    "Config": {
+                        "Env": _CODEX_IMAGE_ENVIRONMENT,
+                        "Labels": {"org.opencontainers.image.revision": source_sha},
+                    },
                     "Id": image_id,
+                }
+            ]
+        )
+    elif arguments[:2] == ["volume", "inspect"]:
+        volume = arguments[2]
+        mountpoints = {
+            "nexus_nexus_codex_state": "/var/lib/docker/volumes/nexus_nexus_codex_state/_data",
+            "nexus_nexus_codex_run": "/var/lib/docker/volumes/nexus_nexus_codex_run/_data",
+        }
+        mountpoint = mountpoints.get(volume)
+        if mountpoint is None:
+            raise AssertionError(f"unknown fake volume {volume!r}")
+        _write_json(
+            [
+                {
+                    "Driver": "local",
+                    "Mountpoint": mountpoint,
+                    "Name": volume,
+                    "Options": {},
+                    "Scope": "local",
                 }
             ]
         )
     elif arguments[0] == "pull":
         pass
     elif arguments[0] == "run":
-        if "cat" in arguments and "/app/runtime-identity.json" in arguments:
+        if arguments[:3] == ["run", "--detach", "--name"]:
+            name = arguments[3]
+            reservation, memory, pids = _RESOURCE_LIMITS["nexus-codex-agent-host"]
+            expected = [
+                "run",
+                "--detach",
+                "--name",
+                name,
+                "--network",
+                "none",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges:true",
+                "--cpus",
+                "1.0",
+                "--memory-reservation",
+                str(reservation),
+                "--memory",
+                str(memory),
+                "--memory-swap",
+                str(memory),
+                "--pids-limit",
+                str(pids),
+                "--user",
+                "10001:10001",
+                "--env",
+                "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
+                "--mount",
+                "type=volume,src=nexus_nexus_codex_run,dst=/run/nexus-codex,readonly",
+                "--entrypoint",
+                "sh",
+                state["candidate_worker_image"],
+                "-c",
+                "while :; do sleep 3600; done",
+            ]
+            if not name.startswith("nexus-codex-capacity-") or arguments != expected:
+                raise AssertionError("Codex capacity canary differs from fixed contract")
+            state["capacity_canary"] = {
+                "id": "c" * 64,
+                "name": name,
+                "running": True,
+            }
+            sys.stdout.write("c" * 64 + "\n")
+        elif "cat" in arguments and "/app/runtime-identity.json" in arguments:
             image = arguments[-2]
             active = image in {
                 state["candidate_api_image"],
@@ -1189,6 +1516,9 @@ def fake_docker_main() -> int:
         job = state["jobs"].get(name)
         if job is not None:
             sys.stdout.write(str(job["id"]) + "\n")
+        canary = state.get("capacity_canary")
+        if isinstance(canary, dict) and canary.get("name") == name:
+            sys.stdout.write(str(canary["id"]) + "\n")
     elif arguments[:2] == ["ps", "--quiet"] and set(arguments[2:]) <= {"--no-trunc"}:
         # Real `docker ps --quiet` truncates to 12 characters unless --no-trunc
         # is given; callers that compare against full Compose ids must ask for
@@ -1245,6 +1575,37 @@ def fake_docker_main() -> int:
             }
         )
         sys.stdout.write(container_id + "\n")
+    elif arguments[:2] == ["exec", "c" * 64]:
+        command = arguments[2:]
+        if command == ["python", "-m", "apps.codex_agent.capacity_canary"]:
+            _write_json(
+                {
+                    "schema_version": "nexus-codex-capacity-canary.v1",
+                    "status": "passed",
+                    "turns": [
+                        {
+                            "phase": phase,
+                            "terminal_status": "succeeded",
+                            "failure_kind": None,
+                            "usage_present": True,
+                            "sdk_version": "0.1.0",
+                            "runtime_version": "0.1.0",
+                            "tool_event_count": 0,
+                            "permission_event_count": 0,
+                        }
+                        for phase in ("cold", "warm_1", "warm_2")
+                    ],
+                }
+            )
+        else:
+            raise AssertionError(f"unsupported fake capacity canary command: {command!r}")
+    elif arguments[:2] == ["exec", str(state["containers"]["nexus-codex-agent-host"]["id"])]:
+        command = arguments[2:]
+        if command[:2] != ["sh", "-c"]:
+            raise AssertionError(f"unsupported fake capacity host command: {command!r}")
+        sys.stdout.write(
+            "memory.max=402653184\nmemory.current=33554432\nmemory.peak=67108864\noom_kill=0\n"
+        )
     elif arguments[0] == "inspect":
         if arguments[1:3] == ["--format", "{{.State.Running}}"]:
             container = _container(state, arguments[3])
@@ -1256,6 +1617,78 @@ def fake_docker_main() -> int:
             sys.stdout.write("healthy\n")
         else:
             target = arguments[1]
+            canary = state.get("capacity_canary")
+            if isinstance(canary, dict) and target == canary.get("id"):
+                reservation, memory, pids = _RESOURCE_LIMITS["nexus-codex-agent-host"]
+                isolation_drift = state["codex_capacity_canary_isolation_drift"]
+                _write_json(
+                    [
+                        {
+                            "Config": {
+                                "Cmd": ["-c", "while :; do sleep 3600; done"],
+                                "Entrypoint": ["sh"],
+                                "Env": [
+                                    *_CODEX_IMAGE_ENVIRONMENT,
+                                    "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
+                                ],
+                                "Image": state["candidate_worker_image"],
+                                "User": "10001:10001",
+                            },
+                            "HostConfig": {
+                                "CapDrop": ["ALL"],
+                                "MemoryReservation": reservation,
+                                "Memory": memory,
+                                "MemorySwap": memory,
+                                "NanoCpus": 1_000_000_000,
+                                "NetworkMode": "none",
+                                "PidsLimit": pids,
+                                "ReadonlyRootfs": True,
+                                "SecurityOpt": ["no-new-privileges:true"],
+                            },
+                            "Image": state["candidate_worker_image_id"],
+                            "Mounts": (
+                                [
+                                    {
+                                        "Destination": "/var/lib/nexus-codex",
+                                        "Name": "nexus_nexus_codex_state",
+                                        "RW": True,
+                                        "Source": "/var/lib/docker/volumes/nexus_nexus_codex_state/_data",
+                                        "Type": "volume",
+                                    },
+                                    {
+                                        "Destination": "/run/nexus-codex",
+                                        "Name": "nexus_nexus_codex_run",
+                                        "RW": True,
+                                        "Source": "/var/lib/docker/volumes/nexus_nexus_codex_run/_data",
+                                        "Type": "volume",
+                                    },
+                                ]
+                                if isolation_drift == "credential_mount_and_network_peer"
+                                else [
+                                    {
+                                        "Destination": "/run/nexus-codex",
+                                        "Name": "nexus_nexus_codex_run",
+                                        "RW": False,
+                                        "Source": "/var/lib/docker/volumes/nexus_nexus_codex_run/_data",
+                                        "Type": "volume",
+                                    }
+                                ]
+                            ),
+                            "Name": f"/{canary['name']}",
+                            "NetworkSettings": {
+                                "Networks": (
+                                    {"nexus_codex_egress": {}}
+                                    if isolation_drift == "credential_mount_and_network_peer"
+                                    else {"none": {}}
+                                ),
+                                "Ports": {},
+                            },
+                            "State": {"Health": {"Status": "healthy"}, "Running": True},
+                        }
+                    ]
+                )
+                _save_state(state_path, state)
+                return 0
             try:
                 _write_json([_container_inspect(state, target)])
             except AssertionError:
@@ -1279,6 +1712,61 @@ def fake_docker_main() -> int:
                         }
                     ]
                 )
+    elif arguments[:2] == ["network", "inspect"]:
+        if arguments[2:] != ["nexus_codex_egress"]:
+            raise AssertionError("unexpected fake Codex host network inspect")
+        host = state["containers"]["nexus-codex-agent-host"]
+        containers = {str(host["id"]): {"Name": "nexus-nexus-codex-agent-host-1"}}
+        canary = state.get("capacity_canary")
+        if (
+            isinstance(canary, dict)
+            and state["codex_capacity_canary_isolation_drift"]
+            == "credential_mount_and_network_peer"
+        ):
+            containers[str(canary["id"])] = {"Name": str(canary["name"])}
+        if state["codex_host_isolation_drift"] == "network_peer":
+            postgres = state["containers"]["postgres"]
+            containers[str(postgres["id"])] = {"Name": "nexus-postgres-1"}
+        network: dict[str, object] = {
+            "Containers": containers,
+            "Driver": "bridge",
+            "IPAM": {
+                "Config": [{"Gateway": "172.29.0.1", "Subnet": "172.29.0.0/16"}],
+                "Driver": "default",
+                "Options": None,
+            },
+            "Internal": False,
+            "Name": "nexus_codex_egress",
+            "Options": {},
+            "Scope": "local",
+        }
+        mutation = state["codex_host_contract_mutation"]
+        if mutation == "network_driver":
+            network["Driver"] = "overlay"
+        elif mutation == "network_scope":
+            network["Scope"] = "swarm"
+        elif mutation == "network_internal":
+            network["Internal"] = True
+        elif mutation == "network_options":
+            network["Options"] = {"com.docker.network.bridge.enable_icc": "true"}
+        elif mutation == "network_ipam":
+            network["IPAM"] = {
+                "Config": [{"Gateway": "172.29.0.1", "Subnet": "172.29.0.0/16"}],
+                "Driver": "overlay",
+                "Options": None,
+            }
+        _write_json([network])
+    elif arguments[:4] == ["ps", "--all", "--quiet", "--filter"]:
+        if len(arguments) != 5:
+            raise AssertionError("unexpected fake Docker container listing")
+        name_filter = arguments[4]
+        prefix = "name=^/"
+        if not name_filter.startswith(prefix) or not name_filter.endswith("$"):
+            raise AssertionError("unexpected fake Docker container name filter")
+        name = name_filter[len(prefix) : -1]
+        canary = state.get("capacity_canary")
+        if isinstance(canary, dict) and name == canary.get("name"):
+            sys.stdout.write(str(canary["id"]) + "\n")
     elif arguments[0] == "start":
         container = _container(state, arguments[1])
         container["running"] = True
@@ -1289,7 +1777,7 @@ def fake_docker_main() -> int:
         job = next(item for item in state["jobs"].values() if item["id"] == target)
         sys.stdout.write(str(job["logs"]))
     elif arguments[0] == "rm":
-        target = arguments[1]
+        target = arguments[-1]
         name = next(
             (
                 name
@@ -1300,8 +1788,38 @@ def fake_docker_main() -> int:
         )
         if name is not None:
             del state["jobs"][name]
+        canary = state.get("capacity_canary")
+        if isinstance(canary, dict) and target in {canary.get("id"), canary.get("name")}:
+            if state["codex_capacity_canary_removal_failure"] is True:
+                _save_state(state_path, state)
+                return 72
+            del state["capacity_canary"]
     else:
         raise AssertionError(f"unsupported fake Docker command: {arguments!r}")
+    _save_state(state_path, state)
+    return 0
+
+
+def fake_apparmor_parser_main() -> int:
+    state_path = Path(os.environ["NEXUS_FAKE_DOCKER_STATE"])
+    state = _load_state(state_path)
+    root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
+    profile = root / "etc/apparmor.d/nexus-codex-agent-host"
+    expected = (
+        root
+        / "opt/nexus/releases"
+        / str(state["candidate_source_sha"])
+        / "nexus-codex-agent-host.apparmor"
+    )
+    if sys.argv[2:] == ["-Q", str(expected)]:
+        state["apparmor_profile_preflight_count"] += 1
+        _save_state(state_path, state)
+        return 0
+    if sys.argv[2:] != ["-r", str(profile)]:
+        raise AssertionError("AppArmor profile command differs from fixed release contract")
+    if profile.read_bytes() != expected.read_bytes():
+        raise AssertionError("loaded AppArmor profile differs from immutable bundle")
+    state["apparmor_profile_load_count"] += 1
     _save_state(state_path, state)
     return 0
 
@@ -1360,6 +1878,16 @@ def verify_current_main(arguments: list[str]) -> int:
     return 0
 
 
+def qualify_codex_capacity_main(arguments: list[str]) -> int:
+    _drop_to_test_group()
+    release_path, root, source_sha = arguments
+    release = _load_release(Path(release_path), "nexus_host_release_capacity_driver")
+    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    host.qualify_codex_capacity(source_sha)
+    sys.stdout.buffer.write(_canonical_json({"source_sha": source_sha, "status": "passed"}))
+    return 0
+
+
 def fail_bound_frontend_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id = arguments
@@ -1391,12 +1919,16 @@ def main() -> int:
         raise AssertionError("host release test helper requires a command")
     if sys.argv[1] == "docker":
         return fake_docker_main()
+    if sys.argv[1] == "apparmor_parser":
+        return fake_apparmor_parser_main()
     if sys.argv[1] == "apply":
         return apply_main(sys.argv[2:])
     if sys.argv[1] == "finalize":
         return finalize_main(sys.argv[2:])
     if sys.argv[1] == "verify-current":
         return verify_current_main(sys.argv[2:])
+    if sys.argv[1] == "qualify-codex-capacity":
+        return qualify_codex_capacity_main(sys.argv[2:])
     if sys.argv[1] == "fail-bound-frontend":
         return fail_bound_frontend_main(sys.argv[2:])
     if sys.argv[1] == "fail-auth-smoke":

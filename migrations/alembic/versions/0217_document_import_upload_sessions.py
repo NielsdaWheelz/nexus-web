@@ -1,7 +1,7 @@
 """Create durable upload intent and nullable immutable-source digest storage.
 
-Revision ID: 0216
-Revises: 0215
+Revision ID: 0217
+Revises: 0216
 Create Date: 2026-08-14
 """
 
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0216"
-down_revision: str | Sequence[str] | None = "0215"
+revision: str = "0217"
+down_revision: str | Sequence[str] | None = "0216"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -127,4 +127,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0216 is an irreversible document-import hard cutover")
+    raise NotImplementedError("0217 is an irreversible document-import hard cutover")

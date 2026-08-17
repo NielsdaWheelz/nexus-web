@@ -80,8 +80,8 @@ services:
     image: ${WORKER_IMAGE:?set an immutable candidate digest}
     restart: unless-stopped
     mem_reservation: 128m
-    mem_limit: 224m
-    memswap_limit: 224m
+    mem_limit: 256m
+    memswap_limit: 256m
     pids_limit: 256
     env_file:
       - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
@@ -95,7 +95,7 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-m", "apps.worker.health", "--lane", "interactive"]
+      test: ["CMD", "python", "-S", "-m", "apps.worker.health", "--lane", "interactive"]
       interval: 5s
       timeout: 3s
       retries: 6
@@ -122,17 +122,70 @@ services:
       BACKGROUND_PROCESS_TERM_GRACE_SECONDS: "5"
       BACKGROUND_PROCESS_RESULT_MAX_BYTES: "1048576"
       BACKGROUND_PROCESS_OOM_SCORE_ADJ: "750"
+      NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - /var/lib/nexus/parser-tmp:/var/lib/nexus/parser-tmp
+      - nexus_codex_run:/run/nexus-codex:ro
     healthcheck:
-      test: ["CMD", "python", "-m", "apps.worker.health", "--lane", "background"]
+      test: ["CMD", "python", "-S", "-m", "apps.worker.health", "--lane", "background"]
       interval: 5s
       timeout: 3s
       retries: 6
       start_period: 10s
+    logging: *default-logging
+
+  nexus-codex-agent-host:
+    image: ${WORKER_IMAGE:?set an immutable candidate digest}
+    restart: unless-stopped
+    mem_reservation: 128m
+    mem_limit: 384m
+    memswap_limit: 384m
+    pids_limit: 64
+    cpus: 1.0
+    command: ["python", "-m", "apps.codex_agent.main"]
+    user: "10001:10001"
+    environment:
+      NEXUS_CODEX_STATE_ROOT_BASE: /var/lib/nexus-codex
+      NEXUS_CODEX_WORKING_DIRECTORY: /var/empty/nexus-codex
+      NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock
+    working_dir: /var/empty/nexus-codex
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      # The trusted outer host must be able to construct Codex's stricter
+      # bwrap+seccomp child sandbox. It remains non-root, capability-free,
+      # read-only, and release-gated on the real inner sandbox probe.
+      - seccomp=unconfined
+      - apparmor=nexus-codex-agent-host
+      - systempaths=unconfined
+    networks:
+      - codex_egress
+    init: true
+    stop_grace_period: 15s
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    ulimits:
+      core: 0
+      fsize: 1048576
+      nofile: 64
+    volumes:
+      - nexus_codex_state:/var/lib/nexus-codex
+      - nexus_codex_run:/run/nexus-codex
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -m apps.codex_agent.health",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     logging: *default-logging
 
   migration:
@@ -154,3 +207,9 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+  nexus_codex_state:
+  nexus_codex_run:
+
+networks:
+  codex_egress:
+    driver: bridge

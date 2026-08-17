@@ -154,9 +154,9 @@ Add non-null `source_sha256 TEXT`. It is the lowercase 64-character digest of th
 This is a maintenance-window hard cut, not expand/contract compatibility:
 
 1. Stop API and both workers; keep PostgreSQL and object storage available.
-2. Migration `0216` creates the session tables and adds a temporarily nullable digest column.
+2. Migration `0217` creates the session tables and adds a temporarily nullable digest column.
 3. A resumable migration-owned backfill streams every existing `media_file`, verifies stored size/signature, and writes the measured digest. Missing or changed objects fail the release; never invent a digest.
-4. Migration `0217` asserts zero null/invalid digests, makes the column non-null, and removes stale upload/index schema residue.
+4. Migration `0218` asserts zero null/invalid digests, makes the column non-null, and removes stale upload/index schema residue.
 5. Start only the new runtime and run the acceptance smoke. No released runtime reads or writes the intermediate shape.
 
 The backfill implementation lives with migration artifacts, is covered against PostgreSQL and MinIO, and is not imported by runtime code.
@@ -236,7 +236,7 @@ Historical migrations and historical decision documents remain history. Runtime 
 
 | Slice | Owns | May not edit |
 | --- | --- | --- |
-| A. Persistence/identity | `migrations/alembic/versions/0216*`, `0217*`, migration backfill, `python/nexus/db/models.py`, `services/sealed_handles.py`, `storage/paths.py` | API, worker, parser, web |
+| A. Persistence/identity | `migrations/alembic/versions/0217*`, `0218*`, migration backfill, `python/nexus/db/models.py`, `services/sealed_handles.py`, `storage/paths.py` | API, worker, parser, web |
 | B. Upload/API | new `services/media_upload_sessions.py`, `media_source_ingest.py`, `schemas/media.py`, `api/routes/media_ingest.py`, storage final-sweep, errors | worker executor, parsers, web |
 | C. Worker isolation | `python/nexus/jobs/{worker,registry,process_executor}.py`, `apps/worker/main.py`, `python/nexus/config.py`, background service in `deploy/hetzner/docker-compose.yml` | upload/API, parsers, web |
 | D. Parser safety | `python/nexus/services/{pdf_ingest,epub_ingest,parser_temp}.py` and bounded parser fixtures/tests | worker, API, DB, web |

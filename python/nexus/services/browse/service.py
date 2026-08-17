@@ -6,10 +6,10 @@ from typing import assert_never
 from urllib.parse import quote
 from uuid import UUID
 
+from llm_tools import WebSearchProvider
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
-from web_search_tool.types import WebSearchProvider
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, InvalidRequestError

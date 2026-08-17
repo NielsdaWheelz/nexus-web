@@ -746,6 +746,16 @@ wheels = [
 ]
 
 [[package]]
+name = "llm-tools"
+version = "0.1.0"
+source = { git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=667e5121268189d6fe1202c244d5ce64e8b096d1#667e5121268189d6fe1202c244d5ce64e8b096d1" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "rfc8785" },
+]
+
+[[package]]
 name = "lxml"
 version = "6.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -984,9 +994,10 @@ dependencies = [
     { name = "fastapi" },
     { name = "html5lib" },
     { name = "httpx" },
+    { name = "llm-tools" },
     { name = "lxml" },
     { name = "pillow" },
-    { name = "provider-runtime" },
+    { name = "provider-runtime", extra = ["llm-tools"] },
     { name = "psycopg-binary" },
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -998,11 +1009,13 @@ dependencies = [
     { name = "structlog" },
     { name = "uuid6" },
     { name = "uvicorn", extra = ["standard"] },
-    { name = "web-search-tool" },
     { name = "youtube-transcript-api" },
 ]
 
 [package.optional-dependencies]
+codex-agent = [
+    { name = "provider-runtime", extra = ["codex-sdk"] },
+]
 dev = [
     { name = "cryptography" },
     { name = "httpx2" },
@@ -1027,10 +1040,12 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.9.1" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.151.9" },
+    { name = "llm-tools", git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=667e5121268189d6fe1202c244d5ce64e8b096d1" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.9.0" },
-    { name = "provider-runtime", git = "https://github.com/NielsdaWheelz/llm-calling?rev=f080686aee5889b341304108b796ed2b1de1d614" },
+    { name = "provider-runtime", extras = ["llm-tools"], git = "https://github.com/NielsdaWheelz/llm-calling?rev=da91e65836562f8367da239f8be5dd06719dc654" },
+    { name = "provider-runtime", extras = ["codex-sdk"], marker = "extra == 'codex-agent'", git = "https://github.com/NielsdaWheelz/llm-calling?rev=da91e65836562f8367da239f8be5dd06719dc654" },
     { name = "psycopg-binary", specifier = ">=3.1.0" },
     { name = "pydantic-settings", specifier = ">=2.6.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.13.0" },
@@ -1047,11 +1062,10 @@ requires-dist = [
     { name = "structlog", specifier = ">=24.1.0" },
     { name = "uuid6", specifier = ">=2025.0.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
-    { name = "web-search-tool", git = "https://github.com/NielsdaWheelz/web-search-tool?rev=ce911344a2e31900eaee3039b5d61109ef54bcb1" },
     { name = "youtube-transcript-api", specifier = ">=1.2.4" },
     { name = "zizmor", marker = "extra == 'dev'", specifier = ">=1.24.1" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["codex-agent", "dev"]
 
 [[package]]
 name = "nodeenv"
@@ -1079,6 +1093,34 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ef/cf/36e3e7235fdf6d125c052acc0970924611b17a20a4fe580596faf4566a65/openai-2.53.0.tar.gz", hash = "sha256:baf5802ad08980e1d9d561e1b996e800c8bcd14af5847c6d0e7a5cc59e4d4116", size = 1099435, upload-time = "2026-08-03T21:42:01.664Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/78/0f/cc6afea3542a5142c5d8fc8211c5e059a8375105d004a41dfa2c7948dbb0/openai-2.53.0-py3-none-any.whl", hash = "sha256:c694ffc747a3c4d1663ef2b07b811315a476164ee5efa3a993967349ebca7618", size = 1659829, upload-time = "2026-08-03T21:41:59.581Z" },
+]
+
+[[package]]
+name = "openai-codex"
+version = "0.144.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openai-codex-cli-bin" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b9/7d/4b999b0ddd05c22d83cc2e879c95e1e92e3b7808b58ac561c4ea91fca1c4/openai_codex-0.144.4.tar.gz", hash = "sha256:91c63a7cb213441569f130e593386b34657ab9e726ae88af255f0ecb8de08ea5", size = 68324, upload-time = "2026-07-17T23:42:17.013Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/17/35/5d2a13e38d91278019f18757ac10426d2649b7ec6f031818c792f64559e9/openai_codex-0.144.4-py3-none-any.whl", hash = "sha256:de1513a6e94b9a8d7728a3b74298bc1469428ade10ba0ef2d5db47dd1cb606f5", size = 76244, upload-time = "2026-07-17T23:42:15.658Z" },
+]
+
+[[package]]
+name = "openai-codex-cli-bin"
+version = "0.144.4"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/30/7e457c007a32aa7333a78438a9f532504c3b77a1ea57e7808855712c2c0f/openai_codex_cli_bin-0.144.4-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:4d587d152d5f0aa25f21ded4d08aac5150da48639b29fc3e57b2a8b413d06903", size = 126851183, upload-time = "2026-07-15T00:14:00.171Z" },
+    { url = "https://files.pythonhosted.org/packages/65/eb/64c180514a2cc3e2500e486813f5a8d7f7e349342e9bebd78d99ddd9791a/openai_codex_cli_bin-0.144.4-py3-none-macosx_11_0_arm64.whl", hash = "sha256:05db505a9c7f020f58b70837a94e00d32a50086986c267bcc44ea97b573d4a05", size = 116474758, upload-time = "2026-07-15T00:14:08.177Z" },
+    { url = "https://files.pythonhosted.org/packages/85/34/921ab692c7ed140941a91e39b84c6deafddb45072793f3a5f6dcbf86f59a/openai_codex_cli_bin-0.144.4-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:cd4bb31b8a477a3adba22139c8c493693fa5292ba21e86eef08ace3e96c41294", size = 119437596, upload-time = "2026-07-15T00:14:17.418Z" },
+    { url = "https://files.pythonhosted.org/packages/25/62/39e630cf8b7b2e2444a5a6669235a6cd88004869a25bb7f3f629ed35638c/openai_codex_cli_bin-0.144.4-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:4106229c38f37245c3eea8d904426afd45b8bf19831765715647f5402f757c06", size = 128817757, upload-time = "2026-07-15T00:14:30.539Z" },
+    { url = "https://files.pythonhosted.org/packages/23/24/318f91a95baaff845307e529d138d42a7202e6bd0e626556058eab3dead5/openai_codex_cli_bin-0.144.4-py3-none-musllinux_1_1_aarch64.whl", hash = "sha256:d2d3fada11731938e3d3e3660819d5324b7f92e825a0ed5aede63100b36ffc9a", size = 119437594, upload-time = "2026-07-15T00:14:39.327Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/a0/65e6fd3a6fba52639937801d9ce517b0c48026458723bb9f08eb07a1dd35/openai_codex_cli_bin-0.144.4-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:70fb62ed7755e332dd8b00ed48e22ee16df10f4a977335039e237cd330490df3", size = 128817755, upload-time = "2026-07-15T00:14:47.849Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/8a/3ab5fc97352e8f780d472c8dd6d7504d6a670cd7dede106d461ac1171999/openai_codex_cli_bin-0.144.4-py3-none-win_amd64.whl", hash = "sha256:56e142974467332f1f669b89f2636e06b3ada09413512abb2f24c33b4a4f59fc", size = 140595092, upload-time = "2026-07-15T00:14:58.484Z" },
+    { url = "https://files.pythonhosted.org/packages/70/1a/3aa52ab8f89e0f596b6eea835e3f3494697da51917d3231f5f48f92e2bcb/openai_codex_cli_bin-0.144.4-py3-none-win_arm64.whl", hash = "sha256:2ad01058db7181323ae7c6217e560702e38c4f107595b99ab1d0abc9f184890a", size = 130665105, upload-time = "2026-07-15T00:15:08.861Z" },
 ]
 
 [[package]]
@@ -1258,7 +1300,7 @@ wheels = [
 [[package]]
 name = "provider-runtime"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-calling?rev=f080686aee5889b341304108b796ed2b1de1d614#f080686aee5889b341304108b796ed2b1de1d614" }
+source = { git = "https://github.com/NielsdaWheelz/llm-calling?rev=da91e65836562f8367da239f8be5dd06719dc654#da91e65836562f8367da239f8be5dd06719dc654" }
 dependencies = [
     { name = "anthropic" },
     { name = "google-genai" },
@@ -1266,6 +1308,15 @@ dependencies = [
     { name = "openai" },
     { name = "opentelemetry-api" },
     { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+llm-tools = [
+    { name = "llm-tools" },
+]
+codex-sdk = [
+    { name = "openai-codex" },
+    { name = "openai-codex-cli-bin" },
 ]
 
 [[package]]
@@ -1743,6 +1794,15 @@ wheels = [
 ]
 
 [[package]]
+name = "rfc8785"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/2f/fa1d2e740c490191b572d33dbca5daa180cb423c24396b856f5886371d8b/rfc8785-0.1.4.tar.gz", hash = "sha256:e545841329fe0eee4f6a3b44e7034343100c12b4ec566dc06ca9735681deb4da", size = 14321, upload-time = "2024-09-27T16:33:31.206Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/78/119878110660b2ad709888c8a1614fce7e2fab39080ab960656dc8605bf6/rfc8785-0.1.4-py3-none-any.whl", hash = "sha256:520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48", size = 9240, upload-time = "2024-09-27T16:33:29.683Z" },
+]
+
+[[package]]
 name = "rich"
 version = "15.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2158,14 +2218,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4f/55/2af26693fd15165c4ff7857e38330e1b61ab8c37d15dc79118cdba115b7a/watchfiles-1.1.1-cp314-cp314t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8c91ed27800188c2ae96d16e3149f199d62f86c7af5f5f4d2c61a3ed8cd3666c", size = 455072, upload-time = "2025-10-14T15:05:48.928Z" },
     { url = "https://files.pythonhosted.org/packages/66/1d/d0d200b10c9311ec25d2273f8aad8c3ef7cc7ea11808022501811208a750/watchfiles-1.1.1-cp314-cp314t-musllinux_1_1_aarch64.whl", hash = "sha256:311ff15a0bae3714ffb603e6ba6dbfba4065ab60865d15a6ec544133bdb21099", size = 629104, upload-time = "2025-10-14T15:05:49.908Z" },
     { url = "https://files.pythonhosted.org/packages/e3/bd/fa9bb053192491b3867ba07d2343d9f2252e00811567d30ae8d0f78136fe/watchfiles-1.1.1-cp314-cp314t-musllinux_1_1_x86_64.whl", hash = "sha256:a916a2932da8f8ab582f242c065f5c81bed3462849ca79ee357dd9551b0e9b01", size = 622112, upload-time = "2025-10-14T15:05:50.941Z" },
-]
-
-[[package]]
-name = "web-search-tool"
-version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/web-search-tool?rev=ce911344a2e31900eaee3039b5d61109ef54bcb1#ce911344a2e31900eaee3039b5d61109ef54bcb1" }
-dependencies = [
-    { name = "httpx" },
 ]
 
 [[package]]

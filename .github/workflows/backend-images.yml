@@ -180,6 +180,10 @@ jobs:
             release-bundle/python/nexus/release_artifact.py
           install -Dm0444 deploy/hetzner/docker-compose.yml release-bundle/docker-compose.yml
           install -Dm0444 deploy/hetzner/Caddyfile release-bundle/Caddyfile
+          install -Dm0444 deploy/hetzner/nexus-codex-agent-host.apparmor \
+            release-bundle/nexus-codex-agent-host.apparmor
+          install -Dm0444 deploy/hetzner/prove-codex-capacity.sh \
+            release-bundle/prove-codex-capacity.sh
 
       - name: Prove digest references are public
         shell: bash

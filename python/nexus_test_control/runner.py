@@ -9,6 +9,7 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import tarfile
 import threading
@@ -28,6 +29,7 @@ import psycopg
 from botocore.exceptions import BotoCoreError
 from sqlalchemy.exc import SQLAlchemyError
 
+from nexus.ops.codex_hosted_evidence import codex_hosted_evidence_is_valid
 from nexus_test_control import android_visual
 from nexus_test_control.build import StandaloneBuild, ensure_standalone_build
 from nexus_test_control.evidence import (
@@ -164,6 +166,7 @@ _PYTHON_POLICY_DIRS = (
     "python/tests/kernel",
     "python/tests/service",
     "python/tests/contract",
+    "python/tests/llm_tools_contract",
     "python/tests/migrations",
     "python/tests/evals",
     "python/tests/audit",
@@ -269,11 +272,13 @@ _HEAVY_CAPABILITIES = frozenset(
         Capability.JOURNEYS_CRITICAL,
         Capability.JOURNEYS_ALL,
         Capability.PROVIDER_RUNTIME,
+        Capability.LLM_TOOLS,
         Capability.LLM_EVAL,
         Capability.EXTENSION,
         Capability.ANDROID_HOST,
         Capability.AUDIT,
         Capability.HOSTED,
+        Capability.CODEX_HOSTED,
         Capability.ANDROID_DEVICE,
         Capability.PROVIDER_CERTIFICATION,
         Capability.ANDROID_RELEASE,
@@ -317,6 +322,73 @@ _CRITICAL_JOURNEY_IDS = frozenset(
 )
 
 type FixedCommand = tuple[tuple[str, ...], Path]
+
+
+@dataclass(frozen=True, slots=True)
+class _PinnedPythonSuite:
+    capability: Capability
+    package: str
+    source_directory: str
+    contract_directory: str
+    local_absent_detail: str
+    exact_proof_error: str
+    no_selection_detail: str
+    success_detail: str
+    verification_commands: tuple[tuple[str, ...], ...]
+
+    @property
+    def marker_name(self) -> str:
+        return f".nexus-{self.package}-revision"
+
+
+_PINNED_PYTHON_VERIFICATION = (
+    ("uv", "run", "--frozen", "--no-sync", "ruff", "check", "src", "tests"),
+    (
+        "uv",
+        "run",
+        "--frozen",
+        "--no-sync",
+        "ruff",
+        "format",
+        "--check",
+        "src",
+        "tests",
+    ),
+    ("uv", "run", "--frozen", "--no-sync", "pyright", "src", "tests"),
+    ("uv", "run", "--frozen", "--no-sync", "pytest", "-q", *_DETERMINISTIC_PYTEST),
+)
+_PROVIDER_RUNTIME_SUITE = _PinnedPythonSuite(
+    capability=Capability.PROVIDER_RUNTIME,
+    package="provider-runtime",
+    source_directory="llm-calling",
+    contract_directory="tests/contract",
+    local_absent_detail="local provider protocol contract owner is absent",
+    exact_proof_error="exact provider protocol proof must name one pytest node",
+    no_selection_detail="no selected local provider protocol proof",
+    success_detail="local provider protocol contract and pinned provider-runtime suite passed",
+    verification_commands=_PINNED_PYTHON_VERIFICATION,
+)
+_LLM_TOOLS_SUITE = _PinnedPythonSuite(
+    capability=Capability.LLM_TOOLS,
+    package="llm-tools",
+    source_directory="llm-tools",
+    contract_directory="tests/llm_tools_contract",
+    local_absent_detail="local llm-tools contract owner is absent",
+    exact_proof_error="exact llm-tools proof must name one pytest node",
+    no_selection_detail="no selected local llm-tools contract proof",
+    success_detail="local llm-tools contract and pinned llm-tools suite passed",
+    verification_commands=(
+        *_PINNED_PYTHON_VERIFICATION,
+        ("uv", "build", "--no-sources", "--offline"),
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class HostedCodexCanaryPlan:
+    command: FixedCommand
+    environment: Mapping[str, str]
+    evidence_relative: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -854,7 +926,11 @@ def run_workflow(
                 if measured_result.evidence.status is not RunStatus.PASS:
                     blocked_by = requirement.capability
         finally:
-            execution.close()
+            try:
+                if measures_containers and heavy_lock_held:
+                    workflow_sampler.disable_containers(context.repo_root)
+            finally:
+                execution.close()
 
     heavy_lock_held = False
     measures_containers = any(
@@ -991,15 +1067,17 @@ def run_proof(
 
     ports = _ports or _RunnerPorts()
     lifecycle = ExitStack()
+    container_owner_enabled = False
     try:
         memory_lock_held = capability in _MEMORY_ADMITTED_CAPABILITIES
         if memory_lock_held:
             lifecycle.enter_context(ports.heavy_lock(context.repo_root))
-        if (
+        container_owner_enabled = (
             _memory_sampler is not None
             and memory_lock_held
             and capability in _LOCAL_RUNTIME_CAPABILITIES
-        ):
+        )
+        if container_owner_enabled and _memory_sampler is not None:
             _memory_sampler.enable_containers(context.repo_root)
         admission = _await_heavy_memory_admission(
             capability,
@@ -1059,6 +1137,12 @@ def run_proof(
                     environment,
                     exact=True,
                 )
+            case Capability.LLM_TOOLS:
+                result = _run_llm_tools(
+                    proof_context,
+                    environment,
+                    exact=True,
+                )
             case Capability.COMPONENT:
                 result = _run_component(proof_context, environment, execution, exact=True)
             case Capability.JOURNEYS_ALL:
@@ -1082,9 +1166,10 @@ def run_proof(
                 result = _run_android_host(proof_context, environment)
             case Capability.AUDIT:
                 result = _run_audit(proof_context, environment, execution, exact=True)
-            case Capability.HOSTED:
+            case Capability.HOSTED | Capability.CODEX_HOSTED:
                 result = _run_hosted(
                     proof_context,
+                    capability,
                     environment,
                     execution,
                     exact=True,
@@ -1099,7 +1184,11 @@ def run_proof(
                 result = _not_run(capability, "exact proof owner has no executor")
         return _classified_exact_result(result, proof_id)
     finally:
-        lifecycle.close()
+        try:
+            if container_owner_enabled and _memory_sampler is not None:
+                _memory_sampler.disable_containers(context.repo_root)
+        finally:
+            lifecycle.close()
 
 
 def _run_capability(
@@ -1240,6 +1329,8 @@ def _run_capability_unlocked(
             return _run_corpus(context)
         case Capability.PROVIDER_RUNTIME:
             return _run_provider_runtime(context, caller_environment)
+        case Capability.LLM_TOOLS:
+            return _run_llm_tools(context, caller_environment)
         case Capability.LLM_EVAL:
             return _run_python_heavy(
                 context,
@@ -1254,8 +1345,8 @@ def _run_capability_unlocked(
             return _run_android_host(context, caller_environment)
         case Capability.AUDIT:
             return _run_audit(context, caller_environment, execution)
-        case Capability.HOSTED:
-            return _run_hosted(context, caller_environment, execution)
+        case Capability.HOSTED | Capability.CODEX_HOSTED:
+            return _run_hosted(context, capability, caller_environment, execution)
         case Capability.ANDROID_DEVICE:
             return _run_android_device(context, caller_environment)
         case Capability.PROVIDER_CERTIFICATION:
@@ -2451,12 +2542,18 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
             ("python/tests/service/", Capability.SERVICE, Workflow.CHANGED),
             ("python/tests/migrations/", Capability.MIGRATIONS, Workflow.PR),
             ("python/tests/contract/", Capability.PROVIDER_RUNTIME, Workflow.FULL),
+            ("python/tests/llm_tools_contract/", Capability.LLM_TOOLS, Workflow.FULL),
             ("python/tests/evals/", Capability.LLM_EVAL, Workflow.FULL),
             ("python/tests/audit/", Capability.AUDIT, Workflow.NIGHTLY),
             (
                 "python/tests/hosted/release/",
                 Capability.PROVIDER_CERTIFICATION,
                 Workflow.RELEASE,
+            ),
+            (
+                "python/tests/hosted/nightly/test_codex_personal_metadata.py",
+                Capability.CODEX_HOSTED,
+                Workflow.CODEX_NIGHTLY,
             ),
             ("python/tests/hosted/nightly/", Capability.HOSTED, Workflow.NIGHTLY),
         ):
@@ -2678,6 +2775,7 @@ def _run_owned_commands(
     required_tools: tuple[str, ...],
     *,
     context: CapabilityContext | None,
+    content_free_failure_detail: str | None = None,
 ) -> CapabilityResult:
     if child_environment.get("NEXUS_ENV") != "test":
         raise ValueError("owned test command requires NEXUS_ENV=test")
@@ -2718,6 +2816,14 @@ def _run_owned_commands(
         if completed.returncode != 0:
             duration_ms = (time.monotonic_ns() - started) // 1_000_000
             interrupted_by = _command_interruption_signal(completed.returncode)
+            status = RunStatus.NOT_RUN if interrupted_by is not None else RunStatus.FAIL
+            if content_free_failure_detail is not None:
+                return _result(
+                    capability,
+                    status,
+                    duration_ms,
+                    content_free_failure_detail,
+                )
             detail = redact_text(
                 _command_result_detail(index, completed, interrupted_by),
                 environment_secrets(child_environment),
@@ -2731,7 +2837,7 @@ def _run_owned_commands(
             )
             return _result(
                 capability,
-                RunStatus.NOT_RUN if interrupted_by is not None else RunStatus.FAIL,
+                status,
                 duration_ms,
                 detail,
                 artifacts=artifacts,
@@ -2843,35 +2949,108 @@ def _run_audit(
 
 def _run_hosted(
     context: CapabilityContext,
+    capability: Capability,
     environment: Mapping[str, str],
     execution: _WorkflowExecution | None,
     *,
     exact: bool = False,
 ) -> CapabilityResult:
-    capability = Capability.HOSTED
+    if capability not in (Capability.HOSTED, Capability.CODEX_HOSTED):
+        raise ValueError("hosted runner requires a typed hosted capability")
     python_root = context.repo_root / "python"
     owner = python_root / "tests/hosted/nightly"
-    available = tuple(sorted(owner.rglob("test_*.py"))) if owner.is_dir() else ()
+    all_available = tuple(sorted(owner.rglob("test_*.py"))) if owner.is_dir() else ()
+    codex_owner = owner / "test_codex_personal_metadata.py"
+    available = (
+        tuple(path for path in all_available if path == codex_owner)
+        if capability is Capability.CODEX_HOSTED
+        else tuple(path for path in all_available if path != codex_owner)
+    )
     if not available or not (python_root / ".venv").is_dir():
         return _not_run(capability, "hosted canary owner is absent")
-    if environment.get("NEXUS_HOSTED_CANARY") != "1":
-        return _not_run(capability, "set NEXUS_HOSTED_CANARY=1 for the paid hosted canary")
-    api_key = environment.get("OPENAI_API_KEY")
-    if not api_key:
-        return _not_run(capability, "the paid hosted canary requires OPENAI_API_KEY")
     if execution is None:
         return _not_run(capability, "hosted canary requires a controller run identity")
     nodes, promoted = _selected_proof_nodes(context, capability, "pytest")
     if exact:
         if not nodes or promoted:
             raise ValueError("exact hosted proof must name one pytest node")
-        targets = tuple(_python_heavy_node(node, "tests/hosted/nightly") for node in nodes)
+        selected = tuple("./" + _python_heavy_node(node, "tests/hosted/nightly") for node in nodes)
     elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
-        targets = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in available)
+        selected = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in available)
     elif nodes:
-        targets = tuple(_python_heavy_node(node, "tests/hosted/nightly") for node in nodes)
+        selected = tuple("./" + _python_heavy_node(node, "tests/hosted/nightly") for node in nodes)
     else:
         return _pass(capability, "no selected hosted canary")
+
+    codex_target = "./tests/hosted/nightly/test_codex_personal_metadata.py"
+    codex_targets = tuple(target for target in selected if target.split("::", 1)[0] == codex_target)
+    openai_targets = tuple(target for target in selected if target not in codex_targets)
+    codex_enabled = environment.get("NEXUS_CODEX_HOSTED_CANARY") == "1"
+    direct_enabled = environment.get("NEXUS_HOSTED_CANARY") == "1"
+    if codex_enabled and direct_enabled:
+        return _not_run(
+            capability,
+            "direct and subscription hosted canaries cannot share a protected runner",
+        )
+    if codex_enabled:
+        if "OPENAI_API_KEY" in environment:
+            return _not_run(
+                capability, "OPENAI_API_KEY is forbidden for the Codex subscription canary"
+            )
+        if not codex_targets:
+            return _not_run(capability, "Codex runner selected no Codex hosted canary")
+        try:
+            plan = build_codex_hosted_canary_plan(
+                repo_root=context.repo_root,
+                run_id=execution.run_id,
+                target=codex_targets[0],
+                environment=environment,
+            )
+        except ValueError as error:
+            return _not_run(capability, str(error))
+        evidence_path = context.repo_root / plan.evidence_relative
+        if evidence_path.exists():
+            evidence_path.unlink()
+        result = _run_owned_commands(
+            capability,
+            (plan.command,),
+            plan.environment,
+            ("uv",),
+            context=context,
+            content_free_failure_detail=(
+                "Codex hosted canary command failed; child output was discarded"
+            ),
+        )
+        if result.evidence.status is not RunStatus.PASS:
+            return result
+        if not codex_hosted_evidence_is_valid(evidence_path, run_id=execution.run_id):
+            return _fail(
+                capability, "Codex hosted canary changed its declared subscription contract"
+            )
+        return CapabilityResult(
+            CapabilityEvidence(
+                capability,
+                RunStatus.PASS,
+                result.evidence.duration_ms,
+                result.evidence.peak_owned_mib,
+                artifacts=(plan.evidence_relative.as_posix(),),
+            ),
+            "one pinned Codex subscription metadata canary passed without API credentials",
+        )
+
+    if direct_enabled:
+        if not openai_targets:
+            return _not_run(capability, "direct runner selected no direct hosted canary")
+    elif codex_targets:
+        return _not_run(
+            capability,
+            "set NEXUS_CODEX_HOSTED_CANARY=1 on the dedicated subscription runner",
+        )
+    else:
+        return _not_run(capability, "set NEXUS_HOSTED_CANARY=1 for the paid hosted canary")
+    api_key = environment.get("OPENAI_API_KEY")
+    if not api_key:
+        return _not_run(capability, "the paid hosted canary requires OPENAI_API_KEY")
     evidence_relative = Path("test-results/runs") / execution.run_id / "hosted-openai-canary.json"
     evidence_path = context.repo_root / evidence_relative
     if evidence_path.exists():
@@ -2902,7 +3081,7 @@ def _run_hosted(
                     "-q",
                     *_DETERMINISTIC_PYTEST,
                     "--force-enable-socket",
-                    *targets,
+                    *openai_targets,
                 ),
                 python_root,
             ),
@@ -2942,6 +3121,92 @@ def _run_hosted(
         ),
         "one pinned OpenAI tool-safety canary passed inside the $0.01 ceiling",
     )
+
+
+def build_codex_hosted_canary_plan(
+    *,
+    repo_root: Path,
+    run_id: str,
+    target: str,
+    environment: Mapping[str, str],
+) -> HostedCodexCanaryPlan:
+    """Construct the credential-free exact command for the protected Codex runner."""
+
+    if environment.get("NEXUS_CODEX_HOSTED_CANARY") != "1":
+        raise ValueError("set NEXUS_CODEX_HOSTED_CANARY=1 on the dedicated subscription runner")
+    if "OPENAI_API_KEY" in environment:
+        raise ValueError("OPENAI_API_KEY is forbidden for the Codex subscription canary")
+    if environment.get("NEXUS_CODEX_HOSTED_PROFILE") != "codex-personal":
+        raise ValueError("Codex hosted canary profile must be codex-personal")
+    if re.fullmatch(r"[0-9a-f]{16}", run_id) is None:
+        raise ValueError("Codex hosted canary run identity is invalid")
+    expected = "./tests/hosted/nightly/test_codex_personal_metadata.py"
+    if target.startswith("./"):
+        normalized_target = target
+    else:
+        normalized_target = _python_heavy_node(target, "tests/hosted/nightly")
+        normalized_target = "./" + normalized_target
+    if normalized_target.split("::", 1)[0] != expected:
+        raise ValueError("Codex hosted canary requires its exact proof node")
+    state_root = _hosted_codex_directory(
+        repo_root, environment, "NEXUS_CODEX_HOSTED_STATE_ROOT", require_empty=False
+    )
+    working_directory = _hosted_codex_directory(
+        repo_root, environment, "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY", require_empty=True
+    )
+    evidence_relative = Path("test-results/runs") / run_id / "hosted-codex-personal-metadata.json"
+    child_environment = _child_environment(environment)
+    child_environment.update(
+        {
+            "NEXUS_CODEX_HOSTED_CANARY": "1",
+            "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
+            "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
+            "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
+            "NEXUS_CODEX_HOSTED_EVIDENCE_PATH": str(repo_root / evidence_relative),
+            "NEXUS_TEST_RUN_ID": run_id,
+        }
+    )
+    return HostedCodexCanaryPlan(
+        command=(
+            (
+                "uv",
+                "run",
+                "--frozen",
+                "--no-sync",
+                "pytest",
+                "-q",
+                *_DETERMINISTIC_PYTEST,
+                "--force-enable-socket",
+                normalized_target,
+            ),
+            repo_root / "python",
+        ),
+        environment=child_environment,
+        evidence_relative=evidence_relative,
+    )
+
+
+def _hosted_codex_directory(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    name: str,
+    *,
+    require_empty: bool,
+) -> Path:
+    raw = environment.get(name)
+    if not raw:
+        raise ValueError(f"Codex hosted canary requires {name}")
+    path = Path(raw)
+    if not path.is_absolute() or path.resolve() != path or not path.is_dir():
+        raise ValueError(f"Codex hosted canary {name} must be an existing resolved directory")
+    if path.is_relative_to(repo_root.resolve()):
+        raise ValueError(f"Codex hosted canary {name} must be outside the workspace")
+    metadata = path.stat()
+    if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+        raise ValueError(f"Codex hosted canary {name} must be current-user-owned mode 0700")
+    if require_empty and any(path.iterdir()):
+        raise ValueError(f"Codex hosted canary {name} must be empty")
+    return path
 
 
 def _parse_hosted_canary_evidence(evidence_path: Path) -> tuple[int, float] | None:
@@ -3211,43 +3476,58 @@ def _read_paid_evidence(
     )
 
 
-def _provider_runtime_pin(repo_root: Path) -> str:
+def _pinned_python_suite_pin(repo_root: Path, suite: _PinnedPythonSuite) -> str:
     try:
         data = tomllib.loads((repo_root / "python/pyproject.toml").read_text(encoding="utf-8"))
-        revision = data["tool"]["uv"]["sources"]["provider-runtime"]["rev"]
+        revision = data["tool"]["uv"]["sources"][suite.package]["rev"]
     except (KeyError, OSError, TypeError, tomllib.TOMLDecodeError) as error:
-        raise RuntimeContractError("provider-runtime pin is invalid or absent") from error
+        raise RuntimeContractError(f"{suite.package} pin is invalid or absent") from error
     if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
-        raise RuntimeContractError("provider-runtime pin is not a full Git SHA")
+        raise RuntimeContractError(f"{suite.package} pin is not a full Git SHA")
     return revision
 
 
-def _ensure_provider_runtime_checkout(
+def _provider_runtime_pin(repo_root: Path) -> str:
+    return _pinned_python_suite_pin(repo_root, _PROVIDER_RUNTIME_SUITE)
+
+
+def _pinned_python_suite_checkout_ready(
+    repo_root: Path,
+    suite: _PinnedPythonSuite,
+) -> bool:
+    revision = _pinned_python_suite_pin(repo_root, suite)
+    checkout = repo_root / ".nexus-test" / suite.package / revision
+    recorded = (checkout / suite.marker_name).read_text(encoding="utf-8").strip()
+    return recorded == revision and (checkout / ".venv").is_dir()
+
+
+def _ensure_pinned_python_suite_checkout(
     repo_root: Path,
     environment: Mapping[str, str],
+    suite: _PinnedPythonSuite,
 ) -> Path:
-    """Materialize the pin without retargeting the developer checkout or venv."""
+    """Materialize one immutable suite without retargeting developer state."""
 
-    revision = _provider_runtime_pin(repo_root)
-    owner = repo_root / ".nexus-test/provider-runtime"
+    revision = _pinned_python_suite_pin(repo_root, suite)
+    owner = repo_root / ".nexus-test" / suite.package
     checkout = owner / revision
-    marker = checkout / ".nexus-provider-runtime-revision"
+    marker = checkout / suite.marker_name
     if checkout.is_dir():
         try:
             recorded = marker.read_text(encoding="utf-8").strip()
         except OSError as error:
-            raise RuntimeContractError("owned provider-runtime checkout is incomplete") from error
+            raise RuntimeContractError(f"owned {suite.package} checkout is incomplete") from error
         if recorded != revision or not (checkout / ".venv").is_dir():
-            raise RuntimeContractError("owned provider-runtime checkout is incomplete")
+            raise RuntimeContractError(f"owned {suite.package} checkout is incomplete")
         return checkout
 
-    source = repo_root.parent / "llm-calling"
+    source = repo_root.parent / suite.source_directory
     if not source.is_dir():
-        raise RuntimeContractError("local provider-runtime Git object source is absent")
+        raise RuntimeContractError(f"local {suite.package} Git object source is absent")
     child_environment = _child_environment(environment)
     path = child_environment.get("PATH")
     if shutil.which("git", path=path) is None or shutil.which("uv", path=path) is None:
-        raise RuntimeContractError("provider-runtime materialization requires git and uv")
+        raise RuntimeContractError(f"{suite.package} materialization requires git and uv")
 
     owner.mkdir(parents=True, exist_ok=True)
     build = owner / f".building-{new_run_id()}"
@@ -3270,7 +3550,7 @@ def _ensure_provider_runtime_checkout(
             check=False,
         )
         if archived.returncode != 0:
-            raise RuntimeContractError("pinned provider-runtime commit is unavailable offline")
+            raise RuntimeContractError(f"pinned {suite.package} commit is unavailable offline")
         with tarfile.open(archive, mode="r:") as bundle:
             bundle.extractall(build, filter="data")
         synced = run_command(
@@ -3287,7 +3567,7 @@ def _ensure_provider_runtime_checkout(
                 "--offline",
                 "--no-editable",
                 "--reinstall-package",
-                "provider-runtime",
+                suite.package,
             ),
             cwd=build,
             env=child_environment,
@@ -3295,8 +3575,8 @@ def _ensure_provider_runtime_checkout(
             check=False,
         )
         if synced.returncode != 0 or not (build / ".venv").is_dir():
-            raise RuntimeContractError("pinned provider-runtime environment is unavailable offline")
-        (build / ".nexus-provider-runtime-revision").write_text(revision + "\n", encoding="utf-8")
+            raise RuntimeContractError(f"pinned {suite.package} environment is unavailable offline")
+        (build / suite.marker_name).write_text(revision + "\n", encoding="utf-8")
         # uv writes each console-script launcher in .venv/bin with the absolute
         # build path of the interpreter; promotion renames the directory, so
         # rewrite those launchers to the promoted checkout before it is used.
@@ -3312,12 +3592,30 @@ def _ensure_provider_runtime_checkout(
                 script.write_text(text.replace(str(build), str(checkout)), encoding="utf-8")
         build.rename(checkout)
     except (OSError, tarfile.TarError) as error:
-        raise RuntimeContractError("provider-runtime materialization failed") from error
+        raise RuntimeContractError(f"{suite.package} materialization failed") from error
     finally:
         archive.unlink(missing_ok=True)
         if build.exists():
             shutil.rmtree(build)
     return checkout
+
+
+def _ensure_provider_runtime_checkout(
+    repo_root: Path,
+    environment: Mapping[str, str],
+) -> Path:
+    return _ensure_pinned_python_suite_checkout(
+        repo_root,
+        environment,
+        _PROVIDER_RUNTIME_SUITE,
+    )
+
+
+def _ensure_llm_tools_checkout(
+    repo_root: Path,
+    environment: Mapping[str, str],
+) -> Path:
+    return _ensure_pinned_python_suite_checkout(repo_root, environment, _LLM_TOOLS_SUITE)
 
 
 def _run_provider_runtime(
@@ -3326,23 +3624,47 @@ def _run_provider_runtime(
     *,
     exact: bool = False,
 ) -> CapabilityResult:
-    capability = Capability.PROVIDER_RUNTIME
+    return _run_pinned_python_suite(
+        context,
+        environment,
+        _PROVIDER_RUNTIME_SUITE,
+        exact=exact,
+    )
+
+
+def _run_llm_tools(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    *,
+    exact: bool = False,
+) -> CapabilityResult:
+    return _run_pinned_python_suite(context, environment, _LLM_TOOLS_SUITE, exact=exact)
+
+
+def _run_pinned_python_suite(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    suite: _PinnedPythonSuite,
+    *,
+    exact: bool,
+) -> CapabilityResult:
+    capability = suite.capability
     python_root = context.repo_root / "python"
-    contract_root = python_root / "tests/contract"
+    contract_root = python_root / suite.contract_directory
     owners = tuple(sorted(contract_root.rglob("test_*.py"))) if contract_root.is_dir() else ()
     if not owners or not (python_root / ".venv").is_dir():
-        return _not_run(capability, "local provider protocol contract owner is absent")
+        return _not_run(capability, suite.local_absent_detail)
     nodes, promoted = _selected_proof_nodes(context, capability, "pytest")
     if exact:
         if not nodes or promoted:
-            raise ValueError("exact provider protocol proof must name one pytest node")
-        targets = tuple(_python_heavy_node(node, "tests/contract") for node in nodes)
+            raise ValueError(suite.exact_proof_error)
+        targets = tuple(_python_heavy_node(node, suite.contract_directory) for node in nodes)
     elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
         targets = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in owners)
     elif nodes:
-        targets = tuple(_python_heavy_node(node, "tests/contract") for node in nodes)
+        targets = tuple(_python_heavy_node(node, suite.contract_directory) for node in nodes)
     else:
-        return _pass(capability, "no selected local provider protocol proof")
+        return _pass(capability, suite.no_selection_detail)
     local = _run_fixed_commands(
         capability,
         (
@@ -3367,45 +3689,16 @@ def _run_provider_runtime(
         return local
 
     try:
-        checkout = _ensure_provider_runtime_checkout(context.repo_root, environment)
+        checkout = _ensure_pinned_python_suite_checkout(
+            context.repo_root,
+            environment,
+            suite,
+        )
     except RuntimeContractError as error:
         return _not_run(capability, str(error))
-    commands: tuple[FixedCommand, ...] = (
-        (
-            ("uv", "run", "--frozen", "--no-sync", "ruff", "check", "src", "tests"),
-            checkout,
-        ),
-        (
-            (
-                "uv",
-                "run",
-                "--frozen",
-                "--no-sync",
-                "ruff",
-                "format",
-                "--check",
-                "src",
-                "tests",
-            ),
-            checkout,
-        ),
-        (("uv", "run", "--frozen", "--no-sync", "pyright", "src", "tests"), checkout),
-        (
-            (
-                "uv",
-                "run",
-                "--frozen",
-                "--no-sync",
-                "pytest",
-                "-q",
-                *_DETERMINISTIC_PYTEST,
-            ),
-            checkout,
-        ),
-    )
     pinned = _run_fixed_commands(
         capability,
-        commands,
+        tuple((command, checkout) for command in suite.verification_commands),
         environment,
         ("uv",),
         elapsed_ms=local.evidence.duration_ms,
@@ -3413,10 +3706,7 @@ def _run_provider_runtime(
     )
     if pinned.evidence.status is not RunStatus.PASS:
         return pinned
-    return CapabilityResult(
-        pinned.evidence,
-        "local provider protocol contract and pinned provider-runtime suite passed",
-    )
+    return CapabilityResult(pinned.evidence, suite.success_detail)
 
 
 def _run_android_host(
@@ -4224,7 +4514,7 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
             (
                 str(context.repo_root / "python/.venv/bin/python"),
                 "-c",
-                "import provider_runtime",
+                "import llm_tools, provider_runtime",
             ),
             context.repo_root,
         ),
@@ -4249,21 +4539,19 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
         if command[0] == "uv" and re.search(r"(?m)^Would (?:download|install|uninstall) ", output):
             return _fail(Capability.DOCTOR, "locked Python environment is stale")
 
-    try:
-        expected_provider_revision = _provider_runtime_pin(context.repo_root)
-        provider_checkout = (
-            context.repo_root / ".nexus-test/provider-runtime" / expected_provider_revision
-        )
-        provider_revision = (provider_checkout / ".nexus-provider-runtime-revision").read_text(
-            encoding="utf-8"
-        )
-    except (OSError, RuntimeContractError):
-        return _not_run(Capability.DOCTOR, "pinned provider-runtime checkout is unavailable")
-    if (
-        provider_revision.strip() != expected_provider_revision
-        or not (provider_checkout / ".venv").is_dir()
-    ):
-        return _not_run(Capability.DOCTOR, "pinned provider-runtime checkout is not ready")
+    for suite in (_PROVIDER_RUNTIME_SUITE, _LLM_TOOLS_SUITE):
+        try:
+            ready = _pinned_python_suite_checkout_ready(context.repo_root, suite)
+        except (OSError, RuntimeContractError):
+            return _not_run(
+                Capability.DOCTOR,
+                f"pinned {suite.package} checkout is unavailable",
+            )
+        if not ready:
+            return _not_run(
+                Capability.DOCTOR,
+                f"pinned {suite.package} checkout is not ready",
+            )
 
     if not _android_sdk_available(context.repo_root / "apps/android", environment):
         return _not_run(Capability.DOCTOR, "the Android SDK is absent")

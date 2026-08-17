@@ -7,12 +7,11 @@ from uuid import uuid4
 
 import pytest
 
-from nexus.config import (
+from nexus.config import Settings, clear_settings_cache
+from nexus.job_topology import (
     BACKGROUND_WORKER_JOB_KINDS,
     INTERACTIVE_WORKER_JOB_KINDS,
     MAINTENANCE_JOB_KINDS,
-    Settings,
-    clear_settings_cache,
 )
 from nexus.jobs.process_executor import (
     BackgroundProcessProtocolDefect,
@@ -53,12 +52,36 @@ def test_worker_topology_and_task_digest_cover_resource_class(
             definition.kind
             for definition in registry.values()
             if definition.resource_class == "Heavy"
-        } == {"ingest_media_source", "media_content_reindex_job"}
+        } == {
+            "enrich_metadata",
+            "ingest_media_source",
+            "media_content_reindex_job",
+        }
         reconciler = registry["reconcile_stale_ingest_media_job"]
         assert reconciler.periodic_priority < min(
             definition.periodic_priority
             for definition in registry.values()
             if definition.kind != reconciler.kind
+        )
+        metadata = registry["enrich_metadata"]
+        assert (
+            metadata.handler_path,
+            metadata.resource_class,
+            metadata.max_attempts,
+            metadata.retry_delays_seconds,
+            metadata.lease_seconds,
+            metadata.child_runtime,
+            metadata.failed_result_statuses,
+            metadata.never_prune_dead,
+        ) == (
+            "nexus.jobs.registry:_run_enrich_metadata",
+            "Heavy",
+            2,
+            (0,),
+            300,
+            "Llm",
+            (),
+            True,
         )
 
         payload = [

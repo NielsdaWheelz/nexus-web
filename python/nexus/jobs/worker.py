@@ -303,6 +303,7 @@ class JobWorker:
                         worker_id=self.worker_id,
                         attempt_no=claimed.attempts,
                         available_at=handler_result.available_at,
+                        delay_seconds=handler_result.delay_seconds,
                         payload=handler_result.payload,
                     )
                     db.commit()
@@ -312,7 +313,12 @@ class JobWorker:
                         worker_id=self.worker_id,
                         job_id=str(claimed.id),
                         kind=claimed.kind,
-                        available_at=handler_result.available_at.isoformat(),
+                        available_at=(
+                            handler_result.available_at.isoformat()
+                            if handler_result.available_at is not None
+                            else None
+                        ),
+                        delay_seconds=handler_result.delay_seconds,
                     )
                 else:
                     logger.warning(

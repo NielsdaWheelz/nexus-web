@@ -284,6 +284,8 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once()
         "deploy/hetzner/release.py",
         "deploy/hetzner/docker-compose.yml",
         "deploy/hetzner/Caddyfile",
+        "deploy/hetzner/nexus-codex-agent-host.apparmor",
+        "deploy/hetzner/prove-codex-capacity.sh",
         "python/nexus/__init__.py",
         "python/nexus/release_artifact.py",
     ):
@@ -299,7 +301,42 @@ def test_backend_dockerfile_has_only_immutable_upstreams_and_baked_identity() ->
             assert re.fullmatch(r"[^\s@]+:[^\s@]+@sha256:[0-9a-f]{64}", match.group(1))
 
     assert dockerfile.count(" AS api") == 1
-    assert dockerfile.count(" AS worker") == 1
+    assert len(re.findall(r"^FROM\s+worker-runtime\s+AS\s+worker$", dockerfile, re.MULTILINE)) == 1
     assert "/app/runtime-identity.json" in dockerfile
     assert "org.opencontainers.image.revision=$SOURCE_SHA" in dockerfile
     assert dockerfile.count("USER nexus:nexus") == 2
+
+
+def test_codex_host_sdk_and_linux_sandbox_exist_only_in_the_worker_artifact() -> None:
+    """Risk: a subscription credential must never reach the API artifact.
+
+    The release image still has one worker identity, but only that target may
+    resolve the Codex SDK extra or contain the bundled Codex sandbox wrappers.
+    """
+
+    dockerfile = (REPO_ROOT / "docker/Dockerfile.backend").read_text(encoding="utf-8")
+
+    worker_extra = dockerfile.index("uv sync --frozen --no-dev --no-editable --extra codex-agent")
+    worker_stage = dockerfile.index("FROM backend-runtime AS worker-runtime")
+    api_stage = dockerfile.index("FROM backend-runtime AS api")
+    worker_target = dockerfile.index("FROM worker-runtime AS worker")
+    api_target = dockerfile[api_stage:worker_stage]
+    backend_runtime = dockerfile[
+        dockerfile.index("FROM python:3.12.13-slim-bookworm", worker_extra) : api_stage
+    ]
+
+    assert worker_extra < worker_stage < worker_target
+    assert "apt-get install -y --no-install-recommends bubblewrap" in dockerfile[worker_stage:]
+    assert "COPY --from=worker-python-builder /app/.venv /app/.venv" in dockerfile[worker_target:]
+    assert "COPY apps/codex_agent ./apps/codex_agent" in dockerfile[worker_target:]
+    assert "apps.codex_agent.sandbox_health" in (REPO_ROOT / "deploy/hetzner/release.py").read_text(
+        encoding="utf-8"
+    )
+    assert "python -m apps.codex_agent.enroll" in (
+        REPO_ROOT / "docs/runbooks/codex-personal-agent-host.md"
+    ).read_text(encoding="utf-8")
+    assert "COPY --from=python-builder /app/.venv /app/.venv" in backend_runtime
+    assert "COPY --from=worker-python-builder /app/.venv /app/.venv" not in backend_runtime
+    assert "bubblewrap" not in api_target
+    assert "apps/codex_agent" not in api_target
+    assert "worker-python-builder" not in api_target

@@ -130,7 +130,7 @@ def test_0215_rewrites_only_retired_provider_facts_and_preserves_durable_state(
 ) -> None:
     config = _migration_config()
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_current_head() == "0217"
+    assert scripts.get_current_head() == "0218"
     command.upgrade(config, "0214")
 
     user_id = uuid4()

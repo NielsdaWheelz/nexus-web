@@ -15,18 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from nexus.config import (
+from nexus.job_topology import (
     BACKGROUND_WORKER_JOB_KINDS,
     INTERACTIVE_WORKER_JOB_KINDS,
-    Environment,
-    get_settings,
 )
-from nexus.jobs.process_executor import BackgroundProcessProtocolDefect, ValidatedCgroup
-from nexus.jobs.registry import get_task_contract_digest
-from nexus.release_artifact import RuntimeIdentity
-from nexus.runtime_health import get_runtime_identity, is_database_ready
 
 WorkerLane = Literal["interactive", "background"]
+ReadinessCheck = Callable[[], bool]
 WORKER_HEALTH_PROGRESS_INTERVAL_SECONDS = 5.0
 WORKER_HEARTBEAT_MAX_AGE_SECONDS = 20.0
 WORKER_HEARTBEAT_PATHS: Mapping[WorkerLane, Path] = {
@@ -88,16 +83,26 @@ class WorkerHeartbeatPublisher:
         *,
         lane: WorkerLane,
         allowed_job_kinds: Sequence[str],
-        identity: RuntimeIdentity,
+        source_sha: str,
+        expected_database_revision: str,
+        expected_oracle_manifest_digest: str,
         task_contract_digest: str,
+        readiness_check: ReadinessCheck,
         heartbeat_path: Path | None = None,
         pid: int | None = None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._lane: WorkerLane = lane
         self._allowed_job_kinds = _closed_job_kinds(allowed_job_kinds)
-        self._identity = identity
+        self._source_sha = _require_source_sha(source_sha)
+        self._expected_database_revision = _require_database_revision(
+            expected_database_revision
+        )
+        self._expected_oracle_manifest_digest = _require_oracle_digest(
+            expected_oracle_manifest_digest
+        )
         self._task_contract_digest = _require_digest(task_contract_digest)
+        self._readiness_check = readiness_check
         self._heartbeat_path = heartbeat_path or WORKER_HEARTBEAT_PATHS[lane]
         self._pid = os.getpid() if pid is None else _require_pid(pid)
         self._monotonic = monotonic
@@ -114,13 +119,16 @@ class WorkerHeartbeatPublisher:
 
     def publish(self) -> None:
         """Publish one complete successful-cycle record via atomic rename."""
+        if not self._readiness_check():
+            self.clear()
+            return
         heartbeat = WorkerHeartbeat(
             pid=self._pid,
             lane=self._lane,
             allowed_job_kinds=self._allowed_job_kinds,
-            source_sha=self._identity.source_sha,
-            expected_database_revision=self._identity.expected_database_revision,
-            expected_oracle_manifest_digest=self._identity.expected_oracle_manifest_digest,
+            source_sha=self._source_sha,
+            expected_database_revision=self._expected_database_revision,
+            expected_oracle_manifest_digest=self._expected_oracle_manifest_digest,
             task_contract_digest=self._task_contract_digest,
             successful_cycle_monotonic_seconds=float(self._monotonic()),
         )
@@ -140,39 +148,40 @@ def validate_worker_heartbeat(
     *,
     expected_lane: WorkerLane,
     expected_allowed_job_kinds: Sequence[str],
-    expected_identity: RuntimeIdentity,
+    expected_source_sha: str,
+    expected_database_revision: str,
+    expected_oracle_manifest_digest: str,
     expected_task_contract_digest: str,
     now_monotonic: float,
     process_is_alive: Callable[[int], bool],
 ) -> WorkerHeartbeat:
     """Validate freshness, process identity, lane, kinds, and release identity."""
-    heartbeat = _parse_worker_heartbeat(payload)
+    heartbeat = validate_worker_heartbeat_record(
+        payload,
+        expected_lane=expected_lane,
+        expected_allowed_job_kinds=expected_allowed_job_kinds,
+        now_monotonic=now_monotonic,
+        process_is_alive=process_is_alive,
+    )
     expected_kinds = _closed_job_kinds(expected_allowed_job_kinds)
     expected_digest = _require_digest(expected_task_contract_digest)
     if (
-        heartbeat.lane != expected_lane
-        or heartbeat.allowed_job_kinds != expected_kinds
-        or heartbeat.source_sha != expected_identity.source_sha
-        or heartbeat.expected_database_revision != expected_identity.expected_database_revision
+        heartbeat.allowed_job_kinds != expected_kinds
+        or heartbeat.source_sha != _require_source_sha(expected_source_sha)
+        or heartbeat.expected_database_revision
+        != _require_database_revision(expected_database_revision)
         or heartbeat.expected_oracle_manifest_digest
-        != expected_identity.expected_oracle_manifest_digest
+        != _require_oracle_digest(expected_oracle_manifest_digest)
         or heartbeat.task_contract_digest != expected_digest
     ):
         raise WorkerHeartbeatError("identity_mismatch")
-
-    now = float(now_monotonic)
-    if not math.isfinite(now) or now < 0:
-        raise WorkerHeartbeatError("heartbeat_invalid")
-    age = now - heartbeat.successful_cycle_monotonic_seconds
-    if age < 0 or age > WORKER_HEARTBEAT_MAX_AGE_SECONDS:
-        raise WorkerHeartbeatError("heartbeat_stale")
-    if not process_is_alive(heartbeat.pid):
-        raise WorkerHeartbeatError("process_dead")
     return heartbeat
 
 
-def check_worker_health(*, lane: WorkerLane, heartbeat_path: Path | None = None) -> WorkerHeartbeat:
-    """Run the full worker health contract, including bounded DB/schema readiness."""
+def check_worker_health(
+    *, lane: WorkerLane, heartbeat_path: Path | None = None
+) -> WorkerHeartbeat:
+    """Validate the recent self-published worker health record."""
     path = heartbeat_path or WORKER_HEARTBEAT_PATHS[lane]
     try:
         encoded = path.read_bytes()
@@ -193,36 +202,38 @@ def check_worker_health(*, lane: WorkerLane, heartbeat_path: Path | None = None)
     ) as exc:
         raise WorkerHeartbeatError("heartbeat_invalid") from exc
 
-    identity = get_runtime_identity()
-    heartbeat = validate_worker_heartbeat(
+    return validate_worker_heartbeat_record(
         payload,
         expected_lane=lane,
         expected_allowed_job_kinds=expected_job_kinds(lane),
-        expected_identity=identity,
-        expected_task_contract_digest=get_task_contract_digest(),
         now_monotonic=time.monotonic(),
         process_is_alive=_process_is_alive,
     )
-    settings = get_settings()
-    if lane == "background":
-        try:
-            ValidatedCgroup.for_current_process(
-                settings.background_process_cgroup_root,
-                expected_memory_limit_bytes=settings.background_process_memory_limit_bytes,
-            )
-        except BackgroundProcessProtocolDefect as exc:
-            raise WorkerHeartbeatError("cgroup_not_ready") from exc
-    reconciler_max_age_seconds = (
-        2 * int(settings.ingest_reconcile_schedule_seconds)
-        if settings.nexus_env in (Environment.STAGING, Environment.PROD)
-        else None
-    )
-    if not is_database_ready(
-        database_url=settings.database_url,
-        expected_revision=identity.expected_database_revision,
-        reconciler_max_age_seconds=reconciler_max_age_seconds,
+
+
+def validate_worker_heartbeat_record(
+    payload: object,
+    *,
+    expected_lane: WorkerLane,
+    expected_allowed_job_kinds: Sequence[str],
+    now_monotonic: float,
+    process_is_alive: Callable[[int], bool],
+) -> WorkerHeartbeat:
+    """Validate a self-authored record without importing the worker runtime graph."""
+    heartbeat = _parse_worker_heartbeat(payload)
+    if (
+        heartbeat.lane != expected_lane
+        or heartbeat.allowed_job_kinds != _closed_job_kinds(expected_allowed_job_kinds)
     ):
-        raise WorkerHeartbeatError("database_not_ready")
+        raise WorkerHeartbeatError("identity_mismatch")
+    now = float(now_monotonic)
+    if not math.isfinite(now) or now < 0:
+        raise WorkerHeartbeatError("heartbeat_invalid")
+    age = now - heartbeat.successful_cycle_monotonic_seconds
+    if age < 0 or age > WORKER_HEARTBEAT_MAX_AGE_SECONDS:
+        raise WorkerHeartbeatError("heartbeat_stale")
+    if not process_is_alive(heartbeat.pid):
+        raise WorkerHeartbeatError("process_dead")
     return heartbeat
 
 
@@ -234,10 +245,12 @@ def _parse_worker_heartbeat(payload: object) -> WorkerHeartbeat:
         pid = _require_pid(value["pid"])
         lane = _require_lane(value["lane"])
         allowed_job_kinds = _closed_job_kinds(value["allowed_job_kinds"])
-        identity = RuntimeIdentity(
-            source_sha=value["source_sha"],
-            expected_database_revision=value["expected_database_revision"],
-            expected_oracle_manifest_digest=value["expected_oracle_manifest_digest"],
+        source_sha = _require_source_sha(value["source_sha"])
+        expected_database_revision = _require_database_revision(
+            value["expected_database_revision"]
+        )
+        expected_oracle_manifest_digest = _require_oracle_digest(
+            value["expected_oracle_manifest_digest"]
         )
         task_contract_digest = _require_digest(value["task_contract_digest"])
         successful_cycle = value["successful_cycle_monotonic_seconds"]
@@ -253,9 +266,9 @@ def _parse_worker_heartbeat(payload: object) -> WorkerHeartbeat:
         pid=pid,
         lane=lane,
         allowed_job_kinds=allowed_job_kinds,
-        source_sha=identity.source_sha,
-        expected_database_revision=identity.expected_database_revision,
-        expected_oracle_manifest_digest=identity.expected_oracle_manifest_digest,
+        source_sha=source_sha,
+        expected_database_revision=expected_database_revision,
+        expected_oracle_manifest_digest=expected_oracle_manifest_digest,
         task_contract_digest=task_contract_digest,
         successful_cycle_monotonic_seconds=float(successful_cycle),
     )
@@ -291,6 +304,37 @@ def _require_digest(value: object) -> str:
         or any(character not in "0123456789abcdef" for character in value)
     ):
         raise ValueError("task contract digest is malformed")
+    return value
+
+
+def _require_source_sha(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 40
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError("source SHA is malformed")
+    return value
+
+
+def _require_database_revision(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 64
+        or not value[0].isalnum()
+        or not all(
+            character.isdigit() or "a" <= character <= "z" or character == "_"
+            for character in value
+        )
+    ):
+        raise ValueError("database revision is malformed")
+    return value
+
+
+def _require_oracle_digest(value: object) -> str:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        raise ValueError("Oracle digest is malformed")
+    _require_digest(value.removeprefix("sha256:"))
     return value
 
 

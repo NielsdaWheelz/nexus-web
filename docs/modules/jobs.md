@@ -83,8 +83,8 @@ Other kinds have no hook; their failure is recorded on their own domain row.
 ### The `failed_result_statuses` gotcha
 
 A handler that *returns* `{"status": "failed"}` still marks the **queue** row
-succeeded unless its kind declares that status in `failed_result_statuses`. Only
-`enrich_metadata` and `media_unit_build` declare it. For other ingest kinds the
+succeeded unless its kind declares that status in `failed_result_statuses`.
+`media_unit_build` declares it. For other ingest kinds the
 failure is recorded on the domain row (e.g. `media`), and recovery relies on the
 stale reconciler plus manual API retry, not queue-level retries. This is
 deliberate: a handler that completed its work and recorded a domain failure has
@@ -100,7 +100,8 @@ kind; queue completion is not a claim that the answer published.
 
 ## Worker lanes
 
-`config.py` declares one complete topology:
+`python/nexus/job_topology.py` declares one complete topology without importing
+the application runtime graph:
 
 - `INTERACTIVE_WORKER_JOB_KINDS`: chat, Dossier, subscription live sync, and
   Oracle generation;
@@ -187,9 +188,8 @@ writes, notes, and Dossier head/build/revision mutations.
 
 ## The LLM generation harness inside the worker
 
-Seven LLM generation kinds — `chat_run`, `oracle_reading_generate`,
-`dossier_build`, `media_unit_build`, `enrich_metadata`, `synapse_scan`, and
-`dawn_write` — run their bodies inside
+Six direct LLM generation kinds — `chat_run`, `oracle_reading_generate`,
+`dossier_build`, `media_unit_build`, `synapse_scan`, and `dawn_write` — run their bodies inside
 the shared `run_llm_task` envelope ([llms.md](llms.md)), not a hand-rolled
 per-task event loop. `run_llm_task` owns only the worker mechanics: one DB
 session, one fresh event loop, one shared `httpx.AsyncClient`, and one
@@ -208,10 +208,17 @@ a ledger row (or, for a denial before any row exists, a typed `ApiError`) plus
 `error_code`/`error_origin` on the run parent, so the operator can always
 answer "what failed". See [llms.md](llms.md) for the full execution order and
 the profile each kind resolves against (`fast` for Oracle/Synapse/media
-  summary/metadata enrichment; binding-owned policy selects `fast` or `balanced`
+  summary; binding-owned policy selects `fast` or `balanced`
   for the eight Dossier operations and Idea resolution; `balanced` for Dawn
   Write; chat alone is
 user-selected).
+
+`enrich_metadata` remains a background queue kind, but it is not inside
+`run_llm_task` and does not return a provider `failed_result_status`. Its durable
+metadata owner dispatches exactly one native Codex subscription turn through the
+private host, records the terminal in `agent_turns`, and treats a known terminal
+metadata failure as completed queue work; `Uncertain` remains suspended for
+operator reconciliation without redispatch.
 
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
 Contributor, Page, Note, and internal Idea subjects. Its binding registry

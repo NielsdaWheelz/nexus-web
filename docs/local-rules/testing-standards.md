@@ -415,6 +415,7 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 | `./scripts/test pr` | deterministic blocking PR portfolio plus same-run sensitivity |
 | `./scripts/test full` | complete deterministic local portfolio |
 | `./scripts/test nightly` | `full` plus randomized/property audit, one hosted canary, and Android device proof |
+| `./scripts/test codex-nightly` | one bounded subscription-authenticated Codex metadata canary on the dedicated runner |
 | `./scripts/test release` | `full` plus bounded provider certification, signed Android release proof, and exact staged artifacts |
 | `./scripts/test doctor` | local tool, dependency, browser, SDK, service, port, and template readiness; protected-workflow inputs only when that lane is explicitly enabled |
 | `./scripts/test android-visual --sha HEAD_SHA --path /OWNED_PATH [--device primary]` | explicit opt-in physical-device authenticated WebView visual check of the current non-`main` worktree; never included in `changed`/`confidence`/`pr`/`full`/`nightly`/`release` |
@@ -428,7 +429,7 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
-<!-- nexus-test-routing-sha256: 5109c55f6ea0aeb9ce49d501cd530255edd76bfc1ffd421a7a4795a61ee85822 -->
+<!-- nexus-test-routing-sha256: 4980bf99bca66fd56cce384cc79547e3baab82688711268c48cf9b511c7ccb00 -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and
@@ -445,6 +446,7 @@ physical-device boundaries are excluded. The owning `full`, `nightly`, or
 | Shared local-real testkit | `python/tests/testkit/` and `python/tests/conftest.py` |
 | Real PostgreSQL/API/service | `python/tests/service/` |
 | Migration graph and convergence | `python/tests/migrations/` |
+| Pinned portable LLM tools | `python/tests/llm_tools_contract/` |
 | Deterministic LLM semantics | `python/tests/evals/` |
 | Property/random-order audit | `python/tests/audit/` |
 | Paid hosted proof | `python/tests/hosted/nightly/` and `python/tests/hosted/release/` |
