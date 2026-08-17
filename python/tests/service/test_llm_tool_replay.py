@@ -473,7 +473,7 @@ def test_position_replay_settles_once_and_does_not_automatically_reissue_uncerta
                 "the public queue fence accepted a stale worker after reclaim"
             )
 
-            changed_input_provider = _NeverSearch()
+            changed_input_provider = _CancelledWebSearch(cross_transport=True)
             changed_input_error_type: type[BaseException] | None = None
             changed_input_error_message = ""
             try:
@@ -492,7 +492,10 @@ def test_position_replay_settles_once_and_does_not_automatically_reissue_uncerta
             except BaseException as exc:  # noqa: BLE001 - assert the exact public defect below.
                 changed_input_error_type = type(exc)
                 changed_input_error_message = str(exc)
-            if changed_input_provider.calls != 0:
+            if (
+                changed_input_provider.adapter_calls,
+                changed_input_provider.transport_dispatches,
+            ) != (0, 0):
                 pytest.fail(
                     "changed invocation crossed the provider dispatch boundary",
                     pytrace=False,
