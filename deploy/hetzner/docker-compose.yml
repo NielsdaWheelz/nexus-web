@@ -121,6 +121,15 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+      # Start ordering only, so a metadata job is not claimed before the Codex
+      # host container and its socket volume exist. Readiness is deliberately
+      # NOT a dependency: `service_healthy` would couple the entire background
+      # lane — ingest, podcasts, reindex, teardown — to the Codex host, so one
+      # expired ChatGPT credential would stop all background work. A host that
+      # starts but never becomes ready instead soft-fails only metadata jobs,
+      # with the spec's terminal E_METADATA_AGENT_HOST_UNAVAILABLE.
+      nexus-codex-agent-host:
+        condition: service_started
     volumes:
       - /var/lib/nexus/parser-tmp:/var/lib/nexus/parser-tmp
       - nexus_codex_run:/run/nexus-codex:ro

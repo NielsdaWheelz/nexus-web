@@ -94,7 +94,6 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     )
     actionlint_config = (REPO_ROOT / ".github/actionlint.yaml").read_text(encoding="utf-8")
     worker_image = (REPO_ROOT / "docker/Dockerfile.backend").read_text(encoding="utf-8")
-    controller = (REPO_ROOT / "deploy/hetzner/release.py").read_text(encoding="utf-8")
     start = compose.index("  nexus-codex-agent-host:\n")
     end = compose.index("  migration:\n", start)
     host = compose[start:end]
@@ -127,20 +126,23 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     assert "nexus_codex_run:/run/nexus-codex" in host
     assert "nexus_codex_run:/run/nexus-codex:ro" in background
     assert "NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock" in background
-    assert "nexus-codex-agent-host:" not in background
+    # The background lane must not claim a metadata job before the host
+    # container and its socket volume exist, but readiness is deliberately NOT a
+    # dependency: service_healthy would couple the whole background lane's boot
+    # to the Codex host, while a started-but-never-ready host must soft-fail
+    # only metadata jobs (terminal E_METADATA_AGENT_HOST_UNAVAILABLE). The
+    # compose graph therefore orders on service_started, never service_healthy.
+    assert "nexus-codex-agent-host:\n        condition: service_started" in background
+    assert "nexus-codex-agent-host:\n        condition: service_healthy" not in compose
     assert "python -m apps.codex_agent.health" in host
     assert "apps.codex_agent.sandbox_health" not in host
-    assert '"nexus-codex-agent-host"' in controller
-    assert '"apps.codex_agent.sandbox_health"' in controller
-    assert '"apps.codex_agent.health"' in controller
-    assert 'host_config.get("NanoCpus") != 1_000_000_000' in controller
-    assert '"seccomp=unconfined"' in controller
-    assert '"apparmor=nexus-codex-agent-host"' in controller
-    assert 'host_config.get("MaskedPaths") != []' in controller
-    assert 'host_config.get("ReadonlyPaths") != []' in controller
-    assert 'set(networks) != {"nexus_codex_egress"}' in controller
-    assert "_prepare_codex_agent_host_state" not in controller
-    assert '"install -d -o 10001 -g 10001 -m 0700 /var/lib/nexus-codex"' not in controller
+    # Controller behavior is proved against the fake Docker release harness in
+    # test_production_release.py, not by grepping release.py source text: the
+    # sandbox/health probes by
+    # test_host_apply_execs_the_codex_sandbox_and_health_probes_inside_the_host
+    # and test_host_apply_rejects_wrong_codex_host_health_identity; the
+    # NanoCpus/MaskedPaths/ReadonlyPaths/SecurityOpt/network isolation checks by
+    # test_host_apply_rejects_codex_host_outer_sandbox_or_network_drift.
     sync_env = (REPO_ROOT / "deploy/hetzner/sync-env.sh").read_text(encoding="utf-8")
     assert "reject_codex_host_runtime_keys" in sync_env
     assert (
@@ -168,9 +170,15 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
 
 
 def test_existing_vps_capacity_qualification_is_immutable_and_exact_candidate_bound() -> None:
-    """Risk: first 0216 promotion runs without exact, immutable measured-host evidence."""
+    """Risk: first 0216 promotion runs without exact, immutable measured-host evidence.
 
-    controller = (REPO_ROOT / "deploy/hetzner/release.py").read_text(encoding="utf-8")
+    The measured behavior (immutable 0444 evidence, exact candidate binding,
+    canary phases and exit codes) is proved by the fake-Docker release harness
+    in test_production_release.py and by the canary contract binding in
+    test_codex_capacity_canary_contract.py; only the declarative wiring of the
+    operator entrypoints is pinned here.
+    """
+
     capacity_probe = (REPO_ROOT / "deploy/hetzner/prove-codex-capacity.sh").read_text(
         encoding="utf-8"
     )
@@ -180,25 +188,10 @@ def test_existing_vps_capacity_qualification_is_immutable_and_exact_candidate_bo
     release_workflow = (REPO_ROOT / ".github/workflows/backend-images.yml").read_text(
         encoding="utf-8"
     )
-    capacity_canary = (REPO_ROOT / "apps/codex_agent/capacity_canary.py").read_text(
-        encoding="utf-8"
-    )
 
-    assert "_MIN_HOST_MEMORY_BYTES = 1900 * 1024 * 1024" in controller
-    assert "sum(_RESOURCE_LIMITS[service][0]forservicein_CAPACITY_SERVICES)" in "".join(
-        controller.split()
-    )
-    assert "Codex capacity qualification" in controller
-    assert "codex-capacity" in controller
-    assert "chmod(0o444)" in controller
     assert "qualify-codex-capacity" in capacity_probe
     assert " apply " not in capacity_probe
     assert "install-bundle" in capacity_probe
-    assert '"apps.codex_agent.capacity_canary"' in controller
-    assert '("cold", UUID(' in capacity_canary
-    assert '("warm_1", UUID(' in capacity_canary
-    assert '("warm_2", UUID(' in capacity_canary
-    assert "client.observe_turn(command)" in capacity_canary
     assert "prove-codex-capacity.sh" in release_workflow
     assert "prove-codex-capacity.sh" in bundle_fetch
 

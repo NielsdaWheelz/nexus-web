@@ -56,6 +56,7 @@ _HOST = re.compile(
     r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z"
 )
+_RELEASE_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 _DOCKER_TIMESTAMP = re.compile(
     r"(?P<seconds>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
     r"(?:\.(?P<fraction>\d{1,9}))?"
@@ -132,13 +133,41 @@ _MIN_SWAP_BYTES = 1024 * 1024 * 1024
 _MIN_PARSER_TEMP_FREE_BYTES = 512 * 1024 * 1024
 _CODEX_CAPACITY_SCHEMA_VERSION = "nexus-codex-capacity.v1"
 _CODEX_CAPACITY_CANARY_SCHEMA_VERSION = "nexus-codex-capacity-canary.v1"
+# The canary owns its phase sequence and exit-code table as the public
+# `apps.codex_agent.capacity_canary.TURNS` and `.EXIT_CODES`. This
+# controller ships in the immutable host bundle without the worker package, so
+# it cannot import that owner and mirrors it here instead; the two are bound by
+# a conformance proof, and neither side may be changed alone. Every non-zero
+# terminal is numbered away from 1 (an uncaught exception) and from 128+signal
+# (a killed process) so no crash can present itself as a stated terminal.
 _CODEX_CAPACITY_PHASES = ("cold", "warm_1", "warm_2")
+_CODEX_CAPACITY_CANARY_EXIT_CODES = {
+    "passed": 0,
+    "not_run": 20,
+    "provider_blocked": 21,
+    "failed": 22,
+    "transport_retriable": 23,
+}
+_CODEX_CAPACITY_CANARY_LABEL = "nexus.release.codex-capacity-canary"
+# One sample is a bounded set of host `/proc` and cgroup reads; the sampler is
+# drained for one whole cycle plus that read budget so a slow but legal sample
+# is never misreported as a stuck sampler.
+_CODEX_CAPACITY_SAMPLE_INTERVAL_SECONDS = 1.0
+_CODEX_CAPACITY_SAMPLE_BUDGET_SECONDS = 20.0
+_CODEX_CAPACITY_SAMPLER_JOIN_SECONDS = (
+    _CODEX_CAPACITY_SAMPLE_INTERVAL_SECONDS + _CODEX_CAPACITY_SAMPLE_BUDGET_SECONDS
+)
+# Qualification measures a live host, so its evidence expires. Beyond this age
+# the measured envelope is no longer a statement about the host that would run
+# the promotion, even for an unchanged candidate.
+_CODEX_CAPACITY_EVIDENCE_MAX_AGE_SECONDS = 72 * 60 * 60
 _CODEX_CAPACITY_EVIDENCE_FIELDS = frozenset(
     {
         "schema_version",
         "source_sha",
         "worker_image_id",
         "status",
+        "measured_at",
         "turns",
         "cgroup_memory_max",
         "cgroup_memory_current",
@@ -163,13 +192,9 @@ _CODEX_CAPACITY_TURN_FIELDS = frozenset(
         "permission_event_count",
     }
 )
-_CODEX_CAPACITY_SERVICES = (
-    "postgres",
-    "caddy",
-    "api",
-    "worker-interactive",
-    "worker-background",
-)
+# Qualification asserts the health of exactly the long-lived services, without
+# the ephemeral Codex host it starts itself.
+_CODEX_CAPACITY_SERVICES = _SERVICES
 _INFRASTRUCTURE_SERVICES = ("postgres", "caddy")
 _INFRASTRUCTURE_VOLUME_TARGETS = {
     "postgres": {"/var/lib/postgresql/data": "nexus_postgres_data"},
@@ -343,6 +368,29 @@ class PermanentReleaseFailure(RuntimeError):
     """The candidate cannot safely continue at its current durable boundary."""
 
 
+class CodexCapacityBreach(PermanentReleaseFailure):
+    """A measured Codex capacity breach the candidate can never take back.
+
+    Only the breaches the cutover §11 enumerates — cgroup peak, OOM, memory
+    pressure, service health, policy, canary protocol, and structured output,
+    plus the shape of the evidence that states one — are this class. Policy is
+    the canary and host isolation contract: those validators are shared with the
+    ordinary release paths, where a difference measures nothing, so qualification
+    converts what they prove into this class at its own call sites. A breach the
+    background sampler observes during the turns is a measurement like any other
+    and is re-raised from the joining thread.
+
+    Everything else measured nothing about the envelope and stays retriable, so
+    it must never be raised as a breach: Docker, transport, sampler and cleanup
+    failures, and a canary that never stated one of its own contract terminals —
+    a crashed, OOM-killed or cut-off canary observed nothing, whether it left
+    stdout empty, unparseable, or carrying an undefined exit code. Only stdout
+    that parses as the canary's evidence contract can state a breach. A breach
+    writes immutable failed evidence that permanently disqualifies its source
+    SHA.
+    """
+
+
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(
         self,
@@ -448,6 +496,8 @@ class ReleasePaths:
     backup_root: Path = Path("/var/backups/nexus")
     lock_path: Path = Path("/run/lock/nexus-release.lock")
     parser_temp_root: Path = Path("/var/lib/nexus/parser-tmp")
+    proc_root: Path = Path("/proc")
+    cgroup_root: Path = Path("/sys/fs/cgroup")
     meminfo: Path = Path("/proc/meminfo")
     memory_pressure: Path = Path("/proc/pressure/memory")
     cgroup_controllers: Path = Path("/sys/fs/cgroup/cgroup.controllers")
@@ -467,6 +517,8 @@ class ReleasePaths:
             backup_root=root / "var/backups/nexus",
             lock_path=root / "run/lock/nexus-release.lock",
             parser_temp_root=root / "var/lib/nexus/parser-tmp",
+            proc_root=root / "proc",
+            cgroup_root=root / "sys/fs/cgroup",
             meminfo=root / "proc/meminfo",
             memory_pressure=root / "proc/pressure/memory",
             cgroup_controllers=root / "sys/fs/cgroup/cgroup.controllers",
@@ -1868,8 +1920,19 @@ def _require_match(name: str, value: object, pattern: re.Pattern[str]) -> str:
 
 
 def _require_timestamp(value: str) -> None:
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value) is None:
+    if _RELEASE_TIMESTAMP.fullmatch(value) is None:
         raise ReleaseDefect("release timestamp must be canonical UTC seconds")
+
+
+def _release_timestamp_seconds(value: str, label: str) -> float:
+    """Read one canonical UTC release timestamp as epoch seconds."""
+
+    if _RELEASE_TIMESTAMP.fullmatch(value) is None:
+        raise ReleaseDefect(f"{label} timestamp is not canonical UTC seconds")
+    try:
+        return float(calendar.timegm(time.strptime(value, "%Y-%m-%dT%H:%M:%SZ")))
+    except ValueError as exc:
+        raise ReleaseDefect(f"{label} timestamp is not canonical UTC seconds") from exc
 
 
 def _docker_timestamp_seconds(value: object, label: str) -> float:
@@ -2097,6 +2160,38 @@ def _inspect_volume_one(volume_name: str, label: str) -> dict[str, Any]:
     return raw[0]
 
 
+def _require_named_volume_mount(
+    mount: object,
+    *,
+    volume_name: str,
+    destination: str,
+    read_write: bool,
+    volume_label: str,
+    breach: type[PermanentReleaseFailure],
+    failure: str,
+) -> None:
+    """Require one container mount to be exactly the named local Docker volume."""
+
+    volume = _inspect_volume_one(volume_name, volume_label)
+    source = volume.get("Mountpoint")
+    if (
+        not isinstance(mount, dict)
+        or volume.get("Name") != volume_name
+        or volume.get("Driver") != "local"
+        or volume.get("Scope") != "local"
+        or volume.get("Options") not in ({}, None)
+        or not isinstance(source, str)
+        or not Path(source).is_absolute()
+        or Path(source) != Path(os.path.normpath(source))
+        or mount.get("Type") != "volume"
+        or mount.get("Name") != volume_name
+        or mount.get("Source") != source
+        or mount.get("Destination") != destination
+        or mount.get("RW") is not read_write
+    ):
+        raise breach(failure)
+
+
 def _bundle_files(path: Path) -> frozenset[str]:
     if not path.is_dir() or path.is_symlink():
         raise ReleaseDefect("release bundle must be a real directory")
@@ -2199,6 +2294,18 @@ def _unquote_env(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
         return value[1:-1]
     return value
+
+
+def _codex_capacity_evidence_expired(measured_at: float) -> bool:
+    """Decide whether a capacity measurement still describes the promoting host.
+
+    One predicate serves both the promotion read and the re-qualification write:
+    the exact measurement a promotion refuses as expired is the one a rerun may
+    replace, and neither side may drift from the other.
+    """
+
+    age_seconds = time.time() - measured_at
+    return age_seconds < -1.0 or age_seconds > _CODEX_CAPACITY_EVIDENCE_MAX_AGE_SECONDS
 
 
 def _requires_codex_agent_host(candidate: CandidateManifest) -> bool:
@@ -2828,18 +2935,12 @@ class HostRelease:
             writers_running=writers_running is not False,
         )
 
-    def _preflight_host_capacity(
-        self,
-        containers: dict[str, ContainerEvidence],
-        *,
-        writers_running: bool,
-    ) -> None:
-        controllers = self._host_text(
-            self.paths.cgroup_controllers,
-            "cgroup v2 controller",
-        ).split()
-        if "memory" not in controllers:
-            raise ReleaseBlocked("host cgroup v2 memory controller is unavailable")
+    def _host_memory_bytes(self) -> dict[str, int]:
+        """Read the three retained `/proc/meminfo` counters, in bytes.
+
+        This is the only parser of that file; every gate applies its own
+        thresholds to what it returns.
+        """
 
         meminfo: dict[str, int] = {}
         for line in self._host_text(self.paths.meminfo, "memory").splitlines():
@@ -2854,15 +2955,14 @@ class HostRelease:
             meminfo[key] = int(parts[0]) * 1024
         if set(meminfo) != {"MemTotal", "MemAvailable", "SwapTotal"}:
             raise ReleaseDefect("host memory evidence is incomplete")
-        if meminfo["MemTotal"] < _MIN_HOST_MEMORY_BYTES:
-            raise ReleaseBlocked("host memory is below the committed 1900 MiB floor")
-        reservation_sum = sum(_RESOURCE_LIMITS[service][0] for service in _CAPACITY_SERVICES)
-        if meminfo["MemTotal"] - reservation_sum < _HOST_RESERVED_MEMORY_BYTES:
-            raise ReleaseBlocked("host memory reserve is below 320 MiB")
-        if meminfo["MemAvailable"] < _MIN_AVAILABLE_MEMORY_BYTES:
-            raise ReleaseBlocked("host available memory is below 256 MiB")
-        if meminfo["SwapTotal"] < _MIN_SWAP_BYTES:
-            raise ReleaseBlocked("host swap is below 1 GiB")
+        return meminfo
+
+    def _host_memory_pressure(self) -> dict[str, float]:
+        """Read the `some`/`full` 10-second memory pressure averages.
+
+        This is the only parser of `/proc/pressure/memory`; every gate applies
+        its own thresholds to what it returns.
+        """
 
         pressure: dict[str, float] = {}
         for line in self._host_text(self.paths.memory_pressure, "memory pressure").splitlines():
@@ -2873,11 +2973,41 @@ class HostRelease:
             if avg10 is None or parts[0] in pressure:
                 raise ReleaseDefect("host memory pressure evidence is malformed")
             try:
-                pressure[parts[0]] = float(avg10.removeprefix("avg10="))
+                measured = float(avg10.removeprefix("avg10="))
             except ValueError as exc:
                 raise ReleaseDefect("host memory pressure evidence is malformed") from exc
+            if not math.isfinite(measured):
+                raise ReleaseDefect("host memory pressure evidence is malformed")
+            pressure[parts[0]] = measured
         if set(pressure) != {"some", "full"}:
             raise ReleaseDefect("host memory pressure evidence is incomplete")
+        return pressure
+
+    def _preflight_host_capacity(
+        self,
+        containers: dict[str, ContainerEvidence],
+        *,
+        writers_running: bool,
+    ) -> None:
+        controllers = self._host_text(
+            self.paths.cgroup_controllers,
+            "cgroup v2 controller",
+        ).split()
+        if "memory" not in controllers:
+            raise ReleaseBlocked("host cgroup v2 memory controller is unavailable")
+
+        meminfo = self._host_memory_bytes()
+        if meminfo["MemTotal"] < _MIN_HOST_MEMORY_BYTES:
+            raise ReleaseBlocked("host memory is below the committed 1900 MiB floor")
+        reservation_sum = sum(_RESOURCE_LIMITS[service][0] for service in _CAPACITY_SERVICES)
+        if meminfo["MemTotal"] - reservation_sum < _HOST_RESERVED_MEMORY_BYTES:
+            raise ReleaseBlocked("host memory reserve is below 320 MiB")
+        if meminfo["MemAvailable"] < _MIN_AVAILABLE_MEMORY_BYTES:
+            raise ReleaseBlocked("host available memory is below 256 MiB")
+        if meminfo["SwapTotal"] < _MIN_SWAP_BYTES:
+            raise ReleaseBlocked("host swap is below 1 GiB")
+
+        pressure = self._host_memory_pressure()
         if pressure["full"] != 0 or pressure["some"] > 5:
             raise ReleaseBlocked("host memory pressure exceeds the release envelope")
 
@@ -3979,26 +4109,15 @@ class HostRelease:
         if set(observed) != set(_CODEX_AGENT_VOLUME_MOUNTS):
             raise PermanentReleaseFailure("Codex agent host mounts differ from isolated contract")
         for destination, volume_name in _CODEX_AGENT_VOLUME_MOUNTS.items():
-            mount = observed[destination]
-            volume = _inspect_volume_one(volume_name, f"Codex agent host volume {volume_name}")
-            source = volume.get("Mountpoint")
-            if (
-                volume.get("Name") != volume_name
-                or volume.get("Driver") != "local"
-                or volume.get("Scope") != "local"
-                or volume.get("Options") not in ({}, None)
-                or not isinstance(source, str)
-                or not Path(source).is_absolute()
-                or Path(source) != Path(os.path.normpath(source))
-                or mount.get("Type") != "volume"
-                or mount.get("Name") != volume_name
-                or mount.get("Source") != source
-                or mount.get("Destination") != destination
-                or mount.get("RW") is not True
-            ):
-                raise PermanentReleaseFailure(
-                    "Codex agent host mounts differ from isolated contract"
-                )
+            _require_named_volume_mount(
+                observed[destination],
+                volume_name=volume_name,
+                destination=destination,
+                read_write=True,
+                volume_label=f"Codex agent host volume {volume_name}",
+                breach=PermanentReleaseFailure,
+                failure="Codex agent host mounts differ from isolated contract",
+            )
 
     def _validate_codex_agent_host_network_peers(
         self,
@@ -4026,6 +4145,7 @@ class HostRelease:
         expected_image: str,
         expected_image_id: str,
         expected_name: str,
+        expected_source_sha: str,
         image_environment: dict[str, str],
     ) -> None:
         config = _mapping(inspected.get("Config"), "Codex capacity canary config")
@@ -4040,11 +4160,14 @@ class HostRelease:
                 "Codex capacity canary environment",
             )
         except ReleaseDefect as exc:
-            raise PermanentReleaseFailure("Codex capacity canary isolation differs") from exc
+            raise CodexCapacityBreach("Codex capacity canary isolation differs") from exc
+        labels = config.get("Labels")
         security_options = host_config.get("SecurityOpt")
         if (
             inspected.get("Image") != expected_image_id
             or inspected.get("Name") != f"/{expected_name}"
+            or not isinstance(labels, dict)
+            or labels.get(_CODEX_CAPACITY_CANARY_LABEL) != expected_source_sha
             or state.get("Running") is not True
             or config.get("Image") != expected_image
             or config.get("User") != "10001:10001"
@@ -4057,34 +4180,21 @@ class HostRelease:
             or host_config.get("NanoCpus") != 1_000_000_000
             or security_options != ["no-new-privileges:true"]
         ):
-            raise PermanentReleaseFailure("Codex capacity canary isolation differs")
+            raise CodexCapacityBreach("Codex capacity canary isolation differs")
         self._validate_resource_limits(_CODEX_AGENT_HOST, inspected)
 
         mounts = inspected.get("Mounts")
-        run_volume_name = _CODEX_AGENT_VOLUME_MOUNTS["/run/nexus-codex"]
-        run_volume = _inspect_volume_one(
-            run_volume_name,
-            "Codex capacity canary run volume",
+        if not isinstance(mounts, list) or len(mounts) != 1:
+            raise CodexCapacityBreach("Codex capacity canary isolation differs")
+        _require_named_volume_mount(
+            mounts[0],
+            volume_name=_CODEX_AGENT_VOLUME_MOUNTS["/run/nexus-codex"],
+            destination="/run/nexus-codex",
+            read_write=False,
+            volume_label="Codex capacity canary run volume",
+            breach=CodexCapacityBreach,
+            failure="Codex capacity canary isolation differs",
         )
-        source = run_volume.get("Mountpoint")
-        if (
-            not isinstance(mounts, list)
-            or len(mounts) != 1
-            or not isinstance(mounts[0], dict)
-            or run_volume.get("Name") != run_volume_name
-            or run_volume.get("Driver") != "local"
-            or run_volume.get("Scope") != "local"
-            or run_volume.get("Options") not in ({}, None)
-            or not isinstance(source, str)
-            or not Path(source).is_absolute()
-            or Path(source) != Path(os.path.normpath(source))
-            or mounts[0].get("Type") != "volume"
-            or mounts[0].get("Name") != run_volume_name
-            or mounts[0].get("Source") != source
-            or mounts[0].get("Destination") != "/run/nexus-codex"
-            or mounts[0].get("RW") is not False
-        ):
-            raise PermanentReleaseFailure("Codex capacity canary isolation differs")
         network = _mapping(
             inspected.get("NetworkSettings"),
             "Codex capacity canary network settings",
@@ -4096,7 +4206,48 @@ class HostRelease:
             or not isinstance(networks.get("none"), dict)
             or network.get("Ports") not in ({}, None)
         ):
-            raise PermanentReleaseFailure("Codex capacity canary isolation differs")
+            raise CodexCapacityBreach("Codex capacity canary isolation differs")
+
+    def _prove_codex_capacity_isolation(
+        self,
+        *,
+        canary: dict[str, Any],
+        host_container_id: str,
+        expected_image: str,
+        expected_image_id: str,
+        expected_name: str,
+        expected_source_sha: str,
+        image_environment: dict[str, str],
+    ) -> None:
+        """Assert live qualification isolation as the §11 policy breach it is.
+
+        Both validators are shared with the ordinary release paths, where an
+        isolation or resource-limit difference is a permanent candidate failure
+        that measured nothing. Proven here it is the enumerated policy breach and
+        must write failed evidence, so this call site converts what they prove
+        instead of changing what they mean everywhere else.
+        """
+
+        try:
+            self._validate_codex_capacity_client_isolation(
+                canary,
+                expected_image=expected_image,
+                expected_image_id=expected_image_id,
+                expected_name=expected_name,
+                expected_source_sha=expected_source_sha,
+                image_environment=image_environment,
+            )
+            self._validate_codex_agent_host_network_peers(
+                host_container_id,
+                _inspect_network_one(
+                    "nexus_codex_egress",
+                    "Codex capacity live network inspect",
+                ),
+            )
+        except CodexCapacityBreach:
+            raise
+        except PermanentReleaseFailure as exc:
+            raise CodexCapacityBreach(str(exc)) from exc
 
     def _validate_codex_agent_host_profile(self, bundle: Path) -> None:
         self._require_codex_agent_host_kernel_boundary()
@@ -4144,23 +4295,7 @@ class HostRelease:
     def _qualification_host_sample(self) -> tuple[int, float, float]:
         """Read the three non-content host counters retained by qualification."""
 
-        memory: dict[str, int] = {}
-        for line in self._host_text(self.paths.meminfo, "qualification memory").splitlines():
-            key, separator, raw = line.partition(":")
-            if key not in {"MemTotal", "MemAvailable", "SwapTotal"}:
-                continue
-            parts = raw.split()
-            if (
-                not separator
-                or len(parts) != 2
-                or parts[1] != "kB"
-                or not parts[0].isdigit()
-                or key in memory
-            ):
-                raise ReleaseDefect("qualification memory evidence is malformed")
-            memory[key] = int(parts[0]) * 1024
-        if set(memory) != {"MemTotal", "MemAvailable", "SwapTotal"}:
-            raise ReleaseDefect("qualification memory evidence is incomplete")
+        memory = self._host_memory_bytes()
         reservation_sum = sum(_RESOURCE_LIMITS[service][0] for service in _CAPACITY_SERVICES)
         if (
             memory["MemTotal"] < _MIN_HOST_MEMORY_BYTES
@@ -4168,27 +4303,7 @@ class HostRelease:
             or memory["SwapTotal"] < _MIN_SWAP_BYTES
         ):
             raise ReleaseBlocked("Codex capacity qualification host envelope is unavailable")
-
-        pressure: dict[str, float] = {}
-        for line in self._host_text(
-            self.paths.memory_pressure, "qualification memory pressure"
-        ).splitlines():
-            parts = line.split()
-            if not parts or parts[0] not in {"some", "full"}:
-                continue
-            avg10 = next((item for item in parts[1:] if item.startswith("avg10=")), None)
-            if avg10 is None or parts[0] in pressure:
-                raise ReleaseDefect("qualification memory pressure evidence is malformed")
-            try:
-                pressure[parts[0]] = float(avg10.removeprefix("avg10="))
-            except ValueError as exc:
-                raise ReleaseDefect("qualification memory pressure evidence is malformed") from exc
-        if (
-            set(pressure) != {"some", "full"}
-            or not math.isfinite(pressure["some"])
-            or not math.isfinite(pressure["full"])
-        ):
-            raise ReleaseDefect("qualification memory pressure evidence is malformed")
+        pressure = self._host_memory_pressure()
         return memory["MemAvailable"], pressure["some"], pressure["full"]
 
     def _require_qualification_host_sample(
@@ -4203,46 +4318,61 @@ class HostRelease:
             return
         if initial:
             raise ReleaseBlocked(message)
-        raise PermanentReleaseFailure(message)
+        raise CodexCapacityBreach(message)
 
-    def _codex_capacity_cgroup_metrics(self, canary_id: str) -> tuple[int, int, int, int]:
-        result = _run(
-            (
-                "docker",
-                "exec",
-                canary_id,
-                "sh",
-                "-c",
-                "printf 'memory.max='; cat /sys/fs/cgroup/memory.max; "
-                "printf 'memory.current='; cat /sys/fs/cgroup/memory.current; "
-                "printf 'memory.peak='; cat /sys/fs/cgroup/memory.peak; "
-                "printf 'oom_kill='; awk '$1 == \"oom_kill\" {print $2}' "
-                "/sys/fs/cgroup/memory.events",
-            ),
-            timeout_seconds=20,
-        )
-        try:
-            lines = result.stdout.decode("ascii").splitlines()
-        except UnicodeDecodeError as exc:
-            raise ReleaseDefect("Codex capacity cgroup metrics are not ASCII") from exc
+    def _codex_capacity_cgroup(self, container_id: str) -> Path:
+        """Resolve the host-side cgroup v2 directory of the measured container.
+
+        The measurement must never enter the cgroup it measures: an exec'd
+        sampler is charged to the same 384 MiB limit and 64-process budget the
+        proof asserts against a 64 MiB margin.
+        """
+
+        inspected = _inspect_one(container_id, "Codex capacity cgroup inspect")
+        state = _mapping(inspected.get("State"), "Codex capacity cgroup state")
+        pid = state.get("Pid")
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            raise ReleaseDefect("Codex capacity container has no running process")
+        unified: list[str] = []
+        for line in self._host_text(
+            self.paths.proc_root / str(pid) / "cgroup",
+            "Codex capacity container cgroup",
+        ).splitlines():
+            if line.startswith("0::"):
+                unified.append(line.removeprefix("0::"))
+        if (
+            len(unified) != 1
+            or not unified[0].startswith("/")
+            or unified[0] == "/"
+            or unified[0] != os.path.normpath(unified[0])
+        ):
+            raise ReleaseDefect("Codex capacity container cgroup evidence is malformed")
+        return self.paths.cgroup_root / unified[0].removeprefix("/")
+
+    def _codex_capacity_cgroup_metrics(self, cgroup: Path) -> tuple[int, int, int, int]:
         values: dict[str, int] = {}
-        for line in lines:
-            key, separator, raw = line.partition("=")
-            if (
-                not separator
-                or key not in {"memory.max", "memory.current", "memory.peak", "oom_kill"}
-                or key in values
-                or not raw.isdigit()
-            ):
+        for counter in ("memory.max", "memory.current", "memory.peak"):
+            raw = self._host_text(cgroup / counter, f"Codex capacity {counter}").strip()
+            if not raw.isdigit():
                 raise ReleaseDefect("Codex capacity cgroup metrics are malformed")
-            values[key] = int(raw)
+            values[counter] = int(raw)
+        for line in self._host_text(
+            cgroup / "memory.events",
+            "Codex capacity memory events",
+        ).splitlines():
+            key, separator, raw = line.partition(" ")
+            if key != "oom_kill":
+                continue
+            if not separator or not raw.isdigit() or "oom_kill" in values:
+                raise ReleaseDefect("Codex capacity cgroup metrics are malformed")
+            values["oom_kill"] = int(raw)
         if set(values) != {"memory.max", "memory.current", "memory.peak", "oom_kill"}:
             raise ReleaseDefect("Codex capacity cgroup metrics are incomplete")
         if (
             values["memory.current"] > values["memory.max"]
             or values["memory.peak"] > values["memory.max"]
         ):
-            raise PermanentReleaseFailure("Codex capacity cgroup counters exceed memory.max")
+            raise CodexCapacityBreach("Codex capacity cgroup counters exceed memory.max")
         return (
             values["memory.max"],
             values["memory.current"],
@@ -4278,7 +4408,7 @@ class HostRelease:
                 or not isinstance(health, dict)
                 or health.get("Status") != "healthy"
             ):
-                raise PermanentReleaseFailure(f"Codex capacity {service} is not healthy")
+                raise CodexCapacityBreach(f"Codex capacity {service} is not healthy")
         return _CODEX_CAPACITY_SERVICES
 
     def _read_codex_capacity_qualification(
@@ -4288,6 +4418,24 @@ class HostRelease:
         worker_image_id: str,
     ) -> None:
         path = self._codex_capacity_evidence_path(candidate.source_sha)
+        value = self._load_codex_capacity_evidence(path)
+        measured_at = self._read_codex_capacity_evidence_value(
+            value,
+            expected_source_sha=candidate.source_sha,
+            worker_image_id=worker_image_id,
+        )
+        # Qualification measured a live host, not only a candidate. Past the
+        # bounded age the measurement no longer describes the host this
+        # promotion would run on, even for the identical candidate. Expiry is
+        # not a breach: like absent evidence it blocks this promotion and is
+        # cured by re-qualifying the unchanged SHA, so it must never terminalize
+        # the candidate.
+        if _codex_capacity_evidence_expired(measured_at):
+            raise ReleaseBlocked("Codex capacity qualification is stale")
+
+    def _load_codex_capacity_evidence(self, path: Path) -> object:
+        """Read one exact immutable evidence file before making a decision from it."""
+
         try:
             metadata = path.lstat()
             value = _read_canonical_json(path, "Codex capacity qualification")
@@ -4302,56 +4450,53 @@ class HostRelease:
             raise PermanentReleaseFailure(
                 "Codex capacity qualification is not root-owned immutable"
             )
-        self._read_codex_capacity_evidence_value(value, candidate, worker_image_id)
+        return value
 
     def _read_codex_capacity_evidence_value(
         self,
         value: object,
-        candidate: CandidateManifest,
+        *,
+        expected_source_sha: str,
         worker_image_id: str,
-    ) -> None:
+    ) -> float:
+        """Validate one capacity evidence value and return when it was measured."""
+
         evidence = _closed_mapping(
             value, _CODEX_CAPACITY_EVIDENCE_FIELDS, "Codex capacity qualification"
         )
         if (
             _string(evidence, "schema_version") != _CODEX_CAPACITY_SCHEMA_VERSION
-            or _string(evidence, "source_sha") != candidate.source_sha
+            or _string(evidence, "source_sha") != expected_source_sha
             or _string(evidence, "worker_image_id") != worker_image_id
             or _string(evidence, "status") != "passed"
         ):
-            raise PermanentReleaseFailure("Codex capacity qualification differs from candidate")
+            raise CodexCapacityBreach("Codex capacity qualification differs from candidate")
         if (
             _nonnegative_integer(evidence, "cgroup_memory_max")
             != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1]
         ):
-            raise PermanentReleaseFailure("Codex capacity qualification cgroup limit differs")
+            raise CodexCapacityBreach("Codex capacity qualification cgroup limit differs")
         peak = _nonnegative_integer(evidence, "cgroup_memory_peak")
         if peak > 320 * 1024 * 1024:
-            raise PermanentReleaseFailure(
-                "Codex capacity qualification cgroup peak exceeds 320 MiB"
-            )
+            raise CodexCapacityBreach("Codex capacity qualification cgroup peak exceeds 320 MiB")
         if (
             _nonnegative_integer(evidence, "cgroup_memory_current")
             > _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1]
         ):
-            raise PermanentReleaseFailure(
-                "Codex capacity qualification cgroup current exceeds limit"
-            )
+            raise CodexCapacityBreach("Codex capacity qualification cgroup current exceeds limit")
         if _nonnegative_integer(evidence, "minimum_mem_available") < _MIN_AVAILABLE_MEMORY_BYTES:
-            raise PermanentReleaseFailure(
-                "Codex capacity qualification host headroom is below 256 MiB"
-            )
+            raise CodexCapacityBreach("Codex capacity qualification host headroom is below 256 MiB")
         some = _finite_number(evidence, "maximum_memory_psi_some")
         full = _finite_number(evidence, "maximum_memory_psi_full")
         if full != 0 or some > 5:
-            raise PermanentReleaseFailure(
+            raise CodexCapacityBreach(
                 "Codex capacity qualification memory pressure exceeds envelope"
             )
         if _nonnegative_integer(evidence, "oom_kill_delta") != 0:
-            raise PermanentReleaseFailure("Codex capacity qualification observed an OOM kill")
+            raise CodexCapacityBreach("Codex capacity qualification observed an OOM kill")
         turns = evidence.get("turns")
         if not isinstance(turns, list) or len(turns) != len(_CODEX_CAPACITY_PHASES):
-            raise PermanentReleaseFailure("Codex capacity qualification turns are malformed")
+            raise CodexCapacityBreach("Codex capacity qualification turns are malformed")
         phases: list[str] = []
         for value in turns:
             turn = _closed_mapping(
@@ -4368,29 +4513,156 @@ class HostRelease:
                 or _nonnegative_integer(turn, "tool_event_count") != 0
                 or _nonnegative_integer(turn, "permission_event_count") != 0
             ):
-                raise PermanentReleaseFailure("Codex capacity qualification turn differs")
+                raise CodexCapacityBreach("Codex capacity qualification turn differs")
         if tuple(phases) != _CODEX_CAPACITY_PHASES:
-            raise PermanentReleaseFailure("Codex capacity qualification turn phases differ")
+            raise CodexCapacityBreach("Codex capacity qualification turn phases differ")
         services = _string_list(evidence.get("services"), "Codex capacity qualification services")
         if tuple(services) != _CODEX_CAPACITY_SERVICES:
-            raise PermanentReleaseFailure("Codex capacity qualification service health differs")
+            raise CodexCapacityBreach("Codex capacity qualification service health differs")
+        return _release_timestamp_seconds(
+            _string(evidence, "measured_at"),
+            "Codex capacity qualification",
+        )
 
-    def _write_codex_capacity_evidence(self, source_sha: str, value: dict[str, object]) -> None:
+    def _read_codex_capacity_failure_value(
+        self,
+        value: object,
+        *,
+        expected_source_sha: str,
+        worker_image_id: str,
+    ) -> float:
+        """Validate the exact permanent-failure evidence shape."""
+
+        evidence = _closed_mapping(
+            value, _CODEX_CAPACITY_EVIDENCE_FIELDS, "Codex capacity qualification"
+        )
+        if (
+            _string(evidence, "schema_version") != _CODEX_CAPACITY_SCHEMA_VERSION
+            or _string(evidence, "source_sha") != expected_source_sha
+            or _string(evidence, "worker_image_id") != worker_image_id
+            or _string(evidence, "status") != "failed"
+        ):
+            raise CodexCapacityBreach("Codex capacity qualification differs from candidate")
+        if (
+            evidence.get("turns") != []
+            or _nonnegative_integer(evidence, "cgroup_memory_max")
+            != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1]
+            or _nonnegative_integer(evidence, "cgroup_memory_current") != 0
+            or _nonnegative_integer(evidence, "cgroup_memory_peak") != 0
+            or _nonnegative_integer(evidence, "minimum_mem_available") != 0
+            or _finite_number(evidence, "maximum_memory_psi_some") != 0
+            or _finite_number(evidence, "maximum_memory_psi_full") != 0
+            or _nonnegative_integer(evidence, "oom_kill_delta") != 0
+            or evidence.get("services") != []
+        ):
+            raise CodexCapacityBreach("Codex capacity failed evidence is malformed")
+        return _release_timestamp_seconds(
+            _string(evidence, "measured_at"),
+            "Codex capacity qualification",
+        )
+
+    def _read_existing_codex_capacity_evidence(
+        self,
+        value: object,
+        *,
+        expected_source_sha: str,
+        worker_image_id: str,
+    ) -> tuple[str, float]:
+        evidence = _mapping(value, "Codex capacity qualification")
+        status = _string(evidence, "status")
+        if status == "passed":
+            measured_at = self._read_codex_capacity_evidence_value(
+                value,
+                expected_source_sha=expected_source_sha,
+                worker_image_id=worker_image_id,
+            )
+        elif status == "failed":
+            measured_at = self._read_codex_capacity_failure_value(
+                value,
+                expected_source_sha=expected_source_sha,
+                worker_image_id=worker_image_id,
+            )
+        else:
+            raise CodexCapacityBreach("Codex capacity qualification status is malformed")
+        return status, measured_at
+
+    def _admit_codex_capacity_qualification(
+        self,
+        *,
+        source_sha: str,
+        worker_image_id: str,
+    ) -> None:
+        """Fail before runtime mutation when immutable evidence already decides the SHA."""
+
+        path = self._codex_capacity_evidence_path(source_sha)
+        if not path.exists() and not path.is_symlink():
+            return
+        status, measured_at = self._read_existing_codex_capacity_evidence(
+            self._load_codex_capacity_evidence(path),
+            expected_source_sha=source_sha,
+            worker_image_id=worker_image_id,
+        )
+        if status == "failed":
+            raise ReleaseBlocked("Codex capacity qualification failed evidence is immutable")
+        if not _codex_capacity_evidence_expired(measured_at):
+            raise ReleaseBlocked("Codex capacity qualification evidence already exists")
+
+    def _write_codex_capacity_evidence(
+        self,
+        source_sha: str,
+        worker_image_id: str,
+        value: dict[str, object],
+    ) -> None:
         path = self._codex_capacity_evidence_path(source_sha)
         if path.exists() or path.is_symlink():
-            raise ReleaseBlocked("Codex capacity qualification evidence already exists")
-        _create_bytes(path, _canonical_json(value), mode=0o444)
+            self._require_replaceable_codex_capacity_evidence(
+                path,
+                source_sha=source_sha,
+                worker_image_id=worker_image_id,
+            )
+            _atomic_bytes(path, _canonical_json(value), mode=0o444)
+        else:
+            _create_bytes(path, _canonical_json(value), mode=0o444)
         os.chown(path, 0, 0)
         path.chmod(0o444)
+
+    def _require_replaceable_codex_capacity_evidence(
+        self,
+        path: Path,
+        *,
+        source_sha: str,
+        worker_image_id: str,
+    ) -> None:
+        """Allow a rerun to replace only an expired passing measurement.
+
+        §11 makes a measured breach permanent: rerunning can never replace failed
+        evidence, and a complete fresh pass is equally final. A passing
+        measurement is bounded by its age instead, so once it can no longer
+        authorize the promotion the unchanged SHA must be able to earn a new
+        measurement — otherwise expiry, not a breach, would disqualify the
+        candidate forever.
+        """
+
+        status, measured_at = self._read_existing_codex_capacity_evidence(
+            self._load_codex_capacity_evidence(path),
+            expected_source_sha=source_sha,
+            worker_image_id=worker_image_id,
+        )
+        if status == "failed":
+            raise ReleaseBlocked("Codex capacity qualification failed evidence is immutable")
+        if not _codex_capacity_evidence_expired(measured_at):
+            raise ReleaseBlocked("Codex capacity qualification evidence already exists")
 
     def _write_codex_capacity_failure(self, *, source_sha: str, worker_image_id: str) -> None:
         self._write_codex_capacity_evidence(
             source_sha,
+            worker_image_id,
             {
                 "schema_version": _CODEX_CAPACITY_SCHEMA_VERSION,
                 "source_sha": source_sha,
                 "worker_image_id": worker_image_id,
                 "status": "failed",
+                "measured_at": _now(),
                 "turns": [],
                 "cgroup_memory_max": _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1],
                 "cgroup_memory_current": 0,
@@ -4419,6 +4691,45 @@ class HostRelease:
             raise ReleaseDefect("Codex capacity canary listing is malformed")
         return identifiers
 
+    def _remove_owned_codex_capacity_canary(
+        self,
+        name: str,
+        *,
+        source_sha: str,
+        operation: str,
+    ) -> None:
+        """Remove only exact inspected containers owned by this qualification."""
+
+        for canary_id in self._codex_capacity_canary_ids(name):
+            inspected = _inspect_one(canary_id, f"Codex capacity canary {operation} inspect")
+            config = _mapping(
+                inspected.get("Config"),
+                f"Codex capacity canary {operation} config",
+            )
+            labels = config.get("Labels")
+            if (
+                inspected.get("Name") != f"/{name}"
+                or not isinstance(labels, dict)
+                or labels.get(_CODEX_CAPACITY_CANARY_LABEL) != source_sha
+            ):
+                raise ReleaseBlocked("Codex capacity canary name is held by a foreign container")
+            # Delete by the inspected immutable ID, never the reusable name. If
+            # the inspected container disappears and another process wins the
+            # name before this call, Docker can only reject the stale ID; it
+            # cannot redirect deletion onto the replacement.
+            _run(("docker", "rm", "--force", canary_id), timeout_seconds=30)
+        if self._codex_capacity_canary_ids(name):
+            raise ExternalCommandFailed(f"Codex capacity canary remains after {operation}")
+
+    def _reclaim_codex_capacity_canary(self, name: str, *, source_sha: str) -> None:
+        """Remove an owned canary left behind by an interrupted same-SHA proof."""
+
+        self._remove_owned_codex_capacity_canary(
+            name,
+            source_sha=source_sha,
+            operation="reclaim",
+        )
+
     def _cleanup_codex_capacity_runtime(
         self,
         *,
@@ -4431,19 +4742,11 @@ class HostRelease:
         failures: list[BaseException] = []
         if canary_name is not None:
             try:
-                removal = _run_observed(
-                    ("docker", "rm", "--force", canary_name),
-                    timeout_seconds=30,
+                self._remove_owned_codex_capacity_canary(
+                    canary_name,
+                    source_sha=candidate.source_sha,
+                    operation="removal",
                 )
-                if removal.returncode != 0:
-                    failures.append(ExternalCommandFailed("Codex capacity canary removal failed"))
-            except BaseException as exc:
-                failures.append(exc)
-            try:
-                if self._codex_capacity_canary_ids(canary_name):
-                    failures.append(
-                        ExternalCommandFailed("Codex capacity canary remains after removal")
-                    )
             except BaseException as exc:
                 failures.append(exc)
         if stop_host:
@@ -4491,7 +4794,19 @@ class HostRelease:
             )
 
     def qualify_codex_capacity(self, source_sha: str) -> None:
-        """Run the one pre-promotion, candidate-bound existing-VPS qualification."""
+        """Run the one pre-promotion, candidate-bound existing-VPS qualification.
+
+        Classification is the run's product. A breach proven by the canary
+        contract, by the isolation policy, by the background sampler, or by the
+        assembled evidence writes immutable failed evidence and disqualifies this
+        source SHA forever, and only stdout that parses as the canary's own
+        evidence contract can prove one. Everything that measured nothing about
+        the envelope stays retriable and writes nothing: Docker, transport,
+        cleanup, a sampler fault, and a canary that crashed or was OOM-killed
+        before stating a contract terminal — empty or unparseable stdout, or an
+        exit code the contract does not define. A rerun may replace only expired
+        passing evidence, never failed evidence.
+        """
 
         self.store.assert_no_oracle_attempt()
         self.store.assert_candidate_admissible(source_sha)
@@ -4499,9 +4814,13 @@ class HostRelease:
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
         if not self._requires_first_codex_capacity_qualification(candidate):
             raise ReleaseBlocked("Codex capacity qualification is only for first 0216 promotion")
+        worker_image_id = self._image_identity(candidate.images.worker, candidate)
+        self._admit_codex_capacity_qualification(
+            source_sha=source_sha,
+            worker_image_id=worker_image_id,
+        )
         self._require_qualification_host_sample(self._qualification_host_sample(), initial=True)
         config = self._config_snapshot()
-        worker_image_id = self._image_identity(candidate.images.worker, candidate)
         host_may_be_started = False
         try:
             self._preflight_codex_agent_host_security(bundle)
@@ -4565,8 +4884,9 @@ class HostRelease:
         try:
             reservation, memory, pids = _RESOURCE_LIMITS[_CODEX_AGENT_HOST]
             run_volume_name = _CODEX_AGENT_VOLUME_MOUNTS["/run/nexus-codex"]
-            if self._codex_capacity_canary_ids(name):
-                raise ReleaseBlocked("Codex capacity canary already exists")
+            self._reclaim_codex_capacity_canary(name, source_sha=source_sha)
+            # From here the named canary is this run's to remove, whether or not
+            # `docker run` reports back, so cleanup always reclaims it.
             canary_may_exist = True
             canary_id = _stdout(
                 (
@@ -4575,6 +4895,8 @@ class HostRelease:
                     "--detach",
                     "--name",
                     name,
+                    "--label",
+                    f"{_CODEX_CAPACITY_CANARY_LABEL}={source_sha}",
                     "--network",
                     "none",
                     "--read-only",
@@ -4605,30 +4927,26 @@ class HostRelease:
                 )
             )
             _require_match("Codex capacity canary container id", canary_id, _CONTAINER_ID)
-            inspected = _inspect_one(canary_id, "Codex capacity canary inspect")
-            self._validate_codex_capacity_client_isolation(
-                inspected,
+            self._prove_codex_capacity_isolation(
+                canary=_inspect_one(canary_id, "Codex capacity canary inspect"),
+                host_container_id=host_container_id,
                 expected_image=candidate.images.worker,
                 expected_image_id=worker_image_id,
                 expected_name=name,
+                expected_source_sha=source_sha,
                 image_environment=self._codex_agent_image_environment(candidate.images.worker),
             )
-            self._validate_codex_agent_host_network_peers(
-                host_container_id,
-                _inspect_network_one(
-                    "nexus_codex_egress",
-                    "Codex capacity live network inspect",
-                ),
-            )
+            host_cgroup = self._codex_capacity_cgroup(host_container_id)
             sampled: list[tuple[tuple[int, float, float], tuple[int, int, int, int]]] = []
             sample_failure: list[Exception] = []
+            sample_breach: list[CodexCapacityBreach] = []
             sampler_stop = threading.Event()
 
             def sample_once() -> None:
                 sampled.append(
                     (
                         self._qualification_host_sample(),
-                        self._codex_capacity_cgroup_metrics(host_container_id),
+                        self._codex_capacity_cgroup_metrics(host_cgroup),
                     )
                 )
 
@@ -4636,9 +4954,13 @@ class HostRelease:
             self._require_qualification_host_sample(sampled[-1][0], initial=True)
 
             def sample_during_turns() -> None:
-                while not sampler_stop.wait(1):
+                # justify-polling: host and cgroup counters expose no event source.
+                while not sampler_stop.wait(_CODEX_CAPACITY_SAMPLE_INTERVAL_SECONDS):
                     try:
                         sample_once()
+                    except CodexCapacityBreach as exc:  # a measurement, not a sampler fault
+                        sample_breach.append(exc)
+                        sampler_stop.set()
                     except Exception as exc:  # retained only as a typed failure
                         sample_failure.append(exc)
                         sampler_stop.set()
@@ -4659,31 +4981,55 @@ class HostRelease:
                 )
             finally:
                 sampler_stop.set()
-                sampler.join(timeout=5)
+                sampler.join(timeout=_CODEX_CAPACITY_SAMPLER_JOIN_SECONDS)
+            if sample_breach:
+                # The sampler observed the ceiling itself during the turns. That
+                # is the measurement §11 enumerates, not a sampler fault, so the
+                # main thread re-raises it first and failed evidence is written;
+                # no later sampler classification may downgrade it.
+                raise sample_breach[0]
             if sampler.is_alive():
-                raise ReleaseDefect("Codex capacity sampler did not stop")
+                # A sampler still inside its own bounded reads measured no
+                # breach; the proof is retried, not permanently disqualified.
+                raise ExternalCommandFailed("Codex capacity sampler did not stop")
             if sample_failure:
                 raise ReleaseDefect("Codex capacity sampler failed") from sample_failure[0]
-            canary = _closed_mapping(
-                _read_json_output(result.stdout, "Codex capacity canary"),
-                _CODEX_CAPACITY_CANARY_FIELDS,
-                "Codex capacity canary",
-            )
-            status = _string(canary, "status")
-            if _string(canary, "schema_version") != _CODEX_CAPACITY_CANARY_SCHEMA_VERSION:
-                raise PermanentReleaseFailure("Codex capacity canary schema differs")
-            expected_exit = {
-                "passed": 0,
-                "not_run": 20,
-                "provider_blocked": 21,
-                "failed": 1,
-            }
-            if result.returncode != expected_exit.get(status):
-                raise PermanentReleaseFailure("Codex capacity canary exit status differs")
-            if status in {"not_run", "provider_blocked"}:
+            # Classify by evidence first, never by the exit code alone. Only
+            # stdout that parses as the canary's own contract statement is a
+            # measurement this run may permanently disqualify a SHA with. A
+            # canary that crashed, was OOM-killed, or was cut off mid-write
+            # leaves stdout that is empty or unparseable; it observed nothing
+            # about the measured envelope, whatever it exited with. A real
+            # envelope breach is the sampler's or the assembled evidence's to
+            # state, and the sampler is already checked above.
+            try:
+                canary = _closed_mapping(
+                    _read_json_output(result.stdout, "Codex capacity canary"),
+                    _CODEX_CAPACITY_CANARY_FIELDS,
+                    "Codex capacity canary",
+                )
+                status = _string(canary, "status")
+                schema_version = _string(canary, "schema_version")
+                turns = canary.get("turns")
+                if not isinstance(turns, list):
+                    raise ReleaseDefect("Codex capacity canary turns are malformed")
+            except ReleaseDefect as exc:
+                raise ExternalCommandFailed(
+                    "Codex capacity canary did not state its contract"
+                ) from exc
+            if result.returncode not in _CODEX_CAPACITY_CANARY_EXIT_CODES.values():
+                # A complete statement carrying a code the contract does not
+                # define is the killed-after-printing case: still retriable,
+                # still never evidence.
+                raise ExternalCommandFailed("Codex capacity canary did not reach a terminal")
+            if schema_version != _CODEX_CAPACITY_CANARY_SCHEMA_VERSION:
+                raise CodexCapacityBreach("Codex capacity canary schema differs")
+            if result.returncode != _CODEX_CAPACITY_CANARY_EXIT_CODES.get(status):
+                raise CodexCapacityBreach("Codex capacity canary exit status differs")
+            if status in {"not_run", "provider_blocked", "transport_retriable"}:
                 raise ReleaseBlocked(f"Codex capacity qualification is {status}")
             if status != "passed":
-                raise PermanentReleaseFailure("Codex capacity canary failed")
+                raise CodexCapacityBreach("Codex capacity canary failed")
             sample_once()
             for sample, _ in sampled:
                 self._require_qualification_host_sample(sample, initial=False)
@@ -4694,22 +5040,18 @@ class HostRelease:
                 or max(metric[2] for metric in metrics) > 320 * 1024 * 1024
                 or final_metrics[3] - initial_metrics[3] != 0
             ):
-                raise PermanentReleaseFailure(
-                    "Codex capacity qualification cgroup envelope differs"
-                )
+                raise CodexCapacityBreach("Codex capacity qualification cgroup envelope differs")
             services = self._require_codex_capacity_service_health(
                 bundle=bundle,
                 candidate=candidate,
                 config_path=config.path,
             )
-            turns = canary.get("turns")
-            if not isinstance(turns, list):
-                raise PermanentReleaseFailure("Codex capacity canary turns are malformed")
             evidence = {
                 "schema_version": _CODEX_CAPACITY_SCHEMA_VERSION,
                 "source_sha": source_sha,
                 "worker_image_id": worker_image_id,
                 "status": "passed",
+                "measured_at": _now(),
                 "turns": turns,
                 "cgroup_memory_max": final_metrics[0],
                 "cgroup_memory_current": final_metrics[1],
@@ -4720,11 +5062,20 @@ class HostRelease:
                 "oom_kill_delta": final_metrics[3] - initial_metrics[3],
                 "services": list(services),
             }
-            self._read_codex_capacity_evidence_value(evidence, candidate, worker_image_id)
-        except (PermanentReleaseFailure, ReleaseDefect, ExternalCommandFailed) as exc:
+            self._read_codex_capacity_evidence_value(
+                evidence,
+                expected_source_sha=candidate.source_sha,
+                worker_image_id=worker_image_id,
+            )
+        except CodexCapacityBreach as exc:
+            # Only a measured breach disqualifies the source SHA forever, and
+            # the immutable failed evidence it writes can never be replaced.
             proof_error = exc
             write_failure_evidence = True
         except BaseException as exc:
+            # Docker, transport, sampler and host-read failures measured no
+            # breach. They stay retriable and write nothing, exactly like the
+            # startup block above.
             proof_error = exc
 
         cleanup_failures = self._cleanup_codex_capacity_runtime(
@@ -4735,9 +5086,10 @@ class HostRelease:
             stop_host=True,
         )
         if cleanup_failures:
+            # Cleanup observes nothing about capacity, so a failure here fails
+            # the run without writing evidence; the next run reclaims the canary.
             if proof_error is None:
                 proof_error = ExternalCommandFailed("Codex capacity cleanup failed")
-                write_failure_evidence = True
             for cleanup_failure in cleanup_failures:
                 proof_error.add_note(f"Codex capacity cleanup also failed: {cleanup_failure}")
         if proof_error is not None:
@@ -4754,7 +5106,7 @@ class HostRelease:
             raise proof_error
         if evidence is None:
             raise ReleaseDefect("Codex capacity qualification produced no evidence")
-        self._write_codex_capacity_evidence(source_sha, evidence)
+        self._write_codex_capacity_evidence(source_sha, worker_image_id, evidence)
 
     def _container_image_id(
         self,
@@ -5019,22 +5371,27 @@ class HostRelease:
 
         if attempt.phase is ReleasePhase.BackendActivationStarted:
             self._prepare_codex_agent_host_security(bundle)
-            self._compose(
-                bundle=bundle,
-                candidate=candidate,
-                config_path=Path(attempt.config_path),
-                arguments=(
-                    "up",
-                    "--detach",
-                    "--no-deps",
-                    "--wait",
-                    "--wait-timeout",
-                    "90",
-                    *_WRITERS,
-                    _CODEX_AGENT_HOST,
-                ),
-                timeout_seconds=120,
-            )
+            # `--no-deps` pins each start to the exact named services, so the
+            # writers' declared dependency on the Codex host is honored here by
+            # starting and awaiting the host first. Otherwise the background
+            # lane could claim a metadata job before the socket exists and take
+            # the terminal host-unavailable outcome, which never auto-retries.
+            for services in ((_CODEX_AGENT_HOST,), _WRITERS):
+                self._compose(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=Path(attempt.config_path),
+                    arguments=(
+                        "up",
+                        "--detach",
+                        "--no-deps",
+                        "--wait",
+                        "--wait-timeout",
+                        "90",
+                        *services,
+                    ),
+                    timeout_seconds=120,
+                )
             self._prove_backend(
                 bundle=bundle,
                 candidate=candidate,
