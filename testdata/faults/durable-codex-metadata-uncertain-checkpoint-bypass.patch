@@ -1,12 +1,15 @@
 diff --git a/python/nexus/tasks/enrich_metadata.py b/python/nexus/tasks/enrich_metadata.py
 --- a/python/nexus/tasks/enrich_metadata.py
 +++ b/python/nexus/tasks/enrich_metadata.py
-@@ -323,17 +323,3 @@
+@@ -414,20 +414,6 @@ def enrich_metadata(
+                 output_schema_fingerprint=facts.output_schema_fingerprint,
+             ),
+         )
 -        if not checkpoint_step_state(
 -            db,
 -            ctx=context,
 -            job=job,
--            step_path=_STEP_PATH,
+-            step_path=METADATA_STEP_PATH,
 -            state=StepReplayState(
 -                generation_id=generation_id,
 -                dispatch_phase=Uncertain,
@@ -15,7 +18,7 @@ diff --git a/python/nexus/tasks/enrich_metadata.py b/python/nexus/tasks/enrich_m
 -            ),
 -        ):
 -            db.rollback()
--            return {"status": "skipped", "reason": "claim_lost_before_dispatch"}
+-            return _job_result(_SkippedPublication(reason="claim_lost_before_dispatch"))
          db.commit()
 
      with factory() as db:

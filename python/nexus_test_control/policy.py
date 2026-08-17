@@ -23,7 +23,12 @@ class PolicyViolation:
 
 
 _BUILTIN_PYTEST_MARKS = frozenset({"filterwarnings", "parametrize", "usefixtures"})
-_OWNED_MODULE_PREFIXES = ("nexus", "nexus_test_control")
+# First-party behavior proofs may not monkeypatch. `apps.codex_agent` is listed
+# explicitly: the private host boundary is pinned to real UDS processes, so its
+# constants and helpers must never be patched into a laboratory shape. The one
+# remaining `apps.worker` entrypoint harness (test_runtime_health.py) predates
+# this gate and is the only sanctioned residue outside it.
+_OWNED_MODULE_PREFIXES = ("nexus", "nexus_test_control", "apps.codex_agent")
 _RAW_SQL_SETUP = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b", re.I)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")

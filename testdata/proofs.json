@@ -197,45 +197,46 @@
     },
     {
       "id": "durable-job-replay",
-    "source_globs": [
-      "python/nexus/jobs/**/*.py",
-      "python/nexus/errors.py",
-      "python/nexus/services/chat_run*.py",
+      "source_globs": [
+        "python/nexus/jobs/**/*.py",
+        "python/nexus/errors.py",
+        "python/nexus/services/chat_run*.py",
         "python/nexus/services/content_indexing.py",
         "python/nexus/services/durable_step_journal.py",
         "python/nexus/services/agent_turn_ledger.py",
-        "python/nexus/services/metadata_dispatch.py",
-        "python/nexus/services/metadata_enrichment.py",
-        "python/nexus/services/metadata_lifecycle.py",
         "python/nexus/services/metadata_*.py",
         "python/nexus/services/native_agent_client.py",
         "python/nexus/services/podcasts/ingest.py",
         "python/nexus/services/semantic_chunks.py",
         "python/nexus/tasks/chat_run.py",
         "python/nexus/tasks/enrich_metadata.py",
+        "python/tests/testkit/codex_metadata.py",
         "python/tests/testkit/network.py",
+        "python/tests/testkit/unreachable_state.py",
         "python/tests/testkit/openai_embedding_server.py",
         "python/tests/testkit/sitecustomize.py",
         "python/tests/testkit/worker.py"
       ],
-    "proofs": [
-      "pytest:python/tests/service/test_codex_metadata_failure_mapping.py::test_native_timeout_persists_as_a_distinct_metadata_failure",
-      "pytest:python/tests/service/test_codex_metadata_enrichment.py",
-      "pytest:python/tests/service/test_codex_metadata_transport_durability.py::test_postaccept_disconnect_stays_incomplete_and_never_redispatches",
-      "pytest:python/tests/service/test_durable_job_replay.py",
-      "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job",
-      "pytest:python/tests/service/test_heavy_job_capacity.py",
-      "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets"
+      "proofs": [
+        "pytest:python/tests/service/test_codex_metadata_failure_mapping.py::test_native_timeout_persists_as_a_distinct_metadata_failure",
+        "pytest:python/tests/service/test_codex_metadata_enrichment.py",
+        "pytest:python/tests/service/test_codex_metadata_enrichment.py::test_real_worker_publishes_authors_pins_and_exactly_replays_after_publication",
+        "pytest:python/tests/service/test_codex_metadata_transport_durability.py::test_postaccept_disconnect_stays_incomplete_and_never_redispatches",
+        "pytest:python/tests/service/test_durable_job_replay.py",
+        "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job",
+        "pytest:python/tests/service/test_heavy_job_capacity.py",
+        "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets"
       ],
-    "capabilities": [
-      "service"
-    ]
+      "capabilities": [
+        "service"
+      ]
     },
     {
       "id": "native-agent-host",
       "source_globs": [
         ".github/workflows/codex-personal-nightly.yml",
         "apps/codex_agent/**/*.py",
+        "deploy/hetzner/release.py",
         "python/pyproject.toml",
         "python/nexus/services/native_agent_contract.py",
         "python/nexus/services/native_agent_client.py",
@@ -246,14 +247,16 @@
         "python/uv.lock"
       ],
       "proofs": [
-      "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
-      "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::test_hosted_canary_rendered_failure_drops_provider_sentinels",
-      "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
-      "pytest:python/tests/kernel/test_native_agent_contract.py",
-      "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
-      "pytest:python/tests/service/test_codex_agent_host.py",
-      "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
-      "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py"
+        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
+        "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::test_hosted_canary_rendered_failure_drops_provider_sentinels",
+        "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
+        "pytest:python/tests/kernel/test_native_agent_contract.py",
+        "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
+        "pytest:python/tests/service/test_codex_agent_host.py",
+        "pytest:python/tests/service/test_codex_agent_host.py::test_host_refuses_non_admissible_capacity_before_runtime_construction",
+        "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
+        "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_release_controller_mirrors_the_canary_exit_and_phase_contract",
+        "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py"
       ],
       "capabilities": [
         "codex-hosted",

@@ -1,7 +1,7 @@
 diff --git a/apps/codex_agent/host.py b/apps/codex_agent/host.py
 --- a/apps/codex_agent/host.py
 +++ b/apps/codex_agent/host.py
-@@ -332,11 +332,11 @@ def _terminal_to_wire(
+@@ -386,11 +386,11 @@ def _terminal_to_wire(
      return NativeAgentTerminal(
          status=terminal.status,
          failure=failure,
@@ -10,8 +10,8 @@ diff --git a/apps/codex_agent/host.py b/apps/codex_agent/host.py
          structured_output=structured if isinstance(structured, dict) else None,
          session_ref=_session_ref(terminal.session_ref),
          usage=_optional_usage(terminal.usage),
--        diagnostics=(),
+-        diagnostics=_provider_terminal_diagnostics(terminal.status, failure),
 +        diagnostics=terminal.diagnostics,
-         sdk_version=sdk_version,
-         runtime_version=runtime_version,
+         sdk_version=versions.sdk,
+         runtime_version=versions.runtime,
      )

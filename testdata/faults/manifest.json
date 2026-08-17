@@ -185,9 +185,8 @@
     {
       "id": "durable-codex-metadata-uncertain-checkpoint-bypass",
       "patch": "testdata/faults/durable-codex-metadata-uncertain-checkpoint-bypass.patch",
-      "sha256": "16387f393484a2e919ccbd802264483247cf51c19b664bd3bbf1510e2b9d38de",
+      "sha256": "b035f0e4e2f4bcfff9505f67b453300b6a8c12e45091496bb0affdb4af57b883",
       "proofs": [
-        "pytest:python/tests/service/test_codex_metadata_enrichment.py",
         "pytest:python/tests/service/test_codex_metadata_enrichment.py::test_real_worker_publishes_authors_pins_and_exactly_replays_after_publication"
       ],
       "expected_failure": "the Uncertain checkpoint was not durably committed before native dispatch"
@@ -204,7 +203,7 @@
     {
       "id": "durable-codex-metadata-quality-bound-bypass",
       "patch": "testdata/faults/durable-codex-metadata-quality-bound-bypass.patch",
-      "sha256": "ecc2a656f33f18b6170adf29d604772542c67e87298306503320d7777902e70a",
+      "sha256": "eefdf8627b977b378a2d43bdb4110cea8545ed44fd8b3d81b921eb9508207315",
       "proofs": [
         "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets"
       ],
@@ -224,15 +223,14 @@
       "patch": "testdata/faults/durable-codex-host-capacity-admission-bypass.patch",
       "sha256": "8baf068d649aa642c638e599ced2d4fb6aa5eaae6a75c0cf08aac8a7b03a9735",
       "proofs": [
-        "pytest:python/tests/service/test_codex_agent_host.py",
         "pytest:python/tests/service/test_codex_agent_host.py::test_host_refuses_non_admissible_capacity_before_runtime_construction"
       ],
-      "expected_failure": "At index 0 diff: 200 != 503"
+      "expected_failure": "non-admissible capacity must be the exact 503 rejection before runtime construction"
     },
     {
       "id": "durable-codex-diagnostic-retention-bypass",
       "patch": "testdata/faults/durable-codex-diagnostic-retention-bypass.patch",
-      "sha256": "0cd4b23a891db277fa9ce536c2713876f081f3c91e2b3794a616ac9630fcb4c9",
+      "sha256": "3e2455b021d1bea0944c080269616f0d88fcb7c7c4d36f51855dbcf14e05bf91",
       "proofs": [
         "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence"
       ],
@@ -250,7 +248,7 @@
     {
       "id": "durable-codex-operation-revision-shadow",
       "patch": "testdata/faults/durable-codex-operation-revision-shadow.patch",
-      "sha256": "9ce8521da17d1b66690bcd37234b6ac1d656d3799c72a53a148aeefd16955600",
+      "sha256": "344163375b7a27598e4703523524a6d085143a90c13d82acb5c5aa1762082a18",
       "proofs": [
         "pytest:python/tests/kernel/test_native_agent_operation_facts.py"
       ],

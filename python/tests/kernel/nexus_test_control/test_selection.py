@@ -370,6 +370,28 @@ def test_durable_metadata_sources_route_all_high_risk_boundary_proofs() -> None:
     )
 
 
+def test_unreachable_state_testkit_routes_to_the_durable_replay_proofs() -> None:
+    """Risk: edits to the raw-SQL unreachable-state owner run no durability proof."""
+
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, "python/tests/testkit/unreachable_state.py"),),
+        load_selection_index(REPO_ROOT),
+    )
+    proofs = {
+        selection.proof
+        for selection in selections
+        if selection.reason is SelectionReason.PRIORITY_RISK
+    }
+
+    assert proofs.issuperset(
+        {
+            "pytest:python/tests/service/test_codex_metadata_enrichment.py",
+            "pytest:python/tests/service/test_durable_job_replay.py",
+            "pytest:python/tests/service/test_heavy_job_capacity.py",
+        }
+    )
+
+
 @pytest.mark.parametrize(
     ("path", "expected_proof"),
     [
@@ -402,20 +424,37 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
     ("path", "expected_capabilities", "expected_proofs"),
     [
         (
+            # The release controller mirrors the canary's public exit/phase
+            # contract, so release.py is owned by native-agent-host as well as
+            # immutable-production-release: its changes must route to the
+            # mirror conformance proof and the host proofs beside the release
+            # harness proofs.
             "deploy/hetzner/release.py",
             {
+                Capability.CODEX_HOSTED,
                 Capability.JOURNEYS_ALL,
                 Capability.KERNEL_PYTHON,
+                Capability.SERVICE,
                 Capability.STATIC_PLATFORM,
             },
             {
                 "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
+                "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py",
+                "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
                 "pytest:python/tests/kernel/test_backend_artifact.py",
+                "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::test_hosted_canary_rendered_failure_drops_provider_sentinels",
+                "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
+                "pytest:python/tests/kernel/test_native_agent_contract.py",
                 "pytest:python/tests/kernel/test_successor_release_contract.py",
                 "pytest:python/tests/kernel/test_production_delivery_contract.py",
                 "pytest:python/tests/kernel/test_production_deploy_behavior.py",
                 "pytest:python/tests/kernel/test_production_release.py",
                 "pytest:python/tests/kernel/test_release_bundle_fetch.py",
+                "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
+                "pytest:python/tests/service/test_codex_agent_host.py",
+                "pytest:python/tests/service/test_codex_agent_host.py::test_host_refuses_non_admissible_capacity_before_runtime_construction",
+                "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
+                "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_release_controller_mirrors_the_canary_exit_and_phase_contract",
             },
         ),
         (
@@ -480,7 +519,9 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_native_agent_contract.py",
                 "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
                 "pytest:python/tests/service/test_codex_agent_host.py",
+                "pytest:python/tests/service/test_codex_agent_host.py::test_host_refuses_non_admissible_capacity_before_runtime_construction",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
+                "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_release_controller_mirrors_the_canary_exit_and_phase_contract",
                 "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py",
             },
         ),

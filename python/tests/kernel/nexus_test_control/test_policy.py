@@ -48,6 +48,10 @@ def _rules(violations: tuple[Any, ...]) -> set[str]:
             "monkeypatch.setattr(owner, 'read', lambda: None)\n",
             "python-owned-monkeypatch",
         ),
+        (
+            "from apps.codex_agent import host\nmonkeypatch.setattr(host, 'DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
         ("import time\ntime.sleep(1)\n", "python-sleep"),
         ("import pytest\n@pytest.mark.skip\ndef test_case(): pass\n", "python-skip"),
         ("import pytest as pt\n@pt.mark.skip\ndef test_case(): pass\n", "python-skip"),
