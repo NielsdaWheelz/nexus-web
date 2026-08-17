@@ -862,6 +862,7 @@ class HostReleaseHarness:
             "PATH": f"{self.fake_bin}{os.pathsep}{os.environ['PATH']}",
             "PYTHONPATH": f"{self.repo_root / 'python'}{os.pathsep}"
             f"{os.environ.get('PYTHONPATH', '')}",
+            "PYTHONDONTWRITEBYTECODE": "1",
             "SSL_CERT_FILE": str(self.tls_certificate),
             "https_proxy": proxy,
             "no_proxy": "",
@@ -875,10 +876,11 @@ class HostReleaseHarness:
 
     def _run_controller(
         self,
-        driver: tuple[str, ...],
+        arguments: tuple[str, ...],
         *,
         environment: dict[str, str],
     ) -> subprocess.CompletedProcess[str]:
+        driver = (sys.executable, "-B", *arguments)
         command = (
             driver
             if os.geteuid() == 0
@@ -918,8 +920,7 @@ class HostReleaseHarness:
             environment["NEXUS_FAKE_INTERRUPT_AFTER_MIGRATION"] = "1"
         if interrupt_during_forward_fix_stop:
             environment["NEXUS_FAKE_INTERRUPT_DURING_FORWARD_FIX_STOP"] = "1"
-        driver = (
-            sys.executable,
+        arguments = (
             str(Path(__file__).resolve()),
             "apply",
             str(self.repo_root / "deploy/hetzner/release.py"),
@@ -928,12 +929,11 @@ class HostReleaseHarness:
             "dpl_Test123",
             "web.example.test",
         )
-        return self._run_controller(driver, environment=environment)
+        return self._run_controller(arguments, environment=environment)
 
     def run_qualify_codex_capacity(self) -> subprocess.CompletedProcess[str]:
         return self._run_controller(
             (
-                sys.executable,
                 str(Path(__file__).resolve()),
                 "qualify-codex-capacity",
                 str(self.repo_root / "deploy/hetzner/release.py"),
@@ -951,7 +951,6 @@ class HostReleaseHarness:
         attempted_source = self.source_sha if source_sha is None else source_sha
         return self._run_controller(
             (
-                sys.executable,
                 str(Path(__file__).resolve()),
                 "install-codex-state-boot-guard",
                 str(self.repo_root / "deploy/hetzner/release.py"),
@@ -969,7 +968,6 @@ class HostReleaseHarness:
         attempted_source = self.source_sha if source_sha is None else source_sha
         return self._run_controller(
             (
-                sys.executable,
                 str(Path(__file__).resolve()),
                 "resume-codex-agent-host",
                 str(self.repo_root / "deploy/hetzner/release.py"),
@@ -1021,7 +1019,6 @@ class HostReleaseHarness:
     def run_finalize(self) -> subprocess.CompletedProcess[str]:
         return self._run_controller(
             (
-                sys.executable,
                 str(Path(__file__).resolve()),
                 "finalize",
                 str(self.repo_root / "deploy/hetzner/release.py"),
@@ -1035,7 +1032,6 @@ class HostReleaseHarness:
     def run_verify_current(self) -> subprocess.CompletedProcess[str]:
         return self._run_controller(
             (
-                sys.executable,
                 str(Path(__file__).resolve()),
                 "verify-current",
                 str(self.repo_root / "deploy/hetzner/release.py"),
@@ -1048,7 +1044,6 @@ class HostReleaseHarness:
     def run_fail_bound_frontend(self) -> subprocess.CompletedProcess[str]:
         return self._run_controller(
             (
-                sys.executable,
                 str(Path(__file__).resolve()),
                 "fail-bound-frontend",
                 str(self.repo_root / "deploy/hetzner/release.py"),
@@ -1062,7 +1057,6 @@ class HostReleaseHarness:
     def run_fail_auth_smoke(self) -> subprocess.CompletedProcess[str]:
         return self._run_controller(
             (
-                sys.executable,
                 str(Path(__file__).resolve()),
                 "fail-auth-smoke",
                 str(self.repo_root / "deploy/hetzner/release.py"),

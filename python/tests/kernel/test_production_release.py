@@ -9,9 +9,11 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from typing import Any, cast
 
 import pytest
 
@@ -112,6 +114,88 @@ def _host_harness(tmp_path: Path) -> HostReleaseHarness:
         repo_root=REPO_ROOT,
         candidate=_candidate(),
     )
+
+
+def test_host_release_privileged_python_cannot_write_checkout_bytecode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Risk: a privileged controller leaves root-owned bytecode in a test checkout."""
+
+    class PublicProxy:
+        server_address = ("127.0.0.1", 43123)
+
+    fake_bin = tmp_path / "fake-bin"
+    state_path = tmp_path / "fake-docker-state.json"
+    tls_certificate = tmp_path / "public.crt"
+    harness = HostReleaseHarness(
+        root=tmp_path,
+        repo_root=REPO_ROOT,
+        source_sha=SOURCE_SHA,
+        state_path=state_path,
+        attempt_path=tmp_path / "release-attempt.json",
+        fake_bin=fake_bin,
+        # justify-type-assertion: the command boundary reads only the proxy address;
+        # this proof exercises no server lifecycle.
+        public_proxy=cast(Any, PublicProxy()),
+        public_proxy_thread=threading.Thread(),
+        tls_certificate=tls_certificate,
+    )
+    captured: dict[str, object] = {}
+
+    def capture_run(
+        command: tuple[str, ...],
+        **options: object,
+    ) -> subprocess.CompletedProcess[str]:
+        captured.update(command=command, **options)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(subprocess, "run", capture_run)
+
+    completed = harness.run_qualify_codex_capacity()
+
+    environment = {
+        "HTTPS_PROXY": "http://127.0.0.1:43123",
+        "NO_PROXY": "",
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "PYTHONPATH": f"{REPO_ROOT / 'python'}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "SSL_CERT_FILE": str(tls_certificate),
+        "https_proxy": "http://127.0.0.1:43123",
+        "no_proxy": "",
+        "NEXUS_FAKE_DOCKER_STATE": str(state_path),
+        "NEXUS_FAKE_RELEASE_ATTEMPT": str(
+            tmp_path / "var/lib/nexus/releases/attempts" / f"{SOURCE_SHA}.json"
+        ),
+        "NEXUS_FAKE_REPO_ROOT": str(REPO_ROOT),
+        "NEXUS_FAKE_TEST_GID": str(os.getgid()),
+    }
+    driver = (
+        sys.executable,
+        "-B",
+        str(REPO_ROOT / "python/tests/testkit/host_release.py"),
+        "qualify-codex-capacity",
+        str(REPO_ROOT / "deploy/hetzner/release.py"),
+        str(tmp_path),
+        SOURCE_SHA,
+    )
+    expected_command = (
+        "sudo",
+        "--non-interactive",
+        "env",
+        *(f"{key}={value}" for key, value in environment.items()),
+        *driver,
+    )
+    assert completed.args == expected_command
+    assert captured == {
+        "command": expected_command,
+        "env": None,
+        "check": False,
+        "capture_output": True,
+        "text": True,
+        "timeout": 30,
+    }
 
 
 def test_codex_host_is_required_only_after_its_immutable_schema_cutover() -> None:
