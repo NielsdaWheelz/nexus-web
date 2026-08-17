@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 from uuid import UUID
 
 from sqlalchemy import text
@@ -113,6 +113,29 @@ class JobExecutionContext:
 
 
 @dataclass(frozen=True)
+class ScheduleAt:
+    """Run the rescheduled attempt at one owned absolute instant."""
+
+    instant: datetime
+
+
+@dataclass(frozen=True)
+class ScheduleAfter:
+    """Run the rescheduled attempt after a delay measured on the database clock."""
+
+    seconds: int
+
+    def __post_init__(self) -> None:
+        # justify-service-invariant-check: a non-negative integer is not
+        # expressible in the type system.
+        if self.seconds < 0:
+            raise ValueError("ScheduleAfter.seconds must be non-negative")
+
+
+type RescheduleSchedule = ScheduleAt | ScheduleAfter
+
+
+@dataclass(frozen=True)
 class RescheduleRequested:
     """Sentinel handler return value requesting a self-reschedule.
 
@@ -125,19 +148,8 @@ class RescheduleRequested:
     this marker is the one supported mechanism.
     """
 
-    available_at: datetime | None = None
+    schedule: RescheduleSchedule
     payload: Mapping[str, Any] | None = None
-    delay_seconds: int | None = None
-
-    def __post_init__(self) -> None:
-        if (self.available_at is None) == (self.delay_seconds is None):
-            raise ValueError(
-                "RescheduleRequested requires exactly one of available_at or delay_seconds"
-            )
-        if self.delay_seconds is not None and (
-            type(self.delay_seconds) is not int or self.delay_seconds < 0
-        ):
-            raise ValueError("RescheduleRequested.delay_seconds must be a non-negative integer")
 
 
 # The single definition of "the Heavy lease is occupied", for queue-owned SQL that
@@ -830,88 +842,108 @@ def promote_unclaimed_job(
 
 
 def heartbeat_job(
-    db: Session,
     *,
-    job_id: UUID,
-    worker_id: str,
+    session_factory: Callable[[], Session],
+    context: JobExecutionContext,
     lease_seconds: int,
-    resource_class: JobResourceClass,
 ) -> bool:
-    """Atomically extend one running job and its matching Heavy capacity lease.
+    """Extend one running job lease through queue-owned transactions.
 
-    Heavy work locks capacity before the job, matching every transition that
-    releases the holder. Light work keeps the unlocked verification read, so a
-    Light heartbeat never contends for the Heavy row.
+    This is an operation boundary, not a primitive composed into a caller's
+    transaction: it creates, commits, rolls back, and closes every Session it
+    uses. Heavy renewal uses two single-lock transactions, never one. The first
+    is a self-fencing conditional capacity UPDATE keyed on the holder's exact
+    (job_id, worker_id, attempt_no); matching no holder means this attempt lost
+    the capacity lease, reported False with no job-side effect. The job-row
+    lease renewal then runs in a second owned transaction. Because no
+    transaction here ever holds more than one of the capacity row and the job
+    row, no lock-ordering cycle with the capacity->job order every other Heavy
+    transition uses -- nor with a long publication transaction holding the job
+    row -- can exist. A caller's unrelated staged state can never be committed
+    by a heartbeat.
+
+    A Light heartbeat never locks the capacity row; it only reads it unlocked
+    to make the same cross-check ``lock_and_renew_running_job_claim`` makes, so
+    a Light attempt that is somehow the Heavy holder is refused instead of
+    renewing a lease it does not own.
     """
-    capacity = _lock_heavy_capacity(db) if resource_class == "Heavy" else _read_heavy_capacity(db)
-    job = (
-        db.execute(
+    if context.resource_class == "Heavy":
+        with session_factory() as capacity_db, capacity_db.begin():
+            renewal = (
+                capacity_db.execute(
+                    text(
+                        """
+                        UPDATE background_job_capacity_leases capacity
+                        SET lease_expires_at =
+                                clock_timestamp()
+                                + (CAST(:lease_seconds AS integer) * interval '1 second'),
+                            updated_at = clock_timestamp()
+                        FROM background_jobs job
+                        WHERE capacity.resource_class = 'Heavy'
+                          AND capacity.job_id = :job_id
+                          AND capacity.worker_id = :worker_id
+                          AND capacity.attempt_no = :attempt_no
+                          AND job.id = capacity.job_id
+                          AND job.status = 'running'
+                          AND job.claimed_by = capacity.worker_id
+                          AND job.attempts = :attempt_no
+                          AND job.lease_expires_at > clock_timestamp()
+                        RETURNING capacity.job_id
+                        """
+                    ),
+                    {
+                        "job_id": context.job_id,
+                        "worker_id": context.worker_id,
+                        "attempt_no": context.attempt_no,
+                        "lease_seconds": max(int(lease_seconds), 1),
+                    },
+                )
+                .mappings()
+                .first()
+            )
+        if renewal is None:
+            return False
+    with session_factory() as job_db, job_db.begin():
+        if (
+            context.resource_class == "Light"
+            and _read_heavy_capacity(job_db).job_id == context.job_id
+        ):
+            # Resource-class drift: a Light attempt can never legitimately be
+            # the Heavy capacity holder, so that pairing means this attempt was
+            # admitted under a class it no longer runs as and has lost its
+            # lease. The read takes no lock, so the Light path still cannot
+            # contend with Heavy admission.
+            return False
+        # The lease is computed inline so a renewal that queued behind a long
+        # job-row lock still lands a full lease from the moment it commits, not
+        # a stale one from the capacity transaction. The job lease may therefore
+        # outlive the capacity lease by that bounded wait; the Heavy slot stays
+        # held either way because _heavy_capacity_is_available only releases it
+        # once the holder job's own lease has also expired.
+        updated = job_db.execute(
             text(
                 """
-                SELECT attempts
-                FROM background_jobs
+                UPDATE background_jobs
+                SET lease_expires_at =
+                        clock_timestamp()
+                        + (CAST(:lease_seconds AS integer) * interval '1 second'),
+                    updated_at = clock_timestamp()
                 WHERE id = :job_id
                   AND status = 'running'
                   AND claimed_by = :worker_id
+                  AND attempts = :attempt_no
                   AND lease_expires_at > clock_timestamp()
-                FOR UPDATE
-                """
-            ),
-            {"job_id": job_id, "worker_id": worker_id},
-        )
-        .mappings()
-        .first()
-    )
-    if job is None:
-        return False
-    if not _capacity_matches_running_job(
-        capacity,
-        job_id=job_id,
-        worker_id=worker_id,
-        attempt_no=int(job["attempts"]),
-        resource_class=resource_class,
-    ):
-        return False
-    renewed = db.execute(
-        text(
-            """
-            UPDATE background_jobs
-            SET lease_expires_at =
-                    clock_timestamp()
-                    + (CAST(:lease_seconds AS integer) * interval '1 second'),
-                updated_at = clock_timestamp()
-            WHERE id = :job_id
-            RETURNING lease_expires_at
-            """
-        ),
-        {"job_id": job_id, "lease_seconds": max(int(lease_seconds), 1)},
-    ).scalar_one()
-    if resource_class == "Heavy":
-        updated = db.execute(
-            text(
-                """
-                UPDATE background_job_capacity_leases
-                SET lease_expires_at = :lease_expires_at,
-                    updated_at = clock_timestamp()
-                WHERE resource_class = 'Heavy'
-                  AND job_id = :job_id
-                  AND worker_id = :worker_id
-                  AND attempt_no = :attempt_no
-                RETURNING resource_class
+                RETURNING id
                 """
             ),
             {
-                "job_id": job_id,
-                "worker_id": worker_id,
-                "attempt_no": int(job["attempts"]),
-                "lease_expires_at": renewed,
+                "job_id": context.job_id,
+                "worker_id": context.worker_id,
+                "attempt_no": context.attempt_no,
+                "lease_seconds": max(int(lease_seconds), 1),
             },
         ).first()
-        # justify-defect: Heavy heartbeat holds the capacity row lock from
-        # verification through renewal, so the exact holder cannot move.
-        if updated is None:
-            raise AssertionError("Heavy capacity holder changed while locked")
-    return True
+    return updated is not None
 
 
 def lock_and_renew_running_job_claim(
@@ -1179,17 +1211,16 @@ def reschedule_running_job(
     job_id: UUID,
     worker_id: str,
     attempt_no: int,
-    available_at: datetime | None = None,
-    delay_seconds: int | None = None,
+    schedule: RescheduleSchedule,
     payload: Mapping[str, Any] | None = None,
 ) -> bool:
     """Self-reschedule a running job back to pending without burning its retry budget.
 
     CAS-fenced exactly like update_running_job_payload (exact running attempt,
     claimant, and unexpired lease). Sets status='pending', optionally a new
-    payload, and clears the claim/lease. Absolute schedules preserve their owned
-    instant; relative schedules are computed from PostgreSQL ``now()`` in the
-    same statement that records ``updated_at``.
+    payload, and clears the claim/lease. `ScheduleAt` preserves its owned
+    instant; `ScheduleAfter` is computed from PostgreSQL ``now()`` in the same
+    statement that records ``updated_at``.
 
     attempts is compensated (attempts - 1, floored at 0) to undo the +1 that
     claim_next_job already applied when this attempt started, so time spent
@@ -1198,12 +1229,13 @@ def reschedule_running_job(
     request this by returning that marker, and the worker -- not the handler
     -- calls this function and skips complete_job/fail_job for that attempt.
     """
-    if (available_at is None) == (delay_seconds is None):
-        raise ValueError(
-            "reschedule_running_job requires exactly one of available_at or delay_seconds"
-        )
-    if delay_seconds is not None and (type(delay_seconds) is not int or delay_seconds < 0):
-        raise ValueError("delay_seconds must be a non-negative integer")
+    match schedule:
+        case ScheduleAt(instant=instant):
+            available_at, delay_seconds = instant, None
+        case ScheduleAfter(seconds=seconds):
+            available_at, delay_seconds = None, seconds
+        case _ as unreachable:
+            assert_never(unreachable)
 
     capacity = _lock_heavy_capacity_for_job(db, job_id)
     updated = db.execute(

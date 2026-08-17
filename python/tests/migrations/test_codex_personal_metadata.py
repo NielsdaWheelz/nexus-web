@@ -34,7 +34,7 @@ def test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle(
         AgentTurnStart,
         AgentTurnTerminal,
         complete_turn_in_current_transaction,
-        start_turn,
+        start_turn_in_current_transaction,
     )
 
     config = _migration_config()
@@ -155,6 +155,16 @@ def test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle(
             for constraint in inspector.get_unique_constraints("agent_turns")
         } == {("uq_agent_turns_owner_turn_seq", ("owner_kind", "owner_id", "turn_seq"))}
         assert inspector.get_check_constraints("agent_turns") == []
+        # Spec §7: the polymorphic owner carries no foreign key, and the
+        # session/identity columns keep their exact declared storage types.
+        assert inspector.get_foreign_keys("agent_turns") == []
+        column_types = {name: repr(column["type"]) for name, column in columns.items()}
+        assert column_types["id"] == "UUID()"
+        assert column_types["owner_id"] == "UUID()"
+        assert column_types["session_ref"] == "JSONB(astext_type=Text())"
+        assert column_types["turn_seq"] == "INTEGER()"
+        assert column_types["created_at"] == "TIMESTAMP(timezone=True)"
+        assert column_types["completed_at"] == "TIMESTAMP(timezone=True)"
 
         llm_owner_check = next(
             constraint
@@ -238,6 +248,12 @@ def test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle(
             )
             db.commit()
 
+        def start_turn_committed(start: AgentTurnStart) -> UUID:
+            with factory() as db:
+                staged = start_turn_in_current_transaction(db, start)
+                db.commit()
+            return staged
+
         turn_id = UUID("25cb8dd3-7be6-51fe-9964-abfa29334031")
         owner = AgentTurnOwner(kind="media_enrichment", id=owner_id)
         started = AgentTurnStart(
@@ -254,10 +270,10 @@ def test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle(
             policy_fingerprint="2" * 64,
             output_schema_fingerprint="3" * 64,
         )
-        assert start_turn(factory, started) == turn_id
-        assert start_turn(factory, started) == turn_id
+        assert start_turn_committed(started) == turn_id
+        assert start_turn_committed(started) == turn_id
         with pytest.raises(AssertionError, match="different immutable start facts"):
-            start_turn(factory, replace(started, model_name="gpt-5.6-terra"))
+            start_turn_committed(replace(started, model_name="gpt-5.6-terra"))
 
         session_ref = {
             "schema_version": "agent-session-ref.v1",
@@ -290,7 +306,7 @@ def test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle(
                 complete_turn_in_current_transaction(db, turn_id, terminal)
 
         second_id = uuid4()
-        start_turn(factory, replace(started, id=second_id))
+        start_turn_committed(replace(started, id=second_id))
         with factory() as db:
             complete_turn_in_current_transaction(
                 db,
@@ -366,7 +382,7 @@ def test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle(
         }
 
         preaccept_id = uuid4()
-        start_turn(factory, replace(started, id=preaccept_id))
+        start_turn_committed(replace(started, id=preaccept_id))
         with factory() as db:
             complete_turn_in_current_transaction(
                 db,

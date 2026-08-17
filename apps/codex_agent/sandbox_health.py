@@ -36,6 +36,8 @@ def main() -> None:
     try:
         check()
     except RuntimeError:
+        # justify-ignore-error: the readiness message is credential-adjacent host context,
+        # so the CLI contract is a silent nonzero exit while callers keep the typed error.
         raise SystemExit(1) from None
 
 

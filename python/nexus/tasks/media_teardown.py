@@ -35,6 +35,7 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
+    ScheduleAt,
     find_nonterminal_jobs_for_payload,
     get_job,
     update_running_job_payload,
@@ -183,7 +184,7 @@ def _prepare(
         return {"disposition": result_disposition}
     # Re-run immediately for the deletion/void step (attempts compensated). Use the DB
     # clock so the reschedule is due against the queue's own now() without clock skew.
-    return RescheduleRequested(available_at=_now_utc(db))
+    return RescheduleRequested(schedule=ScheduleAt(_now_utc(db)))
 
 
 def _compute_cleanup_not_before(db: Session, media_id: UUID, armed: list[JobRow]) -> datetime:
@@ -272,7 +273,7 @@ def _commit_or_void(
 
     if next_kind == _DELETION_COMMITTED:
         cleanup_not_before = _parse_iso(str(checkpoint["cleanupNotBefore"]))
-        return RescheduleRequested(available_at=cleanup_not_before)
+        return RescheduleRequested(schedule=ScheduleAt(cleanup_not_before))
     return {"disposition": next_kind}
 
 
@@ -285,7 +286,7 @@ def _cleanup_storage(
     cleanup_not_before = _parse_iso(str(checkpoint["cleanupNotBefore"]))
     now = _now_utc(db)
     if now < cleanup_not_before:
-        return RescheduleRequested(available_at=cleanup_not_before)
+        return RescheduleRequested(schedule=ScheduleAt(cleanup_not_before))
 
     client = get_storage_client()
     storage_paths = list(checkpoint.get("storagePaths") or [])

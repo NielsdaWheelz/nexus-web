@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
-from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, get_job
+from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, ScheduleAt, get_job
 from nexus.logging import get_logger
 from nexus.storage.client import get_storage_client
 from nexus.tasks.storage_object_cleanup import (
@@ -101,7 +101,7 @@ def storage_orphan_sweep(
 
         if page.next_continuation_token is not None:
             return RescheduleRequested(
-                available_at=datetime.now(UTC),
+                schedule=ScheduleAt(datetime.now(UTC)),
                 payload={**job.payload, "continuationToken": page.next_continuation_token},
             )
         return {"disposition": "SweepComplete", "deleted": deleted, "scanned": scanned}

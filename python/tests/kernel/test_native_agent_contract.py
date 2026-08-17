@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from nexus.services.native_agent_contract import (
+    METADATA_ENRICHMENT_MAX_INPUT_BYTES,
     NativeAgentCapacityRejection,
     NativeAgentFrame,
     NativeAgentTerminal,
@@ -59,9 +60,9 @@ def _successful_terminal() -> dict[str, object]:
 
 
 def test_metadata_command_and_terminal_round_trip_only_the_closed_revision() -> None:
-    assert METADATA_ENRICHMENT_OPERATION_REVISION == "metadata-enrichment.2026-08-12.3"
+    assert METADATA_ENRICHMENT_OPERATION_REVISION == "metadata-enrichment.2026-08-12.4"
     facts = metadata_enrichment_operation_facts()
-    assert facts.transport_deadline_seconds == 150.0
+    assert facts.transport_deadline_seconds == 255.0
     command = build_metadata_enrichment_command(
         request_id=REQUEST_ID,
         input="Known metadata and a bounded content sample.",
@@ -97,6 +98,40 @@ def test_metadata_command_and_terminal_round_trip_only_the_closed_revision() -> 
     with pytest.raises(ValidationError, match="literal_error"):
         type(command).model_validate(drifted_operation)
 
+    assert METADATA_ENRICHMENT_MAX_INPUT_BYTES == 32_768
+    oversized = command.model_dump(mode="json")
+    oversized["operation"]["input"] = "n" * (METADATA_ENRICHMENT_MAX_INPUT_BYTES + 1)
+    with pytest.raises(ValidationError, match="UTF-8 bytes"):
+        type(command).model_validate(oversized)
+
+
+def test_event_union_carries_no_freeform_payload_channels() -> None:
+    """Risk: a payload side channel reappears on tool or native events."""
+
+    for event in (
+        {
+            "kind": "tool_use",
+            "tool_call_id": "tool-1",
+            "name": "commandExecution",
+            "phase": "started",
+            "payload": {"command": "must not cross the boundary"},
+        },
+        {
+            "kind": "native",
+            "native_type": "codex/thread.started",
+            "payload": {"detail": "must not cross the boundary"},
+        },
+    ):
+        with pytest.raises(ValidationError, match="extra_forbidden"):
+            NativeAgentFrame.model_validate(
+                {
+                    "schema_version": "nexus-agent-event.v1",
+                    "request_id": str(REQUEST_ID),
+                    "sequence": 0,
+                    "event": event,
+                }
+            )
+
 
 def test_event_union_rejects_unknown_kinds_and_invalid_terminal_states() -> None:
     frame = {
@@ -118,6 +153,32 @@ def test_event_union_rejects_unknown_kinds_and_invalid_terminal_states() -> None
     failed_without_failure.update({"status": "failed", "failure": None, "structured_output": None})
     frame["event"] = failed_without_failure
     with pytest.raises(ValidationError, match="failed terminal"):
+        NativeAgentFrame.model_validate(frame)
+
+    silent_failure = _successful_terminal()
+    silent_failure.update(
+        {
+            "status": "failed",
+            "failure": {"kind": "backend_failed"},
+            "structured_output": None,
+            "diagnostics": [],
+        }
+    )
+    frame["event"] = silent_failure
+    with pytest.raises(ValidationError, match="at least one diagnostic"):
+        NativeAgentFrame.model_validate(frame)
+
+    silent_cancellation = _successful_terminal()
+    silent_cancellation.update(
+        {
+            "status": "cancelled",
+            "failure": None,
+            "structured_output": None,
+            "diagnostics": [],
+        }
+    )
+    frame["event"] = silent_cancellation
+    with pytest.raises(ValidationError, match="at least one diagnostic"):
         NativeAgentFrame.model_validate(frame)
 
     failed_with_legacy_collapsed_reason = _successful_terminal()

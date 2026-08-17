@@ -164,7 +164,11 @@ def lose_metadata_queue_completion_after_published_checkpoint(
     assert before["attempts"] == 1
     assert before["claimed_by"] is None
     assert before["lease_expires_at"] is None
-    assert isinstance(before["result"], dict) and before["result"].get("status") == "success"
+    # The queue row's own status is "succeeded"; its published result carries the
+    # repo-wide status-keyed projection of the domain success, failure, or skip.
+    assert isinstance(before["result"], dict)
+    published_status = before["result"].get("status")
+    assert published_status in {"success", "failed", "skipped"}
     coordination = before["payload"].get("coordination")
     assert isinstance(coordination, dict)
     step = coordination.get("codex/metadata")
@@ -174,9 +178,14 @@ def lose_metadata_queue_completion_after_published_checkpoint(
     decoded_terminal = json.loads(str(terminal_result.get("value")))
     publication_result = decoded_terminal.get("publication_result")
     assert isinstance(publication_result, dict)
-    assert {key: value for key, value in publication_result.items() if value is not None} == before[
-        "result"
-    ]
+    assert publication_result.get("kind") == "Present"
+    # The durable memo keeps the kind-discriminated publication union while the
+    # queue row publishes the status-keyed projection of the same facts.
+    memo_value = publication_result.get("value")
+    assert isinstance(memo_value, dict) and memo_value.get("kind") == published_status
+    assert {key: value for key, value in memo_value.items() if key != "kind"} == {
+        key: value for key, value in before["result"].items() if key != "status"
+    }
 
     after = (
         db.execute(

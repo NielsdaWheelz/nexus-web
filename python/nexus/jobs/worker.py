@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, assert_never
 from uuid import UUID
 
 import psycopg
@@ -19,9 +19,10 @@ from nexus.db.retries import retry_serializable
 from nexus.jobs.queue import (
     HEAVY_CAPACITY_OCCUPIED_SQL,
     JobExecutionContext,
-    JobResourceClass,
     JobRow,
     RescheduleRequested,
+    ScheduleAfter,
+    ScheduleAt,
     claim_job,
     claim_next_job,
     complete_job,
@@ -167,15 +168,17 @@ class JobWorker:
                 db.commit()
             return True
 
-        with self.session_factory() as db:
-            still_owned = heartbeat_job(
-                db,
-                job_id=claimed.id,
-                worker_id=self.worker_id,
-                lease_seconds=definition.lease_seconds,
-                resource_class=definition.resource_class,
-            )
-            db.commit()
+        context = JobExecutionContext(
+            job_id=claimed.id,
+            worker_id=self.worker_id,
+            attempt_no=claimed.attempts,
+            resource_class=definition.resource_class,
+        )
+        still_owned = heartbeat_job(
+            session_factory=self.session_factory,
+            context=context,
+            lease_seconds=definition.lease_seconds,
+        )
         if not still_owned:
             logger.warning(
                 "worker_job_start_rejected_lost_ownership",
@@ -188,18 +191,11 @@ class JobWorker:
         self._advance_successful_cycle()
 
         stop_event, heartbeat_thread = self._start_heartbeat_thread(
-            job_id=claimed.id,
+            context=context,
             lease_seconds=definition.lease_seconds,
-            resource_class=definition.resource_class,
         )
 
         try:
-            context = JobExecutionContext(
-                job_id=claimed.id,
-                worker_id=self.worker_id,
-                attempt_no=claimed.attempts,
-                resource_class=definition.resource_class,
-            )
             handler_result = definition.handler(payload=claimed.payload, context=context)
 
             if isinstance(handler_result, RescheduleRequested):
@@ -209,23 +205,24 @@ class JobWorker:
                         job_id=claimed.id,
                         worker_id=self.worker_id,
                         attempt_no=claimed.attempts,
-                        available_at=handler_result.available_at,
-                        delay_seconds=handler_result.delay_seconds,
+                        schedule=handler_result.schedule,
                         payload=handler_result.payload,
                     )
                     db.commit()
                 if rescheduled:
+                    match handler_result.schedule:
+                        case ScheduleAt(instant=instant):
+                            schedule_fact = {"available_at": instant.isoformat()}
+                        case ScheduleAfter(seconds=seconds):
+                            schedule_fact = {"delay_seconds": seconds}
+                        case _ as unreachable:
+                            assert_never(unreachable)
                     logger.info(
                         "worker_job_rescheduled",
                         worker_id=self.worker_id,
                         job_id=str(claimed.id),
                         kind=claimed.kind,
-                        available_at=(
-                            handler_result.available_at.isoformat()
-                            if handler_result.available_at is not None
-                            else None
-                        ),
-                        delay_seconds=handler_result.delay_seconds,
+                        **schedule_fact,
                     )
                 else:
                     logger.warning(
@@ -675,7 +672,7 @@ class JobWorker:
             stop_event.wait(timeout)
 
     def _start_heartbeat_thread(
-        self, *, job_id: UUID, lease_seconds: int, resource_class: JobResourceClass
+        self, *, context: JobExecutionContext, lease_seconds: int
     ) -> tuple[threading.Event, threading.Thread]:
         stop_event = threading.Event()
         heartbeat_every = min(self.heartbeat_interval_seconds, max(float(lease_seconds) / 2.0, 1.0))
@@ -685,26 +682,26 @@ class JobWorker:
         def _loop() -> None:
             while not stop_event.wait(heartbeat_every):
                 try:
-                    with self.session_factory() as db:
-                        updated = heartbeat_job(
-                            db,
-                            job_id=job_id,
-                            worker_id=self.worker_id,
-                            lease_seconds=lease_seconds,
-                            resource_class=resource_class,
-                        )
-                        db.commit()
-                        if not updated:
-                            return
-                        self._advance_successful_cycle()
+                    updated = heartbeat_job(
+                        session_factory=self.session_factory,
+                        context=context,
+                        lease_seconds=lease_seconds,
+                    )
+                    if not updated:
+                        return
+                    self._advance_successful_cycle()
                 except SQLAlchemyError:
                     logger.exception(
                         "worker_heartbeat_failed",
                         worker_id=self.worker_id,
-                        job_id=str(job_id),
+                        job_id=str(context.job_id),
                     )
 
-        thread = threading.Thread(target=_loop, daemon=True, name=f"job-heartbeat-{job_id}")
+        thread = threading.Thread(
+            target=_loop,
+            daemon=True,
+            name=f"job-heartbeat-{context.job_id}",
+        )
         thread.start()
         return stop_event, thread
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +13,7 @@ from nexus.services.native_agent_contract import (
     NativeAgentCapacityRejection,
     NativeAgentCommand,
     NativeAgentFrame,
+    NativeAgentHealth,
     NativeAgentPermissionRequest,
     NativeAgentTerminal,
     NativeAgentToolUse,
@@ -22,10 +22,13 @@ from nexus.services.native_agent_operations import (
     METADATA_ENRICHMENT_TRANSPORT_DEADLINE_SECONDS,
 )
 
+_HOST_AUTHORITY = "http://nexus-codex"
 _MAX_FRAME_BYTES = 256 * 1024
 _MAX_STREAM_BYTES = 1024 * 1024
+_MAX_HEALTH_BYTES = 4 * 1024
 _MAX_FRAMES = 1_024
 _REQUEST_DEADLINE_SECONDS = METADATA_ENRICHMENT_TRANSPORT_DEADLINE_SECONDS
+_HEALTH_DEADLINE_SECONDS = 5.0
 
 
 class NativeAgentClientError(RuntimeError):
@@ -48,6 +51,8 @@ class NativeAgentRequestRejected(NativeAgentClientError):
     """The host rejected the command before accepting a turn."""
 
 
+# justify-defect: only a host or transport defect can break the closed private contract,
+# so every violation of it is an internal defect rather than a modeled turn outcome.
 class NativeAgentProtocolDefect(AssertionError):
     """The private host violated its closed ordered stream contract."""
 
@@ -61,20 +66,39 @@ class NativeAgentTurnObservation:
 
 class CodexAgentClient:
     def __init__(self, socket_path: Path) -> None:
-        if (
-            not isinstance(socket_path, Path)
-            or not socket_path.is_absolute()
-            or os.path.normpath(str(socket_path)) != str(socket_path)
-        ):
-            raise ValueError("Codex agent socket path must be a normalized absolute path")
         self._socket_path = socket_path
+
+    async def health(self) -> NativeAgentHealth:
+        transport = httpx.AsyncHTTPTransport(uds=str(self._socket_path))
+        try:
+            async with asyncio.timeout(_HEALTH_DEADLINE_SECONDS):
+                async with httpx.AsyncClient(transport=transport, timeout=None) as client:
+                    async with client.stream(
+                        "GET",
+                        f"{_HOST_AUTHORITY}/health",
+                        headers={"accept": "application/json"},
+                    ) as response:
+                        if response.status_code != 200:
+                            raise NativeAgentRequestRejected(
+                                "native agent host answered health with "
+                                f"HTTP {response.status_code}"
+                            )
+                        payload = await self._read_bounded_body(response, _MAX_HEALTH_BYTES)
+        except TimeoutError as error:
+            raise NativeAgentUnavailable("native agent health deadline expired") from error
+        except httpx.HTTPError as error:
+            raise NativeAgentUnavailable("native agent host is unavailable") from error
+        try:
+            return NativeAgentHealth.model_validate_json(payload)
+        except ValidationError as error:
+            raise NativeAgentProtocolDefect(
+                "native agent host returned an invalid health identity"
+            ) from error
 
     async def turn(self, command: NativeAgentCommand) -> NativeAgentTerminal:
         return (await self.observe_turn(command)).terminal
 
     async def observe_turn(self, command: NativeAgentCommand) -> NativeAgentTurnObservation:
-        if not isinstance(command, NativeAgentCommand):
-            raise TypeError("turn requires NativeAgentCommand")
         accepted = False
         transport = httpx.AsyncHTTPTransport(uds=str(self._socket_path))
         try:
@@ -82,7 +106,7 @@ class CodexAgentClient:
                 async with httpx.AsyncClient(transport=transport, timeout=None) as client:
                     async with client.stream(
                         "POST",
-                        "http://nexus-codex/v1/turns",
+                        f"{_HOST_AUTHORITY}/v1/turns",
                         headers={
                             "accept": "application/x-ndjson",
                             "content-type": "application/json",
@@ -209,8 +233,19 @@ class CodexAgentClient:
         try:
             observed = NativeAgentCapacityRejection.model_validate_json(payload)
         except ValidationError:
+            # justify-ignore-error: capacity refusal is recognized only on an exact body,
+            # and every other non-200 body is reported as a rejected command instead.
             return False
         return observed == NativeAgentCapacityRejection()
+
+    @staticmethod
+    async def _read_bounded_body(response: httpx.Response, maximum_bytes: int) -> bytes:
+        payload = bytearray()
+        async for chunk in response.aiter_bytes():
+            payload.extend(chunk)
+            if len(payload) > maximum_bytes:
+                raise NativeAgentProtocolDefect("native agent response exceeded its byte bound")
+        return bytes(payload)
 
     @staticmethod
     def _parse_frame(raw: bytes) -> NativeAgentFrame:

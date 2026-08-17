@@ -2,18 +2,36 @@
 
 from __future__ import annotations
 
+from functools import cache
 from uuid import UUID
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from nexus.jobs.queue import JobRow, enqueue_job, enqueue_unique_job
+from nexus.jobs.queue import enqueue_job, enqueue_unique_job
 from nexus.logging import get_logger
 
 logger = get_logger(__name__)
 
+# The one durable step path of the billed-once metadata turn (spec §7). The job
+# owner writes checkpoints under it and the retry lifecycle reads them.
+METADATA_STEP_PATH = "codex/metadata"
+
 _INITIAL_CAPACITY_WAIT_INDEX = 0
-_MAX_ATTEMPTS = 2
+
+
+@cache
+def _metadata_max_attempts() -> int:
+    """Resolve the registry's attempt budget for ``enrich_metadata`` once."""
+    # Deferred registry import (same shape as content_indexing and
+    # media_content_reindex): nexus.jobs.registry's enrich_metadata handler
+    # imports nexus.tasks.enrich_metadata, which imports this module, so the two
+    # are mutually dependent and each side resolves the other at call time
+    # rather than at import time. The cache above keeps that resolution to one
+    # lookup per process instead of one per enqueue.
+    from nexus.jobs.registry import get_default_registry
+
+    return get_default_registry()["enrich_metadata"].max_attempts
 
 
 def enqueue_metadata_enrichment(
@@ -22,29 +40,28 @@ def enqueue_metadata_enrichment(
     media_id: UUID | str,
     request_id: str | None,
     dedupe_key: str | None = None,
-) -> tuple[JobRow, bool]:
+) -> None:
     """Enqueue one canonical metadata job without committing its transaction."""
     payload = {
         "media_id": str(media_id),
         "request_id": request_id,
         "capacity_wait_index": _INITIAL_CAPACITY_WAIT_INDEX,
     }
+    max_attempts = _metadata_max_attempts()
     if dedupe_key is not None:
-        return enqueue_unique_job(
+        enqueue_unique_job(
             db,
             kind="enrich_metadata",
             payload=payload,
             dedupe_key=dedupe_key,
-            max_attempts=_MAX_ATTEMPTS,
+            max_attempts=max_attempts,
         )
-    return (
-        enqueue_job(
-            db,
-            kind="enrich_metadata",
-            payload=payload,
-            max_attempts=_MAX_ATTEMPTS,
-        ),
-        True,
+        return
+    enqueue_job(
+        db,
+        kind="enrich_metadata",
+        payload=payload,
+        max_attempts=max_attempts,
     )
 
 
@@ -61,6 +78,8 @@ def try_enqueue_metadata_enrichment(
     a dedicated session only after publication has committed; an enqueue failure
     may safely roll back that whole short transaction.
     """
+    # justify-service-invariant-check: whether the caller's session already
+    # opened a transaction is runtime session state, not expressible in types.
     if db.in_transaction():
         raise AssertionError(
             "metadata enrichment requires a fresh dedicated post-publication session"

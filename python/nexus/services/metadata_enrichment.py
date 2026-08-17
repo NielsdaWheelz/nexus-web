@@ -20,8 +20,6 @@ from pydantic import (
     Field,
     StringConstraints,
     ValidationError,
-    ValidationInfo,
-    field_validator,
 )
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -31,12 +29,14 @@ from nexus.db.models import Media
 from nexus.logging import get_logger
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.contributor_taxonomy import (
+    MAX_CONTRIBUTOR_NAME_CODE_POINTS,
     NOT_OBSERVED,
     ContributorObservationBatch,
     ObservedRoleSlices,
     RawCreditEntry,
     build_observation,
 )
+from nexus.services.native_agent_contract import METADATA_ENRICHMENT_MAX_INPUT_BYTES
 
 logger = get_logger(__name__)
 
@@ -76,8 +76,9 @@ class MetadataMergeResult:
     author_observation: ContributorObservationBatch = NOT_OBSERVED
 
 
-# Domain value constraints stay in validators so the output contract remains
-# explicit and independently checked after native-agent decoding.
+# Domain value constraints live on the field annotations: they validate every
+# decoded payload and carry into the exported JSON schema the native agent is
+# held to.
 _METADATA_STRING_MAX_LENGTHS = {
     "title": 255,
     "publisher": 255,
@@ -86,7 +87,18 @@ _METADATA_STRING_MAX_LENGTHS = {
     "language": 32,
 }
 _METADATA_MAX_AUTHORS = 20
-_METADATA_MAX_AUTHOR_NAME_LENGTH = 200
+# Prompt hints are persisted data, not trusted framing. Bound each hint and
+# their aggregate so a pathological historical Text row cannot crowd out the
+# early extracted source that carries the primary work evidence.
+_METADATA_PROMPT_HINT_MAX_BYTES = 1_024
+_METADATA_PROMPT_HINT_TOTAL_MAX_BYTES = 8_192
+_METADATA_PROMPT_SOURCE_RESERVED_BYTES = 16_384
+_METADATA_PROMPT_TRUNCATION_MARKER = " [truncated]"
+# The author bound is the contributor publication truncation bound: the schema
+# must never advertise a length publication will not persist, or an accepted
+# longer name would be silently stored differently from the audited structured
+# output.
+_METADATA_MAX_AUTHOR_NAME_LENGTH = MAX_CONTRIBUTOR_NAME_CODE_POINTS
 
 type _MetadataAuthorName = Annotated[
     str,
@@ -99,8 +111,7 @@ type _MetadataAuthorName = Annotated[
 ]
 
 
-# Every field is required-nullable. Length caps and date/language patterns are
-# enforced by the validators below.
+# Every field is required-nullable.
 class MetadataEnrichmentOutput(BaseModel):
     """Enriched bibliographic metadata for one media item. Use null for unknown fields."""
 
@@ -121,7 +132,7 @@ class MetadataEnrichmentOutput(BaseModel):
     authors: (
         Annotated[
             list[_MetadataAuthorName],
-            Field(max_length=_METADATA_MAX_AUTHORS),
+            Field(min_length=1, max_length=_METADATA_MAX_AUTHORS),
         ]
         | None
     )
@@ -173,53 +184,6 @@ class MetadataEnrichmentOutput(BaseModel):
         ]
         | None
     )
-
-    @field_validator("title", "publisher", "description", "published_date", "language")
-    @classmethod
-    def _non_empty_string(cls, value: str | None, info: ValidationInfo) -> str | None:
-        if value is None:
-            return None
-        max_length = _METADATA_STRING_MAX_LENGTHS[str(info.field_name)]
-        if len(value) > max_length:
-            raise ValueError(f"{info.field_name} must be at most {max_length} characters")
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("metadata string fields must be non-empty when present")
-        return stripped
-
-    @field_validator("published_date")
-    @classmethod
-    def _valid_partial_iso_date(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not re.fullmatch(r"\d{4}(?:-\d{2}(?:-\d{2})?)?", value):
-            raise ValueError("published_date must be YYYY, YYYY-MM, or YYYY-MM-DD")
-        return value
-
-    @field_validator("language")
-    @classmethod
-    def _valid_iso_639_1_language(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not re.fullmatch(r"[a-z]{2}", value):
-            raise ValueError("language must be an ISO 639-1 lowercase two-letter code")
-        return value
-
-    @field_validator("authors")
-    @classmethod
-    def _valid_authors(cls, value: list[str] | None) -> list[str] | None:
-        if value is None:
-            return None
-        if len(value) > _METADATA_MAX_AUTHORS:
-            raise ValueError(f"authors must have at most {_METADATA_MAX_AUTHORS} entries")
-        stripped = [author.strip() for author in value]
-        if not stripped or any(not author for author in stripped):
-            raise ValueError("authors must be non-empty names")
-        if any(len(author) > _METADATA_MAX_AUTHOR_NAME_LENGTH for author in stripped):
-            raise ValueError(
-                f"author names must be at most {_METADATA_MAX_AUTHOR_NAME_LENGTH} characters"
-            )
-        return stripped
 
 
 def metadata_enrichment_agent_definition() -> tuple[str, dict[str, object]]:
@@ -421,41 +385,40 @@ def build_enrichment_user_content(
             "the show/podcast. Authors are hosts or creators only when clear."
         ),
     }.get(str(media.kind), "Saved item is the primary media work.")
-    metadata_lines = [
-        f"- kind: {media.kind}",
-        f"- current_title: {_json_prompt_value(media.title)}",
+    # This order is the explicit disclosure priority when an old or malformed
+    # persisted media row contains more untrusted metadata than the wire can
+    # carry. Labels and prompt framing remain intact; values consume the
+    # remaining byte budget in this order. Per-hint and aggregate budgets keep
+    # meaningful capacity for extracted source text.
+    metadata_entries = [
+        ("kind", str(media.kind)),
+        ("current_title", media.title),
     ]
     if media.requested_url:
-        metadata_lines.append(f"- requested_url: {_json_prompt_value(media.requested_url)}")
+        metadata_entries.append(("requested_url", media.requested_url))
     if media.canonical_source_url:
-        metadata_lines.append(
-            f"- canonical_source_url: {_json_prompt_value(media.canonical_source_url)}"
-        )
+        metadata_entries.append(("canonical_source_url", media.canonical_source_url))
     if media.canonical_url:
-        metadata_lines.append(f"- canonical_url: {_json_prompt_value(media.canonical_url)}")
+        metadata_entries.append(("canonical_url", media.canonical_url))
     if media.external_playback_url:
-        metadata_lines.append(
-            f"- external_playback_url: {_json_prompt_value(media.external_playback_url)}"
-        )
+        metadata_entries.append(("external_playback_url", media.external_playback_url))
     if media.provider:
-        metadata_lines.append(f"- provider: {_json_prompt_value(media.provider)}")
+        metadata_entries.append(("provider", media.provider))
     if media.provider_id:
-        metadata_lines.append(f"- provider_id: {_json_prompt_value(media.provider_id)}")
+        metadata_entries.append(("provider_id", media.provider_id))
     current_authors = get_current_author_names(db, media)
     if current_authors:
-        metadata_lines.append(f"- current_authors: {_json_prompt_value(current_authors)}")
+        metadata_entries.append(("current_authors", current_authors))
     if media.publisher:
-        metadata_lines.append(f"- current_publisher: {_json_prompt_value(media.publisher)}")
+        metadata_entries.append(("current_publisher", media.publisher))
     if media.published_date:
-        metadata_lines.append(
-            f"- current_published_date: {_json_prompt_value(media.published_date)}"
-        )
+        metadata_entries.append(("current_published_date", media.published_date))
     if media.language:
-        metadata_lines.append(f"- current_language: {_json_prompt_value(media.language)}")
+        metadata_entries.append(("current_language", media.language))
     if media.description:
         description_hint = _clean_sample_text(media.description)
         if description_hint:
-            metadata_lines.append(f"- current_description: {_json_prompt_value(description_hint)}")
+            metadata_entries.append(("current_description", description_hint))
 
     if media.kind == "podcast_episode":
         row = db.execute(
@@ -471,21 +434,126 @@ def build_enrichment_user_content(
         ).fetchone()
         if row is not None:
             if row[0]:
-                metadata_lines.append(f"- podcast_title: {_json_prompt_value(row[0])}")
+                metadata_entries.append(("podcast_title", row[0]))
 
-    metadata_block = "\n".join(metadata_lines)
+    metadata_line_prefixes = tuple(f"- {label}: " for label, _ in metadata_entries)
     content_block = _clean_sample_text(content_sample) or "(no media text available)"
 
-    return f"""Known metadata:
-{metadata_block}
-
-Media-kind target:
+    prompt_prefix = "Known metadata:\n"
+    prompt_middle = f"""\n\nMedia-kind target:
 {kind_rule}
 
 Early extracted text:
 ---
-{content_block}
----"""
+"""
+    prompt_suffix = "\n---"
+    # The wire contract is byte-bounded, but all persisted field values and
+    # extracted source are untrusted UTF-8 data. Reserve every trusted label,
+    # section heading, and delimiter first; then allocate the remaining bytes
+    # deterministically to metadata values (in priority order) and source.
+    structural_bytes = len(
+        (prompt_prefix + "\n".join(metadata_line_prefixes) + prompt_middle + prompt_suffix).encode(
+            "utf-8"
+        )
+    )
+    untrusted_budget = METADATA_ENRICHMENT_MAX_INPUT_BYTES - structural_bytes
+    if untrusted_budget < 0:
+        # The trusted structure is code-owned and has a fixed, audited size.
+        raise AssertionError("metadata prompt structure exceeds the wire input bound")
+    metadata_budget = min(
+        _METADATA_PROMPT_HINT_TOTAL_MAX_BYTES,
+        max(0, untrusted_budget - _METADATA_PROMPT_SOURCE_RESERVED_BYTES),
+    )
+    metadata_values, metadata_bytes = _allocate_bounded_metadata_hints(
+        tuple(value for _, value in metadata_entries),
+        metadata_budget,
+    )
+    source_budget = untrusted_budget - metadata_bytes
+    metadata_block = "\n".join(
+        f"{prefix}{value}"
+        for prefix, value in zip(metadata_line_prefixes, metadata_values, strict=True)
+    )
+    return f"{prompt_prefix}{metadata_block}{prompt_middle}{_bounded_utf8_text(content_block, source_budget)}{prompt_suffix}"
+
+
+def _bounded_utf8_text(value: str, max_bytes: int) -> str:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+    # `ignore` drops only the code point a byte cut would split.
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def _allocate_bounded_metadata_hints(
+    values: Sequence[object], budget: int
+) -> tuple[tuple[str, ...], int]:
+    """Render ordered untrusted hints as bounded valid JSON values."""
+    remaining = budget
+    bounded_values: list[str] = []
+    minimum_value_bytes = len(
+        _json_prompt_value(_METADATA_PROMPT_TRUNCATION_MARKER.strip()).encode("utf-8")
+    )
+    if budget < minimum_value_bytes * len(values):
+        raise AssertionError("metadata hint budget cannot preserve valid JSON framing")
+    for index, value in enumerate(values):
+        reserved_for_remaining_values = minimum_value_bytes * (len(values) - index - 1)
+        bounded = _bounded_json_prompt_value(
+            value,
+            min(
+                _METADATA_PROMPT_HINT_MAX_BYTES,
+                remaining - reserved_for_remaining_values,
+            ),
+        )
+        bounded_values.append(bounded)
+        remaining -= len(bounded.encode("utf-8"))
+    return tuple(bounded_values), budget - remaining
+
+
+def _bounded_json_prompt_value(value: object, max_bytes: int) -> str:
+    """Return a valid JSON hint within ``max_bytes``, retaining string prefixes."""
+    rendered = _json_prompt_value(value)
+    if len(rendered.encode("utf-8")) <= max_bytes:
+        return rendered
+    if isinstance(value, str):
+        return _bounded_json_string(value, max_bytes)
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return _bounded_json_string_list(value, max_bytes)
+    return _json_prompt_value(_METADATA_PROMPT_TRUNCATION_MARKER.strip())
+
+
+def _bounded_json_string(value: str, max_bytes: int) -> str:
+    """Keep the largest UTF-8 character prefix whose JSON string fits."""
+    marker = _METADATA_PROMPT_TRUNCATION_MARKER
+    low = 0
+    high = len(value)
+    best = _json_prompt_value(marker.strip())
+    while low <= high:
+        candidate_length = (low + high) // 2
+        candidate = _json_prompt_value(value[:candidate_length] + marker)
+        if len(candidate.encode("utf-8")) <= max_bytes:
+            best = candidate
+            low = candidate_length + 1
+        else:
+            high = candidate_length - 1
+    return best
+
+
+def _bounded_json_string_list(values: list[str], max_bytes: int) -> str:
+    """Keep a valid JSON list prefix and make omitted authors explicit."""
+    retained: list[str] = []
+    for value in values:
+        candidate = _json_prompt_value(
+            [*retained, value, _METADATA_PROMPT_TRUNCATION_MARKER.strip()]
+        )
+        if len(candidate.encode("utf-8")) > max_bytes:
+            break
+        retained.append(value)
+    rendered = _json_prompt_value(retained)
+    if len(retained) < len(values):
+        marked = _json_prompt_value([*retained, _METADATA_PROMPT_TRUNCATION_MARKER.strip()])
+        if len(marked.encode("utf-8")) <= max_bytes:
+            return marked
+    return rendered
 
 
 def get_current_author_names(db: Session, media: Media) -> list[str]:
@@ -507,15 +575,22 @@ def get_current_author_names(db: Session, media: Media) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def validate_structured_enrichment(payload: object) -> dict | None:
-    """Validate native-agent structured metadata and drop null fields."""
+def validate_structured_enrichment(payload: object) -> MetadataEnrichmentOutput | None:
+    """Validate native-agent structured metadata once at ingress.
+
+    Returns the accepted model, or None when the payload is outside the domain
+    output contract. The one caller classifies None as the invalid-output
+    terminal and reuses the returned model for its replay memo.
+    """
     if not isinstance(payload, dict):
         return None
     try:
-        parsed = MetadataEnrichmentOutput.model_validate(payload)
+        return MetadataEnrichmentOutput.model_validate(payload)
+    # justify-ignore-error: an out-of-contract payload is this validator's
+    # expected None outcome; the caller classifies it as the typed
+    # invalid-output terminal.
     except ValidationError:
         return None
-    return parsed.model_dump(exclude_none=True)
 
 
 # ---------------------------------------------------------------------------

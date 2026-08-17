@@ -10,13 +10,13 @@ from nexus.db.models import AgentTurn
 from nexus.errors import ApiErrorCode, ConflictError
 from nexus.jobs.queue import get_job
 from nexus.services.durable_step_journal import Uncertain, decode_step_states
+from nexus.services.metadata_dispatch import METADATA_STEP_PATH
 from nexus.services.metadata_lifecycle import retry_metadata_for_viewer
-from tests.service.test_codex_metadata_enrichment import (
-    _STEP_PATH,
-    _audit_requests,
-    _host,
-    _seed_media_job,
-    _start_worker,
+from tests.testkit.codex_metadata import (
+    audit_requests,
+    scripted_codex_host,
+    seed_media_job,
+    start_worker,
 )
 from tests.testkit.worker import controller_run, kill_and_forget_process, wait_for_job
 
@@ -26,20 +26,20 @@ def test_postaccept_disconnect_stays_incomplete_and_never_redispatches(
 ) -> None:
     """Risk: transport loss after acceptance is mistaken for a safe retry."""
     run = controller_run()
-    seeded = _seed_media_job(engine)
+    seeded = seed_media_job(engine)
 
-    with _host(run, "accepted_disconnect") as host:
-        worker = _start_worker(run, host.socket_path)
+    with scripted_codex_host(run, "accepted_disconnect") as host:
+        worker = start_worker(run, host.socket_path)
         try:
             wait_for_job(engine, seeded.job_id, status="dead", attempts=2)
         finally:
             kill_and_forget_process(worker)
-        assert len(_audit_requests(host.audit_path)) == 1
+        assert len(audit_requests(host.audit_path)) == 1
 
     with Session(engine) as db:
         job = get_job(db, seeded.job_id)
         assert job is not None
-        state = decode_step_states(job.payload)[_STEP_PATH]
+        state = decode_step_states(job.payload)[METADATA_STEP_PATH]
         assert state.dispatch_phase is Uncertain
         turn = db.get(AgentTurn, state.generation_id)
         assert turn is not None

@@ -60,6 +60,7 @@ from nexus.jobs.queue import (
     SUCCEEDED,
     JobExecutionContext,
     RescheduleRequested,
+    ScheduleAt,
     enqueue_unique_job,
     get_job,
     requeue_dead_job,
@@ -1332,7 +1333,7 @@ async def run_build(
             collected = await binding.collect(db, resolved, audience, runtime)
         except DossierResearchPending as exc:
             db.commit()
-            return RescheduleRequested(available_at=exc.available_at)
+            return RescheduleRequested(schedule=ScheduleAt(exc.available_at))
         except ResearchLeaseLost:
             db.rollback()
             return None
@@ -1350,7 +1351,7 @@ async def run_build(
         except AggregateDependenciesPending:
             db.commit()
             return RescheduleRequested(
-                available_at=datetime.now(UTC) + timedelta(seconds=5),
+                schedule=ScheduleAt(datetime.now(UTC) + timedelta(seconds=5)),
             )
         except DossierInputTooLarge:
             db.commit()

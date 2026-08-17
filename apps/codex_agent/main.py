@@ -12,7 +12,8 @@ from pathlib import Path
 import uvicorn
 from apps.codex_agent import sandbox_health
 from apps.codex_agent.auth_environment import reject_api_key_auth
-from apps.codex_agent.host import create_codex_agent_app
+from apps.codex_agent.host import create_codex_agent_app, resolve_runtime_versions
+from apps.codex_agent.path_environment import required_absolute_path
 from provider_runtime.agent_runtime import (
     AgentRuntime,
     AgentRuntimeConfig,
@@ -26,13 +27,14 @@ _WORKING_DIRECTORY_ENV = "NEXUS_CODEX_WORKING_DIRECTORY"
 
 
 async def run() -> None:
-    socket_path = _required_path(_SOCKET_ENV)
-    state_root = _required_path(_STATE_ROOT_ENV)
-    working_directory = _required_path(_WORKING_DIRECTORY_ENV)
+    socket_path = required_absolute_path(_SOCKET_ENV)
+    state_root = required_absolute_path(_STATE_ROOT_ENV)
+    working_directory = required_absolute_path(_WORKING_DIRECTORY_ENV)
     reject_api_key_auth()
     _validate_directories(socket_path, state_root, working_directory)
     _remove_proven_stale_socket(socket_path)
     sandbox_health.check()
+    versions = resolve_runtime_versions()
     await _probe_chatgpt_auth(state_root)
 
     def runtime_factory() -> AgentRuntime:
@@ -41,6 +43,7 @@ async def run() -> None:
     app = create_codex_agent_app(
         runtime_factory=runtime_factory,
         working_directory=working_directory,
+        versions=versions,
     )
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     owned_identity: tuple[int, int] | None = None
@@ -77,16 +80,6 @@ async def _probe_chatgpt_auth(state_root: Path) -> None:
         )
     finally:
         await runtime.close()
-
-
-def _required_path(name: str) -> Path:
-    raw = os.environ.get(name)
-    if raw is None or not raw:
-        raise RuntimeError(f"{name} is required")
-    path = Path(raw)
-    if not path.is_absolute() or os.path.normpath(raw) != raw:
-        raise RuntimeError(f"{name} must be a normalized absolute path")
-    return path
 
 
 def _validate_directories(socket_path: Path, state_root: Path, working_directory: Path) -> None:

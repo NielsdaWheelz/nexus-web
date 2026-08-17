@@ -41,6 +41,8 @@ def capacity_is_available(paths: CapacityPaths = PRODUCTION_CAPACITY_PATHS) -> b
         current = _unsigned_bytes(_read_bounded(paths.memory_current))
         maximum = _unsigned_bytes(_read_bounded(paths.memory_max))
     except (OSError, UnicodeDecodeError, ValueError, InvalidOperation):
+        # justify-ignore-error: admission is fail-closed, so an unreadable or malformed
+        # kernel snapshot refuses the turn exactly as observed pressure does.
         return False
     if maximum != _EXPECTED_MEMORY_MAX_BYTES or current > maximum:
         return False
