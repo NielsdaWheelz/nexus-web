@@ -1,6 +1,6 @@
 import {
-  ANDROID_PLAYER_PROTOCOL_VERSION,
   NATIVE_PLAYER_COMMAND_DEADLINE_MS,
+  androidPlayerProtocolIdentity,
   decodeAndroidPlayerMessage,
   isAndroidPlayerEvent,
   type AndroidPlayerCommand,
@@ -18,6 +18,8 @@ declare global {
   interface Window {
     nexusPlayer?: NexusPlayerBridge;
   }
+  // Android injects this property on Window, whose global object is globalThis.
+  var nexusPlayer: NexusPlayerBridge | undefined;
 }
 
 type PendingRequest = {
@@ -27,8 +29,11 @@ type PendingRequest = {
 };
 
 export class NativePlayerUnavailableError extends Error {
-  constructor(message = "Native player is unavailable.") {
-    super(message);
+  constructor(
+    message = "Native player is unavailable.",
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
     this.name = "NativePlayerUnavailableError";
   }
 }
@@ -88,7 +93,7 @@ export class AndroidPlayerClient {
   };
 
   connectChannel(): void {
-    const bridge = window.nexusPlayer;
+    const bridge = globalThis.nexusPlayer;
     if (!bridge || typeof bridge.postMessage !== "function") {
       throw new NativePlayerUnavailableError();
     }
@@ -127,8 +132,9 @@ export class AndroidPlayerClient {
     const wire = {
       ...command,
       requestId,
-      protocolVersion: ANDROID_PLAYER_PROTOCOL_VERSION,
-    } as AndroidPlayerCommand;
+      ...androidPlayerProtocolIdentity(),
+    } satisfies AndroidPlayerCommand;
+    const serialized = JSON.stringify(wire);
     return new Promise<AndroidPlayerReply>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(requestId);
@@ -136,11 +142,16 @@ export class AndroidPlayerClient {
       }, NATIVE_PLAYER_COMMAND_DEADLINE_MS);
       this.pending.set(requestId, { resolve, reject, timeout });
       try {
-        bridge.postMessage(JSON.stringify(wire));
+        bridge.postMessage(serialized);
       } catch (error) {
         clearTimeout(timeout);
         this.pending.delete(requestId);
-        reject(error);
+        reject(
+          new NativePlayerUnavailableError(
+            "Native player bridge is unavailable.",
+            { cause: error },
+          ),
+        );
       }
     });
   }

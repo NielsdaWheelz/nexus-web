@@ -552,6 +552,15 @@
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject"
       ],
       "expected_failure": "first Bearer [REDACTED] failed bootstrap"
+    },
+    {
+      "id": "android-player-protocol-skew-bypass",
+      "patch": "testdata/faults/android-player-protocol-skew-bypass.patch",
+      "sha256": "1d618963500583bab0ad0e6370a00234b96127b2297cb7f97ac8a8baf9fed243",
+      "proofs": [
+        "pytest:python/tests/kernel/test_production_release.py::test_android_player_protocol_preflight_accepts_only_the_matching_stable_manifest"
+      ],
+      "expected_failure": "DID NOT RAISE"
     }
   ]
 }

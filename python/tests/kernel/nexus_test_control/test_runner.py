@@ -772,6 +772,59 @@ def test_complete_python_kernel_deselects_the_same_run_sensitive_green_node(
     ]
 
 
+def test_selected_python_file_subsumes_its_exact_node_once_at_execution(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    _write(
+        tmp_path / "python/tests/kernel/test_first.py",
+        "def test_owned():\n    assert True\n\ndef test_neighbor():\n    assert True\n",
+    )
+    _write(tmp_path / "python/tests/kernel/test_second.py", "def test_other():\n    assert True\n")
+    (tmp_path / "python/.venv").mkdir()
+    environment = _stub_tools(tmp_path, "uv")
+    context = CapabilityContext(
+        tmp_path,
+        Workflow.CHANGED,
+        (
+            Selection(
+                "deploy/hetzner/release.py",
+                Capability.KERNEL_PYTHON,
+                SelectionReason.PRIORITY_RISK,
+                "pytest:python/tests/kernel/test_first.py",
+            ),
+            Selection(
+                "deploy/hetzner/release.py",
+                Capability.KERNEL_PYTHON,
+                SelectionReason.PRIORITY_RISK,
+                "pytest:python/tests/kernel/test_first.py::test_owned",
+            ),
+            Selection(
+                "deploy/hetzner/release.py",
+                Capability.KERNEL_PYTHON,
+                SelectionReason.PRIORITY_RISK,
+                "pytest:python/tests/kernel/test_second.py::test_other",
+            ),
+        ),
+    )
+
+    result = run_capability(context, Capability.KERNEL_PYTHON, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    assert _commands(tmp_path)[-1]["argv"] == [
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "--maxfail=1",
+        "-p",
+        "no:randomly",
+        "--",
+        "./tests/kernel/test_first.py",
+        "./tests/kernel/test_second.py::test_other",
+    ]
+
+
 def test_single_scenario_service_file_covered_by_sensitivity_does_not_prepare_runtime(
     tmp_path: Path,
 ) -> None:
@@ -3128,18 +3181,45 @@ def test_android_release_parsers_fail_closed_on_signer_and_manifest_contract() -
     manifest = (
         '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
         'package="app.nexus.android" android:versionCode="42" android:versionName="2.1">'
-        '<application android:usesCleartextTraffic="false"><activity>'
+        '<application android:usesCleartextTraffic="false">'
+        '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_VERSION" '
+        'android:value="2"/>'
+        '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_CONTRACT_SHA256" '
+        f'android:value="{"d" * 64}"/>'
+        "<activity>"
         '<intent-filter android:autoVerify="true">'
         '<data android:scheme="https" android:host="nexus.nielseriknandal.com"/>'
         "</intent-filter></activity></application></manifest>"
     )
 
-    assert runner._apksigner_certificate(completed) == certificate
-    assert runner._release_manifest_facts(manifest) == (
+    expected_manifest = (
         "app.nexus.android",
         "42",
         "2.1",
         "nexus.nielseriknandal.com",
+        "2",
+        "d" * 64,
+    )
+    manifest_result = subprocess.CompletedProcess(("apkanalyzer",), 0, manifest, "")
+
+    assert runner._apksigner_certificate(completed) == certificate
+    assert runner._release_manifest_facts(manifest) == expected_manifest
+    assert runner._release_apk_contract_is_exact(
+        signer=completed,
+        manifest=manifest_result,
+        expected_certificate=certificate,
+        expected_manifest=expected_manifest,
+    )
+    assert not runner._release_apk_contract_is_exact(
+        signer=completed,
+        manifest=subprocess.CompletedProcess(
+            ("apkanalyzer",),
+            0,
+            manifest.replace("d" * 64, "e" * 64),
+            "",
+        ),
+        expected_certificate=certificate,
+        expected_manifest=expected_manifest,
     )
     assert (
         runner._apksigner_certificate(

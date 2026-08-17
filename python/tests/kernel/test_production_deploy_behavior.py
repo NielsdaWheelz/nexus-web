@@ -75,6 +75,110 @@ def _assert_only_bound_candidate_mutates(state: dict[str, Any]) -> None:
     assert all(BOUND_DEPLOYMENT_ID in arguments for arguments in promotions)
 
 
+@pytest.mark.parametrize("mode", ("absent", "malformed", "protocol-mismatch", "wrong-tag"))
+def test_stable_android_manifest_preflight_stops_before_the_first_host_or_provider_mutation(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    harness = _harness(
+        tmp_path,
+        inspect=_inspect(
+            status="new",
+            current_sha=CURRENT_SHA,
+            current_deployment_id=CURRENT_DEPLOYMENT_ID,
+        ),
+        authoritative_id=CURRENT_DEPLOYMENT_ID,
+    )
+    harness.update_state(android_manifest_mode=mode)
+
+    failed = harness.run()
+
+    assert failed.returncode != 0
+    state = harness.state()
+    ssh = _joined_events(state, "ssh")
+    assert len(ssh) == 1
+    assert "sudo test -x /opt/nexus/releases/" in ssh[0]
+    assert _events(state, "scp") == []
+    assert _events(state, "node") == []
+    assert _events(state, "curl") == []
+
+
+def test_stable_android_manifest_preflight_uses_the_update_page_latest_pointer(
+    tmp_path: Path,
+) -> None:
+    harness = _harness(
+        tmp_path,
+        inspect=_inspect(
+            status="new",
+            current_sha=CURRENT_SHA,
+            current_deployment_id=CURRENT_DEPLOYMENT_ID,
+        ),
+        authoritative_id=CURRENT_DEPLOYMENT_ID,
+    )
+    completed = harness.run()
+
+    assert completed.returncode == 0, completed.stderr
+    state = harness.state()
+    api_calls = [
+        arguments
+        for arguments in _events(state, "gh")
+        if arguments[:1] == ["api"]
+        and arguments[-1] == "repos/NielsdaWheelz/nexus-web/releases/latest"
+    ]
+    assert api_calls == [["api", "repos/NielsdaWheelz/nexus-web/releases/latest"]]
+    downloads = [
+        arguments for arguments in _events(state, "gh") if arguments[:2] == ["release", "download"]
+    ]
+    assert len(downloads) == 1
+    assert downloads[0][2] == "android-v0.2.14"
+
+
+@pytest.mark.parametrize(
+    "updates",
+    (
+        {"draft": True},
+        {"prerelease": True},
+        {"tag_name": "web-v999.0.0"},
+        {"assets": []},
+        {
+            "assets": [
+                {"name": "release-manifest.json"},
+                {"name": "release-manifest.json"},
+            ]
+        },
+    ),
+    ids=("draft", "prerelease", "non-android", "manifest-absent", "manifest-ambiguous"),
+)
+def test_stable_android_manifest_preflight_rejects_an_invalid_latest_pointer(
+    tmp_path: Path,
+    updates: dict[str, object],
+) -> None:
+    harness = _harness(
+        tmp_path,
+        inspect=_inspect(
+            status="new",
+            current_sha=CURRENT_SHA,
+            current_deployment_id=CURRENT_DEPLOYMENT_ID,
+        ),
+        authoritative_id=CURRENT_DEPLOYMENT_ID,
+    )
+    latest = harness.state()["latest_android_release"]
+    assert isinstance(latest, dict)
+    harness.update_state(latest_android_release={**latest, **updates})
+
+    failed = harness.run()
+
+    assert failed.returncode != 0
+    state = harness.state()
+    assert [
+        arguments for arguments in _events(state, "gh") if arguments[:2] == ["release", "download"]
+    ] == []
+    assert _events(state, "scp") == []
+    assert _events(state, "node") == []
+    assert _events(state, "curl") == []
+    assert all(" install-bundle " not in f" {' '.join(event)} " for event in _events(state, "ssh"))
+
+
 def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_isolation() -> None:
     """Risk: agent credentials or a control endpoint escape the narrow host."""
 

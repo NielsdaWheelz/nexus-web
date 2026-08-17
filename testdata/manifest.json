@@ -2,6 +2,16 @@
   "version": 1,
   "artifacts": [
     {
+      "path": "testdata/android/player-protocol.json",
+      "sha256": "d97000cb03a6f4896129dbdc7d849b53955b0287f48bde150273df46a4f97a0b",
+      "source": "repo-authored: canonical Android player protocol v2 cases",
+      "license": "Repository-owned test data; retained as the cross-language player protocol and release-identity oracle",
+      "purpose": [
+        "Cross-language Android player command, reply, event, snapshot, rejection, and nested-variant conformance",
+        "Byte-exact player protocol identity for web, signed Android, and production release proof"
+      ]
+    },
+    {
       "path": "testdata/consumption/canonical_word_policy.json",
       "sha256": "f4fafd95b12bcc1e135e2975bf95011d04dbea2a39485b6b2fc29c4aa7322113",
       "source": "repo-authored: canonical consumption word-policy cases",

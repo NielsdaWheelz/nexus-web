@@ -112,6 +112,48 @@ def _host_harness(tmp_path: Path) -> HostReleaseHarness:
     )
 
 
+def test_android_player_protocol_preflight_accepts_only_the_matching_stable_manifest(
+    tmp_path: Path,
+) -> None:
+    release = _release_module()
+    corpus = REPO_ROOT / "testdata/android/player-protocol.json"
+    digest = hashlib.sha256(corpus.read_bytes()).hexdigest()
+    tag = "android-v0.2.14"
+    version_name = tag.removeprefix("android-v")
+    apk_digest = "d" * 64
+    names = ("nexus-android.apk", f"nexus-android-{version_name}.apk")
+    manifest = {
+        "version": 2,
+        "run_id": "android-release-test",
+        "git_sha": "e" * 40,
+        "tag": tag,
+        "package": "app.nexus.android",
+        "version_code": 17,
+        "version_name": version_name,
+        "signer_sha256": "c" * 64,
+        "source_apk_sha256": apk_digest,
+        "player_protocol": {"version": 2, "contract_sha256": digest},
+        "assets": {
+            name: (apk_digest if name in names else "b" * 64)
+            for name in (*names, *(f"{name}.sha256" for name in names))
+        },
+    }
+    path = tmp_path / "release-manifest.json"
+    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    accepted = release.load_android_release_manifest(
+        path,
+        corpus=corpus,
+        expected_tag=tag,
+    )
+
+    assert accepted.player_protocol.as_json() == manifest["player_protocol"]
+    manifest["player_protocol"] = {"version": 2, "contract_sha256": "a" * 64}
+    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(release.ReleaseDefect, match="differs from the corpus"):
+        release.load_android_release_manifest(path, corpus=corpus, expected_tag=tag)
+
+
 def test_codex_host_is_required_only_after_its_immutable_schema_cutover() -> None:
     """Risk: a legacy predecessor is rejected for a host it never shipped."""
 
@@ -1107,6 +1149,24 @@ def test_host_finalize_proves_public_tls_and_publishes_record_and_current(
             ("api.example.test", "/readyz"),
         )
     ]
+
+
+def test_host_finalize_rejects_a_public_player_protocol_mismatch(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    release = _release_module()
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    harness.update_state(public_web_mode="different-player-protocol")
+
+    failed = harness.run_finalize()
+
+    assert failed.returncode != 0
+    assert "authoritative frontend does not serve the bound candidate" in failed.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.AwaitingFrontendPromotion
 
 
 @pytest.mark.parametrize(

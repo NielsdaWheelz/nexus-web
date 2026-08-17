@@ -2,6 +2,7 @@ package app.nexus.android.playback
 
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -9,6 +10,32 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NexusPlaybackServiceContractTest {
+    @Test
+    fun `native consumers serialize the owned protocol mismatch code`() {
+        val requestId = "00000000-0000-4000-8000-000000000001"
+        val parsed = PlayerWire.parseCommand(
+            JSONObject()
+                .put("kind", "opaque")
+                .put("requestId", requestId)
+                .put("protocolVersion", PLAYER_PROTOCOL_VERSION + 1)
+                .toString()
+        ) as PlayerCommandParseResult.Rejected
+
+        listOf(
+            serializeBridgeRejection(parsed),
+            serializeServiceRejection(parsed),
+        ).forEach { raw ->
+            val reply = JSONObject(raw)
+            assertEquals("Rejected", reply.getString("kind"))
+            assertEquals("ProtocolMismatch", reply.getString("code"))
+            assertEquals(PLAYER_PROTOCOL_VERSION, reply.getInt("protocolVersion"))
+            assertEquals(
+                PLAYER_PROTOCOL_CONTRACT_SHA256,
+                reply.getString("protocolContractSha256"),
+            )
+        }
+    }
+
     @Test
     fun `pause shortening install is ordered safely and reports failure`() {
         val naturalCalls = mutableListOf<String>()

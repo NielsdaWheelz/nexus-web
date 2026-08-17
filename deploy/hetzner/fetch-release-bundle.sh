@@ -72,7 +72,7 @@ timeout --foreground 5m gh run download "$publisher_run_id" \
   --name "$ARTIFACT_NAME" \
   --dir "$BUNDLE"
 bundle_files="$(cd "$BUNDLE" && find . -type f -printf '%P\n' | LC_ALL=C sort)"
-expected_bundle_files=$'Caddyfile\ncandidate-manifest.json\ndocker-compose.yml\nnexus-codex-agent-host.apparmor\nprove-codex-capacity.sh\npython/nexus/__init__.py\npython/nexus/release_artifact.py\nrelease.py'
+expected_bundle_files=$'Caddyfile\ncandidate-manifest.json\ndocker-compose.yml\nnexus-codex-agent-host.apparmor\nprove-codex-capacity.sh\npython/nexus/__init__.py\npython/nexus/release_artifact.py\nrelease.py\ntestdata/android/player-protocol.json'
 [ "$bundle_files" = "$expected_bundle_files" ] || \
   die "release artifact has an unexpected shape"
 cmp "${BUNDLE}/release.py" "${ROOT_DIR}/deploy/hetzner/release.py"
@@ -85,6 +85,8 @@ cmp "${BUNDLE}/prove-codex-capacity.sh" \
 cmp "${BUNDLE}/python/nexus/__init__.py" "${ROOT_DIR}/python/nexus/__init__.py"
 cmp "${BUNDLE}/python/nexus/release_artifact.py" \
   "${ROOT_DIR}/python/nexus/release_artifact.py"
+cmp "${BUNDLE}/testdata/android/player-protocol.json" \
+  "${ROOT_DIR}/testdata/android/player-protocol.json"
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${ROOT_DIR}/python" \
   python3 -B "${ROOT_DIR}/deploy/hetzner/release.py" validate-candidate \
     --manifest "${BUNDLE}/candidate-manifest.json" >/dev/null

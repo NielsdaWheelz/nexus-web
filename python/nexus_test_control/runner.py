@@ -3848,6 +3848,18 @@ class _AndroidReleaseInputs:
     apkanalyzer: Path
 
 
+@dataclass(frozen=True, slots=True)
+class _AndroidPlayerProtocolIdentity:
+    version: int
+    contract_sha256: str
+
+    def as_json(self) -> dict[str, int | str]:
+        return {
+            "version": self.version,
+            "contract_sha256": self.contract_sha256,
+        }
+
+
 def _run_android_release(
     context: CapabilityContext,
     environment: Mapping[str, str],
@@ -3860,6 +3872,10 @@ def _run_android_release(
     inputs = _android_release_inputs(context.repo_root, environment)
     if isinstance(inputs, CapabilityResult):
         return inputs
+    try:
+        player_protocol = _android_player_protocol_identity(context.repo_root)
+    except RuntimeContractError as error:
+        return _release_failure(capability, started, str(error))
     android_root = context.repo_root / "apps/android"
     child_environment = _child_environment(environment)
     release_environment_names = (
@@ -3928,6 +3944,8 @@ def _run_android_release(
             str(inputs.version_code),
             inputs.version_name,
             inputs.owned_host,
+            str(player_protocol.version),
+            player_protocol.contract_sha256,
         )
         if manifest.returncode != 0 or manifest_facts != expected_manifest:
             return _release_failure(
@@ -3987,11 +4005,22 @@ def _run_android_release(
             context.repo_root,
             child_environment,
         )
-        if (
-            verified_again.returncode != 0
-            or _apksigner_certificate(verified_again) != inputs.certificate_sha256
+        manifest_again = _release_command(
+            (str(inputs.apkanalyzer), "manifest", "print", str(apk)),
+            context.repo_root,
+            child_environment,
+        )
+        if not _release_apk_contract_is_exact(
+            signer=verified_again,
+            manifest=manifest_again,
+            expected_certificate=inputs.certificate_sha256,
+            expected_manifest=expected_manifest,
         ):
-            return _release_failure(capability, started, "tested release APK changed after signing")
+            return _release_failure(
+                capability,
+                started,
+                "tested release APK signature or manifest changed after instrumentation",
+            )
         resolved = _release_command(
             (
                 str(inputs.adb),
@@ -4029,7 +4058,7 @@ def _run_android_release(
     evidence_path.write_text(
         json.dumps(
             {
-                "version": 1,
+                "version": 2,
                 "run_id": execution.run_id,
                 "git_sha": inputs.git_sha,
                 "tag": inputs.tag,
@@ -4046,6 +4075,7 @@ def _run_android_release(
                 "resolved_activity": resolved_activity[0],
                 "production_network_contact": False,
                 "emulator_network_disabled": True,
+                "player_protocol": player_protocol.as_json(),
             },
             indent=2,
             sort_keys=True,
@@ -4080,19 +4110,31 @@ def _run_release_artifact(
     )
     try:
         source = json.loads(evidence_path.read_text(encoding="utf-8"))
+        evidence_version = source["version"]
         tag = source["tag"]
         apk_relative = source["apk_path"]
         expected_sha256 = source["apk_sha256"]
         signer = source["signer_sha256"]
+        package = source["package"]
         version_code = source["version_code"]
         version_name = source["version_name"]
         git_sha = source["git_sha"]
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        app_link_host = source["app_link_host"]
+        player_protocol = _android_player_protocol_identity_from_json(source["player_protocol"])
+    except (
+        OSError,
+        RuntimeContractError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+    ):
         return _release_failure(
             capability, started, "same-run Android release evidence is absent or invalid"
         )
     if (
-        source.get("run_id") != execution.run_id
+        evidence_version != 2
+        or source.get("run_id") != execution.run_id
         or not isinstance(tag, str)
         or re.fullmatch(r"android-v[a-zA-Z0-9._-]+", tag) is None
         or apk_relative != "apps/android/app/build/outputs/apk/release/app-release.apk"
@@ -4100,6 +4142,7 @@ def _run_release_artifact(
         or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
         or not isinstance(signer, str)
         or re.fullmatch(r"[0-9a-f]{64}", signer) is None
+        or package != "app.nexus.android"
         or isinstance(version_code, bool)
         or not isinstance(version_code, int)
         or version_code < 1
@@ -4107,8 +4150,19 @@ def _run_release_artifact(
         or version_name != tag.removeprefix("android-v")
         or not isinstance(git_sha, str)
         or re.fullmatch(r"[0-9a-f]{40}", git_sha) is None
+        or app_link_host != "nexus.nielseriknandal.com"
     ):
         return _release_failure(capability, started, "Android release evidence changed shape")
+    try:
+        expected_player_protocol = _android_player_protocol_identity(context.repo_root)
+    except RuntimeContractError as error:
+        return _release_failure(capability, started, str(error))
+    if player_protocol != expected_player_protocol:
+        return _release_failure(
+            capability,
+            started,
+            "Android release evidence player protocol differs from the repository corpus",
+        )
     apk = context.repo_root / apk_relative
     try:
         tag_sha = _git_commit(context.repo_root, tag, environment)
@@ -4130,14 +4184,37 @@ def _run_release_artifact(
     sdk_tools = _android_release_tools(environment)
     if sdk_tools is None:
         return _not_run(capability, "Android release SDK tools are absent")
-    _adb, apksigner, _apkanalyzer = sdk_tools
+    _adb, apksigner, apkanalyzer = sdk_tools
+    child_environment = _child_environment(environment)
     verified = _release_command(
         (str(apksigner), "verify", "--verbose", "--print-certs", str(apk)),
         context.repo_root,
-        _child_environment(environment),
+        child_environment,
     )
-    if verified.returncode != 0 or _apksigner_certificate(verified) != signer:
-        return _release_failure(capability, started, "release source signer changed")
+    manifest = _release_command(
+        (str(apkanalyzer), "manifest", "print", str(apk)),
+        context.repo_root,
+        child_environment,
+    )
+    expected_manifest = (
+        package,
+        str(version_code),
+        version_name,
+        app_link_host,
+        str(expected_player_protocol.version),
+        expected_player_protocol.contract_sha256,
+    )
+    if not _release_apk_contract_is_exact(
+        signer=verified,
+        manifest=manifest,
+        expected_certificate=signer,
+        expected_manifest=expected_manifest,
+    ):
+        return _release_failure(
+            capability,
+            started,
+            "release source APK signature or manifest changed before staging",
+        )
     release_root = context.repo_root / "test-results/runs" / execution.run_id
     staged = release_root / "release"
     temporary = release_root / "release.tmp"
@@ -4153,7 +4230,7 @@ def _run_release_artifact(
             encoding="utf-8",
         )
     manifest = {
-        "version": 1,
+        "version": 2,
         "run_id": execution.run_id,
         "git_sha": git_sha,
         "tag": tag,
@@ -4162,6 +4239,7 @@ def _run_release_artifact(
         "version_name": version_name,
         "signer_sha256": signer,
         "source_apk_sha256": expected_sha256,
+        "player_protocol": player_protocol.as_json(),
         "assets": {
             name: _sha256_file(temporary / name)
             for name in (*names, *(f"{name}.sha256" for name in names))
@@ -4382,7 +4460,22 @@ def _apksigner_certificate(completed: subprocess.CompletedProcess[str]) -> str |
     return match.group(1).replace(":", "").lower() if match else None
 
 
-def _release_manifest_facts(text: str) -> tuple[str, str, str, str] | None:
+def _release_apk_contract_is_exact(
+    *,
+    signer: subprocess.CompletedProcess[str],
+    manifest: subprocess.CompletedProcess[str],
+    expected_certificate: str,
+    expected_manifest: tuple[str, str, str, str, str, str],
+) -> bool:
+    return (
+        signer.returncode == 0
+        and _apksigner_certificate(signer) == expected_certificate
+        and manifest.returncode == 0
+        and _release_manifest_facts(manifest.stdout) == expected_manifest
+    )
+
+
+def _release_manifest_facts(text: str) -> tuple[str, str, str, str, str, str] | None:
     start = text.find("<manifest")
     if start < 0:
         return None
@@ -4405,12 +4498,57 @@ def _release_manifest_facts(text: str) -> tuple[str, str, str, str] | None:
                     hosts.add(host)
     if len(hosts) != 1:
         return None
+    player_metadata: dict[str, str] = {}
+    for metadata in root.findall("./application/meta-data"):
+        name = metadata.attrib.get(f"{android}name")
+        value = metadata.attrib.get(f"{android}value")
+        if name not in {
+            "app.nexus.android.PLAYER_PROTOCOL_VERSION",
+            "app.nexus.android.PLAYER_PROTOCOL_CONTRACT_SHA256",
+        }:
+            continue
+        if name in player_metadata or value is None:
+            return None
+        player_metadata[name] = value
+    if set(player_metadata) != {
+        "app.nexus.android.PLAYER_PROTOCOL_VERSION",
+        "app.nexus.android.PLAYER_PROTOCOL_CONTRACT_SHA256",
+    }:
+        return None
     return (
         root.attrib.get("package", ""),
         root.attrib.get(f"{android}versionCode", ""),
         root.attrib.get(f"{android}versionName", ""),
         next(iter(hosts)),
+        player_metadata["app.nexus.android.PLAYER_PROTOCOL_VERSION"],
+        player_metadata["app.nexus.android.PLAYER_PROTOCOL_CONTRACT_SHA256"],
     )
+
+
+def _android_player_protocol_identity(repo_root: Path) -> _AndroidPlayerProtocolIdentity:
+    corpus = repo_root / "testdata/android/player-protocol.json"
+    try:
+        digest = _sha256_file(corpus)
+    except OSError as error:
+        raise RuntimeContractError(
+            "Android player protocol corpus is absent or unreadable"
+        ) from error
+    return _AndroidPlayerProtocolIdentity(version=2, contract_sha256=digest)
+
+
+def _android_player_protocol_identity_from_json(value: object) -> _AndroidPlayerProtocolIdentity:
+    if not isinstance(value, dict) or set(value) != {"version", "contract_sha256"}:
+        raise RuntimeContractError("Android release evidence player protocol changed shape")
+    version = value.get("version")
+    contract_sha256 = value.get("contract_sha256")
+    if (
+        type(version) is not int
+        or version != 2
+        or not isinstance(contract_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", contract_sha256) is None
+    ):
+        raise RuntimeContractError("Android release evidence player protocol changed shape")
+    return _AndroidPlayerProtocolIdentity(version=version, contract_sha256=contract_sha256)
 
 
 def _git_commit(repo_root: Path, revision: str, environment: Mapping[str, str]) -> str:
@@ -4701,7 +4839,18 @@ def _selected_proof_nodes(
         if not separator or proof_runner != runner or not node:
             raise ValueError(f"invalid {runner} proof selection: {selection.proof}")
         nodes.add(node)
-    return tuple(sorted(nodes)), promoted
+    ordered = tuple(sorted(nodes))
+    if runner != "pytest":
+        return ordered, promoted
+    whole_files = {node for node in nodes if "::" not in node}
+    return (
+        tuple(
+            node
+            for node in ordered
+            if "::" not in node or node.split("::", 1)[0] not in whole_files
+        ),
+        promoted,
+    )
 
 
 def _frontend_related_paths(context: CapabilityContext) -> tuple[str, ...]:

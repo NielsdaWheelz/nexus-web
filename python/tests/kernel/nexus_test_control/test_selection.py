@@ -232,6 +232,53 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
     assert {selection.reason for selection in selections} == {SelectionReason.PRIORITY_RISK}
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "apps/web/src/app/android/page.tsx",
+        "apps/web/src/lib/player/androidPlayerProtocol.ts",
+        "apps/android/app/src/main/java/app/nexus/android/playback/PlayerProtocol.kt",
+        "deploy/hetzner/release.py",
+        "testdata/android/player-protocol.json",
+    ],
+)
+def test_android_player_protocol_sources_route_the_cross_release_skew_proofs(
+    path: str,
+) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+    owned = {
+        (selection.capability, selection.proof)
+        for selection in selections
+        if selection.reason is SelectionReason.PRIORITY_RISK
+    }
+
+    assert owned.issuperset(
+        {
+            (
+                Capability.KERNEL_WEB,
+                "vitest:apps/web/src/app/android/page.unit.test.tsx",
+            ),
+            (
+                Capability.KERNEL_PYTHON,
+                "pytest:python/tests/kernel/test_production_deploy_behavior.py::"
+                "test_stable_android_manifest_preflight_uses_the_update_page_latest_pointer",
+            ),
+            (
+                Capability.ANDROID_HOST,
+                "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt",
+            ),
+            (
+                Capability.KERNEL_PYTHON,
+                "pytest:python/tests/kernel/test_production_release.py::"
+                "test_android_player_protocol_preflight_accepts_only_the_matching_stable_manifest",
+            ),
+        }
+    )
+
+
 @pytest.mark.parametrize("path", ["python/pyproject.toml", "python/uv.lock"])
 def test_codex_dependency_changes_route_release_proofs_without_duplicate_host_ownership(
     path: str,
@@ -404,18 +451,29 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
         (
             "deploy/hetzner/release.py",
             {
+                Capability.ANDROID_HOST,
+                Capability.COMPONENT,
                 Capability.JOURNEYS_ALL,
                 Capability.KERNEL_PYTHON,
+                Capability.KERNEL_WEB,
                 Capability.STATIC_PLATFORM,
             },
             {
+                "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt",
                 "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
                 "pytest:python/tests/kernel/test_backend_artifact.py",
                 "pytest:python/tests/kernel/test_successor_release_contract.py",
                 "pytest:python/tests/kernel/test_production_delivery_contract.py",
                 "pytest:python/tests/kernel/test_production_deploy_behavior.py",
+                "pytest:python/tests/kernel/test_production_deploy_behavior.py::"
+                "test_stable_android_manifest_preflight_uses_the_update_page_latest_pointer",
                 "pytest:python/tests/kernel/test_production_release.py",
+                "pytest:python/tests/kernel/test_production_release.py::"
+                "test_android_player_protocol_preflight_accepts_only_the_matching_stable_manifest",
                 "pytest:python/tests/kernel/test_release_bundle_fetch.py",
+                "vitest:apps/web/src/app/android/page.unit.test.tsx",
+                "vitest:apps/web/src/components/player/GlobalPlayerSurfaces.browser.test.tsx",
+                "vitest:apps/web/src/lib/player/androidPlayerProtocol.unit.test.ts",
             },
         ),
         (
@@ -463,17 +521,25 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
         (
             "python/nexus_test_control/runner.py",
             {
+                Capability.ANDROID_HOST,
                 Capability.CODEX_HOSTED,
+                Capability.COMPONENT,
                 Capability.KERNEL_PYTHON,
+                Capability.KERNEL_WEB,
                 Capability.LLM_TOOLS,
                 Capability.SERVICE,
             },
             {
+                "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt",
                 "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool",
                 "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization",
                 "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
+                "pytest:python/tests/kernel/test_production_deploy_behavior.py::"
+                "test_stable_android_manifest_preflight_uses_the_update_page_latest_pointer",
+                "pytest:python/tests/kernel/test_production_release.py::"
+                "test_android_player_protocol_preflight_accepts_only_the_matching_stable_manifest",
                 "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::test_hosted_canary_rendered_failure_drops_provider_sentinels",
                 "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
@@ -482,6 +548,9 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/service/test_codex_agent_host.py",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
                 "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py",
+                "vitest:apps/web/src/app/android/page.unit.test.tsx",
+                "vitest:apps/web/src/components/player/GlobalPlayerSurfaces.browser.test.tsx",
+                "vitest:apps/web/src/lib/player/androidPlayerProtocol.unit.test.ts",
             },
         ),
     ],

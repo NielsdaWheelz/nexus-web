@@ -24,6 +24,10 @@ import java.util.UUID
 internal const val NATIVE_PLAYER_COMMAND_DEADLINE_MS = 5_000L
 private const val PLAYER_WEB_OBJECT = "nexusPlayer"
 
+internal fun serializeBridgeRejection(
+    rejection: PlayerCommandParseResult.Rejected,
+): String = PlayerWire.rejected(rejection)
+
 internal class PlayerBridgeSessionFence {
     var currentSessionKey: UUID? = null
         private set
@@ -141,16 +145,16 @@ internal class NexusPlayerBridge(
     fun onControllerEvent(raw: String) {
         mainHandler.post {
             val event = runCatching { strictJsonObject(raw) }.getOrNull() ?: return@post
-            if (
-                event.optLong("protocolVersion", -1) !=
-                PLAYER_PROTOCOL_VERSION.toLong()
-            ) {
-                return@post
-            }
+            runCatching { PlayerWire.requireIdentity(event) }.getOrElse { return@post }
             when (event.optString("kind")) {
                 "SnapshotChanged" -> {
                     runCatching {
-                        event.requireExactKeys("protocolVersion", "kind", "snapshot")
+                        event.requireExactKeys(
+                            "protocolVersion",
+                            "protocolContractSha256",
+                            "kind",
+                            "snapshot",
+                        )
                         sessionFence.observeSnapshotEvent(
                             playerSnapshotSessionKey(event.requireObject("snapshot"))
                         )
@@ -158,7 +162,12 @@ internal class NexusPlayerBridge(
                 }
                 "NaturalEndPending" -> {
                     val receipt = runCatching {
-                        event.requireExactKeys("protocolVersion", "kind", "receipt")
+                        event.requireExactKeys(
+                            "protocolVersion",
+                            "protocolContractSha256",
+                            "kind",
+                            "receipt",
+                        )
                         PlayerWire.decodePendingNaturalEnd(
                             event.requireObject("receipt").toString()
                         )
@@ -205,6 +214,7 @@ internal class NexusPlayerBridge(
             .put("kind", "Connect")
             .put("requestId", requestId.toString())
             .put("protocolVersion", PLAYER_PROTOCOL_VERSION)
+            .put("protocolContractSha256", PLAYER_PROTOCOL_CONTRACT_SHA256)
             .put("accountId", accountId.toString())
             .toString()
         val future = runCatching {
@@ -294,10 +304,7 @@ internal class NexusPlayerBridge(
             is PlayerCommandParseResult.Rejected ->
                 postReply(
                     message.replyProxy,
-                    PlayerWire.rejected(
-                        parsed.requestId,
-                        PlayerRejectionCode.InvalidRequest,
-                    )
+                    serializeBridgeRejection(parsed)
                 )
             is PlayerCommandParseResult.Accepted ->
                 dispatch(parsed.command, message)
@@ -485,16 +492,14 @@ internal class NexusPlayerBridge(
         return runCatching {
             val reply = strictJsonObject(raw)
             require(reply.requireCanonicalUuid("requestId") == request.command.requestId)
-            require(
-                reply.requireLong("protocolVersion", 1, 1) ==
-                    PLAYER_PROTOCOL_VERSION.toLong()
-            )
+            PlayerWire.requireIdentity(reply)
             when (reply.requireBoundedString("kind", 1, 32)) {
                 "Connected" -> {
                     reply.requireExactKeys(
                         "kind",
                         "requestId",
                         "protocolVersion",
+                        "protocolContractSha256",
                         "snapshot",
                         "pendingNaturalEnd",
                     )
@@ -515,6 +520,7 @@ internal class NexusPlayerBridge(
                         "kind",
                         "requestId",
                         "protocolVersion",
+                        "protocolContractSha256",
                         "snapshot",
                         "pendingNaturalEnd",
                     )
@@ -526,7 +532,12 @@ internal class NexusPlayerBridge(
                     )
                 }
                 "Accepted" -> {
-                    reply.requireExactKeys("kind", "requestId", "protocolVersion")
+                    reply.requireExactKeys(
+                        "kind",
+                        "requestId",
+                        "protocolVersion",
+                        "protocolContractSha256",
+                    )
                     when (val command = request.command) {
                         is PlayerCommand.LoadCanonical -> {
                             sessionFence.acceptedLoad(command.sessionKey)
@@ -549,6 +560,7 @@ internal class NexusPlayerBridge(
                         "kind",
                         "requestId",
                         "protocolVersion",
+                        "protocolContractSha256",
                         "code",
                     )
                     PlayerRejectionCode.valueOf(
@@ -581,15 +593,13 @@ internal class NexusPlayerBridge(
                 "kind",
                 "requestId",
                 "protocolVersion",
+                "protocolContractSha256",
                 "snapshot",
                 "pendingNaturalEnd",
             )
             require(reply.requireBoundedString("kind", 1, 32) == "Connected")
             require(reply.requireCanonicalUuid("requestId") == requestId)
-            require(
-                reply.requireLong("protocolVersion", 1, 1) ==
-                    PLAYER_PROTOCOL_VERSION.toLong()
-            )
+            PlayerWire.requireIdentity(reply)
             val snapshot = reply.requireObject("snapshot")
             val sessionKey = playerSnapshotSessionKey(snapshot)
             val pending = pendingNaturalEnd(

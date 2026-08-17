@@ -1,5 +1,6 @@
 package app.nexus.android.playback
 
+import app.nexus.android.BuildConfig
 import app.nexus.android.webkit.requireArray
 import app.nexus.android.webkit.requireBoolean
 import app.nexus.android.webkit.requireBoundedString
@@ -14,9 +15,11 @@ import org.json.JSONObject
 import java.net.URI
 import java.util.UUID
 
-internal const val PLAYER_PROTOCOL_VERSION = 1
+internal val PLAYER_PROTOCOL_VERSION = BuildConfig.PLAYER_PROTOCOL_VERSION
+internal val PLAYER_PROTOCOL_CONTRACT_SHA256 = BuildConfig.PLAYER_PROTOCOL_CONTRACT_SHA256
 private const val MAX_SOURCE_TIME_MS = Int.MAX_VALUE.toLong()
 private const val MAX_CHAPTERS = 100
+private val SHA256 = Regex("[0-9a-f]{64}")
 
 internal sealed interface Presence<out T> {
     data object Absent : Presence<Nothing>
@@ -366,12 +369,16 @@ internal enum class PlayerRejectionCode {
     StaleSession,
     NaturalEndPending,
     PlayerUnavailable,
+    ProtocolMismatch,
 }
 
 internal sealed interface PlayerCommandParseResult {
     data class Accepted(val command: PlayerCommand) : PlayerCommandParseResult
 
-    data class Rejected(val requestId: UUID) : PlayerCommandParseResult
+    data class Rejected(
+        val requestId: UUID,
+        val code: PlayerRejectionCode,
+    ) : PlayerCommandParseResult
 
     data object Unreplyable : PlayerCommandParseResult
 }
@@ -388,14 +395,42 @@ internal object PlayerWire {
         } catch (_: RuntimeException) {
             return PlayerCommandParseResult.Unreplyable
         }
-        return try {
-            require(
-                json.requireLong("protocolVersion", 1, 1) ==
-                    PLAYER_PROTOCOL_VERSION.toLong()
+        val protocolVersion = try {
+            json.requireLong("protocolVersion", 0, Int.MAX_VALUE.toLong())
+        } catch (_: RuntimeException) {
+            return PlayerCommandParseResult.Rejected(
+                requestId,
+                PlayerRejectionCode.InvalidRequest,
             )
+        }
+        if (protocolVersion != PLAYER_PROTOCOL_VERSION.toLong()) {
+            return PlayerCommandParseResult.Rejected(
+                requestId,
+                PlayerRejectionCode.ProtocolMismatch,
+            )
+        }
+        val protocolContractSha256 = try {
+            json.requireBoundedString("protocolContractSha256", 64, 64)
+                .also { require(SHA256.matches(it)) }
+        } catch (_: RuntimeException) {
+            return PlayerCommandParseResult.Rejected(
+                requestId,
+                PlayerRejectionCode.InvalidRequest,
+            )
+        }
+        if (protocolContractSha256 != PLAYER_PROTOCOL_CONTRACT_SHA256) {
+            return PlayerCommandParseResult.Rejected(
+                requestId,
+                PlayerRejectionCode.ProtocolMismatch,
+            )
+        }
+        return try {
             PlayerCommandParseResult.Accepted(parseCommand(json, requestId))
         } catch (_: RuntimeException) {
-            PlayerCommandParseResult.Rejected(requestId)
+            PlayerCommandParseResult.Rejected(
+                requestId,
+                PlayerRejectionCode.InvalidRequest,
+            )
         }
     }
 
@@ -434,9 +469,27 @@ internal object PlayerWire {
                 .put("code", code.name),
         )
 
+    fun rejected(rejection: PlayerCommandParseResult.Rejected): String =
+        rejected(rejection.requestId, rejection.code)
+
+    fun requireIdentity(json: JSONObject) {
+        require(
+            json.requireLong(
+                "protocolVersion",
+                PLAYER_PROTOCOL_VERSION.toLong(),
+                PLAYER_PROTOCOL_VERSION.toLong(),
+            ) == PLAYER_PROTOCOL_VERSION.toLong()
+        )
+        require(
+            json.requireBoundedString("protocolContractSha256", 64, 64) ==
+                PLAYER_PROTOCOL_CONTRACT_SHA256
+        )
+    }
+
     fun snapshotChanged(snapshot: PlayerSnapshot): String =
         JSONObject()
             .put("protocolVersion", PLAYER_PROTOCOL_VERSION)
+            .put("protocolContractSha256", PLAYER_PROTOCOL_CONTRACT_SHA256)
             .put("kind", "SnapshotChanged")
             .put("snapshot", snapshot.toJson())
             .toString()
@@ -444,6 +497,7 @@ internal object PlayerWire {
     fun naturalEndPending(receipt: PendingNaturalEnd): String =
         JSONObject()
             .put("protocolVersion", PLAYER_PROTOCOL_VERSION)
+            .put("protocolContractSha256", PLAYER_PROTOCOL_CONTRACT_SHA256)
             .put("kind", "NaturalEndPending")
             .put("receipt", pendingNaturalEndToJson(receipt))
             .toString()
@@ -460,6 +514,7 @@ internal object PlayerWire {
             }
         return JSONObject()
             .put("protocolVersion", PLAYER_PROTOCOL_VERSION)
+            .put("protocolContractSha256", PLAYER_PROTOCOL_CONTRACT_SHA256)
             .put("kind", "ControllerReconnected")
             .put("snapshot", snapshot)
             .put(
@@ -478,30 +533,27 @@ internal object PlayerWire {
     private fun parseCommand(json: JSONObject, requestId: UUID): PlayerCommand {
         return when (json.requireBoundedString("kind", 1, 64)) {
             "Connect" -> {
-                json.requireExactKeys("kind", "requestId", "protocolVersion", "accountId")
+                json.requireCommandKeys("accountId")
                 PlayerCommand.Connect(requestId, json.requireCanonicalUuid("accountId"))
             }
             "GetSnapshot" -> {
-                json.requireExactKeys("kind", "requestId", "protocolVersion")
+                json.requireCommandKeys()
                 PlayerCommand.GetSnapshot(requestId)
             }
             "RetryFailedActivity" -> {
-                json.requireExactKeys("kind", "requestId", "protocolVersion")
+                json.requireCommandKeys()
                 PlayerCommand.RetryFailedActivity(requestId)
             }
             "DiscardFailedActivity" -> {
-                json.requireExactKeys("kind", "requestId", "protocolVersion")
+                json.requireCommandKeys()
                 PlayerCommand.DiscardFailedActivity(requestId)
             }
             "SetActivityPaused" -> {
-                json.requireExactKeys("kind", "requestId", "protocolVersion", "paused")
+                json.requireCommandKeys("paused")
                 PlayerCommand.SetActivityPaused(requestId, json.requireBoolean("paused"))
             }
             "LoadCanonical" -> {
-                json.requireExactKeys(
-                    "kind",
-                    "requestId",
-                    "protocolVersion",
+                json.requireCommandKeys(
                     "sessionKey",
                     "session",
                     "rateState",
@@ -514,10 +566,7 @@ internal object PlayerWire {
                 )
             }
             "LoadPreview" -> {
-                json.requireExactKeys(
-                    "kind",
-                    "requestId",
-                    "protocolVersion",
+                json.requireCommandKeys(
                     "sessionKey",
                     "descriptor",
                 )
@@ -536,10 +585,7 @@ internal object PlayerWire {
                     PlayerCommand.Pause(request, session)
                 }
             "SeekTo" -> {
-                json.requireExactKeys(
-                    "kind",
-                    "requestId",
-                    "protocolVersion",
+                json.requireCommandKeys(
                     "sessionKey",
                     "positionMs",
                 )
@@ -550,10 +596,7 @@ internal object PlayerWire {
                 )
             }
             "SkipBy" -> {
-                json.requireExactKeys(
-                    "kind",
-                    "requestId",
-                    "protocolVersion",
+                json.requireCommandKeys(
                     "sessionKey",
                     "deltaMs",
                 )
@@ -568,10 +611,7 @@ internal object PlayerWire {
                 )
             }
             "SetVolume" -> {
-                json.requireExactKeys(
-                    "kind",
-                    "requestId",
-                    "protocolVersion",
+                json.requireCommandKeys(
                     "sessionKey",
                     "volume",
                 )
@@ -582,10 +622,7 @@ internal object PlayerWire {
                 )
             }
             "SetPlaybackRateState" -> {
-                json.requireExactKeys(
-                    "kind",
-                    "requestId",
-                    "protocolVersion",
+                json.requireCommandKeys(
                     "sessionKey",
                     "rateState",
                 )
@@ -596,10 +633,7 @@ internal object PlayerWire {
                 )
             }
             "SetSessionPauseShorteningMode" -> {
-                json.requireExactKeys(
-                    "kind",
-                    "requestId",
-                    "protocolVersion",
+                json.requireCommandKeys(
                     "sessionKey",
                     "mode",
                 )
@@ -617,10 +651,7 @@ internal object PlayerWire {
                     PlayerCommand.ClearSessionPauseShorteningMode(request, session)
                 }
             "SetDeviceDefaultPauseShorteningMode" -> {
-                json.requireExactKeys(
-                    "kind",
-                    "requestId",
-                    "protocolVersion",
+                json.requireCommandKeys(
                     "mode",
                 )
                 PlayerCommand.SetDeviceDefaultPauseShorteningMode(
@@ -629,10 +660,7 @@ internal object PlayerWire {
                 )
             }
             "InstallPodcastPlaybackSettings" -> {
-                json.requireExactKeys(
-                    "kind",
-                    "requestId",
-                    "protocolVersion",
+                json.requireCommandKeys(
                     "sessionKey",
                     "podcastId",
                     "subscription",
@@ -653,10 +681,7 @@ internal object PlayerWire {
                     PlayerCommand.Drain(request, session)
                 }
             "AdoptListeningState" -> {
-                json.requireExactKeys(
-                    "kind",
-                    "requestId",
-                    "protocolVersion",
+                json.requireCommandKeys(
                     "sessionKey",
                     "listeningState",
                 )
@@ -678,10 +703,7 @@ internal object PlayerWire {
                     PlayerCommand.Dismiss(request, session)
                 }
             "AcknowledgeNaturalEnd" -> {
-                json.requireExactKeys(
-                    "kind",
-                    "requestId",
-                    "protocolVersion",
+                json.requireCommandKeys(
                     "sessionKey",
                     "clientMutationId",
                 )
@@ -700,7 +722,7 @@ internal object PlayerWire {
         requestId: UUID,
         build: (UUID, UUID) -> PlayerCommand,
     ): PlayerCommand {
-        json.requireExactKeys("kind", "requestId", "protocolVersion", "sessionKey")
+        json.requireCommandKeys("sessionKey")
         return build(requestId, json.requireCanonicalUuid("sessionKey"))
     }
 
@@ -708,6 +730,7 @@ internal object PlayerWire {
         JSONObject()
             .put("requestId", requestId.toString())
             .put("protocolVersion", PLAYER_PROTOCOL_VERSION)
+            .put("protocolContractSha256", PLAYER_PROTOCOL_CONTRACT_SHA256)
             .apply {
                 outcome.keys().forEach { key ->
                     check(!has(key))
@@ -715,6 +738,16 @@ internal object PlayerWire {
                 }
             }
             .toString()
+}
+
+private fun JSONObject.requireCommandKeys(vararg payloadKeys: String) {
+    requireExactKeys(
+        "kind",
+        "requestId",
+        "protocolVersion",
+        "protocolContractSha256",
+        *payloadKeys,
+    )
 }
 
 private inline fun <reified T : Enum<T>> JSONObject.requireEnum(key: String): T =

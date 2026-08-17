@@ -80,6 +80,7 @@ class PriorityRiskId(StrEnum):
     NATIVE_AGENT_HOST = "native-agent-host"
     DATABASE_OBJECT_CONVERGENCE = "database-object-convergence"
     LLM_TOOL_SAFETY = "llm-tool-safety"
+    ANDROID_PLAYER_PROTOCOL_SKEW = "android-player-protocol-skew"
     IMMUTABLE_PRODUCTION_RELEASE = "immutable-production-release"
     PRODUCTION_RUNTIME_HEALTH = "production-runtime-health"
     ORACLE_PUBLICATION = "oracle-publication"
@@ -90,7 +91,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "f054c5e612c05d168aa12fc63eaf5c6525d8026a42bca3d7524b1676aaf142b0"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "644ecce6029c4f78faf4a55f91fb6701b8c2f1b6b3a2521a8ef2b10a813d86ca"
 
 
 class ResourceKind(StrEnum):

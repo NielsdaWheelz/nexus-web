@@ -2,8 +2,17 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { playwright } from "@vitest/browser-playwright";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "path";
 import type { Plugin } from "vite";
+
+const playerProtocolContractSha256 = createHash("sha256")
+  .update(
+    readFileSync(
+      path.resolve(__dirname, "../..", "testdata/android/player-protocol.json"),
+    ),
+  )
+  .digest("hex");
 
 function serveVendoredPdfJs(): Plugin {
   const vendoredModules = new Map(
@@ -42,6 +51,8 @@ export default defineConfig({
     "process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN": JSON.stringify(
       "http://localhost:3000",
     ),
+    "process.env.NEXT_PUBLIC_ANDROID_PLAYER_PROTOCOL_CONTRACT_SHA256":
+      JSON.stringify(playerProtocolContractSha256),
   },
   optimizeDeps: {
     include: [

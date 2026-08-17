@@ -1623,6 +1623,7 @@ export function ResourceActionRuntimeProvider({
         }
         break;
       case "Absent":
+      case "UpdateRequired":
       case "RuntimeFailed":
       case "PlaybackFailed":
       case "PreviewAudio":

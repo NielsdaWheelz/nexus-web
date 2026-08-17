@@ -1,4 +1,5 @@
 import java.net.URI
+import java.security.MessageDigest
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -45,6 +46,25 @@ val debugUri = URI(debugBaseUrl)
 val releaseUri = URI(releaseBaseUrl)
 val assetLinksText = rootProject.file("../web/public/.well-known/assetlinks.json").readText()
 val assetLinksTextForFingerprintMatch = assetLinksText.replace(":", "").uppercase()
+val playerProtocolFile = rootProject.file("../../testdata/android/player-protocol.json")
+val playerProtocolBytes = playerProtocolFile.readBytes()
+require(playerProtocolBytes.toString(Charsets.UTF_8).toByteArray(Charsets.UTF_8).contentEquals(playerProtocolBytes)) {
+    "Android player protocol corpus must be UTF-8."
+}
+require(
+    !(playerProtocolBytes.size >= 3 &&
+        playerProtocolBytes[0] == 0xef.toByte() &&
+        playerProtocolBytes[1] == 0xbb.toByte() &&
+        playerProtocolBytes[2] == 0xbf.toByte()) &&
+        !playerProtocolBytes.contains('\r'.code.toByte()) &&
+        playerProtocolBytes.lastOrNull() == '\n'.code.toByte() &&
+        (playerProtocolBytes.size == 1 || playerProtocolBytes[playerProtocolBytes.lastIndex - 1] != '\n'.code.toByte())
+) {
+    "Android player protocol corpus must have no BOM, LF line endings, and one trailing LF."
+}
+val playerProtocolContractSha256 = MessageDigest.getInstance("SHA-256")
+    .digest(playerProtocolBytes)
+    .joinToString("") { "%02x".format(it) }
 
 require(debugUri.host == debugOwnedHost) {
     "nexusAndroidDebugBaseUrl host must match nexusAndroidDebugOwnedHost."
@@ -138,6 +158,14 @@ android {
         versionCode = versionCodeProperty?.toIntOrNull() ?: 1
         versionName = versionNameProperty ?: "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("int", "PLAYER_PROTOCOL_VERSION", "2")
+        buildConfigField(
+            "String",
+            "PLAYER_PROTOCOL_CONTRACT_SHA256",
+            "\"$playerProtocolContractSha256\"",
+        )
+        manifestPlaceholders["playerProtocolVersion"] = "2"
+        manifestPlaceholders["playerProtocolContractSha256"] = playerProtocolContractSha256
     }
 
     buildFeatures {
@@ -184,6 +212,10 @@ android {
 
     testOptions {
         animationsDisabled = true
+    }
+
+    sourceSets {
+        getByName("test").resources.srcDir(rootProject.file("../../testdata/android"))
     }
 }
 

@@ -46,6 +46,7 @@ def test_release_bundle_fetch_binds_unique_artifact_owner_and_source_ci(
         "python/nexus/__init__.py",
         "python/nexus/release_artifact.py",
         "release.py",
+        "testdata/android/player-protocol.json",
     ]
     events = harness.state()["events"]
     assert any("actions/artifacts?name=" in " ".join(event["arguments"]) for event in events)

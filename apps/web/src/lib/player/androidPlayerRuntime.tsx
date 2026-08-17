@@ -47,6 +47,7 @@ import {
   NativePlayerUnavailableError,
 } from "@/lib/player/androidPlayerClient";
 import {
+  AndroidPlayerUpdateRequiredError,
   receiptSettlement,
   type AndroidPlaybackRateState,
   type AndroidPlayerCommandInput,
@@ -121,9 +122,25 @@ type AndroidListeningState = Extract<
   { kind: "AdoptListeningState" }
 >["listeningState"];
 
+type NativeOperationReplayKey =
+  | "SessionIntent"
+  | "PodcastSettings"
+  | "ListeningProjection";
+
 type RetryableNativeOperation = {
+  replayKey: NativeOperationReplayKey;
   run: () => Promise<void>;
   stillApplies?: () => boolean;
+};
+
+type DispatchedNativeOperation = RetryableNativeOperation & {
+  dispatchSequence: number;
+  naturalEndClearedGeneration: number;
+};
+
+type DeferredNaturalEndOperation = {
+  operation: DispatchedNativeOperation;
+  receiptMutationId: string | null;
 };
 
 type DevicePauseShorteningFailure = {
@@ -492,16 +509,19 @@ function asConnectionError(error: unknown): {
       message: "The Android player could not connect. Please retry.",
     };
   }
-  if (error instanceof TypeError) {
-    return {
-      code: "InvalidNativePlayerMessage",
-      message: "The Android player returned an invalid response.",
-    };
-  }
   return {
     code: "NativePlayerUnavailable",
     message: "The Android player is unavailable. Please retry.",
   };
+}
+
+function isConnectionFailure(error: unknown): boolean {
+  return (
+    error instanceof NativePlayerUnavailableError ||
+    error instanceof NativePlayerTimeoutError ||
+    (error instanceof NativePlayerRejectedError &&
+      error.code === "PlayerUnavailable")
+  );
 }
 
 function podcastIdForSnapshot(
@@ -536,6 +556,7 @@ export function AndroidPlayerRuntimeProvider({
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
     null,
   );
+  const [updateRequired, setUpdateRequired] = useState(false);
 
   const clientRef = useRef<AndroidPlayerClient | null>(null);
   const snapshotRef = useRef<AndroidPlayerSnapshot | null>(null);
@@ -551,21 +572,262 @@ export function AndroidPlayerRuntimeProvider({
   const retryPodcastRateRef = useRef<(attempt: PodcastRateAttempt) => void>(
     () => {},
   );
-  const installRetryableFailureRef = useRef<
-    (error: unknown, operation: RetryableNativeOperation) => void
+  const pendingReceiptRef = useRef<PendingReceiptDelivery | null>(null);
+  const deferredNaturalEndOperationsRef = useRef<
+    Map<NativeOperationReplayKey, DeferredNaturalEndOperation>
+  >(
+    new Map(),
+  );
+  const nativeOperationSequenceRef = useRef(0);
+  const latestNativeOperationSequenceByKeyRef = useRef(
+    new Map<NativeOperationReplayKey, number>(),
+  );
+  const naturalEndClearedGenerationRef = useRef(0);
+  const sessionIntentInFlightRef = useRef<DispatchedNativeOperation | null>(
+    null,
+  );
+  const frozenConnectionOperationsRef = useRef(
+    new Map<NativeOperationReplayKey, DispatchedNativeOperation>(),
+  );
+  const sessionIntentQueueRef = useRef<RetryableNativeOperation[]>([]);
+  const stampNativeOperationRef = useRef<
+    (operation: RetryableNativeOperation) => DispatchedNativeOperation
+  >(() => {
+    throw new Error("Native operation dispatcher is not installed.");
+  });
+  const dispatchNativeOperationRef = useRef<
+    (operation: RetryableNativeOperation) => void
   >(() => {});
-  installRetryableFailureRef.current = (error, operation) => {
-    setConnectionFailure({
-      ...asConnectionError(error),
-      retry: () => {
+  const resumeNativeOperationRef = useRef<
+    (operation: DispatchedNativeOperation) => void
+  >(() => {});
+  const releaseSessionIntentRef = useRef<
+    (operation: DispatchedNativeOperation) => void
+  >(() => {});
+  const installProtocolFailure = useCallback(
+    (
+      error: unknown,
+      operation?: DispatchedNativeOperation,
+    ): void => {
+      if (error instanceof AndroidPlayerUpdateRequiredError) {
         setConnectionFailure(null);
-        if (operation.stillApplies?.() === false) return;
-        void operation.run().catch((nextError: unknown) => {
-          installRetryableFailureRef.current(nextError, operation);
-        });
-      },
-    });
+        setUpdateRequired(true);
+        return;
+      }
+      if (
+        error instanceof NativePlayerRejectedError &&
+        error.code === "NaturalEndPending"
+      ) {
+        if (operation === undefined) {
+          setAsyncDefect({ error });
+          return;
+        }
+        if (
+          operation.naturalEndClearedGeneration <
+          naturalEndClearedGenerationRef.current
+        ) {
+          if (operation.stillApplies?.() !== false) {
+            resumeNativeOperationRef.current(operation);
+          } else {
+            releaseSessionIntentRef.current(operation);
+          }
+          return;
+        }
+        if (operation.stillApplies?.() === false) {
+          releaseSessionIntentRef.current(operation);
+          return;
+        }
+        if (
+          operation.replayKey !== "SessionIntent" &&
+          latestNativeOperationSequenceByKeyRef.current.get(operation.replayKey) !==
+          operation.dispatchSequence
+        ) {
+          return;
+        }
+        const current = deferredNaturalEndOperationsRef.current.get(
+          operation.replayKey,
+        );
+        if (
+          current === undefined ||
+          operation.dispatchSequence >= current.operation.dispatchSequence
+        ) {
+          deferredNaturalEndOperationsRef.current.set(operation.replayKey, {
+            operation,
+            receiptMutationId:
+              pendingReceiptRef.current?.receipt.clientMutationId ?? null,
+          });
+        }
+        return;
+      }
+      if (!isConnectionFailure(error)) {
+        setAsyncDefect({ error });
+        return;
+      }
+      if (
+        operation !== undefined &&
+        operation.replayKey !== "SessionIntent" &&
+        operation.dispatchSequence !==
+          latestNativeOperationSequenceByKeyRef.current.get(operation.replayKey)
+      ) {
+        return;
+      }
+      if (operation !== undefined) {
+        frozenConnectionOperationsRef.current.set(operation.replayKey, operation);
+      }
+      setConnectionFailure({
+        ...asConnectionError(error),
+        ...(operation === undefined
+          ? {}
+          : {
+              retry: () => {
+                setConnectionFailure(null);
+                if (
+                  frozenConnectionOperationsRef.current.get(operation.replayKey)
+                    ?.dispatchSequence === operation.dispatchSequence
+                ) {
+                  frozenConnectionOperationsRef.current.delete(operation.replayKey);
+                }
+                if (
+                  operation.replayKey !== "SessionIntent" &&
+                  operation.dispatchSequence !==
+                  latestNativeOperationSequenceByKeyRef.current.get(
+                    operation.replayKey,
+                  )
+                ) {
+                  return;
+                }
+                if (operation.stillApplies?.() === false) {
+                  if (
+                    operation.replayKey === "SessionIntent" &&
+                    sessionIntentInFlightRef.current?.dispatchSequence ===
+                      operation.dispatchSequence
+                  ) {
+                    releaseSessionIntentRef.current(operation);
+                  }
+                  return;
+                }
+                resumeNativeOperationRef.current(operation);
+              },
+            }),
+      });
+    },
+    [],
+  );
+  stampNativeOperationRef.current = (operation) => {
+    const dispatched: DispatchedNativeOperation = {
+      ...operation,
+      dispatchSequence: nativeOperationSequenceRef.current + 1,
+      naturalEndClearedGeneration: naturalEndClearedGenerationRef.current,
+    };
+    nativeOperationSequenceRef.current = dispatched.dispatchSequence;
+    if (dispatched.replayKey !== "SessionIntent") {
+      frozenConnectionOperationsRef.current.delete(dispatched.replayKey);
+      latestNativeOperationSequenceByKeyRef.current.set(
+        dispatched.replayKey,
+        dispatched.dispatchSequence,
+      );
+      const deferred = deferredNaturalEndOperationsRef.current.get(
+        dispatched.replayKey,
+      );
+      if (
+        deferred !== undefined &&
+        dispatched.dispatchSequence > deferred.operation.dispatchSequence
+      ) {
+        deferredNaturalEndOperationsRef.current.delete(dispatched.replayKey);
+      }
+    }
+    return dispatched;
   };
+  const runDispatchedNativeOperation = (
+    dispatched: DispatchedNativeOperation,
+  ): void => {
+    setConnectionFailure((current) =>
+      current?.retry === undefined ? current : null,
+    );
+    void dispatched
+      .run()
+      .then(() => {
+        if (
+          frozenConnectionOperationsRef.current.get(dispatched.replayKey)
+            ?.dispatchSequence === dispatched.dispatchSequence
+        ) {
+          frozenConnectionOperationsRef.current.delete(dispatched.replayKey);
+        }
+        if (
+          dispatched.replayKey !== "SessionIntent" ||
+          sessionIntentInFlightRef.current?.dispatchSequence !==
+            dispatched.dispatchSequence
+        ) {
+          return;
+        }
+        releaseSessionIntentRef.current(dispatched);
+      })
+      .catch((error: unknown) => {
+        installProtocolFailure(error, dispatched);
+      });
+  };
+  resumeNativeOperationRef.current = (operation) => {
+    const dispatched = stampNativeOperationRef.current(operation);
+    if (dispatched.replayKey === "SessionIntent") {
+      sessionIntentInFlightRef.current = dispatched;
+    }
+    runDispatchedNativeOperation(dispatched);
+  };
+  releaseSessionIntentRef.current = (operation) => {
+    if (
+      operation.replayKey !== "SessionIntent" ||
+      sessionIntentInFlightRef.current?.dispatchSequence !==
+        operation.dispatchSequence
+    ) {
+      return;
+    }
+    if (
+      frozenConnectionOperationsRef.current.get(operation.replayKey)
+        ?.dispatchSequence === operation.dispatchSequence
+    ) {
+      frozenConnectionOperationsRef.current.delete(operation.replayKey);
+    }
+    sessionIntentInFlightRef.current = null;
+    const next = sessionIntentQueueRef.current.shift();
+    if (next !== undefined) dispatchNativeOperationRef.current(next);
+  };
+  dispatchNativeOperationRef.current = (operation) => {
+    if (
+      operation.replayKey === "SessionIntent" &&
+      sessionIntentInFlightRef.current !== null
+    ) {
+      sessionIntentQueueRef.current.push(operation);
+      return;
+    }
+    const dispatched = stampNativeOperationRef.current(operation);
+    if (dispatched.replayKey === "SessionIntent") {
+      sessionIntentInFlightRef.current = dispatched;
+    }
+    runDispatchedNativeOperation(dispatched);
+  };
+
+  const installPendingReceipt = useCallback(
+    (next: PendingReceiptDelivery | null): void => {
+      pendingReceiptRef.current = next;
+      const released: DispatchedNativeOperation[] = [];
+      for (const [key, deferred] of deferredNaturalEndOperationsRef.current) {
+        if (next !== null && deferred.receiptMutationId === null) {
+          deferred.receiptMutationId = next.receipt.clientMutationId;
+        } else if (
+          next !== null &&
+          deferred.receiptMutationId !== next.receipt.clientMutationId
+        ) {
+          deferredNaturalEndOperationsRef.current.delete(key);
+          released.push(deferred.operation);
+        }
+      }
+      setPendingReceipt(next);
+      for (const operation of released) {
+        releaseSessionIntentRef.current(operation);
+      }
+    },
+    [],
+  );
 
   const installSnapshot = useCallback(
     (
@@ -573,6 +835,7 @@ export function AndroidPlayerRuntimeProvider({
       authoritative = false,
       clearFrozenFailure = false,
     ): void => {
+      let releasedSessionIntent: DeferredNaturalEndOperation | undefined;
       const expected = expectedSessionKeyRef.current;
       if (!authoritative) {
         if (expected === null && next.kind !== "Absent") return;
@@ -586,6 +849,10 @@ export function AndroidPlayerRuntimeProvider({
       if (
         sessionKeyOf(snapshotRef.current) !== sessionKeyOf(next)
       ) {
+        releasedSessionIntent = deferredNaturalEndOperationsRef.current.get(
+          "SessionIntent",
+        );
+        deferredNaturalEndOperationsRef.current.delete("SessionIntent");
         podcastRateAttemptRef.current = null;
         podcastPauseAttemptRef.current = null;
         setPlaybackRateRemember({ kind: "Unavailable" });
@@ -595,6 +862,20 @@ export function AndroidPlayerRuntimeProvider({
       installNativeActivitySync(accountId, next.activitySync);
       snapshotRef.current = next;
       setSnapshot(next);
+      if (releasedSessionIntent !== undefined) {
+        releaseSessionIntentRef.current(releasedSessionIntent.operation);
+      }
+      if (clearFrozenFailure) {
+        const frozen = [...frozenConnectionOperationsRef.current.values()];
+        frozenConnectionOperationsRef.current.clear();
+        for (const operation of frozen) {
+          if (operation.replayKey === "SessionIntent") {
+            releaseSessionIntentRef.current(operation);
+          } else if (operation.stillApplies?.() !== false) {
+            resumeNativeOperationRef.current(operation);
+          }
+        }
+      }
       if (authoritative) {
         setConnectionFailure((current) =>
           clearFrozenFailure || current?.retry === undefined
@@ -610,8 +891,10 @@ export function AndroidPlayerRuntimeProvider({
     (reply: AndroidPlayerReply, authoritative = false): void => {
       if (reply.kind === "Connected" || reply.kind === "Snapshot") {
         installSnapshot(reply.snapshot, authoritative);
-        setPendingReceipt((current) => {
-          if (reply.pendingNaturalEnd.kind === "Absent") return null;
+        const current = pendingReceiptRef.current;
+        if (reply.pendingNaturalEnd.kind === "Absent") {
+          installPendingReceipt(null);
+        } else {
           const receipt = reply.pendingNaturalEnd.value;
           if (
             reply.kind === "Snapshot" &&
@@ -619,13 +902,14 @@ export function AndroidPlayerRuntimeProvider({
             current.receipt.sessionKey === receipt.sessionKey &&
             current.receipt.clientMutationId === receipt.clientMutationId
           ) {
-            return current;
+            installPendingReceipt(current);
+          } else {
+            installPendingReceipt({ receipt, allowSuccessor: false });
           }
-          return { receipt, allowSuccessor: false };
-        });
+        }
       }
     },
-    [installSnapshot],
+    [installPendingReceipt, installSnapshot],
   );
 
   const getClient = useCallback((): AndroidPlayerClient => {
@@ -751,7 +1035,7 @@ export function AndroidPlayerRuntimeProvider({
     clientRef.current?.close();
     const client = new AndroidPlayerClient((error) => {
       if (generation !== connectGenerationRef.current) return;
-      setConnectionFailure(asConnectionError(error));
+      installProtocolFailure(error);
     });
     clientRef.current = client;
     try {
@@ -764,7 +1048,7 @@ export function AndroidPlayerRuntimeProvider({
         }
         if (event.kind === "ControllerReconnected") {
           installSnapshot(event.snapshot, true, true);
-          setPendingReceipt(
+          installPendingReceipt(
             event.pendingNaturalEnd.kind === "Present"
               ? {
                   receipt: event.pendingNaturalEnd.value,
@@ -775,7 +1059,7 @@ export function AndroidPlayerRuntimeProvider({
           return;
         }
         const current = snapshotRef.current;
-        setPendingReceipt({
+        installPendingReceipt({
           receipt: event.receipt,
           allowSuccessor:
             current?.kind === "Canonical" &&
@@ -792,9 +1076,15 @@ export function AndroidPlayerRuntimeProvider({
       installReply(reply, true);
     } catch (error) {
       if (generation !== connectGenerationRef.current) return;
-      setConnectionFailure(asConnectionError(error));
+      installProtocolFailure(error);
     }
-  }, [accountId, installReply, installSnapshot]);
+  }, [
+    accountId,
+    installPendingReceipt,
+    installProtocolFailure,
+    installReply,
+    installSnapshot,
+  ]);
 
   useEffect(() => {
     void connect();
@@ -873,24 +1163,30 @@ export function AndroidPlayerRuntimeProvider({
           const sessionKey = crypto.randomUUID();
           const rateState = initialRateState(next.descriptor);
           const operation: RetryableNativeOperation = {
+            replayKey: "SessionIntent",
             run: () => loadCanonical(next, rateState, sessionKey),
             stillApplies: () =>
               expectedSessionKeyRef.current === sessionKey,
           };
-          void operation.run().catch((error: unknown) => {
-            installRetryableFailureRef.current(error, operation);
-          });
+          dispatchNativeOperationRef.current(operation);
         }
         return;
       }
       const sessionKey = sessionKeyOf(snapshotRef.current);
       if (sessionKey === null) return;
       if (transition.effect.kind === "RestartCurrent") {
-        void requestAndReconcile({
-          kind: "SeekTo",
-          sessionKey,
-          positionMs: 0,
-        });
+        const operation: RetryableNativeOperation = {
+          replayKey: "SessionIntent",
+          run: async () => {
+            await requestAndReconcile({
+              kind: "SeekTo",
+              sessionKey,
+              positionMs: 0,
+            });
+          },
+          stillApplies: () => sessionKeyOf(snapshotRef.current) === sessionKey,
+        };
+        dispatchNativeOperationRef.current(operation);
       }
     },
     [loadCanonical, requestAndReconcile],
@@ -905,6 +1201,7 @@ export function AndroidPlayerRuntimeProvider({
           ? install.settings.podcast_id
           : install.podcastId;
       const subscription = installedSubscription(install);
+      let nativeOperation: DispatchedNativeOperation | null = null;
       try {
         let target = snapshotRef.current;
         for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -920,13 +1217,29 @@ export function AndroidPlayerRuntimeProvider({
             installedPodcastId,
             subscription,
           );
-          const reply = await requestAndReconcile({
-            kind: "InstallPodcastPlaybackSettings",
-            sessionKey: targetSessionKey,
-            podcastId: installedPodcastId,
-            subscription,
-            rateState,
+          let nativeReply: AndroidPlayerReply | null = null;
+          nativeOperation = stampNativeOperationRef.current({
+            replayKey: "PodcastSettings",
+            run: () =>
+              requestAndReconcile({
+                kind: "InstallPodcastPlaybackSettings",
+                sessionKey: targetSessionKey,
+                podcastId: installedPodcastId,
+                subscription,
+                rateState,
+              }).then((reply) => {
+                nativeReply = reply;
+              }),
+            stillApplies: () =>
+              snapshotRef.current?.kind === "Canonical" &&
+              snapshotRef.current.sessionKey === targetSessionKey &&
+              podcastIdForSnapshot(snapshotRef.current) === installedPodcastId,
           });
+          await nativeOperation.run();
+          if (nativeReply === null) {
+            throw new Error("Podcast settings install returned no reply.");
+          }
+          const reply = nativeReply;
           const active = snapshotRef.current;
           if (
             active?.kind !== "Canonical" ||
@@ -962,21 +1275,13 @@ export function AndroidPlayerRuntimeProvider({
           (install.owner === podcastRateAttemptRef.current ||
             install.owner === podcastPauseAttemptRef.current);
         if (!playerOwnsAttempt) {
-          setConnectionFailure({
-            code: "NativeSettingsInstallFailed",
-            message:
-              "Podcast settings were saved, but the Android player did not update.",
-            retry: () => {
-              setConnectionFailure(null);
-              void handleSubscriptionInstall(install);
-            },
-          });
+          installProtocolFailure(error, nativeOperation ?? undefined);
           return;
         }
         throw error;
       }
     },
-    [requestAndReconcile],
+    [installProtocolFailure, requestAndReconcile],
   );
 
   useEffect(
@@ -1000,6 +1305,7 @@ export function AndroidPlayerRuntimeProvider({
       }
       const listeningState = event.state.listeningState.value;
       const operation: RetryableNativeOperation = {
+        replayKey: "ListeningProjection",
         run: async () => {
           const reply = await requestAndReconcile({
             kind: "AdoptListeningState",
@@ -1025,9 +1331,7 @@ export function AndroidPlayerRuntimeProvider({
           );
         },
       };
-      void operation.run().catch((error: unknown) => {
-        installRetryableFailureRef.current(error, operation);
-      });
+      dispatchNativeOperationRef.current(operation);
     };
     const drainBeforeReset = async (mediaId: MediaId): Promise<void> => {
       const current = snapshotRef.current;
@@ -1077,11 +1381,32 @@ export function AndroidPlayerRuntimeProvider({
       .then(async (result) => {
         await acknowledgeNaturalEnd(receipt);
         acknowledged = true;
-        setPendingReceipt((current) =>
-          current?.receipt.clientMutationId === receipt.clientMutationId
-            ? null
-            : current,
-        );
+        naturalEndClearedGenerationRef.current += 1;
+        const replays = [...deferredNaturalEndOperationsRef.current.entries()]
+          .filter(
+            ([, deferred]) =>
+              deferred.receiptMutationId === receipt.clientMutationId &&
+              deferred.operation.naturalEndClearedGeneration <
+                naturalEndClearedGenerationRef.current,
+          )
+          .map(([, deferred]) => deferred.operation)
+          .sort((left, right) => left.dispatchSequence - right.dispatchSequence);
+        for (const operation of replays) {
+          deferredNaturalEndOperationsRef.current.delete(operation.replayKey);
+        }
+        if (
+          pendingReceiptRef.current?.receipt.clientMutationId ===
+          receipt.clientMutationId
+        ) {
+          installPendingReceipt(null);
+        }
+        for (const operation of replays) {
+          if (operation.stillApplies?.() !== false) {
+            resumeNativeOperationRef.current(operation);
+          } else {
+            releaseSessionIntentRef.current(operation);
+          }
+        }
         const acknowledgedSnapshot = snapshotRef.current;
         const mayAdvance =
           delivery.allowSuccessor &&
@@ -1105,6 +1430,7 @@ export function AndroidPlayerRuntimeProvider({
         }));
         const sessionKey = crypto.randomUUID();
         const operation: RetryableNativeOperation = {
+          replayKey: "SessionIntent",
           run: () =>
             loadCanonical(
               successor,
@@ -1114,27 +1440,17 @@ export function AndroidPlayerRuntimeProvider({
           stillApplies: () =>
             expectedSessionKeyRef.current === sessionKey,
         };
-        try {
-          await operation.run();
-        } catch (error) {
-          installRetryableFailureRef.current(error, operation);
-          throw error;
-        }
+        dispatchNativeOperationRef.current(operation);
       })
       .catch((error: unknown) => {
         if (handleUnauthenticatedApiError(error)) return;
-        // The Lectern owner presents retryable settlement failures. An
-        // acknowledgement/bridge failure remains native-pending and becomes a
-        // visible connection retry without fabricating completion state.
+        // The Lectern owner presents settlement failures. Native acknowledgement
+        // failures use the same transport classifier as every other bridge call.
         if (
           !isApiError(error) &&
           !(error instanceof DOMException && error.name === "AbortError")
         ) {
-          setConnectionFailure((current) =>
-            current?.retry === undefined
-              ? asConnectionError(error)
-              : current,
-          );
+          installProtocolFailure(error);
         }
       })
       .finally(() => {
@@ -1148,6 +1464,8 @@ export function AndroidPlayerRuntimeProvider({
   }, [
     accountId,
     acknowledgeNaturalEnd,
+    installPendingReceipt,
+    installProtocolFailure,
     lectern,
     loadCanonical,
     pendingReceipt,
@@ -1161,9 +1479,15 @@ export function AndroidPlayerRuntimeProvider({
     ): void => {
       const sessionKey = sessionKeyOf(snapshotRef.current);
       if (sessionKey === null) return;
-      void requestAndReconcile(command(sessionKey)).catch((error: unknown) => {
-        setConnectionFailure(asConnectionError(error));
-      });
+      const input = command(sessionKey);
+      const operation: RetryableNativeOperation = {
+        replayKey: "SessionIntent",
+        run: async () => {
+          await requestAndReconcile(input);
+        },
+        stillApplies: () => sessionKeyOf(snapshotRef.current) === sessionKey,
+      };
+      dispatchNativeOperationRef.current(operation);
     },
     [requestAndReconcile],
   );
@@ -1191,6 +1515,7 @@ export function AndroidPlayerRuntimeProvider({
       };
       const sessionKey = crypto.randomUUID();
       const operation: RetryableNativeOperation = {
+        replayKey: "SessionIntent",
         run: () =>
           loadCanonical(
             session,
@@ -1200,9 +1525,7 @@ export function AndroidPlayerRuntimeProvider({
         stillApplies: () =>
           expectedSessionKeyRef.current === sessionKey,
       };
-      void operation.run().catch((error: unknown) => {
-        installRetryableFailureRef.current(error, operation);
-      });
+      dispatchNativeOperationRef.current(operation);
     },
     [lectern.resource, loadCanonical],
   );
@@ -1211,13 +1534,12 @@ export function AndroidPlayerRuntimeProvider({
     (descriptor: PreviewAudioDescriptor): void => {
       const sessionKey = crypto.randomUUID();
       const operation: RetryableNativeOperation = {
+        replayKey: "SessionIntent",
         run: () => loadPreview(descriptor, sessionKey),
         stillApplies: () =>
           expectedSessionKeyRef.current === sessionKey,
       };
-      void operation.run().catch((error: unknown) => {
-        installRetryableFailureRef.current(error, operation);
-      });
+      dispatchNativeOperationRef.current(operation);
     },
     [loadPreview],
   );
@@ -1239,10 +1561,18 @@ export function AndroidPlayerRuntimeProvider({
             : current.descriptor.durationMs,
       };
       expectedSessionKeyRef.current = null;
-      void requestAndReconcile({
-        kind: "Dismiss",
-        sessionKey: current.sessionKey,
-      });
+      const operation: RetryableNativeOperation = {
+        replayKey: "SessionIntent",
+        run: async () => {
+          await requestAndReconcile({
+            kind: "Dismiss",
+            sessionKey: current.sessionKey,
+          });
+        },
+        stillApplies: () =>
+          sessionKeyOf(snapshotRef.current) === current.sessionKey,
+      };
+      dispatchNativeOperationRef.current(operation);
       return position;
     },
     [requestAndReconcile],
@@ -1302,35 +1632,41 @@ export function AndroidPlayerRuntimeProvider({
           (error.code === "E_NOT_FOUND" ||
             error.code === "E_PODCAST_NOT_FOUND");
         if (notFound) {
-          try {
-            const subscription = absent<PodcastPlaybackSubscription>();
-            const rateState = rateStateAfterSubscription(
-              active.rateState,
-              attempt.podcastId,
-              subscription,
-            );
-            const reply = await requestAndReconcile({
-              kind: "InstallPodcastPlaybackSettings",
-              sessionKey: active.sessionKey,
-              podcastId: attempt.podcastId,
-              subscription,
-              rateState,
-            });
-            requireReconciled(
-              reconciledSettingsInstall(
-                reply,
-                active.sessionKey,
+          const operation = stampNativeOperationRef.current({
+            replayKey: "PodcastSettings",
+            run: async () => {
+              const subscription = absent<PodcastPlaybackSubscription>();
+              const rateState = rateStateAfterSubscription(
+                active.rateState,
+                attempt.podcastId,
+                subscription,
+              );
+              const reply = await requestAndReconcile({
+                kind: "InstallPodcastPlaybackSettings",
+                sessionKey: active.sessionKey,
+                podcastId: attempt.podcastId,
                 subscription,
                 rateState,
-              ),
-              "Removed-subscription install",
-            );
-          } catch {
-            setConnectionFailure({
-              code: "NativeSettingsInstallFailed",
-              message:
-                "The subscription is gone, but the Android player did not update.",
-            });
+              });
+              requireReconciled(
+                reconciledSettingsInstall(
+                  reply,
+                  active.sessionKey,
+                  subscription,
+                  rateState,
+                ),
+                "Removed-subscription install",
+              );
+            },
+            stillApplies: () =>
+              snapshotRef.current?.kind === "Canonical" &&
+              snapshotRef.current.sessionKey === active.sessionKey &&
+              podcastIdForSnapshot(snapshotRef.current) === attempt.podcastId,
+          });
+          try {
+            await operation.run();
+          } catch (installError) {
+            installProtocolFailure(installError, operation);
           }
         }
         let feedback: FeedbackContent;
@@ -1358,7 +1694,7 @@ export function AndroidPlayerRuntimeProvider({
         }
       }
     },
-    [requestAndReconcile],
+    [installProtocolFailure, requestAndReconcile],
   );
   retryPodcastRateRef.current = (attempt) => {
     void runPodcastRateAttempt(attempt);
@@ -1441,35 +1777,41 @@ export function AndroidPlayerRuntimeProvider({
           (error.code === "E_NOT_FOUND" ||
             error.code === "E_PODCAST_NOT_FOUND");
         if (notFound) {
-          try {
-            const subscription = absent<PodcastPlaybackSubscription>();
-            const rateState = rateStateAfterSubscription(
-              active.rateState,
-              attempt.podcastId,
-              subscription,
-            );
-            const reply = await requestAndReconcile({
-              kind: "InstallPodcastPlaybackSettings",
-              sessionKey: active.sessionKey,
-              podcastId: attempt.podcastId,
-              subscription,
-              rateState,
-            });
-            requireReconciled(
-              reconciledSettingsInstall(
-                reply,
-                active.sessionKey,
+          const operation = stampNativeOperationRef.current({
+            replayKey: "PodcastSettings",
+            run: async () => {
+              const subscription = absent<PodcastPlaybackSubscription>();
+              const rateState = rateStateAfterSubscription(
+                active.rateState,
+                attempt.podcastId,
+                subscription,
+              );
+              const reply = await requestAndReconcile({
+                kind: "InstallPodcastPlaybackSettings",
+                sessionKey: active.sessionKey,
+                podcastId: attempt.podcastId,
                 subscription,
                 rateState,
-              ),
-              "Removed-subscription install",
-            );
-          } catch {
-            setConnectionFailure({
-              code: "NativeSettingsInstallFailed",
-              message:
-                "The subscription is gone, but the Android player did not update.",
-            });
+              });
+              requireReconciled(
+                reconciledSettingsInstall(
+                  reply,
+                  active.sessionKey,
+                  subscription,
+                  rateState,
+                ),
+                "Removed-subscription install",
+              );
+            },
+            stillApplies: () =>
+              snapshotRef.current?.kind === "Canonical" &&
+              snapshotRef.current.sessionKey === active.sessionKey &&
+              podcastIdForSnapshot(snapshotRef.current) === attempt.podcastId,
+          });
+          try {
+            await operation.run();
+          } catch (installError) {
+            installProtocolFailure(installError, operation);
           }
         }
         let feedback: FeedbackContent;
@@ -1497,7 +1839,7 @@ export function AndroidPlayerRuntimeProvider({
         }
       }
     },
-    [requestAndReconcile],
+    [installProtocolFailure, requestAndReconcile],
   );
   retryPodcastPauseRef.current = (attempt) => {
     void runPodcastPauseAttempt(attempt);
@@ -1561,10 +1903,18 @@ export function AndroidPlayerRuntimeProvider({
         const current = snapshotRef.current;
         if (current === null || current.kind === "Absent") return;
         expectedSessionKeyRef.current = null;
-        void requestAndReconcile({
-          kind: "Dismiss",
-          sessionKey: current.sessionKey,
-        });
+        const operation: RetryableNativeOperation = {
+          replayKey: "SessionIntent",
+          run: async () => {
+            await requestAndReconcile({
+              kind: "Dismiss",
+              sessionKey: current.sessionKey,
+            });
+          },
+          stillApplies: () =>
+            sessionKeyOf(snapshotRef.current) === current.sessionKey,
+        };
+        dispatchNativeOperationRef.current(operation);
         setHistory(EMPTY_HISTORY);
       },
       resume: () =>
@@ -1747,6 +2097,9 @@ export function AndroidPlayerRuntimeProvider({
   }, [sendCurrent]);
 
   const publicState = useMemo<GlobalPlayerState>(() => {
+    if (updateRequired) {
+      return { kind: "UpdateRequired" };
+    }
     if (connectionFailure !== null) {
       return {
         kind: "RuntimeFailed",
@@ -1807,6 +2160,7 @@ export function AndroidPlayerRuntimeProvider({
     pendingReceipt,
     retryPlayback,
     snapshot,
+    updateRequired,
   ]);
 
   const persistence = useMemo<PlayerPersistence>(() => {

@@ -1671,6 +1671,7 @@ def _is_product_path(path: str) -> bool:
         "python/nexus_test_control/runtime.py",
         "python/nexus_test_control/services.py",
     }
-    return (product or test_runtime_product) and not any(
+    production_control_product = path == "deploy/hetzner/release.py"
+    return (product or test_runtime_product or production_control_product) and not any(
         part in Path(path).name for part in (".test.", ".spec.")
     )

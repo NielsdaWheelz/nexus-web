@@ -288,6 +288,7 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once()
         "deploy/hetzner/prove-codex-capacity.sh",
         "python/nexus/__init__.py",
         "python/nexus/release_artifact.py",
+        "testdata/android/player-protocol.json",
     ):
         assert bundled in workflow
 

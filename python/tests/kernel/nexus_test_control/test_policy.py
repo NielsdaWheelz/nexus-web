@@ -8,7 +8,11 @@ from typing import Any
 
 import pytest
 
-from nexus_test_control.model import PRIORITY_RISK_FLOOR, TEST_ROUTING_SHA256
+from nexus_test_control.model import (
+    PRIORITY_RISK_FLOOR,
+    TEST_ROUTING_SHA256,
+    PriorityRiskId,
+)
 from nexus_test_control.policy import (
     corpus_manifest_schema_violations,
     corpus_violations,
@@ -587,6 +591,82 @@ def test_priority_floor_and_journey_inventory_are_complete() -> None:
     assert not proof_contract_violations(REPO_ROOT)
 
 
+def test_android_player_protocol_skew_is_a_typed_priority_risk() -> None:
+    assert PriorityRiskId.ANDROID_PLAYER_PROTOCOL_SKEW.value == "android-player-protocol-skew"
+
+
+def test_android_player_protocol_corpus_has_canonical_repository_bytes() -> None:
+    raw = (REPO_ROOT / "testdata/android/player-protocol.json").read_bytes()
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            assert key not in value, f"duplicate Android player corpus key: {key}"
+            value[key] = item
+        return value
+
+    assert raw.decode("utf-8").encode("utf-8") == raw
+    assert not raw.startswith(b"\xef\xbb\xbf")
+    assert b"\r" not in raw
+    assert raw.endswith(b"\n")
+    assert not raw.endswith(b"\n\n")
+    corpus = json.loads(raw, object_pairs_hook=unique_object)
+    assert set(corpus) == {
+        "version",
+        "inventory",
+        "commands",
+        "snapshots",
+        "pendingNaturalEnd",
+        "replies",
+        "rejections",
+        "events",
+        "nestedVariants",
+    }
+    inventory = corpus["inventory"]
+    assert isinstance(inventory, dict)
+    assert set(inventory) == {
+        "commands",
+        "replies",
+        "events",
+        "snapshots",
+        "rejectionCodes",
+        "presence",
+        "origins",
+        "playbackRateStates",
+        "playbackRateSources",
+        "playbackPhases",
+        "persistence",
+        "persistenceSuspensions",
+        "pauseShorteningModes",
+        "pauseShorteningProvenance",
+        "activityCapture",
+        "activityCaptureBlocks",
+        "activitySync",
+    }
+    nested_variants = corpus["nestedVariants"]
+    assert isinstance(nested_variants, dict)
+    assert set(nested_variants) == {
+        "activityCapture",
+        "activitySync",
+        "origins",
+        "persistence",
+        "playbackRateSources",
+        "playbackPhases",
+        "pauseShorteningModes",
+        "pauseShorteningProvenance",
+        "presence",
+    }
+    assert corpus["version"] == 2
+    token = "$PROTOCOL_CONTRACT_SHA256"
+    envelope_count = 0
+    for collection in ("commands", "replies", "rejections", "events"):
+        for envelope in corpus[collection]:
+            assert envelope["protocolVersion"] == 2
+            assert envelope["protocolContractSha256"] == token
+            envelope_count += 1
+    assert raw.decode("utf-8").count(token) == envelope_count
+
+
 def test_populated_proof_inventory_has_valid_paths_and_owners(tmp_path: Path) -> None:
     _complete_proof_repository(tmp_path)
     assert not proof_contract_violations(tmp_path)
@@ -866,6 +946,17 @@ def test_fault_guard_allows_the_exact_controller_execution_owner(
     manifest = _fault_repository(tmp_path)
     patch = f"diff --git a/{owner} b/{owner}\n".encode()
     (tmp_path / "testdata/faults/example.patch").write_bytes(patch)
+    manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert not fault_manifest_violations(tmp_path)
+
+
+def test_fault_guard_allows_the_production_release_controller(tmp_path: Path) -> None:
+    manifest = _fault_repository(tmp_path)
+    patch = b"diff --git a/deploy/hetzner/release.py b/deploy/hetzner/release.py\n"
+    path = tmp_path / "testdata/faults/example.patch"
+    path.write_bytes(patch)
     manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
     _dump(tmp_path, "testdata/faults/manifest.json", manifest)
 
