@@ -18,3 +18,12 @@ diff --git a/python/nexus/services/tool_runtime/execution.py b/python/nexus/serv
              if (
                  state.dispatch_phase is Uncertain
                  and identity.replay_policy is JournalReplayPolicy.ReDispatchable
+@@ -540,8 +542,7 @@ class NexusPositionRecorder:
+         if isinstance(execution.reservation, Present):
+             stored = execution.reservation.value
+             if (
+                 stored.calls != reservation.calls
+-                or stored.input_bytes != reservation.input_bytes
+                 or stored.max_attempts != reservation.max_attempts
+                 or stored.max_output_bytes != reservation.max_output_bytes
+             ):

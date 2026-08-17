@@ -313,7 +313,7 @@
     {
       "id": "llm-tool-position-replay-bypass",
       "patch": "testdata/faults/llm-tool-position-replay-bypass.patch",
-      "sha256": "7a617948c1e0bcc7eb1b13c37a8414563cb3979175405a26d8e384073c05ccfb",
+      "sha256": "b9dc387a15df3238039f387afed21524173deff4fa323fd7021b55e32cb4f49c",
       "proofs": [
         "pytest:python/tests/service/test_llm_tool_replay.py::test_position_replay_settles_once_and_does_not_automatically_reissue_uncertain_billed_search"
       ],
