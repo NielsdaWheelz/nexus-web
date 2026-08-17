@@ -252,7 +252,7 @@
       "proofs": [
         "pytest:python/tests/kernel/test_production_release.py::test_codex_capacity_requires_exact_encrypted_state_before_starting_runtime"
       ],
-      "expected_failure": "Codex state storage or locked-boot admission reached runtime"
+      "expected_failure": "unencrypted Codex state reached runtime admission"
     },
     {
       "id": "durable-codex-diagnostic-retention-bypass",
