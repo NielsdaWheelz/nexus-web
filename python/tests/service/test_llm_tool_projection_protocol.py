@@ -85,10 +85,8 @@ def _send_body() -> dict[str, object]:
 
 
 def _assert_reload_required(response: Any, *, boundary: str) -> None:
-    assert response.status_code == 409, (
-        f"{boundary} crossed the public Chat boundary with a stale projection: "
-        f"status={response.status_code}, body={response.text}"
-    )
+    if response.status_code != 409:
+        raise AssertionError(f"{boundary} crossed the public Chat boundary with a stale projection")
     body = response.json()
     assert body.get("error", {}).get("code") == _RELOAD_REQUIRED_CODE, (
         f"{boundary} returned a second projection-mismatch shape: {body!r}"
