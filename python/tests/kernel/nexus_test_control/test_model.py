@@ -28,6 +28,7 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         "citation-provenance-identity",
         "durable-job-replay",
         "database-object-convergence",
+        "document-import-reliability",
         "llm-tool-safety",
         "immutable-production-release",
         "production-runtime-health",

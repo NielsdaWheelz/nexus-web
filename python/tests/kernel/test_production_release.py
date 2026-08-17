@@ -51,7 +51,7 @@ def _candidate(source_sha: str = SOURCE_SHA) -> dict[str, object]:
             "api": f"ghcr.io/nielsdawheelz/nexus-api@sha256:{IMAGE_DIGEST}",
             "worker": f"ghcr.io/nielsdawheelz/nexus-worker@sha256:{WORKER_DIGEST}",
         },
-        "expected_database_revision": "0215",
+        "expected_database_revision": "0217",
         "expected_oracle_manifest_digest": f"sha256:{ORACLE_DIGEST}",
     }
 
@@ -175,22 +175,22 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
     assert attempt.backup.sha256 == hashlib.sha256(backup_bytes).hexdigest()
 
     state = harness.state()
-    assert state["database_revision"] == "0215"
+    assert state["database_revision"] == "0217"
     assert state["backup_dump_count"] == 1
     assert state["backup_verify_count"] == 2
     assert state["migration_count"] == 1
     assert state["jobs"] == {}
     assert state["ancestry_proofs"] == [
         {
-            "candidate_head": "0215",
+            "candidate_head": "0217",
             "current_revision": "0210",
-            "heads": ["0215"],
+            "heads": ["0217"],
             "is_ancestor": True,
         },
         {
-            "candidate_head": "0215",
+            "candidate_head": "0217",
             "current_revision": "0210",
-            "heads": ["0215"],
+            "heads": ["0217"],
             "is_ancestor": True,
         },
     ]
@@ -381,7 +381,7 @@ def test_forward_fix_converges_stopped_writer_limits_without_requesting_live_sta
         else:
             container["image_id"] = state["worker_image_id"]
             container["config"]["Image"] = state["worker_image"]
-    harness.update_state(containers=containers, database_revision="0215")
+    harness.update_state(containers=containers, database_revision="0217")
     successor_sha = harness.install_candidate(_candidate(NEXT_SHA))
 
     completed = harness.run_apply(source_sha=successor_sha)
@@ -795,7 +795,7 @@ def test_host_apply_replays_every_durable_phase_after_process_death(
     assert completed is not None
     assert completed.phase is release.ReleasePhase.AwaitingFrontendPromotion
     state = harness.state()
-    assert state["database_revision"] == "0215"
+    assert state["database_revision"] == "0217"
     assert state["migration_count"] == 1
     assert state["jobs"] == {}
     assert not tuple(release.ReleasePaths.under(tmp_path).state_root.rglob("*.partial"))
@@ -967,7 +967,7 @@ def test_host_apply_recovers_a_completed_migration_side_effect_without_reapplyin
     persisted = _stored_attempt(release, tmp_path)
     assert persisted is not None
     assert persisted.phase is release.ReleasePhase.DataMutationStarted
-    assert harness.state()["database_revision"] == "0215"
+    assert harness.state()["database_revision"] == "0217"
 
     replayed = harness.run_apply(interrupt_after_migration=True)
 
@@ -1055,7 +1055,7 @@ def test_forward_fix_accepts_advanced_schema_and_stopped_writers(
         else:
             container["image_id"] = state["worker_image_id"]
             container["config"]["Image"] = state["worker_image"]
-    harness.update_state(containers=containers, database_revision="0215")
+    harness.update_state(containers=containers, database_revision="0217")
 
     successor_sha = harness.install_candidate(_candidate(NEXT_SHA))
     completed = harness.run_apply(source_sha=successor_sha)

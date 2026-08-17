@@ -25,6 +25,7 @@ function responseData(): unknown {
       has_more: false,
       items: [
         {
+          kind: "Media",
           media_id: FAILED_MEDIA_ID,
           title: "Searchable later",
           media_kind: "epub",
@@ -48,6 +49,7 @@ function responseData(): unknown {
           },
         },
         {
+          kind: "Media",
           media_id: MEDIA_ID,
           title: "The long document",
           media_kind: "pdf",
@@ -110,6 +112,36 @@ function stateRecord(raw: unknown, index: number): Record<string, unknown> {
   return state;
 }
 
+function uploadSessionResponse(): unknown {
+  return {
+    data: {
+      needs_attention_count: 1,
+      active_count: 0,
+      has_more: false,
+      items: [
+        {
+          kind: "UploadSession",
+          session_handle: "upload-session-handle",
+          filename: "The Last Bakker.epub",
+          document_kind: "Epub",
+          expected_size_bytes: 314159,
+          attention: {
+            kind: "TransportFailed",
+            failure_kind: "HttpRejected",
+            http_status: { kind: "Present", value: 403 },
+          },
+          created_at: "2026-08-14T18:40:02Z",
+          updated_at: "2026-08-14T18:40:34Z",
+          capabilities: {
+            can_retry_upload: true,
+            can_remove: true,
+          },
+        },
+      ],
+    },
+  };
+}
+
 describe("media Activity transport", () => {
   it("decodes the exact attention snapshot and preserves its closed state union", () => {
     const decoded = decodeMediaActivityResponse(responseData());
@@ -118,7 +150,10 @@ describe("media Activity transport", () => {
     expect(decoded.activeCount).toBe(1);
     expect(decoded.hasMore).toBe(false);
 
-    expect(decoded.items[0]?.state).toEqual({
+    const attention = decoded.items[0];
+    expect(attention?.kind).toBe("Media");
+    if (attention?.kind !== "Media") throw new Error("expected media attention item");
+    expect(attention.state).toEqual({
       kind: "NeedsAttention",
       scope: "Search",
       stage: "Index",
@@ -126,7 +161,9 @@ describe("media Activity transport", () => {
     });
 
     const active = decoded.items[1];
-    expect(active?.state).toMatchObject({
+    expect(active?.kind).toBe("Media");
+    if (active?.kind !== "Media") throw new Error("expected active media item");
+    expect(active.state).toMatchObject({
       kind: "Active",
       status: "Processing",
       stage: "Extract",
@@ -137,10 +174,39 @@ describe("media Activity transport", () => {
         value: { kind: "Counted", completed: 84, total: 712, unit: "Page" },
       },
     });
-    expect(active?.requestId).toEqual({
+    expect(active.requestId).toEqual({
       kind: "Present",
       value: "req_activity_123",
     });
+  });
+
+  it("decodes an upload-session obligation without fabricating media fields", () => {
+    const decoded = decodeMediaActivityResponse(uploadSessionResponse());
+
+    expect(decoded.items).toEqual([
+      {
+        kind: "UploadSession",
+        sessionHandle: "upload-session-handle",
+        filename: "The Last Bakker.epub",
+        documentKind: "Epub",
+        expectedSizeBytes: 314159,
+        attention: {
+          kind: "TransportFailed",
+          failureKind: "HttpRejected",
+          httpStatus: { kind: "Present", value: 403 },
+        },
+        createdAt: "2026-08-14T18:40:02Z",
+        updatedAt: "2026-08-14T18:40:34Z",
+        capabilities: { canRetryUpload: true, canRemove: true },
+      },
+    ]);
+  });
+
+  it("rejects fabricated media fields on an upload-session obligation", () => {
+    const raw = uploadSessionResponse();
+    itemRecord(raw, 0).media_id = MEDIA_ID;
+
+    expect(() => decodeMediaActivityResponse(raw)).toThrow();
   });
 
   it.each([

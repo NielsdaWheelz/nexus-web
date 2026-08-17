@@ -68,7 +68,8 @@ export type MediaActivityState =
       readonly failureCode: Presence<string>;
     };
 
-export interface MediaActivityItem {
+export interface MediaActivityMediaItem {
+  readonly kind: "Media";
   readonly mediaId: string;
   readonly title: string;
   readonly mediaKind: LibraryMediaKind;
@@ -87,6 +88,34 @@ export interface MediaActivityItem {
     readonly canRemove: boolean;
   };
 }
+
+export type UploadSessionAttention =
+  | {
+      readonly kind: "TransportFailed";
+      readonly failureKind: "Network" | "Timeout" | "HttpRejected" | "Aborted";
+      readonly httpStatus: Presence<number>;
+    }
+  | { readonly kind: "CapabilityExpired" }
+  | { readonly kind: "VerificationFailed"; readonly failureCode: string };
+
+export interface MediaActivityUploadSessionItem {
+  readonly kind: "UploadSession";
+  readonly sessionHandle: string;
+  readonly filename: string;
+  readonly documentKind: "Pdf" | "Epub";
+  readonly expectedSizeBytes: number;
+  readonly attention: UploadSessionAttention;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly capabilities: {
+    readonly canRetryUpload: boolean;
+    readonly canRemove: boolean;
+  };
+}
+
+export type MediaActivityItem =
+  | MediaActivityMediaItem
+  | MediaActivityUploadSessionItem;
 
 export interface MediaActivityResponse {
   readonly needsAttentionCount: number;
@@ -267,11 +296,15 @@ function activityState(
   throw new TypeError(`${name}.kind must be Active or NeedsAttention`);
 }
 
-function activityItem(raw: unknown, index: number): MediaActivityItem {
+function mediaActivityItem(
+  raw: unknown,
+  index: number,
+): MediaActivityMediaItem {
   const name = `media Activity items[${index}]`;
   const item = expectExactRecord(
     raw,
     [
+      "kind",
       "media_id",
       "title",
       "media_kind",
@@ -287,12 +320,16 @@ function activityItem(raw: unknown, index: number): MediaActivityItem {
     ],
     name,
   );
+  if (item.kind !== "Media") {
+    throw new TypeError(`${name}.kind must be Media`);
+  }
   const capabilities = expectExactRecord(
     item.capabilities,
     ["can_open", "can_repair_source", "can_repair_search", "can_remove"],
     `${name}.capabilities`,
   );
   return {
+    kind: "Media",
     mediaId: canonicalUuid(item.media_id, `${name}.media_id`),
     title: nonemptyString(item.title, `${name}.title`),
     mediaKind: expectOneOf(
@@ -334,6 +371,120 @@ function activityItem(raw: unknown, index: number): MediaActivityItem {
   };
 }
 
+function uploadSessionAttention(
+  raw: unknown,
+  name: string,
+): UploadSessionAttention {
+  const rawKind =
+    typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).kind
+      : undefined;
+  if (rawKind === "TransportFailed") {
+    const attention = expectExactRecord(
+      raw,
+      ["kind", "failure_kind", "http_status"],
+      name,
+    );
+    return {
+      kind: "TransportFailed",
+      failureKind: expectOneOf(
+        attention.failure_kind,
+        ["Network", "Timeout", "HttpRejected", "Aborted"] as const,
+        `${name}.failure_kind`,
+      ),
+      httpStatus: decodePresence(attention.http_status, (value) => {
+        const status = expectNonnegativeInteger(value, `${name}.http_status.value`);
+        if (status < 100 || status > 599) {
+          throw new TypeError(`${name}.http_status.value must be an HTTP status`);
+        }
+        return status;
+      }),
+    };
+  }
+  if (rawKind === "CapabilityExpired") {
+    expectExactRecord(raw, ["kind"], name);
+    return { kind: "CapabilityExpired" };
+  }
+  if (rawKind === "VerificationFailed") {
+    const attention = expectExactRecord(raw, ["kind", "failure_code"], name);
+    return {
+      kind: "VerificationFailed",
+      failureCode: nonemptyString(attention.failure_code, `${name}.failure_code`),
+    };
+  }
+  throw new TypeError(
+    `${name}.kind must be TransportFailed, CapabilityExpired, or VerificationFailed`,
+  );
+}
+
+function uploadSessionActivityItem(
+  raw: unknown,
+  index: number,
+): MediaActivityUploadSessionItem {
+  const name = `media Activity items[${index}]`;
+  const item = expectExactRecord(
+    raw,
+    [
+      "kind",
+      "session_handle",
+      "filename",
+      "document_kind",
+      "expected_size_bytes",
+      "attention",
+      "created_at",
+      "updated_at",
+      "capabilities",
+    ],
+    name,
+  );
+  if (item.kind !== "UploadSession") {
+    throw new TypeError(`${name}.kind must be UploadSession`);
+  }
+  const capabilities = expectExactRecord(
+    item.capabilities,
+    ["can_retry_upload", "can_remove"],
+    `${name}.capabilities`,
+  );
+  const expectedSizeBytes = expectNonnegativeInteger(
+    item.expected_size_bytes,
+    `${name}.expected_size_bytes`,
+  );
+  if (expectedSizeBytes === 0) {
+    throw new TypeError(`${name}.expected_size_bytes must be positive`);
+  }
+  return {
+    kind: "UploadSession",
+    sessionHandle: nonemptyString(item.session_handle, `${name}.session_handle`),
+    filename: nonemptyString(item.filename, `${name}.filename`),
+    documentKind: expectOneOf(
+      item.document_kind,
+      ["Pdf", "Epub"] as const,
+      `${name}.document_kind`,
+    ),
+    expectedSizeBytes,
+    attention: uploadSessionAttention(item.attention, `${name}.attention`),
+    createdAt: expectIsoInstant(item.created_at, `${name}.created_at`),
+    updatedAt: expectIsoInstant(item.updated_at, `${name}.updated_at`),
+    capabilities: {
+      canRetryUpload: expectBoolean(
+        capabilities.can_retry_upload,
+        `${name}.can_retry_upload`,
+      ),
+      canRemove: expectBoolean(capabilities.can_remove, `${name}.can_remove`),
+    },
+  };
+}
+
+function activityItem(raw: unknown, index: number): MediaActivityItem {
+  const kind =
+    typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).kind
+      : undefined;
+  if (kind === "Media") return mediaActivityItem(raw, index);
+  if (kind === "UploadSession") return uploadSessionActivityItem(raw, index);
+  throw new TypeError(`media Activity items[${index}].kind is unsupported`);
+}
+
 export function decodeMediaActivityResponse(
   raw: unknown,
 ): MediaActivityResponse {
@@ -366,15 +517,20 @@ export function decodeMediaActivityResponse(
   if (hasMore !== (total > items.length)) {
     throw new TypeError("media Activity has_more must match its total");
   }
-  if (new Set(items.map((item) => item.mediaId)).size !== items.length) {
-    throw new TypeError("media Activity items must have unique media IDs");
+  const identities = items.map((item) =>
+    item.kind === "Media"
+      ? `Media:${item.mediaId}`
+      : `UploadSession:${item.sessionHandle}`,
+  );
+  if (new Set(identities).size !== items.length) {
+    throw new TypeError("media Activity items must have unique identities");
   }
   const returnedAttentionCount = Math.min(needsAttentionCount, items.length);
   if (
     items.some(
       (item, index) =>
         (index < returnedAttentionCount) !==
-        (item.state.kind === "NeedsAttention"),
+        (item.kind === "UploadSession" || item.state.kind === "NeedsAttention"),
     )
   ) {
     throw new TypeError(

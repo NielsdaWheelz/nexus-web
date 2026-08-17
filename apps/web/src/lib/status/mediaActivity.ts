@@ -4,7 +4,7 @@ import {
 } from "@/lib/api/client";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type {
-  MediaActivityItem,
+  MediaActivityMediaItem,
   SourceProgress,
 } from "@/lib/media/activityClient";
 import type { LibraryMediaKind } from "@/lib/libraries/mediaKind";
@@ -67,7 +67,7 @@ export function mediaActivityProgressCopy(progress: SourceProgress): string {
   }
 }
 
-export function mediaActivityStatusCopy(item: MediaActivityItem): string {
+export function mediaActivityStatusCopy(item: MediaActivityMediaItem): string {
   switch (item.state.kind) {
     case "Active": {
       const { progress, stage, status, statusCode, waitingReason } = item.state;

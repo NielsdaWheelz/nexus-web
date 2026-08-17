@@ -5,8 +5,118 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
+
+
+def install_deferred_media_insert_failure(
+    engine: Engine, *, media_id: UUID, discriminator: str
+) -> tuple[str, str]:
+    """Force one synthetic Media insert to fail only at the real commit boundary."""
+    trigger_name = f"fail_upload_publication_{discriminator}"
+    function_name = f"fail_upload_publication_{discriminator}"
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                f"""
+                CREATE FUNCTION {function_name}() RETURNS trigger
+                LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.id = '{media_id}'::uuid THEN
+                        RAISE EXCEPTION 'forced upload publication commit failure';
+                    END IF;
+                    RETURN NEW;
+                END
+                $$
+                """
+            )
+        )
+        connection.execute(
+            text(
+                f"""
+                CREATE CONSTRAINT TRIGGER {trigger_name}
+                AFTER INSERT ON media
+                DEFERRABLE INITIALLY DEFERRED
+                FOR EACH ROW EXECUTE FUNCTION {function_name}()
+                """
+            )
+        )
+    return trigger_name, function_name
+
+
+def remove_deferred_media_insert_failure(
+    engine: Engine, *, trigger_name: str, function_name: str
+) -> None:
+    with engine.begin() as connection:
+        connection.execute(text(f"DROP TRIGGER IF EXISTS {trigger_name} ON media"))
+        connection.execute(text(f"DROP FUNCTION IF EXISTS {function_name}()"))
+
+
+def cleanup_committed_upload_user(engine: Engine, *, user_id: UUID) -> None:
+    """Remove every row committed by a dedicated upload-session proof user."""
+    with engine.begin() as connection:
+        upload_session_ids = (
+            connection.execute(
+                text(
+                    "SELECT id::text FROM media_upload_sessions WHERE created_by_user_id = :user_id"
+                ),
+                {"user_id": user_id},
+            )
+            .scalars()
+            .all()
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM media_upload_session_destinations
+                WHERE upload_session_id IN (
+                    SELECT id FROM media_upload_sessions
+                    WHERE created_by_user_id = :user_id
+                )
+                """
+            ),
+            {"user_id": user_id},
+        )
+        connection.execute(
+            text("DELETE FROM media_upload_sessions WHERE created_by_user_id = :user_id"),
+            {"user_id": user_id},
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM library_entries
+                WHERE media_id IN (SELECT id FROM media WHERE created_by_user_id = :user_id)
+                """
+            ),
+            {"user_id": user_id},
+        )
+        connection.execute(
+            text("DELETE FROM media_source_attempts WHERE created_by_user_id = :user_id"),
+            {"user_id": user_id},
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM background_jobs
+                WHERE payload->>'actor_user_id' = :user_id
+                   OR payload->>'uploadSessionId' = ANY(:session_ids)
+                """
+            ),
+            {"user_id": str(user_id), "session_ids": upload_session_ids},
+        )
+        connection.execute(
+            text("DELETE FROM media WHERE created_by_user_id = :user_id"),
+            {"user_id": user_id},
+        )
+        connection.execute(
+            text("DELETE FROM libraries WHERE owner_user_id = :user_id"),
+            {"user_id": user_id},
+        )
+        connection.execute(
+            text("DELETE FROM viewer_collection_revisions WHERE viewer_id = :user_id"),
+            {"user_id": user_id},
+        )
+        connection.execute(text("DELETE FROM users WHERE id = :user_id"), {"user_id": user_id})
 
 
 def prioritize_job_for_worker_proof(db: Session, *, job_id: UUID) -> None:
@@ -37,6 +147,64 @@ def expire_job_claim(db: Session, *, job_id: UUID) -> None:
         ),
         {"job_id": job_id},
     )
+
+
+def force_upload_cleanup_job_due(db: Session, *, job_id: UUID) -> None:
+    """Advance one upload cleanup reservation past both durable deletion fences."""
+    deadline = "1970-01-01T00:00:00+00:00"
+    db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET available_at = now() - interval '1 second',
+                payload = jsonb_set(
+                    jsonb_set(
+                        payload,
+                        '{retainUntil}',
+                        to_jsonb(CAST(:deadline AS text))
+                    ),
+                    '{writeMayLandUntil}',
+                    to_jsonb(CAST(:deadline AS text))
+                )
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": job_id, "deadline": deadline},
+    )
+    db.commit()
+
+
+def make_upload_cleanup_job_available_before_its_fence(db: Session, *, job_id: UUID) -> None:
+    """Expose one cleanup job while preserving its future durable writer fences."""
+    db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET available_at = now() - interval '1 second'
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": job_id},
+    )
+    db.commit()
+
+
+def age_completed_job(engine: Engine, *, job_id: UUID, seconds: int) -> None:
+    """Place one terminal job outside a freshness window for readiness proof."""
+    if seconds < 1:
+        raise ValueError("completed-job age must be positive")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET finished_at = now() - (CAST(:seconds AS integer) * interval '1 second')
+                WHERE id = :job_id
+                  AND status = 'succeeded'
+                """
+            ),
+            {"job_id": job_id, "seconds": seconds},
+        )
 
 
 def expire_heavy_job_claim(db: Session, *, job_id: UUID) -> None:
@@ -183,9 +351,155 @@ def release_heavy_capacity_row(db: Session) -> None:
     )
 
 
+def make_pending_job_due(db: Session, *, job_id: UUID) -> None:
+    """Make one exact synthetic pending job claimable while retaining its row lock."""
+    kind = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET available_at = clock_timestamp(), updated_at = clock_timestamp()
+            WHERE id = :job_id
+              AND status = 'pending'
+              AND claimed_by IS NULL
+            RETURNING kind
+            """
+        ),
+        {"job_id": job_id},
+    ).scalar_one()
+    db.execute(text("SELECT pg_notify('nexus_background_jobs', :kind)"), {"kind": kind})
+
+
 def delete_jobs_of_kinds(db: Session, *, kinds: Sequence[str]) -> None:
     """Remove committed probe queue rows created by a capacity proof module."""
     db.execute(
         text("DELETE FROM background_jobs WHERE kind = ANY(CAST(:kinds AS text[]))"),
         {"kinds": list(kinds)},
+    )
+
+
+def delete_source_probe_owners_by_job_kind(db: Session, *, kind: str) -> None:
+    """Remove exact synthetic attempt/media owners named by one probe job kind."""
+    owners = db.execute(
+        text(
+            """
+            SELECT payload->>'attempt_id', payload->>'media_id'
+            FROM background_jobs
+            WHERE kind = :kind
+              AND payload ? 'attempt_id'
+              AND payload ? 'media_id'
+            """
+        ),
+        {"kind": kind},
+    ).all()
+    attempt_ids = [UUID(str(row[0])) for row in owners]
+    media_ids = [UUID(str(row[1])) for row in owners]
+    if media_ids:
+        db.execute(
+            text(
+                """
+                DELETE FROM content_index_states
+                WHERE owner_kind = 'media'
+                  AND owner_id = ANY(CAST(:ids AS uuid[]))
+                """
+            ),
+            {"ids": media_ids},
+        )
+    if attempt_ids:
+        db.execute(
+            text("DELETE FROM media_source_attempts WHERE id = ANY(CAST(:ids AS uuid[]))"),
+            {"ids": attempt_ids},
+        )
+    if media_ids:
+        db.execute(
+            text("DELETE FROM media WHERE id = ANY(CAST(:ids AS uuid[]))"),
+            {"ids": media_ids},
+        )
+
+
+def delete_jobs_by_ids(db: Session, *, job_ids: Sequence[UUID]) -> None:
+    """Remove only committed queue rows owned by one exact service proof."""
+    if not job_ids:
+        return
+    db.execute(
+        text("DELETE FROM background_jobs WHERE id = ANY(CAST(:job_ids AS uuid[]))"),
+        {"job_ids": list(job_ids)},
+    )
+
+
+def delete_source_attempt_and_media(
+    db: Session,
+    *,
+    attempt_id: UUID,
+    media_id: UUID,
+) -> None:
+    """Remove one committed synthetic source owner after its readiness proof."""
+    delete_source_attempts_and_media(
+        db,
+        attempt_ids=(attempt_id,),
+        media_id=media_id,
+    )
+
+
+def delete_source_attempts_and_media(
+    db: Session,
+    *,
+    attempt_ids: Sequence[UUID],
+    media_id: UUID,
+) -> None:
+    """Remove exact committed synthetic source owners and their shared media."""
+    db.execute(
+        text("DELETE FROM media_source_attempts WHERE id = ANY(CAST(:attempt_ids AS uuid[]))"),
+        {"attempt_ids": list(attempt_ids)},
+    )
+    db.execute(text("DELETE FROM media WHERE id = :media_id"), {"media_id": media_id})
+
+
+def publish_source_probe_success(
+    db: Session,
+    *,
+    attempt_id: UUID,
+    media_id: UUID,
+    job_id: UUID,
+) -> None:
+    """Inject the exact durable-success window before a probe child is killed."""
+    db.execute(
+        text(
+            """
+            UPDATE media_source_attempts
+            SET status = 'succeeded', finished_at = now(), updated_at = now()
+            WHERE id = :attempt_id AND job_id = :job_id
+            """
+        ),
+        {"attempt_id": attempt_id, "job_id": job_id},
+    )
+    db.execute(
+        text(
+            """
+            UPDATE media
+            SET processing_status = 'ready_for_reading',
+                processing_completed_at = now(), updated_at = now()
+            WHERE id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            INSERT INTO fragments (media_id, idx, canonical_text, html_sanitized)
+            VALUES (:media_id, 0, 'durable artifact sentinel', '<p>durable artifact sentinel</p>')
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            INSERT INTO content_index_states (
+                owner_kind, owner_id, revision, status, status_reason
+            )
+            VALUES ('media', :media_id, 1, 'pending', 'source_success')
+            """
+        ),
+        {"media_id": media_id},
     )

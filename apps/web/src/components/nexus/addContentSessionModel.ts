@@ -3,10 +3,11 @@ import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import type { AddSeed } from "@/lib/nexus/model";
 import type { LibraryDestinationSelection } from "@/lib/libraries/client";
-import type {
-  AcceptedUploadIdentity,
-  SourceIngestResult,
-  UploadFileKind,
+import {
+  UploadNeedsAttentionError,
+  type AcceptedIngestResult,
+  type UploadFileKind,
+  type UploadPhase,
 } from "@/lib/media/ingestionClient";
 import {
   projectLibraryPlacement,
@@ -38,6 +39,28 @@ export type FrozenAcceptanceIntent = Readonly<{
   idempotencyKey: string;
 }>;
 
+type FrozenFileAcceptanceIntent = FrozenAcceptanceIntent & {
+  readonly source: Extract<AddSource, { kind: "File" }>;
+};
+
+type FrozenUrlAcceptanceIntent = FrozenAcceptanceIntent & {
+  readonly source: Extract<AddSource, { kind: "Url" }>;
+};
+
+type SubmittingAddItem =
+  | {
+      kind: "Submitting";
+      id: string;
+      intent: FrozenFileAcceptanceIntent;
+      uploadPhase: UploadPhase;
+    }
+  | {
+      kind: "Submitting";
+      id: string;
+      intent: FrozenUrlAcceptanceIntent;
+      uploadPhase: null;
+    };
+
 export type AddItem =
   | {
       kind: "Invalid";
@@ -46,7 +69,7 @@ export type AddItem =
       feedback: FeedbackContent;
     }
   | ({ kind: "Draft"; id: string } & FrozenAcceptanceIntent)
-  | { kind: "Submitting"; id: string; intent: FrozenAcceptanceIntent }
+  | SubmittingAddItem
   | {
       kind: "Rejected";
       id: string;
@@ -60,20 +83,10 @@ export type AddItem =
       feedback: FeedbackContent;
     }
   | {
-      kind: "AcceptedUncertain";
-      id: string;
-      intent: FrozenAcceptanceIntent & {
-        source: Extract<AddSource, { kind: "File" }>;
-      };
-      mediaId: string;
-      sourceAttemptId: string;
-      feedback: FeedbackContent;
-    }
-  | {
       kind: "Accepted";
       id: string;
       source: SourceSummary;
-      result: SourceIngestResult;
+      result: AcceptedIngestResult;
     };
 
 export type PlacementCommand =
@@ -154,6 +167,17 @@ export type AcceptanceFailure =
   | { kind: "Defect"; error: unknown };
 
 export function acceptanceErrorMessage(error: unknown): AcceptanceFailure {
+  if (error instanceof UploadNeedsAttentionError) {
+    return {
+      kind: "Rejected",
+      feedback: {
+        tone: "Warning",
+        title: "Upload needs attention",
+        message:
+          "Use Import Activity for the available next step, or restage this file as a new import.",
+      },
+    };
+  }
   if (!isApiError(error) || isSameSystemApiDefect(error)) {
     return { kind: "Defect", error };
   }
@@ -208,20 +232,19 @@ export type AddSessionAction =
     }
   | { kind: "StartMutation"; operation: SessionMutationOperation }
   | { kind: "StartSubmission"; itemIds: readonly string[] }
+  | { kind: "StartFileReconciliation"; itemId: string }
+  | { kind: "SetUploadPhase"; itemId: string; phase: UploadPhase }
   | { kind: "ResolveItem"; item: AddItem }
   | { kind: "FinishMutation" }
   | {
       kind: "StopMutation";
-      acceptedUploadIdentityByItemId: ReadonlyMap<
-        string,
-        AcceptedUploadIdentity
-      >;
       startedSubmissionItemIds: ReadonlySet<string>;
       placementProgressByMediaId: ReadonlyMap<
         string,
         PlacementMutationProgress
       >;
       acceptanceFeedback: FeedbackContent;
+      uploadFeedback: FeedbackContent;
       operationFeedback: FeedbackContent;
     }
   | {
@@ -366,18 +389,26 @@ export function reduceAddSession(
       return {
         ...state,
         items: state.items.map(
-          (item): AddItem =>
-            item.kind === "Draft" && itemIds.has(item.id)
+          (item): AddItem => {
+            if (item.kind !== "Draft" || !itemIds.has(item.id)) return item;
+            const intent = {
+              destinations: [...item.destinations],
+              idempotencyKey: item.idempotencyKey,
+            };
+            return item.source.kind === "File"
               ? {
                   kind: "Submitting",
                   id: item.id,
-                  intent: {
-                    source: item.source,
-                    destinations: [...item.destinations],
-                    idempotencyKey: item.idempotencyKey,
-                  },
+                  intent: { ...intent, source: item.source },
+                  uploadPhase: "Preparing",
                 }
-              : item,
+              : {
+                  kind: "Submitting",
+                  id: item.id,
+                  intent: { ...intent, source: item.source },
+                  uploadPhase: null,
+                };
+          },
         ),
         mutation: {
           kind: "Running",
@@ -385,6 +416,56 @@ export function reduceAddSession(
         },
       };
     }
+    case "StartFileReconciliation":
+      return {
+        ...state,
+        items: state.items.map((item): AddItem => {
+          if (
+            item.id !== action.itemId ||
+            item.kind !== "AcceptanceUnresolved" ||
+            item.intent.source.kind !== "File"
+          ) {
+            return item;
+          }
+          return {
+            kind: "Submitting",
+            id: item.id,
+            intent: {
+              source: item.intent.source,
+              destinations: item.intent.destinations,
+              idempotencyKey: item.intent.idempotencyKey,
+            },
+            uploadPhase: "Preparing",
+          };
+        }),
+        mutation: {
+          kind: "Running",
+          operation: { kind: "ReconcileAcceptance", itemId: action.itemId },
+        },
+      };
+    case "SetUploadPhase":
+      return {
+        ...state,
+        items: state.items.map((item): AddItem => {
+          if (
+            item.id !== action.itemId ||
+            item.kind !== "Submitting" ||
+            item.intent.source.kind !== "File"
+          ) {
+            return item;
+          }
+          return {
+            kind: "Submitting",
+            id: item.id,
+            intent: {
+              source: item.intent.source,
+              destinations: item.intent.destinations,
+              idempotencyKey: item.intent.idempotencyKey,
+            },
+            uploadPhase: action.phase,
+          };
+        }),
+      };
     case "ResolveItem":
       return {
         ...state,
@@ -408,19 +489,9 @@ export function reduceAddSession(
           ) {
             return item;
           }
-          const identity = action.acceptedUploadIdentityByItemId.get(item.id);
-          if (identity && item.intent.source.kind === "File") {
-            return {
-              kind: "AcceptedUncertain",
-              id: item.id,
-              intent: { ...item.intent, source: item.intent.source },
-              mediaId: identity.mediaId,
-              sourceAttemptId: identity.sourceAttemptId,
-              feedback: action.acceptanceFeedback,
-            };
-          }
           if (
             item.kind === "Submitting" &&
+            !isActiveReconciliation &&
             !action.startedSubmissionItemIds.has(item.id)
           ) {
             return {
@@ -431,12 +502,19 @@ export function reduceAddSession(
               idempotencyKey: item.intent.idempotencyKey,
             };
           }
-          return {
-            kind: "AcceptanceUnresolved",
-            id: item.id,
-            intent: item.intent,
-            feedback: action.acceptanceFeedback,
-          };
+          return item.intent.source.kind === "File"
+            ? {
+                kind: "Rejected",
+                id: item.id,
+                intent: item.intent,
+                feedback: action.uploadFeedback,
+              }
+            : {
+                kind: "AcceptanceUnresolved",
+                id: item.id,
+                intent: item.intent,
+                feedback: action.acceptanceFeedback,
+              };
         }),
         opml:
           state.opml.kind === "Importing"
@@ -459,8 +537,6 @@ export function reduceAddSession(
             }
             const progress = action.placementProgressByMediaId.get(mediaId);
             if (!progress) {
-              // justify-defect: an in-flight placement projection must have a
-              // frozen request-boundary lifecycle entry owned by the mutation.
               throw new Error("Missing placement mutation progress.");
             }
             switch (progress.phase) {

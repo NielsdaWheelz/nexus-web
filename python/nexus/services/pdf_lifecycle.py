@@ -36,23 +36,28 @@ _MAX_ERROR_MSG_LEN = 1000
 _PDF_AUTHOR_SOURCE = "pdf_metadata"
 
 
-def confirm_pdf_ingest(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    *,
-    library_ids: list[UUID],
-    request_id: str | None = None,
-) -> dict:
-    from nexus.services.media_source_ingest import confirm_uploaded_source
+class _ResourceLimitApiError(ApiError):
+    """Lifecycle carrier recognized by the child-process result projection."""
 
-    return confirm_uploaded_source(
-        db=db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        library_ids=library_ids,
-        request_id=request_id,
-    )
+    def __init__(
+        self,
+        code: ApiErrorCode,
+        message: str,
+        resource_dimension: Literal["Memory", "Time", "Structure", "Output"],
+    ) -> None:
+        super().__init__(code, message)
+        self.resource_dimension = resource_dimension
+
+
+def _extraction_api_error(plan: PdfExtractionError) -> ApiError:
+    message = (plan.error_message or "PDF extraction failed")[:_MAX_ERROR_MSG_LEN]
+    code = _source_api_error_code(plan.error_code)
+    if plan.resource_limit_dimension is not None:
+        # The child-process protocol reads this explicit attribute; preserve
+        # the parser's safe dimension instead of treating a declared budget
+        # breach as an ordinary retryable ingest error.
+        return _ResourceLimitApiError(code, message, plan.resource_limit_dimension)
+    return ApiError(code, message)
 
 
 def retry_pdf_ingest_for_viewer(
@@ -78,6 +83,7 @@ def prepare_pdf_source(
     attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
+    expected_source_sha256: str,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     source_package: PdfSourcePackageArtifact | None = None,
     source_package_diagnostics: dict[str, object] | None = None,
@@ -88,16 +94,14 @@ def prepare_pdf_source(
         attempt_id=attempt_id,
         storage_path=storage_path,
         source_size_bytes=source_size_bytes,
+        expected_source_sha256=expected_source_sha256,
         storage_client=get_storage_client(),
         record_progress=record_progress,
         source_package=source_package,
         source_package_diagnostics=source_package_diagnostics,
     )
     if isinstance(plan, PdfExtractionError):
-        raise ApiError(
-            _source_api_error_code(plan.error_code),
-            (plan.error_message or "PDF extraction failed")[:_MAX_ERROR_MSG_LEN],
-        )
+        raise _extraction_api_error(plan)
     return plan
 
 

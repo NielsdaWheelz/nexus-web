@@ -451,6 +451,69 @@
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject"
       ],
       "expected_failure": "first Bearer [REDACTED] failed bootstrap"
+    },
+    {
+      "id": "document-import-digest-nullability-bypass",
+      "patch": "testdata/faults/document-import-digest-nullability-bypass.patch",
+      "sha256": "2c50c7140f2a99d52cd6b49b46f378b045c00267ca569f5cec992532066e80ab",
+      "proofs": [
+        "pytest:python/tests/migrations/test_document_import_reliability_migration.py::test_0216_0217_backfill_is_resumable_fail_closed_and_hard_contracts_schema"
+      ],
+      "expected_failure": "assert not True"
+    },
+    {
+      "id": "document-import-upload-generation-bypass",
+      "patch": "testdata/faults/document-import-upload-generation-bypass.patch",
+      "sha256": "041ca873742616acc75f9f8acf684bb7d5eaec876a73d4753b92441e43bf18e8",
+      "proofs": [
+        "pytest:python/tests/service/test_media_upload_sessions.py"
+      ],
+      "expected_failure": "E_UPLOAD_GENERATION_STALE"
+    },
+    {
+      "id": "document-import-time-dimension-bypass",
+      "patch": "testdata/faults/document-import-time-dimension-bypass.patch",
+      "sha256": "9f4813249a9514a7ff2e5733d999737e05c0411945808d52a953ef0bb08fdfe8",
+      "proofs": [
+        "pytest:python/tests/service/test_background_worker_process_containment.py::test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child"
+      ],
+      "expected_failure": "resource-limited source settlement lost its exact dimension"
+    },
+    {
+      "id": "document-import-parser-dimension-bypass",
+      "patch": "testdata/faults/document-import-parser-dimension-bypass.patch",
+      "sha256": "7568fd1a75c7e5b88eed25836405b5162515c471a5542f6a18af4fd1348f49c5",
+      "proofs": [
+        "pytest:python/tests/service/test_bounded_media_extraction.py"
+      ],
+      "expected_failure": "assert None == 'Output'"
+    },
+    {
+      "id": "document-import-activity-upload-omission",
+      "patch": "testdata/faults/document-import-activity-upload-omission.patch",
+      "sha256": "55d90c7397b918b5194031ba0c19d07ae6e891af59425d767d46ddfa3811b4a4",
+      "proofs": [
+        "pytest:python/tests/service/test_media_activity.py::test_activity_projects_only_upload_obligations_with_strict_precedence"
+      ],
+      "expected_failure": "assert 0 == 3"
+    },
+    {
+      "id": "document-import-reconciler-readiness-bypass",
+      "patch": "testdata/faults/document-import-reconciler-readiness-bypass.patch",
+      "sha256": "6745f440dd18b8424b582891df4639b0d6fb51e5ba0ddd5ec8fe5a2181e42254",
+      "proofs": [
+        "pytest:python/tests/service/test_ingest_reconciliation_readiness.py"
+      ],
+      "expected_failure": "assert not True"
+    },
+    {
+      "id": "document-import-upload-retry-ui-bypass",
+      "patch": "testdata/faults/document-import-upload-retry-ui-bypass.patch",
+      "sha256": "8e13d15cb2c2aab5a218575a79a73b17a76e3919505a3f4d31ede73c650c70b2",
+      "proofs": [
+        "vitest:apps/web/src/components/nexus/MediaActivityPage.browser.test.tsx"
+      ],
+      "expected_failure": "retries only the exact original upload and removes terminal verification failure"
     }
   ]
 }

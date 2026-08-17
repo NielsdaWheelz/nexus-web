@@ -75,6 +75,7 @@ class PriorityRiskId(StrEnum):
     CITATION_PROVENANCE_IDENTITY = "citation-provenance-identity"
     DURABLE_JOB_REPLAY = "durable-job-replay"
     DATABASE_OBJECT_CONVERGENCE = "database-object-convergence"
+    DOCUMENT_IMPORT_RELIABILITY = "document-import-reliability"
     LLM_TOOL_SAFETY = "llm-tool-safety"
     IMMUTABLE_PRODUCTION_RELEASE = "immutable-production-release"
     PRODUCTION_RUNTIME_HEALTH = "production-runtime-health"
@@ -86,7 +87,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "6aef29d5c04dcd08348cac767633ff142a4b825fb158098e38b0dbc5032ec966"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "81bdc7bebfeed9e3f2b935753ee3248a9f00ff523239742e08993ddb1a592349"
 
 
 class ResourceKind(StrEnum):

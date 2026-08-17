@@ -5,13 +5,13 @@ does not authorize access and must not encode user identity.
 
 ## Owners
 
-| Object family             | DB owner                               | Key shape                                   | Access lane                           |
-| ------------------------- | -------------------------------------- | ------------------------------------------- | ------------------------------------- | ---------------------------------------- | --------------------------------------------------- |
-| Original PDF/EPUB uploads | `media_file`                           | `media/{media_id}/original.{pdf             | epub}`                                | viewer-authenticated media/file services |
-| Direct-upload staging     | transient upload flow                  | `uploads/media/{media_id}/original.{pdf     | epub}`                                | private upload lifecycle only            |
-| Media source artifacts    | `media_source_attempts.source_payload` | `media/{media_id}/source/{attempt_id}.{html | tar}`                                 | private source lifecycle only            |
-| Extracted EPUB resources  | `epub_resources`                       | `media/{media_id}/assets/{asset_key}`       | viewer-authenticated EPUB asset route |
-| Oracle plates             | `oracle_plates`                        | `oracle/plates/{slug}.{jpg                  | png                                   | webp}`                                   | public owned-asset route, internal-header protected |
+| Object family | DB owner | Key shape | Access lane |
+| --- | --- | --- | --- |
+| Original PDF/EPUB sources | `media_file` | `media/{media_id}/original.{pdf,epub}` or `media/{media_id}/candidates/{verification_token}/original.{pdf,epub}` | viewer-authenticated media/file services |
+| Direct-upload staging | `media_upload_sessions` | `uploads/sessions/{session_id}/{generation}/original.{pdf,epub}` | private upload lifecycle only |
+| Media source artifacts | `media_source_attempts.source_payload` | `media/{media_id}/source/{attempt_id}.{html,tar}` | private source lifecycle only |
+| Extracted EPUB resources | `epub_resources` | `media/{media_id}/assets/{asset_key}` | viewer-authenticated EPUB asset route |
+| Oracle plates | `oracle_plates` | `oracle/plates/{slug}.{jpg,png,webp}` | public owned-asset route, internal-header protected |
 
 All storage path construction goes through `python/nexus/storage/paths.py`.
 Extension-taking builders accept only bare extensions: no leading dot, dot,
@@ -72,18 +72,23 @@ Three durable task modules own all teardown/lifecycle storage deletion
   idempotent and failure retries.
 - **`storage_object_cleanup.py`** — the browser-direct-upload backstop. Every
   in-process object write (`media_source_ingest.py`, `email_ingest_service.py`,
-  `epub_ingest.py`) and the staging-to-final copy in `upload.py` first locks
-  media, rejects an intent, and reserves at most one nonterminal
-  `StorageObjectCleanupJob` per `(mediaId, storagePath)` before the bounded
+  `epub_ingest.py`) and each verification-token-fenced candidate copy in
+  `media_upload_sessions.py` first locks its owner and reserves at most one
+  nonterminal `StorageObjectCleanupJob` per `(owner, storagePath)` before the bounded
   external call: `Armed` -> `Retained` (a short post-write transaction rechecks
-  media + no-intent + committed path ownership) or, at the `writeMayLandUntil`
-  deadline, `DeleteRequired` -> `Deleted` (an exclusive queue-owned hold on the
-  path; installed only when no other nonterminal writer targets it). Only
-  `Retained`/`Deleted` is prunable. Browser direct upload is the exception
-  because the server cannot perform the post-write check: signing locks the
-  media row, rejects an intent, and persists the staging path plus
-  `media_source_attempts.signed_upload_expires_at` (TTL capped at 300 seconds)
-  before returning the signed URL.
+  media + no-intent + committed path ownership) or, after both `retainUntil`
+  and `writeMayLandUntil`, `DeleteRequired` -> `Deleted` (an exclusive queue-owned
+  hold on the path; installed only when no other nonterminal writer targets it). Only
+  `Retained`/`Deleted` is prunable. Browser-direct writes are owned by a durable
+  `media_upload_sessions` row and generation-scoped staging path. Capability
+  expiry changes the session projection to `CapabilityExpired`; it never
+  deletes accepted intent. Confirmation verifies size, signature, and SHA-256,
+  copies to an immutable verification-token candidate, then persists that winning
+  path with the media, source attempt, final object owner, and exact queue job
+  atomically. Retry mints a new generation; explicit removal reserves cleanup.
+  Browser PUTs abort at the earlier of the capability's `expires_at` or the fixed
+  240-second client horizon and report `Timeout`; server configuration requires
+  the cleanup write margin to be strictly longer than that horizon.
 - **`storage_orphan_sweep.py`** — the singleton recurring backstop for writes
   that complete after a signed-URL expiry or an earlier delete. Durably pages
   the `media/` prefix, ignores objects modified within
@@ -103,12 +108,10 @@ pruned, so paths stay operator-discoverable via `requeue_dead_job`. Domain code
 never writes `background_jobs` raw — every checkpoint write goes through the
 queue owner's exact-attempt/claimant/lease-fenced CAS methods.
 
-The existing one-day R2 lifecycle rule on the `uploads/` direct-upload staging
-prefix (`deploy/cloudflare/r2-lifecycle.example.json`, applied by
-`deploy/cloudflare/apply-r2-lifecycle.sh`) is the first durable backstop; its
-prefix and max-age are asserted against `nexus.storage.paths` by
-`python/tests/test_r2_lifecycle_drift.py` so the deployed rule cannot silently
-drift from the code that writes the staging prefix.
+The one-day R2 lifecycle rule on the `uploads/` direct-upload staging prefix is
+an independent durable backstop for late browser writes. The repository-owned
+rule is `deploy/cloudflare/r2-lifecycle.example.json`; operators apply that exact
+file with `deploy/cloudflare/apply-r2-lifecycle.sh`.
 
 ## Deployment
 

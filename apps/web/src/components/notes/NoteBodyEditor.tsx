@@ -41,7 +41,7 @@ import { extractUrls } from "@/lib/extractUrls";
 import {
   getFileUploadError,
   isMediaIngestionDefect,
-  projectUploadReference,
+  UploadNeedsAttentionError,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
 import {
@@ -464,29 +464,25 @@ export default function NoteBodyEditor({
       attachmentBusyRef.current = true;
       view.setProps({ editable: () => false });
       try {
-        let referenced = false;
         const upload = await uploadIngestFile({
           file,
           libraryIds: [],
-          onAcceptedIdentity: ({ mediaId }) => {
-            referenced = insertMedia(view, mediaId, file.name);
-            if (!referenced) {
-              throw new MediaAttachmentContractDefect(
-                "The accepted attachment target changed unexpectedly.",
-              );
-            }
-          },
         });
-        const { warning } = projectUploadReference({
-          result: upload,
-          processingFailureFeedback: {
-            tone: "Warning",
-            title: "File was attached, but source processing failed.",
-          },
-        });
-        if (warning) onFeedbackRef.current?.(warning);
+        if (!insertMedia(view, upload.result.mediaId, file.name)) {
+          throw new MediaAttachmentContractDefect(
+            "The published attachment target changed unexpectedly.",
+          );
+        }
       } catch (caught: unknown) {
         if (handleUnauthenticatedApiError(caught)) return;
+        if (caught instanceof UploadNeedsAttentionError) {
+          onFeedbackRef.current?.({
+            tone: "Warning",
+            title: "Upload needs attention",
+            message: "Open Import Activity for the available next step.",
+          });
+          return;
+        }
         if (isMediaAttachmentDefect(caught)) {
           setDefect({ error: caught });
           return;

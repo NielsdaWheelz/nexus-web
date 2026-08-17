@@ -19,6 +19,7 @@ from nexus.services.offline_download_source import (
     OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH,
     OFFLINE_DOWNLOAD_TITLE_MAX_LENGTH,
 )
+from nexus.services.sealed_handles import UploadSessionHandle
 
 MediaProcessingStatus = Literal[
     "pending",
@@ -408,22 +409,180 @@ class FragmentOut(BaseModel):
 # =============================================================================
 
 
-class UploadInitRequest(BaseModel):
-    """Request schema for POST /media/upload/init."""
-
-    kind: Literal["pdf", "epub"]
+class CreateUploadSessionRequest(BaseModel):
+    kind: Literal["Pdf", "Epub"]
     filename: str = Field(min_length=1, max_length=255)
     content_type: str
     size_bytes: int = Field(gt=0)
     library_ids: list[UUID] = Field(default_factory=list)
 
+    model_config = ConfigDict(extra="forbid")
 
-class MediaIngestRequest(BaseModel):
-    """Request schema for POST /media/{id}/ingest."""
 
-    library_ids: list[UUID] = Field(default_factory=list)
+class RetryUploadSessionRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    content_type: str
+    size_bytes: int = Field(gt=0)
 
     model_config = ConfigDict(extra="forbid")
+
+
+class ConfirmUploadSessionRequest(BaseModel):
+    generation: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class _UploadTransportFailureBase(BaseModel):
+    generation: int = Field(ge=1)
+    duration_ms: int = Field(ge=0)
+    request_id: str = Field(min_length=1, max_length=255)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class UploadNetworkFailureRequest(_UploadTransportFailureBase):
+    kind: Literal["Network"]
+
+
+class UploadTimeoutFailureRequest(_UploadTransportFailureBase):
+    kind: Literal["Timeout"]
+
+
+class UploadHttpRejectedFailureRequest(_UploadTransportFailureBase):
+    kind: Literal["HttpRejected"]
+    status: int = Field(ge=100, le=599)
+
+
+class UploadAbortedFailureRequest(_UploadTransportFailureBase):
+    kind: Literal["Aborted"]
+
+
+UploadTransportFailureRequest = Annotated[
+    UploadNetworkFailureRequest
+    | UploadTimeoutFailureRequest
+    | UploadHttpRejectedFailureRequest
+    | UploadAbortedFailureRequest,
+    Field(discriminator="kind"),
+]
+
+
+class UploadRequiredHeaders(BaseModel):
+    content_type: str = Field(alias="Content-Type")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class UploadRequired(BaseModel):
+    kind: Literal["UploadRequired"] = "UploadRequired"
+    session_handle: UploadSessionHandle
+    generation: int = Field(ge=1)
+    method: Literal["PUT"] = "PUT"
+    upload_url: str
+    required_headers: UploadRequiredHeaders
+    expires_at: datetime
+    idempotency_outcome: Literal["Created", "Reused"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class Published(BaseModel):
+    kind: Literal["Published"] = "Published"
+    session_handle: UploadSessionHandle
+    media_id: UUID
+    source_attempt_id: UUID
+    idempotency_outcome: Literal["Created", "Reused"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class VerificationFailed(BaseModel):
+    kind: Literal["VerificationFailed"] = "VerificationFailed"
+    code: Literal[
+        "E_SOURCE_INTEGRITY",
+        "E_INVALID_FILE_TYPE",
+        "E_FILE_TOO_LARGE",
+    ]
+    failed_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class UploadTransportNetworkFailure(BaseModel):
+    kind: Literal["Network"] = "Network"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class UploadTransportTimeoutFailure(BaseModel):
+    kind: Literal["Timeout"] = "Timeout"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class UploadTransportHttpRejectedFailure(BaseModel):
+    kind: Literal["HttpRejected"] = "HttpRejected"
+    status: int = Field(ge=100, le=599)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class UploadTransportAbortedFailure(BaseModel):
+    kind: Literal["Aborted"] = "Aborted"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+UploadTransportFailure = Annotated[
+    UploadTransportNetworkFailure
+    | UploadTransportTimeoutFailure
+    | UploadTransportHttpRejectedFailure
+    | UploadTransportAbortedFailure,
+    Field(discriminator="kind"),
+]
+
+
+class TransportFailed(BaseModel):
+    kind: Literal["TransportFailed"] = "TransportFailed"
+    reason: UploadTransportFailure
+    failed_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CapabilityExpired(BaseModel):
+    kind: Literal["CapabilityExpired"] = "CapabilityExpired"
+    expired_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+UploadSessionFailure = Annotated[
+    VerificationFailed | TransportFailed | CapabilityExpired,
+    Field(discriminator="kind"),
+]
+
+
+class UploadSessionCapabilities(BaseModel):
+    can_retry_upload: bool
+    can_remove: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NeedsAttention(BaseModel):
+    kind: Literal["NeedsAttention"] = "NeedsAttention"
+    session_handle: UploadSessionHandle
+    failure: UploadSessionFailure
+    capabilities: UploadSessionCapabilities
+
+    model_config = ConfigDict(extra="forbid")
+
+
+UploadSessionResponse = Annotated[
+    UploadRequired | Published | NeedsAttention,
+    Field(discriminator="kind"),
+]
 
 
 class ArticleCaptureRequest(BaseModel):

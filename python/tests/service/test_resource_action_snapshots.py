@@ -11,6 +11,7 @@ subscriptions), then the snapshot is asserted to reflect it.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -792,6 +793,7 @@ def test_file_backed_media_reports_original_download_capability(engine: Engine) 
                 storage_path=f"test/{media_id}.pdf",
                 content_type="application/pdf",
                 size_bytes=1024,
+                source_sha256=hashlib.sha256(b"\0" * 1024).hexdigest(),
             )
         )
         ensure_media_in_default_library(db, viewer_id, media_id)

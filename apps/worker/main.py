@@ -14,6 +14,7 @@ from apps.worker.health import (
     WorkerHeartbeatPublisher,
     WorkerLane,
 )
+from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import (
     BACKGROUND_WORKER_JOB_KINDS,
@@ -22,17 +23,24 @@ from nexus.config import (
     PRODUCTION_ENABLED_JOB_KINDS,
     get_settings,
 )
-from nexus.db.session import get_session_factory
-from nexus.jobs.queue import parser_operation_has_live_job
+from nexus.db.engine import get_engine
+from nexus.jobs.process_executor import BackgroundProcessExecutor, ValidatedCgroup
 from nexus.jobs.registry import get_default_registry, get_task_contract_digest
 from nexus.jobs.worker import JobWorker
 from nexus.logging import configure_logging, get_logger
 from nexus.runtime_health import get_runtime_identity
-from nexus.services.llm_profiles import validate_profiles
-from nexus.services.parser_temp import prune_stale_parser_temp
-from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 
 logger = get_logger(__name__)
+
+
+def _get_worker_session_factory() -> sessionmaker[Session]:
+    """Build the worker factory without importing the FastAPI request seam."""
+    return sessionmaker(
+        bind=get_engine(),
+        autocommit=False,
+        autoflush=False,
+        expire_on_commit=False,
+    )
 
 
 def _worker_id() -> str:
@@ -50,7 +58,6 @@ def _register_signal_handlers(stop_event: threading.Event) -> None:
 
 def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None) -> JobWorker:
     settings = get_settings()
-    validate_profiles()
     registry = get_default_registry()
     if settings.worker_lane == "interactive":
         allowed_kinds = INTERACTIVE_WORKER_JOB_KINDS
@@ -81,17 +88,32 @@ def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None
     if unknown_kinds:
         raise RuntimeError(f"Unknown worker job kinds: {', '.join(sorted(unknown_kinds))}")
 
-    session_factory = get_session_factory()
-    # Install the process-global rate limiter at startup (same construction as
-    # the API lifespan in nexus/app.py) so the first job of any kind — not just
-    # chat — has a working limiter instead of failing E_RATE_LIMITER_UNAVAILABLE.
-    set_rate_limiter(
-        RateLimiter(
-            session_factory=session_factory,
-            rpm_limit=settings.rate_limit_rpm,
-            concurrent_limit=settings.rate_limit_concurrent,
+    session_factory = _get_worker_session_factory()
+    process_executor: BackgroundProcessExecutor | None = None
+    if settings.worker_lane == "background":
+        process_executor = BackgroundProcessExecutor(
+            cgroup=ValidatedCgroup.for_current_process(
+                settings.background_process_cgroup_root,
+                expected_memory_limit_bytes=settings.background_process_memory_limit_bytes,
+            ),
+            result_max_bytes=settings.background_process_result_max_bytes,
+            term_grace_seconds=settings.background_process_term_grace_seconds,
+            child_oom_score_adj=settings.background_process_oom_score_adj,
+            parser_temp_root=settings.parser_temp_root,
         )
-    )
+    else:
+        # Interactive and explicitly gated maintenance handlers remain in-process.
+        from nexus.services.llm_profiles import validate_profiles
+        from nexus.services.rate_limit import RateLimiter, set_rate_limiter
+
+        validate_profiles()
+        set_rate_limiter(
+            RateLimiter(
+                session_factory=session_factory,
+                rpm_limit=settings.rate_limit_rpm,
+                concurrent_limit=settings.rate_limit_concurrent,
+            )
+        )
     return JobWorker(
         session_factory=session_factory,
         worker_id=_worker_id(),
@@ -110,6 +132,7 @@ def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None
             if successful_cycle_callback is not None
             else None
         ),
+        process_executor=process_executor,
     )
 
 
@@ -139,13 +162,14 @@ def main() -> None:
         successful_cycle_callback=publisher.publish if publisher is not None else None
     )
     if settings.worker_lane == "background":
-        with worker.session_factory() as db:
-            removed_parser_temp_directories = prune_stale_parser_temp(
-                settings.parser_temp_root,
-                operation_is_live=lambda operation_id: parser_operation_has_live_job(
-                    db, operation_id=operation_id
-                ),
-            )
+        process_executor = worker.process_executor
+        if process_executor is None:
+            # justify-defect: create_worker always equips the background lane.
+            raise AssertionError("background worker has no child process executor")
+        removed_parser_temp_directories = process_executor.prune_stale_parser_temp(
+            settings.parser_temp_root,
+            worker_id=worker.worker_id,
+        )
         logger.info(
             "parser_temp_startup_pruned",
             removed_directories=removed_parser_temp_directories,

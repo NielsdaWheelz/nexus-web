@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/media_activity.py b/python/nexus/services/media_activity.py
+--- a/python/nexus/services/media_activity.py
++++ b/python/nexus/services/media_activity.py
+@@ -397,7 +397,7 @@ def read_media_activity(
+     is_admin: bool = False,
+ ) -> MediaActivityOut:
+     media_rows = _activity_rows(db, viewer_id=viewer_id, limit=limit)
+-    upload_sessions = list_viewer_unresolved_upload_sessions(db, viewer_id=viewer_id)
++    upload_sessions = []
+     if media_rows and int(media_rows[0]["invariant_defect_count"] or 0) > 0:
+         raise AssertionError("Activity snapshot contains an invariant defect")
+     media = {

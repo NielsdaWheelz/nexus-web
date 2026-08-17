@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
-from nexus.config import get_settings
+from nexus.config import clear_settings_cache, get_settings
 from nexus.db.session import create_session_factory
 from nexus.jobs.registry import get_task_contract_digest
 from nexus.jobs.worker import JobWorker
@@ -240,3 +240,43 @@ def test_worker_health_binds_live_process_release_contract_and_database(
     with pytest.raises(WorkerHeartbeatError) as caught:
         check_worker_health(lane="interactive", heartbeat_path=heartbeat_path)
     assert caught.value.code == "database_not_ready"
+
+
+def test_background_worker_health_revalidates_the_live_cgroup_contract(
+    runtime_identity_file: tuple[Path, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del runtime_identity_file
+    heartbeat_path = tmp_path / "background-heartbeat.json"
+    identity = get_runtime_identity()
+    WorkerHeartbeatPublisher(
+        lane="background",
+        allowed_job_kinds=expected_job_kinds("background"),
+        identity=identity,
+        task_contract_digest=get_task_contract_digest(),
+        heartbeat_path=heartbeat_path,
+        pid=os.getpid(),
+    ).publish()
+
+    memberships = [
+        line.removeprefix("0::")
+        for line in Path("/proc/self/cgroup").read_text(encoding="ascii").splitlines()
+        if line.startswith("0::/")
+    ]
+    assert len(memberships) == 1
+    cgroup_root = tmp_path / "cgroup"
+    cgroup_directory = cgroup_root / memberships[0].lstrip("/")
+    cgroup_directory.mkdir(parents=True)
+    (cgroup_directory / "cgroup.controllers").write_text("memory\n", encoding="ascii")
+    (cgroup_directory / "memory.max").write_text("1\n", encoding="ascii")
+    (cgroup_directory / "memory.oom.group").write_text("0\n", encoding="ascii")
+    (cgroup_directory / "memory.events").write_text("oom_kill 0\n", encoding="ascii")
+    monkeypatch.setenv("BACKGROUND_PROCESS_CGROUP_ROOT", str(cgroup_root))
+    clear_settings_cache()
+    try:
+        with pytest.raises(WorkerHeartbeatError) as caught:
+            check_worker_health(lane="background", heartbeat_path=heartbeat_path)
+        assert caught.value.code == "cgroup_not_ready"
+    finally:
+        clear_settings_cache()

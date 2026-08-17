@@ -121,7 +121,6 @@ function itemLabel(item: AddItem): string {
     case "Submitting":
     case "Rejected":
     case "AcceptanceUnresolved":
-    case "AcceptedUncertain":
       return item.intent.source.kind === "Url"
         ? item.intent.source.url
         : item.intent.source.file.name;
@@ -141,7 +140,6 @@ function isFileItem(item: AddItem): boolean {
     case "Submitting":
     case "Rejected":
     case "AcceptanceUnresolved":
-    case "AcceptedUncertain":
       return item.intent.source.kind === "File";
     case "Accepted":
       return item.source.kind === "File";
@@ -150,6 +148,7 @@ function isFileItem(item: AddItem): boolean {
 
 function acceptedStatus(item: Extract<AddItem, { kind: "Accepted" }>): string {
   const prefix = item.result.duplicate ? "Already in Nexus" : "Saved";
+  if (!("processingStatus" in item.result)) return prefix;
   if (item.result.sourceAttemptStatus === "failed") {
     return `${prefix} · processing failed`;
   }
@@ -171,13 +170,13 @@ function itemStatus(item: AddItem): string {
     case "Draft":
       return "Ready to add";
     case "Submitting":
-      return item.intent.source.kind === "File" ? "Uploading…" : "Saving…";
+      return item.intent.source.kind === "File"
+        ? `${item.uploadPhase}…`
+        : "Saving…";
     case "Rejected":
       return "Not added";
     case "AcceptanceUnresolved":
       return "Acceptance status unknown";
-    case "AcceptedUncertain":
-      return "Saved · status unknown";
     case "Accepted":
       return acceptedStatus(item);
   }
@@ -188,7 +187,6 @@ function feedbackForItem(item: AddItem) {
     case "Invalid":
     case "Rejected":
     case "AcceptanceUnresolved":
-    case "AcceptedUncertain":
       return item.feedback;
     case "Draft":
     case "Submitting":
@@ -243,6 +241,23 @@ function projectBulkLibraries(
 function mutationLabel(session: AddContentSessionController): string {
   const mutation = session.state.mutation;
   if (mutation.kind === "Idle") return "";
+  const foregroundUploadPhases = session.state.items.flatMap((item) => {
+    if (
+      item.kind !== "Submitting" ||
+      item.intent.source.kind !== "File"
+    ) {
+      return [];
+    }
+    return [item.uploadPhase];
+  });
+  if (
+    ((mutation.operation.kind === "Submit" &&
+      mutation.operation.itemIds.length === 1) ||
+      mutation.operation.kind === "ReconcileAcceptance") &&
+    foregroundUploadPhases.length === 1
+  ) {
+    return `${foregroundUploadPhases[0]}…`;
+  }
   switch (mutation.operation.kind) {
     case "Submit":
       return `Adding ${mutation.operation.itemIds.length} ${mutation.operation.itemIds.length === 1 ? "item" : "items"}…`;
@@ -296,8 +311,7 @@ function liveStatus(session: AddContentSessionController): string {
   const ready = draftItems(state).length;
   const accepted = settledAcceptedItems(state).length;
   const unknown = state.items.filter(
-    (item) =>
-      item.kind === "AcceptanceUnresolved" || item.kind === "AcceptedUncertain",
+    (item) => item.kind === "AcceptanceUnresolved",
   ).length;
   const attention = state.items.filter(
     (item) => item.kind === "Rejected" || item.kind === "Invalid",
@@ -711,11 +725,7 @@ export default function AddPanel({
                     ? `${id}-${item.id}-feedback`
                     : undefined;
                   const mediaId =
-                    item.kind === "Accepted"
-                      ? item.result.mediaId
-                      : item.kind === "AcceptedUncertain"
-                        ? item.mediaId
-                        : null;
+                    item.kind === "Accepted" ? item.result.mediaId : null;
                   return (
                     <article
                       key={item.id}
@@ -741,6 +751,7 @@ export default function AddPanel({
                           {state.mutation.kind === "Running" &&
                           state.mutation.operation.kind ===
                             "ReconcileAcceptance" &&
+                          item.kind === "AcceptanceUnresolved" &&
                           state.mutation.operation.itemId === item.id
                             ? "Checking…"
                             : itemStatus(item)}
@@ -794,8 +805,7 @@ export default function AddPanel({
                             Restage
                           </Button>
                         ) : null}
-                        {item.kind === "AcceptanceUnresolved" ||
-                        item.kind === "AcceptedUncertain" ? (
+                        {item.kind === "AcceptanceUnresolved" ? (
                           <Button
                             variant="secondary"
                             size="sm"
@@ -860,8 +870,7 @@ export default function AddPanel({
                         {item.kind === "Invalid" ||
                         item.kind === "Draft" ||
                         item.kind === "Rejected" ||
-                        item.kind === "AcceptanceUnresolved" ||
-                        item.kind === "AcceptedUncertain" ? (
+                        item.kind === "AcceptanceUnresolved" ? (
                           <Button
                             variant="ghost"
                             size="sm"

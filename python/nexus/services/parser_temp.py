@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import re
 import shutil
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -16,6 +17,20 @@ from nexus.storage.client import StorageClientBase, StorageError
 
 class StorageObjectSizeMismatch(AssertionError):
     pass
+
+
+class StorageObjectDigestMismatch(AssertionError):
+    """The immutable object bytes do not match their persisted source identity."""
+
+
+_SHA256_HEX_RE = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def require_source_sha256(value: str) -> str:
+    """Return one canonical persisted SHA-256 or fail before a parser opens bytes."""
+    if not _SHA256_HEX_RE.fullmatch(value):
+        raise ValueError("expected source SHA-256 must be a lowercase 64-character hex digest")
+    return value
 
 
 @contextmanager
@@ -50,10 +65,12 @@ def stream_storage_object_to_file(
     storage_path: str,
     destination: Path,
     expected_size_bytes: int,
+    expected_source_sha256: str,
 ) -> str:
-    """Materialize exactly the persisted byte length and return its SHA-256."""
+    """Materialize exactly one persisted source object and verify its SHA-256."""
     if expected_size_bytes < 0:
         raise ValueError("expected storage object size cannot be negative")
+    expected_source_sha256 = require_source_sha256(expected_source_sha256)
     digest = hashlib.sha256()
     streamed_size_bytes = 0
     try:
@@ -76,7 +93,13 @@ def stream_storage_object_to_file(
     except Exception:
         destination.unlink(missing_ok=True)
         raise
-    return digest.hexdigest()
+    actual_source_sha256 = digest.hexdigest()
+    if actual_source_sha256 != expected_source_sha256:
+        destination.unlink(missing_ok=True)
+        raise StorageObjectDigestMismatch(
+            "storage object SHA-256 differs from persisted source identity"
+        )
+    return actual_source_sha256
 
 
 def prune_stale_parser_temp(

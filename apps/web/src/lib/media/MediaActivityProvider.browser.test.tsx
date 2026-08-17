@@ -12,6 +12,7 @@ import { uploadIngestFile } from "@/lib/media/ingestionClient";
 
 const UPLOAD_MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const UPLOAD_ATTEMPT_ID = "22222222-2222-4222-8222-222222222222";
+const UPLOAD_SESSION_HANDLE = "nup1.session.signature";
 
 function activitySnapshot(needsAttentionCount: number, activeCount: number) {
   return {
@@ -294,7 +295,7 @@ describe("MediaActivityProvider convergence", () => {
     otherTab.close();
   });
 
-  it("publishes durable upload-init acceptance before the signed upload settles", async () => {
+  it("keeps foreground upload work out of Activity until publication", async () => {
     const signedUpload = deferred<Response>();
     let activityReads = 0;
     let signedUploadStarted = false;
@@ -305,22 +306,20 @@ describe("MediaActivityProvider convergence", () => {
         if (url.pathname === "/api/media/activity") {
           activityReads += 1;
           return jsonResponse(
-            activityReads === 1
-              ? activitySnapshot(0, 0)
-              : activitySnapshot(0, 1),
+            activitySnapshot(0, 0),
           );
         }
-        if (url.pathname === "/api/media/upload/init") {
+        if (url.pathname === "/api/media/uploads") {
           return jsonResponse({
             data: {
-              media_id: UPLOAD_MEDIA_ID,
-              source_attempt_id: UPLOAD_ATTEMPT_ID,
-              source_type: "upload",
-              source_attempt_status: "accepted",
-              idempotency_outcome: "created",
-              processing_status: "pending",
-              ingest_enqueued: false,
+              kind: "UploadRequired",
+              session_handle: UPLOAD_SESSION_HANDLE,
+              generation: 1,
+              method: "PUT",
               upload_url: "/signed-upload",
+              required_headers: { "Content-Type": "application/pdf" },
+              expires_at: new Date(Date.now() + 300_000).toISOString(),
+              idempotency_outcome: "Created",
             },
           });
         }
@@ -328,17 +327,17 @@ describe("MediaActivityProvider convergence", () => {
           signedUploadStarted = true;
           return signedUpload.promise;
         }
-        if (url.pathname === `/api/media/${UPLOAD_MEDIA_ID}/ingest`) {
+        if (
+          url.pathname ===
+          `/api/media/uploads/${UPLOAD_SESSION_HANDLE}/confirm`
+        ) {
           return jsonResponse({
             data: {
+              kind: "Published",
+              session_handle: UPLOAD_SESSION_HANDLE,
               media_id: UPLOAD_MEDIA_ID,
               source_attempt_id: UPLOAD_ATTEMPT_ID,
-              source_type: "upload",
-              source_attempt_status: "queued",
-              idempotency_outcome: "created",
-              processing_status: "pending",
-              ingest_enqueued: true,
-              duplicate: false,
+              idempotency_outcome: "Created",
             },
           });
         }
@@ -357,19 +356,22 @@ describe("MediaActivityProvider convergence", () => {
     });
     await waitFor(() => expect(signedUploadStarted).toBe(true));
 
-    try {
-      await waitFor(
-        () =>
-          expect(
-            screen.getByRole("status", { name: "Activity snapshot" }),
-          ).toHaveTextContent("0 attention, 1 active"),
-        { timeout: 750 },
-      );
-    } finally {
-      signedUpload.resolve(new Response(null, { status: 200 }));
-      await upload;
-    }
-    expect(activityReads).toBe(3);
+    expect(
+      screen.getByRole("status", { name: "Activity snapshot" }),
+    ).toHaveTextContent("0 attention, 0 active");
+    expect(activityReads).toBe(1);
+
+    signedUpload.resolve(new Response(null, { status: 200 }));
+    await expect(upload).resolves.toEqual({
+      kind: "Published",
+      result: {
+        mediaId: UPLOAD_MEDIA_ID,
+        sourceAttemptId: UPLOAD_ATTEMPT_ID,
+        idempotencyOutcome: "created",
+        duplicate: false,
+      },
+    });
+    await waitFor(() => expect(activityReads).toBe(2));
   });
 
   it("polls known active work while closed and stops as soon as it completes", async () => {

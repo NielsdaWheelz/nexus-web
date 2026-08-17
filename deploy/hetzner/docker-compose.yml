@@ -104,6 +104,7 @@ services:
 
   worker-background:
     image: ${WORKER_IMAGE:?set an immutable candidate digest}
+    init: true
     restart: unless-stopped
     mem_reservation: 128m
     mem_limit: 448m
@@ -115,10 +116,14 @@ services:
       WORKER_LANE: background
       DATABASE_STATEMENT_TIMEOUT_MS: "300000"
       DATABASE_IDLE_IN_TX_TIMEOUT_MS: "0"
+      BACKGROUND_PROCESS_CGROUP_ROOT: /sys/fs/cgroup
+      BACKGROUND_PROCESS_MEMORY_LIMIT_BYTES: "469762048"
+      BACKGROUND_PROCESS_WALL_TIMEOUT_SECONDS: "900"
+      BACKGROUND_PROCESS_TERM_GRACE_SECONDS: "5"
+      BACKGROUND_PROCESS_RESULT_MAX_BYTES: "1048576"
+      BACKGROUND_PROCESS_OOM_SCORE_ADJ: "750"
     depends_on:
       postgres:
-        condition: service_healthy
-      api:
         condition: service_healthy
     volumes:
       - /var/lib/nexus/parser-tmp:/var/lib/nexus/parser-tmp

@@ -192,17 +192,6 @@ def _compute_cleanup_not_before(db: Session, media_id: UUID, armed: list[JobRow]
     now = _now_utc(db)
     # Floor: always wait at least the object-store clock-skew grace.
     candidates = [now + grace]
-    for (signed_expiry,) in db.execute(
-        text(
-            """
-            SELECT signed_upload_expires_at
-            FROM media_source_attempts
-            WHERE media_id = :m AND signed_upload_expires_at IS NOT NULL
-            """
-        ),
-        {"m": media_id},
-    ).fetchall():
-        candidates.append(signed_expiry + grace)
     for writer in armed:
         wmlu = writer.payload.get("writeMayLandUntil")
         if isinstance(wmlu, str):

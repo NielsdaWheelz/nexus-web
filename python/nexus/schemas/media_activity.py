@@ -47,7 +47,8 @@ MediaActivityState = Annotated[
 ]
 
 
-class MediaActivityItemOut(BaseModel):
+class MediaActivityMediaItemOut(BaseModel):
+    kind: Literal["Media"] = "Media"
     media_id: UUID
     title: str
     media_kind: Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
@@ -62,6 +63,62 @@ class MediaActivityItemOut(BaseModel):
     capabilities: MediaActivityCapabilitiesOut
 
     model_config = ConfigDict(extra="forbid")
+
+
+class MediaUploadSessionCapabilitiesOut(BaseModel):
+    can_retry_upload: bool
+    can_remove: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaUploadSessionTransportFailureOut(BaseModel):
+    kind: Literal["TransportFailed"] = "TransportFailed"
+    failure_kind: Literal["Network", "Timeout", "HttpRejected", "Aborted"]
+    http_status: Presence[int]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaUploadSessionCapabilityExpiredOut(BaseModel):
+    kind: Literal["CapabilityExpired"] = "CapabilityExpired"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaUploadSessionVerificationFailureOut(BaseModel):
+    kind: Literal["VerificationFailed"] = "VerificationFailed"
+    failure_code: NonemptyString
+
+    model_config = ConfigDict(extra="forbid")
+
+
+MediaUploadSessionAttention = Annotated[
+    MediaUploadSessionTransportFailureOut
+    | MediaUploadSessionCapabilityExpiredOut
+    | MediaUploadSessionVerificationFailureOut,
+    Field(discriminator="kind"),
+]
+
+
+class MediaActivityUploadSessionItemOut(BaseModel):
+    kind: Literal["UploadSession"] = "UploadSession"
+    session_handle: NonemptyString
+    filename: NonemptyString
+    document_kind: Literal["Pdf", "Epub"]
+    expected_size_bytes: int = Field(gt=0)
+    attention: MediaUploadSessionAttention
+    created_at: datetime
+    updated_at: datetime
+    capabilities: MediaUploadSessionCapabilitiesOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+MediaActivityItemOut = Annotated[
+    MediaActivityMediaItemOut | MediaActivityUploadSessionItemOut,
+    Field(discriminator="kind"),
+]
 
 
 class MediaActivityOut(BaseModel):

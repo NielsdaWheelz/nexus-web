@@ -11,21 +11,64 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.schemas.media import MediaOut
+from nexus.schemas.media import CapabilityExpired, MediaOut, TransportFailed, VerificationFailed
 from nexus.schemas.media_activity import (
     MediaActivityActiveStateOut,
     MediaActivityCapabilitiesOut,
-    MediaActivityItemOut,
+    MediaActivityMediaItemOut,
     MediaActivityNeedsAttentionStateOut,
     MediaActivityOut,
+    MediaActivityUploadSessionItemOut,
+    MediaUploadSessionCapabilitiesOut,
+    MediaUploadSessionCapabilityExpiredOut,
+    MediaUploadSessionTransportFailureOut,
+    MediaUploadSessionVerificationFailureOut,
 )
 from nexus.schemas.presence import Absent, Present, absent, present
 from nexus.services.media import list_media_for_viewer_by_ids
+from nexus.services.media_upload_sessions import (
+    UploadSessionOwnerProjection,
+    list_viewer_unresolved_upload_sessions,
+)
 
 WORKER_INTERRUPTED_CODE = "E_WORKER_INTERRUPTED"
 
 ActivityStage = Literal["Validate", "Extract", "Finalize", "Index"]
 WaitingReason = Literal["Queue", "Capacity", "RetryBackoff"]
+
+
+def _upload_activity_item(
+    projection: UploadSessionOwnerProjection,
+) -> MediaActivityUploadSessionItemOut:
+    failure = projection.failure
+    if isinstance(failure, VerificationFailed):
+        attention = MediaUploadSessionVerificationFailureOut(
+            failure_code=failure.code,
+        )
+    elif isinstance(failure, TransportFailed):
+        reason = failure.reason
+        attention = MediaUploadSessionTransportFailureOut(
+            failure_kind=reason.kind,
+            http_status=(present(reason.status) if reason.kind == "HttpRejected" else absent()),
+        )
+    elif isinstance(failure, CapabilityExpired):
+        attention = MediaUploadSessionCapabilityExpiredOut()
+    else:
+        raise AssertionError("unknown upload-session failure projection")
+
+    return MediaActivityUploadSessionItemOut(
+        session_handle=projection.session_handle,
+        filename=projection.filename,
+        document_kind=projection.kind,
+        expected_size_bytes=projection.expected_size_bytes,
+        attention=attention,
+        created_at=projection.created_at,
+        updated_at=projection.updated_at,
+        capabilities=MediaUploadSessionCapabilitiesOut(
+            can_retry_upload=projection.capabilities.can_retry_upload,
+            can_remove=projection.capabilities.can_remove,
+        ),
+    )
 
 
 def _activity_rows(db: Session, *, viewer_id: UUID, limit: int) -> list[RowMapping]:
@@ -265,7 +308,7 @@ def _queue_fields(
     )
 
 
-def _activity_item(row: RowMapping, media: MediaOut) -> MediaActivityItemOut:
+def _activity_item(row: RowMapping, media: MediaOut) -> MediaActivityMediaItemOut:
     if row["source_job_id"] is not None and (
         row["source_job_kind"] != "ingest_media_source" or not row["source_job_exact"]
     ):
@@ -325,7 +368,7 @@ def _activity_item(row: RowMapping, media: MediaOut) -> MediaActivityItemOut:
             status_code=_status_code(row, job_prefix=queue_prefix),
         )
 
-    return MediaActivityItemOut(
+    return MediaActivityMediaItemOut(
         media_id=media.id,
         title=media.title,
         media_kind=cast(
@@ -356,34 +399,58 @@ def read_media_activity(
     limit: int,
     is_admin: bool = False,
 ) -> MediaActivityOut:
-    rows = _activity_rows(db, viewer_id=viewer_id, limit=limit)
-    if not rows:
-        return MediaActivityOut(
-            needs_attention_count=0,
-            active_count=0,
-            has_more=False,
-            items=[],
-        )
-    if int(rows[0]["invariant_defect_count"] or 0) > 0:
+    media_rows = _activity_rows(db, viewer_id=viewer_id, limit=limit)
+    upload_sessions = list_viewer_unresolved_upload_sessions(db, viewer_id=viewer_id)
+    if media_rows and int(media_rows[0]["invariant_defect_count"] or 0) > 0:
         raise AssertionError("Activity snapshot contains an invariant defect")
     media = {
         item.id: item
         for item in list_media_for_viewer_by_ids(
             db,
             viewer_id,
-            [UUID(str(row["media_id"])) for row in rows],
+            [UUID(str(row["media_id"])) for row in media_rows],
             is_admin=is_admin,
         )
     }
-    expected_media_ids = [UUID(str(row["media_id"])) for row in rows]
+    expected_media_ids = [UUID(str(row["media_id"])) for row in media_rows]
     missing_media_ids = [media_id for media_id in expected_media_ids if media_id not in media]
     if missing_media_ids:
         raise AssertionError("Activity media hydration lost viewer-visible rows")
-    items = [_activity_item(row, media[UUID(str(row["media_id"]))]) for row in rows]
-    first = rows[0]
+
+    ordered: list[
+        tuple[
+            tuple[int, float, str],
+            MediaActivityMediaItemOut | MediaActivityUploadSessionItemOut,
+        ]
+    ] = []
+    for row in media_rows:
+        item = _activity_item(row, media[UUID(str(row["media_id"]))])
+        updated_at = row["lifecycle_updated_at"]
+        if row["classification"] == "NeedsAttention":
+            key = (0, updated_at.timestamp(), str(row["source_attempt_id"]))
+        else:
+            key = (1, -updated_at.timestamp(), str(row["source_attempt_id"]))
+        ordered.append((key, item))
+    for upload_session in upload_sessions:
+        ordered.append(
+            (
+                (
+                    0,
+                    upload_session.attention_at.timestamp(),
+                    str(upload_session.session_id),
+                ),
+                _upload_activity_item(upload_session),
+            )
+        )
+    ordered.sort(key=lambda entry: entry[0])
+
+    media_needs_attention = int(media_rows[0]["needs_attention_count"]) if media_rows else 0
+    upload_needs_attention = len(upload_sessions)
+    active_count = int(media_rows[0]["active_count"]) if media_rows else 0
+    total = media_needs_attention + upload_needs_attention + active_count
     return MediaActivityOut(
-        needs_attention_count=int(first["needs_attention_count"]),
-        active_count=int(first["active_count"]),
-        has_more=bool(first["has_more"]),
-        items=items,
+        needs_attention_count=media_needs_attention + upload_needs_attention,
+        active_count=active_count,
+        has_more=total > limit,
+        items=[item for _key, item in ordered[:limit]],
     )

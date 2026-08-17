@@ -16,7 +16,6 @@ from nexus.services.content_indexing import (
     MediaContentReindexIntent,
     ensure_media_content_reindex_job,
 )
-from nexus.services.media_deletion import delete_abandoned_document_media
 from nexus.services.media_source_ingest import ensure_stale_source_attempt_job
 
 _BATCH_LIMIT = 25
@@ -28,27 +27,6 @@ def reconcile_stale_ingest_media_job(
     settings = get_settings()
     discovery = get_session_factory()()
     try:
-        pending_upload_ids = list(
-            discovery.scalars(
-                text(
-                    """
-                    SELECT m.id
-                    FROM media m
-                    JOIN media_file mf ON mf.media_id = m.id
-                    WHERE m.processing_status = 'pending'
-                      AND m.kind IN ('pdf', 'epub')
-                      AND m.created_at
-                          < now() - (CAST(:upload_seconds AS integer) * interval '1 second')
-                    ORDER BY m.created_at ASC, m.id ASC
-                    LIMIT :limit
-                    """
-                ),
-                {
-                    "upload_seconds": int(settings.signed_url_expiry_s),
-                    "limit": _BATCH_LIMIT,
-                },
-            )
-        )
         source_rows = (
             discovery.execute(
                 text(
@@ -148,19 +126,6 @@ def reconcile_stale_ingest_media_job(
     finally:
         discovery.close()
 
-    pending_upload_deleted = 0
-    for media_id in pending_upload_ids:
-        db = get_session_factory()()
-        try:
-            retry_serializable(
-                db,
-                "reconcile_abandoned_upload",
-                partial(_delete_pending_upload, db, UUID(str(media_id))),
-            )
-            pending_upload_deleted += 1
-        finally:
-            db.close()
-
     source_enqueued = 0
     source_deduplicated = 0
     source_suspended = 0
@@ -238,7 +203,6 @@ def reconcile_stale_ingest_media_job(
             semantic_deduplicated += 1
 
     return {
-        "pending_upload_deleted": pending_upload_deleted,
         "source_scanned": len(source_rows),
         "source_enqueued": source_enqueued,
         "source_deduplicated": source_deduplicated,
@@ -252,11 +216,6 @@ def reconcile_stale_ingest_media_job(
         "semantic_enqueued": semantic_enqueued,
         "semantic_deduplicated": semantic_deduplicated,
     }
-
-
-def _delete_pending_upload(db: Session, media_id: UUID) -> None:
-    delete_abandoned_document_media(db, media_id)
-    db.commit()
 
 
 def _ensure_source(

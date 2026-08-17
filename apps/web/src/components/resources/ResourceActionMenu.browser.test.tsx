@@ -321,7 +321,10 @@ function installBff(options: BffOptions = {}): Bff {
                 can_retry: false,
                 can_refresh_source: false,
                 can_retry_metadata: false,
+                can_repair_source: false,
+                can_repair_search: false,
                 can_edit_authors: true,
+                can_read_embeds: false,
               },
             },
           });

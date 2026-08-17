@@ -7,6 +7,8 @@ import {
   Circle,
   ExternalLink,
   RefreshCw,
+  Trash2,
+  Upload,
   Wrench,
 } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
@@ -14,11 +16,16 @@ import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { formatDisplayDate } from "@/lib/display/format";
 import type {
-  MediaActivityItem,
+  MediaActivityMediaItem,
   MediaActivityStage,
+  MediaActivityUploadSessionItem,
   MediaRepairScope,
 } from "@/lib/media/activityClient";
 import { useMediaActivity } from "@/lib/media/MediaActivityProvider";
+import {
+  getFileUploadKind,
+  isMediaIngestionDefect,
+} from "@/lib/media/ingestionClient";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -34,7 +41,7 @@ const PIPELINE_STEPS = ["Upload", "Validate", "Extract", "Index"] as const;
 type PipelineStep = (typeof PIPELINE_STEPS)[number];
 type PipelineStepState = "Complete" | "Current" | "Upcoming" | "Attention";
 
-function activityStatusLabel(item: MediaActivityItem): string {
+function activityStatusLabel(item: MediaActivityMediaItem): string {
   return item.state.kind === "NeedsAttention"
     ? "Needs attention"
     : item.state.status;
@@ -68,7 +75,7 @@ function activePipelineStep(stage: MediaActivityStage): PipelineStep {
 }
 
 function pipelineStepState(
-  item: MediaActivityItem,
+  item: MediaActivityMediaItem,
   step: PipelineStep,
 ): PipelineStepState {
   if (step === "Upload") return "Complete";
@@ -80,7 +87,7 @@ function pipelineStepState(
   return item.state.kind === "NeedsAttention" ? "Attention" : "Current";
 }
 
-function Pipeline({ item }: { item: MediaActivityItem }) {
+function Pipeline({ item }: { item: MediaActivityMediaItem }) {
   return (
     <ol className={styles.pipeline} aria-label="Upload, validate, extract, index">
       {PIPELINE_STEPS.map((step) => {
@@ -88,6 +95,7 @@ function Pipeline({ item }: { item: MediaActivityItem }) {
         return (
           <li
             key={step}
+            aria-label={`${step} step`}
             data-state={state}
             aria-current={state === "Current" || state === "Attention" ? "step" : undefined}
           >
@@ -106,7 +114,7 @@ function ActivityDetails({
   item,
   updatedAt,
 }: {
-  item: MediaActivityItem;
+  item: MediaActivityMediaItem;
   updatedAt: string;
 }) {
   const code =
@@ -164,14 +172,14 @@ function ActivityDetails({
   );
 }
 
-function ActivityRow({
+function MediaActivityRow({
   item,
   repairing,
   onOpen,
   onRepair,
   updatedAt,
 }: {
-  item: MediaActivityItem;
+  item: MediaActivityMediaItem;
   repairing: MediaRepairScope | null;
   onOpen(): void;
   onRepair(scope: MediaRepairScope): void;
@@ -244,6 +252,185 @@ function ActivityRow({
   );
 }
 
+function uploadAttentionCopy(item: MediaActivityUploadSessionItem): string {
+  switch (item.attention.kind) {
+    case "TransportFailed":
+      return item.attention.failureKind === "HttpRejected"
+        ? "The storage service rejected this upload. Choose the original file to retry."
+        : "The upload did not finish. Choose the original file to retry.";
+    case "CapabilityExpired":
+      return "The upload link expired. Choose the original file to retry.";
+    case "VerificationFailed":
+      switch (item.attention.failureCode) {
+        case "E_FILE_TOO_LARGE":
+          return "This file exceeds the import limit. Remove it and start a new import with a smaller file.";
+        case "E_INVALID_FILE_TYPE":
+          return "This file is not a valid PDF or EPUB. Remove it and start a new import.";
+        default:
+          return "Nexus could not verify the uploaded bytes. Remove this import and start a new one.";
+      }
+  }
+}
+
+function UploadSessionRow({
+  item,
+  onRetry,
+  onRemove,
+  updatedAt,
+}: {
+  item: MediaActivityUploadSessionItem;
+  onRetry(file: File): Promise<void>;
+  onRemove(): Promise<void>;
+  updatedAt: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [working, setWorking] = useState<"Retry" | "Remove" | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [defect, setDefect] = useState<unknown | null>(null);
+  const attentionStep =
+    item.attention.kind === "VerificationFailed" ? "Validate" : "Upload";
+  const selectFile = async (file: File) => {
+    if (
+      file.name !== item.filename ||
+      file.size !== item.expectedSizeBytes ||
+      getFileUploadKind(file) !== item.documentKind
+    ) {
+      setFailure(
+        `Choose ${item.filename} (${item.expectedSizeBytes} bytes), or return to Add to start a new import.`,
+      );
+      return;
+    }
+    setWorking("Retry");
+    setFailure(null);
+    try {
+      await onRetry(file);
+    } catch (error) {
+      if (isMediaIngestionDefect(error)) setDefect(error);
+      else setFailure("The upload could not be retried. Check your connection and try again.");
+    } finally {
+      setWorking(null);
+    }
+  };
+  const remove = async () => {
+    if (!window.confirm(`Remove the unfinished import “${item.filename}”?`)) return;
+    setWorking("Remove");
+    setFailure(null);
+    try {
+      await onRemove();
+    } catch (error) {
+      if (isMediaIngestionDefect(error)) setDefect(error);
+      else setFailure("The unfinished import could not be removed. Refresh and try again.");
+    } finally {
+      setWorking(null);
+    }
+  };
+  if (defect !== null) throw defect;
+  return (
+    <li>
+      <article
+        className={styles.card}
+        data-kind="NeedsAttention"
+        aria-label={`${item.filename} upload`}
+      >
+        <header className={styles.cardHeader}>
+          <div>
+            <p className={styles.kind}>{item.documentKind.toUpperCase()} upload</p>
+            <h3>{item.filename}</h3>
+          </div>
+          <span className={styles.status}>Needs attention</span>
+        </header>
+        <ol className={styles.pipeline} aria-label="Upload, validate, extract, index">
+          {PIPELINE_STEPS.map((step) => {
+            const stepIndex = PIPELINE_STEPS.indexOf(step);
+            const attentionIndex = PIPELINE_STEPS.indexOf(attentionStep);
+            const state =
+              stepIndex < attentionIndex
+                ? "Complete"
+                : stepIndex === attentionIndex
+                  ? "Attention"
+                  : "Upcoming";
+            return (
+              <li
+                key={step}
+                aria-label={`${step} step`}
+                data-state={state}
+                aria-current={state === "Attention" ? "step" : undefined}
+              >
+                <span className={styles.stepMark} aria-hidden="true">
+                  {state === "Complete" ? <Check size={11} /> : <Circle size={8} />}
+                </span>
+                <span>{step}</span>
+              </li>
+            );
+          })}
+        </ol>
+        <div className={styles.facts}>
+          <strong>{uploadAttentionCopy(item)}</strong>
+          {failure === null ? null : <span role="alert">{failure}</span>}
+        </div>
+        <div className={styles.actions}>
+          {item.capabilities.canRetryUpload ? (
+            <>
+              <input
+                ref={inputRef}
+                className={styles.srOnly}
+                type="file"
+                aria-label={`Choose ${item.filename} to retry upload`}
+                accept=".pdf,.epub,application/pdf,application/epub+zip"
+                disabled={working !== null}
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  if (file) void selectFile(file);
+                }}
+              />
+              <button
+                type="button"
+                className={styles.actionButton}
+                disabled={working !== null}
+                onClick={() => inputRef.current?.click()}
+              >
+                <Upload size={15} aria-hidden="true" />
+                {working === "Retry" ? "Uploading…" : "Retry upload"}
+              </button>
+            </>
+          ) : null}
+          {item.capabilities.canRemove ? (
+            <button
+              type="button"
+              className={styles.actionButton}
+              disabled={working !== null}
+              onClick={() => void remove()}
+            >
+              <Trash2 size={15} aria-hidden="true" />
+              {working === "Remove" ? "Removing…" : "Remove"}
+            </button>
+          ) : null}
+        </div>
+        <details className={styles.details}>
+          <summary>Details</summary>
+          <dl>
+            <div>
+              <dt>Expected size</dt>
+              <dd>{item.expectedSizeBytes} bytes</dd>
+            </div>
+            {item.attention.kind === "VerificationFailed" ? (
+              <div>
+                <dt>Code</dt>
+                <dd><code>{item.attention.failureCode}</code></dd>
+              </div>
+            ) : null}
+            <div>
+              <dt>Updated</dt>
+              <dd><time dateTime={item.updatedAt}>{updatedAt}</time></dd>
+            </div>
+          </dl>
+        </details>
+      </article>
+    </li>
+  );
+}
+
 export default function MediaActivityPage({
   onBack,
   onOpenMedia,
@@ -267,6 +454,8 @@ export default function MediaActivityPage({
     endActivityOpening,
     refreshActivity,
     repairActivity,
+    retryUploadSession,
+    removeUploadSession,
   } = useMediaActivity();
   const display = useRenderEnvironment();
   const handleUnauthenticated = useUnauthenticatedApiHandler();
@@ -402,23 +591,33 @@ export default function MediaActivityPage({
             </p>
           ) : null}
           <ul className={styles.list}>
-            {snapshot.items.map((item) => (
-              <ActivityRow
-                key={item.mediaId}
-                item={item}
-                repairing={
-                  repairing?.mediaId === item.mediaId ? repairing.scope : null
-                }
-                onOpen={() => onOpenMedia(item.mediaId)}
-                onRepair={(scope) => void repair(item.mediaId, scope)}
-                updatedAt={
-                  formatDisplayDate(item.updatedAt, display, {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  }) ?? item.updatedAt
-                }
-              />
-            ))}
+            {snapshot.items.map((item) => {
+              const updatedAt =
+                formatDisplayDate(item.updatedAt, display, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                }) ?? item.updatedAt;
+              return item.kind === "UploadSession" ? (
+                <UploadSessionRow
+                  key={`UploadSession:${item.sessionHandle}`}
+                  item={item}
+                  onRetry={(file) => retryUploadSession(item.sessionHandle, file)}
+                  onRemove={() => removeUploadSession(item.sessionHandle)}
+                  updatedAt={updatedAt}
+                />
+              ) : (
+                <MediaActivityRow
+                  key={`Media:${item.mediaId}`}
+                  item={item}
+                  repairing={
+                    repairing?.mediaId === item.mediaId ? repairing.scope : null
+                  }
+                  onOpen={() => onOpenMedia(item.mediaId)}
+                  onRepair={(scope) => void repair(item.mediaId, scope)}
+                  updatedAt={updatedAt}
+                />
+              );
+            })}
           </ul>
         </>
       )}

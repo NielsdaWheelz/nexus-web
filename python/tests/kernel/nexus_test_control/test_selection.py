@@ -255,13 +255,22 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
         (
             "python/nexus/runtime_health.py",
             {
+                Capability.COMPONENT,
                 Capability.KERNEL_PYTHON,
+                Capability.MIGRATIONS,
                 Capability.SERVICE,
             },
             {
                 "pytest:python/tests/kernel/test_runtime_health.py",
                 "pytest:python/tests/kernel/test_worker_runtime_health.py",
+                "pytest:python/tests/migrations/test_document_import_reliability_migration.py::test_0216_0217_backfill_is_resumable_fail_closed_and_hard_contracts_schema",
+                "pytest:python/tests/service/test_background_worker_process_containment.py::test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child",
+                "pytest:python/tests/service/test_bounded_media_extraction.py",
+                "pytest:python/tests/service/test_ingest_reconciliation_readiness.py",
+                "pytest:python/tests/service/test_media_activity.py::test_activity_projects_only_upload_obligations_with_strict_precedence",
+                "pytest:python/tests/service/test_media_upload_sessions.py",
                 "pytest:python/tests/service/test_runtime_health.py",
+                "vitest:apps/web/src/components/nexus/MediaActivityPage.browser.test.tsx",
             },
         ),
         (

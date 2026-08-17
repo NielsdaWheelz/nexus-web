@@ -2,7 +2,6 @@
 
 import json
 import os
-import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,17 +80,16 @@ def run_node_ingest(
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            start_new_session=True,
         )
 
         try:
             stdout, stderr = proc.communicate(input=input_json, timeout=subprocess_timeout_s)
         except subprocess.TimeoutExpired:
             try:
-                if hasattr(os, "killpg"):
-                    os.killpg(proc.pid, signal.SIGKILL)
-                else:
-                    proc.kill()
+                # This helper deliberately remains in the outer background child's
+                # process group. Its local timeout owns only the direct Node child;
+                # outer containment owns the complete process group.
+                proc.kill()
             except (ProcessLookupError, OSError):
                 # justify-ignore-error: the process already exited before the timeout cleanup.
                 pass

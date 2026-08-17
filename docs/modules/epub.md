@@ -3,10 +3,10 @@
 EPUB has separate owners for original-file lifecycle, extracted structure, and
 private resource assets.
 
-- `media_source_ingest.py`: durable source acceptance and retry/refresh for
-  uploaded EPUBs, remote EPUB URLs, and browser-captured EPUB files.
-- `upload.py`: direct-upload initialization and byte confirmation primitives
-  used by the source owner.
+- `media_upload_sessions.py`: durable direct-upload intent, generation fencing,
+  byte verification, and atomic publication for uploaded EPUBs.
+- `media_source_ingest.py`: durable source processing and retry/refresh after
+  publication, plus remote EPUB URLs and browser-captured EPUB files.
 - `epub_ingest.py` / related reader services: extraction, fragments, TOC,
   navigation, resume data.
 - `epub_find.py`: bounded literal Find over current canonical fragments in one

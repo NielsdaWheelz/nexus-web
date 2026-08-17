@@ -1,0 +1,7 @@
+diff --git a/migrations/alembic/versions/0217_document_import_digest_finalize.py b/migrations/alembic/versions/0217_document_import_digest_finalize.py
+--- a/migrations/alembic/versions/0217_document_import_digest_finalize.py
++++ b/migrations/alembic/versions/0217_document_import_digest_finalize.py
+@@ -202,2 +202,2 @@ def upgrade() -> None:
+-    op.alter_column("media_file", "source_sha256", existing_type=sa.Text(), nullable=False)
++    op.alter_column("media_file", "source_sha256", existing_type=sa.Text(), nullable=True)
+     op.execute("DROP INDEX IF EXISTS idx_media_stale_pending_upload_cleanup")

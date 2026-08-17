@@ -30,12 +30,14 @@ from nexus.services.latex_apparatus import (
     extract_latex_biblatex_apparatus_from_archive,
 )
 from nexus.services.parser_temp import (
+    StorageObjectDigestMismatch,
     nested_utf8_byte_length,
     parser_attempt_directory,
     stream_storage_object_to_file,
     utf8_byte_length,
 )
 from nexus.services.pdf_highlight_geometry import (
+    MAX_EXACT_CODEPOINTS,
     GeometryValidationError,
     canonicalize_geometry,
     validate_exact_length,
@@ -54,6 +56,8 @@ PDF_MAX_PAGES = 10_000
 PDF_APPARATUS_MAX_ITEMS = 2_000
 PDF_APPARATUS_MAX_EDGES = 2_000
 PDF_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
+RESOURCE_LIMIT_ERROR_CODE = "E_RESOURCE_LIMIT"
+SOURCE_INTEGRITY_ERROR_CODE = "E_SOURCE_INTEGRITY"
 
 _PDF_REFERENCE_LINK_Y_TOLERANCE_PT = 5.0
 _PDF_REFERENCE_LINK_X_TOLERANCE_PT = 2.0
@@ -99,6 +103,15 @@ class PdfExtractionResult:
     pdf_creation_date: str | None = None
 
 
+@dataclass
+class _PdfPageTextSnapshot:
+    """The sole page-local PyMuPDF text representation for one extraction pass."""
+
+    plain_text: str
+    blocks: list[tuple[float, float, float, float, str]]
+    lines: list[dict[str, Any]]
+
+
 @dataclass(frozen=True)
 class PdfExtractionError:
     """Deterministic PDF extraction failure."""
@@ -106,6 +119,7 @@ class PdfExtractionError:
     error_code: str = ""
     error_message: str = ""
     terminal: bool = False
+    resource_limit_dimension: Literal["Memory", "Time", "Structure", "Output"] | None = None
 
 
 @dataclass(frozen=True)
@@ -376,6 +390,7 @@ def _extract_with_pymupdf(
         apparatus_scan = _PdfApparatusScan()
         record_progress(0, page_count, "Page")
         for page_num in range(page_count):
+            page = None
             try:
                 page = doc[page_num]
             except (RuntimeError, AttributeError, ValueError):
@@ -387,12 +402,11 @@ def _extract_with_pymupdf(
                 page_rotation = None
                 apparatus_scan.page_heights.append(None)
             else:
+                snapshot: _PdfPageTextSnapshot | None = None
                 try:
-                    _scan_pdf_page_apparatus(apparatus_scan, page, page_num)
-                except _PdfResourceLimitExceeded as exc:
-                    return _pdf_resource_limit_error(str(exc))
-                try:
-                    page_text = str(page.get_text("text") or "")
+                    snapshot = _pdf_page_text_snapshot(page)
+                    _scan_pdf_page_apparatus(apparatus_scan, page, page_num, snapshot)
+                    page_text = snapshot.plain_text
                     try:
                         raw_page_label = page.get_label()
                     except (AttributeError, RuntimeError):
@@ -405,11 +419,19 @@ def _extract_with_pymupdf(
                     page_rect = page.rect
                     page_size = (float(page_rect.width), float(page_rect.height))
                     page_rotation = int(page.rotation or 0)
+                except _PdfResourceLimitExceeded as exc:
+                    return _pdf_resource_limit_error(str(exc))
                 except (RuntimeError, AttributeError, ValueError):
                     page_text = ""
                     page_label = None
                     page_size = None
                     page_rotation = None
+                finally:
+                    # PyMuPDF pages may retain substantial decoded state. Do
+                    # not let a document-wide loop retain page-local snapshots.
+                    if snapshot is not None:
+                        del snapshot
+                    del page
             normalized_page = normalize_pdf_text(page_text)
             if normalized_page:
                 if nonempty_page_count:
@@ -417,10 +439,9 @@ def _extract_with_pymupdf(
                 normalized_text_bytes += utf8_byte_length(normalized_page)
                 nonempty_page_count += 1
             if normalized_text_bytes > PDF_EXTRACTED_TEXT_MAX_BYTES:
-                return PdfExtractionError(
-                    error_code=ApiErrorCode.E_SOURCE_TOO_LARGE.value,
-                    error_message="PDF extracted text exceeds the 32 MiB limit",
-                    terminal=True,
+                return _pdf_resource_limit_error(
+                    "PDF extracted text exceeds the 32 MiB limit",
+                    dimension="Output",
                 )
             normalized_pages.append(normalized_page)
             page_labels.append(page_label)
@@ -484,20 +505,21 @@ def _extract_with_pymupdf(
         doc.close()
 
 
-def _scan_pdf_page_apparatus(scan: _PdfApparatusScan, page, page_index: int) -> None:
+def _scan_pdf_page_apparatus(
+    scan: _PdfApparatusScan,
+    page,
+    page_index: int,
+    snapshot: _PdfPageTextSnapshot,
+) -> None:
     try:
         page_height = float(page.rect.height)
     except (AttributeError, TypeError, ValueError):
         page_height = None
     scan.page_heights.append(page_height)
 
-    try:
-        raw_page_blocks = page.get_text("blocks")
-        if len(raw_page_blocks) > PDF_APPARATUS_MAX_ITEMS:
-            raise _PdfResourceLimitExceeded("PDF page block count exceeds apparatus limit")
-        page_blocks = sorted(raw_page_blocks, key=lambda block: (float(block[1]), float(block[0])))
-    except (RuntimeError, TypeError, ValueError, IndexError):
-        page_blocks = []
+    page_blocks = snapshot.blocks
+    if len(page_blocks) > PDF_APPARATUS_MAX_ITEMS:
+        raise _PdfResourceLimitExceeded("PDF page block count exceeds apparatus limit")
     for block in page_blocks:
         text_value = _normalize_pdf_block_text(str(block[4] or ""))
         if not text_value:
@@ -545,7 +567,7 @@ def _scan_pdf_page_apparatus(scan: _PdfApparatusScan, page, page_index: int) -> 
         if source_rect is None:
             _increment(scan.native_skipped, "missing_source_rect")
             continue
-        exact = _pdf_link_text(page, link.get("from")).strip()
+        exact = _pdf_link_text_from_snapshot(snapshot, source_rect)
         if not exact:
             _increment(scan.native_skipped, "missing_marker_text")
             continue
@@ -571,7 +593,7 @@ def _scan_pdf_page_apparatus(scan: _PdfApparatusScan, page, page_index: int) -> 
         scan.native_links.append(citation_link)
 
     try:
-        lines = _pdf_text_lines(page)
+        lines = snapshot.lines
         if len(lines) > PDF_APPARATUS_MAX_ITEMS:
             raise _PdfResourceLimitExceeded("PDF page line count exceeds apparatus limit")
         body_font_size = _pdf_body_font_size(page, lines)
@@ -884,11 +906,16 @@ def _validate_pdf_apparatus_budget(result: PdfApparatusResult) -> None:
         raise _PdfResourceLimitExceeded("PDF apparatus output exceeds 8 MiB retained-text limit")
 
 
-def _pdf_resource_limit_error(message: str) -> PdfExtractionError:
+def _pdf_resource_limit_error(
+    message: str,
+    *,
+    dimension: Literal["Memory", "Time", "Structure", "Output"] = "Structure",
+) -> PdfExtractionError:
     return PdfExtractionError(
-        error_code=ApiErrorCode.E_SOURCE_TOO_LARGE.value,
+        error_code=RESOURCE_LIMIT_ERROR_CODE,
         error_message=message,
         terminal=True,
+        resource_limit_dimension=dimension,
     )
 
 
@@ -908,14 +935,13 @@ def _extract_pdf_source_package_apparatus(
 
     try:
         source_path = attempt_directory / "source-package.tar"
-        source_package_sha256_hex = stream_storage_object_to_file(
+        stream_storage_object_to_file(
             storage_client,
             storage_path=source_package.storage_path,
             destination=source_path,
             expected_size_bytes=source_package.size_bytes,
+            expected_source_sha256=source_package.sha256_hex,
         )
-        if source_package_sha256_hex != source_package.sha256_hex.lower():
-            raise AssertionError("PDF source package SHA-256 differs from persisted metadata")
     except StorageError as exc:
         return PdfApparatusResult(
             diagnostics={
@@ -1173,9 +1199,53 @@ def _pdf_legal_footnote_marker_item(
     }
 
 
-def _pdf_text_lines(page) -> list[dict[str, Any]]:
-    lines: list[dict[str, Any]] = []
+def _pdf_page_text_snapshot(page: Any) -> _PdfPageTextSnapshot:
+    """Decode one PyMuPDF ``dict`` and derive every page text view from it."""
     text_dict = page.get_text("dict")
+    if not isinstance(text_dict, dict):
+        raise ValueError("PDF text representation must be a dictionary")
+    blocks: list[tuple[float, float, float, float, str]] = []
+    plain_blocks: list[str] = []
+    for block in text_dict.get("blocks", []):
+        if not isinstance(block, dict):
+            continue
+        raw_lines = block.get("lines", [])
+        line_texts: list[str] = []
+        for line in raw_lines if isinstance(raw_lines, list) else []:
+            if not isinstance(line, dict):
+                continue
+            raw_spans = line.get("spans", [])
+            text_value = "".join(
+                str(span.get("text") or "") for span in raw_spans if isinstance(span, dict)
+            )
+            if text_value:
+                line_texts.append(text_value)
+        block_text = "\n".join(line_texts)
+        if block_text:
+            plain_blocks.append(block_text)
+        bbox = block.get("bbox") or (0, 0, 0, 0)
+        try:
+            blocks.append(
+                (
+                    float(bbox[0]),
+                    float(bbox[1]),
+                    float(bbox[2]),
+                    float(bbox[3]),
+                    block_text,
+                )
+            )
+        except (TypeError, ValueError, IndexError):
+            continue
+    blocks.sort(key=lambda block: (block[1], block[0]))
+    return _PdfPageTextSnapshot(
+        plain_text="\n".join(plain_blocks),
+        blocks=blocks,
+        lines=_pdf_text_lines(text_dict),
+    )
+
+
+def _pdf_text_lines(text_dict: dict[str, Any]) -> list[dict[str, Any]]:
+    lines: list[dict[str, Any]] = []
     for block in text_dict.get("blocks", []):
         for line in block.get("lines", []):
             raw_spans = line.get("spans", [])
@@ -1508,11 +1578,28 @@ def _quad_json(quad: Any) -> dict[str, float]:
     }
 
 
-def _pdf_link_text(page: Any, rect: Any) -> str:
-    try:
-        return str(page.get_textbox(rect) or "")
-    except (RuntimeError, ValueError, TypeError):
-        return ""
+def _pdf_link_text_from_snapshot(
+    snapshot: _PdfPageTextSnapshot,
+    source_rect: tuple[float, float, float, float],
+) -> str:
+    """Select native-link marker text from the sole page text representation."""
+    left, top, right, bottom = source_rect
+    text_parts: list[str] = []
+    text_codepoints = 0
+    for line in snapshot.lines:
+        for span in line["spans"]:
+            span_left = float(span["left"])
+            span_top = float(span["top"])
+            span_right = float(span["right"])
+            span_bottom = float(span["bottom"])
+            if span_right <= left or span_left >= right or span_bottom <= top or span_top >= bottom:
+                continue
+            text_value = str(span["text"])
+            text_codepoints += len(text_value)
+            if text_codepoints > MAX_EXACT_CODEPOINTS:
+                return ""
+            text_parts.append(text_value)
+    return normalize_whitespace("".join(text_parts))
 
 
 def _pdf_point_json(point: Any) -> dict[str, float] | None:
@@ -1660,6 +1747,7 @@ def build_pdf_extraction_plan(
     attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
+    expected_source_sha256: str,
     storage_client,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     source_package: PdfSourcePackageArtifact | None = None,
@@ -1669,12 +1757,20 @@ def build_pdf_extraction_plan(
     t0 = time.monotonic()
     with parser_attempt_directory(attempt_id) as attempt_directory:
         pdf_path = attempt_directory / "source.pdf"
-        source_sha256_hex = stream_storage_object_to_file(
-            storage_client,
-            storage_path=storage_path,
-            destination=pdf_path,
-            expected_size_bytes=source_size_bytes,
-        )
+        try:
+            source_sha256_hex = stream_storage_object_to_file(
+                storage_client,
+                storage_path=storage_path,
+                destination=pdf_path,
+                expected_size_bytes=source_size_bytes,
+                expected_source_sha256=expected_source_sha256,
+            )
+        except StorageObjectDigestMismatch:
+            return PdfExtractionError(
+                error_code=SOURCE_INTEGRITY_ERROR_CODE,
+                error_message="Stored PDF bytes do not match the immutable source identity",
+                terminal=True,
+            )
         parsed = _extract_with_pymupdf(
             pdf_path,
             media_id=media_id,

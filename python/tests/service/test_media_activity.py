@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -14,6 +14,7 @@ from nexus.db.models import (
     Media,
     MediaKind,
     MediaSourceAttempt,
+    MediaUploadSession,
     ProcessingStatus,
 )
 from nexus.errors import NotFoundError
@@ -25,10 +26,11 @@ from nexus.jobs.queue import (
     replace_dead_job_payload,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.ingest_recovery import repair_media_work
+from nexus.services.ingest_recovery import get_ingest_recovery_health, repair_media_work
 from nexus.services.library_entries import ensure_media_in_default_library
 from nexus.services.media import read_event_snapshot
 from nexus.services.media_activity import read_media_activity
+from nexus.services.sealed_handles import seal_upload_session_handle
 from tests.testkit.auth import UserRecord
 from tests.testkit.unreachable_state import expire_heavy_job_claim
 
@@ -105,6 +107,38 @@ def _claim(
     )
     assert claimed is not None, f"expected {job_id} to be claimable"
     return claimed
+
+
+def _upload_session(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    filename: str,
+    expires_at: datetime,
+    transport_failure_kind: str | None = None,
+    verification_error_code: str | None = None,
+) -> MediaUploadSession:
+    now = datetime.now(UTC)
+    session = MediaUploadSession(
+        id=uuid4(),
+        created_by_user_id=viewer_id,
+        candidate_media_id=uuid4(),
+        kind="epub",
+        filename=filename,
+        content_type="application/epub+zip",
+        expected_size_bytes=4096,
+        idempotency_key=f"activity-upload-{uuid4()}",
+        request_id=f"activity-request-{uuid4()}",
+        upload_generation=1,
+        upload_url_expires_at=expires_at,
+        transport_failure_kind=transport_failure_kind,
+        transport_failed_at=(now if transport_failure_kind is not None else None),
+        verification_error_code=verification_error_code,
+        verification_failed_at=(now if verification_error_code is not None else None),
+    )
+    db.add(session)
+    db.flush()
+    return session
 
 
 def test_activity_composes_queue_progress_index_and_viewer_visibility(
@@ -208,15 +242,12 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
     )
     complete_attempt.status = "succeeded"
 
-    _unconfirmed_id, unconfirmed_attempt = _source_media(
+    expired_upload = _upload_session(
         db_session,
         viewer_id=test_user.id,
-        title="Unconfirmed upload",
-        attempt_no=7,
-        attempt_status="accepted",
+        filename="Expired Bakker.epub",
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
     )
-    unconfirmed_attempt.processing_stage = None
-    unconfirmed_attempt.progress_updated_at = None
 
     hidden_user_id = uuid4()
     ensure_user_and_default_library(
@@ -231,6 +262,12 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
         attempt_no=8,
     )
     _source_job(db_session, media_id=hidden_id, attempt=hidden_attempt, max_attempts=3)
+    _upload_session(
+        db_session,
+        viewer_id=hidden_user_id,
+        filename="Foreign upload.epub",
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
     db_session.flush()
 
     response = authenticated_client.get("/media/activity?limit=20")
@@ -238,11 +275,14 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "private, no-store"
     payload = response.json()["data"]
-    by_title = {item["title"]: item for item in payload["items"]}
+    by_title = {item["title"]: item for item in payload["items"] if item["kind"] == "Media"}
+    by_filename = {
+        item["filename"]: item for item in payload["items"] if item["kind"] == "UploadSession"
+    }
     assert "Foreign work" not in by_title
-    assert "Unconfirmed upload" in by_title
-    assert payload["needs_attention_count"] == 1
-    assert payload["active_count"] == 5
+    assert "Foreign upload.epub" not in by_filename
+    assert payload["needs_attention_count"] == 2
+    assert payload["active_count"] == 4
     assert payload["has_more"] is False
     assert by_title["Running bounded PDF"]["state"]["kind"] == "Active"
     assert by_title["Running bounded PDF"]["state"]["status"] == "Processing"
@@ -290,23 +330,37 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
     assert by_title["Readable while indexing"]["state"]["kind"] == "Active"
     assert by_title["Readable while indexing"]["state"]["stage"] == "Index"
     assert by_title["Readable while indexing"]["capabilities"]["can_open"] is True
-    unconfirmed_state = by_title["Unconfirmed upload"]["state"]
-    assert unconfirmed_state["kind"] == "Active"
-    assert unconfirmed_state["status"] == "Queued"
-    assert unconfirmed_state["stage"] == "Validate"
-    assert unconfirmed_state["waiting_reason"] == {"kind": "Absent"}
-    assert unconfirmed_state["progress"] == {"kind": "Absent"}
-    assert unconfirmed_state["status_code"] == {"kind": "Absent"}
+    assert by_filename["Expired Bakker.epub"] == {
+        "kind": "UploadSession",
+        "session_handle": seal_upload_session_handle(expired_upload.id),
+        "filename": "Expired Bakker.epub",
+        "document_kind": "Epub",
+        "expected_size_bytes": 4096,
+        "attention": {"kind": "CapabilityExpired"},
+        "created_at": expired_upload.created_at.isoformat().replace("+00:00", "Z"),
+        "updated_at": expired_upload.updated_at.isoformat().replace("+00:00", "Z"),
+        "capabilities": {"can_retry_upload": True, "can_remove": True},
+    }
     assert "Fully ready" not in by_title
-    assert "Unconfirmed upload" in by_title
+    assert "Expired Bakker.epub" in by_filename
 
     limited = authenticated_client.get("/media/activity?limit=3")
     assert limited.status_code == 200, limited.text
     limited_payload = limited.json()["data"]
     assert len(limited_payload["items"]) == 3
-    assert limited_payload["items"][0]["state"]["kind"] == "NeedsAttention"
-    assert limited_payload["needs_attention_count"] == 1
-    assert limited_payload["active_count"] == 5
+    limited_attention = {
+        (
+            item["kind"],
+            item.get("title") if item["kind"] == "Media" else item.get("filename"),
+        )
+        for item in limited_payload["items"][:2]
+    }
+    assert limited_attention == {
+        ("Media", "Needs repair"),
+        ("UploadSession", "Expired Bakker.epub"),
+    }
+    assert limited_payload["needs_attention_count"] == 2
+    assert limited_payload["active_count"] == 4
     assert limited_payload["has_more"] is True
 
     at_limit = authenticated_client.get("/media/activity?limit=6")
@@ -319,7 +373,11 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
     db_session.flush()
     after_expiry = authenticated_client.get("/media/activity?limit=20")
     assert after_expiry.status_code == 200, after_expiry.text
-    after_expiry_by_title = {item["title"]: item for item in after_expiry.json()["data"]["items"]}
+    after_expiry_by_title = {
+        item["title"]: item
+        for item in after_expiry.json()["data"]["items"]
+        if item["kind"] == "Media"
+    }
     assert after_expiry_by_title["Waiting for capacity"]["state"]["waiting_reason"] == {
         "kind": "Present",
         "value": "Queue",
@@ -382,6 +440,162 @@ def test_activity_orders_lifecycle_evidence_not_media_edits(
         "New active",
         "Old active",
     ]
+
+
+def test_activity_projects_only_upload_obligations_with_strict_precedence(
+    db_session: Session,
+    test_user: UserRecord,
+    authenticated_client: TestClient,
+) -> None:
+    now = datetime.now(UTC)
+    expired = _upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="expired.epub",
+        expires_at=now - timedelta(minutes=3),
+    )
+    transport = _upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="transport.epub",
+        expires_at=now - timedelta(minutes=4),
+        transport_failure_kind="HttpRejected",
+    )
+    transport.transport_http_status = 503
+    transport.transport_failed_at = now - timedelta(minutes=2)
+    verification = _upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="verification.epub",
+        expires_at=now - timedelta(minutes=5),
+        verification_error_code="E_SOURCE_INTEGRITY",
+    )
+    verification.verification_failed_at = now - timedelta(minutes=1)
+    verifying = _upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="verifying.epub",
+        expires_at=now - timedelta(minutes=6),
+        transport_failure_kind="Timeout",
+    )
+    verifying.verification_token = uuid4()
+    verifying.verification_generation = verifying.upload_generation
+    verifying.verification_expires_at = now + timedelta(minutes=1)
+    _upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="awaiting.epub",
+        expires_at=now + timedelta(minutes=1),
+    )
+    db_session.flush()
+
+    response = authenticated_client.get("/media/activity?limit=20")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["needs_attention_count"] == 3
+    assert payload["active_count"] == 0
+    assert payload["has_more"] is False
+    assert [item["filename"] for item in payload["items"]] == [
+        "expired.epub",
+        "transport.epub",
+        "verification.epub",
+    ]
+    by_filename = {item["filename"]: item for item in payload["items"]}
+    assert by_filename["expired.epub"]["session_handle"] == seal_upload_session_handle(expired.id)
+    assert by_filename["expired.epub"]["attention"] == {"kind": "CapabilityExpired"}
+    assert by_filename["transport.epub"]["attention"] == {
+        "kind": "TransportFailed",
+        "failure_kind": "HttpRejected",
+        "http_status": {"kind": "Present", "value": 503},
+    }
+    assert by_filename["transport.epub"]["capabilities"] == {
+        "can_retry_upload": True,
+        "can_remove": True,
+    }
+    assert by_filename["verification.epub"]["attention"] == {
+        "kind": "VerificationFailed",
+        "failure_code": "E_SOURCE_INTEGRITY",
+    }
+    assert by_filename["verification.epub"]["capabilities"] == {
+        "can_retry_upload": False,
+        "can_remove": True,
+    }
+    assert "verifying.epub" not in by_filename
+    assert "awaiting.epub" not in by_filename
+
+
+def test_ingest_health_projects_upload_publication_and_resource_facts(
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    now = datetime.now(UTC)
+    _upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="expired.epub",
+        expires_at=now - timedelta(minutes=1),
+    )
+    _upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="failed.epub",
+        expires_at=now + timedelta(minutes=1),
+        transport_failure_kind="Network",
+    )
+    verifying = _upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="verifying.epub",
+        expires_at=now - timedelta(minutes=1),
+    )
+    verifying.verification_token = uuid4()
+    verifying.verification_generation = verifying.upload_generation
+    verifying.verification_expires_at = now + timedelta(minutes=1)
+
+    _jobless_id, _jobless_attempt = _source_media(
+        db_session,
+        viewer_id=test_user.id,
+        title="Accepted without exact job",
+        attempt_no=1,
+        attempt_status="accepted",
+    )
+    limited_id, limited_attempt = _source_media(
+        db_session,
+        viewer_id=test_user.id,
+        title="Bounded child exhausted",
+        attempt_no=2,
+        attempt_status="running",
+    )
+    limited_job = _source_job(
+        db_session,
+        media_id=limited_id,
+        attempt=limited_attempt,
+        max_attempts=1,
+    )
+    _claim(db_session, limited_job.id, "resource-worker")
+    assert (
+        fail_job(
+            db_session,
+            job_id=limited_job.id,
+            worker_id="resource-worker",
+            error_code="E_RESOURCE_LIMIT",
+            error_message="bounded child exceeded memory",
+            retry_delays_seconds=(),
+        )
+        == "dead"
+    )
+    limited_attempt.status = "failed"
+    db_session.flush()
+
+    health = get_ingest_recovery_health(db_session)
+
+    assert health["expired_upload_session_count"] == 1
+    assert health["failed_upload_session_count"] == 1
+    assert health["active_upload_verification_lease_count"] == 1
+    assert health["accepted_jobless_source_attempt_count"] == 1
+    assert health["resource_limited_source_job_count"] == 1
+    assert health["degraded"] is True
 
 
 def test_terminal_source_without_safe_code_uses_absent_failure_code(

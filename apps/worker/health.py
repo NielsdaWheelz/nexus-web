@@ -18,8 +18,10 @@ from typing import Any, Literal, cast
 from nexus.config import (
     BACKGROUND_WORKER_JOB_KINDS,
     INTERACTIVE_WORKER_JOB_KINDS,
+    Environment,
     get_settings,
 )
+from nexus.jobs.process_executor import BackgroundProcessProtocolDefect, ValidatedCgroup
 from nexus.jobs.registry import get_task_contract_digest
 from nexus.release_artifact import RuntimeIdentity
 from nexus.runtime_health import get_runtime_identity, is_database_ready
@@ -202,9 +204,23 @@ def check_worker_health(*, lane: WorkerLane, heartbeat_path: Path | None = None)
         process_is_alive=_process_is_alive,
     )
     settings = get_settings()
+    if lane == "background":
+        try:
+            ValidatedCgroup.for_current_process(
+                settings.background_process_cgroup_root,
+                expected_memory_limit_bytes=settings.background_process_memory_limit_bytes,
+            )
+        except BackgroundProcessProtocolDefect as exc:
+            raise WorkerHeartbeatError("cgroup_not_ready") from exc
+    reconciler_max_age_seconds = (
+        2 * int(settings.ingest_reconcile_schedule_seconds)
+        if settings.nexus_env in (Environment.STAGING, Environment.PROD)
+        else None
+    )
     if not is_database_ready(
         database_url=settings.database_url,
         expected_revision=identity.expected_database_revision,
+        reconciler_max_age_seconds=reconciler_max_age_seconds,
     ):
         raise WorkerHeartbeatError("database_not_ready")
     return heartbeat

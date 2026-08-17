@@ -925,7 +925,8 @@ capability projection; `source` is not a `failure_stage`. `failure_stage='metada
 and `'embed'` are soft warnings that coexist with readable media.
 
 **Capture entry points** (`api/routes/media_ingest.py`): `POST /media/from_url`,
-`POST /media/upload/init` + `POST /media/{id}/ingest`, and
+`POST /media/uploads` plus session-scoped confirm/retry/transport-failure/delete,
+and
 `POST /media/capture/{article,file,url}`. Routes are transport adapters; they
 call exactly one service owner. (The media routers are split per capability:
 `media.py` catalog, `media_ingest.py` ingest, `media_assets.py` image/EPUB-asset
@@ -935,14 +936,19 @@ Ingest `library_ids` are writable non-default destinations; media services
 validate them through library governance and assign default plus selected
 destinations through `library_entries`.
 
-Every accepted source returns `media_id`, `source_attempt_id`, `source_type`,
-`source_attempt_status`, `idempotency_outcome`, `processing_status`, and `ingest_enqueued`. Provider,
+An upload session is durable intent, not media: signed capability expiry never
+deletes it, and media/source attempt/exact queue job publish atomically only
+after byte verification. Its publication response returns the stable media and
+source-attempt identities. Non-upload source acceptance returns `media_id`,
+`source_attempt_id`, `source_type`, `source_attempt_status`,
+`idempotency_outcome`, `processing_status`, and `ingest_enqueued`. Provider,
 network, sanitization, extraction, and post-acceptance storage failures update
 the existing media row and latest source attempt; the user retries by creating a
 new source attempt through `POST /media/{id}/retry`.
 
 **Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
-`extracting` rows, GCs abandoned uploads, and repairs content/semantic indexes.
+`extracting` rows and repairs content/semantic indexes. Upload-session expiry is
+projected as a user repair obligation; explicit removal owns its cleanup.
 `media_events` streams live status. `services/media_deletion.py` is explicit and
 reference-counted; storage deletion happens only after the DB commit.
 

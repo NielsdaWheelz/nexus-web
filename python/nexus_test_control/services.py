@@ -846,6 +846,28 @@ def start_python_process(
             "-m",
             "apps.worker.main",
         )
+        if role == "worker-background":
+            systemd_run = shutil.which("systemd-run")
+            user_runtime_directory = Path(f"/run/user/{os.getuid()}")
+            user_bus = user_runtime_directory / "bus"
+            if systemd_run is None or not user_bus.exists():
+                raise RuntimeContractError(
+                    "background worker proof requires a live user-systemd cgroup delegate"
+                )
+            command = (
+                systemd_run,
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "-p",
+                "MemoryMax=469762048",
+                "-p",
+                "MemorySwapMax=0",
+                "-p",
+                "OOMPolicy=continue",
+                *command,
+            )
     else:
         raise RuntimeContractError(f"Python process role is not owned: {role}")
     process_environment = {
@@ -860,6 +882,14 @@ def start_python_process(
         "PODCAST_INDEX_BASE_URL": f"http://127.0.0.1:{runtime.ports.external}",
         "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
         **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
+        **(
+            {
+                "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}",
+                "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{os.getuid()}/bus",
+            }
+            if role == "worker-background"
+            else {}
+        ),
         **(overrides or {}),
     }
     return _start_owned_process(
