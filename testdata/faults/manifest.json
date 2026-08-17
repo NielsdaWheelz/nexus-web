@@ -246,6 +246,15 @@
       "expected_failure": "non-admissible capacity must be the exact 503 rejection before runtime construction"
     },
     {
+      "id": "durable-codex-state-encryption-admission-bypass",
+      "patch": "testdata/faults/durable-codex-state-encryption-admission-bypass.patch",
+      "sha256": "4f15f95bb6f9cbcbe68bcfce5446d3369d824c9954d0b5dcd3bf7fd73f344915",
+      "proofs": [
+        "pytest:python/tests/kernel/test_production_release.py::test_codex_capacity_requires_exact_encrypted_state_before_starting_runtime"
+      ],
+      "expected_failure": "Codex state storage or locked-boot admission reached runtime"
+    },
+    {
       "id": "durable-codex-diagnostic-retention-bypass",
       "patch": "testdata/faults/durable-codex-diagnostic-retention-bypass.patch",
       "sha256": "3e2455b021d1bea0944c080269616f0d88fcb7c7c4d36f51855dbcf14e05bf91",

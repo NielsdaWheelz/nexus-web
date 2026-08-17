@@ -892,8 +892,15 @@ def test_fault_guard_allows_the_exact_controller_execution_owner(
     assert not fault_manifest_violations(tmp_path)
 
 
-@pytest.mark.parametrize("owner", ("apps/api/main.py", "apps/codex_agent/host.py"))
-def test_fault_guard_allows_declared_python_app_product_owner(
+@pytest.mark.parametrize(
+    "owner",
+    (
+        "apps/api/main.py",
+        "apps/codex_agent/host.py",
+        "deploy/hetzner/release.py",
+    ),
+)
+def test_fault_guard_allows_declared_product_owner(
     tmp_path: Path,
     owner: str,
 ) -> None:
@@ -904,6 +911,25 @@ def test_fault_guard_allows_declared_python_app_product_owner(
     _dump(tmp_path, "testdata/faults/manifest.json", manifest)
 
     assert not fault_manifest_violations(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "owner",
+    ("deploy/hetzner/deploy.sh", "deploy/hetzner/docker-compose.yml"),
+)
+def test_fault_guard_keeps_deployment_fault_authority_on_the_release_controller(
+    tmp_path: Path,
+    owner: str,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    patch = f"diff --git a/{owner} b/{owner}\n".encode()
+    (tmp_path / "testdata/faults/example.patch").write_bytes(patch)
+    manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert any(
+        violation.rule == "fault-product-only" for violation in fault_manifest_violations(tmp_path)
+    )
 
 
 @pytest.mark.parametrize(

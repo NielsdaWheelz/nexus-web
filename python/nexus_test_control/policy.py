@@ -95,6 +95,7 @@ _PRODUCT_SOURCE_ROOTS: tuple[tuple[str, frozenset[str]], ...] = (
     ("apps/android/app/src/main", frozenset({".java", ".kt", ".kts"})),
     ("migrations/alembic", frozenset({".py"})),
 )
+_PRODUCT_SOURCE_FILES = frozenset({"deploy/hetzner/release.py"})
 _RETIRED_PRODUCT_TEST_SEAMS = (
     "REAL_MEDIA_PROVIDER_FIXTURES",
     "REAL_MEDIA_FIXTURE_DIR",
@@ -1678,7 +1679,7 @@ def _fault_changed_paths(patch: str) -> tuple[str, ...]:
 
 
 def _is_product_path(path: str) -> bool:
-    product = any(
+    product = path in _PRODUCT_SOURCE_FILES or any(
         (path == source_root or path.startswith(f"{source_root}/"))
         and Path(path).suffix in suffixes
         for source_root, suffixes in _PRODUCT_SOURCE_ROOTS

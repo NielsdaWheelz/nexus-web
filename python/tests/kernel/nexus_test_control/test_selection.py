@@ -406,6 +406,14 @@ def test_unreachable_state_testkit_routes_to_the_durable_replay_proofs() -> None
             "deploy/hetzner/prove-codex-capacity.sh",
             "pytest:python/tests/kernel/test_production_release.py",
         ),
+        (
+            "docs/cutovers/codex-personal-metadata-hard-cutover.md",
+            "pytest:python/tests/kernel/test_production_delivery_contract.py",
+        ),
+        (
+            "docs/runbooks/codex-personal-agent-host.md",
+            "pytest:python/tests/kernel/test_production_delivery_contract.py",
+        ),
     ],
 )
 def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
@@ -452,6 +460,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_production_delivery_contract.py",
                 "pytest:python/tests/kernel/test_production_deploy_behavior.py",
                 "pytest:python/tests/kernel/test_production_release.py",
+                "pytest:python/tests/kernel/test_production_release.py::test_codex_capacity_requires_exact_encrypted_state_before_starting_runtime",
                 "pytest:python/tests/kernel/test_release_bundle_fetch.py",
                 "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
                 "pytest:python/tests/service/test_codex_agent_host.py",
