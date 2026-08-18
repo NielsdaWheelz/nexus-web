@@ -49,7 +49,10 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
     /^[0-9a-f-]{36}$/i,
   );
   await expect(
-    page.getByText(/^Episode updates (?:pending|current)$/),
+    page.getByText(
+      /^(?:Episode updates pending|Checking for new episodes|Episode updates current)$/,
+    ),
+    "Podcast subscription did not establish a pending, active, or current live-sync state.",
   ).toBeVisible({ timeout: 25_000 });
   const podcastPane = page.getByRole("region", {
     name: "Houston We Have a Podcast — Podcasts",
