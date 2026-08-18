@@ -4908,8 +4908,17 @@ def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
     return all(
         owner.is_dir()
         and (owner / "INSTALLATION_COMPLETE").is_file()
-        and any(path.is_file() and os.access(path, os.X_OK) for path in owner.rglob(executable))
-        for owner, executable in ((chromium, "chrome"), (headless, "chrome-headless-shell"))
+        and any(
+            path.name in executables and path.is_file() and os.access(path, os.X_OK)
+            for path in owner.rglob("*")
+        )
+        for owner, executables in (
+            (chromium, frozenset({"chrome"})),
+            # Playwright's Linux arm64 archive owns `headless_shell`; its x64
+            # archive owns `chrome-headless-shell`. Both are exact locked
+            # Chromium artifacts, not a fallback to an arbitrary executable.
+            (headless, frozenset({"chrome-headless-shell", "headless_shell"})),
+        )
     )
 
 

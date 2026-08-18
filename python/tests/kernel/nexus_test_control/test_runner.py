@@ -3276,6 +3276,45 @@ def _write(path: Path, contents: str) -> None:
     path.write_text(contents, encoding="utf-8")
 
 
+@pytest.mark.parametrize("headless_executable_name", ("chrome-headless-shell", "headless_shell"))
+def test_locked_browser_detection_accepts_only_exact_platform_executables(
+    tmp_path: Path,
+    headless_executable_name: str,
+) -> None:
+    repo_root = tmp_path / "repo"
+    cache = tmp_path / "ms-playwright"
+    _write(
+        repo_root / "apps/web/node_modules/playwright-core/browsers.json",
+        json.dumps(
+            {
+                "browsers": [
+                    {"name": "chromium", "revision": "1217"},
+                    {"name": "chromium-headless-shell", "revision": "1217"},
+                ]
+            }
+        ),
+    )
+    chromium = cache / "chromium-1217"
+    headless = cache / "chromium_headless_shell-1217"
+    for owner in (chromium, headless):
+        _write(owner / "INSTALLATION_COMPLETE", "")
+    chromium_executable = chromium / "chrome-linux/chrome"
+    headless_executable = headless / f"chrome-linux/{headless_executable_name}"
+    _write(chromium_executable, "browser\n")
+    _write(headless_executable, "browser\n")
+    chromium_executable.chmod(0o755)
+    headless_executable.chmod(0o755)
+    environment = {"PLAYWRIGHT_BROWSERS_PATH": str(cache)}
+
+    assert runner._browser_installed(repo_root, environment)
+
+    headless_executable.chmod(0o644)
+    unrelated = headless / "chrome-linux/not-the-locked-browser"
+    _write(unrelated, "browser\n")
+    unrelated.chmod(0o755)
+    assert not runner._browser_installed(repo_root, environment)
+
+
 def test_changed_stylesheet_reaches_the_css_token_owner_and_never_the_eslint_command(
     tmp_path: Path,
 ) -> None:
