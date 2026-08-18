@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "playwright/test";
+import { androidPlayerProtocolIdentity } from "@/lib/player/androidPlayerProtocol";
 import {
   expect,
   expectInvalidPasswordFeedback,
@@ -146,8 +147,14 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
   expect(version.headers()).not.toHaveProperty("location");
   expect(version.headers()).not.toHaveProperty("set-cookie");
   const versionBody = (await version.json()) as Record<string, unknown>;
-  expect(Object.keys(versionBody)).toEqual(["source_sha"]);
-  expect(versionBody.source_sha).toMatch(/^[0-9a-f]{40}$/);
+  const playerProtocol = androidPlayerProtocolIdentity();
+  expect(versionBody).toEqual({
+    source_sha: expect.stringMatching(/^[0-9a-f]{40}$/),
+    player_protocol: {
+      version: playerProtocol.protocolVersion,
+      contract_sha256: playerProtocol.protocolContractSha256,
+    },
+  });
   const supabase = pageRequest(page, supabaseOrigin);
   const deniedSignup = await supabase.post("/auth/v1/signup", {
     data: {
