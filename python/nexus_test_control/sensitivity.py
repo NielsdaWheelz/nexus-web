@@ -497,7 +497,7 @@ def isolated_worktree(
     runtime_cleaner: RuntimeCleaner = clean_owned_runtime,
     memory_sampler: OwnedMemorySampler | None = None,
 ) -> Iterator[Path]:
-    temporary = Path(tempfile.mkdtemp(prefix="nexus-test-sensitivity-"))
+    temporary = Path(tempfile.mkdtemp(prefix="nexus-test-sensitivity-")).resolve(strict=True)
     checkout = temporary / "checkout"
     _git(repo_root, "worktree", "add", "--detach", str(checkout), revision)
     try:

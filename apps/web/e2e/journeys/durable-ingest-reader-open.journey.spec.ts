@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { APIResponse } from "playwright/test";
+import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import { captureCanonicalArticle } from "../articleFixture";
 import {
   adversarialTruncatedPdf,
@@ -18,6 +19,8 @@ import {
 import { pageRequest, type ExactOriginRequest } from "../request";
 
 test.use({ journeyId: "durable-ingest-reader-open" });
+
+const TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection";
 
 interface UploadInit {
   data: {
@@ -361,6 +364,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
     headers: {
       origin: webOrigin,
       "Idempotency-Key": `bounded-interactive-${randomUUID()}`,
+      [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION,
     },
     data: {
       destination: {
@@ -385,7 +389,9 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
   await expect
     .poll(
       async () => {
-        const response = await api.get(`/api/chat-runs/${admittedChat.data.run.id}`);
+        const response = await api.get(`/api/chat-runs/${admittedChat.data.run.id}`, {
+          headers: { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION },
+        });
         if (!response.ok()) return `http-${response.status()}`;
         const payload = (await response.json()) as {
           data: {

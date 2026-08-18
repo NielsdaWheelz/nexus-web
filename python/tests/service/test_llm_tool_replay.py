@@ -406,38 +406,6 @@ def test_position_replay_settles_once_and_does_not_automatically_reissue_uncerta
             )
             effect_id_before = states["turn/0/tool/4"].generation_id
 
-            original_admission = replace_completed_chat_prepare_admitted_resource_uris(
-                db,
-                job_id=chat.job_id,
-                admitted_resource_uris=(media_uri, f"media:{uuid4()}"),
-            )
-            db.commit()
-            tampered_job = get_job(db, chat.job_id)
-            assert tampered_job is not None
-            tampered_runtime = ScriptedRuntime()
-            tampered_provider = _NeverSearch()
-            with pytest.raises(AssertionError, match="request fingerprint"):
-                asyncio.run(
-                    execute_chat_run(
-                        db,
-                        run_id=chat.run_id,
-                        job=tampered_job,
-                        execution_context=first_context,
-                        session_factory=session_factory,
-                        runtime=tampered_runtime,
-                        settings=get_settings(),
-                        web_search_provider=tampered_provider,
-                    )
-                )
-            assert tampered_runtime.calls == []
-            assert tampered_provider.calls == 0
-            replace_completed_chat_prepare_admitted_resource_uris(
-                db,
-                job_id=chat.job_id,
-                admitted_resource_uris=original_admission,
-            )
-            db.commit()
-
             assert (
                 fail_job(
                     db,
@@ -492,14 +460,10 @@ def test_position_replay_settles_once_and_does_not_automatically_reissue_uncerta
             except BaseException as exc:  # noqa: BLE001 - assert the exact public defect below.
                 changed_input_error_type = type(exc)
                 changed_input_error_message = str(exc)
-            if (
+            assert (
                 changed_input_provider.adapter_calls,
                 changed_input_provider.transport_dispatches,
-            ) != (0, 0):
-                pytest.fail(
-                    "changed invocation crossed the provider dispatch boundary",
-                    pytrace=False,
-                )
+            ) == (0, 0), "changed invocation crossed the provider dispatch boundary"
             assert changed_input_error_type is PositionConflictDefect
             assert "different invocation" in changed_input_error_message
 
@@ -518,6 +482,41 @@ def test_position_replay_settles_once_and_does_not_automatically_reissue_uncerta
                 )
                 == 1
             ), "completed write replay duplicated its stable child"
+
+            # Keep this independent prepare-integrity oracle after the replay
+            # fault's transport boundary so its expected traceback cannot mask
+            # which behavior made the sensitivity red.
+            original_admission = replace_completed_chat_prepare_admitted_resource_uris(
+                db,
+                job_id=chat.job_id,
+                admitted_resource_uris=(media_uri, f"media:{uuid4()}"),
+            )
+            db.commit()
+            tampered_job = get_job(db, chat.job_id)
+            assert tampered_job is not None
+            tampered_runtime = ScriptedRuntime()
+            tampered_provider = _NeverSearch()
+            with pytest.raises(AssertionError, match="request fingerprint"):
+                asyncio.run(
+                    execute_chat_run(
+                        db,
+                        run_id=chat.run_id,
+                        job=tampered_job,
+                        execution_context=retry_context,
+                        session_factory=session_factory,
+                        runtime=tampered_runtime,
+                        settings=get_settings(),
+                        web_search_provider=tampered_provider,
+                    )
+                )
+            assert tampered_runtime.calls == []
+            assert tampered_provider.calls == 0
+            replace_completed_chat_prepare_admitted_resource_uris(
+                db,
+                job_id=chat.job_id,
+                admitted_resource_uris=original_admission,
+            )
+            db.commit()
 
             crossed_chat = create_entitled_chat(
                 db,

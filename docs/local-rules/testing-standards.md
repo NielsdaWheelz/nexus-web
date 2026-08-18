@@ -394,11 +394,15 @@ one workflow.
 
 Before launching Node/browser/build/Gradle or other heavy proof, the controller
 acquires the single-heavy-operation lock and waits at most 30 seconds for
-kernel-reported `MemAvailable` to reach 2,048 MiB. This bounded admission wait
-only resamples host state; it never launches or reruns proof and is not an
-automatic retry. Unknown memory is immediately `not_run`; expiry below the
-floor is `not_run` before launch and reports the latest observed value. This is
-a conservative host-safety admission floor, not a proof-size or performance
+kernel-reported available memory to reach 2,048 MiB: Linux `MemAvailable`, or
+Darwin free plus file-backed pages while the kernel VM pressure state is normal.
+The Darwin estimate does not add speculative pages because they are already
+included in the file-backed owner, and excludes anonymous inactive, purgeable,
+and compressed pages. This bounded admission wait only resamples host state; it
+never launches or reruns proof and is not an automatic retry. Unknown memory or
+non-normal Darwin pressure is immediately `not_run`; expiry below the floor is
+`not_run` before launch and reports the latest observed value. This is a
+conservative host-safety admission floor, not a proof-size or performance
 target. Change it only from recorded memory evidence on the 8 GiB reference
 host.
 

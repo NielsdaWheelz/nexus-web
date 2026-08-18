@@ -68,6 +68,21 @@ def _ports() -> RuntimePorts:
     return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091, 19092)
 
 
+def _process_is_running(process_id: int) -> bool:
+    try:
+        os.kill(process_id, 0)
+    except ProcessLookupError:
+        return False
+    if sys.platform == "linux":
+        try:
+            status = (Path("/proc") / str(process_id) / "status").read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return False
+        state = next((line for line in status.splitlines() if line.startswith("State:")), "")
+        return "Z (zombie)" not in state
+    return True
+
+
 def _owned_run(tmp_path: Path, *, migration: bool = True) -> OwnedRun:
     initialize_runtime(tmp_path, TEST_ENV, _ports())
     claim_run(tmp_path, TEST_ENV, RUN_ID)
@@ -220,6 +235,82 @@ def test_owned_process_unblocks_sigterm_before_exec_and_stops_gracefully(
             pass
 
 
+def test_owned_process_cleanup_rejects_a_different_owner_without_signaling(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", "import signal; signal.pause()"),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        with pytest.raises(RuntimeContractError, match="no longer belongs"):
+            services._stop_process_group(
+                tmp_path,
+                started.process_group_id,
+                started.process_start_token,
+                started.run_id,
+                "b" * 32,
+            )
+
+        os.kill(started.process_group_id, 0)
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+
+def test_clean_stops_owned_children_after_the_recorded_group_leader_exits(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    child_path = tmp_path / "child-pid.txt"
+    leader_script = (
+        "import os,pathlib,signal,subprocess,sys; "
+        "owner_fd=os.environ.get('NEXUS_TEST_PROCESS_OWNER_FD'); "
+        "inherited=() if owner_fd is None else (int(owner_fd),); "
+        "child=subprocess.Popen((sys.executable,'-c','import signal; signal.pause()'),"
+        "pass_fds=inherited); "
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+        "signal.pause()"
+    )
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", leader_script, str(child_path)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    child_pid = 0
+    try:
+        for _attempt in range(500):
+            if child_path.is_file():
+                child_pid = int(child_path.read_text(encoding="utf-8"))
+                break
+            threading.Event().wait(0.01)
+        assert child_pid > 1
+
+        os.kill(started.process_group_id, signal.SIGTERM)
+        os.waitpid(started.process_group_id, 0)
+        os.kill(child_pid, 0)
+
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        assert not _process_is_running(child_pid)
+    finally:
+        try:
+            os.killpg(started.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
 def test_clean_recovers_a_process_killed_between_spawn_and_created_record(
     tmp_path: Path,
 ) -> None:
@@ -236,16 +327,32 @@ def test_clean_recovers_a_process_killed_between_spawn_and_created_record(
         external_id=owner_token,
         command=command,
     )
-    process = subprocess.Popen(
-        command,
-        env={
-            **os.environ,
-            "NEXUS_ENV": "test",
-            "NEXUS_TEST_PROCESS_OWNER": owner_token,
-            "NEXUS_TEST_RUN_ID": RUN_ID,
-        },
-        start_new_session=True,
-    )
+    owner_descriptor: int | None = None
+    inherited_descriptors: tuple[int, ...] = ()
+    if sys.platform == "darwin":
+        owner_marker = services._process_owner_marker(tmp_path, RUN_ID, owner_token)
+        owner_marker.parent.mkdir(parents=True, exist_ok=True)
+        owner_descriptor = os.open(
+            owner_marker,
+            os.O_CREAT | os.O_EXCL | os.O_RDONLY,
+            0o600,
+        )
+        inherited_descriptors = (owner_descriptor,)
+    try:
+        process = subprocess.Popen(
+            command,
+            env={
+                **os.environ,
+                "NEXUS_ENV": "test",
+                "NEXUS_TEST_PROCESS_OWNER": owner_token,
+                "NEXUS_TEST_RUN_ID": RUN_ID,
+            },
+            start_new_session=True,
+            pass_fds=inherited_descriptors,
+        )
+    finally:
+        if owner_descriptor is not None:
+            os.close(owner_descriptor)
     try:
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
@@ -255,6 +362,84 @@ def test_clean_recovers_a_process_killed_between_spawn_and_created_record(
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
+
+
+def test_clean_recovers_planned_children_after_the_group_leader_exits(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    owner_token = "a" * 32
+    child_path = tmp_path / "planned-child-pid.txt"
+    leader_script = (
+        "import os,pathlib,signal,subprocess,sys; "
+        "owner_fd=os.environ.get('NEXUS_TEST_PROCESS_OWNER_FD'); "
+        "inherited=() if owner_fd is None else (int(owner_fd),); "
+        "child=subprocess.Popen((sys.executable,'-c','import signal; signal.pause()'),"
+        "pass_fds=inherited); "
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+        "signal.pause()"
+    )
+    command = (sys.executable, "-c", leader_script, str(child_path))
+    resource = Resource(ResourceKind.PROCESS, process_resource_identity(RUN_ID, "api"))
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        resource,
+        external_id=owner_token,
+        command=command,
+    )
+    owner_descriptor: int | None = None
+    inherited_descriptors: tuple[int, ...] = ()
+    owner_environment: dict[str, str] = {}
+    if sys.platform == "darwin":
+        owner_marker = services._process_owner_marker(tmp_path, RUN_ID, owner_token)
+        owner_marker.parent.mkdir(parents=True, exist_ok=True)
+        owner_descriptor = os.open(
+            owner_marker,
+            os.O_CREAT | os.O_EXCL | os.O_RDONLY,
+            0o600,
+        )
+        inherited_descriptors = (owner_descriptor,)
+        owner_environment["NEXUS_TEST_PROCESS_OWNER_FD"] = str(owner_descriptor)
+    try:
+        leader = subprocess.Popen(
+            command,
+            env={
+                **os.environ,
+                "NEXUS_ENV": "test",
+                "NEXUS_TEST_PROCESS_OWNER": owner_token,
+                "NEXUS_TEST_RUN_ID": RUN_ID,
+                **owner_environment,
+            },
+            start_new_session=True,
+            pass_fds=inherited_descriptors,
+        )
+    finally:
+        if owner_descriptor is not None:
+            os.close(owner_descriptor)
+    child_pid = 0
+    try:
+        for _attempt in range(500):
+            if child_path.is_file():
+                child_pid = int(child_path.read_text(encoding="utf-8"))
+                break
+            threading.Event().wait(0.01)
+        assert child_pid > 1
+
+        os.kill(leader.pid, signal.SIGTERM)
+        leader.wait(timeout=3)
+        os.kill(child_pid, 0)
+
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        assert not _process_is_running(child_pid)
+    finally:
+        try:
+            os.killpg(leader.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def test_clean_uses_immutable_identity_when_owned_process_rewrites_argv(
@@ -281,11 +466,27 @@ def test_clean_uses_immutable_identity_when_owned_process_rewrites_argv(
     command_line = b""
     try:
         for _attempt in range(500):
-            command_line = (Path("/proc") / str(started.process_group_id) / "cmdline").read_bytes()
-            if command_line.startswith(b"nexus-mutated-title"):
+            if sys.platform == "linux":
+                command_line = (
+                    Path("/proc") / str(started.process_group_id) / "cmdline"
+                ).read_bytes()
+            else:
+                command_line = subprocess.run(
+                    (
+                        "/bin/ps",
+                        "-ww",
+                        "-p",
+                        str(started.process_group_id),
+                        "-o",
+                        "command=",
+                    ),
+                    check=True,
+                    capture_output=True,
+                ).stdout
+            if b"/bin/bash" not in command_line:
                 break
             threading.Event().wait(0.01)
-        assert command_line.startswith(b"nexus-mutated-title")
+        assert b"/bin/bash" not in command_line
 
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 

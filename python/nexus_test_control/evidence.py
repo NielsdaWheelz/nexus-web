@@ -278,6 +278,8 @@ class RunEvidence:
         _artifact_path("run context artifact", self.run_context_artifact)
         if self.git_sha is None and self.status is RunStatus.PASS:
             raise ValueError("a passing run requires an exact Git SHA")
+        if self.status is RunStatus.PASS and not self.peak_owned_mib.measurement_complete:
+            raise ValueError("a passing run requires complete memory measurement")
 
         selected_proofs = {item.proof for item in self.selection if item.proof is not None}
         sensitivity_by_proof = {item.proof: item for item in self.sensitivity}
@@ -349,6 +351,8 @@ class ProveEvidence:
         for artifact in self.artifacts:
             _artifact_path("prove artifact", artifact)
         if self.status is RunStatus.PASS:
+            if not self.peak_owned_mib.measurement_complete:
+                raise ValueError("passing prove evidence requires complete memory measurement")
             if self.git_sha is None or len(self.sensitivity) != 1 or self.detail or self.artifacts:
                 raise ValueError("passing prove evidence requires one result and an exact Git SHA")
             record = self.sensitivity[0]

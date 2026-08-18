@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 from dataclasses import dataclass
@@ -84,9 +85,11 @@ class NodeIngestProtocolDefect(RuntimeError):
 
 def local_node_ingest_command() -> NodeIngestCommand:
     """Resolve the checked-out ingress command for local and test composition."""
-
+    executable = shutil.which(_LOCAL_NODE_EXECUTABLE)
+    if executable is None:
+        raise NodeIngestProtocolDefect("local Node.js executable is unavailable")
     return NodeIngestCommand(
-        executable=_LOCAL_NODE_EXECUTABLE,
+        executable=Path(executable).resolve(strict=True).as_posix(),
         script=_LOCAL_NODE_INGEST_SCRIPT,
     )
 

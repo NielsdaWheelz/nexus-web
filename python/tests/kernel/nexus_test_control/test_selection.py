@@ -419,10 +419,12 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
         (
             "deploy/hetzner/release.py",
             {
+                Capability.COMPONENT,
                 Capability.JOURNEYS_ALL,
                 Capability.KERNEL_PYTHON,
                 Capability.LLM_TOOLS,
                 Capability.RELEASE_ARTIFACT,
+                Capability.SERVICE,
                 Capability.STATIC_PLATFORM,
             },
             {
@@ -444,6 +446,11 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/release_artifact/"
                 "test_node_ingest_image_binding.py::"
                 "test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint",
+                "pytest:python/tests/service/test_llm_tool_projection_protocol.py::"
+                "test_revision_gates_every_changed_chat_projection_boundary",
+                "pytest:python/tests/service/test_llm_tools_availability.py::"
+                "test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch",
+                "vitest:apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx",
             },
         ),
         (
@@ -492,6 +499,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
             "python/nexus_test_control/runner.py",
             {
                 Capability.CODEX_HOSTED,
+                Capability.COMPONENT,
                 Capability.KERNEL_PYTHON,
                 Capability.LLM_TOOLS,
                 Capability.RELEASE_ARTIFACT,
@@ -514,6 +522,11 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/service/test_codex_agent_host.py",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
                 "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py",
+                "pytest:python/tests/service/test_llm_tool_projection_protocol.py::"
+                "test_revision_gates_every_changed_chat_projection_boundary",
+                "pytest:python/tests/service/test_llm_tools_availability.py::"
+                "test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch",
+                "vitest:apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx",
             },
         ),
     ],

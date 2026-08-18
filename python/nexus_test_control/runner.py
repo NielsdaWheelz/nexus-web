@@ -5,12 +5,14 @@ import fcntl
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import signal
 import socket
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -46,6 +48,7 @@ from nexus_test_control.memory import (
     available_memory_mib,
     measure_owned_memory,
     measured,
+    required_platform_memory_tools,
 )
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
@@ -101,6 +104,7 @@ from nexus_test_control.services import (
     new_run_id,
     prepare_openai_provider_fixture,
     prepare_run,
+    required_platform_process_tools,
     resolve_adb,
     run_environment,
     start_python_process,
@@ -978,7 +982,7 @@ def run_workflow(
         item.status is RunStatus.PASS for item in capabilities
     ):
         detail = workflow_sampler.failure_detail or (
-            "owned container memory could not be measured truthfully"
+            "owned memory could not be measured truthfully"
         )
         reporter.report(
             stream,
@@ -1258,8 +1262,9 @@ def _await_heavy_memory_admission(
     if admission is None or available_mib is None:
         return admission
     deadline = monotonic() + _MEMORY_ADMISSION_TIMEOUT_SECONDS
-    # justify-polling: Linux MemAvailable has no event notification; sample the
-    # launch condition every 250 ms for at most 30 seconds before failing closed.
+    # justify-polling: kernel memory availability has no portable event
+    # notification; sample the launch condition every 250 ms for at most 30
+    # seconds before failing closed.
     while available_mib < _MIN_AVAILABLE_HEAVY_MIB:
         remaining = deadline - monotonic()
         if remaining <= 0:
@@ -4734,6 +4739,16 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
     )
     if missing_tools:
         return _not_run(Capability.DOCTOR, f"required tools are absent: {', '.join(missing_tools)}")
+    missing_platform_tools = tuple(
+        path.as_posix()
+        for path in (*required_platform_memory_tools(), *required_platform_process_tools())
+        if not path.is_file() or not os.access(path, os.X_OK)
+    )
+    if missing_platform_tools:
+        return _not_run(
+            Capability.DOCTOR,
+            f"required platform tools are absent: {', '.join(missing_platform_tools)}",
+        )
 
     required_paths = (
         "python/pyproject.toml",
@@ -5171,6 +5186,9 @@ def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
     revisions = dict(_browser_revisions(repo_root))
     if set(revisions) != {"chromium", "chromium-headless-shell"}:
         return False
+    executables = _browser_executable_names(sys.platform, platform.machine())
+    if executables is None:
+        return False
     browser_root = environment.get("PLAYWRIGHT_BROWSERS_PATH")
     if browser_root:
         cache = Path(browser_root)
@@ -5189,8 +5207,21 @@ def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
         owner.is_dir()
         and (owner / "INSTALLATION_COMPLETE").is_file()
         and any(path.is_file() and os.access(path, os.X_OK) for path in owner.rglob(executable))
-        for owner, executable in ((chromium, "chrome"), (headless, "chrome-headless-shell"))
+        for owner, executable in zip((chromium, headless), executables, strict=True)
     )
+
+
+def _browser_executable_names(platform_name: str, machine: str) -> tuple[str, str] | None:
+    architecture = machine.lower()
+    if platform_name == "linux":
+        if architecture in {"x86_64", "amd64"}:
+            return "chrome", "chrome-headless-shell"
+        if architecture in {"aarch64", "arm64"}:
+            return "chrome", "headless_shell"
+        return None
+    if platform_name == "darwin" and architecture in {"x86_64", "amd64", "arm64", "aarch64"}:
+        return "Chromium", "chrome-headless-shell"
+    return None
 
 
 def _browser_revisions(repo_root: Path) -> tuple[tuple[str, str], ...]:
