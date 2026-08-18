@@ -41,11 +41,20 @@
     {
       "id": "auth-bootstrap-cache-cross-user",
       "patch": "testdata/faults/auth-bootstrap-cache-cross-user.patch",
-      "sha256": "a6346a0cb00fed516fb7fee89c6c769311bf45e318ec540b080b5d15598fe0fd",
+      "sha256": "cc39958808e7ee15dbad72549158c5b3cd82dceaf0fafedafd0160fcff3e921f",
       "proofs": [
         "pytest:python/tests/service/test_auth_bootstrap_cache.py::test_auth_bootstrap_cache_reuses_only_the_matching_users_durable_library"
       ],
       "expected_failure": "second authenticated identity reused the first user's bootstrap cache entry"
+    },
+    {
+      "id": "auth-bootstrap-singleflight-bypass",
+      "patch": "testdata/faults/auth-bootstrap-singleflight-bypass.patch",
+      "sha256": "99c3831b965575f51d02f49cf356a0733358d19eb604970428d0a725ffd70458",
+      "proofs": [
+        "pytest:python/tests/service/test_auth_bootstrap_singleflight.py::test_auth_bootstrap_cache_fans_concurrent_cold_requests_into_one_bootstrap"
+      ],
+      "expected_failure": "concurrent cold requests ran duplicate bootstrap operations"
     },
     {
       "id": "auth-password-state-identity-leak",

@@ -57,6 +57,7 @@
       "proofs": [
         "pytest:python/tests/kernel/test_auth_config_verifier.py",
         "pytest:python/tests/service/test_auth_bootstrap_cache.py::test_auth_bootstrap_cache_reuses_only_the_matching_users_durable_library",
+        "pytest:python/tests/service/test_auth_bootstrap_singleflight.py::test_auth_bootstrap_cache_fans_concurrent_cold_requests_into_one_bootstrap",
         "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked",
         "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal",
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject",

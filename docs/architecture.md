@@ -665,12 +665,14 @@ the scheduler loop) go through the one helper `db/retries.py:retry_serializable`
 ### 7.4 Auth, identity & bootstrap
 
 Supabase issues JWTs; FastAPI verifies them via JWKS (`auth/verifier.py`) and
-derives a `Viewer`. On a user's first request per process, `AuthMiddleware` runs
+derives a `Viewer`. On a user's first request per process, `AuthMiddleware`
+coalesces concurrent cold requests into one cancellation-shielded task and runs
 **bootstrap** (`services/bootstrap.py`: `ensure_user_and_default_library`) once —
-idempotent under SERIALIZABLE, creating the `users` row, a default library, and an
-admin membership; its bounded process-local LRU carries the resulting
-`default_library_id` on later `Viewer` projections without another threadpool or
-database hop. Eviction only repeats the idempotent bootstrap on a later request.
+idempotent under SERIALIZABLE across processes, creating the `users` row, a default
+library, and an admin membership. Its bounded process-local LRU carries the
+resulting `default_library_id` on later `Viewer` projections without another
+threadpool or database hop. Failure is never cached; eviction only repeats the
+idempotent bootstrap on a later request.
 Visibility is enforced by boolean predicates (`auth/permissions.py`) that take an
 explicit session and never leak existence (not-found == not-visible).
 

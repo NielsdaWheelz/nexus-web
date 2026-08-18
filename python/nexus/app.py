@@ -134,8 +134,9 @@ def create_bootstrap_callback():
 
     def bootstrap(user_id: UUID, email: str | None = None) -> UUID:
         # AuthMiddleware owns the process-local successful-result cache and
-        # invokes this blocking miss path in its threadpool. Concurrent cold
-        # misses may race, but the durable bootstrap is idempotent.
+        # coalesces same-process cold misses before invoking this blocking path
+        # in its threadpool. The durable SERIALIZABLE bootstrap remains
+        # idempotent across processes.
         db = session_factory()
         try:
             return ensure_user_and_default_library(db, user_id, email=email)
