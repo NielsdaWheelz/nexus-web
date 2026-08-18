@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from "playwright/test";
+import type { BrowserContext, Page, Request } from "playwright/test";
 import {
   expect,
   expectInvalidPasswordFeedback,
@@ -32,6 +32,13 @@ const FIRST_PASSWORD = "Nexus-invitation-password-01!";
 const REPLACEMENT_PASSWORD = "Nexus-replacement-password-02!";
 const ENDED_SESSION_PASSWORD = "Nexus-ended-session-password-03!";
 const MAX_COOKIE_VALUE_BYTES = 3_800;
+
+function isSessionResolutionRequest(request: Request): boolean {
+  const target = new URL(request.url());
+  return (
+    target.origin === webOrigin && target.pathname === "/auth/session/resolve"
+  );
+}
 
 async function savePassword(page: Page, password: string): Promise<void> {
   await page.getByLabel("New password", { exact: true }).fill(password);
@@ -391,7 +398,11 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
       header: request.headers()["x-nexus-session"],
     });
   });
+  const refreshResolutionRequest = page.waitForRequest(
+    isSessionResolutionRequest,
+  );
   await gotoWithStrictCsp(page, "/browse");
+  await refreshResolutionRequest;
   await expect(page).toHaveURL(/\/browse$/);
   expect(resolveRequests).toEqual([
     { method: "POST", origin: webOrigin, header: "Resolve" },
@@ -405,7 +416,11 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
     refresh_token: "terminal-refresh-token",
   });
   resolveRequests.length = 0;
+  const terminalResolutionRequest = page.waitForRequest(
+    isSessionResolutionRequest,
+  );
   await gotoWithStrictCsp(page, "/browse", { waitUntil: "commit" });
+  await terminalResolutionRequest;
   await expect(page).toHaveURL(
     (url) =>
       url.pathname === "/login" && url.searchParams.get("next") === "/browse",
