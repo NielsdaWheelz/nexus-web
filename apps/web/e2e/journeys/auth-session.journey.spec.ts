@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { BrowserContext, Page } from "playwright/test";
-import { androidPlayerProtocolIdentity } from "@/lib/player/androidPlayerProtocol";
+import { ANDROID_PLAYER_PROTOCOL_VERSION } from "@/lib/player/androidPlayerProtocol";
 import {
   expect,
   expectInvalidPasswordFeedback,
@@ -33,6 +36,16 @@ const FIRST_PASSWORD = "Nexus-invitation-password-01!";
 const REPLACEMENT_PASSWORD = "Nexus-replacement-password-02!";
 const ENDED_SESSION_PASSWORD = "Nexus-ended-session-password-03!";
 const MAX_COOKIE_VALUE_BYTES = 3_800;
+const PLAYER_PROTOCOL_CONTRACT_SHA256 = createHash("sha256")
+  .update(
+    readFileSync(
+      path.resolve(
+        __dirname,
+        "../../../../testdata/android/player-protocol.json",
+      ),
+    ),
+  )
+  .digest("hex");
 
 async function savePassword(page: Page, password: string): Promise<void> {
   await page.getByLabel("New password", { exact: true }).fill(password);
@@ -147,12 +160,11 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
   expect(version.headers()).not.toHaveProperty("location");
   expect(version.headers()).not.toHaveProperty("set-cookie");
   const versionBody = (await version.json()) as Record<string, unknown>;
-  const playerProtocol = androidPlayerProtocolIdentity();
   expect(versionBody).toEqual({
     source_sha: expect.stringMatching(/^[0-9a-f]{40}$/),
     player_protocol: {
-      version: playerProtocol.protocolVersion,
-      contract_sha256: playerProtocol.protocolContractSha256,
+      version: ANDROID_PLAYER_PROTOCOL_VERSION,
+      contract_sha256: PLAYER_PROTOCOL_CONTRACT_SHA256,
     },
   });
   const supabase = pageRequest(page, supabaseOrigin);
