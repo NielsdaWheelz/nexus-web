@@ -38,7 +38,10 @@ def test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle(
     )
 
     config = _migration_config()
-    assert ScriptDirectory.from_config(config).get_current_head() == "0216"
+    scripts = ScriptDirectory.from_config(config)
+    revision = scripts.get_revision("0216")
+    assert revision is not None
+    assert revision.down_revision == "0215"
     command.upgrade(config, "0215")
 
     removed_call_id = uuid4()
