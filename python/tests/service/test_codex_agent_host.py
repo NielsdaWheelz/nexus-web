@@ -10,8 +10,9 @@ import socket
 import sys
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
+from tempfile import gettempdir
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -56,6 +57,13 @@ from nexus.services.native_agent_operations import build_metadata_enrichment_com
 
 REQUEST_ID = UUID("755a2de9-2bdc-5c57-a6a0-17a2407f14bb")
 _REAL_ASYNCIO_TIMEOUT = asyncio.timeout
+_LINUX_SUN_PATH_BYTES = 108
+
+
+def _short_socket_path() -> Path:
+    socket_path = Path(gettempdir()) / f"nexus-agent-host-{uuid4().hex[:16]}.sock"
+    assert len(str(socket_path).encode("utf-8")) < _LINUX_SUN_PATH_BYTES
+    return socket_path
 
 
 def _capacity_paths(
@@ -621,7 +629,7 @@ def _start_owned_process(
 def test_real_uds_host_binds_the_exact_metadata_policy_and_closes_after_terminal(
     tmp_path: Path,
 ) -> None:
-    socket_path = tmp_path / "agent.sock"
+    socket_path = _short_socket_path()
     report_parent, report_child = multiprocessing.Pipe(duplex=False)
     process, ready = _start_owned_process(
         _run_scripted_host,
@@ -734,7 +742,7 @@ def test_host_refuses_non_admissible_capacity_before_runtime_construction(
     some_avg10: str,
     full_avg10: str,
 ) -> None:
-    socket_path = tmp_path / "capacity-refused.sock"
+    socket_path = _short_socket_path()
     paths = _capacity_paths(
         tmp_path,
         mem_available_kib=mem_available_kib,
@@ -787,7 +795,7 @@ def test_host_refuses_non_admissible_capacity_before_runtime_construction(
 
 
 def test_host_admits_exact_remaining_growth_plus_256_mib_boundary(tmp_path: Path) -> None:
-    socket_path = tmp_path / "capacity-boundary.sock"
+    socket_path = _short_socket_path()
     paths = _capacity_paths(tmp_path, mem_available_kib=524_288)
     runtime_marker = tmp_path / "runtime-constructions"
     process, ready = _start_owned_process(
@@ -816,7 +824,7 @@ def test_host_admits_exact_remaining_growth_plus_256_mib_boundary(tmp_path: Path
 def test_busy_host_refuses_before_capacity_snapshot_and_never_waits_behind_http_200(
     tmp_path: Path,
 ) -> None:
-    socket_path = tmp_path / "capacity-busy.sock"
+    socket_path = _short_socket_path()
     paths = _capacity_paths(tmp_path)
     runtime_marker = tmp_path / "runtime-constructions"
     context = multiprocessing.get_context("fork")
@@ -880,7 +888,7 @@ def test_busy_host_refuses_before_capacity_snapshot_and_never_waits_behind_http_
 def test_two_free_slot_arrivals_admit_exactly_one_without_queueing_the_other(
     tmp_path: Path,
 ) -> None:
-    socket_path = tmp_path / "capacity-race.sock"
+    socket_path = _short_socket_path()
     paths = _capacity_paths(tmp_path)
     runtime_marker = tmp_path / "runtime-constructions"
     context = multiprocessing.get_context("fork")
@@ -975,7 +983,7 @@ def test_client_recognizes_only_the_exact_pre_accept_capacity_response(
     body: bytes,
     expected_error: type[Exception],
 ) -> None:
-    socket_path = tmp_path / "rejection.sock"
+    socket_path = _short_socket_path()
     process, ready = _start_owned_process(
         _run_fixed_http_rejection_host,
         (str(socket_path), status, content_type, body),
@@ -998,7 +1006,7 @@ def test_capacity_canary_emits_only_three_bounded_non_content_turn_facts(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    socket_path = tmp_path / "capacity-canary.sock"
+    socket_path = _short_socket_path()
     paths = _capacity_paths(tmp_path)
     runtime_marker = tmp_path / "runtime-constructions"
     process, ready = _start_owned_process(
@@ -1047,7 +1055,7 @@ def test_capacity_canary_emits_only_three_bounded_non_content_turn_facts(
 
 
 def test_host_fails_closed_and_redacts_a_forbidden_tool_event(tmp_path: Path) -> None:
-    socket_path = tmp_path / "policy.sock"
+    socket_path = _short_socket_path()
     process, ready = _start_owned_process(
         _run_policy_violation_host,
         (str(socket_path), str(tmp_path)),
@@ -1069,7 +1077,7 @@ def test_host_fails_closed_and_redacts_a_forbidden_tool_event(tmp_path: Path) ->
 
 
 def test_host_normalizes_runtime_cleanup_failure_before_emitting_terminal(tmp_path: Path) -> None:
-    socket_path = tmp_path / "close-failure.sock"
+    socket_path = _short_socket_path()
     process, ready = _start_owned_process(
         _run_close_failing_host,
         (str(socket_path), str(tmp_path)),
@@ -1104,7 +1112,7 @@ def test_host_preserves_pre_start_stop_reason_as_a_closed_terminal(
     expected_status: str,
     expected_failure: str | None,
 ) -> None:
-    socket_path = tmp_path / f"turn-not-started-{reason}.sock"
+    socket_path = _short_socket_path()
     process, ready = _start_owned_process(
         _run_turn_not_started_host,
         (str(socket_path), str(tmp_path), reason),
@@ -1144,7 +1152,7 @@ def test_host_preserves_pre_start_stop_reason_as_a_closed_terminal(
 def test_client_refuses_a_frame_after_terminal_before_returning_success(
     tmp_path: Path,
 ) -> None:
-    socket_path = tmp_path / "malformed.sock"
+    socket_path = _short_socket_path()
     process, ready = _start_owned_process(_run_post_terminal_host, (str(socket_path),))
     try:
         command = build_metadata_enrichment_command(request_id=REQUEST_ID, input="bounded input")
@@ -1172,7 +1180,7 @@ def test_client_deadline_classifies_whether_the_host_accepted_the_request(
     accepted: bool,
     expected_error: type[Exception],
 ) -> None:
-    socket_path = tmp_path / f"deadline-{accepted}.sock"
+    socket_path = _short_socket_path()
     process, ready = _start_owned_process(
         _run_stalling_http_host,
         (str(socket_path), accepted),
@@ -1196,7 +1204,7 @@ def test_client_deadline_classifies_whether_the_host_accepted_the_request(
 
 
 def test_startup_recovers_only_a_proven_stale_socket(tmp_path: Path) -> None:
-    stale_path = tmp_path / "stale.sock"
+    stale_path = _short_socket_path()
     stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     stale.bind(str(stale_path))
     stale.close()
@@ -1207,7 +1215,7 @@ def test_startup_recovers_only_a_proven_stale_socket(tmp_path: Path) -> None:
     assert not stale_path.exists()
     assert stale_identity.st_ino > 0
 
-    live_path = tmp_path / "live.sock"
+    live_path = _short_socket_path()
     live = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     live.bind(str(live_path))
     live.listen(1)
