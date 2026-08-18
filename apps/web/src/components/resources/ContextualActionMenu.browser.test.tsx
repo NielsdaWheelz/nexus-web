@@ -130,7 +130,10 @@ function menuEnvironment(menu: ReactNode) {
                 <LecternProvider>
                   <LibraryPlacementControllerProvider>
                     <ShareControllerProvider>
-                      <OfflineMediaProvider accountId={ACCOUNT_ID} transport={null}>
+                      <OfflineMediaProvider
+                        accountId={ACCOUNT_ID}
+                        transport={null}
+                      >
                         <ResourceOverlaysProvider>
                           <GlobalPlayerProvider>
                             <ResourceActionRuntimeProvider>
@@ -179,6 +182,34 @@ describe("ContextualActionMenu", () => {
     vi.unstubAllGlobals();
     localStorage.clear();
     sessionStorage.clear();
+  });
+
+  it("keeps local-only menus independent of the canonical resource runtime", async () => {
+    const refresh = vi.fn();
+    render(
+      <ContextualActionMenu
+        label="More"
+        sections={[
+          {
+            id: "Pane",
+            actions: [
+              {
+                kind: "command",
+                id: "Pane.Refresh",
+                label: "Refresh",
+                onSelect: refresh,
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const menu = await openMore();
+    await userEvent.click(
+      within(menu).getByRole("menuitem", { name: "Refresh" }),
+    );
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("keeps local pane commands available and appends the canonical resource plan as one ordered suffix", async () => {
@@ -232,7 +263,9 @@ describe("ContextualActionMenu", () => {
     // and the canonical planner retains its own Chat/Danger group boundaries.
     expect(within(menu).getAllByRole("separator")).toHaveLength(4);
 
-    await userEvent.click(within(menu).getByRole("menuitem", { name: "Refresh" }));
+    await userEvent.click(
+      within(menu).getByRole("menuitem", { name: "Refresh" }),
+    );
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(bff.resolveCalls).toHaveLength(1);
   });
@@ -286,7 +319,9 @@ describe("ContextualActionMenu", () => {
       "true",
     );
     expect(screen.getByRole("menu")).toBe(menu);
-    expect(within(menu).getByRole("menuitem", { name: "Refresh" })).toBeEnabled();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Refresh" }),
+    ).toBeEnabled();
     expect(refreshItem).toHaveFocus();
     expect(
       within(menu).getByRole("menuitem", { name: "Libraries…" }),
@@ -343,12 +378,16 @@ describe("ContextualActionMenu", () => {
 
     await waitFor(() => expect(bff.resolveCalls).toHaveLength(1));
     const menu = await openMore();
-    expect(within(menu).getByRole("menuitem", { name: "Refresh" })).toBeEnabled();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Refresh" }),
+    ).toBeEnabled();
     expect(
       within(menu).getByRole("menuitem", { name: "Retry actions" }),
     ).toBeEnabled();
 
-    await userEvent.click(within(menu).getByRole("menuitem", { name: "Refresh" }));
+    await userEvent.click(
+      within(menu).getByRole("menuitem", { name: "Refresh" }),
+    );
     expect(refresh).toHaveBeenCalledTimes(1);
 
     const retryMenu = await openMore();

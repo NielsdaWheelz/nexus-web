@@ -946,6 +946,8 @@
         "apps/web/src/lib/libraries/libraryPlacementCommit.ts",
         "apps/web/src/lib/libraries/placementController.tsx",
         "apps/web/src/lib/libraries/useLibraryPlacement.ts",
+        "apps/web/src/lib/actions/resourceActionRuntime.tsx",
+        "apps/web/src/components/resources/ContextualActionMenu.tsx",
         "apps/web/src/components/libraries/LibraryPlacementOverlay.tsx",
         "apps/web/src/components/libraries/LibraryEntryEditor.tsx"
       ],
