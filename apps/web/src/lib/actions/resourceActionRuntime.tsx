@@ -1739,17 +1739,18 @@ function descriptorsForPlan(
 }
 
 function useCanonicalResourceActionModel(
-  target: ResourceActionSubject,
-): ResourceActionMenuModel {
+  target: ResourceActionSubject | null,
+): ResourceActionMenuModel | null {
   const { busyStore, cache, invoke, raiseDefect } = useRuntimeContext();
   const environment = useResourceActionEnvironment();
-  const entry = useResourceActionSnapshot(target.ref);
+  const entry = useResourceActionSnapshot(target?.ref ?? null);
   const busyKeys = useSyncExternalStore(
     busyStore.subscribe,
     busyStore.getKeys,
     busyStore.getKeys,
   );
-  return useMemo<ResourceActionMenuModel>(() => {
+  return useMemo<ResourceActionMenuModel | null>(() => {
+    if (target === null) return null;
     if (!entry || entry.status === "Loading") return LOADING_MODEL;
     const snapshot =
       entry.status === "Ready" || entry.status === "Reconciling"
@@ -1815,6 +1816,17 @@ function useCanonicalResourceActionModel(
 }
 
 /**
+ * The optional-subject model keeps composite menus mounted while pane chrome
+ * publishes its canonical resource identity. A missing subject owns no
+ * resource suffix and performs no snapshot read.
+ */
+export function useOptionalResourceActionMenuModel(
+  target: ResourceActionSubject | undefined,
+): ResourceActionMenuModel | null {
+  return useCanonicalResourceActionModel(target ?? null);
+}
+
+/**
  * The dropdown model for `ResourceActionMenu`: the composed, danger-last plan
  * projected to ActionDescriptor[]. Until the ref's snapshot exists, the visible
  * trigger is inert and menu-open performs zero network work.
@@ -1822,5 +1834,9 @@ function useCanonicalResourceActionModel(
 export function useResourceActionMenuModel(
   target: ResourceActionSubject,
 ): ResourceActionMenuModel {
-  return useCanonicalResourceActionModel(target);
+  const model = useOptionalResourceActionMenuModel(target);
+  if (model === null) {
+    throw new Error("A canonical resource action subject is required.");
+  }
+  return model;
 }

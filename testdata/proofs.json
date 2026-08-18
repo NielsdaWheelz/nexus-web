@@ -924,6 +924,7 @@
         "apps/web/src/lib/resources/resourceOverlaysController.tsx",
         "apps/web/src/lib/actions/resourceActionApplicability.oracle.unit.test.ts",
         "apps/web/src/components/resource-surface/ResourceSurfaceBodyEditor.tsx",
+        "apps/web/src/components/resources/ContextualActionMenu.tsx",
         "apps/web/src/components/resources/ResourceActionMenu.tsx",
         "apps/web/src/components/ui/ActionMenu.tsx",
         "apps/web/e2e/resourceActionProductOracle.ts",
