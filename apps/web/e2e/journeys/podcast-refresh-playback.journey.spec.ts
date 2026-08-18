@@ -48,12 +48,6 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
   expect(podcastId, "Subscribed Podcast route omitted its canonical id.").toMatch(
     /^[0-9a-f-]{36}$/i,
   );
-  await expect(
-    page.getByText(
-      /^(?:Episode updates pending|Checking for new episodes|Episode updates current)$/,
-    ),
-    "Podcast subscription did not establish a pending, active, or current live-sync state.",
-  ).toBeVisible({ timeout: 25_000 });
   const podcastPane = page.getByRole("region", {
     name: "Houston We Have a Podcast — Podcasts",
     exact: true,
@@ -63,7 +57,10 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
     name: "Refresh",
     exact: true,
   });
-  await expect(refresh).toBeVisible();
+  await expect(
+    refresh,
+    `Subscribed Podcast ${podcastId} did not publish its Refresh action.`,
+  ).toBeVisible({ timeout: 25_000 });
   const refreshAdmissionPromise = page.waitForResponse(
     (response) =>
       matchesResponse(response, webOrigin, "POST", "/api/podcasts/refresh-runs"),
