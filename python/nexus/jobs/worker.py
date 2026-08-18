@@ -287,6 +287,7 @@ class JobWorker:
                 if isinstance(child_result, ChildReschedule):
                     handler_result = RescheduleRequested(
                         available_at=child_result.available_at,
+                        delay_seconds=child_result.delay_seconds,
                         payload=child_result.payload,
                     )
                 elif isinstance(child_result, ChildSucceeded):

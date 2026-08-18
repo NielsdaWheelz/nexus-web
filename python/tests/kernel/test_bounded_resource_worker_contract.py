@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -16,12 +17,14 @@ from nexus.job_topology import (
 from nexus.jobs.process_executor import (
     BackgroundProcessProtocolDefect,
     ChildDefect,
+    ChildReschedule,
     ChildSucceeded,
     _bounded_result_bytes,
     _decode_result,
+    _encode_handler_result,
     _encode_request,
 )
-from nexus.jobs.queue import JobExecutionContext
+from nexus.jobs.queue import JobExecutionContext, RescheduleRequested
 from nexus.jobs.registry import get_default_registry, get_task_contract_digest
 
 
@@ -125,11 +128,17 @@ def test_worker_topology_and_task_digest_cover_resource_class(
 @pytest.mark.parametrize(
     "encoded",
     (
-        b'{"version":2,"kind":"Succeeded","payload":{}}',
-        b'{"version":1,"version":1,"kind":"Succeeded","payload":{}}',
-        b'{"version":1,"kind":"Succeeded","payload":{},"extra":null}',
-        b'{"version":1,"kind":"ModeledFailure","error_code":"E_RESOURCE_LIMIT",'
+        b'{"version":1,"kind":"Succeeded","payload":{}}',
+        b'{"version":2,"version":2,"kind":"Succeeded","payload":{}}',
+        b'{"version":2,"kind":"Succeeded","payload":{},"extra":null}',
+        b'{"version":2,"kind":"ModeledFailure","error_code":"E_RESOURCE_LIMIT",'
         b'"message":"bounded","resource_dimension":null}',
+        b'{"version":2,"kind":"Reschedule","available_at":null,"delay_seconds":null,'
+        b'"payload":{"kind":"Absent"}}',
+        b'{"version":2,"kind":"Reschedule","available_at":"2026-08-17T12:00:00+00:00",'
+        b'"delay_seconds":30,"payload":{"kind":"Absent"}}',
+        b'{"version":2,"kind":"Reschedule","available_at":null,"delay_seconds":true,'
+        b'"payload":{"kind":"Absent"}}',
     ),
 )
 def test_background_child_result_protocol_rejects_noncanonical_values(encoded: bytes) -> None:
@@ -138,12 +147,12 @@ def test_background_child_result_protocol_rejects_noncanonical_values(encoded: b
 
 
 def test_background_child_result_protocol_is_exact_and_size_bounded() -> None:
-    success = _decode_result(b'{"version":1,"kind":"Succeeded","payload":{"value":3}}')
+    success = _decode_result(b'{"version":2,"kind":"Succeeded","payload":{"value":3}}')
     assert success == ChildSucceeded(payload={"value": 3})
 
     encoded = _bounded_result_bytes(
         {
-            "version": 1,
+            "version": 2,
             "kind": "Succeeded",
             "payload": {"value": "x" * 2048},
         },
@@ -154,6 +163,32 @@ def test_background_child_result_protocol_is_exact_and_size_bounded() -> None:
         error_type="ResultTooLarge",
         message="Background child result exceeded its closed protocol limit.",
     )
+
+
+def test_background_child_reschedule_protocol_preserves_exact_schedule_form() -> None:
+    absolute = datetime(2026, 8, 17, 12, tzinfo=UTC)
+    cases = (
+        (
+            RescheduleRequested(available_at=absolute),
+            ChildReschedule(available_at=absolute, delay_seconds=None, payload=None),
+        ),
+        (
+            RescheduleRequested(delay_seconds=30, payload={"capacity_wait_index": 1}),
+            ChildReschedule(
+                available_at=None,
+                delay_seconds=30,
+                payload={"capacity_wait_index": 1},
+            ),
+        ),
+    )
+
+    for requested, expected in cases:
+        encoded = json.dumps(
+            _encode_handler_result(requested),
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        assert _decode_result(encoded) == expected
 
 
 @pytest.mark.parametrize("constant", (float("nan"), float("inf"), float("-inf")))
@@ -174,7 +209,7 @@ def test_background_child_protocol_rejects_non_json_numeric_constants(constant: 
         )
 
     encoded = _bounded_result_bytes(
-        {"version": 1, "kind": "Succeeded", "payload": {"value": constant}},
+        {"version": 2, "kind": "Succeeded", "payload": {"value": constant}},
         result_max_bytes=1024,
     )
     assert _decode_result(encoded) == ChildDefect(
@@ -184,4 +219,4 @@ def test_background_child_protocol_rejects_non_json_numeric_constants(constant: 
 
     for token in (b"NaN", b"Infinity", b"-Infinity"):
         with pytest.raises(BackgroundProcessProtocolDefect, match="non-JSON constant"):
-            _decode_result(b'{"version":1,"kind":"Succeeded","payload":{"value":' + token + b"}}")
+            _decode_result(b'{"version":2,"kind":"Succeeded","payload":{"value":' + token + b"}}")

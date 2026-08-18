@@ -21,7 +21,7 @@ from uuid import UUID
 
 from nexus.jobs.queue import JobExecutionContext, RescheduleRequested
 
-_PROTOCOL_VERSION = 1
+_PROTOCOL_VERSION = 2
 _INPUT_KEYS = frozenset(
     {
         "version",
@@ -35,7 +35,7 @@ _INPUT_KEYS = frozenset(
 )
 _RESULT_KEYS = {
     "Succeeded": frozenset({"version", "kind", "payload"}),
-    "Reschedule": frozenset({"version", "kind", "available_at", "payload"}),
+    "Reschedule": frozenset({"version", "kind", "available_at", "delay_seconds", "payload"}),
     "ModeledFailure": frozenset({"version", "kind", "error_code", "message", "resource_dimension"}),
     "Defect": frozenset({"version", "kind", "error_type", "message"}),
 }
@@ -123,8 +123,17 @@ class ChildSucceeded:
 
 @dataclass(frozen=True, slots=True)
 class ChildReschedule:
-    available_at: datetime
+    available_at: datetime | None
+    delay_seconds: int | None
     payload: Mapping[str, Any] | None
+
+    def __post_init__(self) -> None:
+        if (self.available_at is None) == (self.delay_seconds is None):
+            raise ValueError("ChildReschedule requires exactly one schedule form")
+        if self.delay_seconds is not None and (
+            type(self.delay_seconds) is not int or self.delay_seconds < 0
+        ):
+            raise ValueError("ChildReschedule.delay_seconds must be a non-negative integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,22 +382,34 @@ def _decode_result(encoded: bytes) -> ChildExecutionResult:
         return ChildSucceeded(dict(payload))
     if kind == "Reschedule":
         available_at = value["available_at"]
-        if not isinstance(available_at, str):
+        delay_seconds = value["delay_seconds"]
+        if (available_at is None) == (delay_seconds is None):
             raise BackgroundProcessProtocolDefect(
-                "background child reschedule time must be a string"
+                "background child reschedule requires exactly one schedule form"
             )
-        try:
-            parsed_available_at = datetime.fromisoformat(available_at)
-        except ValueError as exc:
+        parsed_available_at: datetime | None = None
+        if available_at is not None:
+            if not isinstance(available_at, str):
+                raise BackgroundProcessProtocolDefect(
+                    "background child absolute reschedule time must be a string"
+                )
+            try:
+                parsed_available_at = datetime.fromisoformat(available_at)
+            except ValueError as exc:
+                raise BackgroundProcessProtocolDefect(
+                    "background child absolute reschedule time is malformed"
+                ) from exc
+            if parsed_available_at.tzinfo is None:
+                raise BackgroundProcessProtocolDefect(
+                    "background child absolute reschedule time must include an offset"
+                )
+        if delay_seconds is not None and (type(delay_seconds) is not int or delay_seconds < 0):
             raise BackgroundProcessProtocolDefect(
-                "background child reschedule time is malformed"
-            ) from exc
-        if parsed_available_at.tzinfo is None:
-            raise BackgroundProcessProtocolDefect(
-                "background child reschedule time must include an offset"
+                "background child relative reschedule delay must be a non-negative integer"
             )
         return ChildReschedule(
             available_at=parsed_available_at,
+            delay_seconds=cast(int | None, delay_seconds),
             payload=_decode_payload_presence(value["payload"]),
         )
     if kind == "ModeledFailure":
@@ -480,11 +501,20 @@ def _child_result(request: dict[str, object]) -> dict[str, object]:
             "error_type": type(exc).__name__,
             "message": str(exc)[:3000],
         }
+    return _encode_handler_result(result)
+
+
+def _encode_handler_result(
+    result: Mapping[str, Any] | RescheduleRequested | None,
+) -> dict[str, object]:
     if isinstance(result, RescheduleRequested):
         return {
             "version": _PROTOCOL_VERSION,
             "kind": "Reschedule",
-            "available_at": result.available_at.isoformat(),
+            "available_at": (
+                result.available_at.isoformat() if result.available_at is not None else None
+            ),
+            "delay_seconds": result.delay_seconds,
             "payload": (
                 {"kind": "Absent"}
                 if result.payload is None
