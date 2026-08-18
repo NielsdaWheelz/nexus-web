@@ -95,9 +95,7 @@ class WorkerHeartbeatPublisher:
         self._lane: WorkerLane = lane
         self._allowed_job_kinds = _closed_job_kinds(allowed_job_kinds)
         self._source_sha = _require_source_sha(source_sha)
-        self._expected_database_revision = _require_database_revision(
-            expected_database_revision
-        )
+        self._expected_database_revision = _require_database_revision(expected_database_revision)
         self._expected_oracle_manifest_digest = _require_oracle_digest(
             expected_oracle_manifest_digest
         )
@@ -178,9 +176,7 @@ def validate_worker_heartbeat(
     return heartbeat
 
 
-def check_worker_health(
-    *, lane: WorkerLane, heartbeat_path: Path | None = None
-) -> WorkerHeartbeat:
+def check_worker_health(*, lane: WorkerLane, heartbeat_path: Path | None = None) -> WorkerHeartbeat:
     """Validate the recent self-published worker health record."""
     path = heartbeat_path or WORKER_HEARTBEAT_PATHS[lane]
     try:
@@ -221,9 +217,8 @@ def validate_worker_heartbeat_record(
 ) -> WorkerHeartbeat:
     """Validate a self-authored record without importing the worker runtime graph."""
     heartbeat = _parse_worker_heartbeat(payload)
-    if (
-        heartbeat.lane != expected_lane
-        or heartbeat.allowed_job_kinds != _closed_job_kinds(expected_allowed_job_kinds)
+    if heartbeat.lane != expected_lane or heartbeat.allowed_job_kinds != _closed_job_kinds(
+        expected_allowed_job_kinds
     ):
         raise WorkerHeartbeatError("identity_mismatch")
     now = float(now_monotonic)
@@ -246,9 +241,7 @@ def _parse_worker_heartbeat(payload: object) -> WorkerHeartbeat:
         lane = _require_lane(value["lane"])
         allowed_job_kinds = _closed_job_kinds(value["allowed_job_kinds"])
         source_sha = _require_source_sha(value["source_sha"])
-        expected_database_revision = _require_database_revision(
-            value["expected_database_revision"]
-        )
+        expected_database_revision = _require_database_revision(value["expected_database_revision"])
         expected_oracle_manifest_digest = _require_oracle_digest(
             value["expected_oracle_manifest_digest"]
         )

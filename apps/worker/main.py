@@ -87,9 +87,7 @@ def _register_signal_handlers(stop_event: threading.Event) -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
 
 
-def create_worker(
-    *, successful_cycle_callback: Callable[[], None] | None = None
-) -> JobWorker:
+def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None) -> JobWorker:
     settings = get_settings()
     registry = get_default_registry()
     if settings.worker_lane == "interactive":
@@ -119,9 +117,7 @@ def create_worker(
 
     unknown_kinds = set(allowed_kinds) - registered_kinds
     if unknown_kinds:
-        raise RuntimeError(
-            f"Unknown worker job kinds: {', '.join(sorted(unknown_kinds))}"
-        )
+        raise RuntimeError(f"Unknown worker job kinds: {', '.join(sorted(unknown_kinds))}")
 
     session_factory = _get_worker_session_factory()
     process_executor: BackgroundProcessExecutor | None = None
@@ -182,9 +178,7 @@ def main() -> None:
     if settings.worker_lane in ("interactive", "background"):
         lane = cast(WorkerLane, settings.worker_lane)
         allowed_job_kinds = (
-            INTERACTIVE_WORKER_JOB_KINDS
-            if lane == "interactive"
-            else BACKGROUND_WORKER_JOB_KINDS
+            INTERACTIVE_WORKER_JOB_KINDS if lane == "interactive" else BACKGROUND_WORKER_JOB_KINDS
         )
         publisher = WorkerHeartbeatPublisher(
             lane=lane,
