@@ -46,6 +46,7 @@ def test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle(
     assert len(heads) == 1
     successors = tuple(scripts.iterate_revisions(heads[0], "0216"))
     assert successors, "0216 must remain a strict ancestor of the current head"
+    assert successors[-1].revision == "0217"
     assert successors[-1].down_revision == "0216"
     command.upgrade(config, "0215")
 

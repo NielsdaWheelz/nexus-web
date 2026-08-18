@@ -133,12 +133,6 @@ def test_0215_rewrites_only_retired_provider_facts_and_preserves_durable_state(
     revision = scripts.get_revision("0215")
     assert revision is not None
     assert revision.down_revision == "0214"
-    heads = scripts.get_heads()
-    assert len(heads) == 1
-    successors = tuple(scripts.iterate_revisions(heads[0], "0215"))
-    assert len(successors) >= 2
-    assert successors[-1].down_revision == "0215"
-    assert successors[-2].down_revision == "0216"
     command.upgrade(config, "0214")
 
     user_id = uuid4()
