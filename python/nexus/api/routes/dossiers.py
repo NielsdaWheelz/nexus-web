@@ -6,7 +6,8 @@ from dataclasses import asdict
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Header, Response
+from fastapi import APIRouter, Body, Depends, Header, Request, Response
+from llm_tools import Available, ToolId
 from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
@@ -44,6 +45,7 @@ from nexus.services.artifacts.dossier_types import (
     DossierSubjectLocator,
     FailedEventPayload,
     InvalidSubjectLocator,
+    WebResearchNotConfigured,
 )
 from nexus.services.artifacts.handles import seal_artifact_build, unseal_artifact_build
 from nexus.services.artifacts.manifests import (
@@ -63,11 +65,20 @@ from nexus.services.resource_graph.refs import (
 )
 from nexus.services.resource_graph.resolve import resolve_ref
 from nexus.services.resource_items.routing import resource_activation_for_ref
+from nexus.services.tool_runtime.composition import ComposedToolRuntime
 
 router = APIRouter(tags=["dossiers"])
 
 _MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
 _COVERAGE_ADAPTER: TypeAdapter[DossierCoverageOut] = TypeAdapter(DossierCoverageOut)
+
+
+def _require_idea_web_research(request: Request) -> None:
+    runtime: ComposedToolRuntime = request.app.state.tool_runtime
+    operation = runtime.operations["idea_dossier_research"]
+    binding = operation.plan.catalog_view.binding(ToolId("web.search"))
+    if not isinstance(binding.execute, Available):
+        raise WebResearchNotConfigured()
 
 
 def _subject_locator(subject_scheme: str, subject_handle: str) -> DossierSubjectLocator:
@@ -310,15 +321,18 @@ def create_dossier_build(
 
 @router.post("/artifacts/dossiers/learn")
 async def learn_dossier(
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     runtime: Annotated[ExecutionRuntime, Depends(get_single_attempt_execution_runtime)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[LearnDossierRequest, Body()],
 ) -> dict:
+    highlight_id = _highlight_ref(body.highlight_ref).id
+    _require_idea_web_research(request)
     outcome = await engine.learn_idea(
         db,
-        highlight_id=_highlight_ref(body.highlight_ref).id,
+        highlight_id=highlight_id,
         requester_user_id=viewer.user_id,
         idempotency_key=idempotency_key,
         runtime=runtime,
@@ -350,15 +364,24 @@ def get_dossier_by_ref(
 
 @router.post("/artifacts/{artifact_ref}/builds", status_code=202)
 def regenerate_dossier(
+    request: Request,
     artifact_ref: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[DossierGenerateRequest, Body()],
 ) -> dict:
+    artifact_id = _artifact_ref(artifact_ref).id
+    head = engine.read_artifact_head(
+        db,
+        artifact_id=artifact_id,
+        requester_user_id=viewer.user_id,
+    )
+    if head.subject_scheme == "idea":
+        _require_idea_web_research(request)
     ticket = engine.regenerate_artifact(
         db,
-        artifact_id=_artifact_ref(artifact_ref).id,
+        artifact_id=artifact_id,
         requester_user_id=viewer.user_id,
         idempotency_key=idempotency_key,
         instruction=nullable_from_presence(body.instruction),

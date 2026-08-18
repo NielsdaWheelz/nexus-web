@@ -3,6 +3,7 @@ import json
 import socket
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -102,16 +103,20 @@ def test_heavy_lock_serializes_linked_worktrees_through_their_common_git_owner(
     assert "BlockingIOError" in completed.stderr
 
 
-def test_docker_host_accepts_only_a_real_local_unix_socket(tmp_path: Path) -> None:
-    ordinary_file = tmp_path / "not-a-socket"
-    ordinary_file.write_text("unsafe", encoding="utf-8")
-    local_socket = tmp_path / "docker.sock"
-    with socket.socket(socket.AF_UNIX) as server:
-        server.bind(str(local_socket))
-        assert local_docker_host((ordinary_file, local_socket)) == f"unix://{local_socket}"
+def test_docker_host_accepts_only_a_real_local_unix_socket() -> None:
+    with tempfile.TemporaryDirectory(prefix="nexus-sock-", dir="/tmp") as temp_dir:
+        socket_root = Path(temp_dir)
+        ordinary_file = socket_root / "not-a-socket"
+        ordinary_file.write_text("unsafe", encoding="utf-8")
+        local_socket = socket_root / "docker.sock"
+        with socket.socket(socket.AF_UNIX) as server:
+            server.bind(str(local_socket))
+            assert local_docker_host((ordinary_file, local_socket)) == (
+                f"unix://{local_socket.resolve()}"
+            )
 
-    with pytest.raises(RuntimeContractError, match="local Docker Unix socket"):
-        local_docker_host((ordinary_file,))
+        with pytest.raises(RuntimeContractError, match="local Docker Unix socket"):
+            local_docker_host((ordinary_file,))
 
 
 def _ports() -> RuntimePorts:

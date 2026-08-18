@@ -15,7 +15,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
-from nexus.schemas.conversation import chat_run_event_payload_json
+from nexus.schemas.conversation import (
+    ChatRunToolResultEventPayload,
+    StoredToolProjection,
+    chat_run_event_payload_json,
+)
 from nexus.services import run_kit
 
 TERMINAL_RUN_STATUSES = run_kit.terminal_statuses(run_kit.RunStreamKind.ChatRun)
@@ -114,7 +118,7 @@ class ChatRunEventEmitter:
     def tool_call_start(
         self,
         *,
-        tool_name: str,
+        projection: StoredToolProjection,
         tool_call_index: int,
         provider_tool_call_id: str,
         provider_event_seq_start: int,
@@ -126,9 +130,9 @@ class ChatRunEventEmitter:
             self._run.id,
             "tool_call_start",
             {
+                **projection.model_dump(mode="json"),
                 "tool_call_id": None,
                 "assistant_message_id": str(self._run.assistant_message_id),
-                "tool_name": tool_name,
                 "tool_call_index": tool_call_index,
                 "provider_tool_call_id": provider_tool_call_id,
                 "provider_event_seq_start": provider_event_seq_start,
@@ -139,7 +143,7 @@ class ChatRunEventEmitter:
     def tool_call_delta(
         self,
         *,
-        tool_name: str,
+        projection: StoredToolProjection,
         tool_call_index: int,
         provider_tool_call_id: str,
         input_delta: str,
@@ -153,9 +157,9 @@ class ChatRunEventEmitter:
             self._run.id,
             "tool_call_delta",
             {
+                **projection.model_dump(mode="json"),
                 "tool_call_id": None,
                 "assistant_message_id": str(self._run.assistant_message_id),
-                "tool_name": tool_name,
                 "tool_call_index": tool_call_index,
                 "provider_tool_call_id": provider_tool_call_id,
                 "input_delta": input_delta,
@@ -168,7 +172,7 @@ class ChatRunEventEmitter:
     def tool_call_done(
         self,
         *,
-        tool_name: str,
+        projection: StoredToolProjection,
         tool_call_index: int,
         provider_tool_call_id: str,
         input: dict[str, Any],
@@ -181,9 +185,9 @@ class ChatRunEventEmitter:
             self._run.id,
             "tool_call_done",
             {
+                **projection.model_dump(mode="json"),
                 "tool_call_id": None,
                 "assistant_message_id": str(self._run.assistant_message_id),
-                "tool_name": tool_name,
                 "tool_call_index": tool_call_index,
                 "provider_tool_call_id": provider_tool_call_id,
                 "input": input,
@@ -198,9 +202,14 @@ class ChatRunEventEmitter:
         self._fence()
         append_run_event(self._db, self._run, "meta", payload)
 
-    def tool_result(self, payload: dict[str, Any]) -> None:
+    def tool_result(self, payload: ChatRunToolResultEventPayload) -> None:
         self._fence()
-        append_run_event(self._db, self._run, "tool_result", payload)
+        append_run_event(
+            self._db,
+            self._run,
+            "tool_result",
+            payload.model_dump(mode="json"),
+        )
 
     def citation_index(self, payload: dict[str, Any]) -> None:
         self._fence()

@@ -22,6 +22,11 @@ import {
 } from "@/lib/conversations/citationOut";
 import type { ChatPublicationWarning } from "@/lib/conversations/types";
 import {
+  decodeToolProjectionFields,
+  type ToolProjectionFields,
+} from "@/lib/conversations/messageWire";
+import { TOOL_CONTRACT_PROJECTION } from "@/lib/conversations/toolContractProjection";
+import {
   decodeContextRef,
   type ContextRefOut,
 } from "@/lib/resourceGraph/contextRefs";
@@ -103,10 +108,9 @@ export type ChatToolStatus =
 
 export interface SSEToolCallEvent {
   type: "tool_call_start";
-  data: {
+  data: ToolProjectionFields & {
     tool_call_id?: string | null;
     assistant_message_id: string;
-    tool_name: string;
     tool_call_index: number;
     provider_tool_call_id?: string | null;
     provider_event_seq_start: number;
@@ -131,15 +135,13 @@ export interface SSEToolCallDoneEvent {
 
 export interface SSEToolResultEvent {
   type: "tool_result";
-  data: {
+  data: ToolProjectionFields & {
     tool_call_id?: string | null;
     assistant_message_id: string;
-    tool_name: string;
     tool_call_index: number;
     status: ChatToolStatus;
     scope: string;
     types: string[];
-    error_code?: string | null;
     result_count?: number | null;
     selected_count?: number | null;
     latency_ms?: number | null;
@@ -367,20 +369,19 @@ function parseDoneData(data: unknown): SSEDoneEvent["data"] {
 }
 
 function parseToolCallStartData(data: unknown): SSEToolCallEvent["data"] {
+  const projection = decodeToolProjectionFields(data);
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
+      ...TOOL_CONTRACT_PROJECTION.fields,
       "tool_call_id",
       "assistant_message_id",
-      "tool_name",
       "tool_call_index",
       "provider_tool_call_id",
       "provider_event_seq_start",
       "provider_event_seq_end",
     ]) ||
     typeof data.assistant_message_id !== "string" ||
-    typeof data.tool_name !== "string" ||
-    data.tool_name.length === 0 ||
     typeof data.tool_call_index !== "number" ||
     !Number.isInteger(data.tool_call_index) ||
     data.tool_call_index < 0 ||
@@ -397,16 +398,16 @@ function parseToolCallStartData(data: unknown): SSEToolCallEvent["data"] {
   ) {
     throw new Error("Invalid SSE payload for tool_call_start");
   }
-  return data as SSEToolCallEvent["data"];
+  return { ...data, ...projection } as SSEToolCallEvent["data"];
 }
 
 function parseToolCallDeltaData(data: unknown): SSEToolCallDeltaEvent["data"] {
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
+      ...TOOL_CONTRACT_PROJECTION.fields,
       "tool_call_id",
       "assistant_message_id",
-      "tool_name",
       "tool_call_index",
       "provider_tool_call_id",
       "input_delta",
@@ -432,9 +433,9 @@ function parseToolCallDoneData(data: unknown): SSEToolCallDoneEvent["data"] {
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
+      ...TOOL_CONTRACT_PROJECTION.fields,
       "tool_call_id",
       "assistant_message_id",
-      "tool_name",
       "tool_call_index",
       "provider_tool_call_id",
       "input",
@@ -453,17 +454,17 @@ function parseToolCallDoneData(data: unknown): SSEToolCallDoneEvent["data"] {
 }
 
 function parseToolResultData(data: unknown): SSEToolResultEvent["data"] {
+  const projection = decodeToolProjectionFields(data);
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
+      ...TOOL_CONTRACT_PROJECTION.fields,
       "tool_call_id",
       "assistant_message_id",
-      "tool_name",
       "tool_call_index",
       "status",
       "scope",
       "types",
-      "error_code",
       "result_count",
       "selected_count",
       "latency_ms",
@@ -472,8 +473,6 @@ function parseToolResultData(data: unknown): SSEToolResultEvent["data"] {
       "results",
     ]) ||
     typeof data.assistant_message_id !== "string" ||
-    typeof data.tool_name !== "string" ||
-    data.tool_name.length === 0 ||
     !isOptionalString(data.tool_call_id) ||
     typeof data.tool_call_index !== "number" ||
     !Number.isInteger(data.tool_call_index) ||
@@ -483,7 +482,6 @@ function parseToolResultData(data: unknown): SSEToolResultEvent["data"] {
     data.scope.length === 0 ||
     !Array.isArray(data.types) ||
     !data.types.every((item) => typeof item === "string") ||
-    !isOptionalString(data.error_code) ||
     !isOptionalNonNegativeInteger(data.result_count) ||
     !isOptionalNonNegativeInteger(data.selected_count) ||
     (data.latency_ms !== undefined &&
@@ -502,7 +500,7 @@ function parseToolResultData(data: unknown): SSEToolResultEvent["data"] {
   ) {
     throw new Error("Invalid SSE payload for tool_result");
   }
-  return data as SSEToolResultEvent["data"];
+  return { ...data, ...projection } as SSEToolResultEvent["data"];
 }
 
 function isChatToolStatus(value: unknown): value is ChatToolStatus {

@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from nexus.api.deps import get_stream_viewer
+from nexus.api.deps import get_stream_viewer, require_tool_projection_revision
 from nexus.api.routes._sse import (
     open_sse_listener,
     tail_cursor_stream,
@@ -149,7 +149,10 @@ async def make_cursor_stream_response(
     )
 
 
-@router.get("/stream/chat-runs/{run_id}/events")
+@router.get(
+    "/stream/chat-runs/{run_id}/events",
+    dependencies=[Depends(require_tool_projection_revision)],
+)
 async def stream_chat_run_events(
     request: Request,
     run_id: UUID,

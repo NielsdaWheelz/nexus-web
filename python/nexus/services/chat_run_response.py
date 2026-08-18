@@ -17,6 +17,7 @@ from nexus.schemas.conversation import (
     ChatRunStreamStateOut,
     ChatRunStreamToolCallOut,
     chat_publication_warning_from_nullable,
+    chat_run_event_payload_json,
 )
 from nexus.schemas.llm import ExpectedChatFailure
 from nexus.schemas.presence import presence_from_nullable
@@ -155,27 +156,42 @@ def _stream_state(db: Session, run: ChatRun, assistant_content: str) -> ChatRunS
                     label=label if isinstance(label, str) else None,
                 )
         elif row.event_type in {"tool_call_start", "tool_call_delta", "tool_call_done"}:
-            index = row.payload.get("tool_call_index")
+            payload = chat_run_event_payload_json(row.event_type, row.payload)
+            index = payload.get("tool_call_index")
             if not isinstance(index, int):
                 folded_event_seq = row.seq
                 continue
             item = tool_calls_by_index.setdefault(
                 index,
                 {
-                    "id": row.payload.get("tool_call_id"),
-                    "assistant_message_id": row.payload.get("assistant_message_id"),
-                    "tool_name": row.payload.get("tool_name"),
+                    "id": payload.get("tool_call_id"),
+                    "assistant_message_id": payload.get("assistant_message_id"),
+                    "record_kind": payload.get("record_kind"),
+                    "canonical_tool_id": payload.get("canonical_tool_id"),
+                    "provider_wire_name": payload.get("provider_wire_name"),
+                    "effect": payload.get("effect"),
+                    "result_kind": payload.get("result_kind"),
+                    "activity_label": payload.get("activity_label"),
+                    "error_type": payload.get("error_type"),
                     "tool_call_index": index,
                     "status": "running",
                     "input_preview": None,
                 },
             )
-            if row.payload.get("tool_call_id") is not None:
-                item["id"] = row.payload.get("tool_call_id")
-            if isinstance(row.payload.get("tool_name"), str):
-                item["tool_name"] = row.payload["tool_name"]
-            if isinstance(row.payload.get("input_preview"), str):
-                item["input_preview"] = row.payload["input_preview"]
+            if payload.get("tool_call_id") is not None:
+                item["id"] = payload.get("tool_call_id")
+            for field in (
+                "record_kind",
+                "canonical_tool_id",
+                "provider_wire_name",
+                "effect",
+                "result_kind",
+                "activity_label",
+                "error_type",
+            ):
+                item[field] = payload.get(field)
+            if isinstance(payload.get("input_preview"), str):
+                item["input_preview"] = payload["input_preview"]
         folded_event_seq = row.seq
     terminal = run.status in {"complete", "error", "cancelled"}
     status = (
@@ -193,7 +209,7 @@ def _stream_state(db: Session, run: ChatRun, assistant_content: str) -> ChatRunS
             for item in sorted(
                 tool_calls_by_index.values(), key=lambda value: value["tool_call_index"]
             )
-            if item.get("assistant_message_id") and item.get("tool_name")
+            if item.get("assistant_message_id") and item.get("record_kind")
         ],
         activity=activity,
         reconnectable=not terminal,

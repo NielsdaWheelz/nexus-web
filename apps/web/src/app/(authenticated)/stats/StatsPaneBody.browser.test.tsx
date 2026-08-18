@@ -231,7 +231,7 @@ describe("Stats activity freshness", () => {
     const exclude = await screen.findByRole("menuitem", {
       name: "Don’t count this session",
     });
-    expect(exclude).toHaveFocus();
+    await waitFor(() => expect(exclude).toHaveFocus());
     await user.keyboard("{Enter}");
     await waitFor(() => expect(posted).toHaveLength(1));
     await waitFor(() => expect(sessionActions).toHaveFocus());

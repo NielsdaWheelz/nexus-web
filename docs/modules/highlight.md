@@ -202,7 +202,7 @@ Under the same row lock the server derives the `highlight:<id>` subject and
 
 The snapshot is not a durable conversation context ref that gets cited and never
 receives a citation ordinal. Citation chips point at the attached
-`highlight:<id>` resource or later `read_resource` evidence.
+`highlight:<id>` resource or later `nexus.resource.read` evidence.
 
 Quote actions require nonblank `exact` text. A geometry-only PDF Highlight (blank
 `exact`) is explicitly non-sendable as a quote; it can still exist and be shown.

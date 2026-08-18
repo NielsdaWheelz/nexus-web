@@ -1,20 +1,18 @@
-diff --git a/python/nexus/services/agent_tools/web_search.py b/python/nexus/services/agent_tools/web_search.py
---- a/python/nexus/services/agent_tools/web_search.py
-+++ b/python/nexus/services/agent_tools/web_search.py
-@@ -600,8 +600,15 @@ def persist_web_search_run(
-     return PersistedWebSearchResult(
-         tool_call_id=tool_call_id,
-         citations=persisted_citations_tuple,
-         selected_citations=selected_citations,
-         next_citation_ordinal=numbering.next_ordinal,
-         model_output=model_output,
--        result_event=result_event,
-+        result_event=result_event.model_copy(
-+            update={
-+                "results": [
-+                    result.model_copy(update={"id": UUID(str(result.result_ref))})
-+                    for result in result_event.results
-+                ]
+diff --git a/python/nexus/services/tool_runtime/execution.py b/python/nexus/services/tool_runtime/execution.py
+--- a/python/nexus/services/tool_runtime/execution.py
++++ b/python/nexus/services/tool_runtime/execution.py
+@@ -902,7 +902,13 @@ def _stage_chat_terminal_projection(
+     result_refs = (
+         audit.created_refs
+         if declaration.spec.effect is ToolEffect.Write
+-        else [citation.result_ref_json() for citation in audit.citations]
++        else [
++            {
++                **citation.result_ref_json(),
++                "id": citation.result_ref_json()["result_ref"],
 +            }
-+        ),
++            for citation in audit.citations
++        ]
      )
+     event_results = [
+         TypeAdapter(RetrievalResultRef).validate_python(citation.result_ref_json())

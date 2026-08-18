@@ -1,0 +1,19 @@
+diff --git a/python/nexus/services/tool_runtime/execution.py b/python/nexus/services/tool_runtime/execution.py
+--- a/python/nexus/services/tool_runtime/execution.py
++++ b/python/nexus/services/tool_runtime/execution.py
+@@ -178,5 +178,5 @@ def _position_state(state: StepReplayState, *, catalog_view: PlanCatalogView) ->
+     return PositionState(
+         terminal_result=terminal,
+-        uncertain=state.dispatch_phase is Uncertain,
++        uncertain=False,
+         actual_attempts=attempts,
+     )
+@@ -589,7 +589,7 @@ class NexusPositionRecorder:
+             self.db.commit()
+             return PositionState(
+                 terminal_result=None,
+-                uncertain=True,
++                uncertain=False,
+                 actual_attempts=execution.abandoned_attempts,
+             )
+         if (

@@ -728,7 +728,7 @@ Other identity surfaces:
 
 One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
 the in-app search page, mobile Nexus, desktop Nexus, and chat
-`app_search` agent tool (RAG). The request is a single typed `SearchQuery` value
+`nexus.search` tool (RAG). The request is a single typed `SearchQuery` value
 object parsed at the
 edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
 Conversations, People, Web) folding the internal result types, with
@@ -816,15 +816,30 @@ user_link_target: UserLinkTargetMode)` row per `ResourceScheme` replaces the
 
 ### 7.7 Citations & the agent tool contract
 
-The chat/oracle LLM can call four tools (`services/agent_tools/`):
+Chat publishes one frozen eleven-tool native plan:
 
-- **`app_search`** — RAG retrieval over the user's library (scoped to
-  `media:`/`library:` refs); produces numbered, citable results.
-- **`web_search`** — Brave public web search; numbered, citable.
-- **`read_resource`** — reads exact text for a `ResourceRef`; evidence reads are
-  citable, oversized docs redirect to inspect.
-- **`inspect_resource`** — returns a navigable document map of a `media:` ref;
-  navigation only, never cited.
+- **`web.search`** — bounded Brave public-web search; numbered and citable.
+- **`nexus.search`** — scoped retrieval over the user's Nexus corpus; numbered
+  and citable.
+- **`nexus.resource.read`** — exact bounded text and immutable evidence for an
+  admitted resource.
+- **`nexus.document.search`** — bounded matching sections inside one admitted
+  readable document.
+- **`nexus.resource.inspect`** — an ordered document map and canonical read
+  URIs; navigation only.
+- **`nexus.relations.list`** — bounded one-hop graph relations from one admitted
+  resource.
+- **`nexus.library.add`**, **`nexus.note.create`**,
+  **`nexus.highlight.create`**, **`nexus.edge.create`**, and
+  **`nexus.queue.add`** — the five additive, owner-gated Write operations. They
+  persist their exact effects with the tool result and support scoped Undo.
+
+Idea-Dossier research receives only a frozen HostTable grant for `web.search`.
+Oracle and the other background algorithms retain their direct operation-owned
+retrieval; they do not inherit Chat's catalogue. Tool declarations, grants,
+limits, replay policy, and durable execution are owned by
+`services/tool_runtime/`; `services/agent_tools/` remains the domain-adapter
+layer, not a second tool contract.
 
 Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
 (attached context refs first, then each tool's selected results). A citation **is an
@@ -1104,8 +1119,8 @@ retrieval, plate selection, LLM prompt/call, parse, persistence, and SSE event
 emission. A short question → retrieve candidates and pick a plate image → one LLM
 call produces a structured three-phase interpretation → stream + persist as
 `oracle_reading_events` + citation "folios". It has its **own**
-prompt/persistence and does **not** use the four chat agent tools, but it
-**reuses the SSE transport**. Retrieval consumes the shared search substrate:
+prompt/persistence and does **not** consume Chat's frozen Native tool plan, but
+it **reuses the SSE transport**. Retrieval consumes the shared search substrate:
 `services/search/embedding.build_query_embedding` (one active-model embedding for
 both lanes) feeds `search/content_chunk_candidates.retrieve_content_chunk_candidates`,
 scoped to the Oracle Corpus library for public-domain candidates (mapped to
@@ -1441,7 +1456,7 @@ full contract is [`modules/consumption-activity.md`](modules/consumption-activit
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
 
 The same `search()` backs the `/search` results page, mobile Nexus deep
-results, desktop Nexus results, and the chat `app_search` tool. All consume
+results, desktop Nexus results, and the Chat `nexus.search` tool. All consume
 the canonical frontend `SearchQuery` model. Desktop **Nexus**
 (`components/nexus/`, `lib/nexus/`) is a controlled switchboard presentation
 over explicit result projections, not a second search model: its zero state is

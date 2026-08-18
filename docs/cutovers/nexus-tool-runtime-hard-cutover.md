@@ -1,12 +1,13 @@
 # Nexus Tool Runtime Hard Cutover
 
-**Status:** APPROVED FOR IMPLEMENTATION; RELEASE BLOCKED ON §7
+**Status:** IMPLEMENTED IN SOURCE; FINAL CONFIDENCE/PR/FULL/RELEASE GATES PENDING
 **Date:** 2026-08-13
 **Type:** atomic Nexus consumer/runtime hard cutover; no compatibility period
 **Prerequisite:** [LLM Tools Library Hard Cutover](llm-tools-library-hard-cutover.md)
-**Release prerequisite:** the separately landed **E0 Accepted-URL Ingest Egress
-Hardening** work package in §§7, 11, and 12 must be green at an exact recorded
-SHA before Idea Dossier adoption or production reopening.
+**E0 prerequisite:** SATISFIED BEFORE N3 — hardened source `1c4c60c0` and the
+E0 R0/N0d checkpoint `325a8eb1` preceded N1–N3; the §7 connection-seam proof
+and `accepted-url-private-redirect-bypass` sensitivity are green. Candidate-image
+binding remains required by the final protected release gate.
 
 ## 1. Decision
 
@@ -51,8 +52,8 @@ Non-goals:
 
 - granting all tools to every job or rewriting background algorithms;
 - Nexus page reading, arbitrary-URL fetching, source-ingest redesign, Browse
-  behavior, or Dossier coordination redesign; §7's existing egress defect is a
-  release prerequisite, not permission to redesign that workflow here;
+  behavior, or Dossier coordination redesign; E0's §7 egress hardening was a
+  separate prerequisite, not permission to redesign that workflow here;
 - PTC, provider-native Tool Search, a guest code runtime, or provider engine,
   model-registry, continuation, or retry changes;
 - remote Nexus tool transport, credentials, authorization, or client product;
@@ -158,7 +159,7 @@ trust trail and Undo.
 | `nexus.relations.list` | Read / `ReDispatchable` | admitted resource URI, direction, required-nullable kinds/limit -> one-hop relations and refs | `ResourceUnavailable` | resource-graph connections owner |
 | `nexus.library.add` | Write / `ReDispatchable` | resource and library identity -> persisted membership ref | `ResourceUnavailable | TargetAmbiguous | WriteCapReached` | library-entry service |
 | `nexus.note.create` | Write / `ReDispatchable` | markdown and optional page URI -> persisted note ref | `ResourceUnavailable | WriteCapReached` | daily-note service |
-| `nexus.highlight.create` | Write / `ReDispatchable` | media URI, quote context, optional note -> persisted highlight ref | `ResourceUnavailable | QuoteNotFound | QuoteAmbiguous | WriteCapReached` | highlight service |
+| `nexus.highlight.create` | Write / `ReDispatchable` | media URI, quote context, optional note -> persisted highlight ref | `ResourceUnavailable | QuoteNotFound | QuoteAmbiguous | Conflict | WriteCapReached` | highlight service |
 | `nexus.edge.create` | Write / `ReDispatchable` | source, target, kind, rationale -> persisted edge ref | `ResourceUnavailable | Conflict | WriteCapReached` | graph-edge service |
 | `nexus.queue.add` | Write / `ReDispatchable` | media URI -> persisted queue-entry ref | `ResourceUnavailable | WriteCapReached` | consumption queue service |
 
@@ -316,15 +317,15 @@ separately reviewed `nexus.source.accept` Write/durable capability.
 
 Idea Dossier accepts only an exact build-owned `web.search` result reference;
 the model cannot supply an arbitrary URL. This first-party host policy requires
-no human approval, but a search result does not make its URL trusted. The
-current production transport in `node/ingest/ingest.mjs` follows redirects
-without the required destination enforcement. **E0 Accepted-URL Ingest Egress
-Hardening** is therefore a separately landed release-prerequisite work package
-with exclusive ownership of `node/ingest/**`, its lock/package metadata,
-`python/nexus/services/node_ingest.py`, `docker/Dockerfile.backend`,
-`deploy/env/env-prod-worker.example`, the release publisher/config validator,
-and its test-control routing. Before this cutover may adopt or reopen Idea
-research, E0 must prove at the actual Node connection seam:
+no human approval, but a search result does not make its URL trusted. The pre-E0
+production transport in `node/ingest/ingest.mjs` followed redirects without the
+required destination enforcement. **E0 Accepted-URL Ingest Egress Hardening**
+therefore landed as a separately committed prerequisite work package with
+exclusive ownership of `node/ingest/**`, its lock/package metadata,
+`.dockerignore`, `python/nexus/services/{node_ingest,web_article_ingest}.py`,
+`docker/Dockerfile.backend`, `deploy/env/env-prod-worker.example`, the release
+publisher/config validator, and its test-control routing. At the final E0
+checkpoint, the actual Node connection seam proved:
 
 - HTTP(S)-only normalized URLs, no userinfo, credentials, cookies, ambient
   proxy, or cross-hop authorization forwarding;
@@ -342,9 +343,9 @@ Node-owned path. E0 owns exactly
 controller as `node-test:node/ingest/test/accepted_url_egress.test.mjs` and
 registered under `auth-privacy-secrets`; the proof uses test-owned HTTP/DNS
 fixtures while exercising the production resolver/connected-transport policy.
-E0 records target-proof red, green, the representative
-`accepted-url-private-redirect-bypass` fault and fingerprint, its exact SHA, and
-the protected release verdict before N3 starts. Production always launches the
+E0 recorded target-proof red and green, the representative
+`accepted-url-private-redirect-bypass` fault and fingerprint, and its exact
+source SHA before N3 began. Production always launches the
 image-baked `/app/node/ingest/ingest.mjs`; published config containing
 `NODE_INGEST_SCRIPT` is rejected, and the production adapter has no environment
 override. Local/test composition may inject an explicit owned script path
@@ -611,7 +612,7 @@ creates deployable dual paths.
 | N0a routing setup | pin/lock plus `Capability.LLM_TOOLS` and `Capability.INGEST_NODE`; workflow ownership, direct-path routing, runners/materializers, doctor, CI, policy projections, controller tests, proof-owner table in `docs/local-rules/testing-standards.md`, and only `llm-tools-developer-head-bypass`'s fault object/patch/hash | final library/provider integration commits | exact LLM package paths route to their own `full` capability, never `PROVIDER_RUNTIME`; the Node prerequisite proof routes through its deterministic owned capability |
 | R0 proof registry | only this cutover's exact risk/journey objects and source globs in `testdata/proofs.json`; no test, product, fault, digest, or controller code | each behavior owner first supplies the exact target proof with a recorded meaningful red | registry validation and N0d digest checkpoint after each handoff; final ownership digest after N3 |
 | N0d digest checkpoint | only `PRIORITY_RISK_OWNERSHIP_SHA256` and its existing policy self-test; this is a repeatable N0 governance phase, not a parallel behavior lane | each R0 handoff | exact independently recomputed digest and policy proof before that behavior lane proceeds to green |
-| E0 accepted-URL egress | `node/ingest/**`, `python/nexus/services/node_ingest.py`, `docker/Dockerfile.backend`, `deploy/env/env-prod-worker.example`, `deploy/hetzner/{release.py,sync-env.sh}`, `python/tests/release_artifact/test_node_ingest_image_binding.py`, and only `accepted-url-private-redirect-bypass`'s fault-manifest object/patch/hash | N0a, then its red → R0 → N0d | exact Node connection-seam proof, worker/image binding proof, and representative fault are green at a separately recorded SHA |
+| E0 accepted-URL egress | `.dockerignore`, `node/ingest/**`, `python/nexus/services/{node_ingest,web_article_ingest}.py`, `docker/Dockerfile.backend`, `deploy/env/env-prod-worker.example`, `deploy/hetzner/{release.py,sync-env.sh}`, `python/tests/release_artifact/test_node_ingest_image_binding.py`, and only `accepted-url-private-redirect-bypass`'s fault-manifest object/patch/hash | N0a, then its red → R0 → N0d | exact Node connection-seam proof, worker/image binding proof, and representative fault are green at a separately recorded SHA |
 | N1 local declarations | `tool_runtime/{declarations,profiles}.py`; `python/scripts/generate_tool_contract_projection.py`; the generated `apps/web/src/lib/conversations/toolContractProjection.ts`; declaration/schema/documentation-revision proofs; migration of `python/tests/kernel/test_agent_tool_surface.py` | N0a, then its red → R0 → N0d | exact declarations and profile definitions, closed errors/effects/limits, semantic-vs-presentation revision, and byte-identical browser projection; no bound family, provider lowering, or final profile revision is claimed |
 | N2 durable/public shape | `db/models.py`, migration; `chat_run_tools.py`, event store/response, `chat_failure.py`, candidates, citations/context/trust readers, conversation schemas, `errors.py`, projection-bearing `api/routes/{chat_runs,stream,messages,conversations,conversation_branches}.py`, `middleware/stream_cors.py`, migration/projection testkit; BFF routes, `lib/api/{client.ts,proxy.ts,sse-client.ts,useGenerationRun.ts}`, Chat send/tail consumers, reducers, and UI | N1 frozen contract, then its red → R0 → N0d | historical migration plus backend/browser projection-header proofs |
 | N3 execution/adoption | `tool_runtime/{bindings,execution,composition}.py`, final bound-catalogue/profile proof, `agent_tools/**`, `chat_runs.py`, `chat_run_steps.py`, Chat prompt, `config.py`, `app.py`, `tasks/{artifacts,chat_run}.py`, Dossier/Browse/resource-graph consumers, every `web_search_tool` importer, named fixtures/safety proofs/faults below, and final existing Chat journey execution | N1–N2, exact E0 SHA/proof, then its red → R0 → N0d | bound family/catalogue/profile revisions and every-engine definition-byte ceiling; reads, writes, keyless boot, Chat/Dossier replay, consumers, trust/Undo, safety eval, and existing Chat journey |
@@ -648,10 +649,14 @@ ever edits `testdata/proofs.json`; only N0d edits the matching digest. E0 owns i
 fault object/patch/hash. N2 owns the new
 `llm-tools-cutover-migration-bypass` and
 `llm-tool-projection-gate-bypass` objects/patches/hashes. N3 owns
-`llm-write-tool-authorization-bypass`, `llm-tool-safety-prompt-bypass`,
-`web-search-provider-identity-bypass`, the new
-`nexus-tool-profile-scope-bypass`, `llm-tool-position-replay-bypass`, and any
-required adaptation of
+`llm-write-tool-authorization-bypass`,
+`llm-tool-safety-prompt-bypass`, `web-search-provider-identity-bypass`,
+`llm-tools-legacy-browse-owner-bypass`,
+`nexus-tool-profile-scope-bypass`, `llm-tool-position-replay-bypass`,
+`llm-tool-prepared-documentation-freeze-bypass`,
+`nexus-tool-declaration-effect-bypass`,
+`nexus-read-empty-admission-scope-bypass`,
+`dossier-uncertain-search-redispatch-bypass`, and the required adaptation of
 `durable-job-fence-bypass`, each at fault-manifest object granularity. N4 never
 edits either registry or a fault patch. Any implementation discovery that
 changes a frozen proof id/source glob reopens R0 and invalidates all later
@@ -680,23 +685,23 @@ proof has exactly one priority-risk owner. Existing unrelated entries remain.
 |---|---|---|---|
 | `pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool` | `production-release-test-control` | `python/pyproject.toml`; `python/uv.lock`; `python/nexus_test_control/**/*.py`; `python/tests/llm_tools_contract/**/*.py` | `LLM_TOOLS` |
 | `pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization` | `production-release-test-control` | `python/nexus_test_control/**/*.py`; `python/tests/kernel/nexus_test_control/test_llm_tools_capability.py`; `docs/local-rules/testing-standards.md` | `kernel-python` |
-| `node-test:node/ingest/test/accepted_url_egress.test.mjs` | `auth-privacy-secrets` | `node/ingest/**/*`; `python/nexus/services/node_ingest.py` | `INGEST_NODE` |
-| `pytest:python/tests/release_artifact/test_node_ingest_image_binding.py::test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint` | `production-release-test-control` | `python/nexus/services/node_ingest.py`; `docker/Dockerfile.backend`; `deploy/env/env-prod-worker.example`; `deploy/hetzner/release.py`; `deploy/hetzner/sync-env.sh`; `python/tests/release_artifact/test_node_ingest_image_binding.py` | `release-artifact` |
+| `node-test:node/ingest/test/accepted_url_egress.test.mjs` | `auth-privacy-secrets` | `node/ingest/**/*`; `python/nexus/services/node_ingest.py`; `python/nexus/services/web_article_ingest.py` | `INGEST_NODE` |
+| `pytest:python/tests/release_artifact/test_node_ingest_image_binding.py::test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint` | `production-release-test-control` | `.dockerignore`; `python/nexus/services/node_ingest.py`; `docker/Dockerfile.backend`; `deploy/env/env-prod-worker.example`; `deploy/hetzner/release.py`; `deploy/hetzner/sync-env.sh`; `python/tests/release_artifact/test_node_ingest_image_binding.py` | `release-artifact` |
 | `pytest:python/tests/kernel/test_llm_tool_declarations.py::test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract` | `llm-tool-safety` | `python/nexus/services/tool_runtime/declarations.py`; `python/nexus/services/tool_runtime/profiles.py`; `python/scripts/generate_tool_contract_projection.py`; `apps/web/src/lib/conversations/toolContractProjection.ts`; `python/tests/kernel/test_llm_tool_declarations.py` | `kernel-python` |
 | `pytest:python/tests/kernel/test_llm_tool_profiles.py::test_bound_families_compile_exact_closed_operation_profiles_without_fallback` | `costly-effects` | `python/nexus/services/tool_runtime/*.py`; `python/tests/kernel/test_llm_tool_profiles.py`; `python/tests/kernel/test_agent_tool_surface.py` | `kernel-python` |
 | `pytest:python/tests/kernel/test_llm_product_intent.py::test_product_intent_freezes_tool_documentation_at_first_prepare` | `costly-effects` | `python/nexus/services/llm_intent_state.py`; `python/nexus/services/chat_runs.py`; `python/tests/kernel/test_llm_product_intent.py` | `kernel-python` |
 | `pytest:python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed` | `auth-privacy-secrets` | `python/nexus/services/tool_runtime/bindings.py`; `python/nexus/services/tool_runtime/execution.py`; `python/tests/service/test_llm_tools_reads.py` | `service` |
 | `pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo` | `llm-tool-safety` | `python/nexus/services/tool_runtime/*.py`; `python/nexus/services/agent_tools/writes.py`; `python/nexus/services/chat_run_tools.py`; `python/nexus/services/message_trust_trails.py`; `python/tests/service/test_llm_tool_safety.py` | `service` |
 | `pytest:python/tests/service/test_llm_tool_replay.py::test_position_replay_settles_once_and_does_not_automatically_reissue_uncertain_billed_search` | `durable-job-replay` | `python/nexus/services/tool_runtime/*.py`; `python/nexus/services/chat_runs.py`; `python/nexus/services/chat_run_steps.py`; `python/nexus/services/durable_step_journal.py`; `python/nexus/tasks/chat_run.py`; `python/tests/service/test_llm_tool_replay.py` | `service` |
-| `pytest:python/tests/migrations/test_llm_tools_cutover_migration.py::test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_malformed_state` | `migration-compatibility` | `migrations/alembic/versions/0216_llm_tools_cutover.py`; `python/nexus/db/models.py`; `python/nexus/services/chat_run_tools.py`; `python/nexus/services/chat_run_event_store.py`; `python/nexus/services/chat_run_response.py`; `python/tests/migrations/test_llm_tools_cutover_migration.py` | `migrations` |
+| `pytest:python/tests/migrations/test_llm_tools_cutover_migration.py::test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_malformed_state` | `migration-compatibility` | `migrations/alembic/versions/0217_llm_tools_cutover.py`; `python/nexus/db/models.py`; `python/nexus/services/chat_run_tools.py`; `python/nexus/services/chat_run_event_store.py`; `python/nexus/services/chat_run_response.py`; `python/tests/migrations/test_llm_tools_cutover_migration.py` | `migrations` |
 | `pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call` | `llm-tool-safety` | `python/nexus/services/tool_runtime/*.py`; `python/nexus/services/chat_prompt.py`; `python/tests/evals/test_tool_safety_eval.py`; `python/tests/evals/cases/tool_safety.v3.json` | `llm-eval` |
 | `pytest:python/tests/hosted/nightly/test_openai_canary.py::test_pinned_openai_canary_refuses_indirect_tool_authority_inside_budget` | `llm-tool-safety` | `python/nexus/services/tool_runtime/*.py`; `python/nexus/services/chat_prompt.py`; `python/tests/hosted/nightly/test_openai_canary.py` | `hosted` |
 | `pytest:python/tests/service/test_llm_tools_availability.py::test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch` | `production-release-test-control` | `python/nexus/config.py`; `python/nexus/app.py`; `python/nexus/tasks/artifacts.py`; `python/nexus/tasks/chat_run.py`; `python/tests/service/test_llm_tools_availability.py` | `service` |
 | `pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity` | `citation-provenance-identity` | `python/nexus/services/tool_runtime/bindings.py`; `python/nexus/services/agent_tools/web_search.py`; `python/nexus/services/retrieval_citation.py`; `python/tests/service/test_web_search_identity.py` | `service` |
 | `pytest:python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search` | `costly-effects` | `python/nexus/services/artifacts/research.py`; `python/nexus/services/artifacts/coordination.py`; `python/nexus/services/agent_tools/web_page_read.py`; `python/nexus/tasks/artifacts.py`; `python/tests/service/test_llm_tools_dossier.py` | `service` |
 | `pytest:python/tests/service/test_llm_tools_browse.py::test_browse_preserves_normalized_provider_results_after_rename` | `citation-provenance-identity` | `python/nexus/api/routes/browse.py`; `python/nexus/services/browse/brave.py`; `python/nexus/services/browse/service.py`; `python/tests/service/test_llm_tools_browse.py` | `service` |
-| `pytest:python/tests/service/test_llm_tool_projection_protocol.py::test_revision_gates_every_changed_chat_projection_boundary` | `production-release-test-control` | `python/nexus/api/routes/chat_runs.py`; `python/nexus/api/routes/stream.py`; `python/nexus/api/routes/messages.py`; `python/nexus/api/routes/conversations.py`; `python/nexus/api/routes/conversation_branches.py`; `python/nexus/middleware/stream_cors.py`; `python/nexus/schemas/conversation.py`; `python/nexus/errors.py`; `python/tests/service/test_llm_tool_projection_protocol.py` | `service` |
-| `vitest:apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx` | `production-release-test-control` | `apps/web/src/app/api/chat-runs/**/*`; `apps/web/src/app/api/conversations/**/*`; `apps/web/src/app/api/messages/**/*`; `apps/web/src/lib/api/*.ts`; `apps/web/src/lib/conversations/toolContractProjection.ts`; `apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx`; `apps/web/src/components/chat/ChatComposer.tsx`; `apps/web/src/components/chat/useConversation.ts`; `apps/web/src/components/chat/useChatRunTail.ts` | `component` |
+| `pytest:python/tests/service/test_llm_tool_projection_protocol.py::test_revision_gates_every_changed_chat_projection_boundary` | `production-release-test-control` | `python/nexus/api/deps.py`; `python/nexus/api/routes/{chat_runs,stream,messages,conversations,conversation_branches}.py`; `python/nexus/middleware/stream_cors.py`; `python/nexus/schemas/conversation.py`; `python/nexus/errors.py`; `python/nexus/services/{chat_run_event_store,chat_run_response,chat_failure,chat_run_candidates,chat_run_citations,context_assembler,message_trust_trails,conversations}.py`; `python/tests/service/test_llm_tool_projection_protocol.py` | `service` |
+| `vitest:apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx` | `production-release-test-control` | the nine projection-bearing BFF route files under `apps/web/src/app/api/{chat-runs,conversations,messages}`; `apps/web/src/lib/api/{client,proxy,sse-client,useGenerationRun}.ts`; `apps/web/src/lib/api/sse/events.ts`; `apps/web/src/lib/conversations/{toolContractProjection,types,messageWire,messageUpdateReducer,toolCallUndo}.ts`; `apps/web/src/components/chat/{ChatComposer,useConversation,useChatRunTail,Conversation,AssistantMessage,AssistantWriteTrail,AssistantDetails,ToolProjectionReloadNotice,toolProjectionProtocol.browser.test}.tsx` | `component` |
 
 R0 also amends only the existing `grounded-chat-citation` journey object's
 source globs with `python/nexus/services/tool_runtime/*.py`,
@@ -780,8 +785,8 @@ testing standard; this spec does not create exceptions.
 
 ## 14. Acceptance criteria
 
-1. Nexus pins one exact final `llm-tools` commit and contains no executable old
-   package/import path.
+1. Nexus pins exact final commits for `llm-tools` and `provider-runtime` and
+   contains no executable old package/import path.
 2. All ten Nexus tools are declared locally with strict semantic/presentation
    schemas, closed errors, replay policy, measured limits, and existing domain
    owners; no global `ApiErrorCode` leaks through the tool boundary.

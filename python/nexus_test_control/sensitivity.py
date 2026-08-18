@@ -497,7 +497,7 @@ def isolated_worktree(
     runtime_cleaner: RuntimeCleaner = clean_owned_runtime,
     memory_sampler: OwnedMemorySampler | None = None,
 ) -> Iterator[Path]:
-    temporary = Path(tempfile.mkdtemp(prefix="nexus-test-sensitivity-"))
+    temporary = Path(tempfile.mkdtemp(prefix="nexus-test-sensitivity-")).resolve(strict=True)
     checkout = temporary / "checkout"
     _git(repo_root, "worktree", "add", "--detach", str(checkout), revision)
     try:
@@ -507,6 +507,10 @@ def isolated_worktree(
         _link_dependency(
             repo_root / "apps/web/node_modules",
             checkout / "apps/web/node_modules",
+        )
+        _link_dependency(
+            repo_root / "node/ingest/node_modules",
+            checkout / "node/ingest/node_modules",
         )
         _clear_isolated_python_bytecode(checkout)
         yield checkout.resolve(strict=True)
@@ -707,7 +711,7 @@ def _proof_path(proof: str) -> str:
     parsed = PurePosixPath(path)
     if (
         not separator
-        or runner not in {"gradle", "playwright", "pytest", "static", "vitest"}
+        or runner not in {"gradle", "node-test", "playwright", "pytest", "static", "vitest"}
         or not path
         or parsed.is_absolute()
         or ".." in parsed.parts

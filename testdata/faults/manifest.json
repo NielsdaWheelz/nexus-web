@@ -259,7 +259,7 @@
     {
       "id": "web-search-provider-identity-bypass",
       "patch": "testdata/faults/web-search-provider-identity-bypass.patch",
-      "sha256": "34daeb879b4c303f4969b25a93dc4b1eee498b2374dfb09003a9bbb4bdb19cdd",
+      "sha256": "8f31734ec4774b7051f09fe26c0ed93c7e1c92d538b6a55cd62e1cf2221e65e0",
       "proofs": [
         "pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
       ],
@@ -286,11 +286,11 @@
     {
       "id": "llm-write-tool-authorization-bypass",
       "patch": "testdata/faults/llm-write-tool-authorization-bypass.patch",
-      "sha256": "5d8fbe7a6cb18abe5ec85f7c889fe8f0945ed7b53e3558447fd1b34795d94129",
+      "sha256": "01076def187ee90f4766051bb316f4d824ac46b45f67fed2dbbb5ffe7683a827",
       "proofs": [
         "pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo"
       ],
-      "expected_failure": "one or more mutating tool classes did not fail closed"
+      "expected_failure": "foreign mutating tool crossed owner authorization"
     },
     {
       "id": "llm-tool-safety-prompt-bypass",
@@ -300,6 +300,78 @@
         "pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call"
       ],
       "expected_failure": "production prompt lost a reviewed tool-safety instruction"
+    },
+    {
+      "id": "llm-tool-prepared-documentation-freeze-bypass",
+      "patch": "testdata/faults/llm-tool-prepared-documentation-freeze-bypass.patch",
+      "sha256": "025853bae37ae9487a6e02b2a2a0e6cdc4070302fd88b212451233ba6f6f6aae",
+      "proofs": [
+        "pytest:python/tests/kernel/test_llm_product_intent.py::test_product_intent_freezes_tool_documentation_at_first_prepare"
+      ],
+      "expected_failure": "prepared tool documentation was not frozen in durable intent"
+    },
+    {
+      "id": "nexus-tool-profile-scope-bypass",
+      "patch": "testdata/faults/nexus-tool-profile-scope-bypass.patch",
+      "sha256": "c90e15734f9dad587bb98d4f700e6098ec0f1fa6529c5862f1e66030c6b583d0",
+      "proofs": [
+        "pytest:python/tests/kernel/test_llm_tool_profiles.py::test_bound_families_compile_exact_closed_operation_profiles_without_fallback"
+      ],
+      "expected_failure": "Left contains one more item: 'nexus.search'"
+    },
+    {
+      "id": "nexus-tool-declaration-effect-bypass",
+      "patch": "testdata/faults/nexus-tool-declaration-effect-bypass.patch",
+      "sha256": "2fdc521e390593abb3625d14e29bf2b6c19a9ea2b7a4ceff97059bde274c6e34",
+      "proofs": [
+        "pytest:python/tests/kernel/test_llm_tool_declarations.py::test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract"
+      ],
+      "expected_failure": "nexus.resource.read declaration effect drifted"
+    },
+    {
+      "id": "nexus-read-empty-admission-scope-bypass",
+      "patch": "testdata/faults/nexus-read-empty-admission-scope-bypass.patch",
+      "sha256": "a8eb7894808809513331627494136e95f4e3bd3938082c28870b445edf72c957",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed"
+      ],
+      "expected_failure": "an empty admission set fell through to viewer-global search"
+    },
+    {
+      "id": "llm-tool-position-replay-bypass",
+      "patch": "testdata/faults/llm-tool-position-replay-bypass.patch",
+      "sha256": "b9dc387a15df3238039f387afed21524173deff4fa323fd7021b55e32cb4f49c",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_tool_replay.py::test_position_replay_settles_once_and_does_not_automatically_reissue_uncertain_billed_search"
+      ],
+      "expected_failure": "changed invocation crossed the provider dispatch boundary"
+    },
+    {
+      "id": "dossier-uncertain-search-redispatch-bypass",
+      "patch": "testdata/faults/dossier-uncertain-search-redispatch-bypass.patch",
+      "sha256": "928a884a21f1bd98b17cda32f2f1e0913a09c8b9b3c5bd2c3cd8e505d7232b1b",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search"
+      ],
+      "expected_failure": "Dossier automatically reissued a durable search"
+    },
+    {
+      "id": "llm-tool-projection-gate-bypass",
+      "patch": "testdata/faults/llm-tool-projection-gate-bypass.patch",
+      "sha256": "2acf35eff78d0638f7b2ada603b4384105bbe10f89928d93d912a43f5db7bae3",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_tool_projection_protocol.py::test_revision_gates_every_changed_chat_projection_boundary"
+      ],
+      "expected_failure": "fresh send with missing revision crossed the public Chat boundary"
+    },
+    {
+      "id": "llm-tools-cutover-migration-bypass",
+      "patch": "testdata/faults/llm-tools-cutover-migration-bypass.patch",
+      "sha256": "644fed427d54de6dbc93c5621e6eca955e9b16e852cdeaba7e20562936911f45",
+      "proofs": [
+        "pytest:python/tests/migrations/test_llm_tools_cutover_migration.py::test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_malformed_state"
+      ],
+      "expected_failure": "Using attached resources"
     },
     {
       "id": "codex-hosted-evidence-size-bound-bypass",
@@ -340,7 +412,7 @@
     {
       "id": "llm-tools-legacy-browse-owner-bypass",
       "patch": "testdata/faults/llm-tools-legacy-browse-owner-bypass.patch",
-      "sha256": "84aa0fc3f93adf87b0584b2e02798be23fd8af63840472fca8f65dca01bbca91",
+      "sha256": "c3424c0f5d06e84f5f57c9b734e37c031d7b5b65b39a92076b711d8fc482780a",
       "proofs": [
         "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool"
       ],
@@ -552,6 +624,15 @@
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject"
       ],
       "expected_failure": "first Bearer [REDACTED] failed bootstrap"
+    },
+    {
+      "id": "accepted-url-private-redirect-bypass",
+      "patch": "testdata/faults/accepted-url-private-redirect-bypass.patch",
+      "sha256": "24bd3768d7e0cffbbd63b0ed46dc9cfcf0759da52a773717d0de5fb9ca623e83",
+      "proofs": [
+        "node-test:node/ingest/test/accepted_url_egress.test.mjs"
+      ],
+      "expected_failure": "expected UnsafeDestination before any request; CLI returned Success"
     }
   ]
 }

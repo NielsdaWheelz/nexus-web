@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import replace
-from typing import Annotated, Any, Literal
+from dataclasses import dataclass, replace
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
-from llm_tools import WebSearchProvider
+from llm_tools import ToolResult
 from provider_runtime import (
     Absent as RuntimeAbsent,
 )
@@ -24,9 +24,11 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, ChatRunEvent, LLMCall, MessageToolCall
 from nexus.jobs.queue import (
+    RUNNING,
     JobExecutionContext,
     JobRow,
     current_dead_job_for_payload,
+    get_job,
     lock_running_job_claim,
     replace_dead_job_payload,
     requeue_dead_job,
@@ -34,6 +36,11 @@ from nexus.jobs.queue import (
 )
 from nexus.schemas.conversation import ChatRunToolResultEventPayload
 from nexus.schemas.presence import Presence, Present, absent, present
+from nexus.services.chat_run_tools import (
+    RecordKind,
+    ToolModelOutput,
+    ToolStepResult,
+)
 from nexus.services.durable_step_journal import (
     AttachReconciledResult,
     Completed,
@@ -58,6 +65,16 @@ from nexus.services.llm_intent_state import (
     continuation_state,
     tool_call_state,
 )
+from nexus.services.tool_runtime.composition import (
+    FrozenToolOperation,
+    compose_product_tool_runtime,
+    freeze_tool_plan_snapshot,
+    validate_tool_plan_snapshot,
+)
+from nexus.services.tool_runtime.execution import (
+    reconcile_uncertain_tool_completion,
+    stage_reconciled_chat_tool_terminal,
+)
 
 
 class _StateModel(BaseModel):
@@ -66,6 +83,7 @@ class _StateModel(BaseModel):
 
 class PreparedChatRun(_StateModel):
     generate_intent: GenerateIntentState
+    admitted_resource_uris: tuple[str, ...]
     initial_citation_ordinal: int = Field(ge=1)
     initial_tool_call_index: int = Field(ge=0)
 
@@ -107,21 +125,6 @@ class GenerationStepResultEnvelope(RootModel[GenerationStepResult]):
     model_config = ConfigDict(frozen=True)
 
 
-class ToolModelOutput(_StateModel):
-    call_id: str = Field(min_length=1)
-    output: str
-    is_error: bool
-
-
-class ToolStepResult(_StateModel):
-    tool_call_id: UUID
-    tool_name: str = Field(min_length=1)
-    tool_call_index: int = Field(ge=1)
-    model_output: ToolModelOutput
-    next_citation_ordinal: int = Field(ge=1)
-    result_event: ChatRunToolResultEventPayload
-
-
 class PublicationStepResult(_StateModel):
     outcome: Literal["Published", "Degraded", "Failed", "Cancelled"]
     message_id: UUID
@@ -134,11 +137,76 @@ class PublicationRequest(_StateModel):
     last_provider_event_seq: Presence[int]
 
 
-class ToolStepRequest(_StateModel):
+class RejectedToolStepRequest(_StateModel):
     provider_call_id: str = Field(min_length=1)
-    tool_name: str = Field(min_length=1)
+    provider_wire_name: str = Field(min_length=1, max_length=128)
     tool_call_index: int = Field(ge=1)
-    arguments: dict[str, JsonValue]
+
+
+class RejectedToolStepResult(_StateModel):
+    tool_call_id: UUID
+    canonical_tool_id: None = None
+    record_kind: Literal[RecordKind.rejected_provider_call] = RecordKind.rejected_provider_call
+    provider_wire_name: str = Field(min_length=1, max_length=128)
+    canonical_input_sha256: None = None
+    tool_contract_revision: None = None
+    binding_policy_revision: None = None
+    tool_call_index: int = Field(ge=1)
+    model_output: ToolModelOutput
+    next_citation_ordinal: int = Field(ge=1)
+    result_event: ChatRunToolResultEventPayload
+
+
+type ToolJournalResult = Annotated[
+    ToolStepResult | RejectedToolStepResult,
+    Field(discriminator="record_kind"),
+]
+
+
+class ToolJournalResultEnvelope(RootModel[ToolJournalResult]):
+    model_config = ConfigDict(frozen=True)
+
+
+@dataclass(frozen=True, slots=True)
+class ChatToolProfileAdmission:
+    profile_id: str
+    profile_revision: str
+    snapshot: dict[str, object]
+
+
+def chat_tool_profile_admission(operation: FrozenToolOperation) -> ChatToolProfileAdmission:
+    """Freeze the semantic tool authority persisted on a newly admitted run."""
+
+    snapshot = freeze_tool_plan_snapshot(operation)
+    if snapshot.exposure.type != "Native" or snapshot.profile_id != "chat":
+        raise ValueError("Chat requires the exact Native chat tool operation")
+    return ChatToolProfileAdmission(
+        profile_id=snapshot.profile_id,
+        profile_revision=snapshot.profile_revision,
+        snapshot=snapshot.model_dump(mode="json"),
+    )
+
+
+def validate_chat_tool_profile(run: ChatRun, operation: FrozenToolOperation) -> None:
+    """Reject a run whose admitted semantic tool authority has drifted."""
+
+    if (
+        run.tool_profile_id is None
+        or run.tool_profile_revision is None
+        or run.tool_profile_snapshot is None
+    ):
+        raise AssertionError("chat run is missing its tool profile snapshot")
+    decoded = validate_tool_plan_snapshot(
+        json.dumps(run.tool_profile_snapshot, separators=(",", ":"), sort_keys=True),
+        operation=operation,
+    )
+    if (
+        run.tool_profile_id != decoded.profile_id
+        or run.tool_profile_revision != decoded.profile_revision
+        or decoded.exposure.type != "Native"
+        or decoded.profile_id != "chat"
+    ):
+        raise AssertionError("chat run tool profile columns disagree with its snapshot")
 
 
 class UncertainChatStep(RuntimeError):
@@ -159,12 +227,6 @@ def step_fingerprint(value: BaseModel) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def tool_replay_policy(tool_name: str) -> ReplayPolicy:
-    if tool_name in {"app_search", "read_resource", "inspect_resource"}:
-        return ReplayPolicy.ReDispatchable
-    return ReplayPolicy.BilledOnce
-
-
 class ChatStepRuntime:
     """The durable capabilities of one currently claimed chat attempt."""
 
@@ -176,14 +238,12 @@ class ChatStepRuntime:
         job: JobRow,
         execution_context: JobExecutionContext,
         llm_runtime: ExecutionRuntime,
-        web_search_provider: Presence[WebSearchProvider],
     ) -> None:
         self.db = db
         self.run_id = run_id
         self.job = job
         self.execution_context = execution_context
         self.llm_runtime = llm_runtime
-        self.web_search_provider = web_search_provider
 
     def read(self, path: str, policy: ReplayPolicy) -> StepReplayState | None:
         state = read_step_states(self.job).get(path)
@@ -300,6 +360,20 @@ class ChatStepRuntime:
             raise AssertionError(f"chat step {path!r} has a noncanonical generation id")
         return state.generation_id
 
+    def refresh_job(self) -> None:
+        """Reload recorder-owned checkpoints before Chat writes another step."""
+
+        refreshed = get_job(self.db, self.execution_context.job_id)
+        if (
+            refreshed is None
+            or refreshed.status != RUNNING
+            or refreshed.claimed_by != self.execution_context.worker_id
+            or refreshed.attempts != self.execution_context.attempt_no
+        ):
+            self.db.rollback()
+            raise LostChatJobLease(f"chat job {self.job.id} lost its lease")
+        self.job = refreshed
+
     def lock_active_attempt(self) -> None:
         """Lock this live claim into the caller's current effect transaction."""
         if not lock_running_job_claim(self.db, context=self.execution_context):
@@ -335,8 +409,8 @@ def decode_generation(state: StepReplayState) -> GenerationStepResult:
     return _decode_completed(state, GenerationStepResultEnvelope).root
 
 
-def decode_tool(state: StepReplayState) -> ToolStepResult:
-    return _decode_completed(state, ToolStepResult)
+def decode_rejected_tool(state: StepReplayState) -> RejectedToolStepResult:
+    return _decode_completed(state, RejectedToolStepResult)
 
 
 def reconcile_uncertain_chat_step(
@@ -346,43 +420,90 @@ def reconcile_uncertain_chat_step(
     step_path: str,
     resolution: UncertainStepResolution,
 ) -> None:
-    job = current_dead_job_for_payload(
-        db,
-        kind="chat_run",
-        expected_payload_match={"run_id": str(run_id)},
-    )
-    if job is None:
-        raise ValueError("chat run has no suspended job")
-    state = read_step_states(job).get(step_path)
-    if state is None or state.dispatch_phase is not Uncertain:
-        raise ValueError("chat step is not uncertain")
-    if state.generation_id != stable_generation_id(run_id, step_path):
-        raise ValueError("chat step has a noncanonical generation id")
-    if isinstance(resolution, ProveNotDispatched):
-        next_state = state.model_copy(update={"dispatch_phase": Prepared})
-    elif isinstance(resolution, AttachReconciledResult):
-        schema = _result_schema(step_path)
-        decoded = decode_step_result(resolution.terminal_result, schema)
-        _validate_reconciled_domain_facts(
+    try:
+        job = current_dead_job_for_payload(
             db,
-            run_id=run_id,
-            step_path=step_path,
-            result=decoded,
+            kind="chat_run",
+            expected_payload_match={"run_id": str(run_id)},
         )
-        next_state = state.model_copy(
-            update={
-                "dispatch_phase": Completed,
-                "terminal_result": present(resolution.terminal_result),
-            }
-        )
-    else:
-        raise AssertionError("unknown uncertain chat-step resolution")
-    payload = payload_with_step_state(job.payload, step_path=step_path, state=next_state)
-    if not replace_dead_job_payload(db, job_id=job.id, payload=payload):
-        raise AssertionError("suspended chat job changed while locked")
-    if not requeue_dead_job(db, job_id=job.id):
-        raise AssertionError("suspended chat job could not be requeued")
-    db.commit()
+        if job is None:
+            raise ValueError("chat run has no suspended job")
+        state = read_step_states(job).get(step_path)
+        if state is None or state.dispatch_phase is not Uncertain:
+            raise ValueError("chat step is not uncertain")
+        if state.generation_id != stable_generation_id(run_id, step_path):
+            raise ValueError("chat step has a noncanonical generation id")
+        if isinstance(resolution, ProveNotDispatched):
+            tool_execution = state.tool_execution
+            if isinstance(tool_execution, Present):
+                if tool_execution.value.identity.replay_policy is not ReplayPolicy.BilledOnce:
+                    raise ValueError("ReDispatchable tool recovery is owned by lease abandonment")
+                tool_execution = present(
+                    tool_execution.value.model_copy(update={"dispatch_claim": absent()})
+                )
+            next_state = state.model_copy(
+                update={
+                    "dispatch_phase": Prepared,
+                    "tool_execution": tool_execution,
+                }
+            )
+        elif isinstance(resolution, AttachReconciledResult):
+            if isinstance(state.tool_execution, Present):
+                if not isinstance(resolution.tool_settlement, Present):
+                    raise ValueError("reconciled tool result requires an exact settlement")
+                run = db.get(ChatRun, run_id)
+                if run is None or run.status not in {"queued", "running"}:
+                    raise ValueError("reconciled chat result requires one active run")
+                tool_match = re.fullmatch(r"turn/\d+/tool/(\d+)", step_path)
+                if tool_match is None:
+                    raise ValueError("tool execution occupies a non-tool Chat step")
+                operation = compose_product_tool_runtime(None).operations["chat"]
+                validate_chat_tool_profile(run, operation)
+                next_state = reconcile_uncertain_tool_completion(
+                    operation=operation,
+                    state=state,
+                    raw_result=resolution.terminal_result,
+                    settlement=resolution.tool_settlement.value,
+                )
+                if not isinstance(next_state.terminal_result, Present):
+                    raise AssertionError("reconciled tool completion omitted its terminal result")
+                result = cast(ToolResult, json.loads(next_state.terminal_result.value))
+                stage_reconciled_chat_tool_terminal(
+                    db=db,
+                    operation=operation,
+                    run=run,
+                    tool_call_index=int(tool_match.group(1)),
+                    identity=state.tool_execution.value.identity,
+                    result=result,
+                )
+            else:
+                if isinstance(resolution.tool_settlement, Present):
+                    raise ValueError("non-tool reconciliation cannot carry a tool settlement")
+                schema = _result_schema(step_path)
+                decoded = decode_step_result(resolution.terminal_result, schema)
+                _validate_reconciled_domain_facts(
+                    db,
+                    run_id=run_id,
+                    step_path=step_path,
+                    result=decoded,
+                )
+                next_state = state.model_copy(
+                    update={
+                        "dispatch_phase": Completed,
+                        "terminal_result": present(resolution.terminal_result),
+                    }
+                )
+        else:
+            raise AssertionError("unknown uncertain chat-step resolution")
+        payload = payload_with_step_state(job.payload, step_path=step_path, state=next_state)
+        if not replace_dead_job_payload(db, job_id=job.id, payload=payload):
+            raise AssertionError("suspended chat job changed while locked")
+        if not requeue_dead_job(db, job_id=job.id):
+            raise AssertionError("suspended chat job could not be requeued")
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
 
 
 def _decode_completed[T: BaseModel](state: StepReplayState, schema: type[T]) -> T:
@@ -399,7 +520,7 @@ def _result_schema(path: str) -> type[BaseModel]:
     if re.fullmatch(r"turn/\d+/generation", path):
         return GenerationStepResultEnvelope
     if re.fullmatch(r"turn/\d+/tool/\d+", path):
-        return ToolStepResult
+        return ToolJournalResultEnvelope
     raise ValueError("unknown chat step path")
 
 
@@ -439,22 +560,25 @@ def _validate_reconciled_domain_facts(
         return
 
     if re.fullmatch(r"turn/\d+/tool/\d+", step_path) is not None:
-        if not isinstance(result, ToolStepResult):
+        if not isinstance(result, ToolJournalResultEnvelope):
             raise AssertionError("tool reconciliation decoded the wrong schema")
-        event = result.result_event
+        tool_result = result.root
+        event = tool_result.result_event
         if (
-            event.tool_call_id != result.tool_call_id
+            event.tool_call_id != tool_result.tool_call_id
             or event.assistant_message_id != run.assistant_message_id
-            or event.tool_name != result.tool_name
-            or event.tool_call_index != result.tool_call_index
+            or event.record_kind != tool_result.record_kind
+            or event.canonical_tool_id != tool_result.canonical_tool_id
+            or event.tool_call_index != tool_result.tool_call_index
         ):
             raise ValueError("reconciled tool result has inconsistent identity")
-        tool_row = db.get(MessageToolCall, result.tool_call_id)
+        tool_row = db.get(MessageToolCall, tool_result.tool_call_id)
         if (
             tool_row is None
             or tool_row.assistant_message_id != run.assistant_message_id
-            or tool_row.tool_name != result.tool_name
-            or tool_row.tool_call_index != result.tool_call_index
+            or tool_row.record_kind != tool_result.record_kind
+            or tool_row.canonical_tool_id != tool_result.canonical_tool_id
+            or tool_row.tool_call_index != tool_result.tool_call_index
             or tool_row.status != event.status
             or tool_row.error_code != event.error_code
         ):
@@ -506,7 +630,7 @@ def assistant_turn_result(
     )
 
 
-def tool_result_message(value: ToolStepResult) -> ToolResultMessage:
+def tool_result_message(value: ToolJournalResult) -> ToolResultMessage:
     return ToolResultMessage(
         call_id=value.model_output.call_id,
         output=value.model_output.output,
