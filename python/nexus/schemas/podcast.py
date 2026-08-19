@@ -225,6 +225,27 @@ class PodcastSubscriptionStatusOut(BaseModel):
     backfill: PodcastBackfillOut
 
 
+class PodcastSubscriptionLifecycleBackfillOut(BaseModel):
+    """The lifecycle stream's stable, browser-shaped backfill projection."""
+
+    id: UUID
+    state: Literal["Pending", "Running", "Complete", "SourceLimited", "Failed"]
+    processed_count: int = Field(ge=0)
+    added_count: int = Field(ge=0)
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+
+class PodcastSubscriptionLifecycleSnapshotOut(BaseModel):
+    """One viewer-owned subscription's live sync and initial-backfill state."""
+
+    podcast_id: UUID
+    sync_status: PodcastSyncStatus
+    backfill: PodcastSubscriptionLifecycleBackfillOut
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+
 class PodcastSubscriptionSettingsOut(PodcastSubscriptionStatusOut):
     collection_revision: CollectionRevision = Field(alias="collectionRevision")
     library_entries_collection_revision: CollectionRevision = Field(

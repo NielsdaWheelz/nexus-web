@@ -30,6 +30,8 @@
         "python/nexus/services/resource_grants.py",
         "python/nexus/schemas/execution.py",
         "python/nexus/api/routes/stream.py",
+        "python/nexus/schemas/podcast.py",
+        "python/nexus/services/podcasts/subscriptions.py",
         "apps/web/src/app/auth/**/*",
         "apps/web/src/app/account/password/**/*",
         "apps/web/src/app/forgot-password/**/*",
@@ -41,6 +43,7 @@
         "apps/web/src/lib/auth/**/*.ts",
         "apps/web/src/lib/auth/**/*.tsx",
         "apps/web/src/lib/api/proxy.ts",
+        "apps/web/src/lib/podcasts/subscriptionLifecycle.ts",
         "apps/web/src/lib/supabase/**/*",
         "apps/web/src/middleware.ts",
         "deploy/smoke/auth-smoke.sh",
@@ -58,12 +61,15 @@
         "pytest:python/tests/kernel/test_auth_config_verifier.py",
         "pytest:python/tests/service/test_auth_bootstrap_cache.py::test_auth_bootstrap_cache_reuses_only_the_matching_users_durable_library",
         "pytest:python/tests/service/test_auth_bootstrap_singleflight.py::test_auth_bootstrap_cache_fans_concurrent_cold_requests_into_one_bootstrap",
+        "pytest:python/tests/service/test_podcast_subscription_lifecycle.py",
+        "pytest:python/tests/service/test_podcast_subscription_lifecycle_stream.py",
         "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked",
         "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal",
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject",
         "vitest:apps/web/src/lib/auth/email-confirmation.unit.test.ts",
         "vitest:apps/web/src/lib/auth/identities.unit.test.ts",
         "vitest:apps/web/src/lib/api/proxy.unit.test.ts",
+        "vitest:apps/web/src/lib/podcasts/subscriptionLifecycle.unit.test.ts",
         "node-test:node/ingest/test/accepted_url_egress.test.mjs",
         "pytest:python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed"
       ],
@@ -112,6 +118,7 @@
         "pytest:python/tests/migrations/test_llm_provider_runtime_migration.py",
         "pytest:python/tests/migrations/test_codex_personal_metadata.py::test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle",
         "pytest:python/tests/migrations/test_llm_tools_cutover_migration.py::test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_malformed_state",
+        "pytest:python/tests/migrations/test_podcast_subscription_lifecycle_events.py",
         "pytest:python/tests/kernel/test_epub_navigation_offsets_cutover.py::test_cutover_state_model_admits_only_resumable_media_and_owned_dead_work"
       ],
       "capabilities": [
@@ -859,7 +866,10 @@
       "proof": "apps/web/e2e/journeys/podcast-refresh-playback.journey.spec.ts",
       "source_globs": [
         "python/nexus/services/podcasts/**/*",
+        "python/nexus/api/routes/stream.py",
+        "python/nexus/schemas/podcast.py",
         "apps/web/src/app/(authenticated)/podcasts/**/*",
+        "apps/web/src/lib/podcasts/**/*",
         "apps/web/src/lib/player/**/*",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],

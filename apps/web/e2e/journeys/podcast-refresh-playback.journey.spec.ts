@@ -52,6 +52,14 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
     name: "Houston We Have a Podcast — Podcasts",
     exact: true,
   });
+  const episode = page.getByRole("link", {
+    name: "The Crew-4 Astronauts",
+    exact: true,
+  });
+  await expect(
+    episode,
+    `Podcast ${podcastId} did not converge its fixture episode from the subscription lifecycle.`,
+  ).toBeVisible({ timeout: 25_000 });
   await podcastPane.getByRole("button", { name: "More", exact: true }).click();
   const refresh = page.getByRole("menuitem", {
     name: "Refresh",
@@ -92,10 +100,6 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
     )
     .toBe("Complete");
 
-  const episode = page.getByRole("link", {
-    name: "The Crew-4 Astronauts",
-    exact: true,
-  });
   await expect(
     episode,
     `Podcast ${podcastId} did not reconcile its fixture episode after refresh ${refreshHandle}.`,

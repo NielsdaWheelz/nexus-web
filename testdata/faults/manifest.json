@@ -111,6 +111,42 @@
       "expected_failure": "0207 must canonicalize legacy Podcast instants"
     },
     {
+      "id": "podcast-subscription-notification-bypass",
+      "patch": "testdata/faults/podcast-subscription-notification-bypass.patch",
+      "sha256": "6bbe9a65da663632947d173d6dcdbc87878c7de6780055a6fb11cec92ec4eddf",
+      "proofs": [
+        "pytest:python/tests/migrations/test_podcast_subscription_lifecycle_events.py"
+      ],
+      "expected_failure": "0218 lifecycle notification stopped publishing subscription epochs"
+    },
+    {
+      "id": "podcast-subscription-dual-terminal-bypass",
+      "patch": "testdata/faults/podcast-subscription-dual-terminal-bypass.patch",
+      "sha256": "a18a97b7cbfbd5e4d358bcf064fb8fdc2066194317640a9509cf1a1b9c1a29c5",
+      "proofs": [
+        "pytest:python/tests/service/test_podcast_subscription_lifecycle.py"
+      ],
+      "expected_failure": "subscription lifecycle became terminal before both sync owners settled"
+    },
+    {
+      "id": "podcast-subscription-epoch-fence-bypass",
+      "patch": "testdata/faults/podcast-subscription-epoch-fence-bypass.patch",
+      "sha256": "c56c37ab243a3b67ea44e1f0ca2b80c2d754815371b3bec4aad911181c065fcd",
+      "proofs": [
+        "pytest:python/tests/service/test_podcast_subscription_lifecycle_stream.py"
+      ],
+      "expected_failure": "replacement state crossed the prior epoch listener"
+    },
+    {
+      "id": "podcast-subscription-lifecycle-protocol-bypass",
+      "patch": "testdata/faults/podcast-subscription-lifecycle-protocol-bypass.patch",
+      "sha256": "94ce53e9ab7074d55e9acd0068d4906933950d928f6cd9b2f983776412437894",
+      "proofs": [
+        "vitest:apps/web/src/lib/podcasts/subscriptionLifecycle.unit.test.ts"
+      ],
+      "expected_failure": "Invalid SSE payload for Podcast subscription lifecycle"
+    },
+    {
       "id": "migration-note-body-index-restart-bypass",
       "patch": "testdata/faults/migration-note-body-index-restart-bypass.patch",
       "sha256": "b6c917502cd2092faf3d5bf87d6572de1b88a29ac819e29e200deacdb2e62aeb",

@@ -330,7 +330,11 @@ Streaming bypasses the BFF for data delivery:
 4. The client parses the SSE wire format (`lib/api/sse-stream.ts`), validates each
    event exhaustively (`lib/api/sse/events.ts`), and folds it into UI state.
 
-This is used by chat runs, oracle readings, and media processing status.
+This is used by chat runs, oracle readings, Dossier builds, media processing
+status, Podcast refresh runs, and the active Podcast subscription lifecycle.
+The lifecycle stream is keyed by the subscription epoch UUID while its public
+route remains viewer + Podcast addressed; every snapshot reasserts that exact
+epoch and viewer before it can cross the stream.
 
 ---
 
@@ -1361,6 +1365,15 @@ transcript references only. They never fetch or publish a transcript. Explicit
 Episode Transcribe prefers a publisher sidecar, then the quota-gated Deepgram
 path; explicit Video Transcribe uses the YouTube caption provider. Current
 transcript origin is exactly `Publisher | Imported | Generated`.
+
+The canonical Podcast detail pane observes those two independent owners through
+one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
+on the subscription and its current backfill notify only the subscription UUID;
+the stream re-reads durable state and remains nonterminal until both owners are
+`Complete | SourceLimited | Failed`. A serialized latest-state drain revalidates
+detail and episodes without overlap when committed snapshots change, so reused
+global episodes and later backfill pages converge without browser polling, a
+manual Refresh, or a second ingest path.
 
 The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 (podcast, video, reader, agent, and Nexus actions all address it); **Now
