@@ -605,7 +605,8 @@ def test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_ma
 
     config = _migration_config()
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == [_TARGET_REVISION], "the cutover must leave one 0217 head"
+    revision = scripts.get_revision(_TARGET_REVISION)
+    assert revision is not None and revision.down_revision == "0216"
 
     command.upgrade(config, "0216")
     engine = create_engine(empty_migration_database_url)
@@ -1160,7 +1161,8 @@ def test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_ma
         command.upgrade(config, _TARGET_REVISION)
         inspector = inspect(engine)
         assert _migration_version(engine) == _TARGET_REVISION
-        assert scripts.get_heads() == [_TARGET_REVISION]
+        revision = scripts.get_revision(_TARGET_REVISION)
+        assert revision is not None and revision.down_revision == "0216"
 
         chat_run_columns = {column["name"]: column for column in inspector.get_columns("chat_runs")}
         assert {"tool_profile_id", "tool_profile_revision", "tool_profile_snapshot"} <= set(
@@ -1718,7 +1720,7 @@ def test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_ma
         with engine.begin() as connection:
             connection.execute(text("DROP SCHEMA public CASCADE"))
             connection.execute(text("CREATE SCHEMA public"))
-        command.upgrade(config, "head")
+        command.upgrade(config, _TARGET_REVISION)
         assert _migration_version(engine) == _TARGET_REVISION
     finally:
         engine.dispose()

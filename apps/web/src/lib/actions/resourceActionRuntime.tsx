@@ -188,6 +188,8 @@ interface BusyStore {
   readonly subscribe: (listener: () => void) => () => void;
 }
 
+const EMPTY_BUSY_KEYS: ReadonlySet<string> = new Set();
+
 function createBusyStore(): BusyStore {
   let keys: ReadonlySet<string> = new Set();
   const listeners = new Set<() => void>();
@@ -1369,12 +1371,6 @@ function useRuntimeContext(): ResourceActionRuntimeValue {
   return value;
 }
 
-function useResourceActionEnvironment(): ResourceActionEnvironment {
-  const value = useContext(EnvironmentContext);
-  if (!value) throw new Error("ResourceActionRuntimeProvider is missing");
-  return value;
-}
-
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -1699,23 +1695,30 @@ export function useResourceActionCompletionUndo(): (
  * trigger stays unavailable until this returns a Ready entry, so opening a
  * menu performs no request.
  */
-export function useResourceActionSnapshot(
+function useResourceActionSnapshotFromCache(
   ref: CanonicalResourceRef | null,
+  cache: ResourceActionSnapshotCache | null,
 ): SnapshotCacheEntry | undefined {
-  const { cache } = useRuntimeContext();
   useEffect(() => {
-    if (ref === null) return;
+    if (ref === null || cache === null) return;
     return cache.retain(ref);
   }, [ref, cache]);
   const subscribe = useCallback(
-    (listener: () => void) => cache.subscribe(listener),
+    (listener: () => void) =>
+      cache === null ? () => undefined : cache.subscribe(listener),
     [cache],
   );
   const getSnapshot = useCallback(
-    () => (ref === null ? undefined : cache.peek(ref)),
+    () => (ref === null || cache === null ? undefined : cache.peek(ref)),
     [ref, cache],
   );
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+export function useResourceActionSnapshot(
+  ref: CanonicalResourceRef | null,
+): SnapshotCacheEntry | undefined {
+  return useResourceActionSnapshotFromCache(ref, useRuntimeContext().cache);
 }
 
 function descriptorsForPlan(
@@ -1739,17 +1742,33 @@ function descriptorsForPlan(
 }
 
 function useCanonicalResourceActionModel(
-  target: ResourceActionSubject,
-): ResourceActionMenuModel {
-  const { busyStore, cache, invoke, raiseDefect } = useRuntimeContext();
-  const environment = useResourceActionEnvironment();
-  const entry = useResourceActionSnapshot(target.ref);
-  const busyKeys = useSyncExternalStore(
-    busyStore.subscribe,
-    busyStore.getKeys,
-    busyStore.getKeys,
+  target: ResourceActionSubject | null,
+): ResourceActionMenuModel | null {
+  const runtime = useContext(RuntimeContext);
+  const environment = useContext(EnvironmentContext);
+  const cache = target === null ? null : (runtime?.cache ?? null);
+  const busyStore = target === null ? null : (runtime?.busyStore ?? null);
+  const entry = useResourceActionSnapshotFromCache(target?.ref ?? null, cache);
+  const subscribeBusy = useCallback(
+    (listener: () => void) =>
+      busyStore === null ? () => undefined : busyStore.subscribe(listener),
+    [busyStore],
   );
-  return useMemo<ResourceActionMenuModel>(() => {
+  const getBusyKeys = useCallback(
+    () => busyStore?.getKeys() ?? EMPTY_BUSY_KEYS,
+    [busyStore],
+  );
+  const busyKeys = useSyncExternalStore(
+    subscribeBusy,
+    getBusyKeys,
+    getBusyKeys,
+  );
+  return useMemo<ResourceActionMenuModel | null>(() => {
+    if (target === null) return null;
+    if (runtime === null || environment === null || cache === null) {
+      throw new Error("ResourceActionRuntimeProvider is missing");
+    }
+    const { invoke, raiseDefect } = runtime;
     if (!entry || entry.status === "Loading") return LOADING_MODEL;
     const snapshot =
       entry.status === "Ready" || entry.status === "Reconciling"
@@ -1811,7 +1830,18 @@ function useCanonicalResourceActionModel(
         ? { triggerDisabledReason: "No actions are available." }
         : {}),
     };
-  }, [busyKeys, cache, entry, environment, invoke, raiseDefect, target]);
+  }, [busyKeys, cache, entry, environment, runtime, target]);
+}
+
+/**
+ * The optional-subject model keeps composite menus mounted while pane chrome
+ * publishes its canonical resource identity. A missing subject owns no
+ * resource suffix and performs no snapshot read.
+ */
+export function useOptionalResourceActionMenuModel(
+  target: ResourceActionSubject | undefined,
+): ResourceActionMenuModel | null {
+  return useCanonicalResourceActionModel(target ?? null);
 }
 
 /**
@@ -1822,5 +1852,9 @@ function useCanonicalResourceActionModel(
 export function useResourceActionMenuModel(
   target: ResourceActionSubject,
 ): ResourceActionMenuModel {
-  return useCanonicalResourceActionModel(target);
+  const model = useOptionalResourceActionMenuModel(target);
+  if (model === null) {
+    throw new Error("A canonical resource action subject is required.");
+  }
+  return model;
 }
