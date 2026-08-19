@@ -1720,7 +1720,7 @@ def test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_ma
         with engine.begin() as connection:
             connection.execute(text("DROP SCHEMA public CASCADE"))
             connection.execute(text("CREATE SCHEMA public"))
-        command.upgrade(config, "head")
+        command.upgrade(config, _TARGET_REVISION)
         assert _migration_version(engine) == _TARGET_REVISION
     finally:
         engine.dispose()
