@@ -1168,7 +1168,7 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 "priority risk ownership differs from the independently frozen floor",
             )
         )
-    proof_owners: dict[str, str] = {}
+    proof_file_owners: dict[str, str] = {}
     canonical_nodes: dict[str, str] = {}
     for risk in data["priority_risks"]:
         location = f"testdata/proofs.json#{risk['id']}"
@@ -1195,27 +1195,31 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                         "proof-node", location, f"invalid or missing proof node: {proof}"
                     )
                 )
-            previous = proof_owners.setdefault(proof, risk["id"])
-            if previous != risk["id"]:
-                violations.append(
-                    PolicyViolation(
-                        "proof-unique-owner", location, f"proof is already owned by {previous}"
+            else:
+                proof_file = proof.partition(":")[2].partition("::")[0]
+                previous = proof_file_owners.setdefault(proof_file, risk["id"])
+                if previous != risk["id"]:
+                    violations.append(
+                        PolicyViolation(
+                            "proof-unique-owner",
+                            location,
+                            f"physical proof file is already owned by {previous}: {proof_file}",
+                        )
                     )
-                )
-            # A changed test file selects its file-level proof, and sensitivity
-            # resolves that path to one canonical node. Two registered nodes for
-            # one path make that resolution ambiguous and abort the run, so the
-            # registry admits exactly one node per proof owner.
-            path = proof.partition(":")[2].split("::", 1)[0]
-            registered = canonical_nodes.setdefault(path, proof)
-            if registered != proof:
-                violations.append(
-                    PolicyViolation(
-                        "proof-canonical-node",
-                        location,
-                        f"proof owner already has the canonical node {registered}: {proof}",
+                # A changed test file selects its file-level proof, and
+                # sensitivity resolves that path to one canonical node. Two
+                # registered nodes for one file make that resolution ambiguous
+                # and abort the run, so the registry admits exactly one node
+                # per proof file.
+                registered = canonical_nodes.setdefault(proof_file, proof)
+                if registered != proof:
+                    violations.append(
+                        PolicyViolation(
+                            "proof-canonical-node",
+                            location,
+                            f"proof owner already has the canonical node {registered}: {proof}",
+                        )
                     )
-                )
         declared_capabilities = set(risk["capabilities"])
         direct_capabilities = declared_capabilities.intersection(
             capability.value for capability in PRIORITY_RISK_DIRECT_CAPABILITY_OWNERS
@@ -1759,6 +1763,7 @@ def _is_product_path(path: str) -> bool:
         "python/nexus_test_control/runtime.py",
         "python/nexus_test_control/services.py",
     }
-    return (product or test_runtime_product) and not any(
+    production_control_product = path == "deploy/hetzner/release.py"
+    return (product or test_runtime_product or production_control_product) and not any(
         part in Path(path).name for part in (".test.", ".spec.")
     )

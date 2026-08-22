@@ -215,11 +215,17 @@ internal fun JSONObject.requireExactKeys(vararg expected: String) {
     }
 }
 
+// Android's org.json.JSONException is a checked Exception (the JVM test
+// artifact's is a RuntimeException). Every strict accessor therefore reads
+// through `opt`, which never throws, so a missing key is always the owned
+// IllegalStateException and a RuntimeException catch is sound on both runtimes.
+private fun JSONObject.present(key: String): Any = opt(key) ?: error("$key is absent")
+
 internal fun JSONObject.requireObject(key: String): JSONObject =
-    get(key) as? JSONObject ?: error("$key must be an object")
+    present(key) as? JSONObject ?: error("$key must be an object")
 
 internal fun JSONObject.requireArray(key: String, maximum: Int): JSONArray {
-    val value = get(key) as? JSONArray ?: error("$key must be an array")
+    val value = present(key) as? JSONArray ?: error("$key must be an array")
     require(value.length() <= maximum)
     return value
 }
@@ -229,7 +235,7 @@ internal fun JSONObject.requireBoundedString(
     minimum: Int,
     maximum: Int,
 ): String {
-    val value = get(key) as? String ?: error("$key must be a string")
+    val value = present(key) as? String ?: error("$key must be a string")
     require(value.codePointCount(0, value.length) in minimum..maximum)
     return value
 }
@@ -246,7 +252,7 @@ internal fun JSONObject.requireCanonicalUuid(key: String): UUID {
 }
 
 internal fun JSONObject.requireLong(key: String, minimum: Long, maximum: Long): Long {
-    val value = when (val raw = get(key)) {
+    val value = when (val raw = present(key)) {
         is Int -> raw.toLong()
         is Long -> raw
         else -> error("$key must be an integer")
@@ -260,7 +266,7 @@ internal fun JSONObject.requireFiniteDouble(
     minimum: Double,
     maximum: Double,
 ): Double {
-    val value = when (val raw = get(key)) {
+    val value = when (val raw = present(key)) {
         is Number -> raw.toDouble()
         else -> error("$key must be a number")
     }
@@ -269,4 +275,4 @@ internal fun JSONObject.requireFiniteDouble(
 }
 
 internal fun JSONObject.requireBoolean(key: String): Boolean =
-    get(key) as? Boolean ?: error("$key must be a boolean")
+    present(key) as? Boolean ?: error("$key must be a boolean")

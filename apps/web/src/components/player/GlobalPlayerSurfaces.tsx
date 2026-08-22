@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import WalknoteReviewPanel from "@/components/walknotes/WalknoteReviewPanel";
@@ -110,7 +111,9 @@ export default function GlobalPlayerSurfaces() {
     const viewportChanged = previousIsMobileRef.current !== isMobile;
     previousIsMobileRef.current = isMobile;
     const identity =
-      model.kind === "Absent" || model.kind === "RuntimeFailure"
+      model.kind === "Absent" ||
+      model.kind === "UpdateRequired" ||
+      model.kind === "RuntimeFailure"
         ? null
         : model.kind === "Canonical"
           ? model.state.session.descriptor.mediaId
@@ -129,6 +132,7 @@ export default function GlobalPlayerSurfaces() {
     if (
       viewportChanged ||
       model.kind === "Absent" ||
+      model.kind === "UpdateRequired" ||
       model.kind === "RuntimeFailure"
     ) {
       setNowPlayingOpen(false);
@@ -143,6 +147,11 @@ export default function GlobalPlayerSurfaces() {
   useEffect(() => {
     if (model.kind === "Absent") {
       announcedIdentityRef.current = null;
+      return;
+    }
+    if (model.kind === "UpdateRequired") {
+      announcedIdentityRef.current = null;
+      setAnnouncement("Update Nexus for Android");
       return;
     }
     if (model.kind === "RuntimeFailure") {
@@ -239,7 +248,13 @@ export default function GlobalPlayerSurfaces() {
   );
 
   const openPlayerTarget = useCallback(() => {
-    if (model.kind === "Absent" || model.kind === "RuntimeFailure") return;
+    if (
+      model.kind === "Absent" ||
+      model.kind === "UpdateRequired" ||
+      model.kind === "RuntimeFailure"
+    ) {
+      return;
+    }
     collapse();
     activateTarget({
       href: playerTargetHref(model),
@@ -269,6 +284,26 @@ export default function GlobalPlayerSurfaces() {
   );
 
   if (model.kind === "Absent") return liveRegion;
+  if (model.kind === "UpdateRequired") {
+    return (
+      <>
+        {liveRegion}
+        <section
+          className={styles.runtimeFailure}
+          role="region"
+          aria-label="Media player"
+        >
+          <div>
+            <strong>Update Nexus for Android</strong>
+            <p>This app version no longer matches the Nexus player.</p>
+          </div>
+          <Button asChild variant="secondary" size="sm">
+            <Link href="/android">Update</Link>
+          </Button>
+        </section>
+      </>
+    );
+  }
   if (model.kind === "RuntimeFailure") {
     return (
       <>

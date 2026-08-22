@@ -31,6 +31,7 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         "native-agent-host",
         "database-object-convergence",
         "llm-tool-safety",
+        "android-player-protocol-skew",
         "immutable-production-release",
         "production-runtime-health",
         "oracle-publication",

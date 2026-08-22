@@ -27,8 +27,23 @@ import {
   expectString,
 } from "@/lib/validation";
 
-export const ANDROID_PLAYER_PROTOCOL_VERSION = 1;
+export const ANDROID_PLAYER_PROTOCOL_VERSION = 2;
 export const NATIVE_PLAYER_COMMAND_DEADLINE_MS = 5_000;
+
+const PROTOCOL_CONTRACT_SHA256_RE = /^[0-9a-f]{64}$/u;
+
+export type AndroidPlayerProtocolIdentity = {
+  protocolVersion: 2;
+  protocolContractSha256: string;
+};
+
+/** A valid peer has a different released player contract, not malformed data. */
+export class AndroidPlayerUpdateRequiredError extends Error {
+  constructor() {
+    super("The Android player protocol does not match this web build.");
+    this.name = "AndroidPlayerUpdateRequiredError";
+  }
+}
 
 const CANONICAL_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -114,49 +129,57 @@ export type AndroidPlayerReply =
   | {
       kind: "Connected";
       requestId: string;
-      protocolVersion: 1;
+      protocolVersion: 2;
+      protocolContractSha256: string;
       snapshot: AndroidPlayerSnapshot;
       pendingNaturalEnd: Presence<PendingNaturalEnd>;
     }
   | {
       kind: "Snapshot";
       requestId: string;
-      protocolVersion: 1;
+      protocolVersion: 2;
+      protocolContractSha256: string;
       snapshot: AndroidPlayerSnapshot;
       pendingNaturalEnd: Presence<PendingNaturalEnd>;
     }
   | {
       kind: "Accepted";
       requestId: string;
-      protocolVersion: 1;
+      protocolVersion: 2;
+      protocolContractSha256: string;
     }
   | {
       kind: "Rejected";
       requestId: string;
-      protocolVersion: 1;
+      protocolVersion: 2;
+      protocolContractSha256: string;
       code:
         | "InvalidRequest"
         | "AccountMismatch"
         | "StaleSession"
         | "NaturalEndPending"
-        | "PlayerUnavailable";
+        | "PlayerUnavailable"
+        | "ProtocolMismatch";
     };
 
 export type AndroidPlayerEvent =
   | {
       kind: "SnapshotChanged";
-      protocolVersion: 1;
+      protocolVersion: 2;
+      protocolContractSha256: string;
       snapshot: AndroidPlayerSnapshot;
     }
   | {
       kind: "ControllerReconnected";
-      protocolVersion: 1;
+      protocolVersion: 2;
+      protocolContractSha256: string;
       snapshot: AndroidPlayerSnapshot;
       pendingNaturalEnd: Presence<PendingNaturalEnd>;
     }
   | {
       kind: "NaturalEndPending";
-      protocolVersion: 1;
+      protocolVersion: 2;
+      protocolContractSha256: string;
       receipt: PendingNaturalEnd;
     };
 
@@ -181,7 +204,8 @@ export type AndroidPlaybackRateState =
 
 type CommandBase = {
   requestId: string;
-  protocolVersion: 1;
+  protocolVersion: 2;
+  protocolContractSha256: string;
 };
 
 export type AndroidPlayerCommand =
@@ -279,7 +303,7 @@ export type AndroidPlayerCommand =
 export type AndroidPlayerCommandInput =
   AndroidPlayerCommand extends infer Command
     ? Command extends AndroidPlayerCommand
-      ? Omit<Command, "requestId" | "protocolVersion">
+      ? Omit<Command, "requestId" | "protocolVersion" | "protocolContractSha256">
       : never
     : never;
 
@@ -291,11 +315,53 @@ function canonicalUuid(raw: unknown, context: string): string {
   return value;
 }
 
-function decodeProtocolVersion(raw: unknown, context: string): 1 {
-  if (raw !== ANDROID_PLAYER_PROTOCOL_VERSION) {
-    throw new TypeError(`${context} must be protocol version 1`);
+export function androidPlayerProtocolIdentity(): AndroidPlayerProtocolIdentity {
+  const protocolContractSha256 =
+    process.env.NEXT_PUBLIC_ANDROID_PLAYER_PROTOCOL_CONTRACT_SHA256 ?? "";
+  if (!PROTOCOL_CONTRACT_SHA256_RE.test(protocolContractSha256)) {
+    throw new Error(
+      "NEXT_PUBLIC_ANDROID_PLAYER_PROTOCOL_CONTRACT_SHA256 must be 64 lowercase hex characters",
+    );
   }
-  return ANDROID_PLAYER_PROTOCOL_VERSION;
+  return {
+    protocolVersion: ANDROID_PLAYER_PROTOCOL_VERSION,
+    protocolContractSha256,
+  };
+}
+
+function decodeProtocolIdentity(
+  value: Record<string, unknown>,
+  context: string,
+): AndroidPlayerProtocolIdentity {
+  const protocolVersion = expectNonnegativeInteger(
+    value.protocolVersion,
+    `${context}.protocolVersion`,
+  );
+  if (!Number.isSafeInteger(protocolVersion)) {
+    throw new TypeError(`${context}.protocolVersion must be a safe integer`);
+  }
+  if (protocolVersion !== ANDROID_PLAYER_PROTOCOL_VERSION) {
+    throw new AndroidPlayerUpdateRequiredError();
+  }
+  const protocolContractSha256 = expectString(
+    value.protocolContractSha256,
+    `${context}.protocolContractSha256`,
+  );
+  if (!PROTOCOL_CONTRACT_SHA256_RE.test(protocolContractSha256)) {
+    throw new TypeError(
+      `${context}.protocolContractSha256 must be 64 lowercase hex characters`,
+    );
+  }
+  if (
+    protocolContractSha256 !==
+    androidPlayerProtocolIdentity().protocolContractSha256
+  ) {
+    throw new AndroidPlayerUpdateRequiredError();
+  }
+  return {
+    protocolVersion: ANDROID_PLAYER_PROTOCOL_VERSION,
+    protocolContractSha256,
+  };
 }
 
 function decodePlayerError(raw: unknown): PlayerError {
@@ -826,6 +892,10 @@ export function decodeAndroidPlayerMessage(
   raw: unknown,
 ): AndroidPlayerReply | AndroidPlayerEvent {
   const value = asRecord(raw, "AndroidPlayerMessage");
+  // Identity is deliberately classified before the discriminant or body. A
+  // released noncurrent peer is actionable version skew; a current peer with
+  // malformed data remains a same-system defect below.
+  const identity = decodeProtocolIdentity(value, "AndroidPlayerMessage");
   const kind = expectOneOf(
     value.kind,
     [
@@ -842,30 +912,24 @@ export function decodeAndroidPlayerMessage(
   if (kind === "SnapshotChanged") {
     exactKeys(
       value,
-      ["kind", "protocolVersion", "snapshot"],
+      ["kind", "protocolVersion", "protocolContractSha256", "snapshot"],
       "SnapshotChanged",
     );
     return {
       kind,
-      protocolVersion: decodeProtocolVersion(
-        value.protocolVersion,
-        "SnapshotChanged.protocolVersion",
-      ),
+      ...identity,
       snapshot: decodeAndroidPlayerSnapshot(value.snapshot),
     };
   }
   if (kind === "NaturalEndPending") {
     exactKeys(
       value,
-      ["kind", "protocolVersion", "receipt"],
+      ["kind", "protocolVersion", "protocolContractSha256", "receipt"],
       "NaturalEndPending",
     );
     return {
       kind,
-      protocolVersion: decodeProtocolVersion(
-        value.protocolVersion,
-        "NaturalEndPending.protocolVersion",
-      ),
+      ...identity,
       receipt: decodePendingNaturalEnd(value.receipt),
     };
   }
@@ -875,6 +939,7 @@ export function decodeAndroidPlayerMessage(
       [
         "kind",
         "protocolVersion",
+        "protocolContractSha256",
         "snapshot",
         "pendingNaturalEnd",
       ],
@@ -882,10 +947,7 @@ export function decodeAndroidPlayerMessage(
     );
     return {
       kind,
-      protocolVersion: decodeProtocolVersion(
-        value.protocolVersion,
-        "ControllerReconnected.protocolVersion",
-      ),
+      ...identity,
       snapshot: decodeAndroidPlayerSnapshot(value.snapshot),
       pendingNaturalEnd: decodePresence(
         value.pendingNaturalEnd,
@@ -894,28 +956,30 @@ export function decodeAndroidPlayerMessage(
     };
   }
   const requestId = canonicalUuid(value.requestId, `${kind}.requestId`);
-  const protocolVersion = decodeProtocolVersion(
-    value.protocolVersion,
-    `${kind}.protocolVersion`,
-  );
   if (kind === "Accepted") {
     exactKeys(
       value,
-      ["kind", "requestId", "protocolVersion"],
+      ["kind", "requestId", "protocolVersion", "protocolContractSha256"],
       "Accepted",
     );
-    return { kind, requestId, protocolVersion };
+    return { kind, requestId, ...identity };
   }
   if (kind === "Rejected") {
     exactKeys(
       value,
-      ["kind", "requestId", "protocolVersion", "code"],
+      [
+        "kind",
+        "requestId",
+        "protocolVersion",
+        "protocolContractSha256",
+        "code",
+      ],
       "Rejected",
     );
     return {
       kind,
       requestId,
-      protocolVersion,
+      ...identity,
       code: expectOneOf(
         value.code,
         [
@@ -924,6 +988,7 @@ export function decodeAndroidPlayerMessage(
           "StaleSession",
           "NaturalEndPending",
           "PlayerUnavailable",
+          "ProtocolMismatch",
         ] as const,
         "Rejected.code",
       ),
@@ -935,6 +1000,7 @@ export function decodeAndroidPlayerMessage(
       "kind",
       "requestId",
       "protocolVersion",
+      "protocolContractSha256",
       "snapshot",
       "pendingNaturalEnd",
     ],
@@ -943,7 +1009,7 @@ export function decodeAndroidPlayerMessage(
   return {
     kind,
     requestId,
-    protocolVersion,
+    ...identity,
     snapshot: decodeAndroidPlayerSnapshot(value.snapshot),
     pendingNaturalEnd: decodePresence(
       value.pendingNaturalEnd,

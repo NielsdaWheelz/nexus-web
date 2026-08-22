@@ -458,10 +458,53 @@
       ]
     },
     {
+      "id": "android-player-protocol-skew",
+      "source_globs": [
+        "apps/android/app/build.gradle.kts",
+        "apps/android/app/src/main/AndroidManifest.xml",
+        "apps/android/app/src/main/java/app/nexus/android/playback/NexusPlaybackService.kt",
+        "apps/android/app/src/main/java/app/nexus/android/playback/NexusPlayerBridge.kt",
+        "apps/android/app/src/main/java/app/nexus/android/playback/PlayerProtocol.kt",
+        "apps/web/androidPlayerProtocolCorpus.ts",
+        "apps/web/next.config.ts",
+        "apps/web/vitest.config.ts",
+        "apps/web/src/app/android/page.tsx",
+        "apps/web/src/app/version/route.ts",
+        "apps/web/src/components/player/GlobalPlayerSurfaces.tsx",
+        "apps/web/src/lib/actions/resourceActionRuntime.tsx",
+        "apps/web/src/lib/player/androidPlayerClient.ts",
+        "apps/web/src/lib/player/androidPlayerProtocol.ts",
+        "apps/web/src/lib/player/androidPlayerRuntime.tsx",
+        "apps/web/src/lib/player/browserPlayerRuntime.tsx",
+        "apps/web/src/lib/player/nativeOperationPump.ts",
+        "apps/web/src/lib/player/playerChromeModel.ts",
+        "apps/web/src/lib/player/playerRuntime.tsx",
+        "deploy/hetzner/deploy.sh",
+        "deploy/hetzner/fetch-release-bundle.sh",
+        "deploy/hetzner/release.py",
+        "python/nexus/release_artifact.py",
+        "testdata/android/player-protocol.json"
+      ],
+      "proofs": [
+        "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
+        "vitest:apps/web/src/app/android/page.unit.test.tsx",
+        "vitest:apps/web/src/lib/player/androidPlayerProtocol.unit.test.ts",
+        "vitest:apps/web/src/components/player/GlobalPlayerSurfaces.browser.test.tsx",
+        "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt"
+      ],
+      "capabilities": [
+        "kernel-python",
+        "kernel-web",
+        "component",
+        "android-host"
+      ]
+    },
+    {
       "id": "immutable-production-release",
       "source_globs": [
         ".github/actions/setup-test/action.yml",
         ".github/workflows/backend-images.yml",
+        "apps/web/next.config.ts",
         "apps/web/src/app/version/route.ts",
         "apps/web/src/lib/env.ts",
         "apps/web/package.json",

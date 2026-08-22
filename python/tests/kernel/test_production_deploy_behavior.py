@@ -539,6 +539,7 @@ def test_pending_settlement_uses_installed_bundle_without_provider_dependencies(
     assert "durable failure settlement unexpectedly returned success" in settled.stderr
     state = harness.state()
     assert _events(state, "gh") == []
+    assert [arguments for arguments in _events(state, "git") if "fetch" in arguments] == []
     assert _events(state, "node") == []
     assert _events(state, "curl") == []
     apply = [command for command in _joined_events(state, "ssh") if " apply " in f" {command} "]

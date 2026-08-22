@@ -1116,6 +1116,24 @@ def test_host_finalize_proves_public_tls_and_publishes_record_and_current(
     ]
 
 
+def test_host_finalize_rejects_a_public_player_protocol_mismatch(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    release = _release_module()
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    harness.update_state(public_web_mode="different-player-protocol")
+
+    failed = harness.run_finalize()
+
+    assert failed.returncode != 0
+    assert "authoritative frontend does not serve the bound candidate" in failed.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.AwaitingFrontendPromotion
+
+
 @pytest.mark.parametrize(
     ("mode", "message"),
     [

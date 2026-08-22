@@ -247,6 +247,79 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
     assert {selection.reason for selection in selections} == {SelectionReason.PRIORITY_RISK}
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "apps/web/androidPlayerProtocolCorpus.ts",
+        "apps/web/src/app/android/page.tsx",
+        "apps/web/src/lib/player/androidPlayerProtocol.ts",
+        "apps/web/src/lib/player/nativeOperationPump.ts",
+        "apps/android/app/src/main/java/app/nexus/android/playback/PlayerProtocol.kt",
+        "deploy/hetzner/release.py",
+        "python/nexus/release_artifact.py",
+        "testdata/android/player-protocol.json",
+    ],
+)
+def test_android_player_protocol_sources_route_the_cross_release_skew_proofs(
+    path: str,
+) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+    owned = {
+        (selection.capability, selection.proof)
+        for selection in selections
+        if selection.reason is SelectionReason.PRIORITY_RISK
+    }
+
+    assert owned.issuperset(
+        {
+            (
+                Capability.KERNEL_WEB,
+                "vitest:apps/web/src/app/android/page.unit.test.tsx",
+            ),
+            (
+                Capability.KERNEL_PYTHON,
+                "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
+            ),
+            (
+                Capability.ANDROID_HOST,
+                "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt",
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "deploy/hetzner/docker-compose.yml",
+        "python/tests/testkit/host_release.py",
+        "python/tests/testkit/production_deploy.py",
+    ],
+)
+def test_release_controller_sources_keep_routing_the_immutable_release_suites(
+    path: str,
+) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+    proofs = {
+        selection.proof
+        for selection in selections
+        if selection.reason is SelectionReason.PRIORITY_RISK
+    }
+
+    assert proofs.issuperset(
+        {
+            "pytest:python/tests/kernel/test_production_deploy_behavior.py",
+            "pytest:python/tests/kernel/test_production_release.py",
+        }
+    )
+
+
 @pytest.mark.parametrize("path", ["python/pyproject.toml", "python/uv.lock"])
 def test_codex_dependency_changes_route_release_proofs_without_duplicate_host_ownership(
     path: str,
@@ -438,10 +511,11 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
         (
             "deploy/hetzner/release.py",
             {
-                Capability.COMPONENT,
                 Capability.ANDROID_HOST,
+                Capability.COMPONENT,
                 Capability.JOURNEYS_ALL,
                 Capability.KERNEL_PYTHON,
+                Capability.KERNEL_WEB,
                 Capability.LLM_TOOLS,
                 Capability.RELEASE_ARTIFACT,
                 Capability.SERVICE,
@@ -449,7 +523,9 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
             },
             {
                 "gradle:apps/android/app/src/test/java/app/nexus/android/offline/readingweb/OfflineReadingRequestRouterTest.kt",
+                "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt",
                 "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
+                "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
                 "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::"
                 "test_exact_pins_round_trip_one_canonical_native_tool",
                 "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::"
@@ -471,8 +547,11 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "test_revision_gates_every_changed_chat_projection_boundary",
                 "pytest:python/tests/service/test_llm_tools_availability.py::"
                 "test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch",
+                "vitest:apps/web/src/app/android/page.unit.test.tsx",
                 "vitest:apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx",
                 "pytest:python/tests/service/test_offline_reading_caddy_delivery.py::test_production_caddy_proxy_preserves_exact_package_identity_bytes_without_encoding",
+                "vitest:apps/web/src/components/player/GlobalPlayerSurfaces.browser.test.tsx",
+                "vitest:apps/web/src/lib/player/androidPlayerProtocol.unit.test.ts",
             },
         ),
         (
