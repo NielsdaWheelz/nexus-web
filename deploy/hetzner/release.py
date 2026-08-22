@@ -1798,7 +1798,7 @@ def load_android_release_manifest(
     manifest = _closed_mapping(
         _read_json(path), _ANDROID_RELEASE_MANIFEST_FIELDS, "Android release manifest"
     )
-    if manifest.get("version") != 2:
+    if type(manifest.get("version")) is not int or manifest["version"] != 2:
         raise ReleaseDefect("Android release manifest version is unsupported")
     run_id = manifest.get("run_id")
     if not isinstance(run_id, str) or not run_id:

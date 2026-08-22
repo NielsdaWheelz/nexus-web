@@ -324,7 +324,7 @@ rejects it:
 
 ```sh
 ./scripts/test prove \
-  --proof pytest:python/tests/kernel/test_production_release.py \
+  --proof pytest:python/tests/kernel/test_android_player_protocol_release_gate.py \
   --against fault:android-player-protocol-skew-bypass
 ```
 

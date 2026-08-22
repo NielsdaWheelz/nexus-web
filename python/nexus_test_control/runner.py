@@ -4839,18 +4839,7 @@ def _selected_proof_nodes(
         if not separator or proof_runner != runner or not node:
             raise ValueError(f"invalid {runner} proof selection: {selection.proof}")
         nodes.add(node)
-    ordered = tuple(sorted(nodes))
-    if runner != "pytest":
-        return ordered, promoted
-    whole_files = {node for node in nodes if "::" not in node}
-    return (
-        tuple(
-            node
-            for node in ordered
-            if "::" not in node or node.split("::", 1)[0] not in whole_files
-        ),
-        promoted,
-    )
+    return tuple(sorted(nodes)), promoted
 
 
 def _frontend_related_paths(context: CapabilityContext) -> tuple[str, ...]:

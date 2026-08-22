@@ -263,22 +263,47 @@ def test_android_player_protocol_sources_route_the_cross_release_skew_proofs(
             ),
             (
                 Capability.KERNEL_PYTHON,
-                "pytest:python/tests/kernel/test_production_deploy_behavior.py",
+                "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
             ),
             (
                 Capability.ANDROID_HOST,
                 "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt",
             ),
-            (
-                Capability.KERNEL_PYTHON,
-                "pytest:python/tests/kernel/test_production_release.py",
-            ),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "deploy/hetzner/docker-compose.yml",
+        "python/tests/testkit/host_release.py",
+        "python/tests/testkit/production_deploy.py",
+    ],
+)
+def test_release_controller_sources_keep_routing_the_immutable_release_suites(
+    path: str,
+) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+    proofs = {
+        selection.proof
+        for selection in selections
+        if selection.reason is SelectionReason.PRIORITY_RISK
+    }
+
+    assert proofs.issuperset(
+        {
+            "pytest:python/tests/kernel/test_production_deploy_behavior.py",
+            "pytest:python/tests/kernel/test_production_release.py",
         }
     )
 
 
 @pytest.mark.parametrize("path", ["python/pyproject.toml", "python/uv.lock"])
-def test_codex_dependency_changes_keep_android_release_proof_in_its_priority_owner(
+def test_codex_dependency_changes_route_release_proofs_without_duplicate_host_ownership(
     path: str,
 ) -> None:
     selections = select_changed(
@@ -287,8 +312,7 @@ def test_codex_dependency_changes_keep_android_release_proof_in_its_priority_own
     )
     proofs = {selection.proof for selection in selections}
 
-    assert "pytest:python/tests/kernel/test_successor_release_contract.py" in proofs
-    assert "pytest:python/tests/kernel/test_production_release.py" not in proofs
+    assert "pytest:python/tests/kernel/test_production_release.py" in proofs
     assert (
         "pytest:python/tests/kernel/test_production_release.py::"
         "test_capacity_qualification_rejects_a_credentialed_or_networked_client_container"
@@ -425,7 +449,7 @@ def test_durable_metadata_sources_route_all_high_risk_boundary_proofs() -> None:
         ),
         (
             "deploy/hetzner/prove-codex-capacity.sh",
-            "pytest:python/tests/kernel/test_successor_release_contract.py",
+            "pytest:python/tests/kernel/test_production_release.py",
         ),
     ],
 )
@@ -460,6 +484,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
             {
                 "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt",
                 "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
+                "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
                 "pytest:python/tests/kernel/test_backend_artifact.py",
                 "pytest:python/tests/kernel/test_successor_release_contract.py",
                 "pytest:python/tests/kernel/test_production_delivery_contract.py",
@@ -516,23 +541,17 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
         (
             "python/nexus_test_control/runner.py",
             {
-                Capability.ANDROID_HOST,
                 Capability.CODEX_HOSTED,
-                Capability.COMPONENT,
                 Capability.KERNEL_PYTHON,
-                Capability.KERNEL_WEB,
                 Capability.LLM_TOOLS,
                 Capability.SERVICE,
             },
             {
-                "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt",
                 "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool",
                 "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization",
                 "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
-                "pytest:python/tests/kernel/test_production_deploy_behavior.py",
-                "pytest:python/tests/kernel/test_production_release.py",
                 "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::test_hosted_canary_rendered_failure_drops_provider_sentinels",
                 "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
@@ -541,9 +560,6 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/service/test_codex_agent_host.py",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
                 "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py",
-                "vitest:apps/web/src/app/android/page.unit.test.tsx",
-                "vitest:apps/web/src/components/player/GlobalPlayerSurfaces.browser.test.tsx",
-                "vitest:apps/web/src/lib/player/androidPlayerProtocol.unit.test.ts",
             },
         ),
     ],

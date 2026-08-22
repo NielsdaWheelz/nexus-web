@@ -134,9 +134,6 @@ done
   die "production release requires a clean checkout"
 [ "$(git -C "$ROOT_DIR" rev-parse HEAD)" = "$SOURCE_SHA" ] || \
   die "requested source SHA must equal checked-out HEAD"
-timeout --foreground 2m git -C "$ROOT_DIR" fetch --quiet origin main
-[ "$(git -C "$ROOT_DIR" rev-parse origin/main)" = "$SOURCE_SHA" ] || \
-  die "requested source SHA must equal origin/main"
 
 TEMPORARY="$(mktemp -d)"
 readonly TEMPORARY
@@ -160,10 +157,18 @@ player_protocol="$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${ROOT_DIR}/python" \
     --corpus "$ROOT_DIR/testdata/android/player-protocol.json")" || \
   die "Android player protocol corpus is absent or malformed"
 
-require_stable_android_release() {
+# A new candidate is the only path that consults mutable GitHub state: the
+# candidate must be origin/main, and GitHub's canonical releases/latest pointer
+# must name one stable signed Android release whose player protocol identity
+# equals this checkout's corpus. Resume, settlement, and verification of an
+# already-current release run from the installed immutable bundle alone.
+require_new_candidate_release_policy() {
   local stable_android_release
 
   require_command gh
+  timeout --foreground 2m git -C "$ROOT_DIR" fetch --quiet origin main
+  [ "$(git -C "$ROOT_DIR" rev-parse origin/main)" = "$SOURCE_SHA" ] || \
+    die "requested source SHA must equal origin/main"
   [ -n "${GH_TOKEN:-}" ] || die "GH_TOKEN is required to read the stable Android release"
   mkdir "$ANDROID_RELEASE_DIR"
   stable_android_release="$(
@@ -210,7 +215,7 @@ else
     die "could not determine whether the immutable host bundle is installed"
 fi
 
-requires_android_preflight=true
+new_candidate=true
 if [ "$bundle_installed" = true ]; then
   host_inspect="$(
     timeout --foreground 1m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
@@ -222,12 +227,12 @@ if [ "$bundle_installed" = true ]; then
       <<<"$host_inspect"
   )" || die "host inspect response has an unsupported status"
   if [ "$inspect_status" != "new" ]; then
-    requires_android_preflight=false
+    new_candidate=false
   fi
 fi
 
-if [ "$requires_android_preflight" = true ]; then
-  require_stable_android_release
+if [ "$new_candidate" = true ]; then
+  require_new_candidate_release_policy
 fi
 
 if [ "$bundle_installed" = false ]; then

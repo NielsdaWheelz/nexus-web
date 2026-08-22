@@ -558,7 +558,7 @@
       "patch": "testdata/faults/android-player-protocol-skew-bypass.patch",
       "sha256": "1d618963500583bab0ad0e6370a00234b96127b2297cb7f97ac8a8baf9fed243",
       "proofs": [
-        "pytest:python/tests/kernel/test_production_release.py"
+        "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py"
       ],
       "expected_failure": "DID NOT RAISE"
     }

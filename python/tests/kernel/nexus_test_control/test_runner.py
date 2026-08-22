@@ -772,59 +772,6 @@ def test_complete_python_kernel_deselects_the_same_run_sensitive_green_node(
     ]
 
 
-def test_selected_python_file_subsumes_its_exact_node_once_at_execution(
-    tmp_path: Path,
-) -> None:
-    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
-    _write(
-        tmp_path / "python/tests/kernel/test_first.py",
-        "def test_owned():\n    assert True\n\ndef test_neighbor():\n    assert True\n",
-    )
-    _write(tmp_path / "python/tests/kernel/test_second.py", "def test_other():\n    assert True\n")
-    (tmp_path / "python/.venv").mkdir()
-    environment = _stub_tools(tmp_path, "uv")
-    context = CapabilityContext(
-        tmp_path,
-        Workflow.CHANGED,
-        (
-            Selection(
-                "deploy/hetzner/release.py",
-                Capability.KERNEL_PYTHON,
-                SelectionReason.PRIORITY_RISK,
-                "pytest:python/tests/kernel/test_first.py",
-            ),
-            Selection(
-                "deploy/hetzner/release.py",
-                Capability.KERNEL_PYTHON,
-                SelectionReason.PRIORITY_RISK,
-                "pytest:python/tests/kernel/test_first.py::test_owned",
-            ),
-            Selection(
-                "deploy/hetzner/release.py",
-                Capability.KERNEL_PYTHON,
-                SelectionReason.PRIORITY_RISK,
-                "pytest:python/tests/kernel/test_second.py::test_other",
-            ),
-        ),
-    )
-
-    result = run_capability(context, Capability.KERNEL_PYTHON, environment)
-
-    assert result.evidence.status is RunStatus.PASS
-    assert _commands(tmp_path)[-1]["argv"] == [
-        "run",
-        "--frozen",
-        "--no-sync",
-        "pytest",
-        "--maxfail=1",
-        "-p",
-        "no:randomly",
-        "--",
-        "./tests/kernel/test_first.py",
-        "./tests/kernel/test_second.py::test_other",
-    ]
-
-
 def test_single_scenario_service_file_covered_by_sensitivity_does_not_prepare_runtime(
     tmp_path: Path,
 ) -> None:

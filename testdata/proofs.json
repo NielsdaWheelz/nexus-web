@@ -297,7 +297,6 @@
     {
       "id": "android-player-protocol-skew",
       "source_globs": [
-        ".github/workflows/backend-images.yml",
         "apps/android/app/build.gradle.kts",
         "apps/android/app/src/main/AndroidManifest.xml",
         "apps/android/app/src/main/java/app/nexus/android/playback/NexusPlaybackService.kt",
@@ -318,12 +317,10 @@
         "deploy/hetzner/deploy.sh",
         "deploy/hetzner/fetch-release-bundle.sh",
         "deploy/hetzner/release.py",
-        "python/nexus_test_control/runner.py",
         "testdata/android/player-protocol.json"
       ],
       "proofs": [
-        "pytest:python/tests/kernel/test_production_deploy_behavior.py",
-        "pytest:python/tests/kernel/test_production_release.py",
+        "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
         "vitest:apps/web/src/app/android/page.unit.test.tsx",
         "vitest:apps/web/src/lib/player/androidPlayerProtocol.unit.test.ts",
         "vitest:apps/web/src/components/player/GlobalPlayerSurfaces.browser.test.tsx",
@@ -341,6 +338,7 @@
       "source_globs": [
         ".github/actions/setup-test/action.yml",
         ".github/workflows/backend-images.yml",
+        "apps/web/next.config.ts",
         "apps/web/src/app/version/route.ts",
         "apps/web/src/lib/env.ts",
         "docker/Dockerfile.backend",
@@ -372,6 +370,8 @@
         "pytest:python/tests/kernel/test_backend_artifact.py",
         "pytest:python/tests/kernel/test_release_bundle_fetch.py",
         "pytest:python/tests/kernel/test_production_delivery_contract.py",
+        "pytest:python/tests/kernel/test_production_deploy_behavior.py",
+        "pytest:python/tests/kernel/test_production_release.py",
         "pytest:python/tests/kernel/test_successor_release_contract.py",
         "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts"
       ],
