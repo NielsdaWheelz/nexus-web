@@ -37,6 +37,7 @@ from nexus.services.contributor_taxonomy import (
     RawCreditEntry,
     build_observation,
 )
+from nexus.services.reader_publication import replace_reader_document_title
 
 logger = get_logger(__name__)
 
@@ -523,6 +524,19 @@ def validate_structured_enrichment(payload: object) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
+def _replace_media_title(db: Session, media: Media, title: str) -> None:
+    """Write the enriched title through the owner of that field.
+
+    The title of a published PDF, EPUB, or web article is reader-visible canonical
+    content: it is captured in the package projection and hashed into the offline
+    package. Replacing it there is a publication, so `reader_publication` performs
+    the write and bumps the generation. Every other media title is this merge's own
+    write.
+    """
+    if not replace_reader_document_title(db, media=media, title=title):
+        media.title = title
+
+
 def merge_enrichment(
     db: Session,
     media: Media,
@@ -538,7 +552,7 @@ def merge_enrichment(
     if "title" in enrichment:
         title = enrichment["title"]
         if isinstance(title, str) and title.strip():
-            media.title = title.strip()[:255]
+            _replace_media_title(db, media, title.strip()[:255])
             accepted_fields.append("title")
 
     if "authors" in enrichment:

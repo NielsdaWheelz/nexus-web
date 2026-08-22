@@ -1,0 +1,363 @@
+{
+  "version": 1,
+  "readerBundleVersion": 1,
+  "entryBodyEncoding": "Each utf8 value is the exact UTF-8 member body without a BOM. A readerDocument value resolves to that document's exact utf8 value.",
+  "readerRevisionAlgorithm": {
+    "domainSeparatorUtf8": "NexusOfflineReadingRevision\u0000",
+    "preludeEncoding": "UINT64_BE(readerGeneration)",
+    "entryOrder": "ascending UTF-8 path bytes",
+    "entryEncoding": "UINT32_BE(path UTF-8 byte length) || path UTF-8 || SHA-256 member bytes || UINT64_BE(sizeBytes) || UINT16_BE(mediaType ASCII byte length) || mediaType ASCII",
+    "hex": "lowercase SHA-256 hex"
+  },
+  "readerDocuments": [
+    {
+      "id": "pdf-minimal",
+      "utf8": "{\"readerContractVersion\":1,\"mediaId\":\"018f2e74-5efc-7d0d-8a3a-142857142857\",\"mediaKind\":\"Pdf\",\"title\":\"Plane Notes PDF\",\"documentPath\":\"document.pdf\"}",
+      "expect": {
+        "kind": "Accept",
+        "mediaId": "018f2e74-5efc-7d0d-8a3a-142857142857",
+        "mediaKind": "Pdf",
+        "title": "Plane Notes PDF",
+        "documentPath": "document.pdf"
+      }
+    },
+    {
+      "id": "epub-with-local-asset",
+      "utf8": "{\"readerContractVersion\":1,\"mediaId\":\"018f2e74-5efc-7d1e-8a3a-142857142857\",\"mediaKind\":\"Epub\",\"title\":\"Plane Notes EPUB\",\"navigation\":[{\"sectionId\":\"chapter-1\",\"label\":\"Chapter 1\"}],\"sections\":[{\"sectionId\":\"chapter-1\",\"ordinal\":0,\"fragmentId\":\"018f2e74-5efc-7e1e-8a3a-142857142857\",\"fragmentIdx\":0,\"hrefPath\":\"EPUB/chapter-1.xhtml\",\"anchorId\":null,\"startOffset\":0,\"endOffset\":23,\"htmlSanitized\":\"<article><h1>Chapter 1</h1><img src=\\\"assets/cover.svg\\\" alt=\\\"Blue horizon\\\"><p>Read locally.</p></article>\",\"canonicalText\":\"Chapter 1\\nRead locally.\",\"assetPaths\":[\"assets/cover.svg\"]}]}",
+      "expect": {
+        "kind": "Accept",
+        "mediaId": "018f2e74-5efc-7d1e-8a3a-142857142857",
+        "mediaKind": "Epub",
+        "title": "Plane Notes EPUB",
+        "navigationOrder": ["chapter-1"],
+        "sectionOrder": ["chapter-1"],
+        "referencedAssetPaths": ["assets/cover.svg"]
+      }
+    },
+    {
+      "id": "web-text-only",
+      "utf8": "{\"readerContractVersion\":1,\"mediaId\":\"018f2e74-5efc-7d2f-8a3a-142857142857\",\"mediaKind\":\"WebArticle\",\"title\":\"Signal on the Train\",\"navigation\":[{\"fragmentId\":\"intro\",\"label\":\"Introduction\"}],\"fragments\":[{\"fragmentId\":\"intro\",\"ordinal\":0,\"htmlSanitized\":\"<article><h1>Signal on the Train</h1><p>A local copy keeps the prose available.</p></article>\",\"canonicalText\":\"Signal on the Train\\nA local copy keeps the prose available.\"}]}",
+      "expect": {
+        "kind": "Accept",
+        "mediaId": "018f2e74-5efc-7d2f-8a3a-142857142857",
+        "mediaKind": "WebArticle",
+        "title": "Signal on the Train",
+        "fragmentOrder": ["intro"],
+        "remoteSubresources": []
+      }
+    },
+    {
+      "id": "reject-remote-web-subresource",
+      "utf8": "{\"readerContractVersion\":1,\"mediaId\":\"018f2e74-5efc-7d2f-8a3a-142857142857\",\"mediaKind\":\"WebArticle\",\"title\":\"Signal on the Train\",\"navigation\":[],\"fragments\":[{\"fragmentId\":\"intro\",\"ordinal\":0,\"htmlSanitized\":\"<article><img src=\\\"https://example.invalid/figure.png\\\" alt=\\\"Figure\\\"></article>\",\"canonicalText\":\"Figure\"}]}",
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "id": "reject-executable-web-content",
+      "utf8": "{\"readerContractVersion\":1,\"mediaId\":\"018f2e74-5efc-7d2f-8a3a-142857142857\",\"mediaKind\":\"WebArticle\",\"title\":\"Signal on the Train\",\"navigation\":[],\"fragments\":[{\"fragmentId\":\"intro\",\"ordinal\":0,\"htmlSanitized\":\"<article><script>window.alert(1)</script><p>Unsafe</p></article>\",\"canonicalText\":\"Unsafe\"}]}",
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "id": "reject-reader-media-mismatch",
+      "package": "web-text-only-copy",
+      "utf8": "{\"readerContractVersion\":1,\"mediaId\":\"018f2e74-5efc-7d2f-8a3a-142857142858\",\"mediaKind\":\"WebArticle\",\"title\":\"Signal on the Train\",\"navigation\":[],\"fragments\":[]}",
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "id": "reject-undeclared-epub-asset",
+      "package": "epub-local-asset-copy",
+      "utf8": "{\"readerContractVersion\":1,\"mediaId\":\"018f2e74-5efc-7d1e-8a3a-142857142857\",\"mediaKind\":\"Epub\",\"title\":\"Plane Notes EPUB\",\"navigation\":[],\"sections\":[{\"sectionId\":\"chapter-1\",\"ordinal\":0,\"htmlSanitized\":\"<img src=\\\"assets/missing.svg\\\" alt=\\\"Missing\\\">\",\"canonicalText\":\"Missing\",\"assetPaths\":[\"assets/missing.svg\"]}]}",
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "id": "reject-reader-unknown-key",
+      "utf8": "{\"readerContractVersion\":1,\"mediaId\":\"018f2e74-5efc-7d0d-8a3a-142857142857\",\"mediaKind\":\"Pdf\",\"title\":\"Plane Notes PDF\",\"documentPath\":\"document.pdf\",\"remoteUrl\":\"https://example.invalid/document.pdf\"}",
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "id": "reject-reader-duplicate-key",
+      "utf8": "{\"readerContractVersion\":1,\"mediaId\":\"018f2e74-5efc-7d0d-8a3a-142857142857\",\"mediaKind\":\"Pdf\",\"title\":\"Plane Notes PDF\",\"documentPath\":\"document.pdf\",\"documentPath\":\"other.pdf\"}",
+      "expect": { "kind": "Reject" }
+    }
+  ],
+  "validSvgAssetCases": [
+    {
+      "name": "accept-default-and-prefixed-namespace-declarations",
+      "path": "assets/cover.svg",
+      "mediaType": "image/svg+xml",
+      "utf8": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 1 1\"><title>Namespaced mark</title><path id=\"mark\" d=\"M0 0h1v1H0z\"/><use href=\"#mark\"/></svg>",
+      "expect": { "kind": "Accept" }
+    }
+  ],
+  "validPackages": [
+    {
+      "name": "pdf-verified-copy",
+      "package": {
+        "manifest": {
+          "packageSchemaVersion": 1,
+          "readerContractVersion": 1,
+          "minimumReaderBundleVersion": 1,
+          "mediaId": "018f2e74-5efc-7d0d-8a3a-142857142857",
+          "mediaKind": "Pdf",
+          "title": "Plane Notes PDF",
+          "readerGeneration": 7,
+          "readerRevisionKey": "f16c842653f328e3a1dc597c6ef08f8dcf97a3ff3b7804d3bfa2f28829140b8b",
+          "entries": [
+            { "path": "document.pdf", "mediaType": "application/pdf", "sizeBytes": 48, "sha256": "49c28c332031c5be46a9f1cc28754ba850448ac9d4ffcc1cbb169f779b66b273" },
+            { "path": "reader.json", "mediaType": "application/json", "sizeBytes": 150, "sha256": "360a3d7ce0ef8162ace20ee8dd6721fb546cc5375475a14d6385219da944f9ff" }
+          ]
+        },
+        "entryBodies": [
+          { "path": "document.pdf", "utf8": "%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n" },
+          { "path": "reader.json", "readerDocument": "pdf-minimal" }
+        ]
+      },
+      "presentation": {
+        "downloadAction": "Download for offline",
+        "downloadedCopyLabel": "Downloaded copy · saved <date>"
+      }
+    },
+    {
+      "name": "epub-local-asset-copy",
+      "package": {
+        "manifest": {
+          "packageSchemaVersion": 1,
+          "readerContractVersion": 1,
+          "minimumReaderBundleVersion": 1,
+          "mediaId": "018f2e74-5efc-7d1e-8a3a-142857142857",
+          "mediaKind": "Epub",
+          "title": "Plane Notes EPUB",
+          "readerGeneration": 11,
+          "readerRevisionKey": "a67ed7a9a5d0868cdb6fc89c14a6999fcc48d1cbc6e82ed06a908da9c2496fe1",
+          "entries": [
+            { "path": "assets/cover.svg", "mediaType": "image/svg+xml", "sizeBytes": 119, "sha256": "9c518120f3f57a2c08a605f8e8e414e7663a44d30f0db9b4f7a86b2acfa92267" },
+            { "path": "reader.json", "mediaType": "application/json", "sizeBytes": 587, "sha256": "88a61a472ef67606bac8a1d54c7b0cb51a3ba00f44e126c949978992ee019c73" }
+          ]
+        },
+        "entryBodies": [
+          { "path": "assets/cover.svg", "utf8": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"><title>Blue horizon</title><rect width=\"1\" height=\"1\"/></svg>" },
+          { "path": "reader.json", "readerDocument": "epub-with-local-asset" }
+        ]
+      },
+      "presentation": {
+        "downloadAction": "Download for offline",
+        "downloadedCopyLabel": "Downloaded copy · saved <date>"
+      }
+    },
+    {
+      "name": "web-text-only-copy",
+      "package": {
+        "manifest": {
+          "packageSchemaVersion": 1,
+          "readerContractVersion": 1,
+          "minimumReaderBundleVersion": 1,
+          "mediaId": "018f2e74-5efc-7d2f-8a3a-142857142857",
+          "mediaKind": "WebArticle",
+          "title": "Signal on the Train",
+          "readerGeneration": 13,
+          "readerRevisionKey": "909669ad8b4a9b086088cb637e0b7610cc9789e9786fe9363bf9daad21b11023",
+          "entries": [
+            { "path": "reader.json", "mediaType": "application/json", "sizeBytes": 432, "sha256": "6b5583f872a6a48471deb9416099a5dc964f963a06488ed61a98816600a2e6fd" }
+          ]
+        },
+        "entryBodies": [
+          { "path": "reader.json", "readerDocument": "web-text-only" }
+        ]
+      },
+      "presentation": {
+        "downloadAction": "Download for offline",
+        "downloadedCopyLabel": "Downloaded copy · saved <date>",
+        "webTextOnlyNotice": "Text-only copy; images not included"
+      }
+    }
+  ],
+  "invalidPackageCases": [
+    {
+      "name": "reject-unsupported-package-schema",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/packageSchemaVersion", "value": 2 }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-unsupported-reader-contract",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/readerContractVersion", "value": 2 }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-future-minimum-reader-bundle",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/minimumReaderBundleVersion", "value": 2 }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-empty-title",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/title", "value": "" }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-nonpositive-reader-generation",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/readerGeneration", "value": 0 }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-uppercase-revision-hex",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/readerRevisionKey", "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-unsorted-manifest-entries",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "move", "from": "/package/manifest/entries/1", "path": "/package/manifest/entries/0" }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-traversal-entry-path",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/entries/0/path", "value": "../document.pdf" }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-backslash-entry-path",
+      "base": "epub-local-asset-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/entries/0/path", "value": "assets\\cover.svg" }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-duplicate-entry-path",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/entries/1/path", "value": "document.pdf" }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-manifest-declared-as-member",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/entries/0/path", "value": "manifest.json" }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-missing-declared-member",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "remove", "path": "/package/entryBodies/0" }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-undeclared-member",
+      "base": "web-text-only-copy",
+      "patch": [{ "op": "add", "path": "/package/entryBodies/-", "value": { "path": "assets/unlisted.svg", "utf8": "<svg/>" } }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-web-article-declared-local-asset",
+      "base": "web-text-only-copy",
+      "patch": [
+        { "op": "replace", "path": "/package/manifest/readerRevisionKey", "value": "7f75079ed6f3d64f5b6e35e5eb0804797c36a4717ee156b62eba32e07f16748a" },
+        { "op": "add", "path": "/package/manifest/entries/-", "value": { "path": "assets/cover.svg", "mediaType": "image/svg+xml", "sizeBytes": 119, "sha256": "9c518120f3f57a2c08a605f8e8e414e7663a44d30f0db9b4f7a86b2acfa92267" } },
+        { "op": "move", "from": "/package/manifest/entries/0", "path": "/package/manifest/entries/1" },
+        { "op": "add", "path": "/package/entryBodies/-", "value": { "path": "assets/cover.svg", "utf8": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"><title>Blue horizon</title><rect width=\"1\" height=\"1\"/></svg>" } }
+      ],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-entry-digest-mismatch",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/entries/0/sha256", "value": "0000000000000000000000000000000000000000000000000000000000000000" }],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-entry-size-mismatch",
+      "base": "pdf-verified-copy",
+      "patch": [{ "op": "replace", "path": "/package/manifest/entries/0/sizeBytes", "value": 47 }],
+      "expect": { "kind": "Reject" }
+    }
+  ],
+  "invalidArchiveCases": [
+    { "name": "reject-symlink-member", "entryPath": "reader.json", "zipAttribute": "symlink", "expect": { "kind": "Reject" } },
+    { "name": "reject-nested-archive-member", "entryPath": "assets/cover.zip", "zipAttribute": "nestedArchive", "expect": { "kind": "Reject" } },
+    { "name": "reject-nonfixed-zip-timestamp", "entryPath": "reader.json", "zipAttribute": "timestamp-not-1980-01-01T00:00:00", "expect": { "kind": "Reject" } }
+  ],
+  "invalidRawJsonCases": [
+    {
+      "name": "reject-manifest-duplicate-key",
+      "target": "manifest.json",
+      "utf8": "{\"packageSchemaVersion\":1,\"packageSchemaVersion\":2}",
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-manifest-unknown-key",
+      "target": "manifest.json",
+      "utf8": "{\"packageSchemaVersion\":1,\"readerContractVersion\":1,\"minimumReaderBundleVersion\":1,\"mediaId\":\"018f2e74-5efc-7d0d-8a3a-142857142857\",\"mediaKind\":\"Pdf\",\"title\":\"Plane Notes PDF\",\"readerGeneration\":7,\"readerRevisionKey\":\"f16c842653f328e3a1dc597c6ef08f8dcf97a3ff3b7804d3bfa2f28829140b8b\",\"entries\":[],\"surprise\":true}",
+      "expect": { "kind": "Reject" }
+    }
+  ],
+  "validTransport": {
+    "mint": {
+      "packageBaseUrl": "https://api.nexus.invalid",
+      "clientPinnedApiOrigin": "https://api.nexus.invalid",
+      "accountId": "018f2e74-5efc-7d1a-8a3a-142857142857",
+      "readerGeneration": 7,
+      "packageSchemaVersion": 1
+    },
+    "package": {
+      "status": 200,
+      "redirected": false,
+      "requestHeaders": { "accept-encoding": "identity" },
+      "responseHeaders": {
+        "content-type": "application/vnd.nexus.offline-reading+zip",
+        "content-length": "{compressedByteLength}",
+        "content-digest": "{zipSha256StructuredField}",
+        "nexus-account-id": "{mintAccountId}",
+        "nexus-reader-generation": "{mintReaderGeneration}",
+        "nexus-expanded-length": "{expandedByteLength}"
+      }
+    }
+  },
+  "invalidTransportCases": [
+    {
+      "name": "reject-content-encoding",
+      "responseHeaders": { "content-encoding": "gzip" },
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-transfer-encoding-chunked",
+      "responseHeaders": { "transfer-encoding": "chunked" },
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-redirect",
+      "status": 302,
+      "responseHeaders": { "location": "https://api.nexus.invalid/offline-reading/elsewhere" },
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-missing-content-length",
+      "removeResponseHeaders": ["content-length"],
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-foreign-package-origin",
+      "mint": { "packageBaseUrl": "https://packages.example.invalid" },
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-foreign-account",
+      "responseHeaders": { "nexus-account-id": "018f2e74-5efc-7d1b-8a3a-142857142857" },
+      "expect": { "kind": "Reject" }
+    },
+    {
+      "name": "reject-generation-mismatch",
+      "responseHeaders": { "nexus-reader-generation": "8" },
+      "expect": { "kind": "Reject" }
+    }
+  ],
+  "invalidPresentationCases": [
+    {
+      "name": "reject-web-copy-without-image-disclosure",
+      "base": "web-text-only-copy",
+      "patch": [{ "op": "remove", "path": "/presentation/webTextOnlyNotice" }],
+      "expect": { "kind": "Reject" }
+    }
+  ]
+}

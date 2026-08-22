@@ -18,6 +18,7 @@ _REQUIRED_TABLES = {
     "llm_calls",
     "media",
     "oracle_corpus_publications",
+    "reader_publications",
     "reader_media_state",
     "resource_edges",
     "users",

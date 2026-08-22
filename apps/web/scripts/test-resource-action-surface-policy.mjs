@@ -608,6 +608,11 @@ const directActionMenuClassifications = [
     owners: ["Reader/pane view"],
   },
   {
+    path: "src/components/offlineMedia/DownloadsOverlay.tsx",
+    occurrences: 1,
+    owners: ["Offline download row"],
+  },
+  {
     path: "src/app/(authenticated)/podcasts/[podcastId]/PodcastEpisodeList.tsx",
     occurrences: 1,
     owners: ["Podcast selection/batch"],

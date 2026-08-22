@@ -12,6 +12,37 @@ const allowedFiles = new Set([
   "src/app/globals.css",
   "src/app/brand.css",
   "src/app/(authenticated)/media/[id]/page.module.css",
+  // The shared reader leaf owns the reader-scoped find-highlight palette that
+  // moved out of the media route stylesheet with the reader-core extraction.
+  "src/components/reader/textDocumentReader.module.css",
+]);
+
+// The packaged APK shelf is its own CSS closure: it never loads a hosted
+// stylesheet at runtime, so every custom property its bundled CSS consumes
+// without an inline fallback must be declared inside that bundle (or installed
+// at runtime by an owner below). The committed bundle is kept current by
+// `scripts/build-offline-reading.mjs` and the Gradle staleness check.
+const offlineBundleCssDir = join(
+  webDir,
+  "../android/app/src/main/assets/nexus-offline/assets",
+);
+
+// pdfjs-dist/web/pdf_viewer.css consumes variables that pdf.js's full
+// `viewer.css` declares for its own toolbar/sidebar/editor chrome. Nexus mounts
+// the viewer components without that chrome and deliberately does not ship
+// `viewer.css`, hosted or packaged, so these are inert third-party leftovers
+// rather than Nexus tokens.
+const pdfJsViewerChromeProperties = new Set([
+  "--comment-edit-button-icon",
+  "--dir-factor",
+  "--doorhanger-height",
+  "--editor-toolbar-min-width",
+  "--icon-size",
+  "--main-color",
+  "--menuitem-height",
+  "--sidebar-transition-duration",
+  "--sidebar-transition-timing-function",
+  "--toolbar-icon-bg-color",
 ]);
 
 const runtimeCustomPropertyOwners = new Map([
@@ -189,6 +220,39 @@ for (const { path, source } of cssSources) {
   }
 }
 
+const offlineBundleViolations = [];
+for (const entry of readdirSync(offlineBundleCssDir)) {
+  if (!entry.endsWith(".css")) continue;
+  const path = `assets/nexus-offline/assets/${entry}`;
+  const source = stripCssComments(
+    readFileSync(join(offlineBundleCssDir, entry), "utf8"),
+  );
+  const bundleDeclared = new Set(
+    [...source.matchAll(/(?:^|[;{])\s*(--[A-Za-z0-9_-]+)\s*:/g)].map(
+      (declaration) => declaration[1],
+    ),
+  );
+  for (const reference of source.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)/g)) {
+    const property = reference[1];
+    if (
+      bundleDeclared.has(property) ||
+      runtimeCustomPropertyOwners.has(property) ||
+      pdfJsViewerChromeProperties.has(property) ||
+      hasInlineFallback(source, reference.index)
+    ) {
+      continue;
+    }
+    if (offlineBundleViolations.some((violation) => violation.token === property)) {
+      continue;
+    }
+    offlineBundleViolations.push({
+      path,
+      line: lineNumberAt(source, reference.index),
+      token: property,
+    });
+  }
+}
+
 if (colorViolations.length > 0) {
   console.error("Raw CSS color literals must live in the theme owner or a documented scoped palette.");
   console.error("Use semantic custom properties from src/app/globals.css in ordinary CSS modules.");
@@ -206,6 +270,25 @@ if (customPropertyViolations.length > 0) {
   }
 }
 
-if (colorViolations.length > 0 || customPropertyViolations.length > 0) {
+if (offlineBundleViolations.length > 0) {
+  if (colorViolations.length > 0 || customPropertyViolations.length > 0) {
+    console.error("");
+  }
+  console.error(
+    "CSS custom properties consumed by the packaged offline shelf but never declared inside its bundle:",
+  );
+  for (const violation of offlineBundleViolations) {
+    console.error(`${violation.path}:${violation.line}: ${violation.token}`);
+  }
+  console.error(
+    "Declare them in src/offline-reading/offlineReading.module.css or give the consumer an inline fallback.",
+  );
+}
+
+if (
+  colorViolations.length > 0 ||
+  customPropertyViolations.length > 0 ||
+  offlineBundleViolations.length > 0
+) {
   process.exit(1);
 }

@@ -1,0 +1,3 @@
+apps/android/app/src/main/assets/nexus-offline/pdfjs/** -whitespace
+apps/web/src/app/fonts/licenses/*.txt -whitespace
+testdata/faults/*.patch -whitespace

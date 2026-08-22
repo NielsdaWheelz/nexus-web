@@ -28,10 +28,18 @@
         "python/nexus/services/chat_run_execution.py",
         "python/nexus/services/public_resource_sharing.py",
         "python/nexus/services/resource_grants.py",
+        "python/nexus/services/resource_items/action_snapshots.py",
         "python/nexus/schemas/execution.py",
+        "python/nexus/schemas/resource_action_snapshots.py",
         "python/nexus/api/routes/stream.py",
         "python/nexus/schemas/podcast.py",
         "python/nexus/services/podcasts/subscriptions.py",
+        "python/nexus/api/routes/offline_reading.py",
+        "python/nexus/offline_reading_paths.py",
+        "python/nexus/schemas/offline_reading_package.py",
+        "python/nexus/services/offline_reading_delivery.py",
+        "python/nexus/services/offline_reading_packages.py",
+        "python/nexus/services/stream_tokens.py",
         "apps/web/src/app/auth/**/*",
         "apps/web/src/app/account/password/**/*",
         "apps/web/src/app/forgot-password/**/*",
@@ -44,6 +52,15 @@
         "apps/web/src/lib/auth/**/*.tsx",
         "apps/web/src/lib/api/proxy.ts",
         "apps/web/src/lib/podcasts/subscriptionLifecycle.ts",
+        "apps/web/src/app/api/media/*/offline-reading-token/route.ts",
+        "apps/web/src/app/api/offline-reading/**/*",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingBindingSeal.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingHttp.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/HttpOfflineReaderProgressOriginClient.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingOriginClient.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageContract.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/readingweb/**/*",
         "apps/web/src/lib/supabase/**/*",
         "apps/web/src/middleware.ts",
         "deploy/smoke/auth-smoke.sh",
@@ -66,18 +83,26 @@
         "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked",
         "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal",
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject",
+        "pytest:python/tests/service/test_resource_action_snapshots.py::test_document_media_subtypes_publish_their_exact_action_families",
+        "pytest:python/tests/kernel/test_offline_reading_package_contract.py",
+        "pytest:python/tests/kernel/test_offline_reading_token_contract.py",
+        "pytest:python/tests/service/test_offline_reading_package_delivery.py",
         "vitest:apps/web/src/lib/auth/email-confirmation.unit.test.ts",
         "vitest:apps/web/src/lib/auth/identities.unit.test.ts",
         "vitest:apps/web/src/lib/api/proxy.unit.test.ts",
         "vitest:apps/web/src/lib/podcasts/subscriptionLifecycle.unit.test.ts",
         "node-test:node/ingest/test/accepted_url_egress.test.mjs",
-        "pytest:python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed"
+        "pytest:python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed",
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingOriginClientTest.kt",
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSharedContractTest.kt",
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingOwnedOriginCookieTest.kt"
       ],
       "capabilities": [
         "kernel-python",
         "kernel-web",
         "service",
-        "ingest-node"
+        "ingest-node",
+        "android-host"
       ]
     },
     {
@@ -119,6 +144,7 @@
         "pytest:python/tests/migrations/test_codex_personal_metadata.py::test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle",
         "pytest:python/tests/migrations/test_llm_tools_cutover_migration.py::test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_malformed_state",
         "pytest:python/tests/migrations/test_podcast_subscription_lifecycle_events.py",
+        "pytest:python/tests/migrations/test_reader_publications_migration.py::test_0219_backfills_only_ready_documents_without_database_cascade",
         "pytest:python/tests/kernel/test_epub_navigation_offsets_cutover.py::test_cutover_state_model_admits_only_resumable_media_and_owned_dead_work"
       ],
       "capabilities": [
@@ -171,6 +197,7 @@
         "pytest:python/tests/kernel/test_llm_runtime_composition.py",
         "pytest:python/tests/kernel/test_llm_tool_profiles.py::test_bound_families_compile_exact_closed_operation_profiles_without_fallback",
         "pytest:python/tests/kernel/test_llm_product_intent.py::test_product_intent_freezes_tool_documentation_at_first_prepare",
+        "pytest:python/tests/kernel/test_llm_product_profile_portfolio.py::test_product_profiles_have_the_fixed_nine_row_chat_portfolio",
         "pytest:python/tests/kernel/test_semantic_chunks_embedding_runtime.py",
         "pytest:python/tests/service/test_costly_effects.py::test_generation_dispatches_once_and_settles_success_or_interruption_exactly_once",
         "pytest:python/tests/service/test_chat_run_candidates.py",
@@ -194,16 +221,45 @@
       "id": "reading-progress",
       "source_globs": [
         "python/nexus/services/consumption/**/*.py",
+        "python/nexus/schemas/offline_reader_progress.py",
+        "python/nexus/api/routes/reader.py",
+        "apps/web/src/app/api/media/*/offline-reader-state/route.ts",
+        "apps/web/src/lib/reader/DocumentReaderSession.ts",
+        "apps/web/src/lib/reader/useDocumentReaderSession.ts",
+        "apps/web/src/lib/reader/ReaderDocumentSource.ts",
+        "apps/web/src/lib/reader/ReaderProgressPort.ts",
         "apps/web/src/lib/reader/readerDocumentPosition.ts",
-        "apps/web/src/lib/reader/readerProgress.ts"
+        "apps/web/src/lib/reader/readerProgress.ts",
+        "apps/web/src/lib/media/documentReadiness.ts",
+        "apps/web/src/lib/panes/paneResourceLoaders.ts",
+        "apps/web/src/lib/offlineReading/**/*",
+        "apps/web/src/lib/offlineMedia/OfflineMediaProvider.tsx",
+        "apps/web/src/lib/reader/ReaderDecorations.ts",
+        "apps/web/src/components/offlineMedia/**/*",
+        "apps/web/src/components/reader/TextDocumentReader.tsx",
+        "apps/web/src/offline-reading/**/*",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderProgress*.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/HttpOfflineReaderProgressOriginClient.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt"
       ],
       "proofs": [
         "pytest:python/tests/service/test_reading_progress.py::test_reader_cursor_cas_rejects_stale_progress_without_partial_side_effects",
-        "vitest:apps/web/src/lib/reader/readerDocumentPosition.unit.test.ts"
+        "pytest:python/tests/service/test_offline_reader_progress.py::test_offline_progress_is_account_generation_and_response_attested",
+        "pytest:python/tests/service/test_offline_reader_account_fence.py",
+        "vitest:apps/web/src/lib/reader/DocumentReaderSession.browser.test.tsx",
+        "vitest:apps/web/src/lib/media/documentReadiness.unit.test.ts",
+        "vitest:apps/web/src/lib/reader/readerDocumentPosition.unit.test.ts",
+        "vitest:apps/web/src/lib/offlineReading/OfflineReading.browser.test.tsx",
+        "vitest:apps/web/src/components/offlineMedia/DownloadsOverlay.reading.browser.test.tsx",
+        "vitest:apps/web/src/components/reader/TextDocumentReader.browser.test.tsx",
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReaderProgressSynchronizerTest.kt",
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingStoreLifecycleTest.kt"
       ],
       "capabilities": [
         "service",
-        "kernel-web"
+        "kernel-web",
+        "component",
+        "android-host"
       ]
     },
     {
@@ -228,7 +284,9 @@
         "python/nexus/api/routes/browse.py",
         "python/nexus/services/browse/brave.py",
         "python/nexus/services/browse/service.py",
-        "python/tests/service/test_llm_tools_browse.py"
+        "python/tests/service/test_llm_tools_browse.py",
+        "apps/web/src/app/(authenticated)/media/*/hostedPdfReaderDecorations.ts",
+        "apps/web/src/app/(authenticated)/media/*/useHostedPdfPageHighlights.ts"
       ],
       "proofs": [
         "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence",
@@ -266,21 +324,33 @@
         "python/tests/testkit/sitecustomize.py",
         "python/tests/testkit/worker.py",
         "python/nexus/services/tool_runtime/*.py",
-        "python/tests/service/test_llm_tool_replay.py"
+        "python/tests/service/test_llm_tool_replay.py",
+        "apps/android/app/src/main/java/app/nexus/android/offline/OfflineMediaStore.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/OfflineNetworkPolicyStore.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingDatabase.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingModels.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingScheduler.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStateCodec.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTransferJobService.kt"
       ],
-    "proofs": [
-      "pytest:python/tests/service/test_codex_metadata_failure_mapping.py::test_native_timeout_persists_as_a_distinct_metadata_failure",
-      "pytest:python/tests/service/test_codex_metadata_enrichment.py",
-      "pytest:python/tests/service/test_codex_metadata_transport_durability.py::test_postaccept_disconnect_stays_incomplete_and_never_redispatches",
-      "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker",
-      "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job",
-      "pytest:python/tests/service/test_heavy_job_capacity.py",
-      "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets",
-      "pytest:python/tests/service/test_llm_tool_replay.py::test_position_replay_settles_once_and_does_not_automatically_reissue_uncertain_billed_search"
+      "proofs": [
+        "pytest:python/tests/service/test_codex_metadata_failure_mapping.py::test_native_timeout_persists_as_a_distinct_metadata_failure",
+        "pytest:python/tests/service/test_codex_metadata_enrichment.py",
+        "pytest:python/tests/service/test_codex_metadata_transport_durability.py::test_postaccept_disconnect_stays_incomplete_and_never_redispatches",
+        "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker",
+        "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job",
+        "pytest:python/tests/service/test_heavy_job_capacity.py",
+        "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets",
+        "pytest:python/tests/service/test_llm_tool_replay.py::test_position_replay_settles_once_and_does_not_automatically_reissue_uncertain_billed_search",
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/OfflineMediaStoreContractTest.kt",
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLifecycleTest.kt",
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSchedulerStoreBoundaryTest.kt"
       ],
-    "capabilities": [
-      "service"
-    ]
+      "capabilities": [
+        "service",
+        "android-host"
+      ]
     },
     {
       "id": "native-agent-host",
@@ -297,14 +367,17 @@
         "python/uv.lock"
       ],
       "proofs": [
-      "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
-      "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::test_hosted_canary_rendered_failure_drops_provider_sentinels",
-      "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
-      "pytest:python/tests/kernel/test_native_agent_contract.py",
-      "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
-      "pytest:python/tests/service/test_codex_agent_host.py",
-      "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
-      "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py"
+        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
+        "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_parser_rejects_green_cost_evidence_without_safe_semantics",
+        "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
+        "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
+        "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::test_hosted_canary_rendered_failure_drops_provider_sentinels",
+        "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
+        "pytest:python/tests/kernel/test_native_agent_contract.py",
+        "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
+        "pytest:python/tests/service/test_codex_agent_host.py",
+        "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
+        "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py"
       ],
       "capabilities": [
         "codex-hosted",
@@ -317,10 +390,25 @@
       "source_globs": [
         "python/nexus/storage/**/*.py",
         "python/nexus/services/media_deletion.py",
-        "python/nexus/tasks/storage_object_cleanup.py"
+        "python/nexus/tasks/storage_object_cleanup.py",
+        "python/nexus/api/routes/offline_reading.py",
+        "python/nexus/services/offline_reading_delivery.py",
+        "python/nexus/services/offline_reading_packages.py",
+        "python/nexus/services/reader_publication.py",
+        "python/nexus/ops/reader_publication_preflight.py",
+        "python/nexus/services/epub_ingest.py",
+        "python/nexus/services/epub_lifecycle.py",
+        "python/nexus/services/media_source_ingest.py",
+        "python/nexus/services/metadata_enrichment.py",
+        "python/nexus/services/pdf_ingest.py",
+        "python/nexus/services/pdf_lifecycle.py",
+        "python/nexus/services/web_article_ingest.py",
+        "python/nexus/services/x_ingest.py"
       ],
       "proofs": [
-        "pytest:python/tests/service/test_database_object_convergence.py::test_owned_object_write_and_document_delete_converge_across_postgres_and_minio"
+        "pytest:python/tests/service/test_database_object_convergence.py::test_owned_object_write_and_document_delete_converge_across_postgres_and_minio",
+        "pytest:python/tests/service/test_reader_publication.py::test_capture_restarts_once_without_mixing_database_and_minio_publications",
+        "pytest:python/tests/service/test_reader_publication_ownership.py"
       ],
       "capabilities": [
         "service"
@@ -376,6 +464,17 @@
         ".github/workflows/backend-images.yml",
         "apps/web/src/app/version/route.ts",
         "apps/web/src/lib/env.ts",
+        "apps/web/package.json",
+        "apps/web/scripts/build-offline-reading.mjs",
+        "apps/web/scripts/check-css-tokens.mjs",
+        "apps/web/scripts/copy-pdfjs.mjs",
+        "apps/web/vite.offline-reading.config.ts",
+        "apps/web/src/offline-reading/**/*",
+        "apps/web/src/lib/offlineReading/**/*",
+        "apps/android/app/build.gradle.kts",
+        "apps/android/app/src/main/AndroidManifest.xml",
+        "apps/android/app/src/main/assets/nexus-offline/**/*",
+        "apps/android/app/src/main/res/xml/data_extraction_rules.xml",
         "docker/Dockerfile.backend",
         "deploy/env/env-prod-backend.example",
         "deploy/env/env-prod-frontend.example",
@@ -408,12 +507,16 @@
         "pytest:python/tests/kernel/test_production_deploy_behavior.py",
         "pytest:python/tests/kernel/test_production_release.py",
         "pytest:python/tests/kernel/test_successor_release_contract.py",
-        "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts"
+        "pytest:python/tests/service/test_offline_reading_caddy_delivery.py::test_production_caddy_proxy_preserves_exact_package_identity_bytes_without_encoding",
+        "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/readingweb/OfflineReadingRequestRouterTest.kt"
       ],
       "capabilities": [
         "kernel-python",
         "static-platform",
-        "journeys-all"
+        "service",
+        "journeys-all",
+        "android-host"
       ]
     },
     {
@@ -621,12 +724,17 @@
       "id": "native-release-auth-handoff",
       "source_globs": [
         "apps/android/app/src/main/java/app/nexus/android/GoogleSignInController.kt",
-        "apps/android/app/src/main/java/app/nexus/android/MainActivity.kt"
+        "apps/android/app/src/main/java/app/nexus/android/MainActivity.kt",
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/**/*",
+        "apps/android/app/src/main/java/app/nexus/android/offline/readingweb/**/*"
       ],
       "proofs": [
-        "gradle:apps/android/app/src/androidTest/java/app/nexus/android/NativeAuthHandoffTest.kt::nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin"
+        "gradle:apps/android/app/src/test/java/app/nexus/android/MainActivityRecoveryTest.kt",
+        "gradle:apps/android/app/src/androidTest/java/app/nexus/android/NativeAuthHandoffTest.kt::nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin",
+        "gradle:apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/OfflineReadingDeviceLifecycleTest.kt::sqliteFilesSealRecreateLeaseRemovalAndAccountPurge"
       ],
       "capabilities": [
+        "android-host",
         "android-device"
       ]
     },

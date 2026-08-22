@@ -13,6 +13,7 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.util.IdentityHashMap
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
@@ -22,8 +23,30 @@ private const val MAX_JSON_DEPTH = 16
 internal data class OwnedWebMessage(
     val data: String,
     val replyProxy: JavaScriptReplyProxy,
+    /** Exact origin of the document that sent this message. */
+    val sourceOrigin: Uri,
+    /** Navigation generation of the document that sent it, not of the delivery. */
     val documentGeneration: Long,
 )
+
+/**
+ * Binds every inbound reply channel to the navigation generation that was
+ * current when its document first spoke. Delivery order is not ordered against
+ * `onPageStarted`, so stamping a message with the generation observed at
+ * delivery time would let a superseded document's late message claim the
+ * current document's identity.
+ *
+ * Keys are compared by identity: one WebView document owns exactly one reply
+ * proxy instance. A known channel is retained for this capability's lifetime;
+ * evicting it would let a superseded document be re-stamped as current after
+ * enough navigations. Only the UI thread touches this map.
+ */
+internal class OwnedDocumentChannels {
+    private val generations = IdentityHashMap<Any, Long>()
+
+    fun generationOf(channel: Any, currentGeneration: Long): Long =
+        generations.getOrPut(channel) { currentGeneration }
+}
 
 internal class OwnedOrigin(baseUrl: String) {
     private val origin = Uri.parse(baseUrl)
@@ -72,11 +95,19 @@ internal class OwnedOrigin(baseUrl: String) {
 internal class OwnedOriginWebMessage(
     private val webView: WebView,
     private val objectName: String,
-    baseUrl: String,
+    baseUrls: Set<String>,
     private val onMessage: (OwnedWebMessage) -> Unit,
 ) {
-    private val ownedOrigin = OwnedOrigin(baseUrl)
+    constructor(
+        webView: WebView,
+        objectName: String,
+        baseUrl: String,
+        onMessage: (OwnedWebMessage) -> Unit,
+    ) : this(webView, objectName, setOf(baseUrl), onMessage)
+
+    private val ownedOrigins = baseUrls.map(::OwnedOrigin)
     private val documentGeneration = AtomicLong(0)
+    private val channels = OwnedDocumentChannels()
     private var installed = false
 
     fun install(): Boolean {
@@ -86,11 +117,11 @@ internal class OwnedOriginWebMessage(
         WebViewCompat.addWebMessageListener(
             webView,
             objectName,
-            setOf(ownedOrigin.rule),
+            ownedOrigins.mapTo(mutableSetOf()) { it.rule },
         ) { _, message, sourceOrigin, isMainFrame, replyProxy ->
             if (
                 !isMainFrame ||
-                !ownedOrigin.matches(sourceOrigin) ||
+                ownedOrigins.none { it.matches(sourceOrigin) } ||
                 message.type != WebMessageCompat.TYPE_STRING
             ) {
                 return@addWebMessageListener
@@ -103,7 +134,8 @@ internal class OwnedOriginWebMessage(
                 OwnedWebMessage(
                     data = data,
                     replyProxy = replyProxy,
-                    documentGeneration = documentGeneration.get(),
+                    sourceOrigin = sourceOrigin,
+                    documentGeneration = channels.generationOf(replyProxy, documentGeneration.get()),
                 )
             )
         }

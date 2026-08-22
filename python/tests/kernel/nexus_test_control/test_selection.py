@@ -323,8 +323,27 @@ def test_native_agent_sources_route_to_the_exact_contract_and_host_proofs(path: 
         {
             (
                 Capability.KERNEL_PYTHON,
-                "pytest:python/tests/kernel/nexus_test_control/test_runner.py::"
+                "pytest:python/tests/kernel/nexus_test_control/"
+                "test_runner.py::"
                 "test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
+            ),
+            (
+                Capability.KERNEL_PYTHON,
+                "pytest:python/tests/kernel/nexus_test_control/"
+                "test_hosted_canary_semantics.py::"
+                "test_hosted_canary_parser_rejects_green_cost_evidence_without_safe_semantics",
+            ),
+            (
+                Capability.KERNEL_PYTHON,
+                "pytest:python/tests/kernel/nexus_test_control/"
+                "test_provider_runtime_pin.py::"
+                "test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
+            ),
+            (
+                Capability.KERNEL_PYTHON,
+                "pytest:python/tests/kernel/nexus_test_control/"
+                "test_android_device_method_scope.py::"
+                "test_exact_android_device_proof_uses_one_instrumentation_method",
             ),
             (
                 Capability.KERNEL_PYTHON,
@@ -420,6 +439,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
             "deploy/hetzner/release.py",
             {
                 Capability.COMPONENT,
+                Capability.ANDROID_HOST,
                 Capability.JOURNEYS_ALL,
                 Capability.KERNEL_PYTHON,
                 Capability.LLM_TOOLS,
@@ -428,6 +448,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 Capability.STATIC_PLATFORM,
             },
             {
+                "gradle:apps/android/app/src/test/java/app/nexus/android/offline/readingweb/OfflineReadingRequestRouterTest.kt",
                 "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
                 "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::"
                 "test_exact_pins_round_trip_one_canonical_native_tool",
@@ -451,6 +472,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/service/test_llm_tools_availability.py::"
                 "test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch",
                 "vitest:apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx",
+                "pytest:python/tests/service/test_offline_reading_caddy_delivery.py::test_production_caddy_proxy_preserves_exact_package_identity_bytes_without_encoding",
             },
         ),
         (
@@ -511,6 +533,9 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
+                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_parser_rejects_green_cost_evidence_without_safe_semantics",
+                "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
+                "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
                 "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::test_hosted_canary_rendered_failure_drops_provider_sentinels",
                 "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
@@ -548,6 +573,59 @@ def test_production_risks_route_only_their_owned_proof_partition(
     assert {
         selection.proof for selection in owned if selection.proof is not None
     } == expected_proofs
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "python/nexus/api/routes/offline_reading.py",
+        "python/nexus/services/offline_reading_delivery.py",
+        "python/nexus/services/offline_reading_packages.py",
+    ],
+)
+def test_offline_reading_package_sources_route_the_full_service_boundary(path: str) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+
+    assert ("pytest:python/tests/service/test_offline_reading_package_delivery.py") in {
+        selection.proof for selection in selections
+    }
+
+
+def test_production_caddyfile_routes_the_real_proxy_process_proof() -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, "deploy/hetzner/Caddyfile"),),
+        load_selection_index(REPO_ROOT),
+    )
+
+    assert (
+        "pytest:python/tests/service/test_offline_reading_caddy_delivery.py::"
+        "test_production_caddy_proxy_preserves_exact_package_identity_bytes_without_encoding"
+    ) in {selection.proof for selection in selections}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "python/nexus/schemas/resource_action_snapshots.py",
+        "python/nexus/services/resource_items/action_snapshots.py",
+    ],
+)
+def test_resource_action_snapshot_sources_route_the_service_proof(path: str) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+
+    # One exact priority node owns this service file. A single proof path may
+    # not be registered under multiple nodes because sensitivity must mutate
+    # and execute one canonical owner deterministically.
+    assert (
+        "pytest:python/tests/service/test_resource_action_snapshots.py::"
+        "test_document_media_subtypes_publish_their_exact_action_families"
+    ) in {selection.proof for selection in selections}
 
 
 def test_journey_manifest_routes_lazy_pane_source_to_its_exact_browser_proof(

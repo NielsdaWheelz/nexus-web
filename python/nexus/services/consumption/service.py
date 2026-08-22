@@ -612,7 +612,7 @@ def put_reader_cursor(
     write: CursorWrite,
 ) -> ReaderCursorSnapshot:
     """Atomically replace a cursor, current engagement, and completion transition."""
-    fresh = _fresh_session()
+    fresh = fresh_session()
     try:
         try:
             return retry_serializable(
@@ -635,6 +635,19 @@ def _put_reader_cursor_op(
     media_id: UUID,
     write: CursorWrite,
 ) -> ReaderCursorSnapshot:
+    snapshot = put_reader_cursor_in_txn(db, viewer_id=viewer_id, media_id=media_id, write=write)
+    db.commit()
+    return snapshot
+
+
+def put_reader_cursor_in_txn(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    write: CursorWrite,
+) -> ReaderCursorSnapshot:
+    """Apply the canonical cursor mutation inside the caller's transaction."""
     _lock_viewer(db, viewer_id)
     media_kind = _visible_reader_media_kind(db, viewer_id=viewer_id, media_id=media_id)
     was_finished = _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id)
@@ -671,7 +684,6 @@ def _put_reader_cursor_op(
         viewer_ids=(viewer_id,),
         families=families,
     )
-    db.commit()
     return snapshot
 
 
@@ -778,7 +790,7 @@ def listening_recency_max_subquery_sql(*, podcast_expr: str) -> str:
 
 def run_lectern_command(viewer_id: UUID, command: LecternCommand) -> LecternResult:
     """Replayable Lectern mutation (fresh session + one serializable txn)."""
-    fresh = _fresh_session()
+    fresh = fresh_session()
     try:
         return retry_serializable(
             fresh, "lectern_command", partial(_run_lectern_command_op, fresh, viewer_id, command)
@@ -866,7 +878,7 @@ class _ConsumptionEffect:
 
 def run_consumption_command(viewer_id: UUID, command: ConsumptionCommand) -> ConsumptionResult:
     """Replayable consumption mutation (fresh session + one serializable txn)."""
-    fresh = _fresh_session()
+    fresh = fresh_session()
     try:
         return retry_serializable(
             fresh,
@@ -1391,7 +1403,7 @@ def record_activity_batch(
     batch: ActivityBatchIn,
 ) -> None:
     """Persist one replayable, server-validated observation batch."""
-    fresh = _fresh_session()
+    fresh = fresh_session()
     try:
         retry_serializable(
             fresh,
@@ -1538,7 +1550,7 @@ def apply_activity_exclusion(
     media_id: UUID | None,
 ) -> ActivityExclusionResultOut:
     """Exclude one exact observed session or restore that exclusion."""
-    fresh = _fresh_session()
+    fresh = fresh_session()
     try:
         return retry_serializable(
             fresh,
@@ -1671,7 +1683,7 @@ def record_listening_heartbeat(
     viewer_id: UUID, media_id: UUID, heartbeat: ListeningHeartbeatIn
 ) -> ListeningHeartbeatResult:
     """Fence and write position/duration/episode rate in one transaction."""
-    fresh = _fresh_session()
+    fresh = fresh_session()
     try:
         return retry_serializable(
             fresh,
@@ -1735,7 +1747,7 @@ def install_preview_position(
     position: PreviewPositionIn,
 ) -> None:
     """Transfer Preview progress once after acquisition without overwriting progress."""
-    fresh = _fresh_session()
+    fresh = fresh_session()
     try:
         retry_serializable(
             fresh,
@@ -1833,7 +1845,7 @@ def ensure_missing_items(
     viewer_id: UUID, media_ids: list[UUID], *, source: LecternSource
 ) -> list[tuple[UUID, UUID]]:
     """Append absent Lectern rows for a trusted source (no replay memo)."""
-    fresh = _fresh_session()
+    fresh = fresh_session()
     try:
         return retry_serializable(
             fresh,
@@ -1884,7 +1896,7 @@ def remove_lectern_item(viewer_id: UUID, item_id: UUID) -> None:
 
     Service-internal (assistant undo of a trusted add); no replay memo. Fresh
     session + one serializable txn with the viewer lock (invariant 7)."""
-    fresh = _fresh_session()
+    fresh = fresh_session()
     try:
         retry_serializable(
             fresh,
@@ -1915,17 +1927,22 @@ def delete_media_consumption_state_in_txn(db: Session, *, media_id: UUID) -> Non
     _activity_store.delete_all_for_media_in_txn(db, media_id=media_id)
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+def fresh_session() -> Session:
+    """The consumption package's sole owner of a command's own session.
 
-
-def _fresh_session() -> Session:
+    Every consumption command that opens its own transaction — here and in the
+    sibling modules of this package — must arrive through this owner.
+    """
     fresh = get_session_factory()()
     # An open transaction would make use_serializable_if_available retain weaker
     # isolation; factory sessions must arrive clean (contributors precedent).
     assert not fresh.in_transaction(), "consumption commands require a fresh session"
     return fresh
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 
 def _lock_viewer(db: Session, viewer_id: UUID) -> None:

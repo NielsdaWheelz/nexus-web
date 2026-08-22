@@ -25,6 +25,7 @@ from starlette.types import ASGIApp
 from nexus.auth.bearer import parse_bearer_token
 from nexus.auth.verifier import TokenVerifier
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.offline_reading_paths import is_offline_reading_package_path
 from nexus.responses import error_response
 from nexus.stream_paths import is_stream_path
 
@@ -219,6 +220,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # instead of Supabase auth. The iss/aud requirement on stream tokens prevents
         # accidental acceptance of supabase JWTs if one hits a stream endpoint.
         if is_stream_path(request.url.path):
+            return await call_next(request)
+
+        # This exact direct route verifies its scoped one-use bearer at the
+        # route boundary. No other offline-reading path skips BFF/Supabase auth.
+        if is_offline_reading_package_path(request.url.path):
             return await call_next(request)
 
         # Step 1: Check internal header if required

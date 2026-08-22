@@ -1848,6 +1848,26 @@ class MediaFile(Base):
     media: Mapped["Media"] = relationship("Media", back_populates="media_file")
 
 
+class ReaderPublication(Base):
+    """Current document publication generation for offline fencing."""
+
+    __tablename__ = "reader_publications"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id"),
+        nullable=False,
+        unique=True,
+    )
+    generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+
 class Fragment(Base):
     """Fragment model - an immutable render unit of a media item."""
 
