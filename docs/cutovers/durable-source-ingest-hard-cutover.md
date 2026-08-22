@@ -228,7 +228,6 @@ Public commands:
 - `accept_url_source(...) -> FromUrlResponse`
 - `accept_browser_article_capture(...) -> FromUrlResponse`
 - `accept_browser_file_capture(...) -> FromUrlResponse`
-- `confirm_uploaded_source(...) -> dict`
 - `run_source_attempt(...) -> dict`
 - `retry_source_for_viewer(...) -> dict`
 - `refresh_source_for_viewer(...) -> dict`
@@ -237,7 +236,7 @@ Responsibilities:
 
 - validate destination libraries through `library_governance`,
 - classify source type through source identity modules,
-- create the durable `media` row,
+- create the durable `media` row for the sources it accepts,
 - create the durable `media_source_attempts` row,
 - attach default plus selected libraries through `library_entries`,
 - enqueue the single source-acquisition job,

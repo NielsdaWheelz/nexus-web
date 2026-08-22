@@ -110,6 +110,12 @@ services:
     mem_limit: 448m
     memswap_limit: 448m
     pids_limit: 256
+    # SIGTERM reaches the supervisor through docker-init; it terminates the running
+    # child (TERM grace then KILL), releases the claim and Heavy capacity, then exits.
+    # Covers BACKGROUND_PROCESS_TERM_GRACE_SECONDS plus one settlement, matches the
+    # `docker compose stop --timeout 30` the release flow already passes, and also
+    # protects an ad-hoc `docker compose restart`/`down`.
+    stop_grace_period: 30s
     env_file:
       - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
     environment:
@@ -117,7 +123,6 @@ services:
       DATABASE_STATEMENT_TIMEOUT_MS: "300000"
       DATABASE_IDLE_IN_TX_TIMEOUT_MS: "0"
       BACKGROUND_PROCESS_CGROUP_ROOT: /sys/fs/cgroup
-      BACKGROUND_PROCESS_MEMORY_LIMIT_BYTES: "469762048"
       BACKGROUND_PROCESS_WALL_TIMEOUT_SECONDS: "900"
       BACKGROUND_PROCESS_TERM_GRACE_SECONDS: "5"
       BACKGROUND_PROCESS_RESULT_MAX_BYTES: "1048576"

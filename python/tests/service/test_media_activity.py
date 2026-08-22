@@ -30,7 +30,7 @@ from nexus.services.ingest_recovery import get_ingest_recovery_health, repair_me
 from nexus.services.library_entries import ensure_media_in_default_library
 from nexus.services.media import read_event_snapshot
 from nexus.services.media_activity import read_media_activity
-from nexus.services.sealed_handles import seal_upload_session_handle
+from nexus.services.sealed_handles import seal_upload_session
 from tests.testkit.auth import UserRecord
 from tests.testkit.unreachable_state import expire_heavy_job_claim
 
@@ -332,7 +332,7 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
     assert by_title["Readable while indexing"]["capabilities"]["can_open"] is True
     assert by_filename["Expired Bakker.epub"] == {
         "kind": "UploadSession",
-        "session_handle": seal_upload_session_handle(expired_upload.id),
+        "session_handle": seal_upload_session(expired_upload.id),
         "filename": "Expired Bakker.epub",
         "document_kind": "Epub",
         "expected_size_bytes": 4096,
@@ -502,7 +502,7 @@ def test_activity_projects_only_upload_obligations_with_strict_precedence(
         "verification.epub",
     ]
     by_filename = {item["filename"]: item for item in payload["items"]}
-    assert by_filename["expired.epub"]["session_handle"] == seal_upload_session_handle(expired.id)
+    assert by_filename["expired.epub"]["session_handle"] == seal_upload_session(expired.id)
     assert by_filename["expired.epub"]["attention"] == {"kind": "CapabilityExpired"}
     assert by_filename["transport.epub"]["attention"] == {
         "kind": "TransportFailed",
@@ -523,6 +523,92 @@ def test_activity_projects_only_upload_obligations_with_strict_precedence(
     }
     assert "verifying.epub" not in by_filename
     assert "awaiting.epub" not in by_filename
+
+
+def test_activity_is_silent_for_published_upload_sessions(
+    db_session: Session,
+    test_user: UserRecord,
+    authenticated_client: TestClient,
+) -> None:
+    """Publication, not capability freshness, resolves an upload obligation.
+
+    A published session keeps its durable identity row and its long-expired PUT
+    capability. If publication stopped resolving the obligation, every successful
+    import would reappear forever as a Needs Attention item whose Remove button can
+    only ever answer E_UPLOAD_ALREADY_PUBLISHED.
+    """
+    now = datetime.now(UTC)
+    published_media_id, published_attempt = _source_media(
+        db_session,
+        viewer_id=test_user.id,
+        title="Published upload",
+        attempt_no=1,
+        processing_status=ProcessingStatus.ready_for_reading,
+        kind=MediaKind.epub,
+    )
+    published_attempt.status = "succeeded"
+    published = _upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="published.epub",
+        expires_at=now - timedelta(minutes=7),
+    )
+    published.published_media_id = published_media_id
+    published.published_source_attempt_id = published_attempt.id
+    published.published_at = now - timedelta(minutes=6)
+    # One unresolved obligation with the same expired capability is the control: it
+    # proves the projection is live and that only publication silences a session.
+    _upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="unpublished.epub",
+        expires_at=now - timedelta(minutes=7),
+    )
+    db_session.flush()
+
+    response = authenticated_client.get("/media/activity?limit=20")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert [item["filename"] for item in payload["items"]] == ["unpublished.epub"]
+    assert payload["needs_attention_count"] == 1
+    assert payload["active_count"] == 0
+    assert payload["has_more"] is False
+    assert "Published upload" not in {item.get("title") for item in payload["items"]}
+
+
+def test_activity_upload_badge_counts_every_unresolved_obligation(
+    db_session: Session,
+    test_user: UserRecord,
+    authenticated_client: TestClient,
+) -> None:
+    """The upload half is page-bounded, but the badge counts the whole backlog.
+
+    Both halves of the union are bounded by the caller's page limit so an unbounded
+    backlog of abandoned sessions cannot be hydrated on one request; the badge is a
+    separate aggregate, so bounding must not silently truncate what it reports.
+    """
+    now = datetime.now(UTC)
+    for index in range(3):
+        _upload_session(
+            db_session,
+            viewer_id=test_user.id,
+            filename=f"backlog-{index}.epub",
+            expires_at=now - timedelta(minutes=10 - index),
+        )
+    db_session.flush()
+
+    bounded = authenticated_client.get("/media/activity?limit=2")
+
+    assert bounded.status_code == 200, bounded.text
+    payload = bounded.json()["data"]
+    assert [item["filename"] for item in payload["items"]] == [
+        "backlog-0.epub",
+        "backlog-1.epub",
+    ]
+    assert payload["needs_attention_count"] == 3
+    assert payload["active_count"] == 0
+    assert payload["has_more"] is True
 
 
 def test_ingest_health_projects_upload_publication_and_resource_facts(

@@ -12,15 +12,20 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from nexus.config import get_settings
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.storage.client import StorageClientBase, StorageError
 
 
-class StorageObjectSizeMismatch(AssertionError):
-    pass
+class StorageObjectIntegrityError(ApiError):
+    """The stored object bytes are not the bytes the media source published.
 
+    A parser observes this before it opens the document, so the owning source
+    attempt settles on the same terminal ``E_SOURCE_INTEGRITY`` outcome as the
+    upload boundary instead of retrying an object that cannot change.
+    """
 
-class StorageObjectDigestMismatch(AssertionError):
-    """The immutable object bytes do not match their persisted source identity."""
+    def __init__(self, message: str) -> None:
+        super().__init__(ApiErrorCode.E_SOURCE_INTEGRITY, message)
 
 
 _SHA256_HEX_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -78,13 +83,13 @@ def stream_storage_object_to_file(
             for chunk in storage_client.stream_object(storage_path):
                 streamed_size_bytes += len(chunk)
                 if streamed_size_bytes > expected_size_bytes:
-                    raise StorageObjectSizeMismatch(
+                    raise StorageObjectIntegrityError(
                         f"Storage object '{storage_path}' exceeds persisted byte length"
                     )
                 digest.update(chunk)
                 output.write(chunk)
         if streamed_size_bytes != expected_size_bytes:
-            raise StorageObjectSizeMismatch(
+            raise StorageObjectIntegrityError(
                 f"Storage object '{storage_path}' is shorter than persisted byte length"
             )
     except StorageError as exc:
@@ -96,7 +101,7 @@ def stream_storage_object_to_file(
     actual_source_sha256 = digest.hexdigest()
     if actual_source_sha256 != expected_source_sha256:
         destination.unlink(missing_ok=True)
-        raise StorageObjectDigestMismatch(
+        raise StorageObjectIntegrityError(
             "storage object SHA-256 differs from persisted source identity"
         )
     return actual_source_sha256

@@ -556,7 +556,7 @@
     {
       "id": "document-import-digest-nullability-bypass",
       "patch": "testdata/faults/document-import-digest-nullability-bypass.patch",
-      "sha256": "0ec8160e7b390a93c2d932611597b71cc34ee2e95c4333abe5390371e6628b09",
+      "sha256": "5ae9acc4557521485e3a41f17f913a54bcdb80cd919c8d61e9b3fba2863d42cd",
       "proofs": [
         "pytest:python/tests/migrations/test_document_import_reliability_migration.py::test_0217_0218_backfill_is_resumable_fail_closed_and_hard_contracts_schema"
       ],
@@ -565,7 +565,7 @@
     {
       "id": "document-import-upload-generation-bypass",
       "patch": "testdata/faults/document-import-upload-generation-bypass.patch",
-      "sha256": "041ca873742616acc75f9f8acf684bb7d5eaec876a73d4753b92441e43bf18e8",
+      "sha256": "254aec97add5a633f5bdb2969532748010d6039e9c97715567750f0a68188419",
       "proofs": [
         "pytest:python/tests/service/test_media_upload_sessions.py"
       ],
@@ -574,7 +574,7 @@
     {
       "id": "document-import-time-dimension-bypass",
       "patch": "testdata/faults/document-import-time-dimension-bypass.patch",
-      "sha256": "9f4813249a9514a7ff2e5733d999737e05c0411945808d52a953ef0bb08fdfe8",
+      "sha256": "1bfec9ccb8b84c4641238900a5bc2c4939275a4da93c02d881c300867ad39a4d",
       "proofs": [
         "pytest:python/tests/service/test_background_worker_process_containment.py::test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child"
       ],
@@ -583,16 +583,16 @@
     {
       "id": "document-import-parser-dimension-bypass",
       "patch": "testdata/faults/document-import-parser-dimension-bypass.patch",
-      "sha256": "7568fd1a75c7e5b88eed25836405b5162515c471a5542f6a18af4fd1348f49c5",
+      "sha256": "654deddf8105de00b683bdb761400fd24c0c65a6aeefdde1f909fd49f7055018",
       "proofs": [
         "pytest:python/tests/service/test_bounded_media_extraction.py"
       ],
-      "expected_failure": "assert None == 'Output'"
+      "expected_failure": "PDF resource-limit projection lost its typed carrier"
     },
     {
       "id": "document-import-activity-upload-omission",
       "patch": "testdata/faults/document-import-activity-upload-omission.patch",
-      "sha256": "55d90c7397b918b5194031ba0c19d07ae6e891af59425d767d46ddfa3811b4a4",
+      "sha256": "9b8b9fc6c27806bb047da3db49597c88d57f3d4464e6e8c2b909a1e124284e30",
       "proofs": [
         "pytest:python/tests/service/test_media_activity.py::test_activity_projects_only_upload_obligations_with_strict_precedence"
       ],
@@ -615,6 +615,87 @@
         "vitest:apps/web/src/components/nexus/MediaActivityPage.browser.test.tsx"
       ],
       "expected_failure": "retries only the exact original upload and removes terminal verification failure"
+    },
+    {
+      "id": "document-import-confirm-replay-conflict",
+      "patch": "testdata/faults/document-import-confirm-replay-conflict.patch",
+      "sha256": "88962497b42d585fb4d423d8ebc2a7c797b23d279e138ec071002a5d3abc637a",
+      "proofs": [
+        "pytest:python/tests/service/test_media_upload_sessions.py::test_confirm_replay_racing_the_publication_transaction_converges_on_published"
+      ],
+      "expected_failure": "assert [ConflictErro... published.')] == []"
+    },
+    {
+      "id": "document-import-verification-lease-renewal-bypass",
+      "patch": "testdata/faults/document-import-verification-lease-renewal-bypass.patch",
+      "sha256": "9f69db8aa254192062d7111249cf7546416051257b8cdbca5cc86071ad54b205",
+      "proofs": [
+        "pytest:python/tests/service/test_media_upload_sessions.py::test_verification_lease_renewal_lets_a_slow_verifier_publish"
+      ],
+      "expected_failure": "assert [ConflictErro...ad session.')] == []"
+    },
+    {
+      "id": "document-import-verification-lease-theft-misclassification",
+      "patch": "testdata/faults/document-import-verification-lease-theft-misclassification.patch",
+      "sha256": "340f0f3a70111212fa8aef4f01e6e367639953abccf3fd6d02ab59132e1e6930",
+      "proofs": [
+        "pytest:python/tests/service/test_media_upload_sessions.py::test_verification_lease_refuses_a_stolen_lease_and_publishes_once"
+      ],
+      "expected_failure": "is <ApiErrorCode.E_UPLOAD_VERIFICATION_IN_PROGRESS"
+    },
+    {
+      "id": "document-import-confirm-failed-fact-omission",
+      "patch": "testdata/faults/document-import-confirm-failed-fact-omission.patch",
+      "sha256": "f5bb6a3470a6bcbc61fcb157e4fea38d78f2909ecf3b72bffede8a04e2d9b8ca",
+      "proofs": [
+        "pytest:python/tests/service/test_media_upload_sessions.py::test_upload_session_fences_generations_and_atomically_publishes_or_converges"
+      ],
+      "expected_failure": "assert ['ConfirmStarted'] == ['ConfirmStar...onfirmFailed']"
+    },
+    {
+      "id": "document-import-upload-publication-silence-bypass",
+      "patch": "testdata/faults/document-import-upload-publication-silence-bypass.patch",
+      "sha256": "7ed32911f0ffd4576efdb7a275ec84f6620fa335fd81ef9d608d8271a36011c2",
+      "proofs": [
+        "pytest:python/tests/service/test_media_activity.py::test_activity_is_silent_for_published_upload_sessions"
+      ],
+      "expected_failure": "== ['unpublished.epub']"
+    },
+    {
+      "id": "document-import-activity-upload-badge-truncation",
+      "patch": "testdata/faults/document-import-activity-upload-badge-truncation.patch",
+      "sha256": "0d84ce1bf234d5684efe9824981a7df4693bcbdddb69d0e7885c704b809b8737",
+      "proofs": [
+        "pytest:python/tests/service/test_media_activity.py::test_activity_upload_badge_counts_every_unresolved_obligation"
+      ],
+      "expected_failure": "assert 2 == 3"
+    },
+    {
+      "id": "document-import-epub2-doctype-rejection",
+      "patch": "testdata/faults/document-import-epub2-doctype-rejection.patch",
+      "sha256": "b945b1194f5fdd2d12ce6e722aa8388e77bab05b5c2f321bfb541631d85b282b",
+      "proofs": [
+        "pytest:python/tests/service/test_bounded_media_extraction.py::test_epub2_public_doctype_and_named_entities_publish_readable_chapters"
+      ],
+      "expected_failure": "the NCX table of contents was not read"
+    },
+    {
+      "id": "document-import-upload-error-defect-laundering",
+      "patch": "testdata/faults/document-import-upload-error-defect-laundering.patch",
+      "sha256": "acfd0ba41f28b58a919b2cfad3609bfb6061d8a3b64528da9a97502276379f75",
+      "proofs": [
+        "vitest:apps/web/src/lib/media/ingestionClient.unit.test.ts"
+      ],
+      "expected_failure": "expected an unresolved item, got Defect"
+    },
+    {
+      "id": "document-import-child-liveness-bypass",
+      "patch": "testdata/faults/document-import-child-liveness-bypass.patch",
+      "sha256": "0afc76b09d86c4f632fc5fa6a81cc72820d3bdd163719185853329874326d5be",
+      "proofs": [
+        "pytest:python/tests/service/test_background_worker_process_containment.py::test_supervisor_death_kills_its_gated_child_before_any_stale_write"
+      ],
+      "expected_failure": "the child is not bound to supervisor liveness"
     }
   ]
 }

@@ -12,7 +12,13 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, ProcessingStatus
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import (
+    ApiError,
+    ApiErrorCode,
+    InvalidRequestError,
+    NotFoundError,
+    ResourceLimitError,
+)
 from nexus.logging import get_logger
 from nexus.services.collection_revisions import (
     CollectionFamily,
@@ -36,28 +42,19 @@ _MAX_ERROR_MSG_LEN = 1000
 _PDF_AUTHOR_SOURCE = "pdf_metadata"
 
 
-class _ResourceLimitApiError(ApiError):
-    """Lifecycle carrier recognized by the child-process result projection."""
-
-    def __init__(
-        self,
-        code: ApiErrorCode,
-        message: str,
-        resource_dimension: Literal["Memory", "Time", "Structure", "Output"],
-    ) -> None:
-        super().__init__(code, message)
-        self.resource_dimension = resource_dimension
-
-
 def _extraction_api_error(plan: PdfExtractionError) -> ApiError:
     message = (plan.error_message or "PDF extraction failed")[:_MAX_ERROR_MSG_LEN]
     code = _source_api_error_code(plan.error_code)
-    if plan.resource_limit_dimension is not None:
-        # The child-process protocol reads this explicit attribute; preserve
-        # the parser's safe dimension instead of treating a declared budget
-        # breach as an ordinary retryable ingest error.
-        return _ResourceLimitApiError(code, message, plan.resource_limit_dimension)
-    return ApiError(code, message)
+    if plan.resource_limit_dimension is None:
+        return ApiError(code, message)
+    # justify-service-invariant-check: the parser result pairs a free-form code
+    # string with an optional dimension, so only this projection can state that
+    # a dimension means the declared resource-limit code.
+    assert code is ApiErrorCode.E_RESOURCE_LIMIT, (
+        f"PDF extraction reported dimension {plan.resource_limit_dimension} "
+        f"with error code {code.value}"
+    )
+    return ResourceLimitError(message, dimension=plan.resource_limit_dimension)
 
 
 def retry_pdf_ingest_for_viewer(

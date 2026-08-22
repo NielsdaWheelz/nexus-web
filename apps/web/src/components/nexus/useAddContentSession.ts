@@ -6,6 +6,7 @@ import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
+import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
 import { extractUrls } from "@/lib/extractUrls";
 import type { AddSeed } from "@/lib/nexus/model";
@@ -39,6 +40,7 @@ import {
 import {
   ADD_SESSION_MAX_ITEMS,
   acceptanceErrorMessage,
+  acceptanceFailureItem,
   acceptedMediaIds,
   createAddSessionState,
   isAddSessionDirty,
@@ -512,7 +514,7 @@ export function useAddContentSession(): AddContentSessionController {
         if (generation !== generationRef.current) return;
         apply({
           kind: "ResolveItem",
-          item: acceptedItem(item.id, item, result.result),
+          item: acceptedItem(item.id, item, result),
         });
       },
     });
@@ -535,20 +537,25 @@ export function useAddContentSession(): AddContentSessionController {
         return;
       }
       const failure = acceptanceErrorMessage(outcome.error);
-      if (failure.kind === "Defect") {
-        apply({ kind: "ResolveItem", item });
-        defects.push(failure.error);
-      } else {
-        apply({
-          kind: "ResolveItem",
-          item: {
-            kind:
-              failure.kind === "Rejected" ? "Rejected" : "AcceptanceUnresolved",
-            id: item.id,
-            intent: item,
-            feedback: failure.feedback,
-          },
-        });
+      switch (failure.kind) {
+        case "Defect":
+          apply({ kind: "ResolveItem", item });
+          defects.push(failure.error);
+          return;
+        case "Superseded":
+          // The session moved on without this attempt. Import Activity owns
+          // the truth, so the foreground stops claiming this item at all.
+          apply({ kind: "RemoveItem", itemId: item.id });
+          return;
+        case "Rejected":
+        case "Unresolved":
+          apply({
+            kind: "ResolveItem",
+            item: acceptanceFailureItem(item.id, item, failure),
+          });
+          return;
+        default:
+          return assertNever(failure, "Unreachable acceptance failure");
       }
     });
     startedSubmissionItemIdsRef.current.clear();
@@ -608,7 +615,7 @@ export function useAddContentSession(): AddContentSessionController {
           if (generation !== generationRef.current) return;
           apply({
             kind: "ResolveItem",
-            item: acceptedItem(item.id, item.intent, result.result),
+            item: acceptedItem(item.id, item.intent, result),
           });
         }
       } catch (error) {
@@ -622,21 +629,22 @@ export function useAddContentSession(): AddContentSessionController {
           return;
         } else {
           const failure = acceptanceErrorMessage(error);
-          if (failure.kind === "Defect") {
-            defectState = { error: failure.error };
-          } else {
-            apply({
-              kind: "ResolveItem",
-              item: {
-                kind:
-                  failure.kind === "Rejected"
-                    ? "Rejected"
-                    : "AcceptanceUnresolved",
-                id: item.id,
-                intent: item.intent,
-                feedback: failure.feedback,
-              },
-            });
+          switch (failure.kind) {
+            case "Defect":
+              defectState = { error: failure.error };
+              break;
+            case "Superseded":
+              apply({ kind: "RemoveItem", itemId: item.id });
+              break;
+            case "Rejected":
+            case "Unresolved":
+              apply({
+                kind: "ResolveItem",
+                item: acceptanceFailureItem(item.id, item.intent, failure),
+              });
+              break;
+            default:
+              assertNever(failure, "Unreachable acceptance failure");
           }
         }
       } finally {

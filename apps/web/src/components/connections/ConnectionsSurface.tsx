@@ -35,8 +35,6 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { createRandomId } from "@/lib/createRandomId";
 import {
   getFileUploadError,
-  isMediaIngestionDefect,
-  UploadNeedsAttentionError,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
@@ -860,17 +858,7 @@ function ConnectionComposer({
             libraryIds: [],
           });
         } catch (error) {
-          if (error instanceof UploadNeedsAttentionError) {
-            controller.update({
-              feedback: {
-                tone: "Warning",
-                title: "Upload needs attention",
-                message: "Open Import Activity for the available next step.",
-              },
-            });
-            continue;
-          }
-          if (isMediaIngestionDefect(error)) {
+          if (isSameSystemApiDefect(error)) {
             setDefect({ error });
             return;
           }
@@ -880,8 +868,8 @@ function ConnectionComposer({
         }
         const pending: ConnectionsPendingAttachment = {
           clientMutationId: createRandomId("link"),
-          mediaId: upload.result.mediaId,
-          sourceAttemptId: upload.result.sourceAttemptId,
+          mediaId: upload.mediaId,
+          sourceAttemptId: upload.sourceAttemptId,
           label: file.name,
           warning: null,
         };

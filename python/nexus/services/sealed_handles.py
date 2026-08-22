@@ -332,19 +332,11 @@ def unseal_library_invitation(raw: str) -> UUID:
     return _unseal(raw, _LIBRARY_INVITATION, "Invalid library invitation handle")
 
 
-def seal_upload_session_handle(session_id: UUID) -> UploadSessionHandle:
+def seal_upload_session(session_id: UUID) -> UploadSessionHandle:
     return _seal(session_id, _UPLOAD_SESSION, UploadSessionHandle)
 
 
-def parse_upload_session_handle(raw: str) -> UploadSessionHandle:
-    try:
-        _parse_entity_wire(raw, _UPLOAD_SESSION)
-    except ValueError as exc:
-        raise InvalidSealedHandle("Invalid upload session handle") from exc
-    return UploadSessionHandle(raw)
-
-
-def unseal_upload_session_handle(raw: str) -> UUID:
+def unseal_upload_session(raw: str) -> UUID:
     return _unseal(raw, _UPLOAD_SESSION, "Invalid upload session handle")
 
 

@@ -33,6 +33,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from psycopg import sql
 
+from nexus.config import BACKGROUND_WORKER_MEMORY_LIMIT_BYTES
 from nexus.release_artifact import (
     BackendArtifactDefect,
     build_runtime_identity,
@@ -792,6 +793,92 @@ def grant_scenario_ai_entitlement(
         engine.dispose()
 
 
+# The background worker lane's readiness contract is a real cgroup v2 memory limit
+# with `memory.oom.group=0` (document-import-reliability-hard-cutover.md §7), and
+# §10 requires the proof lane to actually be cgroup-capable. A rootless systemd user
+# manager is what delegates one, so its absence is a host-provisioning fault with one
+# exact repair. CI provisions it in `.github/actions/setup-test`, which fails with
+# this same text, and `./scripts/test doctor` reports it before any proof runs.
+CGROUP_DELEGATE_DIAGNOSTIC = (
+    "The background worker proof requires a rootless systemd user manager that "
+    "delegates a cgroup v2 memory controller. Provision it with: "
+    'sudo loginctl enable-linger "$(id -un)"; '
+    "export XDG_RUNTIME_DIR=/run/user/$(id -u) "
+    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus; "
+    "then confirm that "
+    f"`systemd-run --user --scope -p MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES} true` "
+    "succeeds and that the scope cgroup exposes memory.max and memory.oom.group."
+)
+_CGROUP_DELEGATE_PROBE_TIMEOUT_SECONDS = 30.0
+_CGROUP_DELEGATE_PROBE_SCRIPT = f"""
+set -eu
+cgroup="/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)"
+test "$(cat "$cgroup/memory.max")" = "{BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}"
+test "$(cat "$cgroup/memory.oom.group")" = "0"
+grep -qw memory "$cgroup/cgroup.controllers"
+"""
+
+
+def user_systemd_environment() -> dict[str, str]:
+    """Address the caller's own rootless systemd user manager."""
+    user_runtime_directory = f"/run/user/{os.getuid()}"
+    return {
+        "XDG_RUNTIME_DIR": user_runtime_directory,
+        "DBUS_SESSION_BUS_ADDRESS": f"unix:path={user_runtime_directory}/bus",
+    }
+
+
+def _require_cgroup_delegate() -> str:
+    """Return the systemd-run path, or refuse with the one shared diagnostic."""
+    systemd_run = shutil.which("systemd-run")
+    if systemd_run is None or not Path(f"/run/user/{os.getuid()}/bus").is_socket():
+        raise RuntimeContractError(CGROUP_DELEGATE_DIAGNOSTIC)
+    return systemd_run
+
+
+def cgroup_delegate_failure() -> str | None:
+    """Probe the real delegate and return the shared diagnostic when it is unusable.
+
+    This runs the exact `systemd-run --user --scope` shape the background worker lane
+    launches with and reads the resulting cgroup, so a manager that exists but cannot
+    delegate the memory controller is reported before any proof depends on it.
+    """
+    try:
+        systemd_run = _require_cgroup_delegate()
+    except RuntimeContractError:
+        return CGROUP_DELEGATE_DIAGNOSTIC
+    try:
+        probe = subprocess.run(
+            (
+                systemd_run,
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                f"--unit=nexus-cgroup-delegate-{uuid4().hex[:16]}",
+                "-p",
+                f"MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}",
+                "-p",
+                "MemorySwapMax=0",
+                "-p",
+                "OOMPolicy=continue",
+                "/bin/sh",
+                "-c",
+                _CGROUP_DELEGATE_PROBE_SCRIPT,
+            ),
+            env={**os.environ, **user_systemd_environment()},
+            capture_output=True,
+            text=True,
+            timeout=_CGROUP_DELEGATE_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return CGROUP_DELEGATE_DIAGNOSTIC
+    if probe.returncode != 0:
+        return CGROUP_DELEGATE_DIAGNOSTIC
+    return None
+
+
 def start_python_process(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -847,13 +934,7 @@ def start_python_process(
             "apps.worker.main",
         )
         if role == "worker-background":
-            systemd_run = shutil.which("systemd-run")
-            user_runtime_directory = Path(f"/run/user/{os.getuid()}")
-            user_bus = user_runtime_directory / "bus"
-            if systemd_run is None or not user_bus.exists():
-                raise RuntimeContractError(
-                    "background worker proof requires a live user-systemd cgroup delegate"
-                )
+            systemd_run = _require_cgroup_delegate()
             command = (
                 systemd_run,
                 "--user",
@@ -861,7 +942,7 @@ def start_python_process(
                 "--quiet",
                 "--collect",
                 "-p",
-                "MemoryMax=469762048",
+                f"MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}",
                 "-p",
                 "MemorySwapMax=0",
                 "-p",
@@ -882,14 +963,7 @@ def start_python_process(
         "PODCAST_INDEX_BASE_URL": f"http://127.0.0.1:{runtime.ports.external}",
         "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
         **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
-        **(
-            {
-                "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}",
-                "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{os.getuid()}/bus",
-            }
-            if role == "worker-background"
-            else {}
-        ),
+        **(user_systemd_environment() if role == "worker-background" else {}),
         **(overrides or {}),
     }
     return _start_owned_process(

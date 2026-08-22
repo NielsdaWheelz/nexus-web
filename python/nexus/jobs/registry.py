@@ -9,13 +9,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 from nexus.config import get_settings
+from nexus.jobs.dead_letter_projections import DeadLetterProjection
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobResourceClass,
-    JobRow,
     RescheduleRequested,
 )
 from nexus.services.podcasts.types import (
@@ -23,11 +23,7 @@ from nexus.services.podcasts.types import (
     PODCAST_SYNC_JOB_LEASE_SECONDS,
 )
 
-if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
 JobHandler = Callable[..., Mapping[str, Any] | RescheduleRequested | None]
-JobDeadLetterHandler = Callable[["Session", JobRow], None]
 type ResourceFailureProjection = Literal["Job", "SourceAttemptMedia"]
 type ChildRuntime = Literal["Base", "Llm"]
 type ChildExitCleanup = Literal["None", "SourceAttemptParserTemp"]
@@ -46,7 +42,7 @@ class JobDefinition:
     periodic_interval_seconds: int | None = None
     periodic_priority: int = 100
     failed_result_statuses: tuple[str, ...] = ()
-    dead_letter_handler_path: str | None = None
+    dead_letter_projection: DeadLetterProjection = "None"
     wall_timeout_seconds: float = 900.0
     resource_failure_projection: ResourceFailureProjection = "Job"
     child_runtime: ChildRuntime = "Base"
@@ -65,11 +61,6 @@ def get_default_registry() -> dict[str, JobDefinition]:
 def resolve_job_handler(path: str) -> JobHandler:
     """Import one declaratively named handler only at its execution boundary."""
     return cast(JobHandler, _resolve_callable(path))
-
-
-def resolve_dead_letter_handler(path: str) -> JobDeadLetterHandler:
-    """Import one declaratively named dead-letter hook only when it is needed."""
-    return cast(JobDeadLetterHandler, _resolve_callable(path))
 
 
 def _resolve_callable(path: str) -> Callable[..., Any]:
@@ -166,7 +157,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
-            dead_letter_handler_path="nexus.jobs.registry:_dead_letter_chat_run",
+            dead_letter_projection="ChatRun",
             never_prune_dead=True,
         ),
         # Universal dossier generation (resource-inspector-and-universal-dossiers
@@ -184,7 +175,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
-            dead_letter_handler_path="nexus.jobs.registry:_dead_letter_dossier_build",
+            dead_letter_projection="DossierBuild",
             never_prune_dead=True,
         ),
         "podcast_sync_subscription_job": JobDefinition(
@@ -194,7 +185,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=PODCAST_SYNC_JOB_LEASE_SECONDS,
-            dead_letter_handler_path="nexus.jobs.registry:_dead_letter_podcast_sync_subscription",
+            dead_letter_projection="PodcastSubscriptionSync",
         ),
         "podcast_backfill_subscription": JobDefinition(
             kind="podcast_backfill_subscription",
@@ -204,7 +195,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=900,
             failed_result_statuses=("failed",),
-            dead_letter_handler_path="nexus.jobs.registry:_dead_letter_podcast_backfill",
+            dead_letter_projection="PodcastBackfill",
             never_prune_dead=True,
         ),
         "podcast_reindex_semantic_job": JobDefinition(
@@ -223,7 +214,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=900,
-            dead_letter_handler_path="nexus.jobs.registry:_dead_letter_note_reindex",
+            dead_letter_projection="NoteContentIndex",
         ),
         "podcast_refresh_due_job": JobDefinition(
             kind="podcast_refresh_due_job",
@@ -360,7 +351,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=5,
             retry_delays_seconds=(60, 300, 900, 3600, 21600),
             lease_seconds=300,
-            dead_letter_handler_path="nexus.jobs.registry:_dead_letter_media_teardown",
+            dead_letter_projection="MediaTeardownIntent",
             never_prune_dead=True,
         ),
         # Durable final-sweep reservation for in-process object writes (spec §3.1).
@@ -431,24 +422,12 @@ def _run_chat_run(
     return chat_run(run_id=str(payload["run_id"]), context=context)
 
 
-def _dead_letter_chat_run(db: Session, job: JobRow) -> None:
-    from nexus.tasks.chat_run import record_dead_lettered_chat_run
-
-    record_dead_lettered_chat_run(db, job)
-
-
 def _run_dossier_build(
     *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.artifacts import dossier_build
 
     return dossier_build(payload=payload, context=context)
-
-
-def _dead_letter_dossier_build(db: Session, job: JobRow) -> None:
-    from nexus.tasks.artifacts import dead_letter_dossier_build
-
-    dead_letter_dossier_build(db, job)
 
 
 def _run_podcast_sync_subscription(
@@ -459,24 +438,12 @@ def _run_podcast_sync_subscription(
     return podcast_sync_subscription_job(payload=payload, context=context)
 
 
-def _dead_letter_podcast_sync_subscription(db: Session, job: JobRow) -> None:
-    from nexus.services.podcasts.sync import dead_letter_podcast_subscription_sync
-
-    dead_letter_podcast_subscription_sync(db, job)
-
-
 def _run_podcast_backfill_subscription(
     *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.podcast_backfill_subscription import podcast_backfill_subscription
 
     return podcast_backfill_subscription(payload=payload, context=context)
-
-
-def _dead_letter_podcast_backfill(db: Session, job: JobRow) -> None:
-    from nexus.tasks.podcast_backfill_subscription import dead_letter_podcast_backfill
-
-    dead_letter_podcast_backfill(db, job)
 
 
 def _run_podcast_reindex_semantic(
@@ -502,32 +469,6 @@ def _run_note_reindex(
         note_block_id=str(payload["note_block_id"]),
         reason=str(payload.get("reason", "note_edit")),
         request_id=_optional_str(payload.get("request_id")),
-    )
-
-
-def _dead_letter_note_reindex(db: Session, job: JobRow) -> None:
-    """Mark the note's content index failed once reindex retries are exhausted.
-
-    Runs inside the worker's dead-letter transaction (no commit here). Skips a
-    malformed note_block_id payload (the only non-retryable failure) so it cannot raise.
-    """
-    from uuid import UUID
-
-    from nexus.errors import ApiErrorCode
-    from nexus.services.content_indexing import IndexOwner, mark_content_index_failed
-
-    note_block_id = job.payload.get("note_block_id")
-    if not note_block_id:
-        return
-    try:
-        owner_id = UUID(str(note_block_id))
-    except (TypeError, ValueError):
-        return
-    mark_content_index_failed(
-        db,
-        owner=IndexOwner("note_block", owner_id),
-        failure_code=ApiErrorCode.E_INTERNAL.value,
-        failure_message=(job.last_error or "Note reindex exhausted retries.")[:1000],
     )
 
 
@@ -640,12 +581,6 @@ def _run_media_teardown(
     from nexus.tasks.media_teardown import media_teardown
 
     return media_teardown(payload=payload, context=context)
-
-
-def _dead_letter_media_teardown(db: Session, job: JobRow) -> None:
-    from nexus.tasks.media_teardown import dead_letter_media_teardown
-
-    dead_letter_media_teardown(db, job)
 
 
 def _run_storage_object_cleanup(

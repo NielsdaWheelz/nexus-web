@@ -210,9 +210,7 @@ def _activity_rows(db: Session, *, viewer_id: UUID, limit: int) -> list[RowMappi
                             AS invariant_defect_count
                     FROM classified
                 ), ordered AS (
-                    SELECT classified.*, totals.*,
-                        (totals.needs_attention_count + totals.active_count > :limit)
-                            AS has_more
+                    SELECT classified.*, totals.*
                     FROM classified
                     CROSS JOIN totals
                     WHERE classification <> 'Complete'
@@ -400,7 +398,9 @@ def read_media_activity(
     is_admin: bool = False,
 ) -> MediaActivityOut:
     media_rows = _activity_rows(db, viewer_id=viewer_id, limit=limit)
-    upload_sessions = list_viewer_unresolved_upload_sessions(db, viewer_id=viewer_id)
+    # Both halves of the union are bounded by the same page limit, so the merged
+    # page is always fillable while neither half can scan an unbounded backlog.
+    upload_page = list_viewer_unresolved_upload_sessions(db, viewer_id=viewer_id, limit=limit)
     if media_rows and int(media_rows[0]["invariant_defect_count"] or 0) > 0:
         raise AssertionError("Activity snapshot contains an invariant defect")
     media = {
@@ -431,7 +431,7 @@ def read_media_activity(
         else:
             key = (1, -updated_at.timestamp(), str(row["source_attempt_id"]))
         ordered.append((key, item))
-    for upload_session in upload_sessions:
+    for upload_session in upload_page.items:
         ordered.append(
             (
                 (
@@ -445,7 +445,8 @@ def read_media_activity(
     ordered.sort(key=lambda entry: entry[0])
 
     media_needs_attention = int(media_rows[0]["needs_attention_count"]) if media_rows else 0
-    upload_needs_attention = len(upload_sessions)
+    # The badge counts every unresolved obligation, not just the page that fit.
+    upload_needs_attention = upload_page.total
     active_count = int(media_rows[0]["active_count"]) if media_rows else 0
     total = media_needs_attention + upload_needs_attention + active_count
     return MediaActivityOut(

@@ -33,6 +33,11 @@ TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
 # Cross-runtime upload safety contract. Keep this equal to
 # `DIRECT_UPLOAD_PUT_TIMEOUT_MS` in `apps/web/src/lib/media/ingestionClient.ts`.
 DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS = 240
+# The one background-worker memory limit. It is deployment shape, not per-environment
+# configuration, so it is a constant here and `mem_limit: 448m` in
+# `deploy/hetzner/docker-compose.yml`; the cgroup readiness check proves at startup
+# that the deployed limit is exactly this value.
+BACKGROUND_WORKER_MEMORY_LIMIT_BYTES = 448 * 1024 * 1024
 
 
 def _database_url_looks_like_supabase(database_url: str) -> bool:
@@ -301,10 +306,6 @@ class Settings(BaseSettings):
     )
     background_process_cgroup_root: Path = Field(
         default=Path("/sys/fs/cgroup"), alias="BACKGROUND_PROCESS_CGROUP_ROOT"
-    )
-    background_process_memory_limit_bytes: int = Field(
-        default=448 * 1024 * 1024,
-        alias="BACKGROUND_PROCESS_MEMORY_LIMIT_BYTES",
     )
     background_process_wall_timeout_seconds: float = Field(
         default=900.0,
@@ -846,10 +847,6 @@ class Settings(BaseSettings):
             )
         if not self.background_process_cgroup_root.is_absolute():
             raise ValueError("BACKGROUND_PROCESS_CGROUP_ROOT must be an absolute path.")
-        if self.background_process_memory_limit_bytes != 448 * 1024 * 1024:
-            raise ValueError(
-                "BACKGROUND_PROCESS_MEMORY_LIMIT_BYTES must match the 448 MiB background limit."
-            )
         if not 0 < self.background_process_wall_timeout_seconds <= 900:
             raise ValueError("BACKGROUND_PROCESS_WALL_TIMEOUT_SECONDS must be > 0 and <= 900.")
         if not 0 < self.background_process_term_grace_seconds <= 30:

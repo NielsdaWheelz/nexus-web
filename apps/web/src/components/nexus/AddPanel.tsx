@@ -28,7 +28,9 @@ import {
   type AddSessionState,
   type PlacementCommand,
   type PlacementState,
+  type UnresolvedAcceptanceReason,
 } from "./addContentSessionModel";
+import { assertNever } from "@/lib/assertNever";
 import type { AddContentSessionController } from "./useAddContentSession";
 import styles from "./AddPanel.module.css";
 
@@ -148,18 +150,52 @@ function isFileItem(item: AddItem): boolean {
 
 function acceptedStatus(item: Extract<AddItem, { kind: "Accepted" }>): string {
   const prefix = item.result.duplicate ? "Already in Nexus" : "Saved";
-  if (!("processingStatus" in item.result)) return prefix;
-  if (item.result.sourceAttemptStatus === "failed") {
-    return `${prefix} · processing failed`;
+  switch (item.result.kind) {
+    case "PublishedUpload":
+      // A published upload is verified bytes; extraction progress is Activity's.
+      return prefix;
+    case "SourceIngest":
+      if (item.result.sourceAttemptStatus === "failed") {
+        return `${prefix} · processing failed`;
+      }
+      switch (item.result.processingStatus) {
+        case "pending":
+        case "extracting":
+          return `${prefix} · processing`;
+        case "ready_for_reading":
+          return `${prefix} · ready`;
+        case "failed":
+          return `${prefix} · processing failed`;
+        default:
+          return assertNever(
+            item.result.processingStatus,
+            "Unreachable processing status",
+          );
+      }
+    default:
+      return assertNever(item.result, "Unreachable accepted ingest result");
   }
-  switch (item.result.processingStatus) {
-    case "pending":
-    case "extracting":
-      return `${prefix} · processing`;
-    case "ready_for_reading":
-      return `${prefix} · ready`;
-    case "failed":
-      return `${prefix} · processing failed`;
+}
+
+function unresolvedStatus(reason: UnresolvedAcceptanceReason): string {
+  switch (reason) {
+    case "StatusUnknown":
+      return "Acceptance status unknown";
+    case "UploadIncomplete":
+      return "Upload didn’t complete";
+    default:
+      return assertNever(reason, "Unreachable unresolved acceptance reason");
+  }
+}
+
+function unresolvedActionLabel(reason: UnresolvedAcceptanceReason): string {
+  switch (reason) {
+    case "StatusUnknown":
+      return "Check status";
+    case "UploadIncomplete":
+      return "Retry upload";
+    default:
+      return assertNever(reason, "Unreachable unresolved acceptance reason");
   }
 }
 
@@ -176,7 +212,7 @@ function itemStatus(item: AddItem): string {
     case "Rejected":
       return "Not added";
     case "AcceptanceUnresolved":
-      return "Acceptance status unknown";
+      return unresolvedStatus(item.reason);
     case "Accepted":
       return acceptedStatus(item);
   }
@@ -816,7 +852,7 @@ export default function AddPanel({
                               )
                             }
                           >
-                            Check status
+                            {unresolvedActionLabel(item.reason)}
                           </Button>
                         ) : null}
                         {item.kind === "AcceptanceUnresolved" ? (

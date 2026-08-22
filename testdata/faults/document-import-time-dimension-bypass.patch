@@ -1,9 +1,12 @@
 diff --git a/python/nexus/jobs/process_executor.py b/python/nexus/jobs/process_executor.py
 --- a/python/nexus/jobs/process_executor.py
 +++ b/python/nexus/jobs/process_executor.py
-@@ -264,4 +264,4 @@ class BackgroundProcessExecutor:
-                 if timed_out:
--                    return ChildResourceFailure("Time")
-+                    return ChildResourceFailure("Memory")
-                 oom_kills_after = self.cgroup.oom_kill_count()
-                 if oom_kills_after > oom_kills_before:
+@@ -343,7 +343,7 @@
+                     if exit_reason == "Shutdown":
+                         return ChildShutdownInterrupted()
+                     if exit_reason == "Timeout":
+-                        return ChildResourceFailure("Time")
++                        return ChildResourceFailure("Memory")
+                     oom_kills_after = self.cgroup.oom_kill_count()
+                     if oom_kills_after > oom_kills_before:
+                         return ChildResourceFailure("Memory")

@@ -4,11 +4,14 @@ import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import type { AddSeed } from "@/lib/nexus/model";
 import type { LibraryDestinationSelection } from "@/lib/libraries/client";
 import {
-  UploadNeedsAttentionError,
+  UploadSessionError,
   type AcceptedIngestResult,
   type UploadFileKind,
   type UploadPhase,
+  type UploadSessionOutcome,
 } from "@/lib/media/ingestionClient";
+import { uploadVerificationFailureCopy } from "@/lib/status/mediaActivity";
+import { assertNever } from "@/lib/assertNever";
 import {
   projectLibraryPlacement,
   type LibraryPlacementDestination,
@@ -80,6 +83,7 @@ export type AddItem =
       kind: "AcceptanceUnresolved";
       id: string;
       intent: FrozenAcceptanceIntent;
+      reason: UnresolvedAcceptanceReason;
       feedback: FeedbackContent;
     }
   | {
@@ -161,45 +165,152 @@ export type AddSessionState = Readonly<{
 
 export type StagedAddItem = Extract<AddItem, { kind: "Invalid" | "Draft" }>;
 
+/**
+ * Why an item is still unresolved. `StatusUnknown` means acceptance itself is
+ * ambiguous; `UploadIncomplete` means the server proved the bytes never landed,
+ * so the repair is a fresh transfer of the same file rather than a status check.
+ */
+export type UnresolvedAcceptanceReason = "StatusUnknown" | "UploadIncomplete";
+
 export type AcceptanceFailure =
   | { kind: "Rejected"; feedback: FeedbackContent }
-  | { kind: "Unresolved"; feedback: FeedbackContent }
+  | {
+      kind: "Unresolved";
+      reason: UnresolvedAcceptanceReason;
+      feedback: FeedbackContent;
+    }
+  /** The foreground attempt lost the session; Import Activity owns it now. */
+  | { kind: "Superseded" }
   | { kind: "Defect"; error: unknown };
 
+function terminalAcceptance(message: string): AcceptanceFailure {
+  return {
+    kind: "Rejected",
+    feedback: { tone: "Danger", title: "Couldn’t save", message },
+  };
+}
+
+function unresolvedAcceptance(requestId?: string): AcceptanceFailure {
+  return {
+    kind: "Unresolved",
+    reason: "StatusUnknown",
+    feedback: {
+      tone: "Warning",
+      title: "Couldn’t confirm",
+      message:
+        "Nexus could not confirm whether this was saved. Check status to find out.",
+      requestId,
+    },
+  };
+}
+
+function uploadAcceptanceFailure(
+  outcome: UploadSessionOutcome,
+  error: unknown,
+): AcceptanceFailure {
+  switch (outcome.kind) {
+    case "NeedsAttention":
+      return {
+        kind: "Rejected",
+        feedback: {
+          tone: "Warning",
+          title: "Upload needs attention",
+          message:
+            "Use Import Activity for the available next step, or restage this file as a new import.",
+        },
+      };
+    case "VerificationRejected":
+      return {
+        kind: "Rejected",
+        feedback: {
+          tone: "Danger",
+          title: "Upload rejected",
+          message: uploadVerificationFailureCopy(outcome.code),
+        },
+      };
+    case "BytesMissing":
+      return {
+        kind: "Unresolved",
+        reason: "UploadIncomplete",
+        feedback: {
+          tone: "Warning",
+          title: "Upload didn’t complete",
+          message:
+            "Nexus never received this file. Retry the upload, or remove it and start a new import.",
+        },
+      };
+    case "Superseded":
+      return { kind: "Superseded" };
+    case "Unresolved":
+      return unresolvedAcceptance();
+    case "UnsupportedFileType":
+      return terminalAcceptance(
+        "This file type isn’t supported. Start a new import with a PDF or EPUB.",
+      );
+    case "FileTooLarge":
+      return terminalAcceptance(
+        "This file exceeds the import limit. Start a new import with a smaller file.",
+      );
+    case "LibraryForbidden":
+      return terminalAcceptance(
+        "You no longer have access to a destination library. Choose different libraries and start a new import.",
+      );
+    case "IntentChanged":
+      return terminalAcceptance("This import changed. Start a new import.");
+    case "FileMismatch":
+      return terminalAcceptance(
+        "That file doesn’t match this import. Choose the same file, or start a new import.",
+      );
+    case "IntentMalformed":
+      return { kind: "Defect", error };
+    default:
+      return assertNever(outcome, "Unreachable upload session outcome");
+  }
+}
+
 export function acceptanceErrorMessage(error: unknown): AcceptanceFailure {
-  if (error instanceof UploadNeedsAttentionError) {
-    return {
-      kind: "Rejected",
-      feedback: {
-        tone: "Warning",
-        title: "Upload needs attention",
-        message:
-          "Use Import Activity for the available next step, or restage this file as a new import.",
-      },
-    };
+  if (error instanceof UploadSessionError) {
+    return uploadAcceptanceFailure(error.outcome, error);
   }
   if (!isApiError(error) || isSameSystemApiDefect(error)) {
     return { kind: "Defect", error };
   }
-
-  let feedback: FeedbackContent;
-  try {
-    feedback = mediaCaptureErrorMessage(error, "SaveSource");
-  } catch (caughtDefect: unknown) {
-    return { kind: "Defect", error: caughtDefect };
-  }
+  // Ordering matters: an unresolved acceptance is decided by the transport
+  // class first, so a server outage the product-copy adapter does not model
+  // stays an honest "check status" instead of becoming an internal defect.
   if (
     error.status >= 500 ||
     error.code === "E_NETWORK" ||
     error.code === "E_UPSTREAM" ||
     error.code === "E_UPSTREAM_TIMEOUT"
   ) {
-    return {
-      kind: "Unresolved",
-      feedback: { ...feedback, tone: "Warning" },
-    };
+    return unresolvedAcceptance(error.requestId);
   }
-  return { kind: "Rejected", feedback };
+  try {
+    return {
+      kind: "Rejected",
+      feedback: mediaCaptureErrorMessage(error, "SaveSource"),
+    };
+  } catch (caughtDefect: unknown) {
+    return { kind: "Defect", error: caughtDefect };
+  }
+}
+
+/** The one projection of a settled acceptance failure onto its session item. */
+export function acceptanceFailureItem(
+  id: string,
+  intent: FrozenAcceptanceIntent,
+  failure: Extract<AcceptanceFailure, { kind: "Rejected" | "Unresolved" }>,
+): AddItem {
+  return failure.kind === "Rejected"
+    ? { kind: "Rejected", id, intent, feedback: failure.feedback }
+    : {
+        kind: "AcceptanceUnresolved",
+        id,
+        intent,
+        reason: failure.reason,
+        feedback: failure.feedback,
+      };
 }
 
 export type AddSessionAction =
@@ -513,6 +624,7 @@ export function reduceAddSession(
                 kind: "AcceptanceUnresolved",
                 id: item.id,
                 intent: item.intent,
+                reason: "StatusUnknown",
                 feedback: action.acceptanceFeedback,
               };
         }),
@@ -537,6 +649,8 @@ export function reduceAddSession(
             }
             const progress = action.placementProgressByMediaId.get(mediaId);
             if (!progress) {
+              // justify-defect: an in-flight placement projection must have a
+              // frozen request-boundary lifecycle entry owned by the mutation.
               throw new Error("Missing placement mutation progress.");
             }
             switch (progress.phase) {

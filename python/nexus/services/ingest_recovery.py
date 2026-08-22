@@ -28,6 +28,7 @@ from nexus.jobs.queue import (
 from nexus.logging import get_logger
 from nexus.runtime_health import ACCEPTED_SOURCE_JOB_DEFECT_COUNT_SQL
 from nexus.schemas.presence import Presence, absent, present
+from nexus.services.media_upload_sessions import UPLOAD_SESSION_DERIVED_STATE_SQL
 
 logger = get_logger(__name__)
 
@@ -131,34 +132,25 @@ def get_ingest_recovery_health(db: Session) -> IngestRecoveryHealth:
         .mappings()
         .one()
     )
+    # The upload owner owns the derived-state precedence; this aggregate selects it
+    # rather than restating the rule, so operator health and Activity cannot drift.
     uploads = (
         db.execute(
             text(
-                """
+                f"""
+                WITH derived AS (
+                    SELECT {UPLOAD_SESSION_DERIVED_STATE_SQL} AS derived_state
+                    FROM media_upload_sessions
+                )
                 SELECT
+                    count(*) FILTER (WHERE derived_state = 'CapabilityExpired')
+                        AS expired_count,
                     count(*) FILTER (
-                        WHERE published_at IS NULL
-                          AND verification_failed_at IS NULL
-                          AND NOT (
-                              verification_token IS NOT NULL
-                              AND verification_expires_at > now()
-                          )
-                          AND transport_failed_at IS NULL
-                          AND upload_url_expires_at <= now()
-                    ) AS expired_count,
-                    count(*) FILTER (
-                        WHERE published_at IS NULL
-                          AND (
-                              verification_failed_at IS NOT NULL
-                              OR transport_failed_at IS NOT NULL
-                          )
+                        WHERE derived_state IN ('VerificationFailed', 'TransportFailed')
                     ) AS failed_count,
-                    count(*) FILTER (
-                        WHERE published_at IS NULL
-                          AND verification_token IS NOT NULL
-                          AND verification_expires_at > now()
-                    ) AS active_verification_count
-                FROM media_upload_sessions
+                    count(*) FILTER (WHERE derived_state = 'Verifying')
+                        AS active_verification_count
+                FROM derived
                 """
             )
         )

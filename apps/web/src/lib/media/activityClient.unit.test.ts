@@ -202,6 +202,32 @@ describe("media Activity transport", () => {
     ]);
   });
 
+  it("decodes the closed verification failure code and rejects an open one", () => {
+    const accepted = uploadSessionResponse();
+    itemRecord(accepted, 0).attention = {
+      kind: "VerificationFailed",
+      failure_code: "E_FILE_TOO_LARGE",
+    };
+    const decoded = decodeMediaActivityResponse(accepted);
+    const item = decoded.items[0];
+    if (item?.kind !== "UploadSession") {
+      throw new Error("expected an upload-session obligation");
+    }
+    expect(item.attention).toEqual({
+      kind: "VerificationFailed",
+      failureCode: "E_FILE_TOO_LARGE",
+    });
+
+    // A fourth server-side verification code must fail the decode rather than
+    // reach the UI as the generic integrity reason.
+    const rejected = uploadSessionResponse();
+    itemRecord(rejected, 0).attention = {
+      kind: "VerificationFailed",
+      failure_code: "E_SOURCE_ENCRYPTED",
+    };
+    expect(() => decodeMediaActivityResponse(rejected)).toThrow();
+  });
+
   it("rejects fabricated media fields on an upload-session obligation", () => {
     const raw = uploadSessionResponse();
     itemRecord(raw, 0).media_id = MEDIA_ID;

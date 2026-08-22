@@ -496,13 +496,23 @@ class Published(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+UploadVerificationFailureCode = Literal[
+    "E_SOURCE_INTEGRITY",
+    "E_INVALID_FILE_TYPE",
+    "E_FILE_TOO_LARGE",
+]
+"""The closed set of deterministic upload rejections recorded on a session.
+
+Every producer and every egress projection of a terminal verification fact reuses
+this alias, so widening it is a type error in each consumer. It is a plain alias
+rather than a ``type`` statement so the same declaration is also the single
+runtime source of the codes (``typing.get_args``).
+"""
+
+
 class VerificationFailed(BaseModel):
     kind: Literal["VerificationFailed"] = "VerificationFailed"
-    code: Literal[
-        "E_SOURCE_INTEGRITY",
-        "E_INVALID_FILE_TYPE",
-        "E_FILE_TOO_LARGE",
-    ]
+    code: UploadVerificationFailureCode
     failed_at: datetime
 
     model_config = ConfigDict(extra="forbid")

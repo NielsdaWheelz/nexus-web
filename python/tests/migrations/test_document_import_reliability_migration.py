@@ -303,9 +303,6 @@ def test_0217_0218_backfill_is_resumable_fail_closed_and_hard_contracts_schema(
         assert "signed_upload_expires_at" not in {
             column["name"] for column in inspector.get_columns("media_source_attempts")
         }
-        assert "idx_media_stale_pending_upload_cleanup" not in {
-            index["name"] for index in inspector.get_indexes("media")
-        }
         assert inspector.get_check_constraints("media_upload_sessions") == []
         assert {
             constraint["name"]
@@ -330,6 +327,17 @@ def test_0217_0218_backfill_is_resumable_fail_closed_and_hard_contracts_schema(
 
         with pytest.raises(NotImplementedError, match="irreversible document-import"):
             command.downgrade(config, "0217")
+        # 0217 owns the session tables and the digest column. `alembic downgrade
+        # 0216` stops at 0218's own refusal, so 0217's contract is asserted on the
+        # revision itself: without it, a later "make local resets easier" edit could
+        # drop media_upload_sessions and media_file.source_sha256 with the whole
+        # suite green, destroying every durable upload obligation and source digest.
+        revision_0217 = ScriptDirectory.from_config(config).get_revision("0217")
+        assert revision_0217.module is not None
+        with pytest.raises(
+            NotImplementedError, match="0217 is an irreversible document-import hard cutover"
+        ):
+            revision_0217.module.downgrade()
     finally:
         for storage_path, _payload in sources.values():
             storage.delete_object(storage_path)

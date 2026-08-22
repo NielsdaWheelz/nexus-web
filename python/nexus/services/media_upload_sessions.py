@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal, cast
+from typing import Literal, assert_never, cast, get_args
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text
@@ -41,6 +41,7 @@ from nexus.schemas.media import (
     UploadTransportHttpRejectedFailure,
     UploadTransportNetworkFailure,
     UploadTransportTimeoutFailure,
+    UploadVerificationFailureCode,
     VerificationFailed,
 )
 from nexus.services import library_entries, library_governance, media_source_ingest
@@ -51,8 +52,8 @@ from nexus.services.file_ingest_validation import (
 from nexus.services.media_processing_state import mark_source_queued
 from nexus.services.sealed_handles import (
     UploadSessionHandle,
-    seal_upload_session_handle,
-    unseal_upload_session_handle,
+    seal_upload_session,
+    unseal_upload_session,
 )
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
 from nexus.storage.paths import (
@@ -61,6 +62,7 @@ from nexus.storage.paths import (
     get_file_extension,
 )
 from nexus.tasks.storage_object_cleanup import (
+    StoragePathCleanupInFlight,
     finalize_upload_session_storage_object_write,
     reserve_upload_session_storage_object_write,
     reserve_upload_session_storage_object_write_in_current_transaction,
@@ -69,14 +71,61 @@ from nexus.tasks.storage_object_cleanup import (
 logger = get_logger(__name__)
 
 _STAGED_RETENTION = timedelta(hours=24)
+
 _VERIFICATION_LEASE = timedelta(minutes=5)
-_TERMINAL_VERIFICATION_CODES = frozenset(
-    {
-        ApiErrorCode.E_SOURCE_INTEGRITY.value,
-        ApiErrorCode.E_INVALID_FILE_TYPE.value,
-        ApiErrorCode.E_FILE_TOO_LARGE.value,
-    }
-)
+"""Renewal period of the verification lease, not a budget for the whole confirm.
+
+The verifier extends the lease under the session row lock at every phase
+boundary, so this bounds how long a *dead* verifier can fence a session, not how
+long a live one may stream. Publication requires the lease token, never a
+non-expired lease, so a slow-but-live verifier that nobody stole from publishes.
+"""
+
+_TERMINAL_VERIFICATION_CODES: frozenset[str] = frozenset(get_args(UploadVerificationFailureCode))
+"""Deterministic rejections recorded on the session, closed by the wire alias."""
+
+UPLOAD_SESSION_DERIVED_STATE_SQL = """
+        CASE
+            WHEN published_at IS NOT NULL THEN 'Published'
+            WHEN verification_error_code IS NOT NULL THEN 'VerificationFailed'
+            WHEN verification_token IS NOT NULL AND verification_expires_at > now()
+                THEN 'Verifying'
+            WHEN transport_failed_at IS NOT NULL THEN 'TransportFailed'
+            WHEN upload_url_expires_at <= now() THEN 'CapabilityExpired'
+            ELSE 'AwaitingBytes'
+        END"""
+"""The one set-wise expression of §6's derived-session-state precedence.
+
+``_needs_attention`` is the per-row owner of the same precedence; this expression
+is its set-wise twin so a bounded page and an operator aggregate never re-derive
+the rule independently. Every consumer selects it over ``media_upload_sessions``
+columns only. The two owners are cross-checked at runtime: every row this
+expression classifies as an unresolved obligation must also produce an attention
+projection in :func:`_needs_attention`.
+"""
+
+UPLOAD_SESSION_ATTENTION_STATES = ("VerificationFailed", "TransportFailed", "CapabilityExpired")
+"""Derived states that are an unresolved user obligation (spec §4.3)."""
+
+_UNRESOLVED_UPLOAD_SESSION_PAGE_SQL = f"""
+    WITH derived AS (
+        SELECT
+            id,
+            {UPLOAD_SESSION_DERIVED_STATE_SQL} AS derived_state,
+            CASE {UPLOAD_SESSION_DERIVED_STATE_SQL}
+                WHEN 'VerificationFailed' THEN verification_failed_at
+                WHEN 'TransportFailed' THEN transport_failed_at
+                WHEN 'CapabilityExpired' THEN upload_url_expires_at
+            END AS attention_at
+        FROM media_upload_sessions
+        WHERE created_by_user_id = :viewer_id
+    )
+    SELECT id, count(*) OVER () AS unresolved_count
+    FROM derived
+    WHERE derived_state = ANY(CAST(:attention_states AS text[]))
+    ORDER BY attention_at, id
+    LIMIT :limit
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,10 +175,29 @@ def _normalize_content_type(content_type: str) -> str:
     return content_type.split(";", 1)[0].strip().lower()
 
 
+def _validate_upload_intent(kind: str, content_type: str, size_bytes: int) -> None:
+    """Validate one upload intent against this surface's declared failure set.
+
+    The shared file-ingest validator owns the single content-type/size table but
+    reports kind and content-type rejections with the direct-body capture codes.
+    Spec §5 declares ``E_INVALID_FILE_TYPE`` for the upload surface, so that branch
+    is consumed here and replaced; the size branch already matches.
+    """
+    try:
+        validate_file_ingest_request(kind, content_type, size_bytes)
+    except InvalidRequestError as exc:
+        if exc.code is ApiErrorCode.E_FILE_TOO_LARGE:
+            raise
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_FILE_TYPE,
+            "Upload intent has an unsupported document type.",
+        ) from exc
+
+
 def _normalize_intent(request: CreateUploadSessionRequest) -> _NormalizedIntent:
     kind = cast(Literal["pdf", "epub"], request.kind.lower())
     content_type = _normalize_content_type(request.content_type)
-    validate_file_ingest_request(kind, content_type, request.size_bytes)
+    _validate_upload_intent(kind, content_type, request.size_bytes)
     return _NormalizedIntent(
         kind=kind,
         filename=_normalize_filename(request.filename),
@@ -223,7 +291,7 @@ def _assert_valid_persisted_state(session: MediaUploadSession) -> None:
 def _owned_session_for_update(
     db: Session, viewer_id: UUID, session_handle: str
 ) -> MediaUploadSession:
-    session_id = unseal_upload_session_handle(session_handle)
+    session_id = unseal_upload_session(session_handle)
     session = db.execute(
         select(MediaUploadSession)
         .where(
@@ -243,7 +311,7 @@ def _published(session: MediaUploadSession, outcome: Literal["Created", "Reused"
     if session.published_media_id is None or session.published_source_attempt_id is None:
         raise AssertionError("published response requested for unpublished upload")
     return Published(
-        session_handle=seal_upload_session_handle(session.id),
+        session_handle=seal_upload_session(session.id),
         media_id=session.published_media_id,
         source_attempt_id=session.published_source_attempt_id,
         idempotency_outcome=outcome,
@@ -275,12 +343,9 @@ def _needs_attention(session: MediaUploadSession, now: datetime) -> NeedsAttenti
         if session.verification_failed_at is None:
             raise AssertionError("terminal verification has no timestamp")
         return NeedsAttention(
-            session_handle=seal_upload_session_handle(session.id),
+            session_handle=seal_upload_session(session.id),
             failure=VerificationFailed(
-                code=cast(
-                    Literal["E_SOURCE_INTEGRITY", "E_INVALID_FILE_TYPE", "E_FILE_TOO_LARGE"],
-                    session.verification_error_code,
-                ),
+                code=cast(UploadVerificationFailureCode, session.verification_error_code),
                 failed_at=session.verification_failed_at,
             ),
             capabilities=UploadSessionCapabilities(can_retry_upload=False, can_remove=True),
@@ -290,13 +355,13 @@ def _needs_attention(session: MediaUploadSession, now: datetime) -> NeedsAttenti
             return None
     if session.transport_failed_at is not None:
         return NeedsAttention(
-            session_handle=seal_upload_session_handle(session.id),
+            session_handle=seal_upload_session(session.id),
             failure=_transport_failure(session),
             capabilities=capabilities,
         )
     if session.upload_url_expires_at <= now:
         return NeedsAttention(
-            session_handle=seal_upload_session_handle(session.id),
+            session_handle=seal_upload_session(session.id),
             failure=CapabilityExpired(expired_at=session.upload_url_expires_at),
             capabilities=capabilities,
         )
@@ -348,7 +413,7 @@ def _upload_required(
     except StorageError as exc:
         raise ApiError(ApiErrorCode.E_SIGN_UPLOAD_FAILED, "Failed to initialize upload.") from exc
     return UploadRequired(
-        session_handle=seal_upload_session_handle(session.id),
+        session_handle=seal_upload_session(session.id),
         generation=session.upload_generation,
         upload_url=signed.upload_url,
         required_headers=UploadRequiredHeaders.model_validate(
@@ -435,6 +500,7 @@ def create_upload_session(
                 if attention is None:
                     raise AssertionError("terminal upload has no attention projection")
                 return attention
+            stole_expired_lease = False
             if (
                 session.verification_token is not None
                 and session.verification_expires_at is not None
@@ -444,10 +510,16 @@ def create_upload_session(
                         ApiErrorCode.E_UPLOAD_VERIFICATION_IN_PROGRESS,
                         "Upload verification is already in progress.",
                     )
-                session.verification_token = None
-                session.verification_generation = None
-                session.verification_expires_at = None
-            if session.transport_failed_at is not None or session.upload_url_expires_at <= now:
+                stole_expired_lease = True
+            if (
+                stole_expired_lease
+                or session.transport_failed_at is not None
+                or session.upload_url_expires_at <= now
+            ):
+                # A generation whose lease was stolen is not reusable: an abandoned
+                # verifier may still be streaming its staged bytes, so the new
+                # capability fences itself with a new generation and a new path.
+                # ``_advance_generation`` clears the stolen lease.
                 _advance_generation(session, now)
             else:
                 session.upload_url_expires_at = now + timedelta(
@@ -475,16 +547,15 @@ def record_transport_failure(
     session_handle: str,
     failure: UploadTransportFailureRequest,
 ) -> None:
-    stale_generation = False
     with transaction(db):
         session = _owned_session_for_update(db, viewer_id, session_handle)
-        if failure.generation != session.upload_generation:
-            stale_generation = True
-        elif session.published_at is not None:
-            raise ConflictError(
-                ApiErrorCode.E_UPLOAD_ALREADY_PUBLISHED, "Upload is already published."
-            )
-        else:
+        # A browser phase report is telemetry, never a mutation the caller can be
+        # refused: a stale generation or an already-published session is accepted
+        # and changes nothing (spec §5).
+        stale_generation = failure.generation != session.upload_generation
+        already_published = session.published_at is not None
+        recorded = not stale_generation and not already_published
+        if recorded:
             now = _db_now(db)
             session.transport_failure_kind = failure.kind
             session.transport_http_status = (
@@ -498,6 +569,8 @@ def record_transport_failure(
         generation=failure.generation,
         current_generation=session.upload_generation,
         stale_generation=stale_generation,
+        already_published=already_published,
+        recorded=recorded,
         request_id=failure.request_id,
         failure_kind=failure.kind,
         http_status=(
@@ -519,7 +592,6 @@ def retry_upload_session(
     content_type = _normalize_content_type(request.content_type)
     with transaction(db):
         session = _owned_session_for_update(db, viewer_id, session_handle)
-        validate_file_ingest_request(session.kind, content_type, request.size_bytes)
         if session.published_at is not None:
             raise ConflictError(
                 ApiErrorCode.E_UPLOAD_ALREADY_PUBLISHED, "Upload is already published."
@@ -529,6 +601,22 @@ def retry_upload_session(
                 ApiErrorCode.E_UPLOAD_INTENT_MISMATCH,
                 "A rejected upload session cannot be retried.",
             )
+        now = _db_now(db)
+        if (
+            session.verification_token is not None
+            and session.verification_expires_at is not None
+            and session.verification_expires_at > now
+        ):
+            # Same policy as create: a live verification owns this session, so a
+            # retry reports it instead of silently cancelling the verifier.
+            raise ConflictError(
+                ApiErrorCode.E_UPLOAD_VERIFICATION_IN_PROGRESS,
+                "Upload verification is already in progress.",
+            )
+        # Intent is compared before any content-type judgement so picking the wrong
+        # file is reported as a mismatch the user can repair, not as a bad request.
+        # The persisted intent was validated on create and is immutable, so a match
+        # needs no re-validation.
         if (
             filename != session.filename
             or content_type != session.content_type
@@ -538,7 +626,6 @@ def retry_upload_session(
                 ApiErrorCode.E_UPLOAD_INTENT_MISMATCH,
                 "Retry request does not match the upload intent.",
             )
-        now = _db_now(db)
         _advance_generation(session, now)
     return _upload_required(
         db,
@@ -656,15 +743,137 @@ def _record_terminal_verification_failure(
             session.updated_at = now
 
 
+@dataclass(frozen=True, slots=True)
+class _AlreadyPublished:
+    """The session already carries its publication fact; every confirm converges."""
+
+    published: Published
+
+
+@dataclass(frozen=True, slots=True)
+class _LeaseClaimed:
+    """This confirm owns the verification fence for exactly one generation."""
+
+    session_id: UUID
+    candidate_media_id: UUID
+    kind: str
+    content_type: str
+    expected_size_bytes: int
+    token: UUID
+    lease_expires_at: datetime
+
+
+type _VerificationFence = _AlreadyPublished | _LeaseClaimed
+"""Every locked decision about a confirm: converge on publication, or hold the fence."""
+
+
+def _verification_lease_lost(session: MediaUploadSession, generation: int) -> ConflictError:
+    """Classify the loss of a held verification lease for one unpublished session.
+
+    Only ``_advance_generation`` moves the generation and it clears the lease, so a
+    token that is no longer current means either a newer generation superseded this
+    attempt or another confirm stole the lease after it lapsed.
+    """
+    if session.upload_generation != generation:
+        return ConflictError(
+            ApiErrorCode.E_UPLOAD_GENERATION_STALE,
+            "Upload generation is no longer current.",
+        )
+    return ConflictError(
+        ApiErrorCode.E_UPLOAD_VERIFICATION_IN_PROGRESS,
+        "Another verification attempt owns this upload session.",
+    )
+
+
+def _assert_lease_pins_generation(session: MediaUploadSession, generation: int) -> None:
+    if session.verification_generation != generation or session.upload_generation != generation:
+        # justify-service-invariant-check: the lease token and the generation it
+        # fences are one fact stored as orthogonal nullable columns, so the pairing
+        # cannot be expressed as a type.
+        raise AssertionError("upload verification lease token outlived its generation")
+
+
+def _renew_verification_lease(
+    db: Session, *, session_id: UUID, generation: int, token: UUID
+) -> _VerificationFence:
+    """Extend the verification fence under the session row lock at a phase boundary.
+
+    Renewal is the heartbeat that makes a slow-but-live verifier safe: publication
+    requires the lease *token*, and expiry only governs whether a new confirm may
+    steal the lease. A confirm that finds the session already published converges on
+    that fact rather than failing.
+    """
+    with transaction(db):
+        session = db.execute(
+            select(MediaUploadSession)
+            .where(MediaUploadSession.id == session_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if session is None:
+            raise NotFoundError(
+                ApiErrorCode.E_UPLOAD_SESSION_NOT_FOUND, "Upload session not found."
+            )
+        _assert_valid_persisted_state(session)
+        if session.published_at is not None:
+            return _AlreadyPublished(_published(session, "Reused"))
+        if session.verification_token != token:
+            raise _verification_lease_lost(session, generation)
+        _assert_lease_pins_generation(session, generation)
+        now = _db_now(db)
+        renewed = _LeaseClaimed(
+            session_id=session.id,
+            candidate_media_id=session.candidate_media_id,
+            kind=session.kind,
+            content_type=session.content_type,
+            expected_size_bytes=session.expected_size_bytes,
+            token=token,
+            lease_expires_at=now + _VERIFICATION_LEASE,
+        )
+        session.verification_expires_at = renewed.lease_expires_at
+        session.updated_at = now
+    return renewed
+
+
+def _reserve_candidate_bytes(
+    db: Session, *, session_id: UUID, candidate_path: str, lease_expires_at: datetime
+) -> None:
+    """Hold the candidate object for at least the life of the current lease.
+
+    The reservation is already keyed to the lease token (the token is part of the
+    path), and its retention deadline trails every renewal by the delayed-writer
+    window, so the durable sweep can never reclaim bytes a live verifier still owns.
+    """
+    retain_until = lease_expires_at + timedelta(
+        seconds=get_settings().storage_object_cleanup_write_window_seconds
+    )
+    try:
+        reserve_upload_session_storage_object_write(
+            db,
+            upload_session_id=session_id,
+            storage_path=candidate_path,
+            retain_until=retain_until,
+        )
+    except StoragePathCleanupInFlight as exc:
+        # The sweep for this exact token-fenced candidate is already deleting it, so
+        # the copied bytes are gone. Nothing deterministic was rejected: the confirm
+        # stays transient and retryable.
+        raise ApiError(
+            ApiErrorCode.E_STORAGE_ERROR, "Uploaded source storage is unavailable."
+        ) from exc
+
+
 def _claim_verification(
     db: Session, *, viewer_id: UUID, session_handle: str, generation: int
-) -> tuple[UUID, UUID, str, str, int, UUID, datetime]:
+) -> _VerificationFence:
+    """Take the one locked decision about this confirm: converge, or own the fence."""
     with transaction(db):
         session = _owned_session_for_update(db, viewer_id, session_handle)
         if session.published_at is not None:
-            raise ConflictError(
-                ApiErrorCode.E_UPLOAD_ALREADY_PUBLISHED, "Upload is already published."
-            )
+            # This locked read is the single source of truth for "already
+            # published". A replay that blocks here behind the winning publication
+            # converges on the same Published projection.
+            return _AlreadyPublished(_published(session, "Reused"))
         if generation != session.upload_generation:
             raise ConflictError(
                 ApiErrorCode.E_UPLOAD_GENERATION_STALE,
@@ -685,21 +894,20 @@ def _claim_verification(
                 ApiErrorCode.E_UPLOAD_VERIFICATION_IN_PROGRESS,
                 "Upload verification is already in progress.",
             )
-        token = new_uuid7()
-        lease_expires_at = now + _VERIFICATION_LEASE
-        session.verification_token = token
+        claimed = _LeaseClaimed(
+            session_id=session.id,
+            candidate_media_id=session.candidate_media_id,
+            kind=session.kind,
+            content_type=session.content_type,
+            expected_size_bytes=session.expected_size_bytes,
+            token=new_uuid7(),
+            lease_expires_at=now + _VERIFICATION_LEASE,
+        )
+        session.verification_token = claimed.token
         session.verification_generation = generation
-        session.verification_expires_at = lease_expires_at
+        session.verification_expires_at = claimed.lease_expires_at
         session.updated_at = now
-    return (
-        session.id,
-        session.candidate_media_id,
-        session.kind,
-        session.content_type,
-        session.expected_size_bytes,
-        token,
-        lease_expires_at,
-    )
+    return claimed
 
 
 def confirm_upload_session(
@@ -711,37 +919,26 @@ def confirm_upload_session(
     request_id: str | None,
     storage_client: StorageClientBase | None = None,
 ) -> Published:
-    try:
-        session_id = unseal_upload_session_handle(session_handle)
-    except InvalidRequestError:
-        raise
-    existing = db.execute(
-        select(MediaUploadSession)
-        .where(
-            MediaUploadSession.id == session_id,
-            MediaUploadSession.created_by_user_id == viewer_id,
-        )
-        .execution_options(populate_existing=True)
-    ).scalar_one_or_none()
-    if existing is not None and existing.published_at is not None:
-        _assert_valid_persisted_state(existing)
-        db.rollback()
-        return _published(existing, "Reused")
-    db.rollback()
-    (
-        session_id,
-        candidate_media_id,
-        kind,
-        content_type,
-        expected_size_bytes,
-        token,
-        lease_expires_at,
-    ) = _claim_verification(
+    claim = _claim_verification(
         db,
         viewer_id=viewer_id,
         session_handle=session_handle,
         generation=generation,
     )
+    match claim:
+        case _AlreadyPublished(published=published):
+            return published
+        case _LeaseClaimed():
+            lease = claim
+        case _ as unreachable:
+            assert_never(unreachable)
+
+    session_id = lease.session_id
+    candidate_media_id = lease.candidate_media_id
+    kind = lease.kind
+    content_type = lease.content_type
+    expected_size_bytes = lease.expected_size_bytes
+    token = lease.token
     logger.info(
         "ConfirmStarted",
         upload_session_id=str(session_id),
@@ -757,40 +954,178 @@ def confirm_upload_session(
         token,
         get_file_extension(kind),
     )
+
+    def renew() -> _LeaseClaimed | Published:
+        """Extend this confirm's fence at one phase boundary, or converge."""
+        renewal = _renew_verification_lease(
+            db, session_id=session_id, generation=generation, token=token
+        )
+        match renewal:
+            case _AlreadyPublished(published=already):
+                return already
+            case _LeaseClaimed():
+                return renewal
+            case _ as unreachable:
+                assert_never(unreachable)
+
+    # One emission point for the ConfirmFailed fact: no failure path added below can
+    # settle a confirm without the operator seeing the keyed, safe reason (spec §7).
     try:
-        staged = _measure_source(
-            client,
-            storage_path=staging_path,
-            kind=kind,
-            expected_content_type=content_type,
-            expected_size_bytes=expected_size_bytes,
-        )
-        reserve_upload_session_storage_object_write(
-            db,
-            upload_session_id=session_id,
-            storage_path=candidate_path,
-            retain_until=lease_expires_at,
-        )
-        client.copy_object(staging_path, candidate_path)
-        candidate = _measure_source(
-            client,
-            storage_path=candidate_path,
-            kind=kind,
-            expected_content_type=content_type,
-            expected_size_bytes=expected_size_bytes,
-        )
-        if candidate.sha256 != staged.sha256:
-            raise InvalidRequestError(
-                ApiErrorCode.E_SOURCE_INTEGRITY,
-                "Published source does not match the verified upload.",
-            )
-    except ApiError as exc:
-        if exc.code.value in _TERMINAL_VERIFICATION_CODES:
-            _record_terminal_verification_failure(
-                db, session_id=session_id, token=token, error_code=exc.code
-            )
-        else:
+        try:
+            try:
+                staged = _measure_source(
+                    client,
+                    storage_path=staging_path,
+                    kind=kind,
+                    expected_content_type=content_type,
+                    expected_size_bytes=expected_size_bytes,
+                )
+                fence = renew()
+                if isinstance(fence, Published):
+                    return fence
+                _reserve_candidate_bytes(
+                    db,
+                    session_id=session_id,
+                    candidate_path=candidate_path,
+                    lease_expires_at=fence.lease_expires_at,
+                )
+                client.copy_object(staging_path, candidate_path)
+                fence = renew()
+                if isinstance(fence, Published):
+                    return fence
+                _reserve_candidate_bytes(
+                    db,
+                    session_id=session_id,
+                    candidate_path=candidate_path,
+                    lease_expires_at=fence.lease_expires_at,
+                )
+                candidate = _measure_source(
+                    client,
+                    storage_path=candidate_path,
+                    kind=kind,
+                    expected_content_type=content_type,
+                    expected_size_bytes=expected_size_bytes,
+                )
+                if candidate.sha256 != staged.sha256:
+                    raise InvalidRequestError(
+                        ApiErrorCode.E_SOURCE_INTEGRITY,
+                        "Published source does not match the verified upload.",
+                    )
+                fence = renew()
+                if isinstance(fence, Published):
+                    return fence
+                _reserve_candidate_bytes(
+                    db,
+                    session_id=session_id,
+                    candidate_path=candidate_path,
+                    lease_expires_at=fence.lease_expires_at,
+                )
+            except StorageError as exc:
+                raise _storage_error(exc) from exc
+        except ApiError as exc:
+            if exc.code.value in _TERMINAL_VERIFICATION_CODES:
+                _record_terminal_verification_failure(
+                    db, session_id=session_id, token=token, error_code=exc.code
+                )
+            else:
+                _clear_verification_lease(db, session_id, token)
+            raise
+
+        try:
+            with transaction(db):
+                session = _owned_session_for_update(db, viewer_id, session_handle)
+                now = _db_now(db)
+                if session.published_at is not None:
+                    return _published(session, "Reused")
+                # The fence is the lease *token*, not its expiry: a slow verifier
+                # nobody stole from still publishes, and a stolen lease never does.
+                if session.verification_token != token:
+                    raise _verification_lease_lost(session, generation)
+                _assert_lease_pins_generation(session, generation)
+                if (
+                    session.kind != kind
+                    or session.content_type != content_type
+                    or session.expected_size_bytes != expected_size_bytes
+                    or session.candidate_media_id != candidate_media_id
+                ):
+                    # justify-service-invariant-check: normalized intent and candidate
+                    # identity are immutable after creation, so drift is corruption
+                    # rather than a state a caller can reach.
+                    raise AssertionError("upload intent changed during verification")
+                destination_ids = list(_session_destinations(db, session.id))
+                library_governance.validate_writable_library_destinations(
+                    db, viewer_id, destination_ids
+                )
+                media = Media(
+                    id=candidate_media_id,
+                    kind=kind,
+                    title=session.filename,
+                    processing_status=ProcessingStatus.pending,
+                    created_by_user_id=viewer_id,
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.add(media)
+                db.add(
+                    MediaFile(
+                        media_id=candidate_media_id,
+                        storage_path=candidate_path,
+                        content_type=content_type,
+                        size_bytes=candidate.size_bytes,
+                        source_sha256=candidate.sha256,
+                    )
+                )
+                db.flush()
+                library_entries.assign_libraries_for_media_in_current_transaction(
+                    db, viewer_id, candidate_media_id, destination_ids
+                )
+                source_type = f"uploaded_{kind}_file"
+                attempt = media_source_ingest.create_attempt(
+                    db,
+                    media=media,
+                    viewer_id=viewer_id,
+                    source_type=source_type,
+                    intent_key=f"upload_session:{session.id}",
+                    requested_url=None,
+                    canonical_source_url=None,
+                    provider=None,
+                    provider_target_ref=None,
+                    source_payload={
+                        "filename": session.filename,
+                        "content_type": content_type,
+                        "size_bytes": candidate.size_bytes,
+                        "source_sha256": candidate.sha256,
+                        "storage_path": candidate_path,
+                        "library_ids": [str(value) for value in destination_ids],
+                    },
+                    request_id=request_id,
+                    idempotency_key=None,
+                    status="accepted",
+                )
+                mark_source_queued(db, media)
+                media_source_ingest.enqueue_accepted_source_attempt_in_transaction(
+                    db,
+                    media_id=candidate_media_id,
+                    attempt_id=attempt.id,
+                    actor_user_id=viewer_id,
+                    request_id=request_id,
+                )
+                session.published_media_id = candidate_media_id
+                session.published_source_attempt_id = attempt.id
+                session.published_at = now
+                session.verification_token = None
+                session.verification_generation = None
+                session.verification_expires_at = None
+                session.transport_failure_kind = None
+                session.transport_http_status = None
+                session.transport_failed_at = None
+                session.verification_error_code = None
+                session.verification_failed_at = None
+                session.updated_at = now
+        except Exception:
             _clear_verification_lease(db, session_id, token)
+            raise
+    except ApiError as exc:
         logger.info(
             "ConfirmFailed",
             upload_session_id=str(session_id),
@@ -799,111 +1134,14 @@ def confirm_upload_session(
             error_code=exc.code.value,
         )
         raise
-    except StorageError as exc:
-        _clear_verification_lease(db, session_id, token)
-        error = _storage_error(exc)
+    except Exception:
         logger.info(
             "ConfirmFailed",
             upload_session_id=str(session_id),
             generation=generation,
             request_id=request_id,
-            error_code=error.code.value,
+            error_code="E_INTERNAL",
         )
-        raise error from exc
-
-    try:
-        with transaction(db):
-            session = _owned_session_for_update(db, viewer_id, session_handle)
-            now = _db_now(db)
-            if session.published_at is not None:
-                return _published(session, "Reused")
-            if (
-                session.upload_generation != generation
-                or session.verification_token != token
-                or session.verification_generation != generation
-                or session.verification_expires_at is None
-                or session.verification_expires_at <= now
-                or session.kind != kind
-                or session.content_type != content_type
-                or session.expected_size_bytes != expected_size_bytes
-                or session.candidate_media_id != candidate_media_id
-            ):
-                raise ConflictError(
-                    ApiErrorCode.E_UPLOAD_GENERATION_STALE,
-                    "Upload verification lease is no longer current.",
-                )
-            destination_ids = list(_session_destinations(db, session.id))
-            library_governance.validate_writable_library_destinations(
-                db, viewer_id, destination_ids
-            )
-            media = Media(
-                id=candidate_media_id,
-                kind=kind,
-                title=session.filename,
-                processing_status=ProcessingStatus.pending,
-                created_by_user_id=viewer_id,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(media)
-            db.add(
-                MediaFile(
-                    media_id=candidate_media_id,
-                    storage_path=candidate_path,
-                    content_type=content_type,
-                    size_bytes=candidate.size_bytes,
-                    source_sha256=candidate.sha256,
-                )
-            )
-            db.flush()
-            library_entries.assign_libraries_for_media_in_current_transaction(
-                db, viewer_id, candidate_media_id, destination_ids
-            )
-            source_type = f"uploaded_{kind}_file"
-            attempt = media_source_ingest.create_attempt(
-                db,
-                media=media,
-                viewer_id=viewer_id,
-                source_type=source_type,
-                intent_key=f"upload_session:{session.id}",
-                requested_url=None,
-                canonical_source_url=None,
-                provider=None,
-                provider_target_ref=None,
-                source_payload={
-                    "filename": session.filename,
-                    "content_type": content_type,
-                    "size_bytes": candidate.size_bytes,
-                    "source_sha256": candidate.sha256,
-                    "storage_path": candidate_path,
-                    "library_ids": [str(value) for value in destination_ids],
-                },
-                request_id=request_id,
-                idempotency_key=None,
-                status="accepted",
-            )
-            mark_source_queued(db, media)
-            media_source_ingest.enqueue_accepted_source_attempt_in_transaction(
-                db,
-                media_id=candidate_media_id,
-                attempt_id=attempt.id,
-                actor_user_id=viewer_id,
-                request_id=request_id,
-            )
-            session.published_media_id = candidate_media_id
-            session.published_source_attempt_id = attempt.id
-            session.published_at = now
-            session.verification_token = None
-            session.verification_generation = None
-            session.verification_expires_at = None
-            session.transport_failure_kind = None
-            session.transport_http_status = None
-            session.transport_failed_at = None
-            session.verification_error_code = None
-            session.verification_failed_at = None
-            session.updated_at = now
-    except Exception:
-        _clear_verification_lease(db, session_id, token)
         raise
 
     finalize_upload_session_storage_object_write(
@@ -914,6 +1152,9 @@ def confirm_upload_session(
     )
     try:
         client.delete_object(staging_path)
+    # justify-ignore-error: the staged object carries its own 24-hour UploadSession
+    # cleanup reservation, which is the durable owner of this deletion; a failed
+    # opportunistic delete only defers reclamation and never orphans bytes.
     except StorageError:
         logger.warning(
             "upload_staging_delete_failed",
@@ -929,7 +1170,7 @@ def confirm_upload_session(
         source_attempt_id=str(attempt.id),
     )
     return Published(
-        session_handle=seal_upload_session_handle(session_id),
+        session_handle=seal_upload_session(session_id),
         media_id=candidate_media_id,
         source_attempt_id=attempt.id,
         idempotency_outcome="Created",
@@ -942,7 +1183,7 @@ def delete_upload_session(
     viewer_id: UUID,
     session_handle: str,
 ) -> None:
-    session_id = unseal_upload_session_handle(session_handle)
+    session_id = unseal_upload_session(session_handle)
     with transaction(db):
         session = db.execute(
             select(MediaUploadSession)
@@ -965,14 +1206,25 @@ def delete_upload_session(
         write_margin = timedelta(seconds=get_settings().storage_object_cleanup_write_window_seconds)
         delete_not_before = max(now, session.upload_url_expires_at) + write_margin
         for generation in range(1, session.upload_generation + 1):
-            reserve_upload_session_storage_object_write_in_current_transaction(
-                db,
-                upload_session_id=session.id,
-                storage_path=build_upload_session_staging_storage_path(
-                    session.id, generation, get_file_extension(session.kind)
-                ),
-                retain_until=delete_not_before,
-            )
+            try:
+                reserve_upload_session_storage_object_write_in_current_transaction(
+                    db,
+                    upload_session_id=session.id,
+                    storage_path=build_upload_session_staging_storage_path(
+                        session.id, generation, get_file_extension(session.kind)
+                    ),
+                    retain_until=delete_not_before,
+                )
+            # justify-ignore-error: a claimed/running sweep of this exact staged path
+            # already is the durable cleanup intent §5 requires for a 204, and it is
+            # strictly stronger evidence than a freshly armed reservation. Removal
+            # stays idempotent instead of reporting another domain's conflict.
+            except StoragePathCleanupInFlight:
+                logger.info(
+                    "upload_staged_cleanup_already_in_flight",
+                    upload_session_id=str(session.id),
+                    generation=generation,
+                )
         db.execute(
             delete(MediaUploadSessionDestination).where(
                 MediaUploadSessionDestination.upload_session_id == session.id
@@ -1032,23 +1284,58 @@ def delete_published_media_support_in_current_transaction(
         raise AssertionError("published upload support deletion did not remove its exact row")
 
 
+@dataclass(frozen=True, slots=True)
+class UnresolvedUploadSessionPage:
+    """One bounded page of viewer obligations plus the exact unresolved total."""
+
+    items: tuple[UploadSessionOwnerProjection, ...]
+    total: int
+
+
 def list_viewer_unresolved_upload_sessions(
-    db: Session, *, viewer_id: UUID
-) -> list[UploadSessionOwnerProjection]:
+    db: Session, *, viewer_id: UUID, limit: int
+) -> UnresolvedUploadSessionPage:
+    """Return at most ``limit`` unresolved obligations and their exact total.
+
+    Selection, ordering, the page bound, and the badge total share one query over
+    :data:`UPLOAD_SESSION_DERIVED_STATE_SQL`, so an unbounded backlog of abandoned
+    sessions can never make a single Activity read scan or hydrate more than a page.
+    """
+    if limit < 1:
+        raise ValueError("Upload-session page limit must be positive.")
+    rows = list(
+        db.execute(
+            text(_UNRESOLVED_UPLOAD_SESSION_PAGE_SQL),
+            {
+                "viewer_id": viewer_id,
+                "limit": limit,
+                "attention_states": list(UPLOAD_SESSION_ATTENTION_STATES),
+            },
+        ).mappings()
+    )
+    if not rows:
+        return UnresolvedUploadSessionPage(items=(), total=0)
+    total = int(rows[0]["unresolved_count"])
+    ordered_ids = [UUID(str(row["id"])) for row in rows]
+    sessions = {
+        session.id: session
+        for session in db.execute(
+            select(MediaUploadSession)
+            .where(MediaUploadSession.id.in_(ordered_ids))
+            .execution_options(populate_existing=True)
+        ).scalars()
+    }
+    # Read the clock after the selection so the per-row classifier can only observe
+    # a later instant: every derived state it must agree with is monotonic in time.
     now = _db_now(db)
-    sessions = db.execute(
-        select(MediaUploadSession)
-        .where(
-            MediaUploadSession.created_by_user_id == viewer_id,
-            MediaUploadSession.published_at.is_(None),
-        )
-        .order_by(MediaUploadSession.created_at, MediaUploadSession.id)
-    ).scalars()
     projections: list[UploadSessionOwnerProjection] = []
-    for session in sessions:
+    for session_id in ordered_ids:
+        session = sessions[session_id]
         attention = _needs_attention(session, now)
         if attention is None:
-            continue
+            # justify-service-invariant-check: the set-wise precedence expression and
+            # the per-row classifier are two owners of one rule; disagreement is drift.
+            raise AssertionError("selected upload obligation has no attention projection")
         failure = attention.failure
         if isinstance(failure, VerificationFailed):
             state = "VerificationFailed"
@@ -1064,7 +1351,7 @@ def list_viewer_unresolved_upload_sessions(
         projections.append(
             UploadSessionOwnerProjection(
                 session_id=session.id,
-                session_handle=seal_upload_session_handle(session.id),
+                session_handle=seal_upload_session(session.id),
                 filename=session.filename,
                 kind=cast(Literal["Pdf", "Epub"], session.kind.title()),
                 expected_size_bytes=session.expected_size_bytes,
@@ -1076,4 +1363,4 @@ def list_viewer_unresolved_upload_sessions(
                 updated_at=session.updated_at,
             )
         )
-    return projections
+    return UnresolvedUploadSessionPage(items=tuple(projections), total=total)

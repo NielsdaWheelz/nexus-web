@@ -85,7 +85,13 @@ Three durable task modules own all teardown/lifecycle storage deletion
   deletes accepted intent. Confirmation verifies size, signature, and SHA-256,
   copies to an immutable verification-token candidate, then persists that winning
   path with the media, source attempt, final object owner, and exact queue job
-  atomically. Retry mints a new generation; explicit removal reserves cleanup.
+  atomically. Retry mints a new generation; explicit removal reserves cleanup. A
+  candidate's reservation is keyed to the lease token and its `retainUntil` trails
+  every lease renewal by the write window, so the sweep cannot reclaim bytes a live
+  verifier still owns. The reservation CAS reports one owner-agnostic
+  in-flight-cleanup condition rather than constructing a domain error: `Media` maps
+  it to `E_MEDIA_DELETING`, while removal reads an already-claimed sweep of a staged
+  generation as the durable cleanup intent it needs and still returns `204`.
   Browser PUTs abort at the earlier of the capability's `expires_at` or the fixed
   240-second client horizon and report `Timeout`; server configuration requires
   the cleanup write margin to be strictly longer than that horizon.

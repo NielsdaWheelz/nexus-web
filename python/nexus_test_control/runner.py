@@ -92,6 +92,7 @@ from nexus_test_control.services import (
     TestUser,
     _repository_template_fingerprint,
     authorized_device_serials,
+    cgroup_delegate_failure,
     clean_run,
     create_supabase_user,
     grant_scenario_ai_entitlement,
@@ -4557,6 +4558,11 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
         return _not_run(Capability.DOCTOR, "the Android SDK is absent")
     if not _browser_installed(context.repo_root, environment):
         return _not_run(Capability.DOCTOR, "the locked Chromium browser is absent")
+    if shutil.which("systemd-run", path=child_environment.get("PATH")) is None:
+        return _not_run(Capability.DOCTOR, "the user-systemd cgroup delegate is absent")
+    cgroup_delegate_diagnostic = cgroup_delegate_failure()
+    if cgroup_delegate_diagnostic is not None:
+        return _fail(Capability.DOCTOR, cgroup_delegate_diagnostic)
 
     try:
         runtime = read_runtime(context.repo_root)

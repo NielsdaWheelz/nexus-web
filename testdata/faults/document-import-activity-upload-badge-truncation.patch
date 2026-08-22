@@ -1,21 +1,12 @@
 diff --git a/python/nexus/services/media_activity.py b/python/nexus/services/media_activity.py
 --- a/python/nexus/services/media_activity.py
 +++ b/python/nexus/services/media_activity.py
-@@ -431,7 +431,7 @@
-         else:
-             key = (1, -updated_at.timestamp(), str(row["source_attempt_id"]))
-         ordered.append((key, item))
--    for upload_session in upload_page.items:
-+    for upload_session in ():  # Fault: Activity drops the upload half of the union.
-         ordered.append(
-             (
-                 (
 @@ -446,7 +446,7 @@
  
      media_needs_attention = int(media_rows[0]["needs_attention_count"]) if media_rows else 0
      # The badge counts every unresolved obligation, not just the page that fit.
 -    upload_needs_attention = upload_page.total
-+    upload_needs_attention = 0
++    upload_needs_attention = len(upload_page.items)
      active_count = int(media_rows[0]["active_count"]) if media_rows else 0
      total = media_needs_attention + upload_needs_attention + active_count
      return MediaActivityOut(

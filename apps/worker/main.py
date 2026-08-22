@@ -16,7 +16,12 @@ from apps.worker.health import (
 )
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import Environment, Settings, get_settings
+from nexus.config import (
+    BACKGROUND_WORKER_MEMORY_LIMIT_BYTES,
+    Environment,
+    Settings,
+    get_settings,
+)
 from nexus.db.engine import get_engine
 from nexus.job_topology import (
     BACKGROUND_WORKER_JOB_KINDS,
@@ -27,6 +32,7 @@ from nexus.job_topology import (
 from nexus.jobs.process_executor import (
     BackgroundProcessExecutor,
     BackgroundProcessProtocolDefect,
+    ParserTempPruned,
     ValidatedCgroup,
 )
 from nexus.jobs.registry import get_default_registry, get_task_contract_digest
@@ -58,7 +64,7 @@ def _worker_readiness_check(
         try:
             ValidatedCgroup.for_current_process(
                 settings.background_process_cgroup_root,
-                expected_memory_limit_bytes=settings.background_process_memory_limit_bytes,
+                expected_memory_limit_bytes=BACKGROUND_WORKER_MEMORY_LIMIT_BYTES,
             )
         except BackgroundProcessProtocolDefect:
             return False
@@ -78,7 +84,14 @@ def _worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
-def _register_signal_handlers(stop_event: threading.Event) -> None:
+def register_shutdown_signal_handlers(stop_event: threading.Event) -> None:
+    """Bind SIGINT/SIGTERM to the worker's one cooperative shutdown signal.
+
+    The worker loop observes this event between jobs and the process executor
+    observes it while a child is running, so a redeploy terminates the child,
+    releases its claim and Heavy capacity, and exits inside the stop grace period.
+    """
+
     def _handle_signal(signum: int, _frame: object) -> None:
         logger.info("postgres_worker_shutdown_signal", signal=signum)
         stop_event.set()
@@ -87,7 +100,11 @@ def _register_signal_handlers(stop_event: threading.Event) -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
 
 
-def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None) -> JobWorker:
+def create_worker(
+    *,
+    stop_event: threading.Event,
+    successful_cycle_callback: Callable[[], None] | None = None,
+) -> JobWorker:
     settings = get_settings()
     registry = get_default_registry()
     if settings.worker_lane == "interactive":
@@ -125,7 +142,7 @@ def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None
         process_executor = BackgroundProcessExecutor(
             cgroup=ValidatedCgroup.for_current_process(
                 settings.background_process_cgroup_root,
-                expected_memory_limit_bytes=settings.background_process_memory_limit_bytes,
+                expected_memory_limit_bytes=BACKGROUND_WORKER_MEMORY_LIMIT_BYTES,
             ),
             result_max_bytes=settings.background_process_result_max_bytes,
             term_grace_seconds=settings.background_process_term_grace_seconds,
@@ -164,13 +181,14 @@ def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None
             else None
         ),
         process_executor=process_executor,
+        stop_event=stop_event,
     )
 
 
 def main() -> None:
     configure_logging()
     stop_event = threading.Event()
-    _register_signal_handlers(stop_event)
+    register_shutdown_signal_handlers(stop_event)
 
     settings = get_settings()
     identity = get_runtime_identity()
@@ -197,21 +215,28 @@ def main() -> None:
             publisher.clear()
 
     worker = create_worker(
-        successful_cycle_callback=publisher.publish if publisher is not None else None
+        stop_event=stop_event,
+        successful_cycle_callback=publisher.publish if publisher is not None else None,
     )
     if settings.worker_lane == "background":
         process_executor = worker.process_executor
         if process_executor is None:
             # justify-defect: create_worker always equips the background lane.
             raise AssertionError("background worker has no child process executor")
-        removed_parser_temp_directories = process_executor.prune_stale_parser_temp(
+        prune = process_executor.prune_stale_parser_temp(
             settings.parser_temp_root,
             worker_id=worker.worker_id,
+            shutdown=stop_event,
+            failure_backoff_seconds=settings.worker_db_failure_backoff_seconds,
+            failure_backoff_max_seconds=settings.worker_db_failure_backoff_max_seconds,
         )
-        logger.info(
-            "parser_temp_startup_pruned",
-            removed_directories=removed_parser_temp_directories,
-        )
+        if isinstance(prune, ParserTempPruned):
+            logger.info(
+                "parser_temp_startup_pruned",
+                removed_directories=prune.removed_directories,
+            )
+        else:
+            logger.info("parser_temp_startup_prune_interrupted", worker_id=worker.worker_id)
     logger.info(
         "postgres_worker_started",
         worker_id=worker.worker_id,
@@ -221,7 +246,7 @@ def main() -> None:
         allowed_job_kinds=list(worker.allowed_kinds or ()),
     )
     try:
-        worker.run_forever(stop_event=stop_event)
+        worker.run_forever()
     finally:
         if publisher is not None:
             publisher.clear()

@@ -100,6 +100,8 @@ include = [
     "nexus/config.py",
     "nexus/errors.py",
     "nexus/ids.py",
+    "nexus/jobs/dead_letter_projections.py",
+    "nexus/jobs/process_executor.py",
     "nexus/jobs/registry.py",
     "nexus/jobs/worker.py",
     "nexus/logging.py",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import shutil
@@ -10,6 +11,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 from collections.abc import Mapping
@@ -19,7 +21,11 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import UUID
 
+from nexus.errors import ApiError, ApiErrorCode, ResourceFailureDimension, ResourceLimitError
 from nexus.jobs.queue import JobExecutionContext, RescheduleRequested
+from nexus.logging import get_logger
+
+logger = get_logger(__name__)
 
 _PROTOCOL_VERSION = 2
 _INPUT_KEYS = frozenset(
@@ -43,10 +49,23 @@ _CONTEXT_KEYS = frozenset({"job_id", "worker_id", "attempt_no", "resource_class"
 _PRESENCE_ABSENT_KEYS = frozenset({"kind"})
 _PRESENCE_PRESENT_KEYS = frozenset({"kind", "value"})
 _RESOURCE_DIMENSIONS = frozenset({"Memory", "Time", "Structure", "Output"})
+_API_ERROR_CODES = frozenset(code.value for code in ApiErrorCode)
 _RESULT_MAX_BYTES = 4 * 1024 * 1024
 _WALL_TIMEOUT_MAX_SECONDS = 900.0
+_MESSAGE_MAX_LENGTH = 3000
+_REQUEST_READ_CHUNK_BYTES = 64 * 1024
+_PARSER_TEMP_PRUNE_WALL_TIMEOUT_SECONDS = 60.0
+# justify-polling: a threading.Event has no selectable descriptor and a child exit
+# has no readiness descriptor either, so the supervisor re-checks both interrupts
+# between bounded waits. 0.25s keeps interrupt latency far inside the container
+# stop grace at four wakeups a second against a 900-second wall limit.
+_CHILD_WAIT_POLL_SECONDS = 0.25
+# justify-polling: process-group emptiness has no readiness descriptor; this probe
+# is bounded by the configured TERM grace.
+_PROCESS_GROUP_EXIT_POLL_SECONDS = 0.01
+_PR_SET_PDEATHSIG = 1
 
-type ResourceFailureDimension = Literal["Memory", "Time", "Structure", "Output"]
+type _ChildExitReason = Literal["Exited", "Timeout", "Shutdown", "ClaimLost"]
 
 
 # justify-defect: this boundary is wholly owned and accepts one exact protocol.
@@ -159,6 +178,23 @@ class ChildInterrupted:
     message: str
 
 
+@dataclass(frozen=True, slots=True)
+class ChildShutdownInterrupted:
+    """The supervisor was asked to stop, so its child was terminated mid-execution.
+
+    This is an explained interruption owned by the operator, not a failure of the
+    job, so the worker releases the claim without consuming a retry attempt.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class ChildClaimLost:
+    """The heartbeat observed the claim is gone, so the child was terminated.
+
+    The worker no longer owns this job and must not settle it.
+    """
+
+
 type ChildExecutionResult = (
     ChildSucceeded
     | ChildReschedule
@@ -166,7 +202,22 @@ type ChildExecutionResult = (
     | ChildDefect
     | ChildResourceFailure
     | ChildInterrupted
+    | ChildShutdownInterrupted
+    | ChildClaimLost
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ParserTempPruned:
+    removed_directories: int
+
+
+@dataclass(frozen=True, slots=True)
+class ParserTempPruneInterrupted:
+    """Shutdown was requested before the startup prune could finish."""
+
+
+type ParserTempPruneOutcome = ParserTempPruned | ParserTempPruneInterrupted
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +250,8 @@ class BackgroundProcessExecutor:
         context: JobExecutionContext,
         wall_timeout_seconds: float,
         runtime: Literal["Base", "Llm"],
+        shutdown: threading.Event,
+        claim_lost: threading.Event,
         child_exit_cleanup: Literal["None", "SourceAttemptParserTemp"] = "None",
     ) -> ChildExecutionResult:
         if not 0 < wall_timeout_seconds <= _WALL_TIMEOUT_MAX_SECONDS:
@@ -226,108 +279,193 @@ class BackgroundProcessExecutor:
         )
         try:
             oom_kills_before = self.cgroup.oom_kill_count()
-            with tempfile.TemporaryFile() as result_file:
+            with (
+                tempfile.TemporaryFile() as request_file,
+                tempfile.TemporaryFile() as result_file,
+            ):
+                request_file.write(request)
+                request_file.seek(0)
+                request_fd = request_file.fileno()
                 result_fd = result_file.fileno()
-                try:
-                    process = subprocess.Popen(
-                        [
-                            sys.executable,
-                            "-m",
-                            "nexus.jobs.process_executor",
-                            "--child-result-fd",
-                            str(result_fd),
-                        ],
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.DEVNULL,
-                        start_new_session=True,
-                        pass_fds=(result_fd,),
-                    )
-                except OSError as exc:
-                    return ChildDefect(
-                        error_type=type(exc).__name__,
-                        message="Background child process could not be started.",
-                    )
-
-                timed_out = False
+                # Termination propagation for this fork. The supervisor holds the
+                # write end of this pipe for exactly as long as the child may run,
+                # so any supervisor death -- including SIGKILL, which runs no
+                # supervisor code -- closes it, and the child's own watchdog then
+                # SIGKILLs its whole process group, grandchildren included. Linux
+                # additionally arms PR_SET_PDEATHSIG inside the child bootstrap, and
+                # the deployed container adds PID-namespace teardown under
+                # `init: true`. See _bind_child_to_supervisor_liveness.
+                liveness_read_fd, liveness_write_fd = os.pipe()
                 try:
                     try:
-                        process.communicate(input=request, timeout=wall_timeout_seconds)
-                    except subprocess.TimeoutExpired:
-                        timed_out = True
-                        _signal_process_group(process.pid, signal.SIGTERM)
-                        try:
-                            process.wait(timeout=self.term_grace_seconds)
-                        except subprocess.TimeoutExpired:
-                            _signal_process_group(process.pid, signal.SIGKILL)
-                            process.wait()
+                        process = subprocess.Popen(
+                            [
+                                sys.executable,
+                                "-m",
+                                "nexus.jobs.process_executor",
+                                "--child-request-fd",
+                                str(request_fd),
+                                "--child-result-fd",
+                                str(result_fd),
+                                "--supervisor-liveness-fd",
+                                str(liveness_read_fd),
+                                "--supervisor-pid",
+                                str(os.getpid()),
+                            ],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            start_new_session=True,
+                            pass_fds=(request_fd, result_fd, liveness_read_fd),
+                        )
+                    except OSError as exc:
+                        return ChildDefect(
+                            error_type=type(exc).__name__,
+                            message="Background child process could not be started.",
+                        )
+
+                    try:
+                        exit_reason = _await_child_exit(
+                            process,
+                            wall_timeout_seconds=wall_timeout_seconds,
+                            term_grace_seconds=self.term_grace_seconds,
+                            shutdown=shutdown,
+                            claim_lost=claim_lost,
+                        )
+                    finally:
+                        _terminate_child_process_group(
+                            process,
+                            term_grace_seconds=self.term_grace_seconds,
+                            job_id=context.job_id,
+                        )
+
+                    if exit_reason == "ClaimLost":
+                        return ChildClaimLost()
+                    if exit_reason == "Shutdown":
+                        return ChildShutdownInterrupted()
+                    if exit_reason == "Timeout":
+                        return ChildResourceFailure("Time")
+                    oom_kills_after = self.cgroup.oom_kill_count()
+                    if oom_kills_after > oom_kills_before:
+                        return ChildResourceFailure("Memory")
+                    if process.returncode != 0:
+                        return ChildInterrupted(
+                            f"Background child exited unexpectedly with code {process.returncode}."
+                        )
+
+                    result_file.seek(0, os.SEEK_END)
+                    result_size = result_file.tell()
+                    if result_size > self.result_max_bytes:
+                        return ChildDefect(
+                            error_type="ResultTooLarge",
+                            message="Background child result exceeded its closed protocol limit.",
+                        )
+                    result_file.seek(0)
+                    encoded = result_file.read(self.result_max_bytes + 1)
+                    try:
+                        return _decode_result(encoded)
+                    except BackgroundProcessProtocolDefect as exc:
+                        return ChildDefect(error_type=type(exc).__name__, message=str(exc))
                 finally:
-                    if process.poll() is None:
-                        _signal_process_group(process.pid, signal.SIGKILL)
-                        process.wait()
-                    _signal_process_group(process.pid, signal.SIGKILL)
-                    _wait_for_process_group_exit(
-                        process.pid,
-                        timeout_seconds=self.term_grace_seconds,
-                    )
-
-                if timed_out:
-                    return ChildResourceFailure("Time")
-                oom_kills_after = self.cgroup.oom_kill_count()
-                if oom_kills_after > oom_kills_before:
-                    return ChildResourceFailure("Memory")
-                if process.returncode != 0:
-                    return ChildInterrupted(
-                        f"Background child exited unexpectedly with code {process.returncode}."
-                    )
-
-                result_file.seek(0, os.SEEK_END)
-                result_size = result_file.tell()
-                if result_size > self.result_max_bytes:
-                    return ChildDefect(
-                        error_type="ResultTooLarge",
-                        message="Background child result exceeded its closed protocol limit.",
-                    )
-                result_file.seek(0)
-                encoded = result_file.read(self.result_max_bytes + 1)
-                try:
-                    return _decode_result(encoded)
-                except BackgroundProcessProtocolDefect as exc:
-                    return ChildDefect(error_type=type(exc).__name__, message=str(exc))
+                    os.close(liveness_write_fd)
+                    os.close(liveness_read_fd)
         finally:
             if cleanup_directory is not None:
-                _remove_exact_parser_attempt_directory(cleanup_directory)
+                _remove_exact_parser_attempt_directory(cleanup_directory, job_id=context.job_id)
 
     def prune_stale_parser_temp(
         self,
         root: Path,
         *,
         worker_id: str,
-        wall_timeout_seconds: float = 60.0,
-    ) -> int:
-        """Run storage-heavy startup cleanup outside the lean supervisor."""
-        result = self.execute(
-            handler_path="nexus.jobs.process_executor:_prune_stale_parser_temp",
-            payload={"root": str(root)},
-            context=JobExecutionContext(
-                job_id=UUID(int=0),
+        shutdown: threading.Event,
+        failure_backoff_seconds: float,
+        failure_backoff_max_seconds: float,
+    ) -> ParserTempPruneOutcome:
+        """Run storage-heavy startup cleanup outside the lean supervisor.
+
+        Transient dependency failure inside the retry budget is expected and
+        absorbed here, so a database blip cannot turn the background lane into a
+        restart loop. Only budget exhaustion or a protocol-shape violation raises,
+        which keeps a real defect loud.
+        """
+        # A startup prune holds no queue claim, so no claim can be lost while it runs.
+        claim_lost = threading.Event()
+        wait_seconds = failure_backoff_seconds
+        while True:
+            result = self.execute(
+                handler_path="nexus.jobs.process_executor:_prune_stale_parser_temp",
+                payload={"root": str(root)},
+                context=JobExecutionContext(
+                    job_id=UUID(int=0),
+                    worker_id=worker_id,
+                    attempt_no=0,
+                    resource_class="Light",
+                ),
+                wall_timeout_seconds=_PARSER_TEMP_PRUNE_WALL_TIMEOUT_SECONDS,
+                runtime="Base",
+                shutdown=shutdown,
+                claim_lost=claim_lost,
+            )
+            if isinstance(result, ChildSucceeded):
+                removed = result.payload.get("removed_directories")
+                if type(removed) is not int or removed < 0:
+                    raise BackgroundProcessProtocolDefect(
+                        "background parser-temp startup cleanup returned an invalid count"
+                    )
+                return ParserTempPruned(removed_directories=removed)
+            if isinstance(result, ChildShutdownInterrupted):
+                return ParserTempPruneInterrupted()
+            if isinstance(result, ChildClaimLost):
+                # justify-defect: a startup prune holds no queue claim to lose.
+                raise AssertionError("background parser-temp startup cleanup lost a claim")
+            if wait_seconds > failure_backoff_max_seconds:
+                raise BackgroundProcessProtocolDefect(
+                    "background parser-temp startup cleanup exhausted its retry budget"
+                )
+            logger.warning(
+                "parser_temp_startup_prune_retrying",
                 worker_id=worker_id,
-                attempt_no=0,
-                resource_class="Light",
-            ),
-            wall_timeout_seconds=wall_timeout_seconds,
-            runtime="Base",
-            child_exit_cleanup="None",
-        )
-        if not isinstance(result, ChildSucceeded):
-            raise BackgroundProcessProtocolDefect(
-                f"background parser-temp startup cleanup failed: {type(result).__name__}"
+                child_result=type(result).__name__,
+                sleep_seconds=wait_seconds,
             )
-        removed = result.payload.get("removed_directories")
-        if type(removed) is not int or removed < 0:
-            raise BackgroundProcessProtocolDefect(
-                "background parser-temp startup cleanup returned an invalid count"
-            )
-        return removed
+            if shutdown.wait(wait_seconds):
+                return ParserTempPruneInterrupted()
+            wait_seconds *= 2
+
+
+def _await_child_exit(
+    process: subprocess.Popen[bytes],
+    *,
+    wall_timeout_seconds: float,
+    term_grace_seconds: float,
+    shutdown: threading.Event,
+    claim_lost: threading.Event,
+) -> _ChildExitReason:
+    """Wait for one child, observing its wall limit and both supervisor interrupts."""
+    deadline = time.monotonic() + wall_timeout_seconds
+    reason: _ChildExitReason = "Timeout"
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            process.wait(timeout=min(_CHILD_WAIT_POLL_SECONDS, remaining))
+        except subprocess.TimeoutExpired:
+            if claim_lost.is_set():
+                reason = "ClaimLost"
+                break
+            if shutdown.is_set():
+                reason = "Shutdown"
+                break
+            continue
+        return "Exited"
+    _signal_process_group(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=term_grace_seconds)
+    except subprocess.TimeoutExpired:
+        _signal_process_group(process.pid, signal.SIGKILL)
+        process.wait()
+    return reason
 
 
 def _encode_request(
@@ -419,6 +557,10 @@ def _decode_result(encoded: bytes) -> ChildExecutionResult:
             raise BackgroundProcessProtocolDefect(
                 "background child modeled failure fields are malformed"
             )
+        if error_code not in _API_ERROR_CODES:
+            raise BackgroundProcessProtocolDefect(
+                "background child modeled failure code is outside the closed error space"
+            )
         return ChildModeledFailure(
             error_code=error_code,
             message=message,
@@ -432,6 +574,14 @@ def _decode_result(encoded: bytes) -> ChildExecutionResult:
 
 
 def _decode_payload_presence(value: object) -> Mapping[str, Any] | None:
+    """Decode the wire Presence wrapper into the owned reschedule payload shape.
+
+    The flattening to `None` is intentional and terminal: `RescheduleRequested.payload`
+    and `background_jobs.payload` model "no new payload" as absent-or-null with no second
+    meaning, so nothing downstream can distinguish an explicit null from an absent one.
+    `_require_presence` still rejects every shape outside `Absent | Present`, so the
+    wire union stays closed.
+    """
     presence = _require_presence(value)
     if presence["kind"] == "Absent":
         return None
@@ -499,7 +649,7 @@ def _child_result(request: dict[str, object]) -> dict[str, object]:
             "version": _PROTOCOL_VERSION,
             "kind": "Defect",
             "error_type": type(exc).__name__,
-            "message": str(exc)[:3000],
+            "message": str(exc)[:_MESSAGE_MAX_LENGTH],
         }
     return _encode_handler_result(result)
 
@@ -579,39 +729,93 @@ def _initialize_child_runtime(runtime: Literal["Base", "Llm"]) -> None:
 
 
 def _modeled_failure(exc: Exception) -> dict[str, object] | None:
-    candidate = getattr(exc, "error_code", getattr(exc, "code", None))
-    if candidate is None:
+    """Project only an owned, closed-code domain failure across the child boundary.
+
+    Anything else -- including a third-party exception that happens to carry a
+    ``code`` attribute -- is a defect, so `background_jobs.error_code` can only
+    ever hold a member of the closed ``ApiErrorCode`` space and `last_error` can
+    only ever hold an owned, already bounded domain message.
+    """
+    if not isinstance(exc, ApiError) or not isinstance(exc.code, ApiErrorCode):
         return None
-    value = getattr(candidate, "value", candidate)
-    error_code = str(value)
-    if not error_code:
-        return None
-    message_value = getattr(exc, "message", str(exc))
-    resource_dimension = getattr(exc, "resource_dimension", None)
-    if resource_dimension is None:
-        dimension_presence: dict[str, object] = {"kind": "Absent"}
-    elif isinstance(resource_dimension, str) and resource_dimension in _RESOURCE_DIMENSIONS:
-        dimension_presence = {"kind": "Present", "value": resource_dimension}
-    else:
-        return {
-            "version": _PROTOCOL_VERSION,
-            "kind": "Defect",
-            "error_type": "InvalidResourceFailureDimension",
-            "message": "Modeled resource failure declared an unsupported dimension.",
-        }
+    dimension = exc.dimension if isinstance(exc, ResourceLimitError) else None
     return {
         "version": _PROTOCOL_VERSION,
         "kind": "ModeledFailure",
-        "error_code": error_code,
-        "message": str(message_value)[:3000],
-        "resource_dimension": dimension_presence,
+        "error_code": exc.code.value,
+        "message": exc.message[:_MESSAGE_MAX_LENGTH],
+        "resource_dimension": (
+            {"kind": "Absent"} if dimension is None else {"kind": "Present", "value": dimension}
+        ),
     }
 
 
-def _run_child(result_fd: int) -> int:
+def _bind_child_to_supervisor_liveness(*, liveness_fd: int, supervisor_pid: int) -> None:
+    """Make this child mortal before it imports or runs any handler.
+
+    Three mechanisms bind the child's lifetime to its supervisor's, from most to
+    least portable:
+
+    1. the liveness pipe, whose write end only the supervisor holds. Reading it
+       blocks until the supervisor exits by any means, including SIGKILL; the
+       watchdog then SIGKILLs this child's whole process group, so descendants the
+       handler started die too. This is the mechanism that works on darwin dev;
+    2. ``PR_SET_PDEATHSIG`` on Linux, which the kernel delivers immediately and
+       without a Python thread. It is armed here rather than through ``preexec_fn``
+       because the supervisor is multithreaded, where ``preexec_fn`` is unsafe. The
+       ``getppid`` recheck closes the window where the supervisor died between fork
+       and exec, which would leave the signal armed against a parent already gone;
+    3. in the deployed container, PID-namespace teardown: ``worker-background`` runs
+       with ``init: true`` and the supervisor is docker-init's direct child.
+    """
+    _arm_parent_death_signal()
+    if os.getppid() != supervisor_pid:
+        _kill_own_process_group()
+    threading.Thread(
+        target=_kill_process_group_when_supervisor_exits,
+        args=(liveness_fd,),
+        name="supervisor-liveness-watchdog",
+        daemon=True,
+    ).start()
+
+
+def _kill_process_group_when_supervisor_exits(liveness_fd: int) -> None:
+    try:
+        # The supervisor never writes, so this blocks until its write end closes.
+        while os.read(liveness_fd, 1):
+            pass
+    except OSError:
+        # justify-ignore-error: an unreadable liveness channel is indistinguishable
+        # from a dead supervisor, and both mean this child must not outlive it.
+        pass
+    _kill_own_process_group()
+
+
+def _kill_own_process_group() -> None:
+    """SIGKILL this child and every descendant it started."""
+    os.killpg(os.getpgid(0), signal.SIGKILL)
+
+
+def _arm_parent_death_signal() -> None:
+    if sys.platform != "linux":
+        # The liveness pipe is the portable mechanism; darwin is a dev host only.
+        return
+    libc = ctypes.CDLL(None, use_errno=True)
+    prctl = libc.prctl
+    prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+    prctl.restype = ctypes.c_int
+    if prctl(_PR_SET_PDEATHSIG, ctypes.c_ulong(signal.SIGKILL), 0, 0, 0) != 0:
+        raise BackgroundProcessProtocolDefect("child parent-death signal could not be armed")
+
+
+def _run_child(*, request_fd: int, result_fd: int, liveness_fd: int, supervisor_pid: int) -> int:
     result_max_bytes = 1024
     try:
-        encoded = sys.stdin.buffer.read()
+        _bind_child_to_supervisor_liveness(
+            liveness_fd=liveness_fd,
+            supervisor_pid=supervisor_pid,
+        )
+        encoded = _read_all(request_fd)
         request = _decode_json_object(encoded, boundary="input")
         _require_protocol_version(request)
         if request.keys() != _INPUT_KEYS:
@@ -633,7 +837,7 @@ def _run_child(result_fd: int) -> int:
                 "version": _PROTOCOL_VERSION,
                 "kind": "Defect",
                 "error_type": type(exc).__name__,
-                "message": str(exc)[:3000],
+                "message": str(exc)[:_MESSAGE_MAX_LENGTH],
             },
             result_max_bytes=result_max_bytes,
         )
@@ -772,7 +976,7 @@ def _child_exit_cleanup_directory(
     return parser_temp_root / str(attempt_id)
 
 
-def _remove_exact_parser_attempt_directory(directory: Path) -> None:
+def _remove_exact_parser_attempt_directory(directory: Path, *, job_id: UUID) -> None:
     try:
         if directory.is_symlink() or not directory.is_dir():
             directory.unlink(missing_ok=True)
@@ -780,20 +984,46 @@ def _remove_exact_parser_attempt_directory(directory: Path) -> None:
         shutil.rmtree(directory)
     except FileNotFoundError:
         pass
+    except OSError as exc:
+        # justify-ignore-error: the startup prune and the parser-temp reconciler own
+        # eventual removal. Masking a decoded -- possibly already committed -- child
+        # result with a cleanup failure would re-run durable work.
+        logger.error(
+            "background_child_parser_temp_cleanup_failed",
+            job_id=str(job_id),
+            error_type=type(exc).__name__,
+        )
 
 
-def _wait_for_process_group_exit(process_group_id: int, *, timeout_seconds: float) -> None:
+def _terminate_child_process_group(
+    process: subprocess.Popen[bytes], *, term_grace_seconds: float, job_id: UUID
+) -> None:
+    """Kill the child's whole process group without masking its decoded result."""
+    if process.poll() is None:
+        _signal_process_group(process.pid, signal.SIGKILL)
+        process.wait()
+    _signal_process_group(process.pid, signal.SIGKILL)
+    if _process_group_exited(process.pid, timeout_seconds=term_grace_seconds):
+        return
+    # justify-ignore-error: a process group that outlives SIGKILL is an operator
+    # condition, not a reason to overwrite the child's already decided outcome.
+    logger.error(
+        "background_child_process_group_survived_kill",
+        job_id=str(job_id),
+        process_group_id=process.pid,
+    )
+
+
+def _process_group_exited(process_group_id: int, *, timeout_seconds: float) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while True:
         try:
             os.killpg(process_group_id, 0)
         except ProcessLookupError:
-            return
+            return True
         if time.monotonic() >= deadline:
-            raise BackgroundProcessProtocolDefect(
-                "background child process group did not exit after SIGKILL"
-            )
-        time.sleep(0.01)
+            return False
+        time.sleep(_PROCESS_GROUP_EXIT_POLL_SECONDS)
 
 
 def _signal_process_group(process_group_id: int, signal_number: signal.Signals) -> None:
@@ -801,6 +1031,15 @@ def _signal_process_group(process_group_id: int, signal_number: signal.Signals) 
         os.killpg(process_group_id, signal_number)
     except ProcessLookupError:
         pass
+
+
+def _read_all(file_descriptor: int) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        chunk = os.read(file_descriptor, _REQUEST_READ_CHUNK_BYTES)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
 
 
 def _write_all(file_descriptor: int, payload: bytes) -> None:
@@ -814,9 +1053,17 @@ def _write_all(file_descriptor: int, payload: bytes) -> None:
 
 def _main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--child-request-fd", type=int, required=True)
     parser.add_argument("--child-result-fd", type=int, required=True)
+    parser.add_argument("--supervisor-liveness-fd", type=int, required=True)
+    parser.add_argument("--supervisor-pid", type=int, required=True)
     arguments = parser.parse_args()
-    return _run_child(arguments.child_result_fd)
+    return _run_child(
+        request_fd=arguments.child_request_fd,
+        result_fd=arguments.child_result_fd,
+        liveness_fd=arguments.supervisor_liveness_fd,
+        supervisor_pid=arguments.supervisor_pid,
+    )
 
 
 if __name__ == "__main__":

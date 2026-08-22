@@ -6,7 +6,8 @@ canonical object key construction.
 
 Path Invariants:
     - Media original: media/{media_id}/original.{ext}
-    - Upload verification candidate:
+    - Upload verification candidate, which is also the immutable published source
+      of an uploaded document:
       media/{media_id}/candidates/{verification_token}/original.{ext}
     - Media source artifact: media/{media_id}/source/{attempt_id}.{ext}
     - Upload staging: uploads/sessions/{session_id}/{generation}/original.{ext}
@@ -87,7 +88,15 @@ def build_upload_verification_candidate_storage_path(
     verification_token: UUID | str,
     ext: str,
 ) -> str:
-    """Build one immutable verification-token-fenced upload candidate path."""
+    """Build the immutable, verification-token-fenced source path for one upload.
+
+    This is not a scratch location: the object copied here is exactly what a
+    successful publication records in ``media_file.storage_path``. The path is
+    fenced by the verification token rather than being derived from the media id
+    alone, so a lease that was stolen or superseded mid-copy can only ever write to
+    its own path and can never overwrite a published source. An abandoned candidate
+    is reclaimed by its own storage-cleanup reservation.
+    """
     ext = _require_bare_storage_extension(ext)
     return f"media/{media_id}/candidates/{verification_token}/original.{ext}"
 

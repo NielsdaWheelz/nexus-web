@@ -11,10 +11,15 @@ import {
   type LibraryMediaKind,
 } from "@/lib/libraries/mediaKind";
 import {
+  UPLOAD_VERIFICATION_CODES,
+  type UploadVerificationCode,
+} from "@/lib/media/uploadVerification";
+import {
   expectArray,
   expectBoolean,
   expectExactRecord,
   expectIsoInstant,
+  expectNonemptyString,
   expectNonnegativeInteger,
   expectOneOf,
   expectString,
@@ -96,7 +101,10 @@ export type UploadSessionAttention =
       readonly httpStatus: Presence<number>;
     }
   | { readonly kind: "CapabilityExpired" }
-  | { readonly kind: "VerificationFailed"; readonly failureCode: string };
+  | {
+      readonly kind: "VerificationFailed";
+      readonly failureCode: UploadVerificationCode;
+    };
 
 export interface MediaActivityUploadSessionItem {
   readonly kind: "UploadSession";
@@ -135,12 +143,6 @@ function canonicalUuid(raw: unknown, name: string): string {
   if (!UUID_RE.test(value)) {
     throw new TypeError(`${name} must be a canonical lowercase UUID`);
   }
-  return value;
-}
-
-function nonemptyString(raw: unknown, name: string): string {
-  const value = expectString(raw, name);
-  if (value.length === 0) throw new TypeError(`${name} must not be empty`);
   return value;
 }
 
@@ -266,7 +268,7 @@ function activityState(
       ),
       progress: decodePresence(state.progress, sourceProgress),
       statusCode: decodePresence(state.status_code, (value) =>
-        nonemptyString(value, `${name}.status_code.value`),
+        expectNonemptyString(value, `${name}.status_code.value`),
       ),
     };
   }
@@ -289,7 +291,7 @@ function activityState(
         `${name}.stage`,
       ),
       failureCode: decodePresence(state.failure_code, (value) =>
-        nonemptyString(value, `${name}.failure_code.value`),
+        expectNonemptyString(value, `${name}.failure_code.value`),
       ),
     };
   }
@@ -331,7 +333,7 @@ function mediaActivityItem(
   return {
     kind: "Media",
     mediaId: canonicalUuid(item.media_id, `${name}.media_id`),
-    title: nonemptyString(item.title, `${name}.title`),
+    title: expectNonemptyString(item.title, `${name}.title`),
     mediaKind: expectOneOf(
       item.media_kind,
       LIBRARY_MEDIA_KINDS,
@@ -343,7 +345,7 @@ function mediaActivityItem(
     ),
     state: activityState(item.state, `${name}.state`),
     requestId: decodePresence(item.request_id, (value) =>
-      nonemptyString(value, `${name}.request_id.value`),
+      expectNonemptyString(value, `${name}.request_id.value`),
     ),
     runCount: expectNonnegativeInteger(item.run_count, `${name}.run_count`),
     queueAttempts: expectNonnegativeInteger(
@@ -409,7 +411,11 @@ function uploadSessionAttention(
     const attention = expectExactRecord(raw, ["kind", "failure_code"], name);
     return {
       kind: "VerificationFailed",
-      failureCode: nonemptyString(attention.failure_code, `${name}.failure_code`),
+      failureCode: expectOneOf(
+        attention.failure_code,
+        UPLOAD_VERIFICATION_CODES,
+        `${name}.failure_code`,
+      ),
     };
   }
   throw new TypeError(
@@ -454,8 +460,8 @@ function uploadSessionActivityItem(
   }
   return {
     kind: "UploadSession",
-    sessionHandle: nonemptyString(item.session_handle, `${name}.session_handle`),
-    filename: nonemptyString(item.filename, `${name}.filename`),
+    sessionHandle: expectNonemptyString(item.session_handle, `${name}.session_handle`),
+    filename: expectNonemptyString(item.filename, `${name}.filename`),
     documentKind: expectOneOf(
       item.document_kind,
       ["Pdf", "Epub"] as const,

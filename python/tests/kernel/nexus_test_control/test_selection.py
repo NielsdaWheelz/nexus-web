@@ -423,6 +423,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
             {
                 Capability.COMPONENT,
                 Capability.KERNEL_PYTHON,
+                Capability.KERNEL_WEB,
                 Capability.MIGRATIONS,
                 Capability.SERVICE,
             },
@@ -438,6 +439,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/service/test_media_upload_sessions.py",
                 "pytest:python/tests/service/test_runtime_health.py",
                 "vitest:apps/web/src/components/nexus/MediaActivityPage.browser.test.tsx",
+                "vitest:apps/web/src/lib/media/ingestionClient.unit.test.ts",
             },
         ),
         (
@@ -445,6 +447,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
             {
                 Capability.COMPONENT,
                 Capability.KERNEL_PYTHON,
+                Capability.KERNEL_WEB,
                 Capability.MIGRATIONS,
                 Capability.SERVICE,
             },
@@ -460,6 +463,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/service/test_media_upload_sessions.py",
                 "pytest:python/tests/service/test_runtime_health.py",
                 "vitest:apps/web/src/components/nexus/MediaActivityPage.browser.test.tsx",
+                "vitest:apps/web/src/lib/media/ingestionClient.unit.test.ts",
             },
         ),
         (

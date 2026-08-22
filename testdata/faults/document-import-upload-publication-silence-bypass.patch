@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/media_upload_sessions.py b/python/nexus/services/media_upload_sessions.py
+--- a/python/nexus/services/media_upload_sessions.py
++++ b/python/nexus/services/media_upload_sessions.py
+@@ -86,7 +86,7 @@
+ 
+ UPLOAD_SESSION_DERIVED_STATE_SQL = """
+         CASE
+-            WHEN published_at IS NOT NULL THEN 'Published'
++            -- Fault: publication no longer resolves the obligation.
+             WHEN verification_error_code IS NOT NULL THEN 'VerificationFailed'
+             WHEN verification_token IS NOT NULL AND verification_expires_at > now()
+                 THEN 'Verifying'

@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import Media, MediaKind, MediaSourceAttempt, ProcessingStatus
 from nexus.db.session import create_session_factory
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.errors import ApiError, ApiErrorCode, ResourceLimitError
 from nexus.jobs.queue import (
     JobExecutionContext,
     claim_job,
@@ -38,6 +38,7 @@ from nexus.jobs.queue import (
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.epub_ingest import (
+    EPUB_APPARATUS_MAX_TARGETS,
     EPUB_RENDERED_TEXT_MAX_BYTES,
     EPUB_XHTML_MAX_DECODED_BYTES,
     EPUB_XML_MAX_ATTRIBUTES_PER_BOOK,
@@ -54,7 +55,7 @@ from nexus.services.latex_apparatus import (
     LATEX_SELECTED_SOURCE_MAX_BYTES,
 )
 from nexus.services.parser_temp import (
-    StorageObjectSizeMismatch,
+    StorageObjectIntegrityError,
     parser_attempt_directory,
     prune_stale_parser_temp,
     stream_storage_object_to_file,
@@ -222,6 +223,75 @@ def _epub_spine_payload(documents: dict[str, bytes]) -> bytes:
     return _zip_payload(entries)
 
 
+def _zip_entries(payload: bytes) -> dict[str, bytes]:
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        return {name: archive.read(name) for name in archive.namelist()}
+
+
+def _epub2_payload(*, chapter: bytes, ncx: bytes) -> bytes:
+    """One EPUB 2 package: an NCX table of contents and an XHTML 1.1 spine item."""
+    return _zip_payload(
+        {
+            "mimetype": b"application/epub+zip",
+            "META-INF/container.xml": b"""<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf"
+    media-type="application/oebps-package+xml"/></rootfiles>
+</container>
+""",
+            "OEBPS/content.opf": b"""<?xml version="1.0" encoding="UTF-8"?>
+<package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Legacy proof</dc:title><dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx"><itemref idref="chapter"/></spine>
+</package>
+""",
+            "OEBPS/toc.ncx": ncx,
+            "OEBPS/chapter.xhtml": chapter,
+        }
+    )
+
+
+_EPUB2_NCX = b"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN"
+  "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head><meta name="dtb:uid" content="legacy-proof"/></head>
+  <docTitle><text>Legacy proof</text></docTitle>
+  <navMap><navPoint id="navpoint-1" playOrder="1">
+    <navLabel><text>Chapter&nbsp;One</text></navLabel>
+    <content src="chapter.xhtml"/>
+  </navPoint></navMap>
+</ncx>
+"""
+
+
+def _oversized_nav_epub_payload() -> bytes:
+    """One EPUB 3 whose manifest-declared navigation document is not in the spine."""
+    entries = _epub_package(
+        manifest_items=(
+            '<item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml"'
+            ' properties="nav"/>'
+        ),
+        spine_items='<itemref idref="chapter"/>',
+    )
+    entries["EPUB/chapter.xhtml"] = (
+        b'<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Readable.</p></body></html>'
+    )
+    entries["EPUB/nav.xhtml"] = (
+        b'<html xmlns="http://www.w3.org/1999/xhtml"><body><nav epub:type="toc">'
+        + b"x" * (EPUB_XHTML_MAX_DECODED_BYTES + 1)
+        + b"</nav></body></html>"
+    )
+    return _zip_payload(entries)
+
+
 def _with_unreadable_entry(payload: bytes, entry_name: str) -> bytes:
     """Rewrite one stored archive entry to an unsupported compression method.
 
@@ -296,6 +366,41 @@ def _pdf_source_package_artifact(payload: bytes) -> PdfSourcePackageArtifact:
         source_url="https://arxiv.org/e-print/bounded-proof",
         source_kind="arxiv_source",
     )
+
+
+def _raw_span(
+    text: str,
+    bbox: tuple[float, float, float, float],
+    size: float = 10.0,
+) -> dict[str, object]:
+    """One PyMuPDF ``rawdict`` span: every character carries its own box."""
+    left, top, right, bottom = bbox
+    advance = (right - left) / max(len(text), 1)
+    return {
+        "bbox": bbox,
+        "size": size,
+        "chars": [
+            {
+                "c": character,
+                "bbox": (left + index * advance, top, left + (index + 1) * advance, bottom),
+            }
+            for index, character in enumerate(text)
+        ],
+    }
+
+
+def _raw_bulk_span(
+    text: str,
+    bbox: tuple[float, float, float, float],
+    size: float = 10.0,
+) -> dict[str, object]:
+    """One ``rawdict`` span whose whole run is a single entry.
+
+    The budgets proved with this span count extracted bytes, not glyph boxes,
+    and one box per character of a multi-megabyte run would dwarf the limit
+    under proof.
+    """
+    return {"bbox": bbox, "size": size, "chars": [{"c": text, "bbox": bbox}]}
 
 
 def _base_pdf_payload() -> bytes:
@@ -407,7 +512,7 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
             )
             assert isinstance(plan, PdfExtractionError)
             assert plan.error_code == "E_RESOURCE_LIMIT"
-            assert plan.resource_limit_dimension == "Structure"
+            assert plan.resource_limit_dimension == "Output"
             assert plan.terminal is True
             detail = {
                 "citation_markers": LATEX_APPARATUS_MAX_ITEMS,
@@ -500,26 +605,31 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
                 )
             )
 
-            malicious_documents = {
-                "entity": b"""<?xml version="1.0"?>
-<!DOCTYPE html [<!ENTITY expanded "must-not-expand">]>
-<html xmlns="http://www.w3.org/1999/xhtml"><body>&expanded;</body></html>""",
-                "external": b"""<?xml version="1.0"?>
-<!DOCTYPE html SYSTEM "http://127.0.0.1:9/must-not-fetch.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml"><body>safe</body></html>""",
-            }
-            for label, document in malicious_documents.items():
-                structural_cases.append(
-                    (
-                        label,
-                        lambda label=label, document=document: _epub_spine_payload(
-                            {label: document}
-                        ),
-                        "E_INVALID_FILE_TYPE",
-                        "entities and external resolution are disabled",
-                        None,
-                    )
+            structural_cases.append(
+                (
+                    "nav-decoded-bytes",
+                    _oversized_nav_epub_payload,
+                    "E_RESOURCE_LIMIT",
+                    "16 MiB",
+                    "Output",
                 )
+            )
+
+            structural_cases.append(
+                (
+                    "entity",
+                    lambda: _epub_spine_payload(
+                        {
+                            "entity": b"""<?xml version="1.0"?>
+<!DOCTYPE html [<!ENTITY expanded "must-not-expand">]>
+<html xmlns="http://www.w3.org/1999/xhtml"><body>&expanded;</body></html>"""
+                        }
+                    ),
+                    "E_INVALID_FILE_TYPE",
+                    "entities and external resolution are disabled",
+                    None,
+                )
+            )
 
             structural_details: dict[str, str] = {}
             structural_peaks: list[float] = []
@@ -550,13 +660,17 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
                         record_progress=lambda _completed, _total, _unit: None,
                     )
                     structural_peaks.append(_process_status_mib("VmHWM"))
-                assert isinstance(plan, EpubExtractionError)
-                assert plan.error_code == expected_code
-                assert expected_message in plan.error_message
-                assert plan.resource_limit_dimension == expected_dimension
-                assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
+                assert isinstance(plan, EpubExtractionError), (
+                    f"{label}: bounded EPUB case produced a plan instead of a failure"
+                )
+                assert plan.error_code == expected_code, f"{label}: {plan!r}"
+                assert expected_message in plan.error_message, f"{label}: {plan!r}"
+                assert plan.resource_limit_dimension == expected_dimension, f"{label}: {plan!r}"
+                assert not (get_settings().parser_temp_root / str(attempt_id)).exists(), (
+                    f"{label}: attempt files survived a bounded EPUB failure"
+                )
                 if expected_dimension is not None:
-                    assert plan.terminal is True
+                    assert plan.terminal is True, f"{label}: {plan!r}"
                 structural_details[label] = plan.error_code
             reported_high_water_rss_mib = max(structural_peaks)
             detail = structural_details
@@ -642,14 +756,18 @@ def test_lifecycle_preserves_declared_resource_dimension_on_api_error() -> None:
         resource_limit_dimension="Structure",
     )
     pdf_raised = pdf_lifecycle._extraction_api_error(pdf_error)
-    assert isinstance(pdf_raised, ApiError)
+    assert isinstance(pdf_raised, ResourceLimitError), (
+        f"PDF resource-limit projection lost its typed carrier: {pdf_raised!r}"
+    )
     assert pdf_raised.code is ApiErrorCode.E_RESOURCE_LIMIT
-    assert getattr(pdf_raised, "resource_dimension", None) == "Output"
+    assert pdf_raised.dimension == "Output"
 
     epub_raised = epub_lifecycle._extraction_api_error(epub_error)
-    assert isinstance(epub_raised, ApiError)
+    assert isinstance(epub_raised, ResourceLimitError), (
+        f"EPUB resource-limit projection lost its typed carrier: {epub_raised!r}"
+    )
     assert epub_raised.code is ApiErrorCode.E_RESOURCE_LIMIT
-    assert getattr(epub_raised, "resource_dimension", None) == "Structure"
+    assert epub_raised.dimension == "Structure"
 
     ordinary_raised = pdf_lifecycle._extraction_api_error(
         PdfExtractionError(
@@ -657,8 +775,9 @@ def test_lifecycle_preserves_declared_resource_dimension_on_api_error() -> None:
             error_message="not a PDF",
         )
     )
+    assert isinstance(ordinary_raised, ApiError)
+    assert not isinstance(ordinary_raised, ResourceLimitError)
     assert ordinary_raised.code is ApiErrorCode.E_INVALID_FILE_TYPE
-    assert getattr(ordinary_raised, "resource_dimension", None) is None
 
 
 def _execute_parser_resource_probe(case: str) -> tuple[float, object]:
@@ -880,7 +999,7 @@ def test_pdf_aggregate_limit_is_exact_and_returns_typed_terminal_failure(
 
         def get_text(self, mode: str, *args: object, **kwargs: object) -> object:
             del args, kwargs
-            if mode == "dict":
+            if mode == "rawdict":
                 return {
                     "blocks": [
                         {
@@ -888,11 +1007,11 @@ def test_pdf_aggregate_limit_is_exact_and_returns_typed_terminal_failure(
                             "lines": [
                                 {
                                     "spans": [
-                                        {
-                                            "text": "x" * (PDF_EXTRACTED_TEXT_MAX_BYTES + 1),
-                                            "bbox": (0, 0, 1, 1),
-                                            "size": 12,
-                                        }
+                                        _raw_bulk_span(
+                                            "x" * (PDF_EXTRACTED_TEXT_MAX_BYTES + 1),
+                                            (0, 0, 1, 1),
+                                            12,
+                                        )
                                     ]
                                 }
                             ],
@@ -942,17 +1061,26 @@ def test_pdf_aggregate_limit_is_exact_and_returns_typed_terminal_failure(
     assert len(opened_sources) == 1 and isinstance(opened_sources[0], Path)
 
 
-@pytest.mark.parametrize("limit_case", ["pages", "blocks", "links", "lines", "legal-retained"])
+@pytest.mark.parametrize(
+    ("limit_case", "expected_dimension"),
+    [
+        ("pages", "Structure"),
+        ("blocks", "Structure"),
+        ("links", "Structure"),
+        ("lines", "Structure"),
+        ("legal-retained", "Output"),
+    ],
+)
 def test_pdf_structural_limits_return_typed_terminal_failure(
     monkeypatch: pytest.MonkeyPatch,
     limit_case: str,
+    expected_dimension: str,
 ) -> None:
     class _Rect:
         width = 612
         height = 792
 
-    normal_span = {"text": "Body", "bbox": (10, 100, 40, 112), "size": 12}
-    normal_line = {"spans": [normal_span]}
+    normal_line = {"spans": [_raw_span("Body", (10, 100, 40, 112), 12)]}
     text_modes: list[str] = []
 
     class _StructuralPage:
@@ -973,7 +1101,7 @@ def test_pdf_structural_limits_return_typed_terminal_failure(
         def get_text(self, mode: str, *args: object, **kwargs: object) -> object:
             del args, kwargs
             text_modes.append(mode)
-            if mode == "dict":
+            if mode == "rawdict":
                 if limit_case == "blocks":
                     return {
                         "blocks": [{"bbox": (0, 0, 1, 1), "lines": []}]
@@ -984,14 +1112,10 @@ def test_pdf_structural_limits_return_typed_terminal_failure(
                 if limit_case == "legal-retained":
                     oversized_note = {
                         "spans": [
-                            {
-                                "text": "x" * (8 * 1024 * 1024 + 1),
-                                "bbox": (10, 600, 500, 608),
-                                "size": 8,
-                            }
+                            _raw_bulk_span("x" * (8 * 1024 * 1024 + 1), (10, 600, 500, 608), 8)
                         ]
                     }
-                    label_line = {"spans": [{"text": "1", "bbox": (0, 600, 5, 608), "size": 8}]}
+                    label_line = {"spans": [_raw_span("1", (0, 600, 5, 608), 8)]}
                     return {"blocks": [{"lines": [normal_line, label_line, oversized_note]}]}
                 return {"blocks": []}
             raise AssertionError(f"unexpected fake PDF extraction mode: {mode}")
@@ -1024,9 +1148,9 @@ def test_pdf_structural_limits_return_typed_terminal_failure(
 
     assert isinstance(result, PdfExtractionError)
     assert result.error_code == "E_RESOURCE_LIMIT"
-    assert result.resource_limit_dimension == "Structure"
+    assert result.resource_limit_dimension == expected_dimension
     assert result.terminal is True
-    assert text_modes == ([] if limit_case == "pages" else ["dict"])
+    assert text_modes == ([] if limit_case == "pages" else ["rawdict"])
 
 
 @pytest.mark.parametrize("expected_delta", [-1, 1])
@@ -1037,7 +1161,7 @@ def test_storage_stream_rejects_size_drift_and_removes_partial(
     payload = b"immutable original"
     destination = tmp_path / "source.bin"
 
-    with pytest.raises(StorageObjectSizeMismatch):
+    with pytest.raises(StorageObjectIntegrityError) as raised:
         stream_storage_object_to_file(
             _ChunkedSourceStorage(payload),
             storage_path="sources/source.bin",
@@ -1046,6 +1170,7 @@ def test_storage_stream_rejects_size_drift_and_removes_partial(
             expected_source_sha256=hashlib.sha256(payload).hexdigest(),
         )
 
+    assert raised.value.code is ApiErrorCode.E_SOURCE_INTEGRITY
     assert not destination.exists()
 
 
@@ -1153,39 +1278,26 @@ def test_pdf_native_link_text_uses_snapshot_without_second_page_extraction(
         def get_text(self, mode: str, *args: object, **kwargs: object) -> object:
             del args, kwargs
             text_modes.append(mode)
-            assert mode == "dict"
+            assert mode == "rawdict"
             return {
                 "blocks": [
                     {
                         "bbox": (10, 10, 24, 22),
-                        "lines": [
-                            {"spans": [{"text": "[1]", "bbox": (10, 10, 24, 22), "size": 10}]}
-                        ],
+                        "lines": [{"spans": [_raw_span("[1]", (10, 10, 24, 22))]}],
                     },
                     {
                         "bbox": (10, 100, 100, 112),
-                        "lines": [
-                            {
-                                "spans": [
-                                    {
-                                        "text": "References",
-                                        "bbox": (10, 100, 100, 112),
-                                        "size": 10,
-                                    }
-                                ]
-                            }
-                        ],
+                        "lines": [{"spans": [_raw_span("References", (10, 100, 100, 112))]}],
                     },
                     {
                         "bbox": (10, 100, 200, 126),
                         "lines": [
                             {
                                 "spans": [
-                                    {
-                                        "text": "[1] Snapshot-derived citation target",
-                                        "bbox": (10, 100, 200, 112),
-                                        "size": 10,
-                                    }
+                                    _raw_span(
+                                        "[1] Snapshot-derived citation target",
+                                        (10, 100, 200, 112),
+                                    )
                                 ]
                             }
                         ],
@@ -1220,13 +1332,211 @@ def test_pdf_native_link_text_uses_snapshot_without_second_page_extraction(
     )
 
     assert isinstance(result, PdfExtractionPlan)
-    assert text_modes == ["dict"]
+    assert text_modes == ["rawdict"]
     native_refs = [
         item
         for item in result.apparatus.items
         if item["kind"] == "bibliography_ref" and item["extraction_method"] == "pdf_native_link"
     ]
     assert [item["label"] for item in native_refs] == ["[1]"]
+
+
+def test_pdf_page_snapshot_failure_keeps_page_heights_aligned_with_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A damaged page must not shift every later page's recorded height.
+
+    Page heights are addressed by page index when a native citation link
+    resolves its destination, so one unreadable page may not renumber them.
+    """
+
+    class _Rect:
+        def __init__(self, height: float) -> None:
+            self.width = 612.0
+            self.height = height
+
+    class _ReferencePage:
+        def __init__(self, height: float, *, damaged: bool, cited: bool) -> None:
+            self.rect = _Rect(height)
+            self.rotation = 0
+            self._damaged = damaged
+            self._cited = cited
+
+        def get_label(self) -> None:
+            return None
+
+        def get_links(self) -> list[dict[str, object]]:
+            if not self._cited:
+                return []
+            return [
+                {
+                    "nameddest": "cite.reference-1",
+                    "page": 1,
+                    "from": fitz.Rect(10.0, 10.0, 24.0, 22.0),
+                    "to": fitz.Point(12.0, 692.0),
+                    "xref": 7,
+                }
+            ]
+
+        def get_text(self, mode: str, *args: object, **kwargs: object) -> object:
+            del args, kwargs
+            assert mode == "rawdict"
+            if self._damaged:
+                raise RuntimeError("damaged content stream")
+            if not self._cited:
+                return {"blocks": []}
+            return {
+                "blocks": [
+                    {
+                        "bbox": (10, 10, 24, 22),
+                        "lines": [{"spans": [_raw_span("[12]", (10, 10, 24, 22))]}],
+                    },
+                    {
+                        "bbox": (10, 50, 100, 62),
+                        "lines": [{"spans": [_raw_span("References", (10, 50, 100, 62))]}],
+                    },
+                    {
+                        "bbox": (10, 100, 200, 112),
+                        "lines": [
+                            {
+                                "spans": [
+                                    _raw_span("[1] Bounded reference body", (10, 100, 200, 112))
+                                ]
+                            }
+                        ],
+                    },
+                ]
+            }
+
+    pages = [
+        _ReferencePage(792.0, damaged=True, cited=False),
+        _ReferencePage(792.0, damaged=False, cited=True),
+        _ReferencePage(1000.0, damaged=False, cited=False),
+    ]
+
+    class _DamagedPageDocument:
+        needs_pass = False
+        metadata: dict[str, str] = {}
+
+        def __len__(self) -> int:
+            return len(pages)
+
+        def __getitem__(self, index: int) -> _ReferencePage:
+            return pages[index]
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(fitz, "open", lambda *_args, **_kwargs: _DamagedPageDocument())
+    payload = b"file-backed parser input"
+    result = build_pdf_extraction_plan(
+        media_id=uuid4(),
+        attempt_id=uuid4(),
+        storage_path="sources/damaged-page.pdf",
+        source_size_bytes=len(payload),
+        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+        storage_client=_ChunkedSourceStorage(payload),
+        record_progress=lambda _completed, _total, _unit: None,
+    )
+
+    assert isinstance(result, PdfExtractionPlan), f"a damaged page failed the document: {result!r}"
+    assert result.result.page_count == 3
+    assert [span.page_number for span in result.result.page_spans] == [1, 2, 3]
+    diagnostics = result.apparatus.diagnostics["pdf_native_link"]
+    assert isinstance(diagnostics, dict)
+    assert diagnostics["skipped"] == {}, (
+        f"the citation on page 2 did not resolve against page 2's own height: {diagnostics!r}"
+    )
+    edges = [
+        edge for edge in result.apparatus.edges if edge["relation"] == "cites_bibliography_entry"
+    ]
+    assert len(edges) == 1, f"native citation edge was dropped: {result.apparatus.edges!r}"
+    targets = [item for item in result.apparatus.items if item["kind"] == "bibliography_entry"]
+    assert [item["label"] for item in targets] == ["[1]"]
+    assert [item["locator"]["page_number"] for item in targets] == [2]
+
+
+def test_pdf_native_link_marker_text_is_clipped_to_the_link_rectangle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Marker text anchors the rectangle that is persisted beside it.
+
+    PyMuPDF renders this sentence as one wide span, so a link over `[12]`
+    proves the clip is by character box and not by span overlap. The oracle is
+    PyMuPDF's own `get_textbox`, which the parser may no longer call.
+    """
+    document = fitz.open()
+    real_page = document.new_page()
+    real_page.insert_text((72, 72), "See also Smith [12] for details")
+    span = real_page.get_text("rawdict")["blocks"][0]["lines"][0]["spans"][0]
+    characters = [(str(char["c"]), tuple(char["bbox"])) for char in span["chars"]]
+    marker_start = "".join(character for character, _bbox in characters).index("[12]")
+    marker_boxes = [bbox for _character, bbox in characters[marker_start : marker_start + 4]]
+    link_rect = (
+        min(box[0] for box in marker_boxes),
+        min(box[1] for box in marker_boxes),
+        max(box[2] for box in marker_boxes),
+        max(box[3] for box in marker_boxes),
+    )
+    clipped_by_pymupdf = real_page.get_textbox(fitz.Rect(*link_rect)).strip()
+    assert clipped_by_pymupdf == "[12]"
+
+    class _LinkedPage:
+        rect = real_page.rect
+        rotation = 0
+
+        def get_label(self) -> None:
+            return None
+
+        def get_links(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "nameddest": "cite.smith-2020",
+                    "page": 0,
+                    "from": fitz.Rect(*link_rect),
+                    "to": fitz.Point(72.0, 400.0),
+                    "xref": 11,
+                }
+            ]
+
+        def get_textbox(self, _rect: object) -> str:
+            raise AssertionError("marker text must come from the one page representation")
+
+        def get_text(self, mode: str, *args: object, **kwargs: object) -> object:
+            del args, kwargs
+            return real_page.get_text(mode)
+
+    class _LinkedDocument:
+        needs_pass = False
+        metadata: dict[str, str] = {}
+
+        def __len__(self) -> int:
+            return 1
+
+        def __getitem__(self, index: int) -> _LinkedPage:
+            assert index == 0
+            return _LinkedPage()
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(fitz, "open", lambda *_args, **_kwargs: _LinkedDocument())
+    payload = b"file-backed parser input"
+    result = build_pdf_extraction_plan(
+        media_id=uuid4(),
+        attempt_id=uuid4(),
+        storage_path="sources/clipped-link.pdf",
+        source_size_bytes=len(payload),
+        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+        storage_client=_ChunkedSourceStorage(payload),
+        record_progress=lambda _completed, _total, _unit: None,
+    )
+    document.close()
+
+    assert isinstance(result, PdfExtractionPlan)
+    markers = [item for item in result.apparatus.items if item["kind"] == "bibliography_ref"]
+    assert [item["label"] for item in markers] == [clipped_by_pymupdf]
+    assert markers[0]["locator"]["exact"] == clipped_by_pymupdf
 
 
 @pytest.mark.parametrize(
@@ -1405,7 +1715,7 @@ def test_pdf_source_package_selected_source_limit_is_typed_terminal() -> None:
     assert LATEX_SELECTED_SOURCE_MAX_BYTES == 8 * 1024 * 1024
     assert isinstance(result, PdfExtractionError)
     assert result.error_code == "E_RESOURCE_LIMIT"
-    assert result.resource_limit_dimension == "Structure"
+    assert result.resource_limit_dimension == "Output"
     assert result.terminal is True
 
 
@@ -1440,7 +1750,7 @@ def test_pdf_source_package_output_limit_is_typed_terminal() -> None:
 
     assert isinstance(result, PdfExtractionError)
     assert result.error_code == "E_RESOURCE_LIMIT"
-    assert result.resource_limit_dimension == "Structure"
+    assert result.resource_limit_dimension == "Output"
     assert result.terminal is True
 
 
@@ -1467,6 +1777,39 @@ def test_epub_combined_rendered_text_limit_returns_typed_terminal_failure() -> N
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
+def test_epub_apparatus_index_limit_is_a_typed_output_resource_failure() -> None:
+    """The apparatus index is extraction output, so its cap is an output budget.
+
+    A footnote-dense but otherwise safe archive is not an unsafe archive.
+    """
+    notes = b"".join(
+        f'<aside epub:type="footnote" id="fn{index}"><p>Note {index}.</p></aside>'.encode()
+        for index in range(EPUB_APPARATUS_MAX_TARGETS + 1)
+    )
+    payload = _epub_payload(chapter_body=b'<section epub:type="footnotes">' + notes + b"</section>")
+    attempt_id = uuid4()
+
+    result = build_epub_extraction_plan(
+        session_factory=lambda: _ReservationSession(),
+        media_id=uuid4(),
+        attempt_id=attempt_id,
+        storage_path="sources/apparatus-index.epub",
+        source_size_bytes=len(payload),
+        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+        storage_client=_ChunkedSourceStorage(payload),
+        record_progress=lambda _completed, _total, _unit: None,
+    )
+
+    assert isinstance(result, EpubExtractionError)
+    assert result.error_code == "E_RESOURCE_LIMIT", f"apparatus budget misclassified: {result!r}"
+    assert result.resource_limit_dimension == "Output", (
+        f"apparatus budget misclassified: {result!r}"
+    )
+    assert result.terminal is True
+    assert "bounded index" in result.error_message
+    assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
+
+
 def test_epub_assets_stream_without_retaining_asset_bytes(engine: Engine) -> None:
     asset = b"streamed-image-proof"
     payload = _epub_payload(chapter_body=b"<p>Readable chapter.</p>", asset=asset)
@@ -1489,6 +1832,50 @@ def test_epub_assets_stream_without_retaining_asset_bytes(engine: Engine) -> Non
     assert len(plan.asset_entries) == 1
     assert "content" not in {field.name for field in fields(plan.asset_entries[0])}
     assert list(storage.uploads.values()) == [(asset, "image/png")]
+    assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
+
+
+def test_epub_referenced_svg_asset_is_sanitized_from_one_entry_handle(engine: Engine) -> None:
+    """The SVG preflight and the sanitizing parse share the caller's entry handle."""
+    entries = _epub_package(
+        manifest_items=(
+            '<item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="image" href="image.svg" media-type="image/svg+xml"/>'
+        ),
+        spine_items='<itemref idref="chapter"/>',
+    )
+    entries["EPUB/chapter.xhtml"] = (
+        b'<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+        b'<img src="image.svg" alt="proof"/></body></html>'
+    )
+    entries["EPUB/image.svg"] = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">'
+        b'<script>fetch("https://example.invalid")</script>'
+        b'<circle cx="4" cy="4" r="3"/></svg>'
+    )
+    payload = _zip_payload(entries)
+    storage = _StreamingAssetStorage(payload)
+    _viewer_id, media_id = _persist_test_media(engine, kind=MediaKind.epub)
+    attempt_id = uuid4()
+
+    plan = build_epub_extraction_plan(
+        session_factory=create_session_factory(engine),
+        media_id=media_id,
+        attempt_id=attempt_id,
+        storage_path="sources/svg-asset.epub",
+        source_size_bytes=len(payload),
+        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+        storage_client=storage,
+        record_progress=lambda _completed, _total, _unit: None,
+    )
+
+    assert isinstance(plan, EpubExtractionPlan), f"SVG asset failed the book: {plan!r}"
+    assert [content_type for _content, content_type in storage.uploads.values()] == [
+        "image/svg+xml"
+    ]
+    (sanitized, _content_type) = next(iter(storage.uploads.values()))
+    assert b"<script" not in sanitized, f"SVG script survived sanitization: {sanitized!r}"
+    assert b"circle" in sanitized, f"SVG lost its drawable content: {sanitized!r}"
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -1577,29 +1964,21 @@ def test_epub_footnote_link_into_another_spine_document_survives_extraction() ->
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
-@pytest.mark.parametrize(
-    "chapter_document",
-    [
-        b"""<?xml version="1.0"?>
+def test_epub_structural_preflight_rejects_an_internal_dtd_subset() -> None:
+    payload = _epub_spine_payload(
+        {
+            "chapter": b"""<?xml version="1.0"?>
 <!DOCTYPE html [<!ENTITY expanded "must-not-expand">]>
-<html xmlns="http://www.w3.org/1999/xhtml"><body>&expanded;</body></html>""",
-        b"""<?xml version="1.0"?>
-<!DOCTYPE html SYSTEM "http://127.0.0.1:9/must-not-fetch.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml"><body>safe</body></html>""",
-    ],
-    ids=("entity", "external-doctype"),
-)
-def test_epub_structural_preflight_rejects_active_doctype_features(
-    chapter_document: bytes,
-) -> None:
-    payload = _epub_spine_payload({"chapter": chapter_document})
+<html xmlns="http://www.w3.org/1999/xhtml"><body>&expanded;</body></html>"""
+        }
+    )
     attempt_id = uuid4()
 
     result = build_epub_extraction_plan(
         session_factory=lambda: _ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
-        storage_path="sources/active-doctype.epub",
+        storage_path="sources/internal-subset.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
         storage_client=_ChunkedSourceStorage(payload),
@@ -1612,21 +1991,40 @@ def test_epub_structural_preflight_rejects_active_doctype_features(
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
-def test_epub_structural_preflight_allows_inert_html_doctype() -> None:
-    payload = _epub_spine_payload(
-        {
-            "chapter": b"""<?xml version="1.0"?>
+@pytest.mark.parametrize(
+    ("case", "chapter_document"),
+    [
+        (
+            "html5",
+            b"""<?xml version="1.0"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Safe doctype.</p></body></html>"""
-        }
-    )
+<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Safe doctype.</p></body></html>""",
+        ),
+        (
+            "external-identifier",
+            b"""<?xml version="1.0"?>
+<!DOCTYPE html SYSTEM "http://127.0.0.1:9/must-not-fetch.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Safe doctype.</p></body></html>""",
+        ),
+    ],
+)
+def test_epub_extraction_reads_an_inert_doctype_without_resolving_it(
+    case: str,
+    chapter_document: bytes,
+) -> None:
+    """An external identifier declares a DTD; it never authorizes fetching one.
+
+    Port 9 discards, so any attempted resolution would fail the import instead
+    of publishing a chapter.
+    """
+    payload = _epub_spine_payload({"chapter": chapter_document})
     attempt_id = uuid4()
 
     plan = build_epub_extraction_plan(
         session_factory=lambda: _ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
-        storage_path="sources/inert-doctype.epub",
+        storage_path=f"sources/inert-doctype-{case}.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
         storage_client=_ChunkedSourceStorage(payload),
@@ -1635,6 +2033,127 @@ def test_epub_structural_preflight_allows_inert_html_doctype() -> None:
 
     assert isinstance(plan, EpubExtractionPlan), f"inert doctype was rejected: {plan!r}"
     assert plan.result.chapter_count == 1
+    assert "Safe doctype." in plan.fragment_specs[0][0].canonical_text
+    assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
+
+
+def test_epub2_public_doctype_and_named_entities_publish_readable_chapters() -> None:
+    """The EPUB 2 corpus: an XHTML 1.1 doctype, an NCX doctype, and HTML entities.
+
+    Every one of those is inert markup a conformant reading system resolves
+    locally, so the book must import with its text intact.
+    """
+    payload = _epub2_payload(
+        chapter=b"""<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>One</title></head>
+<body><p>Call&nbsp;me Ishmael&mdash;some years ago.</p></body></html>""",
+        ncx=_EPUB2_NCX,
+    )
+    attempt_id = uuid4()
+
+    plan = build_epub_extraction_plan(
+        session_factory=lambda: _ReservationSession(),
+        media_id=uuid4(),
+        attempt_id=attempt_id,
+        storage_path="sources/epub2-legacy.epub",
+        source_size_bytes=len(payload),
+        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+        storage_client=_ChunkedSourceStorage(payload),
+        record_progress=lambda _completed, _total, _unit: None,
+    )
+
+    assert isinstance(plan, EpubExtractionPlan), f"EPUB 2 book was rejected: {plan!r}"
+    assert plan.result.chapter_count == 1
+    fragment = plan.fragment_specs[0][0]
+    assert "Call\u00a0me Ishmael\u2014some years ago." in fragment.html_sanitized
+    assert "Ishmael\u2014some years ago." in fragment.canonical_text
+    assert [node.label for node in plan.toc_nodes] == ["Chapter\u00a0One"], (
+        f"the NCX table of contents was not read: {[node.label for node in plan.toc_nodes]!r}"
+    )
+    assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
+
+
+def test_epub_publishes_a_chapter_that_is_not_well_formed_xml() -> None:
+    """Content documents are rendered by the recovering HTML parser.
+
+    An unclosed tag, a void element, and a bare ampersand are ordinary EPUB
+    markup; the preflight bounds such a chapter without refusing it.
+    """
+    payload = _epub_spine_payload(
+        {
+            "chapter": (
+                b'<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+                b"<p>Unclosed paragraph with <br> a raw & ampersand and <span>overlap</p>"
+                b"</body></html>"
+            )
+        }
+    )
+    attempt_id = uuid4()
+
+    plan = build_epub_extraction_plan(
+        session_factory=lambda: _ReservationSession(),
+        media_id=uuid4(),
+        attempt_id=attempt_id,
+        storage_path="sources/not-well-formed.epub",
+        source_size_bytes=len(payload),
+        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+        storage_client=_ChunkedSourceStorage(payload),
+        record_progress=lambda _completed, _total, _unit: None,
+    )
+
+    assert isinstance(plan, EpubExtractionPlan), f"malformed chapter was rejected: {plan!r}"
+    assert plan.result.chapter_count == 1
+    fragment = plan.fragment_specs[0][0]
+    assert "Unclosed paragraph with" in fragment.canonical_text
+    assert "a raw & ampersand and overlap" in fragment.canonical_text
+    assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
+
+
+@pytest.mark.parametrize(
+    ("case", "ncx"),
+    [
+        ("absent", None),
+        ("malformed", b"<ncx><navMap><navPoint></ncx>"),
+    ],
+)
+def test_epub_optional_navigation_entry_that_cannot_be_parsed_is_absence(
+    case: str,
+    ncx: bytes | None,
+) -> None:
+    """A declared but unusable table of contents leaves the book readable."""
+    payload = _epub2_payload(
+        chapter=(
+            b'<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+            b"<p>Readable chapter.</p></body></html>"
+        ),
+        ncx=ncx if ncx is not None else b"",
+    )
+    if case == "absent":
+        payload = _zip_payload(
+            {
+                name: content
+                for name, content in _zip_entries(payload).items()
+                if name != "OEBPS/toc.ncx"
+            }
+        )
+    attempt_id = uuid4()
+
+    plan = build_epub_extraction_plan(
+        session_factory=lambda: _ReservationSession(),
+        media_id=uuid4(),
+        attempt_id=attempt_id,
+        storage_path=f"sources/{case}-ncx.epub",
+        source_size_bytes=len(payload),
+        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+        storage_client=_ChunkedSourceStorage(payload),
+        record_progress=lambda _completed, _total, _unit: None,
+    )
+
+    assert isinstance(plan, EpubExtractionPlan), f"{case} NCX failed the book: {plan!r}"
+    assert plan.result.chapter_count == 1
+    assert plan.result.toc_node_count == 0
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 

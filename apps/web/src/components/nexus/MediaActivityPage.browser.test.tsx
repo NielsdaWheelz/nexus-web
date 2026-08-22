@@ -1,4 +1,5 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
@@ -9,8 +10,9 @@ import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaActivityProvider } from "@/lib/media/MediaActivityProvider";
+import { subscribeMediaActivityInvalidations } from "@/lib/media/activityClient";
 import {
-  UploadNeedsAttentionError,
+  UploadSessionError,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
@@ -119,14 +121,22 @@ function activeActivityItem() {
   };
 }
 
+type UploadAttentionFixture =
+  | {
+      kind: "TransportFailed";
+      failure_kind: "Network" | "Timeout" | "Aborted";
+      http_status: { kind: "Absent" };
+    }
+  | {
+      kind: "TransportFailed";
+      failure_kind: "HttpRejected";
+      http_status: { kind: "Present"; value: number };
+    }
+  | { kind: "CapabilityExpired" }
+  | { kind: "VerificationFailed"; failure_code: "E_SOURCE_INTEGRITY" };
+
 function uploadSessionItem(
-  attention:
-    | {
-        kind: "TransportFailed";
-        failure_kind: "Network";
-        http_status: { kind: "Absent" };
-      }
-    | { kind: "VerificationFailed"; failure_code: "E_SOURCE_INTEGRITY" },
+  attention: UploadAttentionFixture,
   options: {
     sessionHandle?: string;
     filename?: string;
@@ -142,7 +152,8 @@ function uploadSessionItem(
     created_at: "2026-08-14T18:40:02Z",
     updated_at: "2026-08-14T18:40:34Z",
     capabilities: {
-      can_retry_upload: attention.kind === "TransportFailed",
+      // A verification rejection is terminal for the session: only removal.
+      can_retry_upload: attention.kind !== "VerificationFailed",
       can_remove: true,
     },
   };
@@ -169,19 +180,25 @@ function deferred<T>() {
 
 function ForegroundUploadAddPanel(): React.ReactElement {
   const session = useAddContentSession();
+  const [defect, setDefect] = useState<unknown>(null);
   return (
-    <AddPanel
-      session={session}
-      dismissalConfirmation={null}
-      onBack={() => {}}
-      onClose={() => {}}
-      onKeepWorking={() => {}}
-      onConfirmDismissal={() => {}}
-      onOpen={() => {}}
-      onDefect={(error) => {
-        throw error;
-      }}
-    />
+    <>
+      {defect === null ? null : (
+        <p>
+          Add defect: {defect instanceof Error ? defect.message : String(defect)}
+        </p>
+      )}
+      <AddPanel
+        session={session}
+        dismissalConfirmation={null}
+        onBack={() => {}}
+        onClose={() => {}}
+        onKeepWorking={() => {}}
+        onConfirmDismissal={() => {}}
+        onOpen={() => {}}
+        onDefect={(error) => setDefect(error)}
+      />
+    </>
   );
 }
 
@@ -191,6 +208,41 @@ function renderForegroundUploadAddPanel() {
       initialViewport: "desktop",
     }),
   );
+}
+
+const FOREGROUND_UPLOAD_URL = "/signed-add-panel-upload";
+
+function uploadRequiredPayload(): Record<string, unknown> {
+  return {
+    kind: "UploadRequired",
+    session_handle: UPLOAD_SESSION_HANDLE,
+    generation: 1,
+    method: "PUT",
+    upload_url: FOREGROUND_UPLOAD_URL,
+    required_headers: { "Content-Type": "application/pdf" },
+    expires_at: futureUploadExpiry(),
+    idempotency_outcome: "Created",
+  };
+}
+
+function needsAttentionPayload(failure: unknown): Record<string, unknown> {
+  return {
+    kind: "NeedsAttention",
+    session_handle: UPLOAD_SESSION_HANDLE,
+    failure,
+    capabilities: { can_retry_upload: true, can_remove: true },
+  };
+}
+
+async function stageForegroundPdf(): Promise<void> {
+  renderForegroundUploadAddPanel();
+  await userEvent.upload(
+    screen.getByLabelText("Choose PDF or EPUB files"),
+    new File([new Uint8Array([1])], "foreground.pdf", {
+      type: "application/pdf",
+    }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Add 1 item" }));
 }
 
 /**
@@ -864,7 +916,10 @@ describe("Nexus Activity workflow", () => {
     });
     await signedUploadStarted.promise;
 
-    await expect(upload).rejects.toBeInstanceOf(UploadNeedsAttentionError);
+    await expect(upload).rejects.toMatchObject({
+      outcome: { kind: "NeedsAttention" },
+    });
+    await expect(upload).rejects.toBeInstanceOf(UploadSessionError);
     expect(transportFailures).toHaveLength(1);
     expect(transportFailures[0]).toMatchObject({
       kind: "Timeout",
@@ -1015,5 +1070,412 @@ describe("Nexus Activity workflow", () => {
       "a non-removable Activity item wrongly rendered the resource dropdown",
     ).toBeNull();
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it.each([
+    [
+      "an unknown response kind",
+      () => ({ ...uploadRequiredPayload(), kind: "upload_required" }),
+    ],
+    [
+      "a missing discriminant",
+      () => {
+        const payload = uploadRequiredPayload();
+        delete payload.kind;
+        return payload;
+      },
+    ],
+    [
+      "an extra capability field",
+      () => ({ ...uploadRequiredPayload(), upload_token: "leaked" }),
+    ],
+    [
+      "a method the browser may not send",
+      () => ({ ...uploadRequiredPayload(), method: "POST" }),
+    ],
+    [
+      "an unfenced generation",
+      () => ({ ...uploadRequiredPayload(), generation: 0 }),
+    ],
+    [
+      "missing required headers",
+      () => {
+        const payload = uploadRequiredPayload();
+        delete payload.required_headers;
+        return payload;
+      },
+    ],
+    [
+      "a naive expiry instant",
+      () => ({ ...uploadRequiredPayload(), expires_at: "2026-08-14T18:40:02" }),
+    ],
+    [
+      "an open verification failure code",
+      () =>
+        needsAttentionPayload({
+          kind: "VerificationFailed",
+          code: "E_SOURCE_ENCRYPTED",
+          failed_at: "2026-08-14T18:40:02Z",
+        }),
+    ],
+    [
+      "an unknown transport reason",
+      () =>
+        needsAttentionPayload({
+          kind: "TransportFailed",
+          reason: { kind: "Throttled" },
+          failed_at: "2026-08-14T18:40:02Z",
+        }),
+    ],
+  ])(
+    "rejects %s from the upload endpoint instead of sending bytes",
+    async (_label, payload) => {
+      const requests: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = new URL(String(input), window.location.origin);
+          requests.push(`${init?.method ?? "GET"} ${url.pathname}`);
+          if (url.pathname === "/api/media/uploads") {
+            return jsonResponse({ data: payload() });
+          }
+          throw new Error(
+            `Unexpected request: ${init?.method ?? "GET"} ${url.pathname}`,
+          );
+        },
+      );
+
+      await stageForegroundPdf();
+
+      expect(
+        await screen.findByText(/returned an invalid response/),
+        "a compatibility upload payload was accepted instead of defecting",
+      ).toBeVisible();
+      expect(
+        requests.filter((request) => request.includes(FOREGROUND_UPLOAD_URL)),
+        "the browser sent bytes for a capability it could not decode",
+      ).toEqual([]);
+    },
+  );
+
+  it("explains an expired capability and a storage rejection with their own repair", async () => {
+    installBff({
+      activity: () => ({
+        data: {
+          needs_attention_count: 2,
+          active_count: 0,
+          has_more: false,
+          items: [
+            uploadSessionItem(
+              { kind: "CapabilityExpired" },
+              { filename: "Expired Bakker.epub" },
+            ),
+            uploadSessionItem(
+              {
+                kind: "TransportFailed",
+                failure_kind: "HttpRejected",
+                http_status: { kind: "Present", value: 403 },
+              },
+              {
+                sessionHandle: REJECTED_UPLOAD_SESSION_HANDLE,
+                filename: "Rejected Bakker.epub",
+              },
+            ),
+          ],
+        },
+      }),
+    });
+
+    renderActivity();
+
+    const expired = await screen.findByRole("article", {
+      name: "Expired Bakker.epub upload",
+    });
+    expect(
+      within(expired).getByText(
+        "The upload link expired. Choose the original file to retry.",
+      ),
+    ).toBeVisible();
+    expect(
+      within(expired).getByRole("button", { name: "Retry upload" }),
+    ).toBeVisible();
+    expect(within(expired).getByRole("button", { name: "Remove" })).toBeVisible();
+
+    const rejected = screen.getByRole("article", {
+      name: "Rejected Bakker.epub upload",
+    });
+    expect(
+      within(rejected).getByText(
+        "The storage service rejected this upload. Choose the original file to retry.",
+      ),
+    ).toBeVisible();
+    expect(
+      within(rejected).getByRole("button", { name: "Retry upload" }),
+    ).toBeVisible();
+  });
+
+  it("drops a session that published elsewhere from both retry and remove", async () => {
+    let retryPresent = true;
+    let removePresent = true;
+    const alreadyPublished = () =>
+      jsonResponse(
+        {
+          error: {
+            code: "E_UPLOAD_ALREADY_PUBLISHED",
+            message: "This upload session already published.",
+          },
+        },
+        409,
+      );
+    const requests = installBff({
+      activity: () => {
+        const items = [
+          ...(retryPresent
+            ? [
+                uploadSessionItem(
+                  {
+                    kind: "TransportFailed",
+                    failure_kind: "Network",
+                    http_status: { kind: "Absent" },
+                  },
+                  { filename: "Retried Bakker.epub" },
+                ),
+              ]
+            : []),
+          ...(removePresent
+            ? [
+                uploadSessionItem(
+                  {
+                    kind: "TransportFailed",
+                    failure_kind: "Network",
+                    http_status: { kind: "Absent" },
+                  },
+                  {
+                    sessionHandle: REJECTED_UPLOAD_SESSION_HANDLE,
+                    filename: "Removed Bakker.epub",
+                  },
+                ),
+              ]
+            : []),
+        ];
+        return {
+          data: {
+            needs_attention_count: items.length,
+            active_count: 0,
+            has_more: false,
+            items,
+          },
+        };
+      },
+      onUploadRequest: ({ path, method }) => {
+        if (
+          path === `/api/media/uploads/${UPLOAD_SESSION_HANDLE}/retry` &&
+          method === "POST"
+        ) {
+          retryPresent = false;
+          return alreadyPublished();
+        }
+        if (
+          path === `/api/media/uploads/${REJECTED_UPLOAD_SESSION_HANDLE}` &&
+          method === "DELETE"
+        ) {
+          removePresent = false;
+          return alreadyPublished();
+        }
+        return null;
+      },
+    });
+    vi.stubGlobal("confirm", () => true);
+
+    renderActivity();
+    expect(
+      await screen.findByRole("heading", { name: "Retried Bakker.epub" }),
+    ).toBeVisible();
+
+    await userEvent.upload(
+      screen.getByLabelText("Choose Retried Bakker.epub to retry upload"),
+      new File([new Uint8Array(4)], "Retried Bakker.epub", {
+        type: "application/epub+zip",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", { name: "Retried Bakker.epub" }),
+        "a published session stayed on screen as a connection problem",
+      ).toBeNull(),
+    );
+    expect(
+      screen
+        .queryAllByRole("alert")
+        .map((alert) => alert.textContent)
+        .filter((text) => text !== null && text.length > 0),
+      "a published session reported a failure instead of disappearing",
+    ).toEqual([]);
+
+    await userEvent.click(
+      within(
+        screen.getByRole("article", { name: "Removed Bakker.epub upload" }),
+      ).getByRole("button", { name: "Remove" }),
+    );
+    expect(
+      await screen.findByText("New import failures will appear here."),
+    ).toBeVisible();
+    expect(
+      requests.filter((request) => request.method === "DELETE"),
+    ).toHaveLength(1);
+  });
+
+  it("retries the same file under one intent when confirmation finds no staged bytes", async () => {
+    const idempotencyKeys: (string | null)[] = [];
+    const putBodies: { name: string; size: number }[] = [];
+    let confirms = 0;
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), window.location.origin);
+        if (url.pathname === "/api/media/uploads" && init?.method === "POST") {
+          idempotencyKeys.push(
+            new Headers(init.headers).get("Idempotency-Key"),
+          );
+          return jsonResponse({
+            data: {
+              ...uploadRequiredPayload(),
+              generation: idempotencyKeys.length,
+              idempotency_outcome:
+                idempotencyKeys.length === 1 ? "Created" : "Reused",
+            },
+          });
+        }
+        if (url.pathname === FOREGROUND_UPLOAD_URL && init?.method === "PUT") {
+          const body = init.body;
+          if (!(body instanceof File)) {
+            throw new Error("Direct upload did not send the chosen File");
+          }
+          putBodies.push({ name: body.name, size: body.size });
+          return new Response(null, { status: 200 });
+        }
+        if (
+          url.pathname ===
+            `/api/media/uploads/${UPLOAD_SESSION_HANDLE}/confirm` &&
+          init?.method === "POST"
+        ) {
+          confirms += 1;
+          return confirms === 1
+            ? jsonResponse(
+                {
+                  error: {
+                    code: "E_STORAGE_MISSING",
+                    message: "No staged object for this generation.",
+                  },
+                },
+                400,
+              )
+            : jsonResponse({
+                data: {
+                  kind: "Published",
+                  session_handle: UPLOAD_SESSION_HANDLE,
+                  media_id: MEDIA_ID,
+                  source_attempt_id: ATTEMPT_ID,
+                  idempotency_outcome: "Created",
+                },
+              });
+        }
+        throw new Error(
+          `Unexpected request: ${init?.method ?? "GET"} ${url.pathname}`,
+        );
+      },
+    );
+
+    await stageForegroundPdf();
+
+    expect(await screen.findByText("Upload didn’t complete")).toBeVisible();
+    expect(
+      screen.getByText(/Nexus never received this file/),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Remove foreground.pdf" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/did not finish/i),
+      "a confirmation with no staged bytes was reported as a transport failure",
+    ).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry upload" }));
+
+    await waitFor(() => expect(screen.getByText("Saved")).toBeVisible());
+    expect(putBodies).toEqual([
+      { name: "foreground.pdf", size: 1 },
+      { name: "foreground.pdf", size: 1 },
+    ]);
+    expect(idempotencyKeys).toHaveLength(2);
+    expect(
+      idempotencyKeys[0],
+      "the retried upload changed intent instead of replaying one key",
+    ).toBe(idempotencyKeys[1]);
+    expect(idempotencyKeys[0]).not.toBeNull();
+  });
+
+  it("drops a superseded foreground attempt and lets Activity own the session", async () => {
+    let invalidations = 0;
+    const unsubscribe = subscribeMediaActivityInvalidations(() => {
+      invalidations += 1;
+    });
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), window.location.origin);
+        if (url.pathname === "/api/media/uploads" && init?.method === "POST") {
+          return jsonResponse({ data: uploadRequiredPayload() });
+        }
+        if (url.pathname === FOREGROUND_UPLOAD_URL && init?.method === "PUT") {
+          return new Response(null, { status: 200 });
+        }
+        if (
+          url.pathname ===
+            `/api/media/uploads/${UPLOAD_SESSION_HANDLE}/confirm` &&
+          init?.method === "POST"
+        ) {
+          return jsonResponse(
+            {
+              error: {
+                code: "E_UPLOAD_GENERATION_STALE",
+                message: "Another generation superseded this attempt.",
+              },
+            },
+            409,
+          );
+        }
+        throw new Error(
+          `Unexpected request: ${init?.method ?? "GET"} ${url.pathname}`,
+        );
+      },
+    );
+
+    try {
+      await stageForegroundPdf();
+
+      await waitFor(() =>
+        expect(
+          screen.queryByText("foreground.pdf"),
+          "a superseded attempt kept claiming the item in the Add sheet",
+        ).toBeNull(),
+      );
+      expect(
+        screen
+          .queryAllByRole("alert")
+          .map((alert) => alert.textContent)
+          .filter((text) => text !== null && text.length > 0),
+      ).toEqual([]);
+      expect(
+        screen.queryByText(/returned an invalid response/),
+        "a modeled stale generation was laundered into a contract defect",
+      ).toBeNull();
+      expect(
+        invalidations,
+        "the superseded attempt did not hand the session to Activity",
+      ).toBeGreaterThanOrEqual(1);
+    } finally {
+      unsubscribe();
+    }
   });
 });

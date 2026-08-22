@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
-from collections.abc import Generator
+import time
+from collections.abc import Generator, Sequence
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -22,6 +24,7 @@ from nexus.services.ingest_recovery import get_ingest_recovery_health
 from tests.testkit.background_process_containment_probe import (
     MEMORY_LIMIT_BYTES,
     PROBE_KIND,
+    SUPERVISOR_RESIDENT_KIB_LIMIT,
     WORKER_ID,
 )
 from tests.testkit.unreachable_state import (
@@ -31,6 +34,110 @@ from tests.testkit.unreachable_state import (
 )
 
 _PYTHON_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = _PYTHON_ROOT.parent
+# The gated scenarios must outlive the deliberate supervisor kill, so their wall
+# limit is far wider than the fast resource-failure scenarios' three seconds.
+_RESOURCE_FAILURE_WALL_TIMEOUT_SECONDS = 3.0
+_GATED_WALL_TIMEOUT_SECONDS = 60.0
+_SUPERVISOR_RUN_TIMEOUT_SECONDS = 45.0
+# Parent-death propagation is a pipe EOF plus a kernel signal; a whole second is
+# already several orders of magnitude of slack.
+_CHILD_DEATH_TIMEOUT_SECONDS = 10.0
+# Must exceed the executor TERM grace plus one queue settlement, and stay inside
+# the `stop_grace_period: 30s` the deployed service declares.
+_SHUTDOWN_TIMEOUT_SECONDS = 20.0
+_OBSERVABLE_FILE_TIMEOUT_SECONDS = 30.0
+
+
+def _supervisor_environment() -> dict[str, str]:
+    environment = dict(os.environ)
+    prior_pythonpath = environment.get("PYTHONPATH")
+    roots = os.pathsep.join((str(_PYTHON_ROOT), str(_REPO_ROOT)))
+    environment["PYTHONPATH"] = (
+        roots if not prior_pythonpath else f"{roots}{os.pathsep}{prior_pythonpath}"
+    )
+    user_runtime_directory = Path(f"/run/user/{os.getuid()}")
+    user_bus = user_runtime_directory / "bus"
+    assert user_bus.exists(), (
+        f"cgroup containment proof requires a live user systemd bus at {user_bus}"
+    )
+    environment["XDG_RUNTIME_DIR"] = str(user_runtime_directory)
+    environment["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={user_bus}"
+    return environment
+
+
+def _supervisor_command(
+    *,
+    supervisor_pid_path: Path,
+    supervisor_state_path: Path,
+    parser_temp_root: Path,
+    wall_timeout_seconds: float,
+    lifetime: Sequence[str],
+) -> list[str]:
+    systemd_run = shutil.which("systemd-run")
+    assert systemd_run is not None, "cgroup containment proof requires systemd-run"
+    return [
+        systemd_run,
+        "--user",
+        "--scope",
+        "--quiet",
+        "--collect",
+        f"--unit=nexus-containment-{uuid4().hex[:16]}",
+        "-p",
+        f"MemoryMax={MEMORY_LIMIT_BYTES}",
+        "-p",
+        "MemorySwapMax=0",
+        "-p",
+        "OOMPolicy=continue",
+        sys.executable,
+        "-m",
+        "tests.testkit.background_process_containment_probe",
+        "--supervisor-pid-path",
+        str(supervisor_pid_path),
+        "--supervisor-state-path",
+        str(supervisor_state_path),
+        "--parser-temp-root",
+        str(parser_temp_root),
+        "--wall-timeout-seconds",
+        str(wall_timeout_seconds),
+        *lifetime,
+    ]
+
+
+def _read_when_present(path: Path, *, what: str) -> str:
+    deadline = time.monotonic() + _OBSERVABLE_FILE_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            value = path.read_text(encoding="ascii").strip()
+        except OSError:
+            value = ""
+        if value:
+            return value
+    raise AssertionError(f"{what} was never observable at {path}")
+
+
+def _process_is_live(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        status = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+    except OSError:
+        return False
+    # An unreaped zombie is a dead process that still answers signal 0.
+    return status.rpartition(")")[2].split()[0] != "Z"
+
+
+def _await_process_exit(pid: int, *, what: str) -> None:
+    deadline = time.monotonic() + _CHILD_DEATH_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if not _process_is_live(pid):
+            return
+    raise AssertionError(
+        f"{what} (pid {pid}) was still alive {_CHILD_DEATH_TIMEOUT_SECONDS}s after its "
+        "supervisor died; the child is not bound to supervisor liveness"
+    )
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -55,6 +162,9 @@ def _enqueue_source_probe(
     parser_temp_root: Path,
     descendant_pid_path: Path | None = None,
     published_path: Path | None = None,
+    gate_path: Path | None = None,
+    marker_path: Path | None = None,
+    note_block_id: UUID | None = None,
 ) -> tuple[UUID, UUID, UUID]:
     media_id = uuid4()
     attempt_id = uuid4()
@@ -91,6 +201,12 @@ def _enqueue_source_probe(
         payload["descendant_pid_path"] = str(descendant_pid_path)
     if published_path is not None:
         payload["published_path"] = str(published_path)
+    if gate_path is not None:
+        payload["gate_path"] = str(gate_path)
+    if marker_path is not None:
+        payload["marker_path"] = str(marker_path)
+    if note_block_id is not None:
+        payload["note_block_id"] = str(note_block_id)
     job = enqueue_job(
         db,
         kind=PROBE_KIND,
@@ -130,7 +246,12 @@ def test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child(
     unrelated_parser_owner = parser_temp_root / str(uuid4())
     unrelated_parser_owner.mkdir()
     (unrelated_parser_owner / "keep").write_text("unrelated", encoding="ascii")
+    supervisor_pid_path = tmp_path / "supervisor.pid"
     supervisor_state_path = tmp_path / "supervisor.json"
+    # The kind under proof declares a dead-letter projection, so terminal settlement
+    # runs it inside the supervisor. A real repair here proves the supervisor can
+    # execute one without loading the note/index service graph.
+    dead_letter_note_block_id = uuid4()
     with Session(engine) as db:
         ensure_user_and_default_library(
             db,
@@ -145,6 +266,7 @@ def test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child(
             pid_path=timeout_pid_path,
             parser_temp_root=parser_temp_root,
             descendant_pid_path=timeout_descendant_pid_path,
+            note_block_id=dead_letter_note_block_id,
         )
         memory_job_id, memory_attempt_id, memory_media_id = _enqueue_source_probe(
             db,
@@ -213,52 +335,19 @@ def test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child(
         )
         db.commit()
 
-    systemd_run = shutil.which("systemd-run")
-    assert systemd_run is not None, "cgroup containment proof requires systemd-run"
-    unit = f"nexus-containment-{uuid4().hex[:16]}"
-    environment = dict(os.environ)
-    prior_pythonpath = environment.get("PYTHONPATH")
-    environment["PYTHONPATH"] = (
-        str(_PYTHON_ROOT)
-        if not prior_pythonpath
-        else f"{_PYTHON_ROOT}{os.pathsep}{prior_pythonpath}"
-    )
-    user_runtime_directory = Path(f"/run/user/{os.getuid()}")
-    user_bus = user_runtime_directory / "bus"
-    assert user_bus.exists(), (
-        f"cgroup containment proof requires a live user systemd bus at {user_bus}"
-    )
-    environment["XDG_RUNTIME_DIR"] = str(user_runtime_directory)
-    environment["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={user_bus}"
     completed = subprocess.run(
-        [
-            systemd_run,
-            "--user",
-            "--scope",
-            "--quiet",
-            "--collect",
-            f"--unit={unit}",
-            "-p",
-            f"MemoryMax={MEMORY_LIMIT_BYTES}",
-            "-p",
-            "MemorySwapMax=0",
-            "-p",
-            "OOMPolicy=continue",
-            sys.executable,
-            "-m",
-            "tests.testkit.background_process_containment_probe",
-            "--supervisor-state-path",
-            str(supervisor_state_path),
-            "--parser-temp-root",
-            str(parser_temp_root),
-            "--expected-jobs",
-            "8",
-        ],
+        _supervisor_command(
+            supervisor_pid_path=supervisor_pid_path,
+            supervisor_state_path=supervisor_state_path,
+            parser_temp_root=parser_temp_root,
+            wall_timeout_seconds=_RESOURCE_FAILURE_WALL_TIMEOUT_SECONDS,
+            lifetime=("--exact-jobs", "8"),
+        ),
         cwd=_PYTHON_ROOT,
-        env=environment,
+        env=_supervisor_environment(),
         capture_output=True,
         text=True,
-        timeout=45,
+        timeout=_SUPERVISOR_RUN_TIMEOUT_SECONDS,
         check=False,
     )
     assert completed.returncode == 0, (
@@ -270,7 +359,7 @@ def test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child(
     supervisor_pid = int(supervisor_state["pid"])
     with pytest.raises(ProcessLookupError):
         os.kill(supervisor_pid, 0)
-    assert int(supervisor_state["resident_kib"]) <= 96 * 1024
+    assert int(supervisor_state["resident_kib"]) <= SUPERVISOR_RESIDENT_KIB_LIMIT
     assert supervisor_state["forbidden_preloaded_modules"] == []
     timeout_pid = _assert_process_absent(timeout_pid_path)
     timeout_descendant_pid = _assert_process_absent(timeout_descendant_pid_path)
@@ -384,6 +473,16 @@ def test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child(
             result_payload={"kind": "StalePublish"},
         )
         recovery_health = get_ingest_recovery_health(oracle)
+        dead_letter_index = oracle.execute(
+            text(
+                """
+                SELECT status, status_reason
+                FROM content_index_states
+                WHERE owner_kind = 'note_block' AND owner_id = :owner_id
+                """
+            ),
+            {"owner_id": dead_letter_note_block_id},
+        ).one_or_none()
 
     assert len(failures) == 4
     for row, dimension, job_id, attempt_id, media_id in (
@@ -477,3 +576,210 @@ def test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child(
     assert stale_memory_completion is False
     assert stale_exit_completion is False
     assert recovery_health["resource_limited_source_job_count"] == 6
+    assert dead_letter_index is not None, (
+        "the supervisor did not apply the kind's dead-letter projection inside its "
+        "terminal transition"
+    )
+    assert dead_letter_index[0] == "failed"
+    assert str(dead_letter_index[1]).startswith("E_INTERNAL: ")
+
+
+def _seed_gated_probe(
+    engine: Engine,
+    *,
+    tmp_path: Path,
+    parser_temp_root: Path,
+) -> tuple[UUID, UUID, UUID, Path, Path, Path]:
+    """Publish one probe job whose child blocks on a gate file until released."""
+    viewer_id = uuid4()
+    pid_path = tmp_path / "gated-child.pid"
+    gate_path = tmp_path / "gate"
+    marker_path = tmp_path / "gate-released"
+    with Session(engine) as db:
+        ensure_user_and_default_library(
+            db,
+            viewer_id,
+            f"containment-{viewer_id}@example.invalid",
+        )
+        job_id, attempt_id, media_id = _enqueue_source_probe(
+            db,
+            viewer_id=viewer_id,
+            mode="Gate",
+            priority=0,
+            pid_path=pid_path,
+            parser_temp_root=parser_temp_root,
+            gate_path=gate_path,
+            marker_path=marker_path,
+        )
+        db.commit()
+    return job_id, attempt_id, media_id, pid_path, gate_path, marker_path
+
+
+def _forget_containment_probe_rows(engine: Engine) -> None:
+    with Session(engine) as db:
+        release_heavy_capacity_row(db)
+        delete_source_probe_owners_by_job_kind(db, kind=PROBE_KIND)
+        delete_jobs_of_kinds(db, kinds=(PROBE_KIND,))
+        db.commit()
+
+
+def test_supervisor_death_kills_its_gated_child_before_any_stale_write(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    """Risk: a SIGKILLed supervisor must not leave an orphan holding a live claim."""
+    parser_temp_root = tmp_path / "parser-temp"
+    parser_temp_root.mkdir()
+    supervisor_pid_path = tmp_path / "supervisor.pid"
+    supervisor_state_path = tmp_path / "supervisor.json"
+    job_id, attempt_id, media_id, pid_path, gate_path, marker_path = _seed_gated_probe(
+        engine,
+        tmp_path=tmp_path,
+        parser_temp_root=parser_temp_root,
+    )
+
+    supervisor = subprocess.Popen(
+        _supervisor_command(
+            supervisor_pid_path=supervisor_pid_path,
+            supervisor_state_path=supervisor_state_path,
+            parser_temp_root=parser_temp_root,
+            wall_timeout_seconds=_GATED_WALL_TIMEOUT_SECONDS,
+            lifetime=("--exact-jobs", "1"),
+        ),
+        cwd=_PYTHON_ROOT,
+        env=_supervisor_environment(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        supervisor_pid = int(_read_when_present(supervisor_pid_path, what="supervisor pid"))
+        child_pid = int(_read_when_present(pid_path, what="gated child pid"))
+        os.kill(supervisor_pid, signal.SIGKILL)
+
+        _await_process_exit(child_pid, what="the gated child")
+        gate_path.write_text("open", encoding="ascii")
+        assert not marker_path.exists(), (
+            "a child whose supervisor is dead still committed its gated write"
+        )
+        _await_process_exit(supervisor_pid, what="the SIGKILLed supervisor")
+        assert not supervisor_state_path.exists(), (
+            "the supervisor finished its run instead of dying mid-child"
+        )
+
+        with Session(engine) as oracle:
+            job = oracle.execute(
+                text(
+                    """
+                    SELECT status, attempts, claimed_by, error_code, result
+                    FROM background_jobs
+                    WHERE id = :job_id
+                    """
+                ),
+                {"job_id": job_id},
+            ).one()
+            attempt_status = oracle.scalar(
+                text("SELECT status FROM media_source_attempts WHERE id = :attempt_id"),
+                {"attempt_id": attempt_id},
+            )
+            media_status = oracle.scalar(
+                text("SELECT processing_status FROM media WHERE id = :media_id"),
+                {"media_id": media_id},
+            )
+        assert tuple(job) == ("running", 1, WORKER_ID, None, None), (
+            f"the orphaned child mutated its own queue row: {tuple(job)!r}"
+        )
+        assert attempt_status == "running"
+        assert media_status == ProcessingStatus.extracting.value
+    finally:
+        supervisor.kill()
+        supervisor.wait(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+        _forget_containment_probe_rows(engine)
+
+
+def test_supervisor_sigterm_returns_its_gated_job_without_burning_an_attempt(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    """Risk: a redeploy mid-Heavy-job must release the claim, not hard-kill it."""
+    parser_temp_root = tmp_path / "parser-temp"
+    parser_temp_root.mkdir()
+    supervisor_pid_path = tmp_path / "supervisor.pid"
+    supervisor_state_path = tmp_path / "supervisor.json"
+    job_id, attempt_id, media_id, pid_path, gate_path, marker_path = _seed_gated_probe(
+        engine,
+        tmp_path=tmp_path,
+        parser_temp_root=parser_temp_root,
+    )
+
+    supervisor = subprocess.Popen(
+        _supervisor_command(
+            supervisor_pid_path=supervisor_pid_path,
+            supervisor_state_path=supervisor_state_path,
+            parser_temp_root=parser_temp_root,
+            wall_timeout_seconds=_GATED_WALL_TIMEOUT_SECONDS,
+            lifetime=("--until-shutdown",),
+        ),
+        cwd=_PYTHON_ROOT,
+        env=_supervisor_environment(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        supervisor_pid = int(_read_when_present(supervisor_pid_path, what="supervisor pid"))
+        child_pid = int(_read_when_present(pid_path, what="gated child pid"))
+        os.kill(supervisor_pid, signal.SIGTERM)
+
+        assert supervisor.wait(timeout=_SHUTDOWN_TIMEOUT_SECONDS) == 0, (
+            "the supervisor did not exit cleanly inside its stop grace period"
+        )
+        _await_process_exit(child_pid, what="the gated child")
+        gate_path.write_text("open", encoding="ascii")
+        assert not marker_path.exists(), (
+            "a terminated child still committed its gated write after shutdown"
+        )
+        assert supervisor_state_path.exists(), (
+            "the supervisor exited before completing its own shutdown path"
+        )
+
+        with Session(engine) as oracle:
+            job = oracle.execute(
+                text(
+                    """
+                    SELECT status, attempts, claimed_by, lease_expires_at,
+                           error_code, last_error, result
+                    FROM background_jobs
+                    WHERE id = :job_id
+                    """
+                ),
+                {"job_id": job_id},
+            ).one()
+            capacity = oracle.execute(
+                text(
+                    """
+                    SELECT job_id, worker_id, attempt_no, lease_expires_at
+                    FROM background_job_capacity_leases
+                    WHERE resource_class = 'Heavy'
+                    """
+                )
+            ).one()
+            attempt_status = oracle.scalar(
+                text("SELECT status FROM media_source_attempts WHERE id = :attempt_id"),
+                {"attempt_id": attempt_id},
+            )
+            media_status = oracle.scalar(
+                text("SELECT processing_status FROM media WHERE id = :media_id"),
+                {"media_id": media_id},
+            )
+        assert tuple(job) == ("pending", 0, None, None, None, None, None), (
+            "a shutdown-interrupted job must return to pending with its retry budget "
+            f"intact; observed {tuple(job)!r}"
+        )
+        assert tuple(capacity) == (None, None, None, None), (
+            f"shutdown did not release the Heavy capacity lease: {tuple(capacity)!r}"
+        )
+        assert attempt_status == "running"
+        assert media_status == ProcessingStatus.extracting.value
+    finally:
+        supervisor.kill()
+        supervisor.wait(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+        _forget_containment_probe_rows(engine)

@@ -1,10 +1,10 @@
 diff --git a/python/nexus/services/media_upload_sessions.py b/python/nexus/services/media_upload_sessions.py
 --- a/python/nexus/services/media_upload_sessions.py
 +++ b/python/nexus/services/media_upload_sessions.py
-@@ -661,7 +661,7 @@ def _claim_verification(
-             raise ConflictError(
-                 ApiErrorCode.E_UPLOAD_ALREADY_PUBLISHED, "Upload is already published."
-             )
+@@ -874,7 +874,7 @@
+             # published". A replay that blocks here behind the winning publication
+             # converges on the same Published projection.
+             return _AlreadyPublished(_published(session, "Reused"))
 -        if generation != session.upload_generation:
 +        if False and generation != session.upload_generation:
              raise ConflictError(

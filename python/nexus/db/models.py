@@ -1197,10 +1197,6 @@ class MediaUploadSession(Base):
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
 
-    destinations: Mapped[list["MediaUploadSessionDestination"]] = relationship(
-        "MediaUploadSessionDestination", back_populates="upload_session"
-    )
-
     __table_args__ = (
         UniqueConstraint(
             "created_by_user_id",
@@ -1239,10 +1235,6 @@ class MediaUploadSessionDestination(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-
-    upload_session: Mapped["MediaUploadSession"] = relationship(
-        "MediaUploadSession", back_populates="destinations"
     )
 
 

@@ -175,6 +175,28 @@ def force_upload_cleanup_job_due(db: Session, *, job_id: UUID) -> None:
     db.commit()
 
 
+def expire_upload_verification_lease(db: Session, *, session_id: UUID) -> UUID:
+    """Lapse a live verification lease in place, keeping its token and generation.
+
+    Production reaches this state by a verifier outliving its renewal period; the
+    proof reaches it directly so the clock is not part of the assertion.
+    """
+    token = db.execute(
+        text(
+            """
+            UPDATE media_upload_sessions
+            SET verification_expires_at = now() - interval '1 second'
+            WHERE id = :session_id
+              AND verification_token IS NOT NULL
+            RETURNING verification_token
+            """
+        ),
+        {"session_id": session_id},
+    ).scalar_one()
+    db.commit()
+    return UUID(str(token))
+
+
 def make_upload_cleanup_job_available_before_its_fence(db: Session, *, job_id: UUID) -> None:
     """Expose one cleanup job while preserving its future durable writer fences."""
     db.execute(
@@ -455,7 +477,7 @@ def delete_jobs_of_kinds(db: Session, *, kinds: Sequence[str]) -> None:
 
 
 def delete_source_probe_owners_by_job_kind(db: Session, *, kind: str) -> None:
-    """Remove exact synthetic attempt/media owners named by one probe job kind."""
+    """Remove exact synthetic attempt/media/note-block owners named by one probe job kind."""
     owners = db.execute(
         text(
             """
@@ -470,6 +492,19 @@ def delete_source_probe_owners_by_job_kind(db: Session, *, kind: str) -> None:
     ).all()
     attempt_ids = [UUID(str(row[0])) for row in owners]
     media_ids = [UUID(str(row[1])) for row in owners]
+    note_block_ids = [
+        UUID(str(row[0]))
+        for row in db.execute(
+            text(
+                """
+                SELECT payload->>'note_block_id'
+                FROM background_jobs
+                WHERE kind = :kind AND payload ? 'note_block_id'
+                """
+            ),
+            {"kind": kind},
+        ).all()
+    ]
     if media_ids:
         db.execute(
             text(
@@ -480,6 +515,17 @@ def delete_source_probe_owners_by_job_kind(db: Session, *, kind: str) -> None:
                 """
             ),
             {"ids": media_ids},
+        )
+    if note_block_ids:
+        db.execute(
+            text(
+                """
+                DELETE FROM content_index_states
+                WHERE owner_kind = 'note_block'
+                  AND owner_id = ANY(CAST(:ids AS uuid[]))
+                """
+            ),
+            {"ids": note_block_ids},
         )
     if attempt_ids:
         db.execute(

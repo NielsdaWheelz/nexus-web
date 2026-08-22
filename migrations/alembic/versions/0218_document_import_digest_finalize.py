@@ -33,6 +33,24 @@ def _required_environment(name: str) -> str:
     return value
 
 
+def _required_timeout(name: str, default: float) -> float:
+    """Read one storage timeout from the same environment the runtime reads.
+
+    The backfill streams every existing source through the production object store,
+    so it must honour the deployment's configured deadlines rather than pin its own.
+    """
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"0218 backfill: {name} must be a number") from exc
+    if value <= 0:
+        raise RuntimeError(f"0218 backfill: {name} must be positive")
+    return value
+
+
 def _storage_client():
     return boto3.client(
         "s3",
@@ -45,8 +63,8 @@ def _storage_client():
             s3={"addressing_style": "path"},
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
-            connect_timeout=5,
-            read_timeout=30,
+            connect_timeout=_required_timeout("R2_CONNECT_TIMEOUT_SECONDS", 5.0),
+            read_timeout=_required_timeout("R2_READ_TIMEOUT_SECONDS", 30.0),
         ),
     )
 
@@ -200,7 +218,6 @@ def upgrade() -> None:
     _assert_no_active_source_publication_defects()
 
     op.alter_column("media_file", "source_sha256", existing_type=sa.Text(), nullable=False)
-    op.execute("DROP INDEX IF EXISTS idx_media_stale_pending_upload_cleanup")
     op.drop_column("media_source_attempts", "signed_upload_expires_at")
     op.execute(
         """

@@ -363,13 +363,11 @@ describe("MediaActivityProvider convergence", () => {
 
     signedUpload.resolve(new Response(null, { status: 200 }));
     await expect(upload).resolves.toEqual({
-      kind: "Published",
-      result: {
-        mediaId: UPLOAD_MEDIA_ID,
-        sourceAttemptId: UPLOAD_ATTEMPT_ID,
-        idempotencyOutcome: "created",
-        duplicate: false,
-      },
+      kind: "PublishedUpload",
+      mediaId: UPLOAD_MEDIA_ID,
+      sourceAttemptId: UPLOAD_ATTEMPT_ID,
+      idempotencyOutcome: "created",
+      duplicate: false,
     });
     await waitFor(() => expect(activityReads).toBe(2));
   });

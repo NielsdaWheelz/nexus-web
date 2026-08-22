@@ -4,7 +4,7 @@ All API errors are defined here with their corresponding HTTP status codes.
 """
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 _ERROR_DETAIL_MAX_CHARS = 1000
 
@@ -458,6 +458,22 @@ class ForbiddenError(ApiError):
 
     def __init__(self, code: ApiErrorCode = ApiErrorCode.E_FORBIDDEN, message: str = "Forbidden"):
         super().__init__(code, message)
+
+
+type ResourceFailureDimension = Literal["Memory", "Time", "Structure", "Output"]
+"""Safe public dimension of an ``E_RESOURCE_LIMIT`` failure; raw parser text stays operator-only."""
+
+
+class ResourceLimitError(ApiError):
+    """A declared parser or runtime budget breach carrying its safe dimension.
+
+    This is the single typed carrier the background child boundary projects into
+    the ``ModeledFailure`` result; untyped exception attributes are never read.
+    """
+
+    def __init__(self, message: str, *, dimension: ResourceFailureDimension) -> None:
+        super().__init__(ApiErrorCode.E_RESOURCE_LIMIT, message)
+        self.dimension: ResourceFailureDimension = dimension
 
 
 class ConflictError(ApiError):

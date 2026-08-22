@@ -947,8 +947,14 @@ destinations through `library_entries`.
 
 An upload session is durable intent, not media: signed capability expiry never
 deletes it, and media/source attempt/exact queue job publish atomically only
-after byte verification. Its publication response returns the stable media and
-source-attempt identities. Non-upload source acceptance returns `media_id`,
+after byte verification. Confirmation is fenced by a *renewable* verification
+lease: the verifier extends it under the session row lock at every phase
+boundary, and publication requires the lease token — not a non-expired lease — so
+a slow but unstolen verifier still publishes while a stolen one never does. Every
+confirm is idempotent: one locked read of the session row owns the
+already-published decision, so a replay that queues behind the winning
+publication returns the same projection rather than a conflict. Its publication
+response returns the stable media and source-attempt identities. Non-upload source acceptance returns `media_id`,
 `source_attempt_id`, `source_type`, `source_attempt_status`,
 `idempotency_outcome`, `processing_status`, and `ingest_enqueued`. Provider,
 network, sanitization, extraction, and post-acceptance storage failures update

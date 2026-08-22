@@ -302,6 +302,7 @@
         "python/nexus/services/epub_lifecycle.py",
         "python/nexus/job_topology.py",
         "python/nexus/jobs/process_executor.py",
+        "python/nexus/jobs/dead_letter_projections.py",
         "python/nexus/jobs/queue.py",
         "python/nexus/jobs/registry.py",
         "python/nexus/jobs/worker.py",
@@ -314,6 +315,8 @@
         "deploy/hetzner/docker-compose.yml",
         "apps/web/src/app/api/media/uploads/**/*",
         "apps/web/src/lib/media/ingestionClient.ts",
+        "apps/web/src/lib/media/uploadVerification.ts",
+        "apps/web/src/lib/media/captureFeedback.ts",
         "apps/web/src/lib/media/activityClient.ts",
         "apps/web/src/lib/media/MediaActivityProvider.tsx",
         "apps/web/src/lib/status/mediaActivity.ts",
@@ -332,12 +335,14 @@
         "pytest:python/tests/service/test_bounded_media_extraction.py",
         "pytest:python/tests/service/test_media_activity.py::test_activity_projects_only_upload_obligations_with_strict_precedence",
         "pytest:python/tests/service/test_ingest_reconciliation_readiness.py",
-        "vitest:apps/web/src/components/nexus/MediaActivityPage.browser.test.tsx"
+        "vitest:apps/web/src/components/nexus/MediaActivityPage.browser.test.tsx",
+        "vitest:apps/web/src/lib/media/ingestionClient.unit.test.ts"
       ],
       "capabilities": [
         "migrations",
         "service",
-        "component"
+        "component",
+        "kernel-web"
       ]
     },
     {
@@ -634,6 +639,7 @@
         "python/nexus/job_topology.py",
         "python/nexus/jobs/queue.py",
         "python/nexus/jobs/process_executor.py",
+        "python/nexus/jobs/dead_letter_projections.py",
         "python/nexus/jobs/registry.py",
         "python/nexus/jobs/worker.py",
         "python/nexus/services/chat_run*.py",
@@ -656,6 +662,8 @@
         "apps/web/src/lib/media/MediaActivityProvider.tsx",
         "apps/web/src/lib/media/activityClient.ts",
         "apps/web/src/lib/media/ingestionClient.ts",
+        "apps/web/src/lib/media/uploadVerification.ts",
+        "apps/web/src/lib/media/captureFeedback.ts",
         "apps/web/e2e/documentUploadFixture.ts",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],

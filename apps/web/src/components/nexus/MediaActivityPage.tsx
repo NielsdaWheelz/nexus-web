@@ -22,10 +22,7 @@ import type {
   MediaRepairScope,
 } from "@/lib/media/activityClient";
 import { useMediaActivity } from "@/lib/media/MediaActivityProvider";
-import {
-  getFileUploadKind,
-  isMediaIngestionDefect,
-} from "@/lib/media/ingestionClient";
+import { getFileUploadKind } from "@/lib/media/ingestionClient";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -34,6 +31,8 @@ import {
   mediaActivityKindLabel,
   mediaActivityRepairErrorMessage,
   mediaActivityStatusCopy,
+  mediaActivityUploadAttentionCopy,
+  uploadSessionActionErrorMessage,
 } from "@/lib/status/mediaActivity";
 import styles from "./MediaActivityPage.module.css";
 
@@ -252,26 +251,6 @@ function MediaActivityRow({
   );
 }
 
-function uploadAttentionCopy(item: MediaActivityUploadSessionItem): string {
-  switch (item.attention.kind) {
-    case "TransportFailed":
-      return item.attention.failureKind === "HttpRejected"
-        ? "The storage service rejected this upload. Choose the original file to retry."
-        : "The upload did not finish. Choose the original file to retry.";
-    case "CapabilityExpired":
-      return "The upload link expired. Choose the original file to retry.";
-    case "VerificationFailed":
-      switch (item.attention.failureCode) {
-        case "E_FILE_TOO_LARGE":
-          return "This file exceeds the import limit. Remove it and start a new import with a smaller file.";
-        case "E_INVALID_FILE_TYPE":
-          return "This file is not a valid PDF or EPUB. Remove it and start a new import.";
-        default:
-          return "Nexus could not verify the uploaded bytes. Remove this import and start a new one.";
-      }
-  }
-}
-
 function UploadSessionRow({
   item,
   onRetry,
@@ -305,8 +284,11 @@ function UploadSessionRow({
     try {
       await onRetry(file);
     } catch (error) {
-      if (isMediaIngestionDefect(error)) setDefect(error);
-      else setFailure("The upload could not be retried. Check your connection and try again.");
+      try {
+        setFailure(uploadSessionActionErrorMessage(error));
+      } catch (caughtDefect: unknown) {
+        setDefect(caughtDefect);
+      }
     } finally {
       setWorking(null);
     }
@@ -318,8 +300,11 @@ function UploadSessionRow({
     try {
       await onRemove();
     } catch (error) {
-      if (isMediaIngestionDefect(error)) setDefect(error);
-      else setFailure("The unfinished import could not be removed. Refresh and try again.");
+      try {
+        setFailure(uploadSessionActionErrorMessage(error));
+      } catch (caughtDefect: unknown) {
+        setDefect(caughtDefect);
+      }
     } finally {
       setWorking(null);
     }
@@ -365,7 +350,7 @@ function UploadSessionRow({
           })}
         </ol>
         <div className={styles.facts}>
-          <strong>{uploadAttentionCopy(item)}</strong>
+          <strong>{mediaActivityUploadAttentionCopy(item)}</strong>
           {failure === null ? null : <span role="alert">{failure}</span>}
         </div>
         <div className={styles.actions}>

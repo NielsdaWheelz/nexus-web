@@ -72,6 +72,27 @@ runs:
       shell: bash
       run: uv sync --all-extras --locked --directory python
 
+    - name: Provision the rootless systemd cgroup delegate
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get install --yes --no-install-recommends dbus-user-session
+        sudo loginctl enable-linger "$(id -un)"
+        runtime_dir="/run/user/$(id -u)"
+        export XDG_RUNTIME_DIR="$runtime_dir"
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+        {
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
+        } >> "$GITHUB_ENV"
+        attempts=0
+        while [ ! -S "$runtime_dir/bus" ] && [ "$attempts" -lt 100 ]; do
+          sleep 0.2
+          attempts=$((attempts + 1))
+        done
+        PYTHONPATH=python python/.venv/bin/python -c \
+          'import sys; from nexus_test_control.services import cgroup_delegate_failure as probe; diagnostic = probe(); sys.exit(diagnostic if diagnostic else 0)'
+
     - name: Install locked JavaScript dependencies
       shell: bash
       run: |

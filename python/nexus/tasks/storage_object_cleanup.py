@@ -60,6 +60,17 @@ _MEDIA_OWNER = "Media"
 _UPLOAD_SESSION_OWNER = "UploadSession"
 
 
+class StoragePathCleanupInFlight(Exception):
+    """The single cleanup reservation for a path is claimed, running, or deleting.
+
+    This is the owner-agnostic condition detected by the reservation CAS; it is
+    deliberately not an :class:`~nexus.errors.ApiError`. Each owner maps it in its
+    own domain: a ``Media`` write is rejected with ``E_MEDIA_DELETING``, while the
+    upload owner reads an in-flight sweep of a staged generation as the durable
+    cleanup intent that ``DELETE /media/uploads/{session_handle}`` requires.
+    """
+
+
 def _now_utc(db: Session) -> datetime:
     return db.execute(text("SELECT now()")).scalar_one()
 
@@ -130,13 +141,18 @@ def _armed_writers_for_path(db: Session, storage_path: str) -> list:
 def reserve_storage_object_write(db: Session, *, media_id: UUID, storage_path: str) -> None:
     """Reserve a durable final-sweep owned by published Media support state."""
     with transaction(db):
-        _reserve_storage_object_write_in_current_transaction(
-            db,
-            owner_kind=_MEDIA_OWNER,
-            owner_id=media_id,
-            storage_path=storage_path,
-            retain_until=None,
-        )
+        try:
+            _reserve_storage_object_write_in_current_transaction(
+                db,
+                owner_kind=_MEDIA_OWNER,
+                owner_id=media_id,
+                storage_path=storage_path,
+                retain_until=None,
+            )
+        except StoragePathCleanupInFlight as exc:
+            raise ConflictError(
+                ApiErrorCode.E_MEDIA_DELETING, "Storage path is being cleaned up"
+            ) from exc
 
 
 def reserve_upload_session_storage_object_write(
@@ -146,7 +162,11 @@ def reserve_upload_session_storage_object_write(
     storage_path: str,
     retain_until: datetime,
 ) -> None:
-    """Reserve a final-sweep for staged/candidate bytes under upload intent."""
+    """Reserve a final-sweep for staged/candidate bytes under upload intent.
+
+    Raises :class:`StoragePathCleanupInFlight` when this exact path is already
+    being swept; the upload owner maps that condition in its own domain.
+    """
     with transaction(db):
         reserve_upload_session_storage_object_write_in_current_transaction(
             db,
@@ -163,7 +183,11 @@ def reserve_upload_session_storage_object_write_in_current_transaction(
     storage_path: str,
     retain_until: datetime,
 ) -> None:
-    """Reserve staged/candidate cleanup inside the caller's owner transaction."""
+    """Reserve staged/candidate cleanup inside the caller's owner transaction.
+
+    Raises :class:`StoragePathCleanupInFlight` when this exact path is already
+    being swept; the upload owner maps that condition in its own domain.
+    """
     _reserve_storage_object_write_in_current_transaction(
         db,
         owner_kind=_UPLOAD_SESSION_OWNER,
@@ -260,11 +284,8 @@ def _reserve_storage_object_write_in_current_transaction(
     )
     if not renewed:
         # Claimed/running or already holding the exclusive delete: the path is
-        # mid-cleanup. Reject rather than write into an object about to be deleted.
-        raise ConflictError(
-            ApiErrorCode.E_MEDIA_DELETING,
-            "Storage path is being cleaned up",
-        )
+        # mid-cleanup. Report the condition; the owner decides what it means.
+        raise StoragePathCleanupInFlight(storage_path)
 
 
 def finalize_storage_object_write(

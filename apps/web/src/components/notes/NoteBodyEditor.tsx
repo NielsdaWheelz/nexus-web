@@ -21,7 +21,7 @@ import {
 } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { history } from "prosemirror-history";
-import { isApiError } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneReturnDescendantReady } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
@@ -40,10 +40,10 @@ import {
 import { extractUrls } from "@/lib/extractUrls";
 import {
   getFileUploadError,
-  isMediaIngestionDefect,
-  UploadNeedsAttentionError,
+  UploadSessionError,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
+import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import {
   captureSourceUrl,
   isSourceUrlCaptureDefect,
@@ -468,19 +468,21 @@ export default function NoteBodyEditor({
           file,
           libraryIds: [],
         });
-        if (!insertMedia(view, upload.result.mediaId, file.name)) {
+        if (!insertMedia(view, upload.mediaId, file.name)) {
           throw new MediaAttachmentContractDefect(
             "The published attachment target changed unexpectedly.",
           );
         }
       } catch (caught: unknown) {
         if (handleUnauthenticatedApiError(caught)) return;
-        if (caught instanceof UploadNeedsAttentionError) {
-          onFeedbackRef.current?.({
-            tone: "Warning",
-            title: "Upload needs attention",
-            message: "Open Import Activity for the available next step.",
-          });
+        if (caught instanceof UploadSessionError) {
+          try {
+            onFeedbackRef.current?.(
+              mediaCaptureErrorMessage(caught, "AddAttachment"),
+            );
+          } catch (caughtDefect: unknown) {
+            setDefect({ error: caughtDefect });
+          }
           return;
         }
         if (isMediaAttachmentDefect(caught)) {
@@ -829,7 +831,7 @@ function noteBodyPositionForTextOffset(
 function isMediaAttachmentDefect(error: unknown): boolean {
   return (
     error instanceof MediaAttachmentContractDefect ||
-    isMediaIngestionDefect(error) ||
+    isSameSystemApiDefect(error) ||
     (!isApiError(error) &&
       !(error instanceof TypeError) &&
       !(error instanceof DOMException))

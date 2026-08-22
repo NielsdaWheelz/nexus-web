@@ -17,15 +17,18 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
+from nexus.errors import ResourceFailureDimension
+from nexus.jobs.dead_letter_projections import apply_dead_letter_projection
 from nexus.jobs.process_executor import (
     BackgroundProcessExecutor,
+    ChildClaimLost,
     ChildDefect,
     ChildInterrupted,
     ChildModeledFailure,
     ChildReschedule,
     ChildResourceFailure,
+    ChildShutdownInterrupted,
     ChildSucceeded,
-    ResourceFailureDimension,
 )
 from nexus.jobs.queue import (
     HEAVY_CAPACITY_OCCUPIED_SQL,
@@ -49,12 +52,15 @@ from nexus.jobs.registry import (
     get_default_registry,
     periodic_dedupe_key,
     periodic_slot_start,
-    resolve_dead_letter_handler,
     resolve_job_handler,
 )
 from nexus.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Time allowed for the heartbeat thread to observe its stop flag and finish the
+# renewal it may already be inside, before the worker settles the job itself.
+_HEARTBEAT_DRAIN_TIMEOUT_SECONDS = 5.0
 
 
 class JobWorker:
@@ -77,6 +83,7 @@ class JobWorker:
         successful_cycle_callback: Callable[[], None] | None = None,
         successful_cycle_interval_seconds: float | None = None,
         process_executor: BackgroundProcessExecutor | None = None,
+        stop_event: threading.Event | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.worker_id = worker_id
@@ -101,6 +108,9 @@ class JobWorker:
         )
         self.allowed_kinds = allowed_kinds
         self.process_executor = process_executor
+        # One shutdown signal per worker: the loop observes it between jobs and the
+        # process executor observes it while a child is running.
+        self._shutdown = threading.Event() if stop_event is None else stop_event
         if (successful_cycle_callback is None) != (successful_cycle_interval_seconds is None):
             raise ValueError("successful cycle callback and interval must be configured together")
         if successful_cycle_callback is not None and allowed_kinds == ():
@@ -203,10 +213,12 @@ class JobWorker:
 
         self._advance_successful_cycle()
 
+        claim_lost = threading.Event()
         stop_event, heartbeat_thread = self._start_heartbeat_thread(
             job_id=claimed.id,
             lease_seconds=definition.lease_seconds,
             resource_class=definition.resource_class,
+            claim_lost=claim_lost,
         )
 
         try:
@@ -229,10 +241,29 @@ class JobWorker:
                     wall_timeout_seconds=definition.wall_timeout_seconds,
                     runtime=definition.child_runtime,
                     child_exit_cleanup=definition.child_exit_cleanup,
+                    shutdown=self._shutdown,
+                    claim_lost=claim_lost,
                 )
+                if isinstance(child_result, ChildClaimLost):
+                    # The claim is already someone else's; settling it here would
+                    # overwrite the current owner's attempt.
+                    logger.warning(
+                        "worker_child_terminated_after_lost_claim",
+                        worker_id=self.worker_id,
+                        job_id=str(claimed.id),
+                        kind=claimed.kind,
+                    )
+                    stop_event.set()
+                    heartbeat_thread.join(timeout=_HEARTBEAT_DRAIN_TIMEOUT_SECONDS)
+                    return True
+                if isinstance(child_result, ChildShutdownInterrupted):
+                    stop_event.set()
+                    heartbeat_thread.join(timeout=_HEARTBEAT_DRAIN_TIMEOUT_SECONDS)
+                    self._release_shutdown_interrupted_job(claimed=claimed)
+                    return True
                 if isinstance(child_result, ChildResourceFailure):
                     stop_event.set()
-                    heartbeat_thread.join(timeout=5)
+                    heartbeat_thread.join(timeout=_HEARTBEAT_DRAIN_TIMEOUT_SECONDS)
                     self._settle_resource_failure(
                         claimed=claimed,
                         definition=definition,
@@ -245,7 +276,7 @@ class JobWorker:
                         and child_result.resource_dimension is not None
                     ):
                         stop_event.set()
-                        heartbeat_thread.join(timeout=5)
+                        heartbeat_thread.join(timeout=_HEARTBEAT_DRAIN_TIMEOUT_SECONDS)
                         self._settle_resource_failure(
                             claimed=claimed,
                             definition=definition,
@@ -255,7 +286,7 @@ class JobWorker:
                     raise _ChildFailure(child_result.error_code, child_result.message)
                 if isinstance(child_result, ChildInterrupted):
                     stop_event.set()
-                    heartbeat_thread.join(timeout=5)
+                    heartbeat_thread.join(timeout=_HEARTBEAT_DRAIN_TIMEOUT_SECONDS)
                     if self._settle_succeeded_source_after_abnormal_child(
                         claimed=claimed,
                         definition=definition,
@@ -273,7 +304,7 @@ class JobWorker:
                         child_error=child_result.message,
                     )
                     stop_event.set()
-                    heartbeat_thread.join(timeout=5)
+                    heartbeat_thread.join(timeout=_HEARTBEAT_DRAIN_TIMEOUT_SECONDS)
                     if self._settle_succeeded_source_after_abnormal_child(
                         claimed=claimed,
                         definition=definition,
@@ -424,7 +455,7 @@ class JobWorker:
                     )
         finally:
             stop_event.set()
-            heartbeat_thread.join(timeout=5)
+            heartbeat_thread.join(timeout=_HEARTBEAT_DRAIN_TIMEOUT_SECONDS)
 
         return True
 
@@ -432,14 +463,12 @@ class JobWorker:
         self,
         db: Session,
         definition: JobDefinition,
-        job: Any,
+        job: JobRow,
     ) -> None:
-        """Run the kind-specific dead-letter hook inside the queue transition."""
-        handler_path = definition.dead_letter_handler_path
-        if handler_path is None:
+        """Apply the kind's closed dead-letter projection inside the queue transition."""
+        if definition.dead_letter_projection == "None":
             return
-        handler = resolve_dead_letter_handler(handler_path)
-        handler(db, job)
+        apply_dead_letter_projection(db, projection=definition.dead_letter_projection, job=job)
         logger.warning(
             "worker_job_dead_letter_handled",
             worker_id=self.worker_id,
@@ -447,6 +476,38 @@ class JobWorker:
             kind=job.kind,
             error_code=job.error_code,
         )
+
+    def _release_shutdown_interrupted_job(self, *, claimed: JobRow) -> None:
+        """Return a shutdown-interrupted job to pending without burning an attempt.
+
+        The interruption is explained by our own shutdown, not by the job, so it
+        must not consume retry budget. ``reschedule_running_job`` compensates the
+        attempt the claim already charged and releases the Heavy capacity lease in
+        the same fenced transaction.
+        """
+        with self.session_factory() as db:
+            released = reschedule_running_job(
+                db,
+                job_id=claimed.id,
+                worker_id=self.worker_id,
+                attempt_no=claimed.attempts,
+                delay_seconds=0,
+            )
+            db.commit()
+        if released:
+            logger.info(
+                "worker_job_released_on_shutdown",
+                worker_id=self.worker_id,
+                job_id=str(claimed.id),
+                kind=claimed.kind,
+            )
+        else:
+            logger.warning(
+                "worker_job_release_rejected_lost_ownership",
+                worker_id=self.worker_id,
+                job_id=str(claimed.id),
+                kind=claimed.kind,
+            )
 
     def _settle_resource_failure(
         self,
@@ -573,9 +634,9 @@ class JobWorker:
 
             return retry_serializable(db, "worker_scheduler", op)
 
-    def run_forever(self, *, stop_event: threading.Event | None = None) -> None:
-        """Run polling + scheduler loops until stop_event is set."""
-        stop = stop_event or threading.Event()
+    def run_forever(self) -> None:
+        """Run polling + scheduler loops until this worker's shutdown signal is set."""
+        stop = self._shutdown
         next_scheduler_at = time.monotonic()
         idle_wait_seconds = self.poll_interval_seconds
         db_failure_wait_seconds = self.db_failure_backoff_seconds
@@ -846,7 +907,12 @@ class JobWorker:
             stop_event.wait(timeout)
 
     def _start_heartbeat_thread(
-        self, *, job_id: UUID, lease_seconds: int, resource_class: JobResourceClass
+        self,
+        *,
+        job_id: UUID,
+        lease_seconds: int,
+        resource_class: JobResourceClass,
+        claim_lost: threading.Event,
     ) -> tuple[threading.Event, threading.Thread]:
         stop_event = threading.Event()
         heartbeat_every = min(self.heartbeat_interval_seconds, max(float(lease_seconds) / 2.0, 1.0))
@@ -866,6 +932,14 @@ class JobWorker:
                         )
                         db.commit()
                         if not updated:
+                            # Our claim is gone: the child must stop burning the
+                            # bounded container on work we no longer own.
+                            logger.warning(
+                                "worker_heartbeat_lost_ownership",
+                                worker_id=self.worker_id,
+                                job_id=str(job_id),
+                            )
+                            claim_lost.set()
                             return
                         self._advance_successful_cycle()
                 except SQLAlchemyError:

@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from nexus.schemas.media import SourceProgress
+from nexus.schemas.media import SourceProgress, UploadVerificationFailureCode
 from nexus.schemas.presence import Presence
 
 NonemptyString = Annotated[str, Field(min_length=1)]
@@ -88,7 +88,7 @@ class MediaUploadSessionCapabilityExpiredOut(BaseModel):
 
 class MediaUploadSessionVerificationFailureOut(BaseModel):
     kind: Literal["VerificationFailed"] = "VerificationFailed"
-    failure_code: NonemptyString
+    failure_code: UploadVerificationFailureCode
 
     model_config = ConfigDict(extra="forbid")
 

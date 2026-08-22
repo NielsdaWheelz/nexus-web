@@ -11,6 +11,7 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
+import structlog
 from sqlalchemy import Engine, event, func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
@@ -56,6 +57,7 @@ from tests.testkit.auth import UserRecord
 from tests.testkit.unreachable_state import (
     cleanup_committed_upload_user,
     delete_jobs_by_ids,
+    expire_upload_verification_lease,
     force_upload_cleanup_job_due,
     install_deferred_media_insert_failure,
     make_upload_cleanup_job_available_before_its_fence,
@@ -135,6 +137,9 @@ class _BlockingCopyStorage:
         if not self._release_copy.wait(timeout=20):
             raise AssertionError("stale verification copy was never released")
         self._delegate.copy_object(source_path, destination_path)
+
+    def delete_object(self, path: str) -> None:
+        self._delegate.delete_object(path)
 
 
 class _BlockingSignStorage:
@@ -231,14 +236,20 @@ def test_upload_session_fences_generations_and_atomically_publishes_or_converges
     staged_paths: set[str] = set()
     candidate_paths: set[str] = set()
 
-    created = create_upload_session(
-        db_session,
-        viewer_id=test_user.id,
-        request=request,
-        request_id="upload-create",
-        idempotency_key="durable-upload",
-        storage_client=storage,
-    )
+    with structlog.testing.capture_logs() as intent_facts:
+        created = create_upload_session(
+            db_session,
+            viewer_id=test_user.id,
+            request=request,
+            request_id="upload-create",
+            idempotency_key="durable-upload",
+            storage_client=storage,
+        )
+    accepted = [entry for entry in intent_facts if entry.get("event") == "IntentAccepted"]
+    assert len(accepted) == 1
+    assert accepted[0]["generation"] == 1
+    assert accepted[0]["request_id"] == "upload-create"
+    assert "filename" not in accepted[0] and "upload_url" not in accepted[0]
     assert created.kind == "UploadRequired"
     assert created.idempotency_outcome == "Created"
     assert created.generation == 1
@@ -325,25 +336,35 @@ def test_upload_session_fences_generations_and_atomically_publishes_or_converges
     )
     session = db_session.get(MediaUploadSession, session.id)
     assert session is not None and session.transport_failure_kind is None
-    record_transport_failure(
-        db_session,
-        viewer_id=test_user.id,
-        session_handle=created.session_handle,
-        failure=UploadHttpRejectedFailureRequest(
-            kind="HttpRejected",
-            status=503,
-            generation=2,
-            duration_ms=20,
-            request_id="current-put",
-        ),
-    )
-    attention = list_viewer_unresolved_upload_sessions(db_session, viewer_id=test_user.id)
-    assert len(attention) == 1
-    assert attention[0].state == "TransportFailed"
-    assert attention[0].expected_size_bytes == len(payload)
-    assert isinstance(attention[0].failure, TransportFailed)
-    assert isinstance(attention[0].failure.reason, UploadTransportHttpRejectedFailure)
-    assert attention[0].failure.reason.status == 503
+    with structlog.testing.capture_logs() as put_facts:
+        record_transport_failure(
+            db_session,
+            viewer_id=test_user.id,
+            session_handle=created.session_handle,
+            failure=UploadHttpRejectedFailureRequest(
+                kind="HttpRejected",
+                status=503,
+                generation=2,
+                duration_ms=20,
+                request_id="current-put",
+            ),
+        )
+    put_failed = [entry for entry in put_facts if entry.get("event") == "PutFailed"]
+    assert len(put_failed) == 1
+    assert put_failed[0]["upload_session_id"] == str(session.id)
+    assert put_failed[0]["generation"] == 2
+    assert put_failed[0]["request_id"] == "current-put"
+    assert put_failed[0]["recorded"] is True
+    assert put_failed[0]["stale_generation"] is False
+    assert "filename" not in put_failed[0] and "upload_url" not in put_failed[0]
+    attention = list_viewer_unresolved_upload_sessions(db_session, viewer_id=test_user.id, limit=20)
+    assert attention.total == 1
+    assert len(attention.items) == 1
+    assert attention.items[0].state == "TransportFailed"
+    assert attention.items[0].expected_size_bytes == len(payload)
+    assert isinstance(attention.items[0].failure, TransportFailed)
+    assert isinstance(attention.items[0].failure.reason, UploadTransportHttpRejectedFailure)
+    assert attention.items[0].failure.reason.status == 503
 
     retry = retry_upload_session(
         db_session,
@@ -387,14 +408,26 @@ def test_upload_session_fences_generations_and_atomically_publishes_or_converges
     staging_path = build_upload_session_staging_storage_path(session.id, 3, "pdf")
     staged_paths.add(staging_path)
     storage.put_object(staging_path, payload, "application/pdf")
-    published = confirm_upload_session(
-        db_session,
-        viewer_id=test_user.id,
-        session_handle=created.session_handle,
-        generation=3,
-        request_id="publish",
-        storage_client=storage,
-    )
+    with structlog.testing.capture_logs() as publish_facts:
+        published = confirm_upload_session(
+            db_session,
+            viewer_id=test_user.id,
+            session_handle=created.session_handle,
+            generation=3,
+            request_id="publish",
+            storage_client=storage,
+        )
+    assert [
+        entry["event"]
+        for entry in publish_facts
+        if entry.get("upload_session_id") == str(session.id)
+    ] == ["ConfirmStarted", "Published"]
+    published_fact = next(entry for entry in publish_facts if entry["event"] == "Published")
+    assert published_fact["generation"] == 3
+    assert published_fact["request_id"] == "publish"
+    assert published_fact["media_id"] == str(candidate_media_id)
+    assert published_fact["source_attempt_id"] == str(published.source_attempt_id)
+    assert "filename" not in published_fact and "upload_url" not in published_fact
     assert published.media_id == candidate_media_id
     assert published.idempotency_outcome == "Created"
     media = db_session.get(Media, candidate_media_id)
@@ -488,6 +521,23 @@ def test_upload_session_fences_generations_and_atomically_publishes_or_converges
     published_session.transport_failed_at = None
     db_session.commit()
 
+    with structlog.testing.capture_logs() as published_put_facts:
+        record_transport_failure(
+            db_session,
+            viewer_id=test_user.id,
+            session_handle=created.session_handle,
+            failure=UploadNetworkFailureRequest(
+                kind="Network", generation=3, duration_ms=30, request_id="post-publish-put"
+            ),
+        )
+    published_put = next(
+        entry for entry in published_put_facts if entry.get("event") == "PutFailed"
+    )
+    assert published_put["already_published"] is True
+    assert published_put["recorded"] is False
+    republished = db_session.get(MediaUploadSession, session.id)
+    assert republished is not None and republished.transport_failed_at is None
+
     with pytest.raises(ApiError) as published_remove:
         delete_upload_session(
             db_session,
@@ -547,8 +597,12 @@ def test_upload_session_fences_generations_and_atomically_publishes_or_converges
         )
     assert rejected_confirm.value.code is ApiErrorCode.E_INVALID_FILE_TYPE
     assert db_session.get(Media, rejected_session.candidate_media_id) is None
-    rejection_attention = list_viewer_unresolved_upload_sessions(db_session, viewer_id=test_user.id)
-    terminal = next(item for item in rejection_attention if item.session_id == rejected_session.id)
+    rejection_attention = list_viewer_unresolved_upload_sessions(
+        db_session, viewer_id=test_user.id, limit=20
+    )
+    terminal = next(
+        item for item in rejection_attention.items if item.session_id == rejected_session.id
+    )
     assert terminal.state == "VerificationFailed"
     assert isinstance(terminal.failure, VerificationFailed)
     assert terminal.failure.code == "E_INVALID_FILE_TYPE"
@@ -559,7 +613,7 @@ def test_upload_session_fences_generations_and_atomically_publishes_or_converges
     rejected_session.verification_expires_at = datetime.now(UTC) + timedelta(minutes=1)
     db_session.commit()
     with pytest.raises(AssertionError, match="terminal upload verification retains a live lease"):
-        list_viewer_unresolved_upload_sessions(db_session, viewer_id=test_user.id)
+        list_viewer_unresolved_upload_sessions(db_session, viewer_id=test_user.id, limit=20)
     db_session.rollback()
     rejected_session = db_session.get(MediaUploadSession, rejected_session.id)
     assert rejected_session is not None
@@ -574,7 +628,7 @@ def test_upload_session_fences_generations_and_atomically_publishes_or_converges
     with pytest.raises(
         AssertionError, match="terminal upload verification retains a transport failure"
     ):
-        list_viewer_unresolved_upload_sessions(db_session, viewer_id=test_user.id)
+        list_viewer_unresolved_upload_sessions(db_session, viewer_id=test_user.id, limit=20)
     db_session.rollback()
     rejected_session = db_session.get(MediaUploadSession, rejected_session.id)
     assert rejected_session is not None
@@ -665,15 +719,29 @@ def test_upload_session_fences_generations_and_atomically_publishes_or_converges
             media_id=failure_candidate_id,
             discriminator=failure_user_id.hex,
         )
-        with pytest.raises(DBAPIError, match="forced upload publication commit failure"):
-            confirm_upload_session(
-                failure_db,
-                viewer_id=failure_user_id,
-                session_handle=failure_created.session_handle,
-                generation=1,
-                request_id="forced-commit-failure",
-                storage_client=storage,
-            )
+        with structlog.testing.capture_logs() as commit_failure_facts:
+            with pytest.raises(DBAPIError, match="forced upload publication commit failure"):
+                confirm_upload_session(
+                    failure_db,
+                    viewer_id=failure_user_id,
+                    session_handle=failure_created.session_handle,
+                    generation=1,
+                    request_id="forced-commit-failure",
+                    storage_client=storage,
+                )
+        failure_events = [
+            entry["event"]
+            for entry in commit_failure_facts
+            if entry.get("upload_session_id") == str(failure_session_id)
+        ]
+        assert failure_events == ["ConfirmStarted", "ConfirmFailed"]
+        confirm_failed = next(
+            entry for entry in commit_failure_facts if entry["event"] == "ConfirmFailed"
+        )
+        assert confirm_failed["generation"] == 1
+        assert confirm_failed["request_id"] == "forced-commit-failure"
+        assert confirm_failed["error_code"] == "E_INTERNAL"
+        assert {"filename", "upload_url", "storage_path", "content"}.isdisjoint(confirm_failed)
         with Session(engine) as rollback_oracle:
             assert rollback_oracle.get(Media, failure_candidate_id) is None
             assert rollback_oracle.get(MediaFile, failure_candidate_id) is None
@@ -933,6 +1001,23 @@ def test_expired_verifier_candidate_cannot_overwrite_the_published_source(
         assert blocking_storage.destination_path == stale_candidate_path
 
         db_session.expire_all()
+        # A retry may not silently cancel a live verification: the same policy the
+        # create endpoint applies. Only a lapsed lease may be stolen.
+        with pytest.raises(ApiError) as live_retry:
+            retry_upload_session(
+                db_session,
+                viewer_id=test_user.id,
+                session_handle=created.session_handle,
+                request=RetryUploadSessionRequest(
+                    filename="fenced.pdf",
+                    content_type="application/pdf",
+                    size_bytes=len(winning_payload),
+                ),
+                storage_client=storage,
+            )
+        assert live_retry.value.code is ApiErrorCode.E_UPLOAD_VERIFICATION_IN_PROGRESS
+        assert expire_upload_verification_lease(db_session, session_id=session.id) == stale_token
+        db_session.expire_all()
         retry = retry_upload_session(
             db_session,
             viewer_id=test_user.id,
@@ -1146,3 +1231,351 @@ def test_retry_capability_is_cleanup_fenced_before_concurrent_remove(
             )
         delete_jobs_by_ids(db_session, job_ids=cleanup_job_ids)
         db_session.commit()
+
+
+def test_confirm_replay_racing_the_publication_transaction_converges_on_published(
+    committed_upload_support: tuple[Session, UserRecord],
+    engine: Engine,
+) -> None:
+    """A replay that queues behind the winning publication lock is not a conflict.
+
+    One locked read of the session row owns the "already published" decision, so a
+    replay blocked on that lock observes the publication fact and returns the same
+    projection instead of the 409 an unlocked pre-read used to race into.
+    """
+    db_session, test_user = committed_upload_support
+    storage = get_storage_client()
+    payload = b"%PDF-1.7\nreplay race source\n%%EOF"
+    created = create_upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        request=_upload_request(filename="replay-race.pdf", size_bytes=len(payload)),
+        request_id="replay-race-create",
+        idempotency_key="replay-race",
+        storage_client=storage,
+    )
+    session = db_session.execute(
+        select(MediaUploadSession).where(
+            MediaUploadSession.created_by_user_id == test_user.id,
+            MediaUploadSession.idempotency_key == "replay-race",
+        )
+    ).scalar_one()
+    storage.put_object(
+        build_upload_session_staging_storage_path(session.id, 1, "pdf"),
+        payload,
+        "application/pdf",
+    )
+
+    publication_pending = Event()
+    release_publication = Event()
+    replay_locking = Event()
+    winner_results: list[tuple[UUID, UUID, str]] = []
+    replay_results: list[tuple[UUID, UUID, str]] = []
+    thread_errors: list[Exception] = []
+
+    def hold_inside_publication_transaction(pending_db: Session) -> None:
+        pending = next(
+            (
+                value
+                for value in pending_db.identity_map.values()
+                if isinstance(value, MediaUploadSession)
+                and value.id == session.id
+                and value.published_at is not None
+            ),
+            None,
+        )
+        if pending is None or publication_pending.is_set():
+            return
+        publication_pending.set()
+        if not release_publication.wait(timeout=20):
+            raise AssertionError("winning publication was never released")
+
+    def confirm(sink: list[tuple[UUID, UUID, str]], request_id: str) -> None:
+        with Session(engine, expire_on_commit=False) as confirm_db:
+            if request_id == "race-winner":
+                event.listen(confirm_db, "before_commit", hold_inside_publication_transaction)
+            try:
+                result = confirm_upload_session(
+                    confirm_db,
+                    viewer_id=test_user.id,
+                    session_handle=created.session_handle,
+                    generation=1,
+                    request_id=request_id,
+                    storage_client=storage,
+                )
+                sink.append((result.media_id, result.source_attempt_id, result.idempotency_outcome))
+            except Exception as exc:  # noqa: BLE001 - surfaced in the parent proof thread.
+                thread_errors.append(exc)
+
+    def note_replay_lock_wait(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if "media_upload_sessions" in statement and "FOR UPDATE" in statement:
+            replay_locking.set()
+
+    winner = Thread(target=confirm, args=(winner_results, "race-winner"), name="race-winner")
+    winner.start()
+    replay: Thread | None = None
+    try:
+        assert publication_pending.wait(timeout=20), "publication transaction never opened"
+        # The winner now holds the session row FOR UPDATE with its publication fact
+        # staged but uncommitted; only the replay can issue that locking read next.
+        event.listen(engine, "before_cursor_execute", note_replay_lock_wait)
+        try:
+            replay = Thread(
+                target=confirm, args=(replay_results, "race-replay"), name="race-replay"
+            )
+            replay.start()
+            assert replay_locking.wait(timeout=20), "replay never reached the session row lock"
+        finally:
+            event.remove(engine, "before_cursor_execute", note_replay_lock_wait)
+    finally:
+        release_publication.set()
+        winner.join(timeout=30)
+        if replay is not None:
+            replay.join(timeout=30)
+
+    assert not winner.is_alive() and replay is not None and not replay.is_alive()
+    assert thread_errors == []
+    assert len(winner_results) == 1 and len(replay_results) == 1
+    assert winner_results[0][2] == "Created"
+    assert replay_results[0][2] == "Reused"
+    assert replay_results[0][0] == winner_results[0][0] == session.candidate_media_id
+    assert replay_results[0][1] == winner_results[0][1]
+    db_session.expire_all()
+    assert (
+        _ingest_job_count(
+            db_session, media_id=session.candidate_media_id, attempt_id=winner_results[0][1]
+        )
+        == 1
+    )
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(MediaSourceAttempt)
+            .where(MediaSourceAttempt.media_id == session.candidate_media_id)
+        )
+        == 1
+    )
+
+
+def test_verification_lease_renewal_lets_a_slow_verifier_publish(
+    committed_upload_support: tuple[Session, UserRecord],
+    engine: Engine,
+) -> None:
+    """A lapsed lease alone never rejects a commit; the phase-boundary renewal fences it.
+
+    The lease is forced to lapse while the verifier is alive and nobody has stolen
+    it. Because publication requires the lease token rather than a non-expired lease,
+    and the verifier heartbeats at each phase boundary, the confirm still publishes
+    instead of failing with a stale-generation error the user cannot act on.
+    """
+    db_session, test_user = committed_upload_support
+    storage = get_storage_client()
+
+    slow_payload = b"%PDF-1.7\nslow but live verifier\n%%EOF"
+    slow_created = create_upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        request=_upload_request(filename="slow-lease.pdf", size_bytes=len(slow_payload)),
+        request_id="slow-lease-create",
+        idempotency_key="slow-lease",
+        storage_client=storage,
+    )
+    slow_session = db_session.execute(
+        select(MediaUploadSession).where(
+            MediaUploadSession.created_by_user_id == test_user.id,
+            MediaUploadSession.idempotency_key == "slow-lease",
+        )
+    ).scalar_one()
+    storage.put_object(
+        build_upload_session_staging_storage_path(slow_session.id, 1, "pdf"),
+        slow_payload,
+        "application/pdf",
+    )
+    slow_copy_started = Event()
+    release_slow_copy = Event()
+    slow_storage = _BlockingCopyStorage(storage, slow_copy_started, release_slow_copy)
+    slow_outcomes: list[str] = []
+    slow_errors: list[Exception] = []
+
+    def confirm_slow_verifier() -> None:
+        with Session(engine, expire_on_commit=False) as slow_db:
+            try:
+                slow_outcomes.append(
+                    confirm_upload_session(
+                        slow_db,
+                        viewer_id=test_user.id,
+                        session_handle=slow_created.session_handle,
+                        generation=1,
+                        request_id="slow-verifier",
+                        storage_client=cast(StorageClientBase, slow_storage),
+                    ).idempotency_outcome
+                )
+            except Exception as exc:  # noqa: BLE001 - surfaced in the parent proof thread.
+                slow_errors.append(exc)
+
+    slow_thread = Thread(target=confirm_slow_verifier, name="slow-upload-verifier")
+    slow_thread.start()
+    try:
+        assert slow_copy_started.wait(timeout=20), "slow verifier never reached its copy"
+        expire_upload_verification_lease(db_session, session_id=slow_session.id)
+    finally:
+        release_slow_copy.set()
+        slow_thread.join(timeout=30)
+
+    assert not slow_thread.is_alive()
+    assert slow_errors == []
+    assert slow_outcomes == ["Created"]
+    db_session.expire_all()
+    slow_published = db_session.get(MediaUploadSession, slow_session.id)
+    assert slow_published is not None
+    assert slow_published.published_media_id == slow_session.candidate_media_id
+    assert slow_published.verification_token is None
+    assert (
+        _ingest_job_count(
+            db_session,
+            media_id=slow_session.candidate_media_id,
+            attempt_id=slow_published.published_source_attempt_id,
+        )
+        == 1
+    )
+
+
+def test_verification_lease_refuses_a_stolen_lease_and_publishes_once(
+    committed_upload_support: tuple[Session, UserRecord],
+    engine: Engine,
+) -> None:
+    """A stolen lease loses as verification contention and never publishes twice.
+
+    A second confirm claims the first verifier's lapsed lease. The loser's own
+    heartbeat sees a different token with the generation unchanged, so it is refused
+    as contention (not as a superseded generation, which would tell the user to
+    re-pick their file), and exactly one publication survives — from the bytes of the
+    verifier that actually held the fence.
+    """
+    db_session, test_user = committed_upload_support
+    storage = get_storage_client()
+
+    stolen_payload = b"%PDF-1.7\nlease theft fencing test\n%%EOF"
+    stolen_created = create_upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        request=_upload_request(filename="stolen-lease.pdf", size_bytes=len(stolen_payload)),
+        request_id="stolen-lease-create",
+        idempotency_key="stolen-lease",
+        storage_client=storage,
+    )
+    stolen_session = db_session.execute(
+        select(MediaUploadSession).where(
+            MediaUploadSession.created_by_user_id == test_user.id,
+            MediaUploadSession.idempotency_key == "stolen-lease",
+        )
+    ).scalar_one()
+    storage.put_object(
+        build_upload_session_staging_storage_path(stolen_session.id, 1, "pdf"),
+        stolen_payload,
+        "application/pdf",
+    )
+    loser_copy_started = Event()
+    release_loser_copy = Event()
+    loser_storage = _BlockingCopyStorage(storage, loser_copy_started, release_loser_copy)
+    thief_copy_started = Event()
+    release_thief_copy = Event()
+    thief_storage = _BlockingCopyStorage(storage, thief_copy_started, release_thief_copy)
+    loser_errors: list[ApiError] = []
+    loser_unexpected: list[Exception] = []
+    thief_outcomes: list[str] = []
+    thief_errors: list[Exception] = []
+
+    def confirm_loser() -> None:
+        with Session(engine, expire_on_commit=False) as loser_db:
+            try:
+                confirm_upload_session(
+                    loser_db,
+                    viewer_id=test_user.id,
+                    session_handle=stolen_created.session_handle,
+                    generation=1,
+                    request_id="lease-loser",
+                    storage_client=cast(StorageClientBase, loser_storage),
+                )
+            except ApiError as exc:
+                loser_errors.append(exc)
+            except Exception as exc:  # noqa: BLE001 - surfaced in the parent proof thread.
+                loser_unexpected.append(exc)
+
+    def confirm_thief() -> None:
+        with Session(engine, expire_on_commit=False) as thief_db:
+            try:
+                thief_outcomes.append(
+                    confirm_upload_session(
+                        thief_db,
+                        viewer_id=test_user.id,
+                        session_handle=stolen_created.session_handle,
+                        generation=1,
+                        request_id="lease-thief",
+                        storage_client=cast(StorageClientBase, thief_storage),
+                    ).idempotency_outcome
+                )
+            except Exception as exc:  # noqa: BLE001 - surfaced in the parent proof thread.
+                thief_errors.append(exc)
+
+    loser_thread = Thread(target=confirm_loser, name="stolen-lease-loser")
+    thief_thread = Thread(target=confirm_thief, name="stolen-lease-thief")
+    loser_thread.start()
+    try:
+        assert loser_copy_started.wait(timeout=20), "loser never reached its candidate copy"
+        loser_token = expire_upload_verification_lease(db_session, session_id=stolen_session.id)
+        thief_thread.start()
+        assert thief_copy_started.wait(timeout=20), "thief never claimed the lapsed lease"
+        with Session(engine) as oracle:
+            thief_token = oracle.scalar(
+                select(MediaUploadSession.verification_token).where(
+                    MediaUploadSession.id == stolen_session.id
+                )
+            )
+        assert thief_token is not None and thief_token != loser_token
+    finally:
+        release_loser_copy.set()
+        loser_thread.join(timeout=30)
+        release_thief_copy.set()
+        thief_thread.join(timeout=30)
+
+    assert not loser_thread.is_alive() and not thief_thread.is_alive()
+    assert loser_unexpected == []
+    assert thief_errors == []
+    assert len(loser_errors) == 1
+    assert loser_errors[0].code is ApiErrorCode.E_UPLOAD_VERIFICATION_IN_PROGRESS
+    assert thief_outcomes == ["Created"]
+    db_session.expire_all()
+    stolen_published = db_session.get(MediaUploadSession, stolen_session.id)
+    assert stolen_published is not None and stolen_published.published_at is not None
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(MediaSourceAttempt)
+            .where(MediaSourceAttempt.media_id == stolen_session.candidate_media_id)
+        )
+        == 1
+    )
+    assert (
+        _ingest_job_count(
+            db_session,
+            media_id=stolen_session.candidate_media_id,
+            attempt_id=stolen_published.published_source_attempt_id,
+        )
+        == 1
+    )
+    stolen_file = db_session.get(MediaFile, stolen_session.candidate_media_id)
+    assert stolen_file is not None
+    assert stolen_file.storage_path == build_upload_verification_candidate_storage_path(
+        stolen_session.candidate_media_id, thief_token, "pdf"
+    )
+    assert stolen_file.storage_path != build_upload_verification_candidate_storage_path(
+        stolen_session.candidate_media_id, loser_token, "pdf"
+    )

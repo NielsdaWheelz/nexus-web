@@ -6,21 +6,20 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 from uuid import UUID
 
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiErrorCode
+from nexus.errors import ResourceFailureDimension, ResourceLimitError
 from nexus.jobs.queue import JobExecutionContext
 from tests.testkit.unreachable_state import publish_source_probe_success
 
-
-class _ModeledResourceLimit(RuntimeError):
-    def __init__(self, *, dimension: str) -> None:
-        super().__init__(f"modeled {dimension.lower()} limit")
-        self.error_code = ApiErrorCode.E_RESOURCE_LIMIT.value
-        self.resource_dimension = dimension
+# The gate must open well inside the probe kind's wall limit so a released gate is
+# observable, and time out well inside it so a stuck gate fails as itself.
+_GATE_TIMEOUT_SECONDS = 20.0
 
 
 def run_containment_probe(
@@ -34,6 +33,7 @@ def run_containment_probe(
     residue.parent.mkdir(parents=True, exist_ok=True)
     residue.write_bytes(b"bounded-residue")
     if mode in {
+        "Gate",
         "Timeout",
         "Memory",
         "PublishThenTimeout",
@@ -42,6 +42,15 @@ def run_containment_probe(
     }:
         pid_path = Path(str(payload["pid_path"]))
         pid_path.write_text(str(os.getpid()), encoding="ascii")
+    if mode == "Gate":
+        gate_path = Path(str(payload["gate_path"]))
+        marker_path = Path(str(payload["marker_path"]))
+        deadline = time.monotonic() + _GATE_TIMEOUT_SECONDS
+        while not gate_path.exists():
+            if time.monotonic() >= deadline:
+                raise AssertionError("containment probe gate never opened")
+        marker_path.write_text("released", encoding="ascii")
+        return {"kind": "ProbeGateReleased"}
     if mode == "Timeout":
         descendant_pid_path = Path(str(payload["descendant_pid_path"]))
         subprocess.Popen(
@@ -83,8 +92,11 @@ def run_containment_probe(
                 allocation[offset] = 1
             allocations.append(allocation)
     if mode in {"ModeledStructure", "ModeledOutput"}:
-        dimension = "Structure" if mode == "ModeledStructure" else "Output"
-        raise _ModeledResourceLimit(dimension=dimension)
+        dimension = cast(
+            ResourceFailureDimension,
+            "Structure" if mode == "ModeledStructure" else "Output",
+        )
+        raise ResourceLimitError(f"modeled {dimension.lower()} limit", dimension=dimension)
     if mode == "Succeed":
         return {"kind": "ProbeSucceeded", "child_pid": os.getpid()}
     raise AssertionError(f"unsupported containment probe mode: {mode!r}")
