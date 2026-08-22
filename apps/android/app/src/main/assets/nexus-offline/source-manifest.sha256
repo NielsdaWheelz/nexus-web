@@ -1,5 +1,5 @@
 888430cd438754088ad6cb0324499794fc7b0aa492de0d14d39e0f6887d64035  apps/web/bun.lock
-e7f500b8847b8a311021ff4ed8211a711075882d729a6bda2b0d1dc2cee7947c  apps/web/package.json
+56eac52dd666bf84ebd0cb76a0601279ed8694566062204c42e6cd64f368021f  apps/web/package.json
 25de390ca8e6044bca37394655ec2406c7813b5f1e5d79a9b62fd3588494ac6f  apps/web/scripts/build-offline-reading.mjs
 e93fddfeb1e4e26a024da9de8f26496402d2aea1dc50cf3db0d92a551cc8c8c6  apps/web/scripts/copy-pdfjs.mjs
 b367fba7aabcc1f41538c0c4a7890a1f88e59b435ecf08735200f0a61c439602  apps/web/src/app/globals.css
@@ -34,7 +34,7 @@ f883e213e484e5a954a48c1c9bbfad57bdacdb6130ffd9dd21a9f153d266fea3  apps/web/src/c
 7494ec8e006585180f0d3d2d14d4839f2a961b2dd38e5c59d3c8b02a9fd2d5f4  apps/web/src/components/ui/MobileSheet.tsx
 d5aac40548bc83bad02e16ef2c365597198e7198d4dc871d334a069e0ce05be1  apps/web/src/components/ui/useMobileModalLifecycle.ts
 7c7b9ba6a0f0328e7466b91cf4c7fb1190d99655e35ddabe20344b6e64408e81  apps/web/src/components/users/PeopleSearchCombobox.tsx
-8e0ebe43b878a088d386265b6843010de4eb6037577dcc85781c93a0f76d285f  apps/web/src/lib/api/client.ts
+66c36b0deeb704256226e24d485dee51bdbb32dc17ae894d61b1fa549635ccb6  apps/web/src/lib/api/client.ts
 bc8d74b6ee6e09777341962dc0623116062da123356bd65315acd1e4d7f59fce  apps/web/src/lib/api/presence.ts
 f57e6543f2d1c0eb2e583ebb376cc68a08cad6705329192ce09d12bf57d47790  apps/web/src/lib/api/resource.ts
 e7fad8851ab73e1ab58512783c1e73fa91de7de5ed0df33922a351743cb0516c  apps/web/src/lib/api/sse/guards.ts
