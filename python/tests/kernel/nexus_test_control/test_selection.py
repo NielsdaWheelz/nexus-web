@@ -235,10 +235,13 @@ def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
 @pytest.mark.parametrize(
     "path",
     [
+        "apps/web/androidPlayerProtocolCorpus.ts",
         "apps/web/src/app/android/page.tsx",
         "apps/web/src/lib/player/androidPlayerProtocol.ts",
+        "apps/web/src/lib/player/nativeOperationPump.ts",
         "apps/android/app/src/main/java/app/nexus/android/playback/PlayerProtocol.kt",
         "deploy/hetzner/release.py",
+        "python/nexus/release_artifact.py",
         "testdata/android/player-protocol.json",
     ],
 )

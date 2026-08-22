@@ -302,6 +302,7 @@
         "apps/android/app/src/main/java/app/nexus/android/playback/NexusPlaybackService.kt",
         "apps/android/app/src/main/java/app/nexus/android/playback/NexusPlayerBridge.kt",
         "apps/android/app/src/main/java/app/nexus/android/playback/PlayerProtocol.kt",
+        "apps/web/androidPlayerProtocolCorpus.ts",
         "apps/web/next.config.ts",
         "apps/web/vitest.config.ts",
         "apps/web/src/app/android/page.tsx",
@@ -312,11 +313,13 @@
         "apps/web/src/lib/player/androidPlayerProtocol.ts",
         "apps/web/src/lib/player/androidPlayerRuntime.tsx",
         "apps/web/src/lib/player/browserPlayerRuntime.tsx",
+        "apps/web/src/lib/player/nativeOperationPump.ts",
         "apps/web/src/lib/player/playerChromeModel.ts",
         "apps/web/src/lib/player/playerRuntime.tsx",
         "deploy/hetzner/deploy.sh",
         "deploy/hetzner/fetch-release-bundle.sh",
         "deploy/hetzner/release.py",
+        "python/nexus/release_artifact.py",
         "testdata/android/player-protocol.json"
       ],
       "proofs": [

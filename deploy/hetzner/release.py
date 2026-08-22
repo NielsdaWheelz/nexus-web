@@ -348,7 +348,7 @@ class ReleaseDefect(RuntimeError):
 
 
 class ReleaseBlocked(RuntimeError):
-    """A valid durable release history prevents the requested mutation."""
+    """A valid durable release history or external release fact prevents the mutation."""
 
 
 class ExternalCommandFailed(RuntimeError):
@@ -1813,6 +1813,8 @@ def load_android_release_manifest(
     except BackendArtifactDefect as exc:
         raise ReleaseDefect(f"Android release manifest {exc}") from exc
     if identity != android_player_protocol_identity(corpus):
+        # The signed APK ships before the web candidate; a lagging published
+        # identity is an expected release-order stop, not malformed input.
         raise ReleaseBlocked("Android release manifest player protocol differs from the corpus")
     return identity
 
