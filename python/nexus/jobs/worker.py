@@ -228,7 +228,13 @@ class JobWorker:
                 attempt_no=claimed.attempts,
                 resource_class=definition.resource_class,
             )
-            if self.process_executor is None:
+            # A fresh child exists to contain Heavy extraction and to host the Llm
+            # runtime the lean supervisor deliberately does not import; a Light,
+            # Base-runtime maintenance job needs neither, so it runs in-process as
+            # it did before the cutover. The worker runs one job at a time, so an
+            # in-process job never shares the bounded cgroup with a live child.
+            needs_child = definition.resource_class == "Heavy" or definition.child_runtime != "Base"
+            if self.process_executor is None or not needs_child:
                 handler_result = resolve_job_handler(definition.handler_path)(
                     payload=claimed.payload,
                     context=context,
