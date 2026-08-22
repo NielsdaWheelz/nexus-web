@@ -31,7 +31,6 @@ from pathlib import Path
 from typing import Any
 
 from nexus.release_artifact import (
-    ANDROID_PLAYER_PROTOCOL_CORPUS,
     ANDROID_RELEASE_TAG,
     AndroidPlayerProtocolIdentity,
     BackendArtifactDefect,
@@ -136,6 +135,8 @@ _MIN_PARSER_TEMP_FREE_BYTES = 512 * 1024 * 1024
 _CODEX_CAPACITY_SCHEMA_VERSION = "nexus-codex-capacity.v1"
 _CODEX_CAPACITY_CANARY_SCHEMA_VERSION = "nexus-codex-capacity-canary.v1"
 _CODEX_CAPACITY_PHASES = ("cold", "warm_1", "warm_2")
+# The bundled raw corpus is the post-promotion and resume identity authority.
+_ANDROID_PLAYER_PROTOCOL_CORPUS = Path("testdata/android/player-protocol.json")
 _CODEX_CAPACITY_EVIDENCE_FIELDS = frozenset(
     {
         "schema_version",
@@ -301,7 +302,7 @@ _BUNDLE_FILES = frozenset(
         "release.py",
         "python/nexus/__init__.py",
         "python/nexus/release_artifact.py",
-        ANDROID_PLAYER_PROTOCOL_CORPUS.as_posix(),
+        _ANDROID_PLAYER_PROTOCOL_CORPUS.as_posix(),
     }
 )
 # justify-retry-schedule: release provider/host effects retry exactly once under
@@ -5335,7 +5336,7 @@ class HostRelease:
         expected_web = {
             "source_sha": candidate.source_sha,
             "player_protocol": android_player_protocol_identity(
-                bundle / ANDROID_PLAYER_PROTOCOL_CORPUS
+                bundle / _ANDROID_PLAYER_PROTOCOL_CORPUS
             ).as_json(),
         }
         if web != expected_web:

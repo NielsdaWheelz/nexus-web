@@ -38,7 +38,6 @@ _REPOSITORY = "NielsdaWheelz/nexus-web"
 _RUNTIME_IDENTITY_PATH = Path("/app/runtime-identity.json")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 ANDROID_PLAYER_PROTOCOL_VERSION = 2
-ANDROID_PLAYER_PROTOCOL_CORPUS = Path("testdata/android/player-protocol.json")
 ANDROID_RELEASE_TAG = re.compile(r"android-v[a-zA-Z0-9._-]+")
 _ANDROID_PLAYER_PROTOCOL_FIELDS = frozenset({"version", "contract_sha256"})
 

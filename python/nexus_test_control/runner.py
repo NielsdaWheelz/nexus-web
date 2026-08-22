@@ -31,7 +31,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.ops.codex_hosted_evidence import codex_hosted_evidence_is_valid
 from nexus.release_artifact import (
-    ANDROID_PLAYER_PROTOCOL_CORPUS,
     ANDROID_RELEASE_TAG,
     AndroidPlayerProtocolIdentity,
     BackendArtifactDefect,
@@ -317,6 +316,7 @@ _EXTERNAL_PROTOCOL_CAPABILITIES = frozenset(
 )
 _TEST_GOOGLE_CLIENT_ID = "nexus-test.apps.googleusercontent.com"
 _ANDROID_RELEASE_OWNED_HOST = "nexus.nielseriknandal.com"
+_ANDROID_PLAYER_PROTOCOL_CORPUS = Path("testdata/android/player-protocol.json")
 _CRITICAL_JOURNEY_IDS = frozenset(
     {
         "auth-session",
@@ -4522,7 +4522,7 @@ def _release_manifest_facts(text: str) -> tuple[str, str, str, str, str, str] | 
 
 def _android_player_protocol_identity(repo_root: Path) -> AndroidPlayerProtocolIdentity:
     try:
-        return AndroidPlayerProtocolIdentity.of_corpus(repo_root / ANDROID_PLAYER_PROTOCOL_CORPUS)
+        return AndroidPlayerProtocolIdentity.of_corpus(repo_root / _ANDROID_PLAYER_PROTOCOL_CORPUS)
     except BackendArtifactDefect as error:
         raise RuntimeContractError(str(error)) from error
 

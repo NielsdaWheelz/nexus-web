@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 from nexus.release_artifact import (
-    ANDROID_PLAYER_PROTOCOL_CORPUS,
     AndroidPlayerProtocolIdentity,
     BackendArtifactDefect,
     CandidateImages,
@@ -67,7 +66,7 @@ def test_runtime_identity_is_closed_canonical_and_duplicate_intolerant(tmp_path:
 def test_android_player_protocol_identity_is_the_raw_corpus_digest_and_admits_only_exact_v2(
     tmp_path: Path,
 ) -> None:
-    corpus = REPO_ROOT / ANDROID_PLAYER_PROTOCOL_CORPUS
+    corpus = REPO_ROOT / "testdata/android/player-protocol.json"
     identity = AndroidPlayerProtocolIdentity.of_corpus(corpus)
 
     assert identity == AndroidPlayerProtocolIdentity(
