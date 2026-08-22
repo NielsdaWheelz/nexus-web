@@ -43,10 +43,12 @@ from nexus.services.chat_run_idempotency import (
 )
 from nexus.services.chat_run_message_blocks import message_document
 from nexus.services.chat_run_response import build_chat_run_response
+from nexus.services.chat_run_steps import chat_tool_profile_admission
 from nexus.services.conversation_branches import ensure_branch_metadata, persist_active_leaf
 from nexus.services.llm_profiles import LlmProfile
 from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.seq import assign_next_message_seq
+from nexus.services.tool_runtime.composition import compose_product_tool_runtime
 
 
 def rerun_assistant_response(
@@ -237,6 +239,9 @@ def _create_sibling_candidate(
         active_leaf_message_id=assistant_message.id,
     )
 
+    tool_admission = chat_tool_profile_admission(
+        compose_product_tool_runtime(None).operations["chat"]
+    )
     run = ChatRun(
         owner_user_id=viewer_id,
         conversation_id=source_run.conversation_id,
@@ -247,6 +252,9 @@ def _create_sibling_candidate(
         status="queued",
         profile_id=source_run.profile_id,
         reasoning_option_id=source_run.reasoning_option_id,
+        tool_profile_id=tool_admission.profile_id,
+        tool_profile_revision=tool_admission.profile_revision,
+        tool_profile_snapshot=tool_admission.snapshot,
     )
     db.add(run)
     db.flush()

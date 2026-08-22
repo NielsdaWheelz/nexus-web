@@ -391,7 +391,7 @@ the pending quote card above the composer.
   change a sent quote
 - the snapshot is not a durable conversation context ref that gets cited and
   never receives a citation ordinal; citation chips point at the attached
-  `highlight:` reference or later `read_resource` evidence
+  `highlight:` reference or later `nexus.resource.read` evidence
 - reaching a new or existing chat uses workspace canonical-pane adoption: the
   destination pane is reused or opened without duplication, and source
   activation returns to the reader pane from the immutable locator

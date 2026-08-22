@@ -152,6 +152,9 @@ def _assert_doctor_checks_llm_tools_checkout(tmp_path: Path, tools: Path) -> Non
         "apps/web/node_modules/.ready",
         "apps/web/e2e/playwright.config.ts",
         "apps/android/gradlew",
+        "node/ingest/package.json",
+        "node/ingest/bun.lock",
+        "node/ingest/node_modules/.ready",
     ):
         _write(repo_root / path, "ready\n")
     _write(repo_root / "python/.venv/bin/python", "#!/bin/sh\nexit 0\n")

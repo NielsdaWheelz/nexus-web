@@ -10,14 +10,26 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
+import json
 import time
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator
 from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
-from llm_tools import WebSearchProvider
+from llm_tools import (
+    EffectId,
+    MalformedJson,
+    ParsedJson,
+    ToolEffect,
+    ToolExecutor,
+    ToolId,
+    WebSearchProvider,
+    canonical_json_bytes,
+    raw_input_digest,
+)
 from provider_runtime import (
     Absent,
     Cancelled,
@@ -38,6 +50,14 @@ from provider_runtime import (
     UsageEvent,
 )
 from provider_runtime.registry import ModelRow, resolve_target
+from provider_runtime.tool_adapter import (
+    CanonicalToolCall,
+    PublishedTools,
+    RejectedToolArguments,
+    RejectedToolCall,
+    ToolPublication,
+    lower_tools,
+)
 from provider_runtime.types import (
     CancelSignal,
     ContinuationArtifact,
@@ -83,32 +103,7 @@ from nexus.schemas.conversation import (
     ExistingChatDestination,
     NoBranchAnchorRequest,
     ReplyInsertion,
-)
-from nexus.services.agent_tools.app_search import (
-    APP_SEARCH_TOOL_DEFINITION,
-    APP_SEARCH_TOOL_NAME,
-    execute_app_search,
-)
-from nexus.services.agent_tools.inspect_resource import (
-    INSPECT_RESOURCE_TOOL_DEFINITION,
-    INSPECT_RESOURCE_TOOL_NAME,
-    execute_inspect_resource,
-)
-from nexus.services.agent_tools.read_resource import (
-    READ_RESOURCE_TOOL_DEFINITION,
-    READ_RESOURCE_TOOL_NAME,
-    execute_read_resource,
-)
-from nexus.services.agent_tools.web_search import (
-    WEB_SEARCH_TOOL_DEFINITION,
-    WEB_SEARCH_TOOL_NAME,
-    execute_web_search,
-    persist_web_search_run,
-)
-from nexus.services.agent_tools.writes import (
-    WRITE_TOOL_NAMES,
-    assistant_write_tool_definitions,
-    execute_write_tool,
+    StoredToolProjection,
 )
 from nexus.services.chat_reader_selection import (
     build_reader_selection_snapshot,
@@ -120,9 +115,7 @@ from nexus.services.chat_run_access import get_run_for_owner
 from nexus.services.chat_run_citations import (
     DegradedCitations,
     PublishedCitations,
-    number_tool_citation_candidates,
     persist_attached_citations,
-    persist_read_evidence_candidate,
     publish_chat_citations,
 )
 from nexus.services.chat_run_event_store import (
@@ -156,25 +149,25 @@ from nexus.services.chat_run_steps import (
     PreparedChatRun,
     PublicationRequest,
     PublicationStepResult,
+    RejectedToolStepRequest,
+    RejectedToolStepResult,
+    assistant_message_from_turn,
+    assistant_turn_result,
+    chat_tool_profile_admission,
+    decode_generation,
+    decode_prepared,
+    decode_rejected_tool,
+    step_fingerprint,
+    tool_result_message,
+    validate_chat_tool_profile,
+)
+from nexus.services.chat_run_tools import (
+    RecordKind,
     ToolModelOutput,
     ToolStepRequest,
     ToolStepResult,
-    assistant_message_from_turn,
-    assistant_turn_result,
-    decode_generation,
-    decode_prepared,
-    decode_tool,
-    step_fingerprint,
-    tool_replay_policy,
-    tool_result_message,
-)
-from nexus.services.chat_run_tools import (
-    app_search_tool_output,
     bind_provider_tool_call_events,
-    persist_tool_call_error,
-    persist_tool_call_start,
-    persist_tool_call_trace,
-    tool_trace_event,
+    persist_rejected_provider_tool_call,
 )
 from nexus.services.chat_run_usage import usage_provider_json
 from nexus.services.chat_run_validation import validate_pre_phase
@@ -187,7 +180,13 @@ from nexus.services.context_assembler import (
     persist_prompt_assembly,
 )
 from nexus.services.conversations import DEFAULT_CONVERSATION_TITLE
-from nexus.services.durable_step_journal import Completed, Prepared, ReplayPolicy, StepReplayState
+from nexus.services.durable_step_journal import (
+    Completed,
+    Prepared,
+    ReplayPolicy,
+    StepReplayState,
+    stable_generation_id,
+)
 from nexus.services.llm_execution import (
     DispatchTransferred,
     ExecutionRuntime,
@@ -205,8 +204,14 @@ from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
+    list_context_refs,
 )
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.tool_runtime.composition import (
+    FrozenToolOperation,
+    compose_product_tool_runtime,
+)
+from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
 
 logger = get_logger(__name__)
 
@@ -332,84 +337,102 @@ def _log_chat_run_finished(
     )
 
 
-def _chat_tool_specs() -> tuple[CanonicalTool, ...]:
-    """The read-only tools plus the assistant write tools when enabled (AC-6)."""
-    definitions: list[tuple[str, str, Mapping[str, Any]]] = [
-        (
-            APP_SEARCH_TOOL_NAME,
-            APP_SEARCH_TOOL_DEFINITION["description"],
-            APP_SEARCH_TOOL_DEFINITION["parameters"],
-        ),
-        (
-            WEB_SEARCH_TOOL_NAME,
-            WEB_SEARCH_TOOL_DEFINITION["description"],
-            WEB_SEARCH_TOOL_DEFINITION["parameters"],
-        ),
-        (
-            READ_RESOURCE_TOOL_NAME,
-            READ_RESOURCE_TOOL_DEFINITION["description"],
-            READ_RESOURCE_TOOL_DEFINITION["parameters"],
-        ),
-        (
-            INSPECT_RESOURCE_TOOL_NAME,
-            INSPECT_RESOURCE_TOOL_DEFINITION["description"],
-            INSPECT_RESOURCE_TOOL_DEFINITION["parameters"],
-        ),
-    ]
-    definitions.extend(
-        (definition["name"], definition["description"], definition["parameters"])
-        for definition in assistant_write_tool_definitions()
-    )
-    return tuple(
-        CanonicalTool(
-            name=name,
-            description=description,
-            parameters=parameters,
-        )
-        for name, description, parameters in definitions
+def _chat_tool_operation(
+    web_search_provider: WebSearchProvider | None,
+) -> FrozenToolOperation:
+    return compose_product_tool_runtime(web_search_provider).operations["chat"]
+
+
+def _presented_tool(tool_id: ToolId) -> Any:
+    matches = [entry for entry in CHAT_TOOL_DECLARATIONS if entry.spec.id == tool_id]
+    if len(matches) != 1:
+        raise AssertionError(f"frozen Chat tool has no unique presentation: {tool_id!s}")
+    return matches[0]
+
+
+def _canonical_tool_projection(
+    operation: FrozenToolOperation,
+    *,
+    tool_id: ToolId,
+    canonical_input_sha256: str | None,
+) -> StoredToolProjection:
+    binding = operation.plan.catalog_view.binding(tool_id)
+    presented = _presented_tool(tool_id)
+    return StoredToolProjection(
+        record_kind=RecordKind.current_execution.value,
+        canonical_tool_id=str(tool_id),
+        provider_wire_name=None,
+        effect=binding.spec.effect,
+        result_kind=presented.result_kind,
+        activity_label=presented.activity_label,
+        error_type=None,
+        canonical_input_sha256=canonical_input_sha256,
+        tool_contract_revision=binding.spec.tool_contract_revision,
+        binding_policy_revision=binding.policy_revision,
     )
 
 
-def _app_search_scopes_from_tool_args(args: Mapping[str, Any]) -> tuple[list[str], str | None]:
-    if "scope" in args:
-        return (
-            [],
-            "app_search uses scopes=[...] for URI scopes; the singular scope field is invalid",
+def _rejected_tool_projection(provider_wire_name: str) -> StoredToolProjection:
+    return StoredToolProjection(
+        record_kind=RecordKind.rejected_provider_call.value,
+        canonical_tool_id=None,
+        provider_wire_name=provider_wire_name,
+        effect=None,
+        result_kind="rejected_provider_call",
+        activity_label="Skipped an unavailable tool",
+        error_type=None,
+        canonical_input_sha256=None,
+        tool_contract_revision=None,
+        binding_policy_revision=None,
+    )
+
+
+def _provider_tool_projection(
+    published: PublishedTools,
+    operation: FrozenToolOperation,
+    *,
+    call: ToolCall,
+    include_input_digest: bool,
+) -> StoredToolProjection:
+    resolution = published.decode_tool_call(call)
+    if isinstance(resolution, RejectedToolCall):
+        return _rejected_tool_projection(resolution.raw_name)
+    digest = (
+        raw_input_digest(_provider_raw_tool_input(call, resolution))
+        if include_input_digest
+        else None
+    )
+    return _canonical_tool_projection(
+        operation,
+        tool_id=resolution.tool_id,
+        canonical_input_sha256=digest,
+    )
+
+
+def _provider_raw_tool_input(
+    call: ToolCall,
+    resolution: CanonicalToolCall | RejectedToolArguments,
+) -> ParsedJson | MalformedJson:
+    """Preserve one executor-owned digest input for every known provider call."""
+
+    if isinstance(resolution, CanonicalToolCall) or resolution.reason == "InputTooLarge":
+        return ParsedJson(dict(call.arguments))
+    try:
+        arguments_sha256 = hashlib.sha256(
+            canonical_json_bytes(cast(JsonValue, dict(call.arguments)))
+        ).hexdigest()
+    except (RecursionError, ValueError) as exc:
+        raise AssertionError(
+            "known provider InvalidJson arguments cannot be canonically identified"
+        ) from exc
+    return MalformedJson(
+        raw_utf8=canonical_json_bytes(
+            {
+                "arguments_sha256": arguments_sha256,
+                "reason": resolution.reason,
+            }
         )
-
-    raw_scopes = args.get("scopes")
-    if raw_scopes is None:
-        return [], None
-    if not isinstance(raw_scopes, list):
-        return [], "app_search scopes must be an array of URI strings"
-
-    scopes: list[str] = []
-    for scope in raw_scopes:
-        if not isinstance(scope, str):
-            return [], "app_search scopes must be an array of URI strings"
-        normalized_scope = scope.strip()
-        if not normalized_scope:
-            return [], "app_search scopes must be non-empty URI strings"
-        scopes.append(normalized_scope)
-    return scopes, None
-
-
-def _app_search_string_array_from_tool_args(
-    args: Mapping[str, Any], key: str
-) -> tuple[list[str] | None, str | None]:
-    raw = args.get(key)
-    if raw is None:
-        return None, None
-    if not isinstance(raw, list):
-        return None, f"app_search {key} must be an array of strings"
-    values: list[str] = []
-    for item in raw:
-        if not isinstance(item, str):
-            return None, f"app_search {key} must be an array of strings"
-        value = item.strip()
-        if value:
-            values.append(value)
-    return (values or None), None
+    )
 
 
 def _max_output_tokens_for_reasoning(row: ModelRow, reasoning: ReasoningLevel) -> int:
@@ -455,6 +478,7 @@ def create_chat_run(
         profile_id=profile_id,
         reasoning_option_id=reasoning_option_id,
     )
+    tool_admission = chat_tool_profile_admission(_chat_tool_operation(None))
 
     try:
         # 2. Idempotency lock; a matching replay returns before source/revision
@@ -544,6 +568,9 @@ def create_chat_run(
             status="queued",
             profile_id=profile_id,
             reasoning_option_id=reasoning_option_id,
+            tool_profile_id=tool_admission.profile_id,
+            tool_profile_revision=tool_admission.profile_revision,
+            tool_profile_snapshot=tool_admission.snapshot,
         )
         db.add(run)
         db.flush()
@@ -765,17 +792,13 @@ async def execute_chat_run(
     web_search_provider: WebSearchProvider | None = None,
 ) -> ChatExecutionOutcome:
     """Execute one claimed chat job; defects escape into queue recovery."""
+    operation = _chat_tool_operation(web_search_provider)
     steps = ChatStepRuntime(
         db,
         run_id=run_id,
         job=job,
         execution_context=execution_context,
         llm_runtime=runtime,
-        web_search_provider=(
-            owned_presence.absent()
-            if web_search_provider is None
-            else owned_presence.present(web_search_provider)
-        ),
     )
     set_flow_id(str(run_id))
     try:
@@ -784,6 +807,7 @@ async def execute_chat_run(
             run_id=run_id,
             steps=steps,
             session_factory=session_factory,
+            operation=operation,
         )
     except Exception:
         db.rollback()
@@ -799,6 +823,7 @@ async def _execute_chat_run(
     run_id: UUID,
     steps: ChatStepRuntime,
     session_factory: sessionmaker[Session],
+    operation: FrozenToolOperation,
 ) -> ChatExecutionOutcome:
     run = db.get(ChatRun, run_id)
     if run is None:
@@ -807,6 +832,7 @@ async def _execute_chat_run(
     if run.status in TERMINAL_RUN_STATUSES:
         steps.clear()
         return SkippedChatExecution(reason="Terminal")
+    validate_chat_tool_profile(run, operation)
 
     profile = lookup_profile(run.profile_id) if run.profile_id is not None else None
     if profile is None:
@@ -840,7 +866,8 @@ async def _execute_chat_run(
     rate_limiter = get_rate_limiter()
     rate_limiter.acquire_inflight_slot(run.owner_user_id)
     try:
-        tools = _chat_tool_specs()
+        published_tools = lower_tools(ToolPublication(plan=operation.plan, revealed_targets=()))
+        tools = published_tools.tools
         try:
             prepared = _prepare_chat_run(
                 db,
@@ -934,6 +961,8 @@ async def _execute_chat_run(
                     emitter=emitter,
                     content_prefix=full_content,
                     tool_call_index_next=tool_call_index_next,
+                    published_tools=published_tools,
+                    tool_operation=operation,
                 )
                 steps.complete(generation_path, generation_result)
 
@@ -960,33 +989,42 @@ async def _execute_chat_run(
             for tool_call in pending_tool_calls:
                 tool_call_index_next += 1
                 tool_path = f"turn/{turn_index}/tool/{tool_call_index_next}"
-                tool_request = ToolStepRequest(
-                    provider_call_id=tool_call.id,
-                    tool_name=tool_call.name,
-                    tool_call_index=tool_call_index_next,
-                    arguments=cast(dict[str, JsonValue], dict(tool_call.arguments)),
-                )
-                tool_fingerprint = step_fingerprint(tool_request)
-                tool_state = steps.read(tool_path, tool_replay_policy(tool_call.name))
-                if tool_state is None:
-                    tool_state = steps.prepare(tool_path, tool_fingerprint)
-                else:
-                    _assert_step_fingerprint(tool_state, tool_fingerprint)
-
-                if tool_state.dispatch_phase is Completed:
-                    tool_result = decode_tool(tool_state)
-                else:
-                    if tool_state.dispatch_phase is not Prepared:
-                        raise AssertionError("tool step is not dispatchable")
-                    tool_result = await _execute_tool_step(
+                resolved_call = published_tools.decode_tool_call(tool_call)
+                if isinstance(resolved_call, RejectedToolCall):
+                    tool_result = _execute_rejected_tool_step(
                         db,
                         run=run,
                         steps=steps,
                         path=tool_path,
-                        tool_call=tool_call,
+                        rejected=resolved_call,
                         tool_call_index=tool_call_index_next,
                         citation_n_next=citation_n_next,
                         emitter=emitter,
+                    )
+                else:
+                    tool_id = resolved_call.tool_id
+                    raw_input = _provider_raw_tool_input(tool_call, resolved_call)
+                    tool_request = ToolStepRequest(
+                        provider_call_id=tool_call.id,
+                        canonical_tool_id=str(tool_id),
+                        tool_call_index=tool_call_index_next,
+                        arguments=(
+                            cast(dict[str, JsonValue], dict(tool_call.arguments))
+                            if isinstance(resolved_call, CanonicalToolCall)
+                            or resolved_call.reason == "InputTooLarge"
+                            else {}
+                        ),
+                    )
+                    tool_result = await _execute_canonical_tool_step(
+                        db,
+                        run=run,
+                        steps=steps,
+                        path=tool_path,
+                        operation=operation,
+                        request=tool_request,
+                        raw_input=raw_input,
+                        admitted_resource_uris=prepared.admitted_resource_uris,
+                        citation_n_next=citation_n_next,
                     )
                 citation_n_next = tool_result.next_citation_ordinal
                 messages.append(tool_result_message(tool_result))
@@ -1043,7 +1081,9 @@ def _prepare_chat_run(
     if state is not None:
         if state.dispatch_phase is not Completed:
             raise AssertionError("prepare database step is not completed")
-        return decode_prepared(state)
+        prepared = decode_prepared(state)
+        _assert_step_fingerprint(state, step_fingerprint(prepared))
+        return prepared
 
     conversation = db.get(Conversation, run.conversation_id)
     user_message = db.get(Message, run.user_message_id)
@@ -1061,8 +1101,19 @@ def _prepare_chat_run(
     persist_prompt_assembly(db, run=run, assembly=assembly)
     reconcile_prompt_retrievals(db, run=run, assembly=assembly)
     attached_numbering = persist_attached_citations(db, run, assembly.attached_citations)
+    admitted_resource_uris = tuple(
+        dict.fromkeys(
+            context.target.uri
+            for context in list_context_refs(
+                db,
+                viewer_id=run.owner_user_id,
+                conversation_id=run.conversation_id,
+            )
+        )
+    )
     prepared = PreparedChatRun(
         generate_intent=GenerateIntentState.from_intent(assembly.generate_intent),
+        admitted_resource_uris=admitted_resource_uris,
         initial_citation_ordinal=attached_numbering.next_ordinal,
         initial_tool_call_index=0,
     )
@@ -1082,6 +1133,8 @@ async def _dispatch_generation_step(
     emitter: ChatRunEventEmitter,
     content_prefix: str,
     tool_call_index_next: int,
+    published_tools: PublishedTools,
+    tool_operation: FrozenToolOperation,
 ) -> AssistantTurn | ExpectedFailure | CancelledGeneration:
     iter_text = ""
     pending_tool_calls: list[ToolCall] = []
@@ -1170,7 +1223,12 @@ async def _dispatch_generation_step(
                     tool_call_index_next + len(provider_tool_indices) + 1,
                 )
                 emitter.tool_call_start(
-                    tool_name=inner.name,
+                    projection=_provider_tool_projection(
+                        published_tools,
+                        tool_operation,
+                        call=ToolCall(id=inner.call_id, name=inner.name, arguments={}),
+                        include_input_digest=False,
+                    ),
                     tool_call_index=provider_tool_indices[inner.call_id],
                     provider_tool_call_id=inner.call_id,
                     provider_event_seq_start=event.seq,
@@ -1186,7 +1244,16 @@ async def _dispatch_generation_step(
                     tool_call_index_next + len(provider_tool_indices) + 1,
                 )
                 emitter.tool_call_delta(
-                    tool_name=tool_names_by_call_id[inner.call_id],
+                    projection=_provider_tool_projection(
+                        published_tools,
+                        tool_operation,
+                        call=ToolCall(
+                            id=inner.call_id,
+                            name=tool_names_by_call_id[inner.call_id],
+                            arguments={},
+                        ),
+                        include_input_digest=False,
+                    ),
                     tool_call_index=provider_tool_indices[inner.call_id],
                     provider_tool_call_id=inner.call_id,
                     input_delta=inner.arguments_delta,
@@ -1205,7 +1272,12 @@ async def _dispatch_generation_step(
                 )
                 pending_tool_calls.append(tool_call)
                 emitter.tool_call_done(
-                    tool_name=tool_call.name,
+                    projection=_provider_tool_projection(
+                        published_tools,
+                        tool_operation,
+                        call=tool_call,
+                        include_input_digest=True,
+                    ),
                     tool_call_index=provider_tool_indices[tool_call.id],
                     provider_tool_call_id=tool_call.id,
                     input=dict(tool_call.arguments),
@@ -1340,356 +1412,125 @@ def _fold_generation_terminal(
     return _failed_chat_execution(db, run_id=run.id, error_code=result.error_code)
 
 
-async def _execute_tool_step(
+async def _execute_canonical_tool_step(
     db: Session,
     *,
     run: ChatRun,
     steps: ChatStepRuntime,
     path: str,
-    tool_call: ToolCall,
+    operation: FrozenToolOperation,
+    request: ToolStepRequest,
+    raw_input: ParsedJson | MalformedJson,
+    admitted_resource_uris: tuple[str, ...],
+    citation_n_next: int,
+) -> ToolStepResult:
+    """Execute one adapter-resolved canonical call through the sole executor."""
+
+    from nexus.services.tool_runtime.execution import (
+        chat_tool_execution_receipt,
+        make_chat_execution_context,
+    )
+
+    tool_id = ToolId(request.canonical_tool_id)
+    binding = operation.plan.catalog_view.binding(tool_id)
+    effect_id = (
+        EffectId(str(stable_generation_id(run.id, path)))
+        if binding.spec.effect is ToolEffect.Write
+        else None
+    )
+    context = make_chat_execution_context(
+        db=db,
+        operation=operation,
+        run=run,
+        claimed_job=steps.job,
+        job_context=steps.execution_context,
+        durable_step_path=path,
+        tool_call_index=request.tool_call_index,
+        admitted_resource_uris=admitted_resource_uris,
+        tool_id=tool_id,
+        effect_id=effect_id,
+    )
+    result = await ToolExecutor.execute(binding, raw_input, context)
+    receipt = chat_tool_execution_receipt(
+        context,
+        result=result,
+        provider_call_id=request.provider_call_id,
+        starting_citation_ordinal=citation_n_next,
+    )
+    steps.refresh_job()
+    return receipt
+
+
+def _execute_rejected_tool_step(
+    db: Session,
+    *,
+    run: ChatRun,
+    steps: ChatStepRuntime,
+    path: str,
+    rejected: RejectedToolCall,
     tool_call_index: int,
     citation_n_next: int,
     emitter: ChatRunEventEmitter,
-) -> ToolStepResult:
-    if tool_call.name != WEB_SEARCH_TOOL_NAME or not isinstance(
-        steps.web_search_provider, owned_presence.Present
-    ):
-        steps.lock_active_attempt()
+) -> RejectedToolStepResult:
+    """Persist an unknown provider name as terminal audit, never authority."""
 
-    if tool_call.name == APP_SEARCH_TOOL_NAME:
-        args = tool_call.arguments
-        scopes, forced_error = _app_search_scopes_from_tool_args(args)
-        kinds, filter_error = _app_search_string_array_from_tool_args(args, "kinds")
-        forced_error = forced_error or filter_error
-        formats, filter_error = _app_search_string_array_from_tool_args(args, "formats")
-        forced_error = forced_error or filter_error
-        authors, filter_error = _app_search_string_array_from_tool_args(args, "authors")
-        forced_error = forced_error or filter_error
-        roles, filter_error = _app_search_string_array_from_tool_args(args, "roles")
-        forced_error = forced_error or filter_error
-        run_result = execute_app_search(
-            db,
-            viewer_id=run.owner_user_id,
-            conversation_id=run.conversation_id,
-            user_message_id=run.user_message_id,
-            assistant_message_id=run.assistant_message_id,
-            scopes=scopes,
-            query=str(args.get("query") or ""),
-            kinds=kinds,
-            formats=formats,
-            authors=authors,
-            roles=roles,
-            tool_call_index=tool_call_index,
-            forced_error=forced_error,
-        )
-        if run_result.tool_call_id is None:
-            raise AssertionError("app search did not persist its tool row")
-        numbering = number_tool_citation_candidates(
-            db,
-            tool_call_id=run_result.tool_call_id,
-            start_ordinal=citation_n_next,
-        )
-        bind_provider_tool_call_events(
-            db,
-            run=run,
-            tool_call_index=tool_call_index,
-            tool_call_id=run_result.tool_call_id,
-        )
-        event = run_result.result_event()
-        return _complete_tool_step(
-            steps=steps,
-            path=path,
-            emitter=emitter,
-            tool_call=tool_call,
-            tool_call_id=run_result.tool_call_id,
-            tool_call_index=tool_call_index,
-            next_citation_ordinal=numbering.next_ordinal,
-            output=app_search_tool_output(run_result, numbering),
-            is_error=run_result.status == "error",
-            event=event,
-        )
-
-    if tool_call.name == WEB_SEARCH_TOOL_NAME:
-        args = tool_call.arguments
-        freshness_arg = args.get("freshness_days")
-        freshness_days = freshness_arg if isinstance(freshness_arg, int) else None
-        filters: dict[str, object] = {
-            "freshness_days": freshness_days,
-            "allowed_domains": [],
-            "blocked_domains": [],
-        }
-        if not isinstance(steps.web_search_provider, owned_presence.Present):
-            error_code = "web_search_not_configured"
-            tool_call_id = persist_tool_call_start(
-                db,
-                run=run,
-                tool_call_index=tool_call_index,
-                tool_name=WEB_SEARCH_TOOL_NAME,
-                scope="public_web",
-                requested_types=["mixed"],
-            )
-            persist_tool_call_error(db, tool_call_id=tool_call_id, error_code=error_code)
-            bind_provider_tool_call_events(
-                db,
-                run=run,
-                tool_call_index=tool_call_index,
-                tool_call_id=tool_call_id,
-            )
-            event = ChatRunToolResultEventPayload(
-                tool_call_id=tool_call_id,
-                assistant_message_id=run.assistant_message_id,
-                tool_name=WEB_SEARCH_TOOL_NAME,
-                tool_call_index=tool_call_index,
-                status="error",
-                scope="public_web",
-                types=["mixed"],
-                filters=filters,
-                error_code=error_code,
-            )
-            return _complete_tool_step(
-                steps=steps,
-                path=path,
-                emitter=emitter,
-                tool_call=tool_call,
-                tool_call_id=tool_call_id,
-                tool_call_index=tool_call_index,
-                next_citation_ordinal=citation_n_next,
-                output='{"error":"web_search is not configured"}',
-                is_error=True,
-                event=event,
-            )
-
-        steps.mark_uncertain(path)
-        unpersisted = await execute_web_search(
-            provider=steps.web_search_provider.value,
-            conversation_id=run.conversation_id,
-            user_message_id=run.user_message_id,
-            assistant_message_id=run.assistant_message_id,
-            query=str(args.get("query") or ""),
-            freshness_days=freshness_days,
-            tool_call_index=tool_call_index,
-        )
-        steps.lock_active_attempt()
-        run_result = persist_web_search_run(
-            db,
-            unpersisted,
-            start_citation_ordinal=citation_n_next,
-        )
-        bind_provider_tool_call_events(
-            db,
-            run=run,
-            tool_call_index=tool_call_index,
-            tool_call_id=run_result.tool_call_id,
-        )
-        return _complete_tool_step(
-            steps=steps,
-            path=path,
-            emitter=emitter,
-            tool_call=tool_call,
-            tool_call_id=run_result.tool_call_id,
-            tool_call_index=tool_call_index,
-            next_citation_ordinal=run_result.next_citation_ordinal,
-            output=run_result.model_output,
-            is_error=run_result.status == "error",
-            event=run_result.result_event,
-        )
-
-    if tool_call.name in {READ_RESOURCE_TOOL_NAME, INSPECT_RESOURCE_TOOL_NAME}:
-        uri = str(tool_call.arguments.get("uri") or "")
-        if tool_call.name == READ_RESOURCE_TOOL_NAME:
-            read_result = execute_read_resource(
-                db,
-                viewer_id=run.owner_user_id,
-                conversation_id=run.conversation_id,
-                uri=uri,
-            )
-            tool_call_id = persist_tool_call_trace(
-                db,
-                run=run,
-                tool_call_index=tool_call_index,
-                tool_name=READ_RESOURCE_TOOL_NAME,
-                result=read_result,
-            )
-            numbering = persist_read_evidence_candidate(
-                db,
-                run=run,
-                tool_call_id=tool_call_id,
-                result=read_result,
-                start_ordinal=citation_n_next,
-            )
-            candidate_n = None
-            next_ordinal = citation_n_next
-            if numbering is not None:
-                if len(numbering.rows) != 1:
-                    raise AssertionError("read tool must own exactly one citation candidate")
-                candidate_n = numbering.rows[0].candidate_ordinal
-                next_ordinal = numbering.next_ordinal
-            output = read_result.tool_output(n=candidate_n)
-            result = read_result
-        else:
-            inspect_result = execute_inspect_resource(
-                db,
-                viewer_id=run.owner_user_id,
-                conversation_id=run.conversation_id,
-                uri=uri,
-            )
-            tool_call_id = persist_tool_call_trace(
-                db,
-                run=run,
-                tool_call_index=tool_call_index,
-                tool_name=INSPECT_RESOURCE_TOOL_NAME,
-                result=inspect_result,
-            )
-            output = inspect_result.tool_output()
-            result = inspect_result
-            next_ordinal = citation_n_next
-
-        bind_provider_tool_call_events(
-            db,
-            run=run,
-            tool_call_index=tool_call_index,
-            tool_call_id=tool_call_id,
-        )
-        event = ChatRunToolResultEventPayload.model_validate(
-            tool_trace_event(
-                run=run,
-                tool_call_id=tool_call_id,
-                tool_call_index=tool_call_index,
-                tool_name=tool_call.name,
-                result=result,
-            )
-        )
-        return _complete_tool_step(
-            steps=steps,
-            path=path,
-            emitter=emitter,
-            tool_call=tool_call,
-            tool_call_id=tool_call_id,
-            tool_call_index=tool_call_index,
-            next_citation_ordinal=next_ordinal,
-            output=output,
-            is_error=result.is_error,
-            event=event,
-        )
-
-    if tool_call.name in WRITE_TOOL_NAMES:
-        write_tool_call_id = persist_tool_call_start(
-            db,
-            run=run,
-            tool_call_index=tool_call_index,
-            tool_name=tool_call.name,
-            scope="assistant_write",
-            requested_types=[],
-        )
-        steps.mark_uncertain(path)
-        steps.lock_active_attempt()
-        outcome = execute_write_tool(
-            db,
-            run=run,
-            tool_call_index=tool_call_index,
-            tool_name=tool_call.name,
-            args=dict(tool_call.arguments),
-            effect_id=steps.generation_id(path),
-        )
-        if outcome.tool_call_id != write_tool_call_id:
-            raise AssertionError("write tool changed its persisted tool-call identity")
-        bind_provider_tool_call_events(
-            db,
-            run=run,
-            tool_call_index=tool_call_index,
-            tool_call_id=outcome.tool_call_id,
-        )
-        event = ChatRunToolResultEventPayload(
-            tool_call_id=outcome.tool_call_id,
-            assistant_message_id=run.assistant_message_id,
-            tool_name=tool_call.name,
-            tool_call_index=tool_call_index,
-            status=outcome.status,
-            scope="assistant_write",
-            types=[],
-            filters={},
-            error_code=outcome.error_code,
-        )
-        return _complete_tool_step(
-            steps=steps,
-            path=path,
-            emitter=emitter,
-            tool_call=tool_call,
-            tool_call_id=outcome.tool_call_id,
-            tool_call_index=tool_call_index,
-            next_citation_ordinal=citation_n_next,
-            output=outcome.tool_output_json,
-            is_error=outcome.is_error,
-            event=event,
-        )
-
-    error_code = "unknown_tool"
-    tool_call_id = persist_tool_call_start(
+    request = RejectedToolStepRequest(
+        provider_call_id=rejected.provider_call_id,
+        provider_wire_name=rejected.raw_name,
+        tool_call_index=tool_call_index,
+    )
+    fingerprint = step_fingerprint(request)
+    state = steps.read(path, ReplayPolicy.ReDispatchable)
+    if state is not None:
+        _assert_step_fingerprint(state, fingerprint)
+        if state.dispatch_phase is Completed:
+            return decode_rejected_tool(state)
+        if state.dispatch_phase is not Prepared:
+            raise AssertionError("rejected provider call is not dispatchable")
+    else:
+        steps.prepare(path, fingerprint)
+    steps.lock_active_attempt()
+    tool_call_id = persist_rejected_provider_tool_call(
         db,
         run=run,
         tool_call_index=tool_call_index,
-        tool_name=tool_call.name,
-        scope="provider_tool",
-        requested_types=[],
+        provider_wire_name=rejected.raw_name,
     )
-    persist_tool_call_error(db, tool_call_id=tool_call_id, error_code=error_code)
     bind_provider_tool_call_events(
         db,
         run=run,
         tool_call_index=tool_call_index,
         tool_call_id=tool_call_id,
     )
+    projection = _rejected_tool_projection(rejected.raw_name)
     event = ChatRunToolResultEventPayload(
+        **projection.model_dump(mode="python"),
         tool_call_id=tool_call_id,
         assistant_message_id=run.assistant_message_id,
-        tool_name=tool_call.name,
         tool_call_index=tool_call_index,
         status="error",
         scope="provider_tool",
         types=[],
         filters={},
-        error_code=error_code,
+        error_code="unknown_tool",
     )
-    return _complete_tool_step(
-        steps=steps,
-        path=path,
-        emitter=emitter,
-        tool_call=tool_call,
+    result = RejectedToolStepResult(
         tool_call_id=tool_call_id,
-        tool_call_index=tool_call_index,
-        next_citation_ordinal=citation_n_next,
-        output=f'{{"error":"unknown tool: {tool_call.name}"}}',
-        is_error=True,
-        event=event,
-    )
-
-
-def _complete_tool_step(
-    *,
-    steps: ChatStepRuntime,
-    path: str,
-    emitter: ChatRunEventEmitter,
-    tool_call: ToolCall,
-    tool_call_id: UUID,
-    tool_call_index: int,
-    next_citation_ordinal: int,
-    output: str,
-    is_error: bool,
-    event: ChatRunToolResultEventPayload,
-) -> ToolStepResult:
-    result = ToolStepResult(
-        tool_call_id=tool_call_id,
-        tool_name=tool_call.name,
+        provider_wire_name=rejected.raw_name,
         tool_call_index=tool_call_index,
         model_output=ToolModelOutput(
-            call_id=tool_call.id,
-            output=output,
-            is_error=is_error,
+            call_id=rejected.provider_call_id,
+            output=json.dumps(
+                {"error": {"type": "UnknownTool"}, "type": "Failure"},
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            is_error=True,
         ),
-        next_citation_ordinal=next_citation_ordinal,
+        next_citation_ordinal=citation_n_next,
         result_event=event,
     )
-    emitter.tool_result(event.model_dump(mode="json"))
+    emitter.tool_result(event)
     steps.complete(path, result)
     return result
 

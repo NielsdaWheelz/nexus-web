@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/tool_runtime/declarations.py b/python/nexus/services/tool_runtime/declarations.py
+--- a/python/nexus/services/tool_runtime/declarations.py
++++ b/python/nexus/services/tool_runtime/declarations.py
+@@ -455,7 +455,7 @@ NEXUS_TOOL_DECLARATIONS: tuple[PresentedToolDeclaration, ...] = (
+         input_type=ResourceReadInput,
+         success_type=ResourceReadSuccess,
+         error_type=ResourceReadError,
+-        effect=ToolEffect.Read,
++        effect=ToolEffect.Pure,
+         limits=ToolLimits(4_096, 348_160, 0, 30.0),
+         result_kind="retrieval",
+         activity_label="Reading a resource",

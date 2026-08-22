@@ -811,6 +811,8 @@ def reconcile_uncertain_media_unit(
             raise AssertionError("uncertain media unit step already has a terminal result")
 
         if isinstance(resolution, step_journal.AttachReconciledResult):
+            if isinstance(resolution.tool_settlement, Present):
+                raise invalid("Media Intelligence reconciliation cannot carry a tool settlement")
             normalized = _COMPLETED_RESULT_ADAPTER.validate_json(resolution.terminal_result)
             candidates = _load_candidates(db, media_id=media_id)
             user_content = _build_media_unit_user_content(candidates)

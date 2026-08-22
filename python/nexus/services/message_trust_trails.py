@@ -33,6 +33,7 @@ from nexus.schemas.conversation import (
     TrustRunOut,
     TrustToolCallOut,
     chat_publication_warning_from_nullable,
+    tool_projection_from_persisted_record,
 )
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services.chat_failure import (
@@ -41,6 +42,7 @@ from nexus.services.chat_failure import (
     compute_terminal_attempts,
 )
 from nexus.services.chat_run_execution import project_chat_run_executions
+from nexus.services.chat_run_tools import decode_persisted_tool_record
 from nexus.services.resource_graph.citations import build_citation_outs_for_sources
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -243,6 +245,8 @@ def build_assistant_trust_trails(
 
     tools_by_message: dict[UUID, list[TrustToolCallOut]] = {}
     for tool in tool_calls:
+        persisted = decode_persisted_tool_record(tool)
+        projection = tool_projection_from_persisted_record(persisted)
         prompt = prompt_by_message.get(tool.assistant_message_id)
         prompt_retrieval_ids = set(prompt.included_retrieval_ids if prompt is not None else [])
         retrievals: list[TrustRetrievalOut] = []
@@ -298,17 +302,15 @@ def build_assistant_trust_trails(
             )
         tools_by_message.setdefault(tool.assistant_message_id, []).append(
             TrustToolCallOut(
+                **projection.model_dump(mode="python"),
                 id=tool.id,
-                tool_name=tool.tool_name,
                 tool_call_index=tool.tool_call_index,
                 status=cast(Any, tool.status),
                 scope=tool.scope,
                 requested_types=tool.requested_types,
-                query_hash=tool.query_hash,
                 latency_ms=tool.latency_ms,
                 result_count=len(tool.result_refs),
                 selected_count=len(tool.selected_context_refs),
-                error_code=tool.error_code,
                 provider_request_ids=tool.provider_request_ids,
                 result_refs=tool.result_refs,
                 selected_context_refs=tool.selected_context_refs,

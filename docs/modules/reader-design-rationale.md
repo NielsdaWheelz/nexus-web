@@ -237,7 +237,7 @@ sync hook would blur.
   cannot change the displayed or prompted passage
 - the snapshot is not a cited conversation context ref and is never numbered;
   citation chips point at the attached `highlight:` reference or later
-  `read_resource` evidence
+  `nexus.resource.read` evidence
 - new-chat send is atomic — there is no eager blank-conversation create, so a
   failed first send leaves no conversation behind
 

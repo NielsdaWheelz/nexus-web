@@ -25,7 +25,7 @@ import pytest
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, ChatRunTurnContext, Message, MessageToolCall
+from nexus.db.models import ChatRun, ChatRunTurnContext, Message
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.services.chat_run_candidates import regenerate_assistant_response
 from nexus.services.chat_run_event_store import mark_running
@@ -35,6 +35,10 @@ from nexus.services.chat_run_idempotency import (
     compute_rerun_payload_hash,
 )
 from nexus.services.chat_run_response import build_chat_run_response
+from nexus.services.chat_run_tools import (
+    current_tool_record_identity,
+    persist_write_tool_call,
+)
 from nexus.services.conversations import regeneratable_assistant_message_ids
 from tests.testkit.chat import create_entitled_chat
 
@@ -212,20 +216,20 @@ def test_regeneration_is_blocked_and_unprojected_after_an_assistant_write_tool_a
     must be neither projected regeneratable nor mutation-permitted."""
     with Session(engine) as db:
         completed = _complete_chat(db, content="Add a note for me.")
-        db.add(
-            MessageToolCall(
-                conversation_id=completed.conversation_id,
-                user_message_id=completed.user_message_id,
-                assistant_message_id=completed.assistant_message_id,
-                tool_name="create_note",
-                tool_call_index=0,
-                scope="assistant_write",
-                requested_types=[],
-                result_refs=[],
-                selected_context_refs=[],
-                provider_request_ids=[],
-                status="complete",
-            )
+        run = db.get(ChatRun, completed.run_id)
+        assert run is not None
+        persist_write_tool_call(
+            db,
+            run=run,
+            tool_call_index=1,
+            identity=current_tool_record_identity(
+                canonical_tool_id="nexus.note.create",
+                canonical_input_sha256="a" * 64,
+                binding_policy_revision="b" * 64,
+            ),
+            created_refs=[],
+            status="complete",
+            error_code=None,
         )
         db.commit()
 

@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy.orm import Session
 
+from nexus.api.deps import require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok
@@ -14,7 +15,10 @@ from nexus.schemas.presence import Present
 from nexus.services import chat_run_candidates
 from nexus.services import chat_runs as chat_runs_service
 
-router = APIRouter(tags=["chat-runs"])
+router = APIRouter(
+    tags=["chat-runs"],
+    dependencies=[Depends(require_tool_projection_revision)],
+)
 
 
 @router.post("/chat-runs", status_code=200)

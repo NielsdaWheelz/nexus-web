@@ -30,6 +30,8 @@
         "python/nexus/services/resource_grants.py",
         "python/nexus/schemas/execution.py",
         "python/nexus/api/routes/stream.py",
+        "python/nexus/schemas/podcast.py",
+        "python/nexus/services/podcasts/subscriptions.py",
         "apps/web/src/app/auth/**/*",
         "apps/web/src/app/account/password/**/*",
         "apps/web/src/app/forgot-password/**/*",
@@ -41,27 +43,41 @@
         "apps/web/src/lib/auth/**/*.ts",
         "apps/web/src/lib/auth/**/*.tsx",
         "apps/web/src/lib/api/proxy.ts",
+        "apps/web/src/lib/podcasts/subscriptionLifecycle.ts",
         "apps/web/src/lib/supabase/**/*",
         "apps/web/src/middleware.ts",
         "deploy/smoke/auth-smoke.sh",
         "deploy/supabase/**/*",
         "supabase/config.toml",
-        "supabase/templates/**/*"
+        "supabase/templates/**/*",
+        "node/ingest/**/*",
+        "python/nexus/services/node_ingest.py",
+        "python/nexus/services/web_article_ingest.py",
+        "python/nexus/services/tool_runtime/*.py",
+        "python/nexus/services/tool_runtime/bindings.py",
+        "python/tests/service/test_llm_tools_reads.py"
       ],
       "proofs": [
         "pytest:python/tests/kernel/test_auth_config_verifier.py",
         "pytest:python/tests/service/test_auth_bootstrap_cache.py::test_auth_bootstrap_cache_reuses_only_the_matching_users_durable_library",
+        "pytest:python/tests/service/test_auth_bootstrap_singleflight.py::test_auth_bootstrap_cache_fans_concurrent_cold_requests_into_one_bootstrap",
+        "pytest:python/tests/service/test_podcast_subscription_lifecycle.py",
+        "pytest:python/tests/service/test_podcast_subscription_lifecycle_stream.py",
         "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked",
         "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal",
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject",
         "vitest:apps/web/src/lib/auth/email-confirmation.unit.test.ts",
         "vitest:apps/web/src/lib/auth/identities.unit.test.ts",
-        "vitest:apps/web/src/lib/api/proxy.unit.test.ts"
+        "vitest:apps/web/src/lib/api/proxy.unit.test.ts",
+        "vitest:apps/web/src/lib/podcasts/subscriptionLifecycle.unit.test.ts",
+        "node-test:node/ingest/test/accepted_url_egress.test.mjs",
+        "pytest:python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed"
       ],
       "capabilities": [
         "kernel-python",
         "kernel-web",
-        "service"
+        "service",
+        "ingest-node"
       ]
     },
     {
@@ -86,7 +102,13 @@
       "id": "migration-compatibility",
       "source_globs": [
         "migrations/alembic/**/*.py",
-        "python/nexus/ops/epub_navigation_offsets_cutover.py"
+        "migrations/alembic/versions/0217_llm_tools_cutover.py",
+        "python/nexus/ops/epub_navigation_offsets_cutover.py",
+        "python/nexus/db/models.py",
+        "python/nexus/services/chat_run_tools.py",
+        "python/nexus/services/chat_run_event_store.py",
+        "python/nexus/services/chat_run_response.py",
+        "python/tests/migrations/test_llm_tools_cutover_migration.py"
       ],
       "proofs": [
         "pytest:python/tests/migrations/test_supported_upgrade.py::test_empty_owned_database_upgrades_to_the_single_head",
@@ -95,6 +117,8 @@
         "pytest:python/tests/migrations/test_epub_navigation_offsets_migration.py::test_0208_backfills_exact_offsets_and_0209_rejects_unrepaired_projection",
         "pytest:python/tests/migrations/test_llm_provider_runtime_migration.py",
         "pytest:python/tests/migrations/test_codex_personal_metadata.py::test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle",
+        "pytest:python/tests/migrations/test_llm_tools_cutover_migration.py::test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_malformed_state",
+        "pytest:python/tests/migrations/test_podcast_subscription_lifecycle_events.py",
         "pytest:python/tests/kernel/test_epub_navigation_offsets_cutover.py::test_cutover_state_model_admits_only_resumable_media_and_owned_dead_work"
       ],
       "capabilities": [
@@ -121,16 +145,32 @@
         "python/nexus/services/llm_credentials.py",
         "python/nexus/services/llm_execution.py",
         "python/nexus/services/llm_intent_state.py",
+        "python/nexus/services/chat_runs.py",
         "python/nexus/services/llm_ledger.py",
         "python/nexus/services/llm_profiles.py",
         "python/nexus/services/rate_limit.py",
         "python/nexus/services/semantic_chunks.py",
+        "python/nexus/services/tool_runtime/*.py",
         "python/nexus/tasks/llm_task.py",
-        "python/nexus/api/routes/llm_profiles.py"
+        "python/nexus/api/routes/llm_profiles.py",
+        "python/tests/kernel/test_agent_tool_surface.py",
+        "python/tests/kernel/test_llm_product_intent.py",
+        "python/tests/kernel/test_llm_tool_profiles.py",
+        "python/nexus/services/artifacts/research.py",
+        "python/nexus/services/artifacts/coordination.py",
+        "python/nexus/services/agent_tools/web_page_read.py",
+        "python/nexus/tasks/artifacts.py",
+        "python/tests/service/test_llm_tools_dossier.py",
+        "python/nexus/services/artifacts/engine.py",
+        "python/nexus/services/artifacts/bindings/idea.py",
+        "python/nexus/services/media_source_ingest.py",
+        "python/nexus/api/routes/dossiers.py",
+        "python/nexus/services/artifacts/dossier_types.py"
       ],
       "proofs": [
         "pytest:python/tests/kernel/test_llm_runtime_composition.py",
-        "pytest:python/tests/kernel/test_llm_product_intent.py",
+        "pytest:python/tests/kernel/test_llm_tool_profiles.py::test_bound_families_compile_exact_closed_operation_profiles_without_fallback",
+        "pytest:python/tests/kernel/test_llm_product_intent.py::test_product_intent_freezes_tool_documentation_at_first_prepare",
         "pytest:python/tests/kernel/test_semantic_chunks_embedding_runtime.py",
         "pytest:python/tests/service/test_costly_effects.py::test_generation_dispatches_once_and_settles_success_or_interruption_exactly_once",
         "pytest:python/tests/service/test_chat_run_candidates.py",
@@ -140,7 +180,8 @@
         "vitest:apps/web/src/lib/conversations/chatRunBody.unit.test.ts",
         "vitest:apps/web/src/lib/conversations/chatDraftKey.unit.test.ts",
         "vitest:apps/web/src/components/chat/ChatComposer.browser.test.tsx",
-        "vitest:apps/web/src/components/chat/AssistantMessage.browser.test.tsx"
+        "vitest:apps/web/src/components/chat/AssistantMessage.browser.test.tsx",
+        "pytest:python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search"
       ],
       "capabilities": [
         "service",
@@ -181,13 +222,20 @@
         "python/nexus/services/agent_tools/web_search.py",
         "python/nexus/schemas/retrieval.py",
         "apps/web/src/lib/conversations/citations.ts",
-        "apps/web/src/components/PdfReader.tsx"
+        "apps/web/src/components/PdfReader.tsx",
+        "python/nexus/services/tool_runtime/bindings.py",
+        "python/tests/service/test_web_search_identity.py",
+        "python/nexus/api/routes/browse.py",
+        "python/nexus/services/browse/brave.py",
+        "python/nexus/services/browse/service.py",
+        "python/tests/service/test_llm_tools_browse.py"
       ],
       "proofs": [
         "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence",
         "pytest:python/tests/service/test_reader_document_positions.py::test_epub_navigation_and_document_map_share_exact_canonical_positions",
         "pytest:python/tests/service/test_epub_structural_anchors.py::test_epub_ingest_repairs_structural_anchors_without_reordering_intervals",
         "pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity",
+        "pytest:python/tests/service/test_llm_tools_browse.py::test_browse_preserves_normalized_provider_results_after_rename",
         "vitest:apps/web/src/components/PdfReader.browser.test.tsx"
       ],
       "capabilities": [
@@ -216,16 +264,19 @@
         "python/tests/testkit/network.py",
         "python/tests/testkit/openai_embedding_server.py",
         "python/tests/testkit/sitecustomize.py",
-        "python/tests/testkit/worker.py"
+        "python/tests/testkit/worker.py",
+        "python/nexus/services/tool_runtime/*.py",
+        "python/tests/service/test_llm_tool_replay.py"
       ],
     "proofs": [
       "pytest:python/tests/service/test_codex_metadata_failure_mapping.py::test_native_timeout_persists_as_a_distinct_metadata_failure",
       "pytest:python/tests/service/test_codex_metadata_enrichment.py",
       "pytest:python/tests/service/test_codex_metadata_transport_durability.py::test_postaccept_disconnect_stays_incomplete_and_never_redispatches",
-      "pytest:python/tests/service/test_durable_job_replay.py",
+      "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker",
       "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job",
       "pytest:python/tests/service/test_heavy_job_capacity.py",
-      "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets"
+      "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets",
+      "pytest:python/tests/service/test_llm_tool_replay.py::test_position_replay_settles_once_and_does_not_automatically_reissue_uncertain_billed_search"
       ],
     "capabilities": [
       "service"
@@ -281,17 +332,41 @@
         "python/nexus/services/agent_tools/**/*.py",
         "python/nexus/services/chat_prompt.py",
         "python/nexus/services/chat_run_tools.py",
+        "python/nexus/services/tool_runtime/declarations.py",
+        "python/nexus/services/tool_runtime/profiles.py",
+        "python/scripts/generate_tool_contract_projection.py",
+        "apps/web/src/lib/conversations/toolContractProjection.ts",
+        "python/tests/kernel/test_llm_tool_declarations.py",
+        "python/tests/kernel/test_agent_tool_surface.py",
         "python/pyproject.toml",
         "python/tests/evals/cases/tool_safety.v3.json",
-        "python/uv.lock"
+        "python/uv.lock",
+        "python/nexus/services/tool_runtime/*.py",
+        "python/nexus/services/agent_tools/writes.py",
+        "python/nexus/services/message_trust_trails.py",
+        "python/tests/service/test_llm_tool_safety.py",
+        "python/tests/evals/test_tool_safety_eval.py",
+        "python/tests/hosted/nightly/test_openai_canary.py",
+        "apps/web/src/components/chat/AssistantWriteTrail.browser.test.tsx",
+        "apps/web/src/components/chat/AssistantWriteTrail.tsx",
+        "apps/web/src/lib/conversations/toolCallUndo.ts",
+        "apps/web/src/lib/conversations/messageWire.ts",
+        "apps/web/src/lib/conversations/types.ts",
+        "apps/web/src/lib/api/client.ts"
       ],
       "proofs": [
         "pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo",
-        "pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call"
+        "pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call",
+        "pytest:python/tests/kernel/test_llm_tool_declarations.py::test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract",
+        "pytest:python/tests/hosted/nightly/test_openai_canary.py::test_pinned_openai_canary_refuses_indirect_tool_authority_inside_budget",
+        "vitest:apps/web/src/components/chat/AssistantWriteTrail.browser.test.tsx"
       ],
       "capabilities": [
         "service",
-        "llm-eval"
+        "llm-eval",
+        "kernel-python",
+        "hosted",
+        "component"
       ]
     },
     {
@@ -455,18 +530,86 @@
         "python/tests/kernel/nexus_test_control/test_llm_tools_capability.py",
         "python/tests/llm_tools_contract/**/*.py",
         "python/uv.lock",
-        "testdata/proofs.json"
+        "testdata/proofs.json",
+        ".dockerignore",
+        "python/nexus/services/node_ingest.py",
+        "docker/Dockerfile.backend",
+        "deploy/env/env-prod-worker.example",
+        "deploy/hetzner/release.py",
+        "deploy/hetzner/sync-env.sh",
+        "python/tests/release_artifact/test_node_ingest_image_binding.py",
+        "python/nexus/api/deps.py",
+        "python/nexus/api/routes/chat_runs.py",
+        "python/nexus/api/routes/stream.py",
+        "python/nexus/api/routes/messages.py",
+        "python/nexus/api/routes/conversations.py",
+        "python/nexus/api/routes/conversation_branches.py",
+        "python/nexus/middleware/stream_cors.py",
+        "python/nexus/schemas/conversation.py",
+        "python/nexus/errors.py",
+        "python/nexus/services/chat_run_event_store.py",
+        "python/nexus/services/chat_run_response.py",
+        "python/nexus/services/chat_failure.py",
+        "python/nexus/services/chat_run_candidates.py",
+        "python/nexus/services/chat_run_citations.py",
+        "python/nexus/services/context_assembler.py",
+        "python/nexus/services/message_trust_trails.py",
+        "python/nexus/services/conversations.py",
+        "python/tests/service/test_llm_tool_projection_protocol.py",
+        "apps/web/src/app/api/chat-runs/route.ts",
+        "apps/web/src/app/api/chat-runs/[runId]/route.ts",
+        "apps/web/src/app/api/chat-runs/[runId]/cancel/route.ts",
+        "apps/web/src/app/api/conversations/[id]/messages/route.ts",
+        "apps/web/src/app/api/conversations/[id]/tree/route.ts",
+        "apps/web/src/app/api/conversations/[id]/active-path/route.ts",
+        "apps/web/src/app/api/conversations/[id]/tool-calls/[toolCallId]/undo/route.ts",
+        "apps/web/src/app/api/messages/[messageId]/rerun/route.ts",
+        "apps/web/src/app/api/messages/[messageId]/regenerate/route.ts",
+        "apps/web/src/lib/api/client.ts",
+        "apps/web/src/lib/api/proxy.ts",
+        "apps/web/src/lib/api/sse-client.ts",
+        "apps/web/src/lib/api/useGenerationRun.ts",
+        "apps/web/src/lib/api/sse/events.ts",
+        "apps/web/src/lib/conversations/toolContractProjection.ts",
+        "apps/web/src/lib/conversations/types.ts",
+        "apps/web/src/lib/conversations/messageWire.ts",
+        "apps/web/src/lib/conversations/messageUpdateReducer.ts",
+        "apps/web/src/lib/conversations/toolCallUndo.ts",
+        "apps/web/src/components/chat/ChatComposer.tsx",
+        "apps/web/src/components/chat/useConversation.ts",
+        "apps/web/src/components/chat/useChatRunTail.ts",
+        "apps/web/src/components/chat/Conversation.tsx",
+        "apps/web/src/components/chat/AssistantMessage.tsx",
+        "apps/web/src/components/chat/AssistantWriteTrail.tsx",
+        "apps/web/src/components/chat/AssistantDetails.tsx",
+        "apps/web/src/components/chat/ToolProjectionReloadNotice.tsx",
+        "apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx",
+        "python/nexus/config.py",
+        "python/nexus/app.py",
+        "python/nexus/tasks/artifacts.py",
+        "python/nexus/tasks/chat_run.py",
+        "python/nexus/api/routes/dossiers.py",
+        "python/nexus/services/artifacts/engine.py",
+        "python/nexus/services/artifacts/dossier_types.py",
+        "python/tests/service/test_llm_tools_availability.py"
       ],
       "proofs": [
         "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool",
         "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization",
         "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
         "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
-        "pytest:python/tests/kernel/test_ci_pr_recovery.py"
+        "pytest:python/tests/kernel/test_ci_pr_recovery.py",
+        "pytest:python/tests/release_artifact/test_node_ingest_image_binding.py::test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint",
+        "pytest:python/tests/service/test_llm_tool_projection_protocol.py::test_revision_gates_every_changed_chat_projection_boundary",
+        "vitest:apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx",
+        "pytest:python/tests/service/test_llm_tools_availability.py::test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch"
       ],
       "capabilities": [
         "kernel-python",
-        "llm-tools"
+        "llm-tools",
+        "release-artifact",
+        "service",
+        "component"
       ]
     },
     {
@@ -697,7 +840,12 @@
         "apps/web/src/lib/api/sse/events.ts",
         "apps/web/src/lib/conversations/messageUpdateReducer.ts",
         "apps/web/src/lib/conversations/messageWire.ts",
-        "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+        "apps/web/src/lib/panes/paneRenderRegistry.tsx",
+        "python/nexus/services/tool_runtime/*.py",
+        "apps/web/src/app/api/chat-runs/**/*",
+        "apps/web/src/app/api/conversations/**/*",
+        "apps/web/src/app/api/messages/**/*",
+        "apps/web/src/lib/conversations/toolContractProjection.ts"
       ],
       "risks": [
         "citation-provenance-identity",
@@ -761,7 +909,10 @@
       "proof": "apps/web/e2e/journeys/podcast-refresh-playback.journey.spec.ts",
       "source_globs": [
         "python/nexus/services/podcasts/**/*",
+        "python/nexus/api/routes/stream.py",
+        "python/nexus/schemas/podcast.py",
         "apps/web/src/app/(authenticated)/podcasts/**/*",
+        "apps/web/src/lib/podcasts/**/*",
         "apps/web/src/lib/player/**/*",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
@@ -827,6 +978,7 @@
         "apps/web/src/lib/resources/resourceOverlaysController.tsx",
         "apps/web/src/lib/actions/resourceActionApplicability.oracle.unit.test.ts",
         "apps/web/src/components/resource-surface/ResourceSurfaceBodyEditor.tsx",
+        "apps/web/src/components/resources/ContextualActionMenu.tsx",
         "apps/web/src/components/resources/ResourceActionMenu.tsx",
         "apps/web/src/components/ui/ActionMenu.tsx",
         "apps/web/e2e/resourceActionProductOracle.ts",
@@ -848,6 +1000,8 @@
         "apps/web/src/lib/libraries/libraryPlacementCommit.ts",
         "apps/web/src/lib/libraries/placementController.tsx",
         "apps/web/src/lib/libraries/useLibraryPlacement.ts",
+        "apps/web/src/lib/actions/resourceActionRuntime.tsx",
+        "apps/web/src/components/resources/ContextualActionMenu.tsx",
         "apps/web/src/components/libraries/LibraryPlacementOverlay.tsx",
         "apps/web/src/components/libraries/LibraryEntryEditor.tsx"
       ],

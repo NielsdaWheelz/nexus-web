@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import errno
 import fcntl
 import ipaddress
@@ -12,6 +13,7 @@ import signal
 import socket
 import ssl
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -118,6 +120,9 @@ _PORT_DEFAULTS = (
 _EPHEMERAL_PORT_RANGE_PATH = Path("/proc/sys/net/ipv4/ip_local_port_range")
 _CONSERVATIVE_EPHEMERAL_PORT_RANGE = (32768, 65535)
 _SUPABASE_DIAGNOSTIC_TAIL_CHARS = 8192
+_DARWIN_PROCESS_BSD_INFO = 3
+_DARWIN_LIBPROC = "/usr/lib/libproc.dylib"
+_DARWIN_LSOF = "/usr/sbin/lsof"
 _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_DIR")
 _STATUS_KEYS = frozenset(
     {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
@@ -136,6 +141,7 @@ _CALLER_RESOURCE_ENV = frozenset(
         "DATABASE_URL_TEST_MIGRATIONS",
         "NEXT_PUBLIC_SUPABASE_URL",
         "NEXUS_TEST_PROCESS_OWNER",
+        "NEXUS_TEST_PROCESS_OWNER_FD",
         "NEXUS_TEST_STATIC_DNS",
         "NEXUS_TEST_TLS_CA_CERT",
         "NODE_OPTIONS",
@@ -207,6 +213,45 @@ class StartedProcess:
     run_id: str
     owner_token: str = field(repr=False)
     log_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ProcessIdentity:
+    uid: int
+    process_group_id: int
+    start_token: str
+
+
+class _DarwinProcessInfo(ctypes.Structure):
+    _fields_ = (
+        ("flags", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("exit_status", ctypes.c_uint32),
+        ("process_id", ctypes.c_uint32),
+        ("parent_process_id", ctypes.c_uint32),
+        ("uid", ctypes.c_uint32),
+        ("gid", ctypes.c_uint32),
+        ("real_uid", ctypes.c_uint32),
+        ("real_gid", ctypes.c_uint32),
+        ("saved_uid", ctypes.c_uint32),
+        ("saved_gid", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+        ("command", ctypes.c_char * 16),
+        ("name", ctypes.c_char * 32),
+        ("file_count", ctypes.c_uint32),
+        ("process_group_id", ctypes.c_uint32),
+        ("job_control_count", ctypes.c_uint32),
+        ("controlling_device", ctypes.c_uint32),
+        ("terminal_process_group_id", ctypes.c_uint32),
+        ("nice", ctypes.c_int32),
+        ("start_seconds", ctypes.c_uint64),
+        ("start_microseconds", ctypes.c_uint64),
+    )
+
+
+def required_platform_process_tools() -> tuple[Path, ...]:
+    """Return fixed host tools required by the platform process owner."""
+    return (Path(_DARWIN_LSOF),) if sys.platform == "darwin" else ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1095,6 +1140,7 @@ def wait_process_ready(
     ) as client:
         while time.monotonic() < deadline:
             if not _owned_process_identity_matches(
+                root,
                 process.process_group_id,
                 process.process_start_token,
                 process.run_id,
@@ -1119,6 +1165,7 @@ def wait_process_ready(
                     response.status_code == 200
                     and _process_group_owns_listener(process.process_group_id, port)
                     and _owned_process_identity_matches(
+                        root,
                         process.process_group_id,
                         process.process_start_token,
                         process.run_id,
@@ -1160,7 +1207,20 @@ def _start_owned_process(
     blocked_signals = {signal.SIGINT, signal.SIGTERM}
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
     process: subprocess.Popen[str] | None = None
+    owner_descriptor: int | None = None
+    owner_marker: Path | None = None
     try:
+        inherited_descriptors: tuple[int, ...] = ()
+        if sys.platform == "darwin":
+            owner_marker = _process_owner_marker(root, run_id, owner_token)
+            owner_marker.parent.mkdir(parents=True, exist_ok=True)
+            owner_descriptor = os.open(
+                owner_marker,
+                os.O_CREAT | os.O_EXCL | os.O_RDONLY,
+                0o600,
+            )
+            inherited_descriptors = (owner_descriptor,)
+            child_environment["NEXUS_TEST_PROCESS_OWNER_FD"] = str(owner_descriptor)
         with log_path.open("w", encoding="utf-8") as log:
             process = subprocess.Popen(
                 unblock_and_exec_command(command),
@@ -1171,6 +1231,7 @@ def _start_owned_process(
                 stderr=subprocess.STDOUT,
                 text=True,
                 start_new_session=True,
+                pass_fds=inherited_descriptors,
             )
         start_token = _process_start_token(process.pid)
         record_created(
@@ -1187,8 +1248,16 @@ def _start_owned_process(
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+        if owner_marker is not None:
+            owner_marker.unlink(missing_ok=True)
+            try:
+                owner_marker.parent.rmdir()
+            except OSError:
+                pass
         raise
     finally:
+        if owner_descriptor is not None:
+            os.close(owner_descriptor)
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
     return StartedProcess(
         role=role,
@@ -1225,6 +1294,7 @@ def clean_run(
                     process_start_token = candidate.process_start_token
                     if process_group_id is None:
                         recovered = _recover_planned_process_group(
+                            root,
                             candidate.external_id,
                             run_id,
                         )
@@ -1232,11 +1302,13 @@ def clean_run(
                             process_group_id, process_start_token = recovered
                     if process_group_id is not None:
                         _stop_process_group(
+                            root,
                             process_group_id,
                             process_start_token,
                             run_id,
                             candidate.external_id,
                         )
+                    _remove_process_owner_marker(root, run_id, candidate.external_id)
                 elif resource.kind is ResourceKind.TEMPLATE_BUILD:
                     if candidate.external_id is None:
                         raise RuntimeContractError("template build lacks its lifecycle fingerprint")
@@ -1814,23 +1886,47 @@ def _delete_extension_profile(repo_root: Path, identity: str) -> None:
 
 
 def _stop_process_group(
+    repo_root: Path,
     process_group_id: int,
     process_start_token: str | None,
     run_id: str,
     owner_token: str,
 ) -> None:
-    process_root = Path("/proc") / str(process_group_id)
-    if not process_root.exists():
+    if sys.platform == "darwin":
+        owned_group = _darwin_owned_process_group(repo_root, run_id, owner_token)
+    elif sys.platform == "linux":
+        owned_group = _linux_owned_process_group(run_id, owner_token)
+    else:
+        raise RuntimeContractError("owned process cleanup requires Linux or Darwin")
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        if owned_group is not None:
+            raise RuntimeContractError(
+                "owned process identity identifies a group the kernel cannot signal"
+            ) from None
         return
-    if process_start_token is None:
-        raise RuntimeContractError("owned process lacks its immutable runtime identity")
-    if not _owned_process_identity_matches(
-        process_group_id,
-        process_start_token,
-        run_id,
-        owner_token,
-    ):
+    except PermissionError as exc:
+        raise RuntimeContractError("owned process group could not be verified") from exc
+    if owned_group is None or owned_group[0] != process_group_id:
         raise RuntimeContractError("process group no longer belongs to the exact test run")
+    if process_start_token is not None:
+        try:
+            leader_identity = _read_process_identity(process_group_id)
+        except (FileNotFoundError, ProcessLookupError):
+            leader_identity = None
+        except (OSError, RuntimeContractError) as exc:
+            raise RuntimeContractError("owned process identity could not be read") from exc
+        if leader_identity is not None and (
+            leader_identity.uid != os.getuid()
+            or leader_identity.process_group_id != process_group_id
+            or leader_identity.start_token != process_start_token
+        ):
+            raise RuntimeContractError("process group no longer belongs to the exact test run")
+    _terminate_process_group(process_group_id)
+
+
+def _terminate_process_group(process_group_id: int) -> None:
     try:
         os.killpg(process_group_id, signal.SIGTERM)
     except ProcessLookupError:
@@ -1845,8 +1941,19 @@ def _stop_process_group(
             os.killpg(process_group_id, 0)
         except ProcessLookupError:
             return
+        except PermissionError:
+            if sys.platform == "darwin":
+                return
+            raise
         time.sleep(0.05)
-    os.killpg(process_group_id, signal.SIGKILL)
+    try:
+        os.killpg(process_group_id, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        if sys.platform == "darwin":
+            return
+        raise
     try:
         os.waitpid(process_group_id, 0)
     except ChildProcessError:
@@ -1854,77 +1961,54 @@ def _stop_process_group(
 
 
 def _recover_planned_process_group(
+    repo_root: Path,
     owner_token: str,
     run_id: str,
-) -> tuple[int, str] | None:
+) -> tuple[int, str | None] | None:
     if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
         raise RuntimeContractError("planned process lacks its exact ownership contract")
-    expected_owner = f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode()
-    expected_run = f"NEXUS_TEST_RUN_ID={run_id}".encode()
-    matches: list[tuple[int, str]] = []
-    for process_root in Path("/proc").iterdir():
-        if not process_root.name.isdecimal():
-            continue
-        try:
-            if process_root.stat().st_uid != os.getuid():
-                continue
-            environment = (process_root / "environ").read_bytes().split(b"\0")
-            if expected_owner not in environment or expected_run not in environment:
-                continue
-            process_id = int(process_root.name)
-            if os.getpgid(process_id) != process_id:
-                raise RuntimeContractError(
-                    "planned process token no longer identifies its exact process group"
-                )
-            start_token = _process_start_token(process_id)
-        except (FileNotFoundError, PermissionError, ProcessLookupError):
-            continue
-        except (OSError, UnicodeDecodeError, ValueError) as exc:
-            raise RuntimeContractError("planned process identity could not be read") from exc
-        matches.append((process_id, start_token))
-    if len(matches) > 1:
-        raise RuntimeContractError("planned process token identifies multiple process groups")
-    return matches[0] if matches else None
+    if sys.platform == "darwin":
+        return _darwin_owned_process_group(repo_root, run_id, owner_token)
+    if sys.platform == "linux":
+        return _linux_owned_process_group(run_id, owner_token)
+    raise RuntimeContractError("owned process recovery requires Linux or Darwin")
 
 
 def _owned_process_identity_matches(
+    repo_root: Path,
     process_group_id: int,
     process_start_token: str,
     run_id: str,
     owner_token: str,
 ) -> bool:
-    process_root = Path("/proc") / str(process_group_id)
     try:
-        if (
-            process_root.stat().st_uid != os.getuid()
-            or os.getpgid(process_group_id) != process_group_id
-        ):
+        identity = _read_process_identity(process_group_id)
+        if identity.uid != os.getuid() or identity.process_group_id != process_group_id:
             return False
-        stat = (process_root / "stat").read_text(encoding="utf-8")
-        actual_start_token = stat[stat.rindex(")") + 2 :].split()[19]
-        process_environment = (process_root / "environ").read_bytes().split(b"\0")
-    except (OSError, ProcessLookupError, ValueError, IndexError):
+        if identity.start_token != process_start_token:
+            return False
+        if sys.platform == "darwin":
+            marker = _process_owner_marker(repo_root, run_id, owner_token)
+            return process_group_id in _darwin_owner_marker_holders(marker)
+        process_environment = _linux_process_environment(process_group_id)
+    except (OSError, ProcessLookupError, RuntimeContractError):
         return False
     return (
-        actual_start_token == process_start_token
-        and f"NEXUS_TEST_RUN_ID={run_id}".encode() in process_environment
+        f"NEXUS_TEST_RUN_ID={run_id}".encode() in process_environment
         and f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode() in process_environment
     )
 
 
 def _process_birth_identity_matches(process_group_id: int, process_start_token: str) -> bool:
-    process_root = Path("/proc") / str(process_group_id)
     try:
-        if (
-            process_root.stat().st_uid != os.getuid()
-            or os.getpgid(process_group_id) != process_group_id
-        ):
-            return False
-        stat = (process_root / "stat").read_text(encoding="utf-8")
-        actual_start_token = stat[stat.rindex(")") + 2 :].split()[19]
-    except (OSError, ProcessLookupError, ValueError, IndexError):
+        identity = _read_process_identity(process_group_id)
+    except (OSError, ProcessLookupError, RuntimeContractError):
         return False
-    return actual_start_token == process_start_token
+    return (
+        identity.uid == os.getuid()
+        and identity.process_group_id == process_group_id
+        and identity.start_token == process_start_token
+    )
 
 
 def _startup_identity_pending(*, birth_matches: bool, now: float, deadline: float) -> bool:
@@ -1932,6 +2016,21 @@ def _startup_identity_pending(*, birth_matches: bool, now: float, deadline: floa
 
 
 def _process_group_owns_listener(process_group_id: int, port: int) -> bool:
+    if sys.platform == "darwin":
+        try:
+            process_ids = _darwin_lsof_process_ids(("-a", f"-iTCP:{port}", "-sTCP:LISTEN"))
+        except RuntimeContractError:
+            return False
+        for process_id in process_ids:
+            try:
+                identity = _read_process_identity(process_id)
+            except (OSError, ProcessLookupError, RuntimeContractError):
+                continue
+            if identity.uid == os.getuid() and identity.process_group_id == process_group_id:
+                return True
+        return False
+    if sys.platform != "linux":
+        return False
     listener_inodes: set[str] = set()
     try:
         rows = Path("/proc/net/tcp").read_text(encoding="ascii").splitlines()[1:]
@@ -1974,15 +2073,218 @@ def _require_loopback_port_available(port: int, role: str) -> None:
 
 
 def _process_start_token(process_id: int) -> str:
+    if sys.platform not in {"darwin", "linux"}:
+        raise RuntimeContractError("owned process identity requires Linux or Darwin")
     deadline = time.monotonic() + 2
-    path = Path("/proc") / str(process_id) / "stat"
     while time.monotonic() < deadline:
         try:
-            stat = path.read_text(encoding="utf-8")
-            return stat[stat.rindex(")") + 2 :].split()[19]
-        except (OSError, UnicodeDecodeError, ValueError, IndexError):
+            return _read_process_identity(process_id).start_token
+        except (OSError, ProcessLookupError, RuntimeContractError):
             time.sleep(0.01)
     raise RuntimeContractError("started process birth identity could not be read")
+
+
+def _read_process_identity(process_id: int) -> _ProcessIdentity:
+    if sys.platform == "darwin":
+        library = ctypes.CDLL(_DARWIN_LIBPROC, use_errno=True)
+        proc_pidinfo = library.proc_pidinfo
+        proc_pidinfo.argtypes = (
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        )
+        proc_pidinfo.restype = ctypes.c_int
+        process_info = _DarwinProcessInfo()
+        ctypes.set_errno(0)
+        size = proc_pidinfo(
+            process_id,
+            _DARWIN_PROCESS_BSD_INFO,
+            0,
+            ctypes.byref(process_info),
+            ctypes.sizeof(process_info),
+        )
+        if size == 0:
+            error_number = ctypes.get_errno()
+            if error_number in {0, errno.ENOENT, errno.ESRCH}:
+                raise ProcessLookupError(process_id)
+            raise OSError(error_number, os.strerror(error_number))
+        if size != ctypes.sizeof(process_info) or process_info.process_id != process_id:
+            raise RuntimeContractError("Darwin process identity was incomplete")
+        start_token = str(process_info.start_seconds * 1_000_000 + process_info.start_microseconds)
+        if start_token == "0":
+            raise RuntimeContractError("Darwin process birth identity was unavailable")
+        return _ProcessIdentity(
+            uid=process_info.uid,
+            process_group_id=process_info.process_group_id,
+            start_token=start_token,
+        )
+    if sys.platform == "linux":
+        process_root = Path("/proc") / str(process_id)
+        process_uid = process_root.stat().st_uid
+        process_group_id = os.getpgid(process_id)
+        try:
+            stat = (process_root / "stat").read_text(encoding="utf-8")
+            start_token = stat[stat.rindex(")") + 2 :].split()[19]
+        except (UnicodeDecodeError, ValueError, IndexError) as exc:
+            raise RuntimeContractError("Linux process identity was malformed") from exc
+        if not start_token.isdecimal():
+            raise RuntimeContractError("Linux process birth identity was malformed")
+        return _ProcessIdentity(process_uid, process_group_id, start_token)
+    raise RuntimeContractError("owned process identity requires Linux or Darwin")
+
+
+def _linux_process_environment(process_id: int) -> tuple[bytes, ...]:
+    if sys.platform != "linux":
+        raise RuntimeContractError("Linux process environment was requested on another platform")
+    return tuple((Path("/proc") / str(process_id) / "environ").read_bytes().split(b"\0"))
+
+
+def _linux_owned_process_group(
+    run_id: str,
+    owner_token: str,
+) -> tuple[int, str | None] | None:
+    require_run_id(run_id)
+    if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
+        raise RuntimeContractError("Linux process owner requires an exact owner token")
+    expected_owner = f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode()
+    expected_run = f"NEXUS_TEST_RUN_ID={run_id}".encode()
+    holder_identities: list[tuple[int, _ProcessIdentity]] = []
+    try:
+        process_roots = tuple(Path("/proc").iterdir())
+    except OSError as exc:
+        raise RuntimeContractError("Linux process table could not be read") from exc
+    for process_root in process_roots:
+        if not process_root.name.isdecimal():
+            continue
+        process_id = int(process_root.name)
+        try:
+            if process_root.stat().st_uid != os.getuid():
+                continue
+            environment = _linux_process_environment(process_id)
+            if expected_owner not in environment or expected_run not in environment:
+                continue
+            identity = _read_process_identity(process_id)
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        except (OSError, RuntimeContractError) as exc:
+            raise RuntimeContractError("owned Linux process identity could not be read") from exc
+        if identity.uid != os.getuid():
+            raise RuntimeContractError("owned Linux process identity changed during cleanup")
+        holder_identities.append((process_id, identity))
+    if not holder_identities:
+        return None
+    process_group_ids = {identity.process_group_id for _, identity in holder_identities}
+    if len(process_group_ids) != 1:
+        raise RuntimeContractError("owned Linux process token identifies multiple groups")
+    [process_group_id] = process_group_ids
+    if process_group_id <= 1:
+        raise RuntimeContractError("owned Linux process token identifies an unsafe group")
+    leader_start_token = next(
+        (
+            identity.start_token
+            for process_id, identity in holder_identities
+            if process_id == process_group_id
+        ),
+        None,
+    )
+    return process_group_id, leader_start_token
+
+
+def _process_owner_marker(repo_root: Path, run_id: str, owner_token: str) -> Path:
+    require_run_id(run_id)
+    if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
+        raise RuntimeContractError("process owner marker requires an exact owner token")
+    return runtime_state_dir(repo_root) / "runs" / run_id / "process-owners" / owner_token
+
+
+def _remove_process_owner_marker(repo_root: Path, run_id: str, owner_token: str) -> None:
+    if sys.platform != "darwin":
+        return
+    marker = _process_owner_marker(repo_root, run_id, owner_token)
+    marker.unlink(missing_ok=True)
+    try:
+        marker.parent.rmdir()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        if exc.errno != errno.ENOTEMPTY:
+            raise RuntimeContractError(
+                "process owner marker directory could not be removed"
+            ) from exc
+
+
+def _darwin_owned_process_group(
+    repo_root: Path,
+    run_id: str,
+    owner_token: str,
+) -> tuple[int, str | None] | None:
+    marker = _process_owner_marker(repo_root, run_id, owner_token)
+    if not marker.is_file():
+        return None
+    holder_ids = _darwin_owner_marker_holders(marker)
+    if not holder_ids:
+        return None
+    holder_identities: list[tuple[int, _ProcessIdentity]] = []
+    for process_id in holder_ids:
+        try:
+            identity = _read_process_identity(process_id)
+        except ProcessLookupError:
+            continue
+        except (OSError, RuntimeContractError) as exc:
+            raise RuntimeContractError("owned Darwin process identity could not be read") from exc
+        if identity.uid != os.getuid():
+            raise RuntimeContractError("owned Darwin process marker has a foreign holder")
+        holder_identities.append((process_id, identity))
+    if not holder_identities:
+        if _darwin_owner_marker_holders(marker):
+            raise RuntimeContractError("owned Darwin process marker holders changed during cleanup")
+        return None
+    process_group_ids = {identity.process_group_id for _, identity in holder_identities}
+    if len(process_group_ids) != 1:
+        raise RuntimeContractError("owned Darwin process marker identifies multiple groups")
+    [process_group_id] = process_group_ids
+    if process_group_id <= 1:
+        raise RuntimeContractError("owned Darwin process marker identifies an unsafe group")
+    leader_start_token = next(
+        (
+            identity.start_token
+            for process_id, identity in holder_identities
+            if process_id == process_group_id
+        ),
+        None,
+    )
+    return process_group_id, leader_start_token
+
+
+def _darwin_owner_marker_holders(marker: Path) -> tuple[int, ...]:
+    try:
+        resolved_marker = marker.resolve(strict=True).as_posix()
+    except OSError as exc:
+        raise RuntimeContractError("Darwin process owner marker could not be inspected") from exc
+    return _darwin_lsof_process_ids(("--", resolved_marker))
+
+
+def _darwin_lsof_process_ids(selection: tuple[str, ...]) -> tuple[int, ...]:
+    try:
+        result = subprocess.run(
+            (_DARWIN_LSOF, "-nP", "-t", *selection),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeContractError("Darwin process ownership could not be inspected") from exc
+    if result.returncode == 1 and not result.stdout.strip():
+        return ()
+    if result.returncode != 0:
+        raise RuntimeContractError("Darwin process ownership inspection failed")
+    rows = result.stdout.splitlines()
+    if not rows or any(not row.isdecimal() for row in rows):
+        raise RuntimeContractError("Darwin process ownership output was malformed")
+    return tuple(dict.fromkeys(int(row) for row in rows))
 
 
 def _child_environment(environment: Mapping[str, str]) -> dict[str, str]:

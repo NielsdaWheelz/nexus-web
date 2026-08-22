@@ -88,6 +88,7 @@ _PRODUCT_SOURCE_ROOTS: tuple[tuple[str, frozenset[str]], ...] = (
     ("apps/web/src", frozenset({".js", ".jsx", ".ts", ".tsx"})),
     ("apps/extension", frozenset({".js", ".jsx", ".ts", ".tsx"})),
     ("apps/android/app/src/main", frozenset({".java", ".kt", ".kts"})),
+    ("node/ingest", frozenset({".mjs"})),
     ("migrations/alembic", frozenset({".py"})),
 )
 _RETIRED_PRODUCT_TEST_SEAMS = (
@@ -260,6 +261,7 @@ _PACKAGE_RUNNER = re.compile(
     r"\.?/?scripts/test\b|"
     r"pytest(?=[\"']|\s|$)|"
     r"vitest(?=[\"']|\s|$)|"
+    r"node\b[^\n]*\s--test\b|"
     r"playwright\s+test\b|"
     r"(?:\./)?gradlew\b[^\n]*(?::(?:test|connected)[A-Za-z0-9_-]*)|"
     r"bun\s+run\s+(?:test|verify|check)(?::|\s|$)"
@@ -269,6 +271,7 @@ _PACKAGE_RUNNER = re.compile(
 _DIRECT_RUNNERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("pytest", re.compile(r"(?<![.\w-])pytest(?=[\"']|\s|$)")),
     ("vitest", re.compile(r"(?<![.\w-])vitest(?=[\"']|\s|$)")),
+    ("node-test", re.compile(r"\bnode\b[^\n]*\s--test\b")),
     ("playwright", re.compile(r"\bplaywright\s+test\b")),
     (
         "gradle",
@@ -1583,7 +1586,8 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 proof_path = node.split("::", 1)[0]
                 if (
                     not separator
-                    or runner not in {"gradle", "playwright", "pytest", "static", "vitest"}
+                    or runner
+                    not in {"gradle", "node-test", "playwright", "pytest", "static", "vitest"}
                     or not _safe_relative(proof_path)
                     or not (repo_root / proof_path).is_file()
                 ):

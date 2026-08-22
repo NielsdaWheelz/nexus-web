@@ -51,7 +51,6 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from llm_tools import BraveSearchProvider
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 
@@ -79,6 +78,10 @@ from nexus.responses import (
 from nexus.runtime_health import get_runtime_identity
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.llm_profiles import validate_profiles
+from nexus.services.tool_runtime.composition import (
+    compose_configured_web_search_provider,
+    compose_product_tool_runtime,
+)
 
 logger = get_logger(__name__)
 
@@ -131,8 +134,9 @@ def create_bootstrap_callback():
 
     def bootstrap(user_id: UUID, email: str | None = None) -> UUID:
         # AuthMiddleware owns the process-local successful-result cache and
-        # invokes this blocking miss path in its threadpool. Concurrent cold
-        # misses may race, but the durable bootstrap is idempotent.
+        # coalesces same-process cold misses before invoking this blocking path
+        # in its threadpool. The durable SERIALIZABLE bootstrap remains
+        # idempotent across processes.
         db = session_factory()
         try:
             return ensure_user_and_default_library(db, user_id, email=email)
@@ -189,16 +193,11 @@ async def lifespan(app: FastAPI):
         trust_env=False,
     )
 
-    app.state.web_search_provider = (
-        BraveSearchProvider(
-            app.state.httpx_client,
-            api_key=settings.brave_search_api_key,
-            base_url=settings.brave_search_base_url,
-            timeout_seconds=settings.brave_search_timeout_seconds,
-        )
-        if settings.brave_search_api_key
-        else None
+    app.state.web_search_provider = compose_configured_web_search_provider(
+        app.state.httpx_client,
+        settings=settings,
     )
+    app.state.tool_runtime = compose_product_tool_runtime(app.state.web_search_provider)
 
     logger.info(
         "app_lifespan_started",

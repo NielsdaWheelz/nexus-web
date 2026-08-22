@@ -26,16 +26,13 @@ from nexus_test_control.runtime import (
     resource_ledger_path,
     run_bucket_name,
     run_database_name,
-    run_lifecycle_lock,
     template_build_database_name,
     template_database_name,
     template_lifecycle_lock,
 )
 from nexus_test_control.services import (
-    _create_database,
     _create_database_raw,
     _drop_database,
-    _ensure_template_locked,
     _postgres_admin,
     _s3,
     clean_run,
@@ -84,6 +81,49 @@ os.close(ready_fd)
 signal.pause()
 """
 
+_TEMPLATE_PREPARE_RUN = """
+import os
+import sys
+from pathlib import Path
+
+from nexus_test_control.model import Resource, ResourceKind
+from nexus_test_control.runtime import (
+    claim_run,
+    run_database_name,
+    run_lifecycle_lock,
+    template_database_name,
+    template_lifecycle_lock,
+)
+from nexus_test_control.services import _create_database, _ensure_template_locked, clean_run
+
+root = Path(sys.argv[1])
+run_id = sys.argv[2]
+fingerprint = sys.argv[3]
+ready_fd = int(sys.argv[4])
+gate_fd = int(sys.argv[5])
+environment = {"NEXUS_ENV": "test"}
+claim_run(root, environment, run_id)
+try:
+    os.write(ready_fd, b"1")
+    os.close(ready_fd)
+    if os.read(gate_fd, 1) != b"1":
+        raise RuntimeError("template preparation gate closed before release")
+    os.close(gate_fd)
+    with run_lifecycle_lock(root, environment, run_id):
+        with template_lifecycle_lock(root, environment, fingerprint):
+            _ensure_template_locked(root, environment, run_id, fingerprint)
+            _create_database(
+                root,
+                environment,
+                run_id,
+                Resource(ResourceKind.RUN_DATABASE, run_database_name(run_id)),
+                template_database_name(fingerprint),
+            )
+except BaseException:
+    clean_run(root, environment, run_id)
+    raise
+"""
+
 
 def _spawn_interrupted(
     run_id: str,
@@ -109,6 +149,36 @@ def _spawn_interrupted(
             stdout=log,
             stderr=subprocess.STDOUT,
             pass_fds=(ready_fd,),
+            start_new_session=True,
+        )
+
+
+def _spawn_template_prepare(
+    run_id: str,
+    fingerprint: str,
+    ready_fd: int,
+    gate_fd: int,
+    log_path: Path,
+) -> subprocess.Popen[bytes]:
+    child_environment = {**os.environ, "NEXUS_ENV": "test"}
+    with log_path.open("wb") as log:
+        return subprocess.Popen(
+            (
+                sys.executable,
+                "-c",
+                _TEMPLATE_PREPARE_RUN,
+                str(REPO_ROOT),
+                run_id,
+                fingerprint,
+                str(ready_fd),
+                str(gate_fd),
+            ),
+            cwd=REPO_ROOT,
+            env=child_environment,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            pass_fds=(ready_fd, gate_fd),
             start_new_session=True,
         )
 
@@ -164,10 +234,25 @@ def _user_exists(user_id: str, admin_key: str) -> bool:
     return True
 
 
-def _process_exists(process_group_id: int) -> bool:
+def _process_group_has_live_member(process_group_id: int) -> bool:
     try:
         os.killpg(process_group_id, 0)
     except ProcessLookupError:
+        return False
+    if sys.platform == "linux":
+        for process_root in Path("/proc").iterdir():
+            if not process_root.name.isdecimal():
+                continue
+            try:
+                stat = (process_root / "stat").read_text(encoding="utf-8")
+            except FileNotFoundError:
+                continue
+            fields = stat[stat.rindex(")") + 2 :].split()
+            assert len(fields) >= 3 and fields[2].lstrip("-").isdecimal(), (
+                "Linux process state was malformed while checking cleanup"
+            )
+            if int(fields[2]) == process_group_id and fields[0] != "Z":
+                return True
         return False
     return True
 
@@ -175,29 +260,6 @@ def _process_exists(process_group_id: int) -> bool:
 def _clean_if_owned(run_id: str) -> None:
     if resource_ledger_path(REPO_ROOT, run_id).is_file():
         clean_run(REPO_ROOT, TEST_ENV, run_id)
-
-
-def _prepare_template_run(
-    run_id: str,
-    fingerprint: str,
-    gate: threading.Barrier,
-) -> None:
-    claim_run(REPO_ROOT, TEST_ENV, run_id)
-    try:
-        gate.wait(timeout=30)
-        with run_lifecycle_lock(REPO_ROOT, TEST_ENV, run_id):
-            with template_lifecycle_lock(REPO_ROOT, TEST_ENV, fingerprint):
-                _ensure_template_locked(REPO_ROOT, TEST_ENV, run_id, fingerprint)
-                _create_database(
-                    REPO_ROOT,
-                    TEST_ENV,
-                    run_id,
-                    Resource(ResourceKind.RUN_DATABASE, run_database_name(run_id)),
-                    template_database_name(fingerprint),
-                )
-    except BaseException:
-        clean_run(REPO_ROOT, TEST_ENV, run_id)
-        raise
 
 
 def _clean_incomplete_template(
@@ -248,20 +310,20 @@ def test_interrupted_database_and_journey_runs_clean_only_their_real_resources(
         api_pid = payload.get("api_pid")
         user_id = payload.get("user_id")
         if mode == "journey":
-            assert isinstance(api_pid, int) and _process_exists(api_pid)
+            assert isinstance(api_pid, int) and _process_group_has_live_member(api_pid)
             assert isinstance(user_id, str) and _user_exists(user_id, credentials.admin_key)
 
         os.killpg(process.pid, signal.SIGTERM)
         assert process.wait(timeout=10) == -signal.SIGTERM
         if isinstance(api_pid, int):
-            assert _process_exists(api_pid)
+            assert _process_group_has_live_member(api_pid)
 
         clean_run(REPO_ROOT, TEST_ENV, run_id, supabase=credentials)
 
         assert _database_state(run_database_name(run_id)) is None
         assert not _bucket_exists(run_bucket_name(run_id))
         if isinstance(api_pid, int):
-            assert not _process_exists(api_pid)
+            assert not _process_group_has_live_member(api_pid)
         if isinstance(user_id, str):
             assert not _user_exists(user_id, credentials.admin_key)
         assert not resource_ledger_path(REPO_ROOT, run_id).exists()
@@ -273,23 +335,54 @@ def test_interrupted_database_and_journey_runs_clean_only_their_real_resources(
         _clean_if_owned(run_id)
 
 
-def test_template_build_clone_and_incomplete_drop_serialize_on_real_postgres() -> None:
+def test_template_build_clone_and_incomplete_drop_serialize_on_real_postgres(
+    tmp_path: Path,
+) -> None:
     _outer_sentinel()
     ensure_services(REPO_ROOT, TEST_ENV)
     fingerprint = secrets.token_hex(20)
     template = template_database_name(fingerprint)
     prepare_ids = (new_run_id(), new_run_id())
     drop_id = new_run_id()
+    processes: list[subprocess.Popen[bytes]] = []
+    open_fds: set[int] = set()
     try:
-        gate = threading.Barrier(3)
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = tuple(
-                pool.submit(_prepare_template_run, run_id, fingerprint, gate)
-                for run_id in prepare_ids
+        controls: list[tuple[subprocess.Popen[bytes], int, int, Path]] = []
+        for index, run_id in enumerate(prepare_ids):
+            ready_read, ready_write = os.pipe()
+            gate_read, gate_write = os.pipe()
+            open_fds.update((ready_read, ready_write, gate_read, gate_write))
+            log_path = tmp_path / f"template-prepare-{index}.log"
+            process = _spawn_template_prepare(
+                run_id,
+                fingerprint,
+                ready_write,
+                gate_read,
+                log_path,
             )
-            gate.wait(timeout=30)
-            for future in futures:
-                future.result(timeout=180)
+            processes.append(process)
+            os.close(ready_write)
+            open_fds.remove(ready_write)
+            os.close(gate_read)
+            open_fds.remove(gate_read)
+            controls.append((process, ready_read, gate_write, log_path))
+
+        for _process, ready_read, _gate_write, log_path in controls:
+            readable, _, _ = select.select((ready_read,), (), (), 30)
+            assert readable and os.read(ready_read, 1) == b"1", (
+                "template controller did not reach the shared lifecycle gate: "
+                f"{log_path.read_text(encoding='utf-8', errors='replace')}"
+            )
+            os.close(ready_read)
+            open_fds.remove(ready_read)
+        for _process, _ready_read, gate_write, _log_path in controls:
+            os.write(gate_write, b"1")
+            os.close(gate_write)
+            open_fds.remove(gate_write)
+        for process, _ready_read, _gate_write, log_path in controls:
+            assert process.wait(timeout=180) == 0, log_path.read_text(
+                encoding="utf-8", errors="replace"
+            )
 
         assert _database_state(template) == (False, True)
         for run_id in prepare_ids:
@@ -325,6 +418,10 @@ def test_template_build_clone_and_incomplete_drop_serialize_on_real_postgres() -
         assert _database_state(template) == (False, True)
         assert not resource_ledger_path(REPO_ROOT, drop_id).exists()
     finally:
+        for file_descriptor in open_fds:
+            os.close(file_descriptor)
+        for process in processes:
+            _terminate(process)
         for run_id in (*prepare_ids, drop_id):
             _clean_if_owned(run_id)
         _drop_finalized_template(template)

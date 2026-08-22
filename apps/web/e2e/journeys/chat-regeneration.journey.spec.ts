@@ -1,4 +1,6 @@
 import { captureCanonicalArticle } from "../articleFixture";
+import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
+import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import {
   expect,
   gotoWithStrictCsp,
@@ -26,7 +28,9 @@ async function loadTree(
   api: ReturnType<typeof pageRequest>,
   conversationId: string,
 ): Promise<ConversationTree> {
-  const response = await api.get(`/api/conversations/${conversationId}/tree`);
+  const response = await api.get(`/api/conversations/${conversationId}/tree`, {
+    headers: { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION },
+  });
   expect(
     response.ok(),
     `Tree load for conversation ${conversationId} failed: ${response.status()} ${(await response.text()).slice(0, 300)}`,

@@ -147,7 +147,8 @@ def test_workflow_writes_truthful_not_run_summary(tmp_path: Path) -> None:
         "detail": (
             "locked tool owners are absent: python/pyproject.toml, python/uv.lock, "
             "python/.venv, apps/web/package.json, apps/web/bun.lock, "
-            "apps/web/node_modules, apps/web/e2e/playwright.config.ts, apps/android/gradlew"
+            "apps/web/node_modules, apps/web/e2e/playwright.config.ts, apps/android/gradlew, "
+            "node/ingest/package.json, node/ingest/bun.lock, node/ingest/node_modules"
         ),
         "duration_ms": 0,
         "estimated_cost_usd": 0,

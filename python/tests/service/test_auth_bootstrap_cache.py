@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
@@ -12,28 +11,8 @@ from sqlalchemy.orm import Session
 from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
 from nexus.db.session import get_db
-from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.bootstrap import ensure_user_and_default_library
-from tests.testkit.auth import StaticTokenVerifier
-
-
-class _ExternalVerifierFake:
-    def __init__(self, identities: tuple[tuple[UUID, str], ...]) -> None:
-        verifiers = tuple(StaticTokenVerifier(user_id, email) for user_id, email in identities)
-        self._verifiers = {verifier.token: verifier for verifier in verifiers}
-        self._token_by_user = {
-            UUID(str(verifier.verify(verifier.token)["sub"])): verifier.token
-            for verifier in verifiers
-        }
-
-    def token_for(self, user_id: UUID) -> str:
-        return self._token_by_user[user_id]
-
-    def verify(self, token: str) -> dict[str, Any]:
-        verifier = self._verifiers.get(token)
-        if verifier is None:
-            raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid test token")
-        return verifier.verify(token)
+from tests.testkit.auth import MultiUserTokenVerifier
 
 
 def test_auth_bootstrap_cache_reuses_only_the_matching_users_durable_library(
@@ -45,7 +24,9 @@ def test_auth_bootstrap_cache_reuses_only_the_matching_users_durable_library(
     second_email = f"auth-cache-second-{second_user_id}@example.invalid"
     first_library_id = ensure_user_and_default_library(db_session, first_user_id, first_email)
     second_library_id = ensure_user_and_default_library(db_session, second_user_id, second_email)
-    verifier = _ExternalVerifierFake(((first_user_id, first_email), (second_user_id, second_email)))
+    verifier = MultiUserTokenVerifier(
+        ((first_user_id, first_email), (second_user_id, second_email))
+    )
     bootstrap_calls: dict[UUID, int] = {}
 
     def bootstrap(user_id: UUID, email: str | None = None) -> UUID:

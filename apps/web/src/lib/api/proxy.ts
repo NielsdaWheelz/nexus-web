@@ -21,7 +21,7 @@ import {
   readSupabaseSessionCookie,
   type SessionState,
 } from "@/lib/auth/session-cookie";
-import { refreshSession } from "@/lib/auth/refresh";
+import type { SessionRefreshOutcome } from "@/lib/auth/refresh";
 import {
   AuthDependencyError,
   finalizeSessionResponse,
@@ -50,6 +50,7 @@ const ALLOWED_REQUEST_HEADERS = new Set([
   "if-none-match",
   "if-modified-since",
   "idempotency-key",
+  "x-nexus-tool-projection",
 ]);
 
 /**
@@ -142,7 +143,7 @@ const PUBLIC_RESOURCE_SHARE_SECURITY_HEADERS = {
 
 interface ProxyDeps {
   readSession: (request: Request) => SessionState;
-  refreshSession: typeof refreshSession;
+  refreshSession: () => Promise<SessionRefreshOutcome>;
   fetch: typeof fetch;
   generateRequestId: () => string;
   appPublicOrigin: string;
@@ -280,6 +281,7 @@ function upstreamUnavailableResponse(requestId: string): NextResponse {
 
 async function createDefaultDeps(): Promise<ProxyDeps> {
   const env = getEnv();
+  const { refreshSession } = await import("@/lib/auth/refresh");
   return {
     readSession: (request) =>
       readSupabaseSessionCookie(

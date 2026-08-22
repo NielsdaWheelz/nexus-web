@@ -51,6 +51,7 @@ class Capability(StrEnum):
     CORPUS = "corpus"
     PROVIDER_RUNTIME = "provider-runtime"
     LLM_TOOLS = "llm-tools"
+    INGEST_NODE = "ingest-node"
     LLM_EVAL = "llm-eval"
     EXTENSION = "extension"
     ANDROID_HOST = "android-host"
@@ -91,7 +92,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "c9eda82127752a4ff6cd10bea4578a5f3bf4f54ee6d5e0aabbcfcb663d5133a0"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "31776f63e3fc17346245b847639450bdb159f3933279ed0296e915c8080cf6fd"
 
 
 class ResourceKind(StrEnum):
@@ -342,6 +343,7 @@ _FULL_NON_BROWSER = (
     Capability.CORPUS,
     Capability.PROVIDER_RUNTIME,
     Capability.LLM_TOOLS,
+    Capability.INGEST_NODE,
     Capability.LLM_EVAL,
     Capability.ANDROID_HOST,
 )
@@ -449,6 +451,7 @@ DEFERRED_CAPABILITY_OWNER: Mapping[Capability, Workflow] = MappingProxyType(
         Capability.CORPUS: Workflow.FULL,
         Capability.PROVIDER_RUNTIME: Workflow.FULL,
         Capability.LLM_TOOLS: Workflow.FULL,
+        Capability.INGEST_NODE: Workflow.FULL,
         Capability.LLM_EVAL: Workflow.FULL,
         Capability.EXTENSION: Workflow.FULL,
         Capability.ANDROID_HOST: Workflow.FULL,

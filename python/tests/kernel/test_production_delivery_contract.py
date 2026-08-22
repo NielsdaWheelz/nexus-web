@@ -90,6 +90,24 @@ def test_config_publication_is_explicit_fresh_and_python_owned() -> None:
     assert "NEXUS_ENV_FILE" not in script
 
 
+def test_worker_ingest_egress_owner_is_baked_and_cannot_be_reconfigured_by_env() -> None:
+    dockerfile = (REPO_ROOT / "docker/Dockerfile.backend").read_text(encoding="utf-8")
+    dockerignore = (REPO_ROOT / ".dockerignore").read_text(encoding="utf-8")
+    worker_env = (REPO_ROOT / "deploy/env/env-prod-worker.example").read_text(encoding="utf-8")
+    publisher = (REPO_ROOT / "deploy/hetzner/release.py").read_text(encoding="utf-8")
+    validator = (REPO_ROOT / "deploy/hetzner/sync-env.sh").read_text(encoding="utf-8")
+
+    assert (
+        "COPY node/ingest/accepted_url_egress.mjs ./node/ingest/accepted_url_egress.mjs"
+        in dockerfile
+    )
+    assert "ENV NODE_INGEST_SCRIPT=" not in dockerfile
+    assert "!node/ingest/accepted_url_egress.mjs" in dockerignore
+    assert "NODE_INGEST_SCRIPT" not in worker_env
+    assert '"NODE_INGEST_SCRIPT",' not in publisher
+    assert "reject_node_ingest_script" in validator
+
+
 def test_vercel_config_rejects_cross_file_duplicates_before_provider_mutation(
     tmp_path: Path,
 ) -> None:

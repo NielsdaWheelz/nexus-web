@@ -1,8 +1,8 @@
 diff --git a/python/nexus/services/browse/brave.py b/python/nexus/services/browse/brave.py
 --- a/python/nexus/services/browse/brave.py
 +++ b/python/nexus/services/browse/brave.py
-@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
- from typing import Literal, cast
+@@ -6,7 +6,7 @@ from dataclasses import dataclass
+ from datetime import UTC, datetime, timedelta
  from urllib.parse import quote, urljoin, urlsplit
  
 -from llm_tools import (

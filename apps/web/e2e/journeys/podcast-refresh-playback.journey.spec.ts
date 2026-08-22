@@ -48,19 +48,27 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
   expect(podcastId, "Subscribed Podcast route omitted its canonical id.").toMatch(
     /^[0-9a-f-]{36}$/i,
   );
-  await expect(
-    page.getByText(/^Episode updates (?:pending|current)$/),
-  ).toBeVisible({ timeout: 25_000 });
   const podcastPane = page.getByRole("region", {
     name: "Houston We Have a Podcast — Podcasts",
     exact: true,
   });
+  const episode = page.getByRole("link", {
+    name: "The Crew-4 Astronauts",
+    exact: true,
+  });
+  await expect(
+    episode,
+    `Podcast ${podcastId} did not converge its fixture episode from the subscription lifecycle.`,
+  ).toBeVisible({ timeout: 25_000 });
   await podcastPane.getByRole("button", { name: "More", exact: true }).click();
   const refresh = page.getByRole("menuitem", {
     name: "Refresh",
     exact: true,
   });
-  await expect(refresh).toBeVisible();
+  await expect(
+    refresh,
+    `Subscribed Podcast ${podcastId} did not publish its Refresh action.`,
+  ).toBeVisible({ timeout: 25_000 });
   const refreshAdmissionPromise = page.waitForResponse(
     (response) =>
       matchesResponse(response, webOrigin, "POST", "/api/podcasts/refresh-runs"),
@@ -92,10 +100,6 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
     )
     .toBe("Complete");
 
-  const episode = page.getByRole("link", {
-    name: "The Crew-4 Astronauts",
-    exact: true,
-  });
   await expect(
     episode,
     `Podcast ${podcastId} did not reconcile its fixture episode after refresh ${refreshHandle}.`,

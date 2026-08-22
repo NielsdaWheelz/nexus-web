@@ -330,7 +330,11 @@ Streaming bypasses the BFF for data delivery:
 4. The client parses the SSE wire format (`lib/api/sse-stream.ts`), validates each
    event exhaustively (`lib/api/sse/events.ts`), and folds it into UI state.
 
-This is used by chat runs, oracle readings, and media processing status.
+This is used by chat runs, oracle readings, Dossier builds, media processing
+status, Podcast refresh runs, and the active Podcast subscription lifecycle.
+The lifecycle stream is keyed by the subscription epoch UUID while its public
+route remains viewer + Podcast addressed; every snapshot reasserts that exact
+epoch and viewer before it can cross the stream.
 
 ---
 
@@ -665,12 +669,14 @@ the scheduler loop) go through the one helper `db/retries.py:retry_serializable`
 ### 7.4 Auth, identity & bootstrap
 
 Supabase issues JWTs; FastAPI verifies them via JWKS (`auth/verifier.py`) and
-derives a `Viewer`. On a user's first request per process, `AuthMiddleware` runs
+derives a `Viewer`. On a user's first request per process, `AuthMiddleware`
+coalesces concurrent cold requests into one cancellation-shielded task and runs
 **bootstrap** (`services/bootstrap.py`: `ensure_user_and_default_library`) once —
-idempotent under SERIALIZABLE, creating the `users` row, a default library, and an
-admin membership; its bounded process-local LRU carries the resulting
-`default_library_id` on later `Viewer` projections without another threadpool or
-database hop. Eviction only repeats the idempotent bootstrap on a later request.
+idempotent under SERIALIZABLE across processes, creating the `users` row, a default
+library, and an admin membership. Its bounded process-local LRU carries the
+resulting `default_library_id` on later `Viewer` projections without another
+threadpool or database hop. Failure is never cached; eviction only repeats the
+idempotent bootstrap on a later request.
 Visibility is enforced by boolean predicates (`auth/permissions.py`) that take an
 explicit session and never leak existence (not-found == not-visible).
 
@@ -728,7 +734,7 @@ Other identity surfaces:
 
 One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
 the in-app search page, mobile Nexus, desktop Nexus, and chat
-`app_search` agent tool (RAG). The request is a single typed `SearchQuery` value
+`nexus.search` tool (RAG). The request is a single typed `SearchQuery` value
 object parsed at the
 edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
 Conversations, People, Web) folding the internal result types, with
@@ -816,15 +822,30 @@ user_link_target: UserLinkTargetMode)` row per `ResourceScheme` replaces the
 
 ### 7.7 Citations & the agent tool contract
 
-The chat/oracle LLM can call four tools (`services/agent_tools/`):
+Chat publishes one frozen eleven-tool native plan:
 
-- **`app_search`** — RAG retrieval over the user's library (scoped to
-  `media:`/`library:` refs); produces numbered, citable results.
-- **`web_search`** — Brave public web search; numbered, citable.
-- **`read_resource`** — reads exact text for a `ResourceRef`; evidence reads are
-  citable, oversized docs redirect to inspect.
-- **`inspect_resource`** — returns a navigable document map of a `media:` ref;
-  navigation only, never cited.
+- **`web.search`** — bounded Brave public-web search; numbered and citable.
+- **`nexus.search`** — scoped retrieval over the user's Nexus corpus; numbered
+  and citable.
+- **`nexus.resource.read`** — exact bounded text and immutable evidence for an
+  admitted resource.
+- **`nexus.document.search`** — bounded matching sections inside one admitted
+  readable document.
+- **`nexus.resource.inspect`** — an ordered document map and canonical read
+  URIs; navigation only.
+- **`nexus.relations.list`** — bounded one-hop graph relations from one admitted
+  resource.
+- **`nexus.library.add`**, **`nexus.note.create`**,
+  **`nexus.highlight.create`**, **`nexus.edge.create`**, and
+  **`nexus.queue.add`** — the five additive, owner-gated Write operations. They
+  persist their exact effects with the tool result and support scoped Undo.
+
+Idea-Dossier research receives only a frozen HostTable grant for `web.search`.
+Oracle and the other background algorithms retain their direct operation-owned
+retrieval; they do not inherit Chat's catalogue. Tool declarations, grants,
+limits, replay policy, and durable execution are owned by
+`services/tool_runtime/`; `services/agent_tools/` remains the domain-adapter
+layer, not a second tool contract.
 
 Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
 (attached context refs first, then each tool's selected results). A citation **is an
@@ -1104,8 +1125,8 @@ retrieval, plate selection, LLM prompt/call, parse, persistence, and SSE event
 emission. A short question → retrieve candidates and pick a plate image → one LLM
 call produces a structured three-phase interpretation → stream + persist as
 `oracle_reading_events` + citation "folios". It has its **own**
-prompt/persistence and does **not** use the four chat agent tools, but it
-**reuses the SSE transport**. Retrieval consumes the shared search substrate:
+prompt/persistence and does **not** consume Chat's frozen Native tool plan, but
+it **reuses the SSE transport**. Retrieval consumes the shared search substrate:
 `services/search/embedding.build_query_embedding` (one active-model embedding for
 both lanes) feeds `search/content_chunk_candidates.retrieve_content_chunk_candidates`,
 scoped to the Oracle Corpus library for public-domain candidates (mapped to
@@ -1345,6 +1366,15 @@ Episode Transcribe prefers a publisher sidecar, then the quota-gated Deepgram
 path; explicit Video Transcribe uses the YouTube caption provider. Current
 transcript origin is exactly `Publisher | Imported | Generated`.
 
+The canonical Podcast detail pane observes those two independent owners through
+one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
+on the subscription and its current backfill notify only the subscription UUID;
+the stream re-reads durable state and remains nonterminal until both owners are
+`Complete | SourceLimited | Failed`. A serialized latest-state drain revalidates
+detail and episodes without overlap when committed snapshots change, so reused
+global episodes and later backfill pages converge without browser polling, a
+manual Refresh, or a second ingest path.
+
 The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 (podcast, video, reader, agent, and Nexus actions all address it); **Now
 Playing** is one device-local audio session, not a second durable list.
@@ -1441,7 +1471,7 @@ full contract is [`modules/consumption-activity.md`](modules/consumption-activit
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
 
 The same `search()` backs the `/search` results page, mobile Nexus deep
-results, desktop Nexus results, and the chat `app_search` tool. All consume
+results, desktop Nexus results, and the Chat `nexus.search` tool. All consume
 the canonical frontend `SearchQuery` model. Desktop **Nexus**
 (`components/nexus/`, `lib/nexus/`) is a controlled switchboard presentation
 over explicit result projections, not a second search model: its zero state is

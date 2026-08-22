@@ -12,6 +12,7 @@ from nexus_test_control.selection import (
     SelectionTarget,
     load_selection_index,
     parse_git_name_status,
+    proof_target,
     select_changed,
     select_explicit_focus,
 )
@@ -144,6 +145,20 @@ def test_control_plane_change_promotes_complete_policy_and_kernel() -> None:
         Capability.POLICY_SELF_TESTS,
         Capability.KERNEL_PYTHON,
     }
+
+
+def test_release_artifact_python_proof_routes_to_its_protected_capability(
+    tmp_path: Path,
+) -> None:
+    proof = "python/tests/release_artifact/test_image_binding.py"
+    node = "test_worker_uses_the_baked_entrypoint"
+    path = tmp_path / proof
+    path.parent.mkdir(parents=True)
+    path.write_text(f"def {node}():\n    pass\n")
+
+    target = proof_target(tmp_path, f"pytest:{proof}::{node}")
+
+    assert target == SelectionTarget(Capability.RELEASE_ARTIFACT, f"pytest:{proof}::{node}")
 
 
 def test_direct_extension_does_not_also_select_all_journeys() -> None:
@@ -482,19 +497,38 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 Capability.JOURNEYS_ALL,
                 Capability.KERNEL_PYTHON,
                 Capability.KERNEL_WEB,
+                Capability.LLM_TOOLS,
+                Capability.RELEASE_ARTIFACT,
+                Capability.SERVICE,
                 Capability.STATIC_PLATFORM,
             },
             {
                 "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt",
                 "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
                 "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
+                "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::"
+                "test_exact_pins_round_trip_one_canonical_native_tool",
+                "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::"
+                "test_llm_tools_paths_route_to_exact_full_materialization",
+                "pytest:python/tests/kernel/nexus_test_control/test_model.py::"
+                "test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
+                "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/test_backend_artifact.py",
+                "pytest:python/tests/kernel/test_ci_pr_recovery.py",
                 "pytest:python/tests/kernel/test_successor_release_contract.py",
                 "pytest:python/tests/kernel/test_production_delivery_contract.py",
                 "pytest:python/tests/kernel/test_production_deploy_behavior.py",
                 "pytest:python/tests/kernel/test_production_release.py",
                 "pytest:python/tests/kernel/test_release_bundle_fetch.py",
+                "pytest:python/tests/release_artifact/"
+                "test_node_ingest_image_binding.py::"
+                "test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint",
+                "pytest:python/tests/service/test_llm_tool_projection_protocol.py::"
+                "test_revision_gates_every_changed_chat_projection_boundary",
+                "pytest:python/tests/service/test_llm_tools_availability.py::"
+                "test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch",
                 "vitest:apps/web/src/app/android/page.unit.test.tsx",
+                "vitest:apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx",
                 "vitest:apps/web/src/components/player/GlobalPlayerSurfaces.browser.test.tsx",
                 "vitest:apps/web/src/lib/player/androidPlayerProtocol.unit.test.ts",
             },
@@ -545,8 +579,10 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
             "python/nexus_test_control/runner.py",
             {
                 Capability.CODEX_HOSTED,
+                Capability.COMPONENT,
                 Capability.KERNEL_PYTHON,
                 Capability.LLM_TOOLS,
+                Capability.RELEASE_ARTIFACT,
                 Capability.SERVICE,
             },
             {
@@ -559,10 +595,18 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
                 "pytest:python/tests/kernel/test_native_agent_contract.py",
+                "pytest:python/tests/release_artifact/"
+                "test_node_ingest_image_binding.py::"
+                "test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint",
                 "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
                 "pytest:python/tests/service/test_codex_agent_host.py",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
                 "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py",
+                "pytest:python/tests/service/test_llm_tool_projection_protocol.py::"
+                "test_revision_gates_every_changed_chat_projection_boundary",
+                "pytest:python/tests/service/test_llm_tools_availability.py::"
+                "test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch",
+                "vitest:apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx",
             },
         ),
     ],
