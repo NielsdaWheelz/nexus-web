@@ -391,6 +391,29 @@ unsupported-removal preflight likewise requires an additive replacement
 manifest on a new SHA, or a separate reviewed retirement operation; never edit
 the attempt or manifest in place.
 
+## Reader publication preflight
+
+Offline reading identifies a reader document by its publication generation.
+Revision `0216` creates one generation-`1` row per eligible `ready_for_reading`
+document at the instant it runs; a document that becomes ready afterwards is
+published by whichever application artifact is deployed, and an artifact that
+predates the publication owner cannot create that row. Such a document has no
+generation at all, so both offline routes fail closed forever.
+
+Before exposing the first reading-capable APK — and, because it is idempotent,
+before every later Android release — close that window explicitly:
+
+```bash
+python -m nexus.ops.reader_publication_preflight census   # read-only report
+python -m nexus.ops.reader_publication_preflight rebuild  # publish the remainder
+```
+
+`rebuild` publishes only documents that still have no publication row, at
+generation `1`, through the publication owner; it never reads an existing row as
+stale and never bumps one. It re-reads its census within a bounded number of
+passes and fails unless every eligible ready document carries a publication row.
+This is an application-data operation, not a release-controller flag.
+
 ## Infrastructure operations
 
 Postgres or Caddy image upgrades, Caddy policy changes, host replacement, R2

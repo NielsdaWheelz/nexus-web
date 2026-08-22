@@ -35,6 +35,29 @@ contract.
 
 ## architecture
 
+### shared document session and sources
+
+The shared document-reader composition is the one format coordinator for PDF,
+EPUB, and web articles. Within it, `DocumentReaderSession` owns source/progress
+orchestration, initial active-unit and preferred-locator selection, and the
+canonical locator projection helpers. Format composition and
+`useReaderProgress` retain visible navigation/scroll/Find state and cursor
+ordering, suppression, revalidation, and writes. `ReaderDocumentSource`
+supplies resolved format inputs and `ReaderProgressPort` supplies
+load/save/conflict transport. Neither interface grants generic network or
+storage access.
+
+Hosted media composition installs the current BFF/API source and canonical
+online cursor port. The Android APK shelf installs a lease-scoped local source
+and native latest-value progress port. `TextDocumentReader` and `PdfReader`
+render resolved inputs and do not fetch media, signed URLs, highlights, or
+progress. Hosted decorations remain a layer over canonical content; offline
+packages contain undecorated canonical inputs.
+
+The parameterized Chromium component proof covers hosted PDF, EPUB, and article
+load/restore/save through this session. It is format-coordinator evidence, not
+evidence for native persistence, package integrity, or signed APK wiring.
+
 ### mobile scroll-linked chrome
 
 One active mobile reader scrollport registers directly with the workspace
@@ -673,6 +696,21 @@ pure black/white to reduce halation under long sessions.
 - All reader-state responses carry `Cache-Control: private, no-store`, via an
   exact-path FastAPI middleware and the matching header on the Next reader-state
   BFF route.
+- Offline reading does not alter this canonical cursor shape or create another
+  server cursor row. `GET|PUT /api/media/{id}/offline-reader-state` is a narrow
+  authenticated envelope around the same Consumption owner. It requires
+  `X-Nexus-Expected-Account-Id`, returns account and publication-generation
+  attestation, and on PUT checks account and locks/compares
+  `reader_publications.generation` before invoking the existing cursor CAS.
+  Wrong account, changed generation, and ordinary revision conflict mutate
+  nothing.
+- Native stores one baseline plus one latest pending locator per installed
+  publication. An offline save is acknowledged only after that pending locator
+  is durable. Foreground sync uses the generation fence and canonical revision;
+  it never picks a value by timestamp or furthest position. A same-generation
+  conflict preserves Canonical and Device choices. A changed or deleted source
+  keeps the installed copy and its pending locator local until confirmed
+  removal.
 - `ReaderResumeState` (the `locator` payload) is a discriminated union:
   - `pdf`: `page`, `page_progression`, `zoom`, `position`
   - `web`: `target.fragment_id`, `locations`, `text`
@@ -839,6 +877,42 @@ of its location-target writes uses.
   navigation section title or active section content. navigation and section
   loading are content-level states and do not own workspace label/header state.
 
+### Android offline publication and package boundary
+
+`reader_publications` is the sole generation owner for ready PDF, EPUB, and web
+article reader inputs. Eligible publication paths call
+`replace_reader_publication`; package capture reads one repeatable-read database
+projection plus its immutable object references, assembles outside the
+transaction, and verifies the generation afterward. One race restarts the
+capture; a second is `E_READER_PUBLICATION_BUSY`.
+
+The canonical resource-action snapshot advertises `OfflineReading` only for a
+ready PDF, EPUB, or web article. It supplies the exact media ID, canonical media
+kind, and server-owned `requestedTitle` used by the Android enqueue command.
+The title is bounded presentation metadata, not authorization or package
+identity; the verified package manifest replaces it after installation.
+
+`offline_reading_packages.py` creates deterministic package-schema and
+reader-contract V1 ZIPs. `testdata/offline-reading-contract-v1.json` is the
+shared Python/TypeScript/Kotlin oracle for strict keys, paths, bounds, hashes,
+revision-key computation, local EPUB assets, PDF binding, and text-only article
+content. Native verifies the response digest, ZIP grammar, manifest and entry
+integrity, supported versions, media/account/generation binding, and baseline
+before publishing one package row and sealed directory.
+
+Archive and expanded totals remain bounded at 512 MiB. The JSON reader member
+has an exact 64-MiB limit matching the canonical EPUB/API-container bound; SVG
+members have an exact 8-MiB limit because their safety check parses XML; other
+members retain the 512-MiB ceiling. Production objects are staged and hashed in
+chunks, then ZIP-streamed with cooperative deadline checks per chunk rather
+than accumulated as one in-memory package.
+
+The Android shelf serves the committed Vite bundle and package entries only on
+the reserved appassets host. Lease capabilities are memory-only. Remote
+article subresources, arbitrary native fetch, WebView `file:`/`content:` access,
+and reserved-host network fallback are absent by contract. Audio remains owned
+by `OfflineMediaStore`; reading remains owned by `OfflineReadingStore`.
+
 ### reader theme quick-switch
 
 - media More exposes a reader theme quick-switch
@@ -881,7 +955,7 @@ this keeps resume robust when typography changes.
 
 ## regression coverage
 
-required e2e coverage includes:
+required automated coverage includes:
 
 - reader settings persistence
 - web canonical locator resume after reflow from profile typography changes
@@ -897,9 +971,24 @@ required e2e coverage includes:
 - reader-to-chat quote flow sends `reader_selection` (highlight key + revision)
   from a typed launch intent and captures an immutable per-message snapshot that
   survives reload, branch, and rerun; a geometry-only Highlight is non-sendable
+- one coherent publication capture across PostgreSQL and MinIO, including the
+  bounded restart/busy result
+- wrong-account and wrong-generation offline cursor writes leaving the
+  canonical cursor unchanged
+- the cross-language V1 package/reader vector and verification-before-publication
+  host state machine
+- the APK shelf's local-only request/range routing and explicit downloaded-copy
+  and text-only-article disclosures
 
 Supporting proof uses controller-owned per-run state, the canonical corpus, and
 the reader-progress/citation journeys.
+
+The current device instrumentation seam covers SQLite/files/Keystore recreation,
+lease-delayed removal, and account purge and is included in signed-release
+instrumentation. Promotion still requires protected physical-device evidence
+for force-stop, reboot after unlock, airplane-mode cold launch, real local API
+package acquisition for all three formats, pending-progress restoration, and
+in-place V1 update compatibility. Host or emulator success is not that evidence.
 
 ## validation commands
 

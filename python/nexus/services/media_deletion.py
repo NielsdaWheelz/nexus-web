@@ -695,6 +695,9 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM media_teardown_intents WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
+    from nexus.services.reader_publication import delete_reader_publication
+
+    delete_reader_publication(db, media_id=media_id)
     db.execute(text("DELETE FROM media WHERE id = :media_id"), {"media_id": media_id})
     return storage_paths
 

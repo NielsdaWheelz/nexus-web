@@ -5,6 +5,7 @@ import errno
 import fcntl
 import ipaddress
 import json
+import mmap
 import os
 import re
 import secrets
@@ -103,6 +104,8 @@ TEST_EXTENSION_ID = "pfcfdmanlahjkanalhpnfjflgaaahgib"
 SUPABASE_EXCLUDED_SERVICES = (
     "realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,postgrest"
 )
+CADDY_VERSION = "v2.11.4"
+_CADDY_MODULE_BUILD_PIN = f"github.com/caddyserver/caddy/v2\t{CADDY_VERSION}".encode()
 
 _PORT_DEFAULTS = (
     15432,
@@ -453,6 +456,83 @@ def authorized_device_serials(
         for line in listed.stdout.splitlines()[1:]
         if line.endswith("\tdevice")
     )
+
+
+def _long_device_inventory(
+    adb: Path, environment: Mapping[str, str], cwd: Path
+) -> tuple[tuple[str, ...], ...] | None:
+    """The one `adb devices -l` parse: the fields of each authorized row."""
+    try:
+        listed = run_command(
+            (str(adb), "devices", "-l"),
+            cwd=cwd,
+            env=android_tool_environment(environment),
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if listed.returncode != 0:
+        return None
+    rows: list[tuple[str, ...]] = []
+    for line in listed.stdout.splitlines()[1:]:
+        fields = tuple(line.split())
+        if len(fields) < 2 or fields[1] != "device":
+            continue
+        rows.append(fields)
+    return tuple(rows)
+
+
+def _is_usb_physical_row(fields: Sequence[str]) -> bool:
+    if fields[0].startswith("emulator-"):
+        return False
+    return any(field.startswith("usb:") and len(field) > 4 for field in fields[2:])
+
+
+def authorized_usb_physical_device(
+    adb: Path, environment: Mapping[str, str], cwd: Path
+) -> tuple[str | None, str]:
+    """Attest the one USB-backed physical device used by protected device proof.
+
+    Emulators and wireless adb transports remain distinct lanes and cannot
+    satisfy this boundary. Other authorized transports may coexist, but exactly
+    one physical row must carry adb's ``usb:`` topology fact.
+    """
+    rows = _long_device_inventory(adb, environment, cwd)
+    if rows is None:
+        return None, "Android USB device inventory could not be read"
+    candidates = [fields[0] for fields in rows if _is_usb_physical_row(fields)]
+    if not candidates:
+        return None, "no authorized USB-backed physical Android device is attached"
+    if len(candidates) != 1:
+        return None, "Android device proof requires exactly one USB-backed physical device"
+    return candidates[0], ""
+
+
+def authorized_instrumentation_device(
+    adb: Path, environment: Mapping[str, str], cwd: Path
+) -> tuple[str | None, str]:
+    """Attest the one device the ordinary `android-device` capability may drive.
+
+    Hosted nightly infrastructure supplies a locally started emulator; the
+    protected lab supplies a USB-wired handset. Either is an owned, physically
+    reachable transport whose serial the controller can bind. A wireless adb
+    transport is neither: it names a host and port the controller does not own,
+    so it can never satisfy this capability.
+    """
+    rows = _long_device_inventory(adb, environment, cwd)
+    if rows is None:
+        return None, "Android device inventory could not be read"
+    candidates = [
+        fields[0]
+        for fields in rows
+        if fields[0].startswith("emulator-") or _is_usb_physical_row(fields)
+    ]
+    if not candidates:
+        return None, "no authorized local emulator or USB-backed Android device is attached"
+    if len(candidates) != 1:
+        return None, "Android device proof requires exactly one local emulator or USB device"
+    return candidates[0], ""
 
 
 def test_environment(caller_environment: Mapping[str, str]) -> dict[str, str]:
@@ -1100,6 +1180,203 @@ def start_web_process(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class OfflineReadingCaddyPorts:
+    """Run-scoped controller-owned loopback ports for the Caddy seam proof.
+
+    The seam proof never binds the runtime's fixed api/web ports: those are
+    owned by the real API and web processes, which other capabilities in the
+    same selection may start concurrently.
+    """
+
+    origin: int
+    site: int
+
+
+_OFFLINE_READING_CADDY_PREFERRED_PORTS = (18300, 18560)
+
+
+def _offline_reading_caddy_output_root(root: Path, run_id: str) -> Path:
+    return root / "test-results" / "runs" / run_id / "offline-reading-caddy"
+
+
+def _offline_reading_caddy_ports_path(root: Path, run_id: str) -> Path:
+    return _offline_reading_caddy_output_root(root, run_id) / "ports.json"
+
+
+def _read_offline_reading_caddy_ports(path: Path) -> OfflineReadingCaddyPorts:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise RuntimeContractError("offline-reading Caddy ports file is unreadable") from error
+    if not isinstance(payload, dict) or set(payload) != {"origin", "site"}:
+        raise RuntimeContractError("offline-reading Caddy ports file has an invalid shape")
+    origin, site = payload["origin"], payload["site"]
+    if not all(
+        isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535
+        for port in (origin, site)
+    ):
+        raise RuntimeContractError("offline-reading Caddy ports are outside TCP port bounds")
+    if origin == site:
+        raise RuntimeContractError("offline-reading Caddy ports must be distinct")
+    return OfflineReadingCaddyPorts(origin=origin, site=site)
+
+
+def _ensure_offline_reading_caddy_ports(root: Path, run_id: str) -> OfflineReadingCaddyPorts:
+    path = _offline_reading_caddy_ports_path(root, run_id)
+    with _port_allocation_lock():
+        if path.exists():
+            return _read_offline_reading_caddy_ports(path)
+        reserved = set(read_runtime(root).ports.as_dict().values())
+        ephemeral_port_range = _local_ephemeral_port_range()
+        chosen: list[int] = []
+        for preferred in _OFFLINE_READING_CADDY_PREFERRED_PORTS:
+            for port in _candidate_ports(preferred, ephemeral_port_range):
+                if port not in reserved and port not in chosen and _port_available(port):
+                    chosen.append(port)
+                    break
+            else:
+                raise RuntimeContractError(
+                    f"no controller-owned loopback port is available from {preferred}"
+                )
+        ports = OfflineReadingCaddyPorts(origin=chosen[0], site=chosen[1])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"origin": ports.origin, "site": ports.site}), encoding="utf-8")
+        return ports
+
+
+def offline_reading_caddy_ports(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> OfflineReadingCaddyPorts:
+    """Read the run's allocated Caddy seam ports; the origin process allocates them."""
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    require_run_id(run_id)
+    path = _offline_reading_caddy_ports_path(root, run_id)
+    if not path.exists():
+        raise RuntimeContractError("offline-reading Caddy ports are not allocated for this run")
+    return _read_offline_reading_caddy_ports(path)
+
+
+def start_offline_reading_caddy_origin_process(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> StartedProcess:
+    """Start the ledger-owned FastAPI origin used only by the Caddy seam proof."""
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    require_run_id(run_id)
+    read_ledger(root, run_id)
+    ports = _ensure_offline_reading_caddy_ports(root, run_id)
+    _require_loopback_port_available(ports.origin, "offline-caddy-origin")
+    python = root / "python/.venv/bin/python"
+    if not python.is_file():
+        raise RuntimeContractError("offline-reading Caddy origin requires the locked Python env")
+    output_root = _offline_reading_caddy_output_root(root, run_id)
+    output_root.mkdir(parents=True, exist_ok=True)
+    audit_path = output_root / "origin-audit.jsonl"
+    if audit_path.exists():
+        raise RuntimeContractError("offline-reading Caddy origin audit already exists")
+    audit_path.touch(exist_ok=False)
+    command = (
+        str(python),
+        str((root / "python/tests/testkit/offline_reading_caddy_origin.py").resolve(strict=True)),
+        "--port",
+        str(ports.origin),
+        "--audit",
+        str(audit_path),
+    )
+    return _start_owned_process(
+        root,
+        environment,
+        run_id,
+        "offline-caddy-origin",
+        command,
+        cwd=root,
+        process_environment={
+            "NEXUS_ENV": "test",
+            "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
+            "NEXUS_TEST_RUN_ID": run_id,
+            "PYTHONPATH": (f"{root / 'python/tests/testkit'}:{root / 'python'}:{root}"),
+        },
+    )
+
+
+def start_caddy_process(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> StartedProcess:
+    """Run the production Caddyfile with only test-owned endpoint substitutions."""
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    require_run_id(run_id)
+    read_ledger(root, run_id)
+    ports_path = _offline_reading_caddy_ports_path(root, run_id)
+    if not ports_path.exists():
+        raise RuntimeContractError("offline-reading Caddy requires its origin to start first")
+    ports = _read_offline_reading_caddy_ports(ports_path)
+    _require_loopback_port_available(ports.site, "offline-caddy")
+    executable_name = shutil.which("caddy", path=environment.get("PATH"))
+    if executable_name is None:
+        raise RuntimeContractError(f"Caddy {CADDY_VERSION} is required by this proof")
+    executable = Path(executable_name).resolve(strict=True)
+    if not executable.is_file():
+        raise RuntimeContractError("resolved Caddy executable is not a file")
+    with (
+        executable.open("rb") as binary,
+        mmap.mmap(binary.fileno(), 0, access=mmap.ACCESS_READ) as build,
+    ):
+        if build.find(_CADDY_MODULE_BUILD_PIN) < 0:
+            raise RuntimeContractError(f"Caddy executable is not pinned to {CADDY_VERSION}")
+
+    production = (root / "deploy/hetzner/Caddyfile").read_text(encoding="utf-8")
+    if not production.startswith("{\n") or production.count("reverse_proxy api:8000") != 2:
+        raise RuntimeContractError("production Caddyfile no longer has the exact proxy shape")
+    rendered = production.replace("{\n", "{\n\tadmin off\n", 1).replace(
+        "reverse_proxy api:8000",
+        f"reverse_proxy 127.0.0.1:{ports.origin}",
+    )
+    site_block = "{$CADDY_SITE} {\n"
+    if rendered.count(site_block) != 1:
+        raise RuntimeContractError("production Caddyfile no longer has one site block")
+    rendered = rendered.replace(site_block, site_block + "\tbind 127.0.0.1\n", 1)
+    output_root = _offline_reading_caddy_output_root(root, run_id)
+    output_root.mkdir(parents=True, exist_ok=True)
+    config_path = output_root / "Caddyfile"
+    if config_path.exists():
+        raise RuntimeContractError("offline-reading Caddy config already exists")
+    config_path.write_text(rendered, encoding="utf-8")
+    caddy_home = output_root / "home"
+    command = (
+        str(executable),
+        "run",
+        "--config",
+        str(config_path),
+        "--adapter",
+        "caddyfile",
+    )
+    return _start_owned_process(
+        root,
+        environment,
+        run_id,
+        "offline-caddy",
+        command,
+        cwd=root,
+        process_environment={
+            "CADDY_ACME_EMAIL": "nexus-test@example.invalid",
+            "CADDY_SITE": f"http://127.0.0.1:{ports.site}",
+            "NEXUS_ENV": "test",
+            "NEXUS_TEST_RUN_ID": run_id,
+            "XDG_CONFIG_HOME": str(caddy_home / ".config"),
+            "XDG_DATA_HOME": str(caddy_home / ".local/share"),
+        },
+    )
+
+
 def wait_process_ready(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -1130,6 +1407,39 @@ def wait_process_ready(
         raise RuntimeContractError("TLS CA is only valid for provider readiness")
     else:
         verify = True
+    _wait_owned_process_url_ready(root, process, url, port, verify, timeout_seconds)
+
+
+def wait_offline_reading_caddy_ready(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    process: StartedProcess,
+    path: str,
+    *,
+    timeout_seconds: float = 30,
+) -> None:
+    """Wait for a Caddy seam proof process at its run-allocated loopback port."""
+    require_test_environment(environment)
+    if not path.startswith("/") or "//" in path:
+        raise RuntimeContractError("process readiness path must be absolute and normalized")
+    root = canonical_repo_root(repo_root)
+    ports = offline_reading_caddy_ports(root, environment, process.run_id)
+    port = {"offline-caddy-origin": ports.origin, "offline-caddy": ports.site}.get(process.role)
+    if port is None:
+        raise RuntimeContractError("only Caddy seam proof processes have run-allocated ports")
+    _wait_owned_process_url_ready(
+        root, process, f"http://127.0.0.1:{port}{path}", port, True, timeout_seconds
+    )
+
+
+def _wait_owned_process_url_ready(
+    root: Path,
+    process: StartedProcess,
+    url: str,
+    port: int,
+    verify: ssl.SSLContext | bool,
+    timeout_seconds: float,
+) -> None:
     deadline = time.monotonic() + timeout_seconds
     identity_deadline = min(deadline, time.monotonic() + 2)
     with httpx.Client(

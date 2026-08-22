@@ -2,19 +2,36 @@
 	email {$CADDY_ACME_EMAIL}
 	log default {
 		format filter {
+			request>headers>Authorization delete
+			request>headers>Cookie delete
 			request>headers>X-Nexus-Internal delete
 		}
 	}
 }
 
 {$CADDY_SITE} {
-	encode zstd gzip
-
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 	}
 
-	reverse_proxy api:8000
+	route {
+		@offline_reading_package path_regexp ^/offline-reading/packages/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+		handle @offline_reading_package {
+			reverse_proxy api:8000 {
+				transport http {
+					dial_timeout 20s
+					response_header_timeout 660s
+					read_timeout 3600s
+					write_timeout 3600s
+				}
+			}
+		}
+
+		handle {
+			encode zstd gzip
+			reverse_proxy api:8000
+		}
+	}
 }

@@ -164,12 +164,13 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ".github/workflows/nightly.yml": (
         (
             'NEXUS_HOSTED_CANARY: "1"',
+            "runs-on: ubuntu-latest",
             "\n          api-level: 36\n",
             "\n          system-image-api-level: 36-ext19\n",
             "\n          channel: canary\n",
             "script: ./scripts/test nightly",
         ),
-        ("make test",),
+        ("make test", "nexus-android-usb"),
     ),
     ".github/workflows/codex-personal-nightly.yml": (
         (
@@ -183,8 +184,12 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("OPENAI_API_KEY", "make test", "pytest"),
     ),
     ".github/workflows/release.yml": (
-        ('NEXUS_PROVIDER_CERTIFICATION: "1"', "script: ./scripts/test release"),
-        ("make test",),
+        (
+            'NEXUS_PROVIDER_CERTIFICATION: "1"',
+            "runs-on: [self-hosted, linux, x64, nexus-android-usb]",
+            "run: ./scripts/test release",
+        ),
+        ("make test", "reactivecircus/android-emulator-runner@"),
     ),
     "docs/local-rules/index.md": (
         ("testing-standards.md",),
@@ -300,10 +305,19 @@ _OWNERSHIP_TOKENS: tuple[tuple[str, re.Pattern[str], frozenset[str], dict[str, i
         {".github/workflows/codex-personal-nightly.yml": 1},
     ),
     (
+        # Nightly keeps the hosted emulator lane it has always had; only the
+        # signed release job may claim the one dedicated USB handset, and it
+        # must never fall back to an emulator.
         "android-emulator",
         re.compile(r"reactivecircus/android-emulator-runner@"),
-        frozenset({".github/workflows/nightly.yml", ".github/workflows/release.yml"}),
-        {".github/workflows/nightly.yml": 1, ".github/workflows/release.yml": 1},
+        frozenset({".github/workflows/nightly.yml"}),
+        {".github/workflows/nightly.yml": 1},
+    ),
+    (
+        "android-usb-runner",
+        re.compile(r"\bnexus-android-usb\b"),
+        frozenset({".github/workflows/release.yml"}),
+        {".github/workflows/release.yml": 1},
     ),
     (
         "android-signing-publication",
@@ -1155,6 +1169,7 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             )
         )
     proof_owners: dict[str, str] = {}
+    canonical_nodes: dict[str, str] = {}
     for risk in data["priority_risks"]:
         location = f"testdata/proofs.json#{risk['id']}"
         if not risk["proofs"]:
@@ -1185,6 +1200,20 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 violations.append(
                     PolicyViolation(
                         "proof-unique-owner", location, f"proof is already owned by {previous}"
+                    )
+                )
+            # A changed test file selects its file-level proof, and sensitivity
+            # resolves that path to one canonical node. Two registered nodes for
+            # one path make that resolution ambiguous and abort the run, so the
+            # registry admits exactly one node per proof owner.
+            path = proof.partition(":")[2].split("::", 1)[0]
+            registered = canonical_nodes.setdefault(path, proof)
+            if registered != proof:
+                violations.append(
+                    PolicyViolation(
+                        "proof-canonical-node",
+                        location,
+                        f"proof owner already has the canonical node {registered}: {proof}",
                     )
                 )
         declared_capabilities = set(risk["capabilities"])
@@ -1551,6 +1580,8 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
         return (PolicyViolation("fault-schema", relative, "invalid fault manifest shape"),)
     seen_ids: set[str] = set()
     manifested: set[str] = set()
+    proof_owner: dict[str, str] = {}
+    canonical_nodes = _registered_canonical_nodes(repo_root)
     for index, fault in enumerate(data["faults"]):
         location = f"{relative}#faults[{index}]"
         if not isinstance(fault, dict) or set(fault) != {
@@ -1592,6 +1623,32 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                             "fault-proof",
                             location,
                             f"invalid or missing fault proof node: {proof}",
+                        )
+                    )
+                    continue
+                # `declared_fault_for_proof` refuses to guess between two faults
+                # for one proof and raises before any workflow can produce
+                # sensitivity evidence. Reject the ambiguity here, where a
+                # policy violation is a readable verdict instead of an abort.
+                owner = proof_owner.setdefault(proof, fault.get("id", ""))
+                if owner != fault.get("id", ""):
+                    violations.append(
+                        PolicyViolation(
+                            "fault-proof-owner",
+                            location,
+                            f"proof is already claimed by fault {owner}: {proof}",
+                        )
+                    )
+                # `canonical_proof` rewrites any request on a registered owner
+                # to that owner's single priority node, so a fault naming a
+                # different node of the same file can never be resolved.
+                canonical = canonical_nodes.get(proof_path)
+                if canonical is not None and canonical != proof:
+                    violations.append(
+                        PolicyViolation(
+                            "fault-canonical-proof",
+                            location,
+                            f"fault proof is not the registered canonical node {canonical}: {proof}",
                         )
                     )
         seen_ids.add(fault.get("id", ""))
@@ -1646,6 +1703,33 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     )
                 )
     return _sorted(violations)
+
+
+def _registered_canonical_nodes(repo_root: Path) -> dict[str, str]:
+    """The single priority node registered for each proof owner path, if any."""
+    manifest = repo_root / "testdata/proofs.json"
+    if not manifest.is_file():
+        return {}
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        risks = data["priority_risks"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return {}
+    nodes: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for risk in risks:
+        for proof in risk.get("proofs", []) if isinstance(risk, dict) else []:
+            if not isinstance(proof, str):
+                continue
+            path = proof.partition(":")[2].split("::", 1)[0]
+            if path in nodes and nodes[path] != proof:
+                ambiguous.add(path)
+            nodes.setdefault(path, proof)
+    # An ambiguous owner is reported by `proof-canonical-node`; do not compound
+    # it with a derived fault violation here.
+    for path in ambiguous:
+        nodes.pop(path, None)
+    return nodes
 
 
 def _fault_changed_paths(patch: str) -> tuple[str, ...]:

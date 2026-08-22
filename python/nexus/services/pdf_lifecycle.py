@@ -28,6 +28,12 @@ from nexus.services.pdf_ingest import (
     publish_pdf_extraction_plan,
 )
 from nexus.services.pdf_metadata import build_pdf_author_observation, persist_pdf_metadata
+from nexus.services.reader_publication import (
+    ReaderPublicationSourceFile,
+    replace_reader_publication,
+    superseded_reader_source_paths,
+    unpublished_reader_source_paths,
+)
 from nexus.storage.client import get_storage_client
 
 logger = get_logger(__name__)
@@ -106,40 +112,68 @@ def publish_pdf_source(
     *,
     media_id: UUID,
     plan: PdfExtractionPlan,
-) -> dict[str, object]:
-    """Publish one prepared PDF plan in the caller's fenced transaction."""
+    source_file: ReaderPublicationSourceFile | None = None,
+) -> tuple[dict[str, object], list[str]]:
+    """Publish one prepared PDF plan in the caller's fenced transaction.
+
+    ``source_file`` is the newly prepared source object this publication makes
+    reader-visible; the publication owner installs that pointer under its lock.
+    Returns the response and the storage paths the caller deletes only after its
+    transaction commits: either the rejected prepared source, or the source this
+    successful publication superseded.
+    """
     media = db.get(Media, media_id)
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if media.kind != "pdf":
         raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be PDF.")
     if media.processing_status != ProcessingStatus.extracting:
-        return {"status": "skipped", "reason": "not_extracting"}
-
-    result = publish_pdf_extraction_plan(db, media_id=media_id, plan=plan)
-    assert isinstance(result, PdfExtractionResult)
-    persist_pdf_metadata(db, media, result)
-    bump_all_collection_families(
+        # Nothing is published, so the prepared object never becomes reader-visible
+        # and the current pointer and generation both stand.
+        return {
+            "status": "skipped",
+            "reason": "not_extracting",
+        }, unpublished_reader_source_paths(db, media_id=media_id, source_file=source_file)
+    superseded_source_paths = superseded_reader_source_paths(
         db,
-        families=(
-            CollectionFamily.AuthorWorks,
-            CollectionFamily.LibraryEntries,
-        ),
+        media_id=media_id,
+        source_file=source_file,
     )
-    db.flush()
-    response: dict[str, object] = {
-        "status": "success",
-        "page_count": result.page_count,
-        "has_text": result.has_text,
-        "metadata_enrichment": True,
-    }
-    if not result.has_text:
-        response["warning_error_code"] = "E_PDF_TEXT_UNAVAILABLE"
-    observation, truncated = build_pdf_author_observation(result)
-    if truncated:
-        logger.info("pdf_author_truncation", media_id=str(media_id), truncated=truncated)
-    attach_author_observation(response, observation=observation, source=_PDF_AUTHOR_SOURCE)
-    return response
+
+    def replace_projection(locked_media: Media) -> dict[str, object]:
+        result = publish_pdf_extraction_plan(db, media_id=media_id, plan=plan)
+        assert isinstance(result, PdfExtractionResult)
+        persist_pdf_metadata(db, locked_media, result)
+        bump_all_collection_families(
+            db,
+            families=(
+                CollectionFamily.AuthorWorks,
+                CollectionFamily.LibraryEntries,
+            ),
+        )
+        db.flush()
+        response: dict[str, object] = {
+            "status": "success",
+            "page_count": result.page_count,
+            "has_text": result.has_text,
+            "metadata_enrichment": True,
+        }
+        if not result.has_text:
+            response["warning_error_code"] = "E_PDF_TEXT_UNAVAILABLE"
+        observation, truncated = build_pdf_author_observation(result)
+        if truncated:
+            logger.info("pdf_author_truncation", media_id=str(media_id), truncated=truncated)
+        attach_author_observation(response, observation=observation, source=_PDF_AUTHOR_SOURCE)
+        return response
+
+    response = replace_reader_publication(
+        db,
+        media_id=media_id,
+        expected_kind="pdf",
+        replace_projection=replace_projection,
+        source_file=source_file,
+    )
+    return response, superseded_source_paths
 
 
 def _source_api_error_code(error_code: str | None) -> ApiErrorCode:

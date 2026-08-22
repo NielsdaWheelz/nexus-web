@@ -23,7 +23,14 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   serializeChatDraftKey,
   type ChatDraftKey,
@@ -168,23 +175,36 @@ function isEmptyRecord(record: ChatDraftRecord): boolean {
   );
 }
 
+function requireSessionStorage(): Storage {
+  if (typeof window === "undefined" || window.sessionStorage === undefined) {
+    throw new Error("Chat drafts require sessionStorage");
+  }
+  return window.sessionStorage;
+}
+
 function loadRecord(storageKey: string): ChatDraftRecord {
-  const raw = sessionStorage.getItem(storageKey);
+  const raw = requireSessionStorage().getItem(storageKey);
   return raw === null ? EMPTY_DRAFT_RECORD : decodeChatDraftRecord(raw);
 }
 
 /** Persist synchronously. A storage failure is a defect (no fallback). */
 function persistRecord(storageKey: string, record: ChatDraftRecord): void {
+  const storage = requireSessionStorage();
   if (isEmptyRecord(record)) {
-    sessionStorage.removeItem(storageKey);
+    storage.removeItem(storageKey);
   } else {
-    sessionStorage.setItem(storageKey, JSON.stringify(record));
+    storage.setItem(storageKey, JSON.stringify(record));
   }
 }
 
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
+
+/** Static store for the hydration guard; the snapshot never changes. */
+function subscribeToNothing(): () => void {
+  return () => undefined;
+}
 
 interface UseChatDraft {
   content: string;
@@ -224,17 +244,40 @@ export function useChatDraft({
     [draftKey],
   );
 
-  // Synchronous record selection: switching keys loads the new record during
-  // render (the React "adjust state during render" pattern), so no effect-driven
-  // stale record can render or mutate under another key.
+  // Hydration guard: false on the server and during the hydration render (so
+  // server and first client markup stay byte-identical without touching
+  // browser storage), true from the post-hydration commit and for every
+  // ordinary client mount's first render.
+  const hydrated = useSyncExternalStore(
+    subscribeToNothing,
+    () => true,
+    () => false,
+  );
+
+  // Synchronous record selection: switching keys (and the first hydrated
+  // render) loads the record during render (the React "adjust state during
+  // render" pattern), so no effect-driven stale record can render or mutate
+  // under another key. In particular, a persisted locked reconciliation is
+  // visible to every effect of the same commit — the `initialContent` seed
+  // below can never race an asynchronous restore and destroy the in-flight
+  // command. Storage reads stay strict: unavailable storage or a malformed
+  // current record throws.
   const [state, setState] = useState<{
     storageKey: string;
     record: ChatDraftRecord;
-  }>(() => ({ storageKey, record: loadRecord(storageKey) }));
+    restored: boolean;
+  }>(() =>
+    hydrated
+      ? { storageKey, record: loadRecord(storageKey), restored: true }
+      : { storageKey, record: EMPTY_DRAFT_RECORD, restored: false },
+  );
   let record = state.record;
   if (state.storageKey !== storageKey) {
+    record = hydrated ? loadRecord(storageKey) : EMPTY_DRAFT_RECORD;
+    setState({ storageKey, record, restored: hydrated });
+  } else if (hydrated && !state.restored) {
     record = loadRecord(storageKey);
-    setState({ storageKey, record });
+    setState({ storageKey, record, restored: true });
   }
   const recordRef = useRef(record);
   recordRef.current = record;
@@ -242,7 +285,7 @@ export function useChatDraft({
   const write = useCallback(
     (next: ChatDraftRecord) => {
       persistRecord(storageKey, next);
-      setState({ storageKey, record: next });
+      setState({ storageKey, record: next, restored: true });
     },
     [storageKey],
   );

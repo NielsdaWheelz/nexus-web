@@ -42,6 +42,7 @@ from nexus.services.reader_apparatus import (
     replace_media_apparatus,
     source_fingerprint,
 )
+from nexus.services.reader_publication import replace_reader_publication
 from nexus.services.source_publication import (
     SourcePublicationFence,
     run_source_publication_phase,
@@ -225,10 +226,7 @@ def materialize_web_article_source(
         finally:
             discovery.close()
 
-        def publish_artifacts(db: Session, _attempt: object) -> UUID:
-            media = db.get(Media, media_id)
-            if media is None:
-                raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        def replace_projection(db: Session, media: Media) -> UUID:
             owner_user_id = media.created_by_user_id or actor_user_id
             delete_web_article_artifacts(
                 db,
@@ -297,6 +295,14 @@ def materialize_web_article_source(
                 edges=source_apparatus.apparatus_edges,
             )
             return fragment.id
+
+        def publish_artifacts(db: Session, _attempt: object) -> UUID:
+            return replace_reader_publication(
+                db,
+                media_id=media_id,
+                expected_kind="web_article",
+                replace_projection=lambda media: replace_projection(db, media),
+            )
 
         try:
             fragment_id = run_source_publication_phase(
