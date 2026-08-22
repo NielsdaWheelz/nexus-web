@@ -53,6 +53,12 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         for requirement in WORKFLOW_REGISTRY[Workflow.CODEX_NIGHTLY].requirements
     ) == (Capability.CODEX_HOSTED,)
 
+    release_capabilities = {
+        requirement.capability for requirement in WORKFLOW_REGISTRY[Workflow.RELEASE].requirements
+    }
+    assert Capability.ANDROID_DEVICE in release_capabilities
+    assert Capability.ANDROID_RELEASE in release_capabilities
+
 
 def test_confidence_keeps_real_stack_affected_and_skips_build_and_journeys() -> None:
     requirements = WORKFLOW_REGISTRY[Workflow.CONFIDENCE].requirements

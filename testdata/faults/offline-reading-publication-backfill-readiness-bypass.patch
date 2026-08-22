@@ -1,0 +1,11 @@
+diff --git a/migrations/alembic/versions/0219_reader_publications.py b/migrations/alembic/versions/0219_reader_publications.py
+--- a/migrations/alembic/versions/0219_reader_publications.py
++++ b/migrations/alembic/versions/0219_reader_publications.py
+@@ -48,7 +48,6 @@ def upgrade() -> None:
+             SELECT id
+             FROM media
+             WHERE kind IN ('pdf', 'epub', 'web_article')
+-              AND processing_status = 'ready_for_reading'
+             ORDER BY id
+             """
+         )

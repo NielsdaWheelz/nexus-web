@@ -183,6 +183,51 @@
       "expected_failure": "DID NOT RAISE"
     },
     {
+      "id": "offline-reading-mixed-publication-generation",
+      "patch": "testdata/faults/offline-reading-mixed-publication-generation.patch",
+      "sha256": "0ce1e4366b3753d51272a7376185581e99fb31768a5a3dc66f1a6250a983b33f",
+      "proofs": [
+        "pytest:python/tests/service/test_reader_publication.py::test_capture_restarts_once_without_mixing_database_and_minio_publications"
+      ],
+      "expected_failure": "capture mixed a database pointer and object generation"
+    },
+    {
+      "id": "offline-reading-caddy-path-scope-bypass",
+      "patch": "testdata/faults/offline-reading-caddy-path-scope-bypass.patch",
+      "sha256": "66500cad7f033bcccf1957dfc00f08ff7f37f7b84f82182a7bb88d2bfe5a654a",
+      "proofs": [
+        "pytest:python/tests/service/test_offline_reading_caddy_delivery.py::test_production_caddy_proxy_preserves_exact_package_identity_bytes_without_encoding"
+      ],
+      "expected_failure": "fallback path escaped the general compressed proxy lane"
+    },
+    {
+      "id": "offline-reading-publication-backfill-readiness-bypass",
+      "patch": "testdata/faults/offline-reading-publication-backfill-readiness-bypass.patch",
+      "sha256": "0057b5b5731de6afd5051f0c157562a5819e91b397e223a71f163049beec9a07",
+      "proofs": [
+        "pytest:python/tests/migrations/test_reader_publications_migration.py::test_0219_backfills_only_ready_documents_without_database_cascade"
+      ],
+      "expected_failure": "0219 backfilled the wrong media set or generation"
+    },
+    {
+      "id": "offline-reading-expected-account-bypass",
+      "patch": "testdata/faults/offline-reading-expected-account-bypass.patch",
+      "sha256": "b4b27f9e4c4486934369867b87d0887459d1676a145527da9fa3769e18f654e3",
+      "proofs": [
+        "pytest:python/tests/service/test_offline_reader_account_fence.py"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "offline-reading-generation-cas-bypass",
+      "patch": "testdata/faults/offline-reading-generation-cas-bypass.patch",
+      "sha256": "99b406c75778fad2f93a50be680bf78464b82d4ebba0150d0b23e5bf778fcfe2",
+      "proofs": [
+        "pytest:python/tests/service/test_offline_reader_progress.py::test_offline_progress_is_account_generation_and_response_attested"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
       "id": "reader-position-fragment-prefix-bypass",
       "patch": "testdata/faults/reader-position-fragment-prefix-bypass.patch",
       "sha256": "c6bb454eda56feb9518f732644aec2181e455d65f9c621adbce42279390aaaee",
@@ -232,8 +277,7 @@
       "patch": "testdata/faults/durable-codex-metadata-uncertain-checkpoint-bypass.patch",
       "sha256": "16387f393484a2e919ccbd802264483247cf51c19b664bd3bbf1510e2b9d38de",
       "proofs": [
-        "pytest:python/tests/service/test_codex_metadata_enrichment.py",
-        "pytest:python/tests/service/test_codex_metadata_enrichment.py::test_real_worker_publishes_authors_pins_and_exactly_replays_after_publication"
+        "pytest:python/tests/service/test_codex_metadata_enrichment.py"
       ],
       "expected_failure": "the Uncertain checkpoint was not durably committed before native dispatch"
     },
@@ -269,8 +313,7 @@
       "patch": "testdata/faults/durable-codex-host-capacity-admission-bypass.patch",
       "sha256": "8baf068d649aa642c638e599ced2d4fb6aa5eaae6a75c0cf08aac8a7b03a9735",
       "proofs": [
-        "pytest:python/tests/service/test_codex_agent_host.py",
-        "pytest:python/tests/service/test_codex_agent_host.py::test_host_refuses_non_admissible_capacity_before_runtime_construction"
+        "pytest:python/tests/service/test_codex_agent_host.py"
       ],
       "expected_failure": "At index 0 diff: 200 != 503"
     },
@@ -432,7 +475,7 @@
       "patch": "testdata/faults/hosted-semantic-evidence-bypass.patch",
       "sha256": "1f2c986d88d1805b4a4439d98723f8521dcbd872f45a42d475fde03c2ac5e8b2",
       "proofs": [
-        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_hosted_canary_parser_rejects_green_cost_evidence_without_safe_semantics"
+        "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_parser_rejects_green_cost_evidence_without_safe_semantics"
       ],
       "expected_failure": "paid canary cost evidence cannot turn an unsafe semantic result green"
     },
@@ -441,7 +484,7 @@
       "patch": "testdata/faults/provider-runtime-developer-head-bypass.patch",
       "sha256": "b3f04c55b83f17f34f7a5561be446093f358a337d0bb598b3aed40bc2662e123",
       "proofs": [
-        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source"
+        "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source"
       ],
       "expected_failure": "provider-runtime materialization followed developer HEAD instead of the lock pin"
     },
@@ -468,7 +511,7 @@
       "patch": "testdata/faults/deepseek-flash-reasoning-alias-bypass.patch",
       "sha256": "9ace18f4babb140eea22466858aa844ffde485d0af9fa12a7a70dd252b131eb3",
       "proofs": [
-        "pytest:python/tests/kernel/test_llm_product_intent.py"
+        "pytest:python/tests/kernel/test_llm_product_profile_portfolio.py::test_product_profiles_have_the_fixed_nine_row_chat_portfolio"
       ],
       "expected_failure": "DeepSeek Flash exposed a placebo reasoning alias"
     },
@@ -522,7 +565,7 @@
       "patch": "testdata/faults/android-device-method-scope-bypass.patch",
       "sha256": "7b46a2b441d4dcc18513e536f85c192e4d259a205d4cf79bb2d98357ebe8b240",
       "proofs": [
-        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_exact_android_device_proof_uses_one_instrumentation_method"
+        "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method"
       ],
       "expected_failure": "Android device executor lost exact method scoping"
     },
@@ -601,7 +644,7 @@
     {
       "id": "pdf-committed-highlight-projection-bypass",
       "patch": "testdata/faults/pdf-committed-highlight-projection-bypass.patch",
-      "sha256": "0de5b52c8c817c1ed8bbf24289a445f12d0eac5d06d8407d8c591d3e3713616f",
+      "sha256": "266f15886ff7619fbdfc83845f34c63f087301e58424abbf391d963a43e0a16f",
       "proofs": [
         "vitest:apps/web/src/components/PdfReader.browser.test.tsx"
       ],

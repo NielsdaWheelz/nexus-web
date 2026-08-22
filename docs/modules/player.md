@@ -24,6 +24,10 @@ Observed activity and Stats are a separate Consumption capability; see
 [consumption-activity.md](consumption-activity.md).
 The final pane-body presentation contract is
 [Lectern editorial surface](../cutovers/lectern-editorial-surface-hard-cutover.md).
+Android offline reading is adjacent but is not player state; see
+[reader implementation](reader-implementation.md#android-offline-publication-and-package-boundary)
+and the
+[offline-reading cutover](../cutovers/android-offline-reading-hard-cutover.md).
 
 ## Backend Owners
 
@@ -275,6 +279,12 @@ Lectern pane is the sole full-list editor).
   every other state captures the canonical remote source. Missing or corrupt
   Ready bytes fail without network fallback, and later download-state changes
   never switch the active source.
+- Android reading downloads do not enter `PlayerSession`, Media3,
+  `OfflineMediaStore`, listening heartbeats, Media Session, or natural-end
+  settlement. `OfflineReadingStore` owns their SQLite/files/leases/progress;
+  the two stores share only the existing persisted network-policy value and a
+  presentation-only Downloads grouping. Account switch/logout coordinates two
+  owner-local purges and exposes no new binding until both acknowledge.
 - `apps/web/src/components/player/` — the Listening Shelf, MiniPlayer, full-
   screen Now Playing, and shared cadence-scoped controls. The surfaces share
   one Capture controller and one provider-lifetime live region. They do not

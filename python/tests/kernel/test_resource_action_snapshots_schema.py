@@ -140,6 +140,12 @@ def test_capability_union_discriminates_every_kind_and_carries_availability() ->
             "kind": "OfflineAudio",
             "availability": {"kind": "Blocked", "reason": "TemporarilyUnavailable"},
         },
+        {
+            "kind": "OfflineReading",
+            "availability": {"kind": "Available"},
+            "mediaKind": "web_article",
+            "requestedTitle": "Offline proof article",
+        },
         {"kind": "Consumption", "availability": {"kind": "Available"}, "state": "InProgress"},
         {"kind": "EpisodeConsumption", "availability": {"kind": "Available"}, "state": "Played"},
         {

@@ -30,11 +30,13 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from nexus.schemas.consumption import PlayerDescriptor
+from nexus.schemas.offline_reading_package import OFFLINE_READING_MAX_TITLE_CODEPOINTS
 from nexus.schemas.resource_action_snapshots import (
     ConsumptionResourceActionCapabilityOut,
     EpisodeConsumptionResourceActionCapabilityOut,
     HighlightNoteResourceActionCapabilityOut,
     LecternMembershipResourceActionCapabilityOut,
+    OfflineReadingResourceActionCapabilityOut,
     OpenSourceResourceActionCapabilityOut,
     PlaybackResourceActionCapabilityOut,
     PodcastSubscriptionResourceActionCapabilityOut,
@@ -589,6 +591,19 @@ def _extend_media(
         capabilities.append(_simple("LibraryPlacement"))
     if media.offline_download_eligible:
         capabilities.append(_simple("OfflineAudio"))
+    if (
+        media.kind in ("web_article", "epub", "pdf")
+        and media.processing_status == "ready_for_reading"
+        and 1 <= len(media.title) <= OFFLINE_READING_MAX_TITLE_CODEPOINTS
+        and not media.title.isspace()
+    ):
+        capabilities.append(
+            OfflineReadingResourceActionCapabilityOut(
+                availability=_available(),
+                media_kind=media.kind,
+                requested_title=media.title,
+            )
+        )
 
 
 def _extend_library(

@@ -24,6 +24,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -124,6 +125,22 @@ class SimpleResourceActionCapabilityOut(BaseModel):
     availability: ServerActionAvailabilityOut
 
     model_config = _OUT_CONFIG
+
+
+class OfflineReadingResourceActionCapabilityOut(BaseModel):
+    kind: Literal["OfflineReading"] = "OfflineReading"
+    availability: ServerActionAvailabilityOut
+    media_kind: Literal["web_article", "epub", "pdf"]
+    requested_title: str = Field(min_length=1, max_length=512)
+
+    model_config = _OUT_CONFIG
+
+    @field_validator("requested_title")
+    @classmethod
+    def validate_requested_title(cls, value: str) -> str:
+        if value.isspace():
+            raise ValueError("requestedTitle must contain visible text")
+        return value
 
 
 class OpenSourceResourceActionCapabilityOut(BaseModel):
@@ -246,6 +263,7 @@ class HighlightNoteResourceActionCapabilityOut(BaseModel):
 
 ResourceActionCapabilityOut = Annotated[
     SimpleResourceActionCapabilityOut
+    | OfflineReadingResourceActionCapabilityOut
     | OpenSourceResourceActionCapabilityOut
     | PlaybackResourceActionCapabilityOut
     | ConsumptionResourceActionCapabilityOut

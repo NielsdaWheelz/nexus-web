@@ -5,6 +5,7 @@ import type {
   MouseEvent,
   PointerEvent,
   ReactNode,
+  Ref,
   RefObject,
   TouchEvent,
   WheelEvent,
@@ -12,9 +13,8 @@ import type {
 import { useEffect, useMemo, useRef } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { composeRefs } from "@/lib/ui/composeRefs";
-import { useMobileChromeReaderScrollport } from "@/lib/workspace/mobileChrome";
 import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
-import styles from "./page.module.css";
+import styles from "./textDocumentReader.module.css";
 
 export type ReaderViewportSnapshot = {
   scrollTop: number;
@@ -23,6 +23,16 @@ export type ReaderViewportSnapshot = {
 };
 
 export type TrustedScrollDirection = "forward" | "backward";
+
+/**
+ * The hosted decoration port. The leaf's `renderedHtml` input is undecorated
+ * canonical HTML; a hosted composition supplies this port to layer highlights
+ * and inert embed projections over it after load. Offline (and any host that
+ * omits the port) renders the canonical HTML as-is.
+ */
+export interface TextReaderContentDecorator {
+  decorate(canonicalHtml: string): string;
+}
 
 type TextDocumentContentState =
   | {
@@ -36,16 +46,18 @@ type TextDocumentContentState =
   | {
       status: "error";
       message: string;
+      /** Re-runs the owning document load; absent when nothing can retry. */
+      retry?: () => void;
     }
   | {
       status: "ready";
+      /** Undecorated canonical HTML; decoration is applied via `decorator`. */
       renderedHtml: string;
     };
 
 export default function TextDocumentReader({
   mediaId,
-  mobileChromeSourceKey,
-  mobileChromeEnabled,
+  additionalViewportRef,
   scrollPositioner,
   beforeContent,
   readerRootRef,
@@ -57,6 +69,7 @@ export default function TextDocumentReader({
   focusMode,
   hyphenation,
   contentState,
+  decorator,
   onViewportReady,
   onViewportScroll,
   onTrustedScrollIntent,
@@ -67,10 +80,12 @@ export default function TextDocumentReader({
   onContentFocus,
   onContentBlur,
   onInternalLinkClick,
+  onCanonicalPosition,
+  canonicalLength,
+  initialCanonicalOffset,
 }: {
   mediaId: string;
-  mobileChromeSourceKey: string;
-  mobileChromeEnabled: boolean;
+  additionalViewportRef?: Ref<HTMLDivElement>;
   scrollPositioner: ReaderScrollPositioner;
   beforeContent?: ReactNode;
   readerRootRef: RefObject<HTMLDivElement | null>;
@@ -82,6 +97,8 @@ export default function TextDocumentReader({
   focusMode: string;
   hyphenation: string;
   contentState: TextDocumentContentState;
+  /** Hosted decoration over canonical HTML; omitted hosts render undecorated. */
+  decorator?: TextReaderContentDecorator;
   onViewportReady: (snapshot: ReaderViewportSnapshot) => void;
   onViewportScroll: (snapshot: ReaderViewportSnapshot) => void;
   onTrustedScrollIntent: (direction: TrustedScrollDirection) => void;
@@ -92,19 +109,27 @@ export default function TextDocumentReader({
   onContentFocus: (event: FocusEvent<HTMLDivElement>) => void;
   onContentBlur: (event: FocusEvent<HTMLDivElement>) => void;
   onInternalLinkClick?: (href: string | null) => boolean;
+  onCanonicalPosition?: (offset: number) => void;
+  canonicalLength?: number;
+  initialCanonicalOffset?: number;
 }) {
-  const chromeScrollportRef =
-    useMobileChromeReaderScrollport<HTMLDivElement>({
-      sourceKey: mobileChromeSourceKey,
-      enabled: mobileChromeEnabled && contentState.status === "ready",
-    });
   const viewportRef = useMemo(
     () =>
-      composeRefs<HTMLDivElement>(
-        textViewportRef,
-        chromeScrollportRef,
-      ),
-    [chromeScrollportRef, textViewportRef],
+      additionalViewportRef
+        ? composeRefs<HTMLDivElement>(textViewportRef, additionalViewportRef)
+        : textViewportRef,
+    [additionalViewportRef, textViewportRef],
+  );
+  const canonicalHtml =
+    contentState.status === "ready" ? contentState.renderedHtml : null;
+  const presentedHtml = useMemo(
+    () =>
+      canonicalHtml === null
+        ? null
+        : decorator === undefined
+          ? canonicalHtml
+          : decorator.decorate(canonicalHtml),
+    [canonicalHtml, decorator],
   );
   const onViewportReadyRef = useRef(onViewportReady);
   const onViewportScrollRef = useRef(onViewportScroll);
@@ -112,9 +137,15 @@ export default function TextDocumentReader({
   const lastTouchYRef = useRef<number | null>(null);
   const pointerScrollActiveRef = useRef(false);
   const lastScrollTopRef = useRef(0);
+  const canonicalPositionRef = useRef(onCanonicalPosition);
+  const canonicalLengthRef = useRef(canonicalLength);
+  const initialCanonicalOffsetRef = useRef(initialCanonicalOffset);
   onViewportReadyRef.current = onViewportReady;
   onViewportScrollRef.current = onViewportScroll;
   onTrustedScrollIntentRef.current = onTrustedScrollIntent;
+  canonicalPositionRef.current = onCanonicalPosition;
+  canonicalLengthRef.current = canonicalLength;
+  initialCanonicalOffsetRef.current = initialCanonicalOffset;
 
   useEffect(() => {
     const viewport = textViewportRef.current;
@@ -128,6 +159,20 @@ export default function TextDocumentReader({
       clientHeight: viewport.clientHeight,
     });
 
+    const initialOffset = initialCanonicalOffsetRef.current;
+    const activeCanonicalLength = canonicalLengthRef.current;
+    const maximum = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    if (
+      initialOffset !== undefined &&
+      initialOffset > 0 &&
+      activeCanonicalLength !== undefined &&
+      activeCanonicalLength > 0 &&
+      maximum > 0
+    ) {
+      viewport.scrollTop = Math.round(
+        (Math.min(initialOffset, activeCanonicalLength) / activeCanonicalLength) * maximum,
+      );
+    }
     lastScrollTopRef.current = viewport.scrollTop;
     onViewportReadyRef.current(snapshot());
     const publishScroll = (event: Event) => {
@@ -135,6 +180,14 @@ export default function TextDocumentReader({
       const delta = nextSnapshot.scrollTop - lastScrollTopRef.current;
       lastScrollTopRef.current = nextSnapshot.scrollTop;
       onViewportScrollRef.current(nextSnapshot);
+      const publishCanonical = canonicalPositionRef.current;
+      const activeCanonicalLength = canonicalLengthRef.current;
+      if (publishCanonical && activeCanonicalLength !== undefined) {
+        const maximum = Math.max(0, nextSnapshot.scrollHeight - nextSnapshot.clientHeight);
+        publishCanonical(
+          maximum > 0 ? Math.round((nextSnapshot.scrollTop / maximum) * activeCanonicalLength) : 0,
+        );
+      }
       if (pointerScrollActiveRef.current && event.isTrusted && delta !== 0) {
         onTrustedScrollIntentRef.current(
           delta > 0 ? "forward" : "backward",
@@ -248,6 +301,7 @@ export default function TextDocumentReader({
         ref={viewportRef}
         className={`${styles.documentViewport} ${styles.textDocumentViewport}`}
         data-testid="document-viewport"
+        data-initial-canonical-offset={initialCanonicalOffset ?? undefined}
         data-pane-content="true"
         tabIndex={0}
         role="region"
@@ -274,7 +328,18 @@ export default function TextDocumentReader({
         >
           <div className={styles.readerContentInner}>
             {contentState.status === "error" ? (
-              <div className={styles.error}>{contentState.message}</div>
+              <div className={styles.error}>
+                {contentState.message}
+                {contentState.retry ? (
+                  <button
+                    type="button"
+                    className={styles.errorRetry}
+                    onClick={contentState.retry}
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
             ) : contentState.status === "loading" ? (
               <div className={styles.loading}>{contentState.message}</div>
             ) : contentState.status === "empty" ? (
@@ -292,7 +357,7 @@ export default function TextDocumentReader({
                 onBlur={onContentBlur}
               >
                 <HtmlRenderer
-                  htmlSanitized={contentState.renderedHtml}
+                  htmlSanitized={presentedHtml ?? ""}
                   className={styles.fragment}
                   mediaId={mediaId}
                   scrollPositioner={scrollPositioner}

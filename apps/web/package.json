@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node scripts/copy-pdfjs.mjs && next dev",
     "build": "node scripts/copy-pdfjs.mjs && next build",
+    "build:offline-reading": "node scripts/build-offline-reading.mjs",
     "start": "next start",
     "lint:css-tokens": "node scripts/check-css-tokens.mjs",
     "test:eslint-policy": "bun scripts/test-eslint-policy.mjs",

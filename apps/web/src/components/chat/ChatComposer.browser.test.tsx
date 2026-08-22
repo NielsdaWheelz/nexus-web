@@ -196,6 +196,89 @@ describe("ChatComposer browser contract", () => {
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   });
 
+  it("restores a persisted draft after the hydrated browser boundary", async () => {
+    const draftKey = newConversationKey("hydration-draft-proof");
+    const view = render(
+      withRenderEnvironment(
+        <Composer conversationId={null} draftKey={draftKey} />,
+      ),
+    );
+    const input = await screen.findByRole<HTMLTextAreaElement>("textbox", {
+      name: "Ask anything",
+    });
+    await userEvent.type(input, "draft survives hydration");
+    expect(input.value).toBe("draft survives hydration");
+    view.unmount();
+
+    render(
+      withRenderEnvironment(
+        <Composer conversationId={null} draftKey={draftKey} />,
+      ),
+    );
+    const restored = await screen.findByRole<HTMLTextAreaElement>("textbox", {
+      name: "Ask anything",
+    });
+    await waitFor(() =>
+      expect(restored.value).toBe("draft survives hydration"),
+    );
+  });
+
+  it("keeps a locked reconciliation intact when a re-key and a new initialContent land in one commit", async () => {
+    const calls: ChatRunCall[] = [];
+    installBff(calls);
+    const lockedKey = pathKey("00000000-0000-4000-8000-00000000000b");
+    const lockedStorageKey = "nx_chat_draft:path:00000000-0000-4000-8000-00000000000b";
+    const persisted = {
+      text: "in-flight message",
+      profile: null,
+      operation: {
+        kind: "ReconcileRequired",
+        command: {
+          idempotencyKey: "locked-command-key",
+          request: {
+            content: "in-flight message",
+            profile_id: "balanced",
+            reasoning_option_id: "medium",
+          },
+        },
+      },
+    };
+    sessionStorage.setItem(lockedStorageKey, JSON.stringify(persisted));
+
+    const view = render(
+      withRenderEnvironment(
+        <Composer
+          draftKey={pathKey("00000000-0000-4000-8000-00000000000a")}
+          initialContent=""
+        />,
+      ),
+    );
+    await screen.findByRole("textbox", { name: "Ask anything" });
+
+    // One commit changes both the draft key and the seeded initialContent
+    // (quote-to-chat navigation shape). The locked ReconcileRequired command
+    // must survive: the seed may never overwrite a locked reconciliation.
+    view.rerender(
+      withRenderEnvironment(
+        <Composer draftKey={lockedKey} initialContent="quoted passage" />,
+      ),
+    );
+
+    await screen.findByRole("button", { name: "Retry send" });
+    expect(
+      screen.getByRole<HTMLTextAreaElement>("textbox", {
+        name: "Ask anything",
+      }).value,
+    ).toBe("in-flight message");
+    const stored = JSON.parse(
+      sessionStorage.getItem(lockedStorageKey) ?? "null",
+    ) as typeof persisted | null;
+    expect(
+      stored?.operation,
+      "re-key + initialContent race destroyed the in-flight send command",
+    ).toEqual(persisted.operation);
+  });
+
   it("reloads an in-flight new-chat send as a locked Retry that replays the exact key and request", async () => {
     const calls: ChatRunCall[] = [];
     installBff(calls);

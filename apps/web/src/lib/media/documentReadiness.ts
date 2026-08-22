@@ -39,30 +39,15 @@ export function canReadMediaDocument(media: {
 // The ONE initial-fragments gate (allowlist), shared by the server seed, the client
 // mount, and prefetch via paneResourceLoaders — so a server seed can never under-load
 // vs the client for a given kind. Only podcast/video render the `fragments` array as
-// first-paint content (epub → /sections, pdf → binary, web_article → its own deferred
-// loader). C9: any future fragment-rendering kind must be added here AND given an
-// empty-seed recovery loader (the web_article / shouldLoadWebArticleFragments pattern),
-// since a consumed empty seed skips the client's first fetch and never self-heals.
+// first-paint content (epub → /sections, pdf → binary, web_article → the reader
+// session's text source). Any future fragment-rendering kind must be added here
+// so the seed and its first-paint consumer remain aligned.
 export function shouldLoadInitialMediaFragments(media: {
   kind?: string;
   capabilities?: { can_read?: boolean } | null;
 }): boolean {
   return (
     (media.kind === "podcast_episode" || media.kind === "video") &&
-    canReadMediaDocument(media)
-  );
-}
-
-export function shouldLoadWebArticleFragments(
-  media: {
-    kind?: string;
-    capabilities?: { can_read?: boolean } | null;
-  } | null,
-  currentFragmentCount: number,
-): boolean {
-  return (
-    media?.kind === "web_article" &&
-    currentFragmentCount === 0 &&
     canReadMediaDocument(media)
   );
 }

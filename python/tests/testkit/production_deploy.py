@@ -57,7 +57,7 @@ def _argument(arguments: list[str], flag: str) -> str:
 
 def _candidate(state: dict[str, Any]) -> dict[str, object]:
     return {
-        "expected_database_revision": "0215",
+        "expected_database_revision": "0216",
         "expected_oracle_manifest_digest": "sha256:" + "c" * 64,
         "images": {
             "api": "ghcr.io/nielsdawheelz/nexus-api@sha256:" + "a" * 64,

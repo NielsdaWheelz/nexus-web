@@ -24,6 +24,7 @@ from nexus_test_control.policy import (
     repository_violations,
     resource_capability_projection_violations,
 )
+from nexus_test_control.sensitivity import SensitivityError, declared_fault_for_proof
 
 REPO_ROOT = Path(__file__).parents[4]
 
@@ -181,6 +182,7 @@ def _minimal_repository(root: Path) -> None:
         root,
         ".github/workflows/nightly.yml",
         'NEXUS_HOSTED_CANARY: "1"\n'
+        "runs-on: ubuntu-latest\n"
         "uses: reactivecircus/android-emulator-runner@example\n"
         "          api-level: 36\n"
         "          system-image-api-level: 36-ext19\n"
@@ -201,8 +203,8 @@ def _minimal_repository(root: Path) -> None:
         root,
         ".github/workflows/release.yml",
         'NEXUS_PROVIDER_CERTIFICATION: "1"\n'
-        "uses: reactivecircus/android-emulator-runner@example\n"
-        "script: ./scripts/test release\n",
+        "runs-on: [self-hosted, linux, x64, nexus-android-usb]\n"
+        "run: ./scripts/test release\n",
     )
     _write(
         root,
@@ -348,9 +350,11 @@ def test_repository_guard_rejects_legacy_test_routes_in_unlisted_active_docs(
         ("api-level: 36", "api-level: 35"),
         ("system-image-api-level: 36-ext19", "system-image-api-level: 35"),
         ("channel: canary", "channel: stable"),
+        ("runs-on: ubuntu-latest", "runs-on: [self-hosted, linux, x64, nexus-android-usb]"),
+        ("script: ./scripts/test nightly", "script: ./scripts/test confidence"),
     ],
 )
-def test_repository_guard_rejects_nightly_without_modern_system_webview_route(
+def test_repository_guard_rejects_nightly_without_its_hosted_emulator_route(
     tmp_path: Path, current: str, stale: str
 ) -> None:
     _minimal_repository(tmp_path)
@@ -740,6 +744,26 @@ def test_proof_contract_rejects_a_nonexistent_exact_node(tmp_path: Path) -> None
     assert "proof-node" in _rules(proof_contract_violations(tmp_path))
 
 
+def test_proof_contract_rejects_two_priority_nodes_for_one_proof_owner(tmp_path: Path) -> None:
+    """One proof owner has one canonical node, or sensitivity cannot resolve it.
+
+    A changed test file selects its file-level proof; `canonical_proof` maps that
+    path to the single registered node and raises when two exist, which aborts
+    the whole workflow instead of reporting a verdict.
+    """
+    manifest = _complete_proof_repository(tmp_path)
+    risk, exact = next(
+        (risk, proof)
+        for risk in manifest["priority_risks"]
+        for proof in risk["proofs"]
+        if "::" in proof
+    )
+    risk["proofs"].append(exact.split("::", 1)[0])
+    _dump(tmp_path, "testdata/proofs.json", manifest)
+
+    assert "proof-canonical-node" in _rules(proof_contract_violations(tmp_path))
+
+
 def test_proof_contract_rejects_declared_capability_without_a_proof_owner(
     tmp_path: Path,
 ) -> None:
@@ -1059,6 +1083,62 @@ def test_fault_guard_rejects_each_violation(tmp_path: Path, mutation: str, rule:
         manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
     _dump(tmp_path, "testdata/faults/manifest.json", manifest)
     assert rule in _rules(fault_manifest_violations(tmp_path))
+
+
+def test_fault_guard_rejects_two_faults_claiming_one_proof(tmp_path: Path) -> None:
+    """Two faults for one proof make the sensitivity owner unresolvable.
+
+    `declared_fault_for_proof` refuses to guess and raises before any workflow
+    can produce evidence, so the ambiguity must surface as a policy verdict.
+    """
+    manifest = _fault_repository(tmp_path)
+    original = manifest["faults"][0]
+    manifest["faults"].append({**original, "id": "example-fault-twin"})
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert "fault-proof-owner" in _rules(fault_manifest_violations(tmp_path))
+    with pytest.raises(SensitivityError) as unresolvable:
+        declared_fault_for_proof(tmp_path, original["proofs"][0])
+    assert "fault-proof-owner" in str(unresolvable.value)
+
+
+def test_fault_guard_rejects_a_proof_that_is_not_its_owner_canonical_node(
+    tmp_path: Path,
+) -> None:
+    """A fault may only claim the node the registry resolves for that owner.
+
+    `canonical_proof` rewrites every request on a registered owner to that
+    owner's one priority node, so a fault naming any other node of the same
+    file silently becomes unresolvable instead of demonstrating red.
+    """
+    manifest = _complete_proof_repository(tmp_path)
+    risk = next(item for item in manifest["priority_risks"] if item["id"] == "reading-progress")
+    canonical = next(proof for proof in risk["proofs"] if proof.startswith("pytest:"))
+    owner_path = canonical.partition(":")[2].split("::", 1)[0]
+    patch = b"diff --git a/python/nexus/owner.py b/python/nexus/owner.py\n"
+    _write(tmp_path, "testdata/faults/example.patch", patch.decode())
+    _dump(
+        tmp_path,
+        "testdata/faults/manifest.json",
+        {
+            "version": 1,
+            "faults": [
+                {
+                    "id": "example-fault",
+                    "patch": "testdata/faults/example.patch",
+                    "sha256": hashlib.sha256(patch).hexdigest(),
+                    "proofs": [f"pytest:{owner_path}::test_some_other_scenario"],
+                    "expected_failure": "expected value differs",
+                }
+            ],
+        },
+    )
+
+    rules = _rules(fault_manifest_violations(tmp_path))
+
+    assert "fault-canonical-proof" in rules
+    with pytest.raises(SensitivityError):
+        declared_fault_for_proof(tmp_path, canonical)
 
 
 _RESOURCE_CAPABILITY_GENERATOR = "python/scripts/generate_resource_capabilities.py"

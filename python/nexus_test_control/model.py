@@ -92,7 +92,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "31776f63e3fc17346245b847639450bdb159f3933279ed0296e915c8080cf6fd"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "c4685f6dac8ebc8c5a4e49acc07b514c8d2e982ba48b23450cffc26fdfcd558e"
 
 
 class ResourceKind(StrEnum):
@@ -423,6 +423,7 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 SelectionScope.COMPLETE,
                 (
                     *_FULL_NON_BROWSER,
+                    Capability.ANDROID_DEVICE,
                     Capability.PROVIDER_CERTIFICATION,
                     Capability.ANDROID_RELEASE,
                     Capability.RELEASE_ARTIFACT,

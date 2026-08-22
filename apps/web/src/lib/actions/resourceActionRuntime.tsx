@@ -16,7 +16,6 @@ import {
 import { RefreshCw } from "lucide-react";
 
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { present } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   useFeedback,
@@ -30,6 +29,7 @@ import {
   type ResourceActionEnvironment,
 } from "@/lib/actions/resourceActionEnvironment";
 import {
+  offlineReadingPackageMediaKind,
   resolveResourceActionPlan,
   type PlannedResourceAction,
   type ResourceActionBlockedReason,
@@ -89,6 +89,9 @@ import {
   type OfflineMediaCapability,
 } from "@/lib/offlineMedia/OfflineMediaProvider";
 import type { OfflineMediaInventoryItem } from "@/lib/offlineMedia/clientStore";
+import { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReadingProvider";
+import type { ReadingAvailability } from "@/lib/offlineReading/contract";
+import { present } from "@/lib/api/presence";
 import { useShareController } from "@/lib/sharing/controller";
 import {
   useLibraryPlacementController,
@@ -285,6 +288,7 @@ interface RuntimePorts {
   readonly playerCommands: ReturnType<typeof usePlayerCommands>;
   readonly playerSession: ReturnType<typeof usePlayerSession>;
   readonly offlineCapability: OfflineMediaCapability;
+  readonly offlineReadingCapability: ReturnType<typeof useOfflineReadingCapability>;
   readonly feedback: FeedbackContextValue;
   // A user-invoked exact completion (Mark finished / Mark played) offers the
   // canonical 10-second completion Undo HUD.
@@ -309,6 +313,45 @@ function requireOfflineController(ports: RuntimePorts) {
     throw new Error("Offline media controller is unavailable");
   }
   return ports.offlineCapability.controller;
+}
+
+function requireOfflineReadingController(ports: RuntimePorts) {
+  if (ports.offlineReadingCapability.kind !== "Ready") {
+    throw new Error("Offline reading controller is unavailable");
+  }
+  return ports.offlineReadingCapability.controller;
+}
+
+function projectReadingAvailability(value: ReadingAvailability): import("@/lib/actions/resourceActionEnvironment").ResourceActionOfflineReadingAvailability {
+  switch (value.kind) {
+    case "Preparing":
+    case "Authorizing":
+    case "Verifying":
+      return { kind: "Resolving" };
+    case "Queued":
+      return {
+        kind: "Queued",
+        reason: value.reason === "WaitingForUnmetered"
+          ? "WaitingForUnmetered"
+          : value.reason === "Scheduler" ? "SystemLimit" : "Capacity",
+      };
+    case "Downloading":
+      return { kind: "Downloading", bytesDownloaded: value.receivedBytes, totalBytes: present(value.totalBytes) };
+    case "Restarting":
+      return { kind: "Restarting" };
+    case "Ready":
+      return {
+        kind: "Ready",
+        sizeBytes: value.sizeBytes,
+        contentType: "application/x-nexus-offline-reading",
+        updatedAt: value.installedAt,
+        hasDevicePosition: value.progress.kind !== "Canonical",
+      };
+    case "Failed":
+      return { kind: "Failed", code: "DownloadFailed" };
+    case "Removing":
+      return { kind: "Removing" };
+  }
 }
 
 /**
@@ -746,16 +789,26 @@ async function runResourceActionEffect(
       await unsubscribeFromPodcast(requireRefId(target));
       return;
     case "OfflineDownload":
-      await requireOfflineController(ports).enqueue(requireRefId(target));
+      if (intent.owner === "Reading") {
+        if (intent.requestedTitle === undefined) throw new Error("Offline reading title is unavailable");
+        if (intent.mediaKind === undefined) throw new Error("Offline reading media kind is unavailable");
+        await requireOfflineReadingController(ports).enqueue(
+          requireRefId(target),
+          intent.requestedTitle,
+          offlineReadingPackageMediaKind(intent.mediaKind),
+        );
+      } else {
+        await requireOfflineController(ports).enqueue(requireRefId(target));
+      }
       return;
     case "OfflineCancel":
-      await requireOfflineController(ports).cancel(requireRefId(target));
+      await (intent.owner === "Reading" ? requireOfflineReadingController(ports) : requireOfflineController(ports)).cancel(requireRefId(target));
       return;
     case "OfflineRetry":
-      await requireOfflineController(ports).retry(requireRefId(target));
+      await (intent.owner === "Reading" ? requireOfflineReadingController(ports) : requireOfflineController(ports)).retry(requireRefId(target));
       return;
     case "OfflineRemove":
-      await requireOfflineController(ports).remove(requireRefId(target));
+      await (intent.owner === "Reading" ? requireOfflineReadingController(ports) : requireOfflineController(ports)).remove(requireRefId(target));
       return;
     case "EditAuthors":
       // Opening a self-loading overlay is not itself a mutation; the overlay
@@ -1435,6 +1488,7 @@ export function ResourceActionRuntimeProvider({
   const playerCommands = usePlayerCommands();
   const playerSession = usePlayerSession();
   const offlineCapability = useOfflineMediaCapability();
+  const offlineReadingCapability = useOfflineReadingCapability();
   const feedback = useFeedback();
   const offerCompletionUndo = useCompletionUndo(cache.reconcile);
   const createOverlayMutationBoundary = useCallback(
@@ -1484,6 +1538,7 @@ export function ResourceActionRuntimeProvider({
     playerCommands,
     playerSession,
     offlineCapability,
+    offlineReadingCapability,
     feedback,
     offerCompletionUndo,
   };
@@ -1603,6 +1658,21 @@ export function ResourceActionRuntimeProvider({
     getInventory,
     () => EMPTY_INVENTORY,
   );
+  const readingController = offlineReadingCapability.kind === "Ready"
+    ? offlineReadingCapability.controller
+    : null;
+  const readingSnapshot = useSyncExternalStore(
+    readingController?.subscribe ?? (() => () => undefined),
+    readingController?.getSnapshot ?? (() => null),
+    () => null,
+  );
+  const readingByRef = useMemo(() => {
+    const byRef = new Map<CanonicalResourceRef, import("@/lib/actions/resourceActionEnvironment").ResourceActionOfflineReadingAvailability>();
+    for (const item of readingSnapshot?.items ?? []) {
+      byRef.set(`media:${item.mediaId}` as CanonicalResourceRef, projectReadingAvailability(item.availability));
+    }
+    return byRef;
+  }, [readingSnapshot]);
   const playbackByRef = useMemo(() => {
     const byRef = new Map<CanonicalResourceRef, "Idle" | "Paused" | "Ended">();
     const session = canonicalSessionOfGlobalState(playerSession.state);
@@ -1645,6 +1715,12 @@ export function ResourceActionRuntimeProvider({
           : offlineCapability.kind === "Connecting"
             ? { kind: "Loading" }
             : { kind: "Unavailable" },
+      offlineReading:
+        offlineReadingCapability.kind === "Ready"
+          ? { kind: "Ready", byRef: readingByRef }
+          : offlineReadingCapability.kind === "Connecting"
+            ? { kind: "Loading" }
+            : { kind: "Unavailable" },
       lectern:
         lectern.resource.status === "ready"
           ? {
@@ -1665,6 +1741,8 @@ export function ResourceActionRuntimeProvider({
       lectern.mutation.kind,
       lectern.resource,
       offlineCapability.kind,
+      offlineReadingCapability.kind,
+      readingByRef,
       playbackByRef,
     ],
   );
