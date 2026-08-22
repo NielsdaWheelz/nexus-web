@@ -50,7 +50,7 @@ duplicate schema constant, or second release system remains.
 | Version or contract digest differs | Global player shows **Update Nexus for Android**, an **Update** action to `/android`, and no Retry action. No body is interpreted. |
 | Identity matches; payload violates v2 | Defect through the existing async/root defect path. Never relabel same-system corruption as Update Required or retryable unavailability. |
 | Bridge is absent, times out, or is transiently unavailable | Existing retryable Player unavailable behavior remains. |
-| GitHub's latest release is not one stable compatible Android release with one manifest | A new production release stops before Vercel promotion or host mutation. |
+| GitHub's latest release is not one stable compatible Android release with one manifest and the APK assets `/android` links | A new production release stops before Vercel promotion or host mutation. |
 | Production is compatible | `/version` reports the exact web player identity used by the running build. |
 
 Copy is direct and calm:
@@ -228,8 +228,9 @@ probe of the exact immutable host bundle and its release state. Before bundle
 installation, mutating SSH, Vercel operation, `_converge_resource_limits`, or
 other host mutation, it resolves GitHub's canonical `releases/latest` pointer
 and requires it to be one non-draft, non-prerelease Android release with one
-`release-manifest.json`. This is the same pointer used by `/android`, so the
-Update action and release gate cannot name different APKs. It invokes the local clean exact-SHA checkout's
+`release-manifest.json` and exactly one `nexus-android.apk` and
+`nexus-android.apk.sha256`. This is the same pointer and asset set used by
+`/android`, so the Update action and release gate cannot name different APKs. It invokes the local clean exact-SHA checkout's
 `deploy/hetzner/release.py` to strictly decode that manifest and compare it with
 the raw local `testdata/android/player-protocol.json` bytes. Shell owns
 transport; the local release controller owns pre-mutation policy. Missing

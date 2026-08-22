@@ -180,13 +180,19 @@ require_new_candidate_release_policy() {
           and (.tag_name | type == "string" and test("^android-v[a-zA-Z0-9._-]+$"))
           and (.published_at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))
         )
+        | . as $release
         | select(
-            ([.assets[] | select(.name == "release-manifest.json")]
-              | length == 1)
+            (
+              ["release-manifest.json", "nexus-android.apk", "nexus-android.apk.sha256"]
+              | all(
+                  . as $name
+                  | ([$release.assets[] | select(.name == $name)] | length) == 1
+                )
+            )
           )
         | .tag_name
       '
-  )" || die "GitHub latest must be one stable Android release with one manifest"
+  )" || die "GitHub latest must be one stable Android release carrying one manifest and the linked APK"
   timeout --foreground 2m gh release download "$stable_android_release" \
     --repo "$REPOSITORY" \
     --pattern "release-manifest.json" \

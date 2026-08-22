@@ -3168,6 +3168,17 @@ def test_android_release_parsers_fail_closed_on_signer_and_manifest_contract() -
         expected_certificate=certificate,
         expected_manifest=expected_manifest,
     )
+    digest_metadata = (
+        '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_CONTRACT_SHA256" '
+        f'android:value="{"d" * 64}"/>'
+    )
+    assert runner._release_manifest_facts(manifest.replace(digest_metadata, "")) is None
+    assert (
+        runner._release_manifest_facts(
+            manifest.replace(digest_metadata, digest_metadata + digest_metadata)
+        )
+        is None
+    )
     assert (
         runner._apksigner_certificate(
             subprocess.CompletedProcess(("apksigner",), 0, "unsigned", "")

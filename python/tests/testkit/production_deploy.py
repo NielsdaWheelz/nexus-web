@@ -606,7 +606,11 @@ class ProductionDeployHarness:
                 "events": [],
                 "host_inspect": host_inspect,
                 "latest_android_release": {
-                    "assets": [{"name": "release-manifest.json"}],
+                    "assets": [
+                        {"name": "release-manifest.json"},
+                        {"name": "nexus-android.apk"},
+                        {"name": "nexus-android.apk.sha256"},
+                    ],
                     "draft": False,
                     "prerelease": False,
                     "published_at": "2026-08-17T12:00:00Z",

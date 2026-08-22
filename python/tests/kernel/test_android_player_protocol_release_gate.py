@@ -276,10 +276,26 @@ def test_stable_android_manifest_preflight_uses_the_update_page_latest_pointer(
             "assets": [
                 {"name": "release-manifest.json"},
                 {"name": "release-manifest.json"},
+                {"name": "nexus-android.apk"},
+                {"name": "nexus-android.apk.sha256"},
+            ]
+        },
+        {
+            "assets": [
+                {"name": "release-manifest.json"},
+                {"name": "nexus-android-0.2.14.apk"},
+                {"name": "nexus-android.apk.sha256"},
             ]
         },
     ),
-    ids=("draft", "prerelease", "non-android", "manifest-absent", "manifest-ambiguous"),
+    ids=(
+        "draft",
+        "prerelease",
+        "non-android",
+        "manifest-absent",
+        "manifest-ambiguous",
+        "linked-apk-absent",
+    ),
 )
 def test_stable_android_manifest_preflight_rejects_an_invalid_latest_pointer(
     tmp_path: Path,
@@ -293,7 +309,10 @@ def test_stable_android_manifest_preflight_rejects_an_invalid_latest_pointer(
     failed = harness.run()
 
     assert failed.returncode != 0, "release proceeded past an invalid releases/latest pointer"
-    assert "GitHub latest must be one stable Android release with one manifest" in failed.stderr
+    assert (
+        "GitHub latest must be one stable Android release carrying one manifest and the linked APK"
+        in failed.stderr
+    )
     state = harness.state()
     assert [
         arguments for arguments in _events(state, "gh") if arguments[:2] == ["release", "download"]
