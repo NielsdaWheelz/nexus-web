@@ -1636,18 +1636,25 @@ def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence
     _write(apk, "signed release bytes\n")
     sha256 = runner._sha256_file(apk)
     signer = "ab" * 32
+    corpus = repo_root / "testdata/android/player-protocol.json"
+    _write(corpus, '{"version": 2}\n')
+    player_protocol = runner._android_player_protocol_identity(repo_root)
     _write(
         repo_root / f"test-results/runs/{run_id}/android-release.json",
         json.dumps(
             {
+                "version": 2,
                 "run_id": run_id,
                 "tag": "android-v1.2.3",
                 "apk_path": apk.relative_to(repo_root).as_posix(),
                 "apk_sha256": sha256,
                 "signer_sha256": signer,
+                "package": "app.nexus.android",
                 "version_code": 123,
                 "version_name": "1.2.3",
                 "git_sha": "a" * 40,
+                "app_link_host": "nexus.nielseriknandal.com",
+                "player_protocol": player_protocol.as_json(),
             }
         ),
     )
@@ -1660,7 +1667,21 @@ def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence
         android_home / "build-tools/35.0.1/apksigner",
         stdout=f"Signer #1 certificate SHA-256 digest: {signer}",
     )
-    _write_executable(android_home / "cmdline-tools/latest/bin/apkanalyzer")
+    _write_executable(
+        android_home / "cmdline-tools/latest/bin/apkanalyzer",
+        stdout=(
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
+            'package="app.nexus.android" android:versionCode="123" android:versionName="1.2.3">'
+            '<application android:usesCleartextTraffic="false">'
+            '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_VERSION" '
+            f'android:value="{player_protocol.version}"/>'
+            '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_CONTRACT_SHA256" '
+            f'android:value="{player_protocol.contract_sha256}"/>'
+            '<activity><intent-filter android:autoVerify="true">'
+            '<data android:scheme="https" android:host="nexus.nielseriknandal.com"/>'
+            "</intent-filter></activity></application></manifest>"
+        ),
+    )
     environment["ANDROID_HOME"] = str(android_home)
 
     result = runner._run_release_artifact(
