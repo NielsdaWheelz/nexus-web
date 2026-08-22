@@ -1,13 +1,13 @@
 import type { NextConfig } from "next";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { getEnv } from "./src/lib/env";
-import { readAndroidPlayerProtocolCorpus } from "./androidPlayerProtocolCorpus";
+import { androidPlayerProtocolContractSha256 } from "./androidPlayerProtocolCorpus";
 
 // Fail the deploy, not the request: a staging/prod build with missing/invalid env aborts
 // `next build`, so Vercel never promotes the bad artifact and the last-good deployment keeps
 // serving. Local/test builds keep local defaults.
 const env = getEnv();
-const playerProtocol = readAndroidPlayerProtocolCorpus();
+const playerProtocolContractSha256 = androidPlayerProtocolContractSha256();
 
 const nextConfig: NextConfig = {
   output: "standalone",
@@ -16,7 +16,7 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_APP_PUBLIC_ORIGIN: env.appPublicOrigin,
     NEXT_PUBLIC_ANDROID_PLAYER_PROTOCOL_CONTRACT_SHA256:
-      playerProtocol.contractSha256,
+      playerProtocolContractSha256,
   },
   // The typed static capability owns lint. `next build` enforces TypeScript validation.
   eslint: {

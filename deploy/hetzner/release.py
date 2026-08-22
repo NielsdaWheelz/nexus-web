@@ -351,11 +351,6 @@ class ReleaseBlocked(RuntimeError):
     """A valid durable release history prevents the requested mutation."""
 
 
-@dataclass(frozen=True, slots=True)
-class AndroidReleaseManifest:
-    player_protocol: AndroidPlayerProtocolIdentity
-
-
 class ExternalCommandFailed(RuntimeError):
     """A bounded external release operation failed without proving permanence."""
 
@@ -1771,7 +1766,8 @@ def load_android_release_manifest(
     *,
     corpus: Path,
     expected_tag: str,
-) -> AndroidReleaseManifest:
+) -> AndroidPlayerProtocolIdentity:
+    """Strictly decode a stable signed release manifest and return its player identity."""
     _require_match("stable Android release tag", expected_tag, ANDROID_RELEASE_TAG)
     manifest = _closed_mapping(
         _read_json(path), _ANDROID_RELEASE_MANIFEST_FIELDS, "Android release manifest"
@@ -1818,7 +1814,7 @@ def load_android_release_manifest(
         raise ReleaseDefect(f"Android release manifest {exc}") from exc
     if identity != android_player_protocol_identity(corpus):
         raise ReleaseBlocked("Android release manifest player protocol differs from the corpus")
-    return AndroidReleaseManifest(player_protocol=identity)
+    return identity
 
 
 def _read_canonical_json(path: Path, label: str) -> object:
@@ -6214,12 +6210,12 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.buffer.write(_canonical_json({"source_sha": candidate.source_sha}))
         return 0
     if args.command == "validate-android-release-manifest":
-        manifest = load_android_release_manifest(
+        identity = load_android_release_manifest(
             args.manifest,
             corpus=args.corpus,
             expected_tag=args.tag,
         )
-        sys.stdout.buffer.write(_canonical_json(manifest.player_protocol.as_json()))
+        sys.stdout.buffer.write(_canonical_json(identity.as_json()))
         return 0
     if args.command == "android-player-protocol-identity":
         identity = android_player_protocol_identity(args.corpus)

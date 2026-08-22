@@ -31,7 +31,11 @@ export type NativeOperationKey =
 export type NativeOperation = {
   key: NativeOperationKey;
   run: () => Promise<void>;
-  /** False once the intent no longer targets live state; it is then discarded. */
+  /**
+   * False once a dispatched intent no longer targets live state. Consulted
+   * only for replay and pruning of a parked operation — never before an
+   * operation's first run, which may itself be what makes it apply.
+   */
   stillApplies: () => boolean;
 };
 
@@ -103,16 +107,6 @@ export function visibleConnectionFailure(
   return null;
 }
 
-/** True while the operation is the pump's live owner of its key. */
-export function isCurrent(
-  pump: NativeOperationPump,
-  operation: DispatchedNativeOperation,
-): boolean {
-  return operation.key === "SessionIntent"
-    ? pump.inFlight?.sequence === operation.sequence
-    : pump.latest.get(operation.key) === operation.sequence;
-}
-
 type Draft = {
   nextSequence: number;
   barrierEpoch: number;
@@ -166,11 +160,9 @@ function run(state: Draft, operation: NativeOperation): void {
 }
 
 function drainQueue(state: Draft): void {
-  while (state.inFlight === null) {
-    const next = state.queue.shift();
-    if (next === undefined) return;
-    if (next.stillApplies()) run(state, next);
-  }
+  if (state.inFlight !== null) return;
+  const next = state.queue.shift();
+  if (next !== undefined) run(state, next);
 }
 
 function releaseDraft(state: Draft, operation: DispatchedNativeOperation): void {
@@ -235,6 +227,7 @@ export function dispatch(
   return finish(state);
 }
 
+/** The operation is finished with — it succeeded, was cancelled, or became a defect. */
 export function settled(
   pump: NativeOperationPump,
   operation: DispatchedNativeOperation,
@@ -244,13 +237,16 @@ export function settled(
   return finish(state);
 }
 
-/** Drop an operation whose outcome no longer matters (cancelled or stale). */
-export function release(
-  pump: NativeOperationPump,
-  operation: DispatchedNativeOperation,
-): PumpStep {
+/**
+ * The runtime invalidated intents (the session changed or the player was
+ * dismissed): every parked operation that no longer applies is released so a
+ * dead intent cannot hold the queue or present a phantom Retry.
+ */
+export function pruned(pump: NativeOperationPump): PumpStep {
   const state = draft(pump);
-  releaseDraft(state, operation);
+  for (const operation of parkedInSequence(state, () => true)) {
+    if (!operation.stillApplies()) releaseDraft(state, operation);
+  }
   return finish(state);
 }
 

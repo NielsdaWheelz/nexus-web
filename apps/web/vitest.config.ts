@@ -4,9 +4,9 @@ import { playwright } from "@vitest/browser-playwright";
 import { readFileSync } from "node:fs";
 import path from "path";
 import type { Plugin } from "vite";
-import { readAndroidPlayerProtocolCorpus } from "./androidPlayerProtocolCorpus";
+import { androidPlayerProtocolContractSha256 } from "./androidPlayerProtocolCorpus";
 
-const playerProtocol = readAndroidPlayerProtocolCorpus();
+const playerProtocolContractSha256 = androidPlayerProtocolContractSha256();
 
 function serveVendoredPdfJs(): Plugin {
   const vendoredModules = new Map(
@@ -46,7 +46,7 @@ export default defineConfig({
       "http://localhost:3000",
     ),
     "process.env.NEXT_PUBLIC_ANDROID_PLAYER_PROTOCOL_CONTRACT_SHA256":
-      JSON.stringify(playerProtocol.contractSha256),
+      JSON.stringify(playerProtocolContractSha256),
   },
   optimizeDeps: {
     include: [

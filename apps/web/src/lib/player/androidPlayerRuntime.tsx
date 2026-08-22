@@ -65,8 +65,8 @@ import {
   connectionFailed,
   createNativeOperationPump,
   dispatch as dispatchToPump,
+  pruned as pumpPruned,
   reconnected as pumpReconnected,
-  release as releaseFromPump,
   retry as retryInPump,
   settled as settledInPump,
   stampOperation,
@@ -651,7 +651,7 @@ export function AndroidPlayerRuntimeProvider({
       switch (failure.kind) {
         case "UpdateRequired":
           setUpdateRequired(true);
-          commitPump(releaseFromPump(pumpRef.current, operation));
+          commitPump(settledInPump(pumpRef.current, operation));
           return;
         case "Connection":
           commitPump(
@@ -662,11 +662,11 @@ export function AndroidPlayerRuntimeProvider({
           commitPump(barrierRejected(pumpRef.current, operation));
           return;
         case "Cancelled":
-          commitPump(releaseFromPump(pumpRef.current, operation));
+          commitPump(settledInPump(pumpRef.current, operation));
           return;
         case "Defect":
           setAsyncDefect({ error: failure.error });
-          commitPump(releaseFromPump(pumpRef.current, operation));
+          commitPump(settledInPump(pumpRef.current, operation));
           return;
         default:
           assertNever(failure, "native failure");
@@ -705,7 +705,7 @@ export function AndroidPlayerRuntimeProvider({
           ownerPresents &&
           classifyNativeFailure(error).kind !== "UpdateRequired"
         ) {
-          commitPump(releaseFromPump(pumpRef.current, stamped.operation));
+          commitPump(settledInPump(pumpRef.current, stamped.operation));
         } else {
           installOperationFailure(stamped.operation, error);
         }
@@ -743,9 +743,9 @@ export function AndroidPlayerRuntimeProvider({
           return;
         }
       }
-      if (
-        sessionKeyOf(snapshotRef.current) !== sessionKeyOf(next)
-      ) {
+      const sessionChanged =
+        sessionKeyOf(snapshotRef.current) !== sessionKeyOf(next);
+      if (sessionChanged) {
         podcastRateAttemptRef.current = null;
         podcastPauseAttemptRef.current = null;
         setPlaybackRateRemember({ kind: "Unavailable" });
@@ -760,6 +760,9 @@ export function AndroidPlayerRuntimeProvider({
       }
       if (clearFrozenFailure) {
         commitPump(pumpReconnected(pumpRef.current));
+      }
+      if (sessionChanged) {
+        commitPump(pumpPruned(pumpRef.current));
       }
     },
     [accountId, commitPump],
@@ -1411,6 +1414,7 @@ export function AndroidPlayerRuntimeProvider({
             : current.descriptor.durationMs,
       };
       expectedSessionKeyRef.current = null;
+      commitPump(pumpPruned(pumpRef.current));
       const operation: NativeOperation = {
         key: "Dismiss",
         run: async () => {
@@ -1425,7 +1429,7 @@ export function AndroidPlayerRuntimeProvider({
       dispatchNativeOperation(operation);
       return position;
     },
-    [dispatchNativeOperation, requestAndReconcile],
+    [commitPump, dispatchNativeOperation, requestAndReconcile],
   );
 
   const setPlaybackRateState = useCallback(
@@ -1747,6 +1751,7 @@ export function AndroidPlayerRuntimeProvider({
         const current = snapshotRef.current;
         if (current === null || current.kind === "Absent") return;
         expectedSessionKeyRef.current = null;
+        commitPump(pumpPruned(pumpRef.current));
         const operation: NativeOperation = {
           key: "Dismiss",
           run: async () => {
@@ -1913,7 +1918,8 @@ export function AndroidPlayerRuntimeProvider({
       setDeviceDefaultPauseShorteningMode: setDeviceDefault,
     }),
     [
-    dispatchNativeOperation,
+      commitPump,
+      dispatchNativeOperation,
       history,
       lectern.resource,
       pauseMutation.kind,

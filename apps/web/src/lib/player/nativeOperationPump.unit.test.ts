@@ -6,8 +6,8 @@ import {
   connectionFailed,
   createNativeOperationPump,
   dispatch,
+  pruned,
   reconnected,
-  release,
   retry,
   settled,
   stampOperation,
@@ -74,26 +74,47 @@ describe("native operation pump: session intents", () => {
     expect(settled(afterSeek.pump, only(afterSeek)).pump.inFlight).toBeNull();
   });
 
-  it("discards a queued intent that no longer applies without blocking the next one", () => {
+  it("runs a queued load whose applicability is only established by its own run", () => {
+    // A load intent's predicate (expected session key) is set inside run(), so
+    // the queue must never consult it before the first run.
     const first = dispatch(createNativeOperationPump(), operation("SessionIntent", "play"));
     const queued = dispatch(
       first.pump,
-      operation("SessionIntent", "stale-seek", () => false),
+      operation("SessionIntent", "load-next", () => false),
     );
-    const live = dispatch(queued.pump, operation("SessionIntent", "pause"));
 
-    const drained = settled(live.pump, only(first));
+    const drained = settled(queued.pump, only(first));
 
-    expect(ran(drained)).toEqual(["pause"]);
+    expect(ran(drained)).toEqual(["load-next"]);
   });
 
-  it("releases a cancelled intent and runs what was queued behind it", () => {
+  it("settling a cancelled intent runs what was queued behind it", () => {
     const first = dispatch(createNativeOperationPump(), operation("SessionIntent", "play"));
     const queued = dispatch(first.pump, operation("SessionIntent", "seek"));
 
-    const released = release(queued.pump, only(first));
+    const released = settled(queued.pump, only(first));
 
     expect(ran(released)).toEqual(["seek"]);
+  });
+
+  it("pruning releases parked intents that no longer apply and drains the queue", () => {
+    let applies = true;
+    const first = dispatch(
+      createNativeOperationPump(),
+      operation("SessionIntent", "play", () => applies),
+    );
+    const frozen = connectionFailed(first.pump, only(first), UNAVAILABLE);
+    const queued = dispatch(frozen.pump, operation("SessionIntent", "load-next"));
+    expect(visibleConnectionFailure(queued.pump)?.key).toBe("SessionIntent");
+    const untouched = pruned(queued.pump);
+    expect(untouched.effects).toEqual([]);
+    expect(visibleConnectionFailure(untouched.pump)?.key).toBe("SessionIntent");
+    applies = false;
+
+    const dismissed = pruned(untouched.pump);
+
+    expect(visibleConnectionFailure(dismissed.pump)).toBeNull();
+    expect(ran(dismissed)).toEqual(["load-next"]);
   });
 });
 

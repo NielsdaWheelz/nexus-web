@@ -86,7 +86,7 @@ def test_release_manifest_decoder_accepts_only_the_exact_corpus_identity(
         expected_tag=STABLE_TAG,
     )
 
-    assert accepted.player_protocol.as_json() == corpus_identity
+    assert accepted.as_json() == corpus_identity
 
 
 @pytest.mark.parametrize(
