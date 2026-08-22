@@ -24,10 +24,6 @@ import java.util.UUID
 internal const val NATIVE_PLAYER_COMMAND_DEADLINE_MS = 5_000L
 private const val PLAYER_WEB_OBJECT = "nexusPlayer"
 
-internal fun serializeBridgeRejection(
-    rejection: PlayerCommandParseResult.Rejected,
-): String = PlayerWire.rejected(rejection)
-
 internal class PlayerBridgeSessionFence {
     var currentSessionKey: UUID? = null
         private set
@@ -302,10 +298,7 @@ internal class NexusPlayerBridge(
         when (val parsed = PlayerWire.parseCommand(message.data)) {
             PlayerCommandParseResult.Unreplyable -> Unit
             is PlayerCommandParseResult.Rejected ->
-                postReply(
-                    message.replyProxy,
-                    serializeBridgeRejection(parsed)
-                )
+                postReply(message.replyProxy, parsed.reply)
             is PlayerCommandParseResult.Accepted ->
                 dispatch(parsed.command, message)
         }

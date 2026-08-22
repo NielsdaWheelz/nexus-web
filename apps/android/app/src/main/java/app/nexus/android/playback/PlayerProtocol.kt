@@ -196,10 +196,7 @@ internal sealed interface PlayerSnapshot {
     data class Absent(
         val deviceDefaultPauseShorteningMode: PauseShorteningMode,
         val pauseShorteningSavedOnDeviceMs: Long,
-        val activitySync: PlayerActivitySyncSnapshot = PlayerActivitySyncSnapshot(
-            NativeActivityCapture.Idle,
-            NativeActivitySync.Synced,
-        ),
+        val activitySync: PlayerActivitySyncSnapshot,
     ) : PlayerSnapshot
 
     data class Canonical(
@@ -215,10 +212,7 @@ internal sealed interface PlayerSnapshot {
         val persistence: PlayerPersistence,
         val playbackFailure: Presence<PlayerFailure>,
         val pauseShortening: PauseShorteningSnapshot,
-        val activitySync: PlayerActivitySyncSnapshot = PlayerActivitySyncSnapshot(
-            NativeActivityCapture.Idle,
-            NativeActivitySync.Synced,
-        ),
+        val activitySync: PlayerActivitySyncSnapshot,
     ) : PlayerSnapshot
 
     data class Preview(
@@ -234,10 +228,7 @@ internal sealed interface PlayerSnapshot {
         val persistence: PlayerPersistence,
         val playbackFailure: Presence<PlayerFailure>,
         val pauseShortening: PauseShorteningSnapshot,
-        val activitySync: PlayerActivitySyncSnapshot = PlayerActivitySyncSnapshot(
-            NativeActivityCapture.Idle,
-            NativeActivitySync.Synced,
-        ),
+        val activitySync: PlayerActivitySyncSnapshot,
     ) : PlayerSnapshot
 }
 
@@ -375,10 +366,17 @@ internal enum class PlayerRejectionCode {
 internal sealed interface PlayerCommandParseResult {
     data class Accepted(val command: PlayerCommand) : PlayerCommandParseResult
 
+    /**
+     * The classifier's exact v2 `Rejected` wire reply. Consumers post [reply]
+     * verbatim; they hold no code to substitute.
+     */
     data class Rejected(
         val requestId: UUID,
         val code: PlayerRejectionCode,
-    ) : PlayerCommandParseResult
+    ) : PlayerCommandParseResult {
+        val reply: String
+            get() = PlayerWire.rejected(requestId, code)
+    }
 
     data object Unreplyable : PlayerCommandParseResult
 }
@@ -469,16 +467,11 @@ internal object PlayerWire {
                 .put("code", code.name),
         )
 
-    fun rejected(rejection: PlayerCommandParseResult.Rejected): String =
-        rejected(rejection.requestId, rejection.code)
-
     fun requireIdentity(json: JSONObject) {
-        require(
-            json.requireLong(
-                "protocolVersion",
-                PLAYER_PROTOCOL_VERSION.toLong(),
-                PLAYER_PROTOCOL_VERSION.toLong(),
-            ) == PLAYER_PROTOCOL_VERSION.toLong()
+        json.requireLong(
+            "protocolVersion",
+            PLAYER_PROTOCOL_VERSION.toLong(),
+            PLAYER_PROTOCOL_VERSION.toLong(),
         )
         require(
             json.requireBoundedString("protocolContractSha256", 64, 64) ==
@@ -911,7 +904,7 @@ private fun decodeCanonicalDescriptor(json: JSONObject): CanonicalDescriptor {
         durationMs = decodeSourceTimePresence(activation.requireObject("durationMs")),
         artworkUrl = decodeStringPresence(activation.requireObject("artworkUrl"), 1, 8192),
         chapters = List(chaptersJson.length()) {
-            decodeChapter(chaptersJson.get(it) as? JSONObject ?: error("chapter must be an object"))
+            decodeChapter(chaptersJson.optJSONObject(it) ?: error("chapter must be an object"))
         },
     )
 }
@@ -1082,9 +1075,7 @@ private fun <T> decodePresence(
         }
         "Present" -> {
             json.requireExactKeys("kind", "value")
-            Presence.Present(
-                decode(json.get("value") as? JSONObject ?: error("value must be an object"))
-            )
+            Presence.Present(decode(json.requireObject("value")))
         }
         else -> error("unknown Presence kind")
     }

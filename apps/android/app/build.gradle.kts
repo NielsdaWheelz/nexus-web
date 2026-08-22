@@ -62,6 +62,7 @@ require(
 ) {
     "Android player protocol corpus must have no BOM, LF line endings, and one trailing LF."
 }
+val playerProtocolVersion = 2
 val playerProtocolContractSha256 = MessageDigest.getInstance("SHA-256")
     .digest(playerProtocolBytes)
     .joinToString("") { "%02x".format(it) }
@@ -158,13 +159,13 @@ android {
         versionCode = versionCodeProperty?.toIntOrNull() ?: 1
         versionName = versionNameProperty ?: "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("int", "PLAYER_PROTOCOL_VERSION", "2")
+        buildConfigField("int", "PLAYER_PROTOCOL_VERSION", playerProtocolVersion.toString())
         buildConfigField(
             "String",
             "PLAYER_PROTOCOL_CONTRACT_SHA256",
             "\"$playerProtocolContractSha256\"",
         )
-        manifestPlaceholders["playerProtocolVersion"] = "2"
+        manifestPlaceholders["playerProtocolVersion"] = playerProtocolVersion.toString()
         manifestPlaceholders["playerProtocolContractSha256"] = playerProtocolContractSha256
     }
 
@@ -246,6 +247,7 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")
+    testImplementation(kotlin("reflect"))
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:core-ktx:1.6.1")

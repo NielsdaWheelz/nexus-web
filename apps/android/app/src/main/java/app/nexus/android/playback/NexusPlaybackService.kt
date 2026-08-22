@@ -52,10 +52,6 @@ import java.util.UUID
 import kotlin.math.max
 import kotlin.time.Duration.Companion.milliseconds
 
-internal fun serializeServiceRejection(
-    rejection: PlayerCommandParseResult.Rejected,
-): String = PlayerWire.rejected(rejection)
-
 internal const val NATIVE_PLAYER_TIMELINE_INTERVAL_MS = 250L
 
 private data class PlayerCommandBarrier(
@@ -418,15 +414,11 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             }
             val raw = args.getString(ARG_COMMAND_JSON)
                 ?: return immediateReply(null)
-            val parsed = PlayerWire.parseCommand(raw)
-            val command = (parsed as? PlayerCommandParseResult.Accepted)?.command
-                ?: return immediateReply(
-                    when (parsed) {
-                        is PlayerCommandParseResult.Rejected ->
-                            serializeServiceRejection(parsed)
-                        else -> null
-                    }
-                )
+            val command = when (val parsed = PlayerWire.parseCommand(raw)) {
+                is PlayerCommandParseResult.Accepted -> parsed.command
+                is PlayerCommandParseResult.Rejected -> return immediateReply(parsed.reply)
+                PlayerCommandParseResult.Unreplyable -> return immediateReply(null)
+            }
             if (actionFor(command) != customCommand.customAction) {
                 return immediateReply(
                     PlayerWire.rejected(
