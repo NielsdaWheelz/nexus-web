@@ -85,6 +85,9 @@ def _copy_bundle(state: dict[str, Any], destination: Path) -> None:
         "release.py": repo_root / "deploy/hetzner/release.py",
         "python/nexus/__init__.py": repo_root / "python/nexus/__init__.py",
         "python/nexus/release_artifact.py": (repo_root / "python/nexus/release_artifact.py"),
+        "testdata/android/player-protocol.json": (
+            repo_root / "testdata/android/player-protocol.json"
+        ),
     }
     for relative, source in sources.items():
         target = destination / relative

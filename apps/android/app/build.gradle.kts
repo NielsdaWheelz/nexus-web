@@ -54,6 +54,26 @@ val debugApiUri = URI(debugApiOrigin)
 val releaseApiUri = URI(releaseApiOrigin)
 val assetLinksText = rootProject.file("../web/public/.well-known/assetlinks.json").readText()
 val assetLinksTextForFingerprintMatch = assetLinksText.replace(":", "").uppercase()
+val playerProtocolFile = rootProject.file("../../testdata/android/player-protocol.json")
+val playerProtocolBytes = playerProtocolFile.readBytes()
+require(playerProtocolBytes.toString(Charsets.UTF_8).toByteArray(Charsets.UTF_8).contentEquals(playerProtocolBytes)) {
+    "Android player protocol corpus must be UTF-8."
+}
+require(
+    !(playerProtocolBytes.size >= 3 &&
+        playerProtocolBytes[0] == 0xef.toByte() &&
+        playerProtocolBytes[1] == 0xbb.toByte() &&
+        playerProtocolBytes[2] == 0xbf.toByte()) &&
+        !playerProtocolBytes.contains('\r'.code.toByte()) &&
+        playerProtocolBytes.lastOrNull() == '\n'.code.toByte() &&
+        (playerProtocolBytes.size == 1 || playerProtocolBytes[playerProtocolBytes.lastIndex - 1] != '\n'.code.toByte())
+) {
+    "Android player protocol corpus must have no BOM, LF line endings, and one trailing LF."
+}
+val playerProtocolVersion = 2
+val playerProtocolContractSha256 = MessageDigest.getInstance("SHA-256")
+    .digest(playerProtocolBytes)
+    .joinToString("") { "%02x".format(it) }
 
 require(debugUri.host == debugOwnedHost) {
     "nexusAndroidDebugBaseUrl host must match nexusAndroidDebugOwnedHost."
@@ -168,6 +188,14 @@ android {
         versionCode = versionCodeProperty?.toIntOrNull() ?: 1
         versionName = versionNameProperty ?: "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("int", "PLAYER_PROTOCOL_VERSION", playerProtocolVersion.toString())
+        buildConfigField(
+            "String",
+            "PLAYER_PROTOCOL_CONTRACT_SHA256",
+            "\"$playerProtocolContractSha256\"",
+        )
+        manifestPlaceholders["playerProtocolVersion"] = playerProtocolVersion.toString()
+        manifestPlaceholders["playerProtocolContractSha256"] = playerProtocolContractSha256
     }
 
     buildFeatures {
@@ -220,6 +248,7 @@ android {
     }
 
     sourceSets {
+        getByName("test").resources.srcDir(rootProject.file("../../testdata/android"))
         // Test-only fixture plumbing (canonical offline-reading ZIP assembly) shared by the
         // JVM host lane and the instrumented device lane so both drive the real verifiers.
         getByName("test").java.srcDir("src/sharedTest/java")
@@ -320,6 +349,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("androidx.test:core-ktx:1.6.1")
     testImplementation("org.json:json:20250517")
+    testImplementation(kotlin("reflect"))
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.robolectric:robolectric:4.14.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

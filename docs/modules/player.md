@@ -17,7 +17,9 @@ Full behavioral contracts, wire shapes, and acceptance criteria:
 `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` and
 `docs/cutovers/resonance-reading-slate-hard-cutover.md`. Android playback and
 pause shortening are specified by
-`docs/cutovers/android-native-player-pause-shortening-hard-cutover.md`.
+`docs/cutovers/android-native-player-pause-shortening-hard-cutover.md`; the
+current signed-web/native compatibility and release contract is
+`docs/cutovers/android-player-protocol-release-hard-cutover.md`.
 Observed activity and Stats are a separate Consumption capability; see
 [consumption-activity.md](consumption-activity.md).
 The final pane-body presentation contract is
@@ -245,6 +247,23 @@ Lectern pane is the sole full-list editor).
   replacement native controller re-handshakes the account and pushes one
   authoritative full snapshot plus pending-receipt Presence; stale web state
   never drives the replacement service.
+- Every Android player command, reply, and event carries protocol v2 plus the
+  SHA-256 of `testdata/android/player-protocol.json`. Web and native decode the
+  body only after exact identity match. Skew is a non-retryable **Update Nexus
+  for Android** state; matching-identity corruption remains a defect. The
+  signed APK embeds the same identity, and production release fails before
+  mutation unless the latest stable signed manifest matches it.
+- `lib/player/nativeOperationPump.ts` is the web's pure native operation pump.
+  One `SessionIntent` is in flight; later session intents queue FIFO. `Dismiss`,
+  `PodcastSettings`, and `ListeningProjection` are latest-wins keys (`Dismiss`
+  is barrier-exempt, as native). A `NaturalEndPending` rejection parks the
+  operation on the current receipt and replays it once that receipt is
+  acknowledged; a superseded or cleared receipt releases it. A transport
+  failure freezes the operation and the shell's Retry is derived from that
+  frozen state, so nothing else can clear it; Retry replays the frozen
+  operation. `androidPlayerRuntime.tsx` owns the single exhaustive failure
+  classifier (skew, retryable transport, barrier, cancellation, defect) that
+  feeds the pump.
 - The service derives each Media3 controller's available player commands from
   the current natural-end and persistence lifecycle barriers and updates them
   synchronously whenever those barriers change. Controller seeks checkpoint

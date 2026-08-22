@@ -1517,22 +1517,29 @@ def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence
     _write(apk, "signed release bytes\n")
     sha256 = runner._sha256_file(apk)
     signer = "ab" * 32
+    corpus = repo_root / "testdata/android/player-protocol.json"
+    _write(corpus, '{"version": 2}\n')
+    player_protocol = runner._android_player_protocol_identity(repo_root)
     _write(
         repo_root / f"test-results/runs/{run_id}/android-release.json",
         json.dumps(
             {
+                "version": 2,
                 "run_id": run_id,
                 "tag": "android-v1.2.3",
                 "apk_path": apk.relative_to(repo_root).as_posix(),
                 "apk_sha256": sha256,
                 "signer_sha256": signer,
+                "package": "app.nexus.android",
                 "version_code": 123,
                 "previous_version_code": 122,
                 "version_name": "1.2.3",
                 "git_sha": "a" * 40,
+                "app_link_host": "nexus.nielseriknandal.com",
                 "api_origin": "https://api.nielseriknandal.com",
                 "api_origin_source": "signed_apk_build_config",
                 "target_sdk": 36,
+                "player_protocol": player_protocol.as_json(),
             }
         ),
     )
@@ -1547,10 +1554,25 @@ def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence
     )
     _write_executable(
         android_home / "cmdline-tools/latest/bin/apkanalyzer",
-        stdout=(
-            ".field public static final NEXUS_API_ORIGIN:Ljava/lang/String; = "
-            '"https://api.nielseriknandal.com"'
-        ),
+        stdout_by_subcommand={
+            "manifest": (
+                '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
+                'package="app.nexus.android" android:versionCode="123" android:versionName="1.2.3">'
+                '<uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36"/>'
+                '<application android:usesCleartextTraffic="false">'
+                '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_VERSION" '
+                f'android:value="{player_protocol.version}"/>'
+                '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_CONTRACT_SHA256" '
+                f'android:value="{player_protocol.contract_sha256}"/>'
+                '<activity><intent-filter android:autoVerify="true">'
+                '<data android:scheme="https" android:host="nexus.nielseriknandal.com"/>'
+                "</intent-filter></activity></application></manifest>"
+            ),
+            "dex": (
+                ".field public static final NEXUS_API_ORIGIN:Ljava/lang/String; = "
+                '"https://api.nielseriknandal.com"'
+            ),
+        },
     )
     environment["ANDROID_HOME"] = str(android_home)
 
@@ -2099,6 +2121,8 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
     test_apk = (
         android_root / "app/build/outputs/apk/androidTest/release/app-release-androidTest.apk"
     )
+    _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
+    player_protocol = runner._android_player_protocol_identity(tmp_path)
     inputs = runner._AndroidReleaseInputs(
         "android-v2.1",
         "a" * 40,
@@ -2159,6 +2183,8 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
             "2.1",
             "nexus.nielseriknandal.com",
             "36",
+            str(player_protocol.version),
+            player_protocol.contract_sha256,
         ),
         read_apk_api_origin=lambda *_: inputs.api_origin,
         installed_version_code=lambda *_: (
@@ -2248,6 +2274,7 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
     assert "production_network_contact" not in evidence, (
         "release evidence still asserts production network contact the controller never observed"
     )
+    assert evidence["player_protocol"] == player_protocol.as_json()
     qemu_reads = [
         argv for argv in commands if argv[-1:] in (("ro.kernel.qemu",), ("ro.boot.qemu",))
     ]
@@ -2284,6 +2311,8 @@ def test_android_release_refuses_an_emulated_device_that_passes_usb_topology(
     test_apk = (
         android_root / "app/build/outputs/apk/androidTest/release/app-release-androidTest.apk"
     )
+    _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
+    player_protocol = runner._android_player_protocol_identity(tmp_path)
     inputs = runner._AndroidReleaseInputs(
         "android-v2.1",
         "a" * 40,
@@ -2331,6 +2360,8 @@ def test_android_release_refuses_an_emulated_device_that_passes_usb_topology(
             "2.1",
             "nexus.nielseriknandal.com",
             "36",
+            str(player_protocol.version),
+            player_protocol.contract_sha256,
         ),
         read_apk_api_origin=lambda *_: inputs.api_origin,
         installed_version_code=lambda *_: 41,
@@ -2371,12 +2402,14 @@ def _assert_release_artifact_retains_pinned_api_origin(tmp_path: Path, sdk: Path
     _write_executable(tmp_path / "bin/uv")
     _write_passthrough_env(tmp_path / "bin/env")
     _write_release_artifact_docker(tmp_path / "bin/docker")
+    _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
+    player_protocol = runner._android_player_protocol_identity(tmp_path)
     evidence = tmp_path / f"test-results/runs/{run_id}/android-release.json"
     _write(
         evidence,
         json.dumps(
             {
-                "version": 1,
+                "version": 2,
                 "run_id": run_id,
                 "git_sha": git_sha,
                 "tag": tag,
@@ -2388,9 +2421,11 @@ def _assert_release_artifact_retains_pinned_api_origin(tmp_path: Path, sdk: Path
                 "previous_version_code": 41,
                 "version_name": "2.1",
                 "signer_sha256": "b" * 64,
+                "app_link_host": "nexus.nielseriknandal.com",
                 "api_origin": api_origin,
                 "api_origin_source": "signed_apk_build_config",
                 "target_sdk": 36,
+                "player_protocol": player_protocol.as_json(),
             }
         ),
     )
@@ -2400,7 +2435,22 @@ def _assert_release_artifact_retains_pinned_api_origin(tmp_path: Path, sdk: Path
     )
     _write_executable(
         sdk / "cmdline-tools/latest/bin/apkanalyzer",
-        stdout=(f'.field public static final NEXUS_API_ORIGIN:Ljava/lang/String; = "{api_origin}"'),
+        stdout_by_subcommand={
+            "manifest": (
+                '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
+                'package="app.nexus.android" android:versionCode="42" android:versionName="2.1">'
+                '<uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36"/>'
+                '<application android:usesCleartextTraffic="false">'
+                '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_VERSION" '
+                f'android:value="{player_protocol.version}"/>'
+                '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_CONTRACT_SHA256" '
+                f'android:value="{player_protocol.contract_sha256}"/>'
+                '<activity><intent-filter android:autoVerify="true">'
+                '<data android:scheme="https" android:host="nexus.nielseriknandal.com"/>'
+                "</intent-filter></activity></application></manifest>"
+            ),
+            "dex": f'.field public static final NEXUS_API_ORIGIN:Ljava/lang/String; = "{api_origin}"',
+        },
     )
     git_script = tmp_path / "bin/git"
     _write(git_script, f"#!/bin/sh\nset -eu\nprintf '%s\\n' '{git_sha}'\n")
@@ -2424,6 +2474,7 @@ def _assert_release_artifact_retains_pinned_api_origin(tmp_path: Path, sdk: Path
     )
     assert manifest["api_origin"] == api_origin
     assert manifest["target_sdk"] == 36
+    assert manifest["player_protocol"] == player_protocol.as_json()
 
 
 def test_missing_tool_is_not_run_and_command_failure_records_its_exit_status(
@@ -4065,19 +4116,57 @@ def test_android_release_parsers_fail_closed_on_signer_and_manifest_contract() -
         '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
         'package="app.nexus.android" android:versionCode="42" android:versionName="2.1">'
         '<uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36"/>'
-        '<application android:usesCleartextTraffic="false"><activity>'
+        '<application android:usesCleartextTraffic="false">'
+        '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_VERSION" '
+        'android:value="2"/>'
+        '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_CONTRACT_SHA256" '
+        f'android:value="{"d" * 64}"/>'
+        "<activity>"
         '<intent-filter android:autoVerify="true">'
         '<data android:scheme="https" android:host="nexus.nielseriknandal.com"/>'
         "</intent-filter></activity></application></manifest>"
     )
 
-    assert runner._apksigner_certificate(completed) == certificate
-    assert runner._release_manifest_facts(manifest) == (
+    expected_manifest = (
         "app.nexus.android",
         "42",
         "2.1",
         "nexus.nielseriknandal.com",
         "36",
+        "2",
+        "d" * 64,
+    )
+    manifest_result = subprocess.CompletedProcess(("apkanalyzer",), 0, manifest, "")
+
+    assert runner._apksigner_certificate(completed) == certificate
+    assert runner._release_manifest_facts(manifest) == expected_manifest
+    assert runner._release_apk_contract_is_exact(
+        signer=completed,
+        manifest=manifest_result,
+        expected_certificate=certificate,
+        expected_manifest=expected_manifest,
+    )
+    assert not runner._release_apk_contract_is_exact(
+        signer=completed,
+        manifest=subprocess.CompletedProcess(
+            ("apkanalyzer",),
+            0,
+            manifest.replace("d" * 64, "e" * 64),
+            "",
+        ),
+        expected_certificate=certificate,
+        expected_manifest=expected_manifest,
+    )
+    digest_metadata = (
+        '<meta-data android:name="app.nexus.android.PLAYER_PROTOCOL_CONTRACT_SHA256" '
+        f'android:value="{"d" * 64}"/>'
+    )
+    assert runner._release_manifest_facts(manifest.replace(digest_metadata, "")) is None
+    assert (
+        runner._release_manifest_facts(
+            manifest.replace(digest_metadata, digest_metadata + digest_metadata)
+        )
+        is None
     )
     assert (
         runner._apksigner_certificate(
@@ -4157,9 +4246,16 @@ def _write_executable(
     path: Path,
     *,
     stdout: str = "",
+    stdout_by_subcommand: Mapping[str, str] | None = None,
     exit_status: int = 0,
     diagnostic: str = "",
 ) -> None:
+    """Write a recording stand-in tool.
+
+    `stdout_by_subcommand` answers by the first argument (for example
+    `apkanalyzer manifest ...` versus `apkanalyzer dex ...`); any other
+    invocation prints `stdout`.
+    """
     _write(
         path,
         "#!/usr/bin/python3\n"
@@ -4181,7 +4277,9 @@ def _write_executable(
         "}\n"
         "with (Path(os.environ['HOME']) / 'commands.jsonl').open('a') as handle:\n"
         "    handle.write(json.dumps(record, sort_keys=True) + '\\n')\n"
-        f"print({stdout!r})\n"
+        f"by_subcommand = {dict(stdout_by_subcommand or {})!r}\n"
+        "subcommand = sys.argv[1] if len(sys.argv) > 1 else ''\n"
+        f"print(by_subcommand.get(subcommand, {stdout!r}))\n"
         f"print({diagnostic!r}, file=sys.stderr)\n"
         f"raise SystemExit({exit_status})\n",
     )

@@ -4,9 +4,522 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.security.MessageDigest
 import java.util.UUID
+import kotlin.reflect.KClass
+
+private val IDLE_SYNCED = PlayerActivitySyncSnapshot(
+    NativeActivityCapture.Idle,
+    NativeActivitySync.Synced,
+)
+
+/** Every concrete arm of a sealed hierarchy, expanding nested sealed interfaces. */
+private fun sealedLeaves(type: KClass<*>): Set<String> =
+    type.sealedSubclasses
+        .flatMapTo(linkedSetOf()) { subclass ->
+            if (subclass.sealedSubclasses.isEmpty()) {
+                setOf(requireNotNull(subclass.simpleName))
+            } else {
+                sealedLeaves(subclass)
+            }
+        }
 
 class PlayerProtocolTest {
+    private val protocolCorpusBytes by lazy {
+        requireNotNull(
+            javaClass.classLoader?.getResourceAsStream("player-protocol.json")
+        ).use { it.readBytes() }
+    }
+
+    private val rawProtocolCorpus by lazy {
+        JSONObject(protocolCorpusBytes.decodeToString())
+    }
+
+    private val protocolCorpus by lazy {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(protocolCorpusBytes)
+            .joinToString("") { "%02x".format(it) }
+        require(digest == PLAYER_PROTOCOL_CONTRACT_SHA256)
+        JSONObject(
+            protocolCorpusBytes.decodeToString()
+                .replace("\$PROTOCOL_CONTRACT_SHA256", digest)
+        )
+    }
+
+    @Test
+    fun `canonical v2 command corpus is exhaustive and accepted`() {
+        assertEquals(PLAYER_PROTOCOL_VERSION, rawProtocolCorpus.getInt("version"))
+        val token = "\$PROTOCOL_CONTRACT_SHA256"
+        var envelopeCount = 0
+        listOf("commands", "replies", "rejections", "events").forEach { owner ->
+            val envelopes = rawProtocolCorpus.getJSONArray(owner)
+            repeat(envelopes.length()) { index ->
+                val envelope = envelopes.getJSONObject(index)
+                assertEquals(PLAYER_PROTOCOL_VERSION, envelope.getInt("protocolVersion"))
+                assertEquals(token, envelope.getString("protocolContractSha256"))
+                envelopeCount += 1
+            }
+        }
+        assertEquals(
+            envelopeCount,
+            Regex(Regex.escape(token))
+                .findAll(protocolCorpusBytes.decodeToString())
+                .count(),
+        )
+        val commands = protocolCorpus.getJSONArray("commands")
+        val acceptedKinds = mutableListOf<String>()
+
+        repeat(commands.length()) { index ->
+            val command = commands.getJSONObject(index)
+            val parsed = PlayerWire.parseCommand(command.toString())
+            assertTrue(
+                "${command.getString("kind")} must be accepted, got $parsed",
+                parsed is PlayerCommandParseResult.Accepted,
+            )
+            acceptedKinds += kindOf((parsed as PlayerCommandParseResult.Accepted).command)
+        }
+        assertEquals(
+            protocolCorpus.getJSONObject("inventory").stringList("commands"),
+            acceptedKinds,
+        )
+        assertEquals(
+            sealedLeaves(PlayerCommand::class),
+            acceptedKinds.toSet(),
+        )
+        assertEquals(
+            protocolCorpus.getJSONObject("inventory").stringList("rejectionCodes"),
+            PlayerRejectionCode.entries.map { it.name },
+        )
+    }
+
+    @Test
+    fun `canonical inventory is exhaustive over native wire variants`() {
+        val inventory = protocolCorpus.getJSONObject("inventory")
+
+        assertEquals(
+            sealedLeaves(PlayerSnapshot::class),
+            inventory.stringSet("snapshots"),
+        )
+        assertEquals(
+            sealedLeaves(Presence::class),
+            inventory.stringSet("presence"),
+        )
+        assertEquals(
+            sealedLeaves(PlayerOrigin::class),
+            inventory.stringSet("origins"),
+        )
+        assertEquals(
+            sealedLeaves(PlaybackRateState::class),
+            inventory.stringSet("playbackRateStates"),
+        )
+        assertEquals(
+            PlaybackRateResolution.Source.entries.map { it.name },
+            inventory.stringList("playbackRateSources"),
+        )
+        assertEquals(
+            PlaybackPhase.entries.map { it.name },
+            inventory.stringList("playbackPhases"),
+        )
+        assertEquals(
+            sealedLeaves(PlayerPersistence::class),
+            inventory.stringSet("persistence"),
+        )
+        assertEquals(
+            PersistenceSuspension.entries.map { it.name },
+            inventory.stringList("persistenceSuspensions"),
+        )
+        assertEquals(
+            PauseShorteningMode.entries.map { it.name },
+            inventory.stringList("pauseShorteningModes"),
+        )
+        assertEquals(
+            PauseShorteningProvenance.entries.map { it.name },
+            inventory.stringList("pauseShorteningProvenance"),
+        )
+        assertEquals(
+            sealedLeaves(NativeActivityCapture::class),
+            inventory.stringSet("activityCapture"),
+        )
+        assertEquals(
+            NativeActivityCapture.Blocked.Reason.entries.map { it.name },
+            inventory.stringList("activityCaptureBlocks"),
+        )
+        assertEquals(
+            sealedLeaves(NativeActivitySync::class),
+            inventory.stringSet("activitySync"),
+        )
+    }
+
+    @Test
+    fun `canonical v2 snapshots replies and events are emitted exactly`() {
+        val absentOff = PlayerSnapshot.Absent(PauseShorteningMode.Off, 0, IDLE_SYNCED)
+        val absentNatural = PlayerSnapshot.Absent(
+            deviceDefaultPauseShorteningMode = PauseShorteningMode.Natural,
+            pauseShorteningSavedOnDeviceMs = 42,
+            activitySync = PlayerActivitySyncSnapshot(
+                NativeActivityCapture.Paused,
+                NativeActivitySync.Synced,
+                9,
+            ),
+        )
+        val canonical = canonicalCorpusSnapshot()
+        val preview = previewCorpusSnapshot()
+        assertJsonArraySimilar(
+            protocolCorpus.getJSONArray("snapshots"),
+            listOf(
+                snapshotJson(absentOff),
+                snapshotJson(canonical),
+                snapshotJson(preview),
+            ),
+        )
+
+        val lecternPendingNaturalEnd = corpusPendingNaturalEnd(
+            PlayerOrigin.Lectern(uuid(11))
+        )
+        val replies = buildList {
+            add(
+                JSONObject(
+                    PlayerWire.connected(
+                        uuid(30),
+                        absentOff,
+                        Presence.Absent,
+                    )
+                )
+            )
+            add(
+                JSONObject(
+                    PlayerWire.snapshot(
+                        uuid(31),
+                        absentNatural,
+                        Presence.Present(lecternPendingNaturalEnd),
+                    )
+                )
+            )
+            add(JSONObject(PlayerWire.accepted(uuid(32))))
+            PlayerRejectionCode.entries.forEachIndexed { index, code ->
+                add(JSONObject(PlayerWire.rejected(uuid(33 + index), code)))
+            }
+        }
+        assertJsonArraySimilar(
+            protocolCorpus.getJSONArray("replies"),
+            replies.take(3),
+        )
+        assertJsonArraySimilar(
+            protocolCorpus.getJSONArray("rejections"),
+            replies.drop(3),
+        )
+
+        assertJsonArraySimilar(
+            protocolCorpus.getJSONArray("events"),
+            listOf(
+                JSONObject(PlayerWire.snapshotChanged(absentOff)),
+                JSONObject(
+                    PlayerWire.controllerReconnected(
+                        snapshotJson(absentNatural),
+                        lecternPendingNaturalEnd,
+                    )
+                ),
+                JSONObject(
+                    PlayerWire.naturalEndPending(
+                        corpusPendingNaturalEnd(PlayerOrigin.Direct)
+                    )
+                ),
+            ),
+        )
+    }
+
+    private fun corpusPendingNaturalEnd(origin: PlayerOrigin): PendingNaturalEnd =
+        PendingNaturalEnd(
+            accountId = uuid(2),
+            sessionKey = uuid(8),
+            mediaId = uuid(9),
+            origin = origin,
+            clientMutationId = uuid(29),
+            terminalListening = TerminalListening(
+                positionMs = 120_000,
+                durationMs = Presence.Present(120_000),
+                episodePlaybackRate = Presence.Present(1.5),
+                expectedWriteRevision = 4,
+                expectedResetEpoch = 1,
+            ),
+            expectedConsumptionOverrideRevision = Presence.Present(4),
+        )
+
+    @Test
+    fun `canonical nested variants are emitted exactly by native owners`() {
+        val nested = protocolCorpus.getJSONObject("nestedVariants")
+        val canonical = canonicalCorpusSnapshot()
+
+        val captures = listOf(
+            NativeActivityCapture.Recording,
+            NativeActivityCapture.Idle,
+            NativeActivityCapture.Paused,
+            NativeActivityCapture.Blocked(
+                NativeActivityCapture.Blocked.Reason.StorageUnavailable
+            ),
+            NativeActivityCapture.Blocked(
+                NativeActivityCapture.Blocked.Reason.CapacityReached
+            ),
+        )
+        assertJsonArraySimilar(
+            nested.getJSONArray("activityCapture"),
+            captures.map { capture ->
+                snapshotJson(
+                    canonical.copy(
+                        activitySync = canonical.activitySync.copy(capture = capture)
+                    )
+                ).getJSONObject("activitySync").getJSONObject("capture")
+            },
+        )
+
+        val syncStates = listOf(
+            NativeActivitySync.Synced,
+            NativeActivitySync.Pending(1, "2026-08-10T00:00:00Z"),
+            NativeActivitySync.Failed(1),
+        )
+        assertJsonArraySimilar(
+            nested.getJSONArray("activitySync"),
+            syncStates.map { sync ->
+                snapshotJson(
+                    canonical.copy(
+                        activitySync = canonical.activitySync.copy(sync = sync)
+                    )
+                ).getJSONObject("activitySync").getJSONObject("sync")
+            },
+        )
+
+        val origins = listOf(PlayerOrigin.Direct, PlayerOrigin.Lectern(uuid(11)))
+        assertJsonArraySimilar(
+            nested.getJSONArray("origins"),
+            origins.map { origin ->
+                snapshotJson(
+                    canonical.copy(session = canonical.session.copy(origin = origin))
+                ).getJSONObject("session").getJSONObject("origin")
+            },
+        )
+
+        val persistenceStates = listOf(
+            PlayerPersistence.Ready,
+            PlayerPersistence.Suspended(
+                PersistenceSuspension.Network,
+                "Network unavailable",
+            ),
+            PlayerPersistence.Suspended(
+                PersistenceSuspension.AuthExpired,
+                "Authentication expired",
+            ),
+        )
+        assertJsonArraySimilar(
+            nested.getJSONArray("persistence"),
+            persistenceStates.map { persistence ->
+                snapshotJson(canonical.copy(persistence = persistence))
+                    .getJSONObject("persistence")
+            },
+        )
+
+        val rateResolutions = listOf(
+            PlaybackRateResolution(
+                1.5,
+                PlaybackRateResolution.Source.Episode,
+                Presence.Absent,
+            ),
+            PlaybackRateResolution(
+                1.25,
+                PlaybackRateResolution.Source.Podcast,
+                Presence.Present(
+                    PodcastRatePreference(uuid(10), Presence.Present(1.25))
+                ),
+            ),
+            PlaybackRateResolution(
+                1.0,
+                PlaybackRateResolution.Source.Product,
+                Presence.Absent,
+            ),
+        )
+        assertEquals(
+            nested.stringList("playbackRateSources"),
+            rateResolutions.map { resolution ->
+                snapshotJson(
+                    canonical.copy(
+                        session = canonical.session.copy(
+                            descriptor = canonical.session.descriptor.copy(
+                                playbackRate = resolution
+                            )
+                        )
+                    )
+                ).getJSONObject("session")
+                    .getJSONObject("descriptor")
+                    .getJSONObject("activation")
+                    .getJSONObject("playbackRate")
+                    .getString("source")
+            },
+        )
+
+        assertEquals(
+            nested.stringList("playbackPhases"),
+            PlaybackPhase.entries.map { phase ->
+                snapshotJson(canonical.copy(phase = phase)).getString("phase")
+            },
+        )
+        assertEquals(
+            nested.stringList("pauseShorteningModes"),
+            PauseShorteningMode.entries.map { mode ->
+                snapshotJson(
+                    canonical.copy(
+                        pauseShortening = canonical.pauseShortening.copy(
+                            deviceDefaultMode = mode
+                        )
+                    )
+                ).getJSONObject("pauseShortening").getString("deviceDefaultMode")
+            },
+        )
+        assertEquals(
+            nested.stringList("pauseShorteningProvenance"),
+            PauseShorteningProvenance.entries.map { provenance ->
+                snapshotJson(
+                    canonical.copy(
+                        pauseShortening = canonical.pauseShortening.copy(
+                            provenance = provenance
+                        )
+                    )
+                ).getJSONObject("pauseShortening").getString("provenance")
+            },
+        )
+
+        val presenceStates: List<Presence<Long>> = listOf(
+            Presence.Absent,
+            Presence.Present(1),
+        )
+        assertJsonArraySimilar(
+            nested.getJSONArray("presence"),
+            presenceStates.map { presence ->
+                snapshotJson(
+                    canonical.copy(
+                        session = canonical.session.copy(
+                            descriptor = canonical.session.descriptor.copy(
+                                durationMs = presence
+                            )
+                        )
+                    )
+                ).getJSONObject("session")
+                    .getJSONObject("descriptor")
+                    .getJSONObject("activation")
+                    .getJSONObject("durationMs")
+            },
+        )
+    }
+
+    @Test
+    fun `replyable identity mismatch wins before command body validation`() {
+        val requestId = "00000000-0000-4000-8000-000000000001"
+        val wrongVersion = JSONObject()
+            .put("kind", "UnknownCommand")
+            .put("requestId", requestId)
+            .put("protocolVersion", PLAYER_PROTOCOL_VERSION + 1)
+        val rejected = PlayerWire.parseCommand(wrongVersion.toString())
+        assertEquals(
+            PlayerCommandParseResult.Rejected(
+                UUID.fromString(requestId),
+                PlayerRejectionCode.ProtocolMismatch,
+            ),
+            rejected,
+        )
+        val reply = JSONObject((rejected as PlayerCommandParseResult.Rejected).reply)
+        assertEquals(
+            setOf("kind", "requestId", "protocolVersion", "protocolContractSha256", "code"),
+            reply.keys().asSequence().toSet(),
+        )
+        assertEquals("Rejected", reply.getString("kind"))
+        assertEquals(requestId, reply.getString("requestId"))
+        assertEquals("ProtocolMismatch", reply.getString("code"))
+        assertEquals(PLAYER_PROTOCOL_VERSION, reply.getInt("protocolVersion"))
+        assertEquals(PLAYER_PROTOCOL_CONTRACT_SHA256, reply.getString("protocolContractSha256"))
+
+        val wrongDigest = JSONObject()
+            .put("kind", "UnknownCommand")
+            .put("requestId", requestId)
+            .put("protocolVersion", PLAYER_PROTOCOL_VERSION)
+            .put("protocolContractSha256", "0".repeat(64))
+        assertEquals(
+            PlayerCommandParseResult.Rejected(
+                UUID.fromString(requestId),
+                PlayerRejectionCode.ProtocolMismatch,
+            ),
+            PlayerWire.parseCommand(wrongDigest.toString()),
+        )
+
+        wrongDigest.put("protocolContractSha256", PLAYER_PROTOCOL_CONTRACT_SHA256)
+        assertEquals(
+            PlayerCommandParseResult.Rejected(
+                UUID.fromString(requestId),
+                PlayerRejectionCode.InvalidRequest,
+            ),
+            PlayerWire.parseCommand(wrongDigest.toString()),
+        )
+    }
+
+    @Test
+    fun `malformed v2 identity is InvalidRequest and unreplyable input is ignored`() {
+        val requestId = "00000000-0000-4000-8000-000000000001"
+        val current = JSONObject()
+            .put("kind", "GetSnapshot")
+            .put("requestId", requestId)
+            .put("protocolVersion", PLAYER_PROTOCOL_VERSION)
+            .put("protocolContractSha256", PLAYER_PROTOCOL_CONTRACT_SHA256)
+        assertTrue(
+            PlayerWire.parseCommand(current.toString()) is PlayerCommandParseResult.Accepted
+        )
+
+        val malformedIdentities = listOf(
+            "absent digest" to JSONObject(current.toString()).apply {
+                remove("protocolContractSha256")
+            },
+            "uppercase digest" to JSONObject(current.toString()).put(
+                "protocolContractSha256",
+                PLAYER_PROTOCOL_CONTRACT_SHA256.uppercase(),
+            ),
+            "short digest" to JSONObject(current.toString()).put(
+                "protocolContractSha256",
+                PLAYER_PROTOCOL_CONTRACT_SHA256.dropLast(1),
+            ),
+            "non-string digest" to JSONObject(current.toString()).put(
+                "protocolContractSha256",
+                7,
+            ),
+            "absent version" to JSONObject(current.toString()).apply {
+                remove("protocolVersion")
+            },
+            "string version" to JSONObject(current.toString()).put(
+                "protocolVersion",
+                PLAYER_PROTOCOL_VERSION.toString(),
+            ),
+            "negative version" to JSONObject(current.toString()).put("protocolVersion", -1),
+        )
+        malformedIdentities.forEach { (label, command) ->
+            assertEquals(
+                label,
+                PlayerCommandParseResult.Rejected(
+                    UUID.fromString(requestId),
+                    PlayerRejectionCode.InvalidRequest,
+                ),
+                PlayerWire.parseCommand(command.toString()),
+            )
+        }
+
+        val unreplyable = listOf(
+            "absent requestId" to JSONObject(current.toString()).apply { remove("requestId") },
+            "malformed requestId" to JSONObject(current.toString()).put("requestId", "nope"),
+            "not an object" to null,
+        )
+        unreplyable.forEach { (label, command) ->
+            assertEquals(
+                label,
+                PlayerCommandParseResult.Unreplyable,
+                PlayerWire.parseCommand(command?.toString() ?: "[]"),
+            )
+        }
+    }
+
     @Test
     fun `connect accepts only the exact versioned shape`() {
         val accepted = PlayerWire.parseCommand(
@@ -14,7 +527,8 @@ class PlayerProtocolTest {
             {
               "kind":"Connect",
               "requestId":"00000000-0000-4000-8000-000000000001",
-              "protocolVersion":1,
+              "protocolVersion":2,
+              "protocolContractSha256":"$PLAYER_PROTOCOL_CONTRACT_SHA256",
               "accountId":"00000000-0000-4000-8000-000000000002"
             }
             """.trimIndent()
@@ -32,7 +546,8 @@ class PlayerProtocolTest {
             {
               "kind":"Connect",
               "requestId":"00000000-0000-4000-8000-000000000001",
-              "protocolVersion":1,
+              "protocolVersion":2,
+              "protocolContractSha256":"$PLAYER_PROTOCOL_CONTRACT_SHA256",
               "accountId":"00000000-0000-4000-8000-000000000002",
               "fallback":true
             }
@@ -50,7 +565,8 @@ class PlayerProtocolTest {
                   "kind":"GetSnapshot",
                   "kind":"Connect",
                   "requestId":"00000000-0000-4000-8000-000000000001",
-                  "protocolVersion":1
+                  "protocolVersion":2,
+                  "protocolContractSha256":"$PLAYER_PROTOCOL_CONTRACT_SHA256"
                 }
                 """.trimIndent()
             ) is PlayerCommandParseResult.Unreplyable
@@ -61,7 +577,8 @@ class PlayerProtocolTest {
                 {
                   "kind":"GetSnapshot",
                   "requestId":"00000000-0000-4000-8000-00000000000A",
-                  "protocolVersion":1
+                  "protocolVersion":2,
+                  "protocolContractSha256":"$PLAYER_PROTOCOL_CONTRACT_SHA256"
                 }
                 """.trimIndent()
             ) is PlayerCommandParseResult.Unreplyable
@@ -74,7 +591,7 @@ class PlayerProtocolTest {
             val exact = JSONObject()
                 .put("kind", kind)
                 .put("requestId", "00000000-0000-4000-8000-000000000001")
-                .put("protocolVersion", 1)
+                .putProtocolIdentity()
             assertTrue(
                 PlayerWire.parseCommand(exact.toString()) is
                     PlayerCommandParseResult.Accepted
@@ -93,7 +610,7 @@ class PlayerProtocolTest {
         val exact = JSONObject()
             .put("kind", "SetActivityPaused")
             .put("requestId", "00000000-0000-4000-8000-000000000001")
-            .put("protocolVersion", 1)
+            .putProtocolIdentity()
             .put("paused", true)
         assertEquals(
             PlayerCommand.SetActivityPaused(
@@ -190,7 +707,7 @@ class PlayerProtocolTest {
         val command = JSONObject()
             .put("kind", "InstallPodcastPlaybackSettings")
             .put("requestId", "00000000-0000-4000-8000-000000000001")
-            .put("protocolVersion", 1)
+            .putProtocolIdentity()
             .put("sessionKey", "00000000-0000-4000-8000-000000000002")
             .put("podcastId", "00000000-0000-4000-8000-000000000003")
             .put(
@@ -278,6 +795,7 @@ class PlayerProtocolTest {
                 "kind",
                 "requestId",
                 "protocolVersion",
+                "protocolContractSha256",
                 "snapshot",
                 "pendingNaturalEnd",
             ),
@@ -313,7 +831,7 @@ class PlayerProtocolTest {
         val raw = JSONObject(
             PlayerWire.connected(
                 UUID.fromString("00000000-0000-4000-8000-000000000001"),
-                PlayerSnapshot.Absent(PauseShorteningMode.Off, 0),
+                PlayerSnapshot.Absent(PauseShorteningMode.Off, 0, IDLE_SYNCED),
                 Presence.Absent,
             )
         )
@@ -323,6 +841,7 @@ class PlayerProtocolTest {
                 "kind",
                 "requestId",
                 "protocolVersion",
+                "protocolContractSha256",
                 "snapshot",
                 "pendingNaturalEnd",
             ),
@@ -337,7 +856,7 @@ class PlayerProtocolTest {
         val snapshot = JSONObject(
             PlayerWire.snapshot(
                 UUID.fromString("00000000-0000-4000-8000-000000000001"),
-                PlayerSnapshot.Absent(PauseShorteningMode.Off, 7),
+                PlayerSnapshot.Absent(PauseShorteningMode.Off, 7, IDLE_SYNCED),
                 Presence.Absent,
             )
         ).getJSONObject("snapshot")
@@ -348,6 +867,7 @@ class PlayerProtocolTest {
         assertEquals(
             setOf(
                 "protocolVersion",
+                "protocolContractSha256",
                 "kind",
                 "snapshot",
                 "pendingNaturalEnd",
@@ -367,6 +887,84 @@ class PlayerProtocolTest {
         assertEquals(
             "Absent",
             event.getJSONObject("pendingNaturalEnd").getString("kind"),
+        )
+    }
+
+    private fun canonicalCorpusSnapshot(): PlayerSnapshot.Canonical {
+        val loaded = acceptedCommand("LoadCanonical") as PlayerCommand.LoadCanonical
+        return PlayerSnapshot.Canonical(
+            sessionKey = loaded.sessionKey,
+            session = loaded.session.copy(
+                descriptor = loaded.session.descriptor.copy(
+                    playbackRate = loaded.session.descriptor.playbackRate.copy(
+                        podcastPreference = Presence.Absent,
+                    ),
+                    artworkUrl = Presence.Absent,
+                    chapters = emptyList(),
+                ),
+                origin = PlayerOrigin.Direct,
+            ),
+            phase = PlaybackPhase.Playing,
+            positionMs = 12_000,
+            durationMs = 120_000,
+            bufferedMs = 30_000,
+            volume = 0.75,
+            observedBaseRate = 1.5,
+            rateState = loaded.rateState.copy(
+                podcastPreference = Presence.Absent,
+            ),
+            persistence = PlayerPersistence.Ready,
+            playbackFailure = Presence.Absent,
+            pauseShortening = PauseShorteningSnapshot(
+                deviceDefaultMode = PauseShorteningMode.Off,
+                podcastOverride = Presence.Present(PauseShorteningMode.Natural),
+                sessionOverride = Presence.Absent,
+                effectiveMode = PauseShorteningMode.Natural,
+                provenance = PauseShorteningProvenance.Podcast,
+                savedOnDeviceMs = 2_500,
+            ),
+            activitySync = PlayerActivitySyncSnapshot(
+                NativeActivityCapture.Recording,
+                NativeActivitySync.Pending(2, "2026-08-10T00:00:00Z"),
+                7,
+            ),
+        )
+    }
+
+    private fun previewCorpusSnapshot(): PlayerSnapshot.Preview {
+        val loaded = acceptedCommand("LoadPreview") as PlayerCommand.LoadPreview
+        return PlayerSnapshot.Preview(
+            sessionKey = loaded.sessionKey,
+            descriptor = loaded.descriptor,
+            phase = PlaybackPhase.Paused,
+            positionMs = 5_000,
+            durationMs = 30_000,
+            bufferedMs = 10_000,
+            volume = 0.5,
+            observedBaseRate = 1.0,
+            rateState = PlaybackRateState.Preview(),
+            persistence = PlayerPersistence.Suspended(
+                PersistenceSuspension.Network,
+                "Network unavailable",
+            ),
+            playbackFailure = Presence.Present(
+                PlayerFailure("PreviewFailed", "Preview failed")
+            ),
+            pauseShortening = PauseShorteningSnapshot(
+                deviceDefaultMode = PauseShorteningMode.Natural,
+                podcastOverride = Presence.Absent,
+                sessionOverride = Presence.Present(PauseShorteningMode.Off),
+                effectiveMode = PauseShorteningMode.Off,
+                provenance = PauseShorteningProvenance.Session,
+                savedOnDeviceMs = 0,
+            ),
+            activitySync = PlayerActivitySyncSnapshot(
+                NativeActivityCapture.Blocked(
+                    NativeActivityCapture.Blocked.Reason.StorageUnavailable
+                ),
+                NativeActivitySync.Failed(1),
+                8,
+            ),
         )
     }
 
@@ -405,7 +1003,7 @@ class PlayerProtocolTest {
         return JSONObject()
             .put("kind", "LoadCanonical")
             .put("requestId", "00000000-0000-4000-8000-000000000001")
-            .put("protocolVersion", 1)
+            .putProtocolIdentity()
             .put("sessionKey", "00000000-0000-4000-8000-000000000002")
             .put(
                 "session",
@@ -443,7 +1041,7 @@ class PlayerProtocolTest {
         return JSONObject()
             .put("kind", "LoadPreview")
             .put("requestId", "00000000-0000-4000-8000-000000000001")
-            .put("protocolVersion", 1)
+            .putProtocolIdentity()
             .put("sessionKey", "00000000-0000-4000-8000-000000000002")
             .put(
                 "descriptor",
@@ -457,5 +1055,85 @@ class PlayerProtocolTest {
                     .put("imageUrl", absent)
                     .put("durationMs", absent),
             )
+    }
+
+    private fun JSONObject.putProtocolIdentity(): JSONObject =
+        put("protocolVersion", PLAYER_PROTOCOL_VERSION)
+            .put("protocolContractSha256", PLAYER_PROTOCOL_CONTRACT_SHA256)
+
+    private fun JSONObject.stringList(key: String): List<String> {
+        val values = getJSONArray(key)
+        return List(values.length()) { values.getString(it) }
+    }
+
+    private fun JSONObject.stringSet(key: String): Set<String> {
+        val values = stringList(key)
+        val unique = values.toSet()
+        assertEquals("$key inventory must not repeat a discriminant", values.size, unique.size)
+        return unique
+    }
+
+    private fun acceptedCommand(kind: String): PlayerCommand {
+        val commands = protocolCorpus.getJSONArray("commands")
+        repeat(commands.length()) { index ->
+            val command = commands.getJSONObject(index)
+            if (command.getString("kind") == kind) {
+                return (PlayerWire.parseCommand(command.toString()) as
+                    PlayerCommandParseResult.Accepted).command
+            }
+        }
+        error("protocol corpus is missing $kind")
+    }
+
+    private fun snapshotJson(snapshot: PlayerSnapshot): JSONObject =
+        JSONObject(
+            PlayerWire.snapshot(
+                uuid(99),
+                snapshot,
+                Presence.Absent,
+            )
+        ).getJSONObject("snapshot")
+
+    private fun assertJsonArraySimilar(
+        expected: org.json.JSONArray,
+        actual: List<JSONObject>,
+    ) {
+        assertEquals(expected.length(), actual.size)
+        actual.forEachIndexed { index, value ->
+            assertTrue(
+                "corpus entry $index differs: expected=${expected.get(index)} actual=$value",
+                expected.getJSONObject(index).similar(value),
+            )
+        }
+    }
+
+    private fun uuid(suffix: Int): UUID = UUID.fromString(
+        "00000000-0000-4000-8000-${suffix.toString().padStart(12, '0')}"
+    )
+
+    private fun kindOf(command: PlayerCommand): String = when (command) {
+        is PlayerCommand.Connect -> "Connect"
+        is PlayerCommand.GetSnapshot -> "GetSnapshot"
+        is PlayerCommand.RetryFailedActivity -> "RetryFailedActivity"
+        is PlayerCommand.DiscardFailedActivity -> "DiscardFailedActivity"
+        is PlayerCommand.SetActivityPaused -> "SetActivityPaused"
+        is PlayerCommand.LoadCanonical -> "LoadCanonical"
+        is PlayerCommand.LoadPreview -> "LoadPreview"
+        is PlayerCommand.Play -> "Play"
+        is PlayerCommand.Pause -> "Pause"
+        is PlayerCommand.SeekTo -> "SeekTo"
+        is PlayerCommand.SkipBy -> "SkipBy"
+        is PlayerCommand.SetVolume -> "SetVolume"
+        is PlayerCommand.SetPlaybackRateState -> "SetPlaybackRateState"
+        is PlayerCommand.SetSessionPauseShorteningMode -> "SetSessionPauseShorteningMode"
+        is PlayerCommand.ClearSessionPauseShorteningMode -> "ClearSessionPauseShorteningMode"
+        is PlayerCommand.SetDeviceDefaultPauseShorteningMode ->
+            "SetDeviceDefaultPauseShorteningMode"
+        is PlayerCommand.InstallPodcastPlaybackSettings -> "InstallPodcastPlaybackSettings"
+        is PlayerCommand.Drain -> "Drain"
+        is PlayerCommand.AdoptListeningState -> "AdoptListeningState"
+        is PlayerCommand.RetryPersistence -> "RetryPersistence"
+        is PlayerCommand.Dismiss -> "Dismiss"
+        is PlayerCommand.AcknowledgeNaturalEnd -> "AcknowledgeNaturalEnd"
     }
 }

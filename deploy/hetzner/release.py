@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any
 
 from nexus.release_artifact import (
+    ANDROID_RELEASE_TAG,
+    AndroidPlayerProtocolIdentity,
     BackendArtifactDefect,
     CandidateManifest,
     RuntimeIdentity,
@@ -132,6 +134,8 @@ _MIN_PARSER_TEMP_FREE_BYTES = 512 * 1024 * 1024
 _CODEX_CAPACITY_SCHEMA_VERSION = "nexus-codex-capacity.v1"
 _CODEX_CAPACITY_CANARY_SCHEMA_VERSION = "nexus-codex-capacity-canary.v1"
 _CODEX_CAPACITY_PHASES = ("cold", "warm_1", "warm_2")
+# The bundled raw corpus is the post-promotion and resume identity authority.
+_ANDROID_PLAYER_PROTOCOL_CORPUS = Path("testdata/android/player-protocol.json")
 _CODEX_CAPACITY_EVIDENCE_FIELDS = frozenset(
     {
         "schema_version",
@@ -271,6 +275,21 @@ _RECORD_FIELDS = frozenset(
         "verified_at",
     }
 )
+_ANDROID_RELEASE_MANIFEST_FIELDS = frozenset(
+    {
+        "version",
+        "run_id",
+        "git_sha",
+        "tag",
+        "package",
+        "version_code",
+        "version_name",
+        "signer_sha256",
+        "source_apk_sha256",
+        "player_protocol",
+        "assets",
+    }
+)
 _TERMINAL_PHASES = frozenset({"RolledBack", "Succeeded", "ForwardFixRequired"})
 _BUNDLE_FILES = frozenset(
     {
@@ -282,6 +301,7 @@ _BUNDLE_FILES = frozenset(
         "release.py",
         "python/nexus/__init__.py",
         "python/nexus/release_artifact.py",
+        _ANDROID_PLAYER_PROTOCOL_CORPUS.as_posix(),
     }
 )
 # justify-retry-schedule: release provider/host effects retry exactly once under
@@ -327,7 +347,7 @@ class ReleaseDefect(RuntimeError):
 
 
 class ReleaseBlocked(RuntimeError):
-    """A valid durable release history prevents the requested mutation."""
+    """A valid durable release history or external release fact prevents the mutation."""
 
 
 class ExternalCommandFailed(RuntimeError):
@@ -1731,6 +1751,71 @@ def _read_json(path: Path) -> object:
         return json.loads(path.read_bytes(), object_pairs_hook=_unique_object)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ReleaseDefect(f"could not read strict JSON state {path}") from exc
+
+
+def android_player_protocol_identity(corpus: Path) -> AndroidPlayerProtocolIdentity:
+    try:
+        return AndroidPlayerProtocolIdentity.of_corpus(corpus)
+    except BackendArtifactDefect as exc:
+        raise ReleaseDefect(str(exc)) from exc
+
+
+def load_android_release_manifest(
+    path: Path,
+    *,
+    corpus: Path,
+    expected_tag: str,
+) -> AndroidPlayerProtocolIdentity:
+    """Strictly decode a stable signed release manifest and return its player identity."""
+    _require_match("stable Android release tag", expected_tag, ANDROID_RELEASE_TAG)
+    manifest = _closed_mapping(
+        _read_json(path), _ANDROID_RELEASE_MANIFEST_FIELDS, "Android release manifest"
+    )
+    if type(manifest.get("version")) is not int or manifest["version"] != 2:
+        raise ReleaseDefect("Android release manifest version is unsupported")
+    run_id = manifest.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        raise ReleaseDefect("Android release manifest run id is malformed")
+    tag = manifest.get("tag")
+    if not isinstance(tag, str) or tag != expected_tag:
+        raise ReleaseDefect("Android release manifest tag differs from the selected stable release")
+    if manifest.get("package") != "app.nexus.android":
+        raise ReleaseDefect("Android release manifest package is unsupported")
+    if type(manifest.get("version_code")) is not int or manifest["version_code"] < 1:
+        raise ReleaseDefect("Android release manifest version code is malformed")
+    if manifest.get("version_name") != expected_tag.removeprefix("android-v"):
+        raise ReleaseDefect("Android release manifest version name differs from its tag")
+    _require_match("Android release manifest git SHA", manifest.get("git_sha"), _SHA)
+    _require_match(
+        "Android release manifest signer SHA-256",
+        manifest.get("signer_sha256"),
+        _SHA256,
+    )
+    source_apk_sha256 = _require_match(
+        "Android release manifest source APK SHA-256",
+        manifest.get("source_apk_sha256"),
+        _SHA256,
+    )
+    version_name = expected_tag.removeprefix("android-v")
+    apk_names = ("nexus-android.apk", f"nexus-android-{version_name}.apk")
+    assets = _closed_mapping(
+        manifest.get("assets"),
+        frozenset((*apk_names, *(f"{name}.sha256" for name in apk_names))),
+        "Android release manifest assets",
+    )
+    for name, digest in assets.items():
+        _require_match(f"Android release manifest asset {name}", digest, _SHA256)
+    if any(assets[name] != source_apk_sha256 for name in apk_names):
+        raise ReleaseDefect("Android release manifest APK assets differ from their source digest")
+    try:
+        identity = AndroidPlayerProtocolIdentity.from_json(manifest.get("player_protocol"))
+    except BackendArtifactDefect as exc:
+        raise ReleaseDefect(f"Android release manifest {exc}") from exc
+    if identity != android_player_protocol_identity(corpus):
+        # The signed APK ships before the web candidate; a lagging published
+        # identity is an expected release-order stop, not malformed input.
+        raise ReleaseBlocked("Android release manifest player protocol differs from the corpus")
+    return identity
 
 
 def _read_canonical_json(path: Path, label: str) -> object:
@@ -5240,6 +5325,7 @@ class HostRelease:
         attempt: ReleaseAttempt,
         candidate: CandidateManifest,
         *,
+        bundle: Path,
         expected_task_contract_digest: str,
     ) -> None:
         _require_match(
@@ -5248,7 +5334,13 @@ class HostRelease:
             _SHA256,
         )
         web, web_headers = self._fetch_json(f"https://{attempt.production_host}/version")
-        if web != {"source_sha": candidate.source_sha}:
+        expected_web = {
+            "source_sha": candidate.source_sha,
+            "player_protocol": android_player_protocol_identity(
+                bundle / _ANDROID_PLAYER_PROTOCOL_CORPUS
+            ).as_json(),
+        }
+        if web != expected_web:
             raise ReleaseBlocked("authoritative frontend does not serve the bound candidate")
         if web_headers.get("cache-control") != "no-store":
             raise PermanentReleaseFailure("frontend version response is cacheable")
@@ -5335,6 +5427,7 @@ class HostRelease:
             self._prove_public(
                 attempt,
                 candidate,
+                bundle=bundle,
                 expected_task_contract_digest=task_digest,
             )
             succeeded = self.store.complete_published_attempt(source_sha, now=_now())
@@ -5350,6 +5443,7 @@ class HostRelease:
             self._prove_public(
                 attempt,
                 candidate,
+                bundle=bundle,
                 expected_task_contract_digest=task_digest,
             )
             attempt = attempt.advance(ReleasePhase.FrontendPromoted, now=_now())
@@ -5366,6 +5460,7 @@ class HostRelease:
         self._prove_public(
             attempt,
             candidate,
+            bundle=bundle,
             expected_task_contract_digest=task_digest,
         )
         existing_record = self.store.load_record(source_sha)
@@ -5391,11 +5486,12 @@ class HostRelease:
         record = self.store.load_record(source_sha)
         if attempt is None or attempt.phase is not ReleasePhase.Succeeded or record is None:
             raise ReleaseDefect("current release is not a complete immutable publication")
-        candidate = load_candidate_manifest(self.bundle(source_sha) / "candidate-manifest.json")
-        if record.manifest_sha256 != _sha256(self.bundle(source_sha) / "candidate-manifest.json"):
+        bundle = self.bundle(source_sha)
+        candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
+        if record.manifest_sha256 != _sha256(bundle / "candidate-manifest.json"):
             raise ReleaseDefect("current release manifest hash differs")
         api_image_id, worker_image_id, task_digest = self._prove_backend(
-            bundle=self.bundle(source_sha),
+            bundle=bundle,
             candidate=candidate,
             attempt=attempt,
             require_codex_agent_host=_requires_codex_agent_host(candidate),
@@ -5403,10 +5499,11 @@ class HostRelease:
         self._prove_public(
             attempt,
             candidate,
+            bundle=bundle,
             expected_task_contract_digest=task_digest,
         )
         self._validate_release_inputs(
-            bundle=self.bundle(source_sha),
+            bundle=bundle,
             candidate=candidate,
             attempt=attempt,
             check_caddy=False,
@@ -5872,6 +5969,7 @@ class HostOracleReconcile:
         self.host._prove_public(
             target.release_attempt,
             target.candidate,
+            bundle=target.bundle,
             expected_task_contract_digest=task_digest,
         )
 
@@ -6061,6 +6159,14 @@ def _parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate-candidate")
     validate.add_argument("--manifest", type=Path, required=True)
 
+    android_release = commands.add_parser("validate-android-release-manifest")
+    android_release.add_argument("--manifest", type=Path, required=True)
+    android_release.add_argument("--corpus", type=Path, required=True)
+    android_release.add_argument("--tag", required=True)
+
+    android_identity = commands.add_parser("android-player-protocol-identity")
+    android_identity.add_argument("--corpus", type=Path, required=True)
+
     install = commands.add_parser("install-bundle")
     install.add_argument("--source", type=Path, required=True)
 
@@ -6107,6 +6213,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate-candidate":
         candidate = load_candidate_manifest(args.manifest)
         sys.stdout.buffer.write(_canonical_json({"source_sha": candidate.source_sha}))
+        return 0
+    if args.command == "validate-android-release-manifest":
+        identity = load_android_release_manifest(
+            args.manifest,
+            corpus=args.corpus,
+            expected_tag=args.tag,
+        )
+        sys.stdout.buffer.write(_canonical_json(identity.as_json()))
+        return 0
+    if args.command == "android-player-protocol-identity":
+        identity = android_player_protocol_identity(args.corpus)
+        sys.stdout.buffer.write(_canonical_json(identity.as_json()))
         return 0
     if args.command == "install-bundle":
         with release_lock(paths.lock_path):

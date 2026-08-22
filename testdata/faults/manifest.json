@@ -858,6 +858,15 @@
       "expected_failure": "the child is not bound to supervisor liveness"
     },
     {
+      "id": "android-player-protocol-skew-bypass",
+      "patch": "testdata/faults/android-player-protocol-skew-bypass.patch",
+      "sha256": "7d6caac2351888bf82d0ee6695c7732b2dcc848bcf948aa9973336c41cf86071",
+      "proofs": [
+        "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
       "id": "accepted-url-private-redirect-bypass",
       "patch": "testdata/faults/accepted-url-private-redirect-bypass.patch",
       "sha256": "24bd3768d7e0cffbbd63b0ed46dc9cfcf0759da52a773717d0de5fb9ca623e83",

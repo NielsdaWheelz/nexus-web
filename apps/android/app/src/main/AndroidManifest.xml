@@ -21,6 +21,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Nexus"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <meta-data
+            android:name="app.nexus.android.PLAYER_PROTOCOL_VERSION"
+            android:value="${playerProtocolVersion}" />
+        <meta-data
+            android:name="app.nexus.android.PLAYER_PROTOCOL_CONTRACT_SHA256"
+            android:value="${playerProtocolContractSha256}" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

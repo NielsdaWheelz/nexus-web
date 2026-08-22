@@ -1,5 +1,5 @@
 888430cd438754088ad6cb0324499794fc7b0aa492de0d14d39e0f6887d64035  apps/web/bun.lock
-e7f500b8847b8a311021ff4ed8211a711075882d729a6bda2b0d1dc2cee7947c  apps/web/package.json
+56eac52dd666bf84ebd0cb76a0601279ed8694566062204c42e6cd64f368021f  apps/web/package.json
 25de390ca8e6044bca37394655ec2406c7813b5f1e5d79a9b62fd3588494ac6f  apps/web/scripts/build-offline-reading.mjs
 e93fddfeb1e4e26a024da9de8f26496402d2aea1dc50cf3db0d92a551cc8c8c6  apps/web/scripts/copy-pdfjs.mjs
 b367fba7aabcc1f41538c0c4a7890a1f88e59b435ecf08735200f0a61c439602  apps/web/src/app/globals.css
