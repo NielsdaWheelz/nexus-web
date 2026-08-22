@@ -19,6 +19,7 @@ from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
+from xml.etree import ElementTree
 
 from nexus_test_control import services as test_services
 from nexus_test_control.runtime import EndpointKind
@@ -30,17 +31,18 @@ _MAX_REQUEST_BYTES = 1_048_576
 _TEST_ENV = {"NEXUS_ENV": "test"}
 _REQUEST_ID = "req_nexus_fixture"
 _RESPONSE_ID = "resp_nexus_fixture"
-_TOOL_ITEM_ID = "fc_nexus_app_search"
-_TOOL_CALL_ID = "call_nexus_app_search"
+_TOOL_ITEM_ID = "fc_nexus_search"
+_TOOL_CALL_ID = "call_nexus_search"
 _TOOL_SAFETY_ITEM_ID = "fc_nexus_tool_safety"
 _TOOL_SAFETY_CALL_ID = "call_nexus_tool_safety"
-_APP_SEARCH_ARGUMENTS = {
+_NEXUS_SEARCH_ARGUMENTS = {
     "query": "SOFIA water Clavius Crater",
     "kinds": ["documents"],
     "formats": ["article"],
     "authors": None,
     "roles": None,
     "scopes": None,
+    "limit": None,
 }
 _DURABLE_AMBIGUITY_MARKER = "nexus durable ambiguity proof"
 
@@ -223,7 +225,7 @@ class _OpenAIProviderHandler(BaseHTTPRequestHandler):
             self._send_sse(
                 _tool_call_frames(
                     payload["model"],
-                    name="queue_add",
+                    name="nexus__queue__add",
                     arguments={"media_uri": media_uri},
                     item_id=_TOOL_SAFETY_ITEM_ID,
                     call_id=_TOOL_SAFETY_CALL_ID,
@@ -234,8 +236,8 @@ class _OpenAIProviderHandler(BaseHTTPRequestHandler):
         if (citation_ordinal := _tool_output_citation(payload)) is not None:
             self._send_sse(_grounded_text_frames(payload["model"], citation_ordinal))
             return
-        _require_app_search_tool(payload)
-        self._send_sse(_app_search_frames(payload["model"]))
+        _require_nexus_search_tool(payload)
+        self._send_sse(_nexus_search_frames(payload["model"]))
 
     def _read_payload(self) -> dict[str, Any]:
         raw_length = self.headers.get("content-length", "")
@@ -373,13 +375,13 @@ def _has_tool(payload: dict[str, Any], name: str) -> bool:
     )
 
 
-def _require_app_search_tool(payload: dict[str, Any]) -> None:
-    if not _has_tool(payload, "app_search") or payload.get("tool_choice") != "auto":
-        raise RequestRejected(422, "app_search_tool_required")
+def _require_nexus_search_tool(payload: dict[str, Any]) -> None:
+    if not _has_tool(payload, "nexus__search") or payload.get("tool_choice") != "auto":
+        raise RequestRejected(422, "nexus_search_tool_required")
 
 
 def _is_tool_safety_request(payload: dict[str, Any]) -> bool:
-    if not _has_tool(payload, "queue_add"):
+    if not _has_tool(payload, "nexus__queue__add"):
         return False
     prompt = _input_text(payload).casefold()
     return (
@@ -413,24 +415,43 @@ def _tool_output_citation(payload: dict[str, Any]) -> int | None:
     if not outputs:
         return None
     if len(outputs) != 1 or outputs[0].get("call_id") != _TOOL_CALL_ID:
-        raise RequestRejected(422, "invalid_app_search_output")
+        raise RequestRejected(422, "invalid_nexus_search_output")
     try:
-        output = json.loads(outputs[0].get("output", ""))
-    except (TypeError, json.JSONDecodeError) as error:
-        raise RequestRejected(422, "invalid_app_search_output") from error
-    results = output.get("results") if isinstance(output, dict) else None
-    if not isinstance(results, list):
-        raise RequestRejected(422, "uncitable_app_search_output")
-    ordinals = [
-        result.get("n")
-        for result in results
-        if isinstance(result, dict)
-        and isinstance(result.get("n"), int)
-        and not isinstance(result.get("n"), bool)
-        and result["n"] > 0
+        frame = ElementTree.fromstring(outputs[0].get("output", ""))
+    except (TypeError, ElementTree.ParseError) as error:
+        raise RequestRejected(422, "invalid_nexus_search_output") from error
+    if frame.tag != "section" or frame.attrib != {"kind": "tool_result"}:
+        raise RequestRejected(422, "invalid_nexus_search_output")
+    sections = list(frame)
+    payload_sections = [section for section in sections if section.attrib == {"kind": "payload"}]
+    citation_sections = [
+        section for section in sections if section.attrib.get("kind") == "tool_citation"
     ]
+    if len(payload_sections) != 1 or len(payload_sections) + len(citation_sections) != len(
+        sections
+    ):
+        raise RequestRejected(422, "invalid_nexus_search_output")
+    try:
+        result = json.loads((payload_sections[0].text or "").strip())
+        citation_refs = [json.loads((section.text or "").strip()) for section in citation_sections]
+    except json.JSONDecodeError as error:
+        raise RequestRejected(422, "invalid_nexus_search_output") from error
+    if not isinstance(result, dict) or result.get("type") != "Success":
+        raise RequestRejected(422, "invalid_nexus_search_output")
+    ordinals = []
+    for section, result_ref in zip(citation_sections, citation_refs, strict=True):
+        ordinal = section.attrib.get("n", "")
+        retrieval_ordinal = section.attrib.get("retrieval_ordinal", "")
+        if (
+            not ordinal.isdecimal()
+            or int(ordinal) < 1
+            or not retrieval_ordinal.isdecimal()
+            or not isinstance(result_ref, dict)
+        ):
+            raise RequestRejected(422, "uncitable_nexus_search_output")
+        ordinals.append(int(ordinal))
     if not ordinals:
-        raise RequestRejected(422, "uncitable_app_search_output")
+        raise RequestRejected(422, "uncitable_nexus_search_output")
     return ordinals[0]
 
 
@@ -622,11 +643,11 @@ def _tool_call_frames(
     ]
 
 
-def _app_search_frames(model: str) -> list[dict[str, Any]]:
+def _nexus_search_frames(model: str) -> list[dict[str, Any]]:
     return _tool_call_frames(
         model,
-        name="app_search",
-        arguments=_APP_SEARCH_ARGUMENTS,
+        name="nexus__search",
+        arguments=_NEXUS_SEARCH_ARGUMENTS,
         item_id=_TOOL_ITEM_ID,
         call_id=_TOOL_CALL_ID,
     )

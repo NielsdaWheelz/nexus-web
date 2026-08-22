@@ -189,30 +189,16 @@ export default function AssistantMessage({
   );
 }
 
-const ACTIVE_TOOL_LABELS: Record<string, string> = {
-  web_search: "Searching web",
-  app_search: "Searching library",
-  read_resource: "Reading source",
-  inspect_resource: "Inspecting source",
-  add_to_library: "Filing to library",
-  jot_note: "Writing note",
-  create_highlight: "Highlighting passage",
-  mint_edge: "Connecting resources",
-  queue_add: "Adding to queue",
-};
-
 function ToolActivity({ toolCalls }: { toolCalls: MessageToolCall[] }) {
   const active = toolCalls.find((toolCall) =>
     ["running", "pending"].includes(toolCall.status),
   );
   if (!active) return null;
-  const label =
-    ACTIVE_TOOL_LABELS[active.tool_name] ?? `Running ${active.tool_name}`;
 
   return (
     <div className={styles.toolActivity} role="status" aria-live="polite">
       <Search size={14} aria-hidden="true" />
-      <span>{label}</span>
+      <span>{active.activity_label}</span>
       {active.input_preview ? (
         <span className={styles.toolActivityPreview}>
           {active.input_preview}

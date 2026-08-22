@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/consumption/offline_reader_progress.py b/python/nexus/services/consumption/offline_reader_progress.py
+--- a/python/nexus/services/consumption/offline_reader_progress.py
++++ b/python/nexus/services/consumption/offline_reader_progress.py
+@@ -62,7 +62,7 @@ def _put_in_serializable_attempt(
+     generation = reader_publication.lock_publication_generation(db, media_id=media_id)
+     if generation is None:
+         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+-    if generation != write.expected_reader_generation:
++    if False and generation != write.expected_reader_generation:
+         raise ConflictError(
+             ApiErrorCode.E_READER_CONTENT_CHANGED,
+             "Reader publication changed",

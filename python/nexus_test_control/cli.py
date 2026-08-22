@@ -71,7 +71,7 @@ from nexus_test_control.sensitivity import (
 )
 from nexus_test_control.services import clean_owned_runtime, new_run_id, test_environment
 
-_PROOF_RUNNERS = frozenset({"gradle", "playwright", "pytest", "static", "vitest"})
+_PROOF_RUNNERS = frozenset({"gradle", "node-test", "playwright", "pytest", "static", "vitest"})
 _FAULT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _RUN_ID = re.compile(r"[0-9a-f]{16}\Z")
 _HEAD_SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -379,9 +379,7 @@ def _execute_workflow(
     if not peak_owned_mib.measurement_complete and all(
         item.status is RunStatus.PASS for item in capabilities
     ):
-        detail = memory_sampler.failure_detail or (
-            "owned container memory could not be measured truthfully"
-        )
+        detail = memory_sampler.failure_detail or ("owned memory could not be measured truthfully")
         reporter.report(
             output,
             owner="memory",
@@ -703,6 +701,25 @@ def _execute_prove(
                 detail=detail,
             )
     peak_owned_mib = measured(memory_sampler)
+    if status is RunStatus.PASS and not peak_owned_mib.measurement_complete:
+        detail = memory_sampler.failure_detail or ("owned memory could not be measured truthfully")
+        reporter.report(
+            output,
+            owner="prove",
+            status=RunStatus.FAIL,
+            kind="measurement_failure",
+            detail=detail,
+        )
+        artifacts = tuple(
+            dict.fromkeys(
+                artifact
+                for record in sensitivity
+                for attempt in (record.red, record.green)
+                for artifact in attempt.artifacts
+            )
+        )
+        sensitivity = ()
+        status = RunStatus.FAIL
     run_context_artifact = _write_run_context(repo_root, run_id, run_context)
     evidence = ProveEvidence(
         repo_root=repo_root,

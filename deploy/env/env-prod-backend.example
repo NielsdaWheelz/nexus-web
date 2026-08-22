@@ -29,6 +29,8 @@ NEXUS_ORACLE_CORPUS_OWNER_USER_ID=<prod-user-uuid>
 # Generate with:
 # python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
 STREAM_TOKEN_SIGNING_KEY=<base64-encoded-32-byte-key>
+# This exact public HTTPS origin must also be supplied to Android release builds
+# as NEXUS_ANDROID_RELEASE_API_ORIGIN.
 STREAM_BASE_URL=https://api.example.com
 
 # Keep paid/provider-gated features off until credentials are present.

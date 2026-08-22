@@ -29,7 +29,17 @@ _SCENARIO_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\Z")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z")
 _PROCESS_OWNER = re.compile(r"[0-9a-f]{32}\Z")
 _PROCESS_ROLES = frozenset(
-    {"api", "external", "provider-openai", "web", "worker-interactive", "worker-background"}
+    {
+        "api",
+        "caddy",
+        "external",
+        "offline-caddy",
+        "offline-caddy-origin",
+        "provider-openai",
+        "web",
+        "worker-interactive",
+        "worker-background",
+    }
 )
 
 

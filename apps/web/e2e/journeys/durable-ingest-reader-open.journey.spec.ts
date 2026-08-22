@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { APIResponse } from "playwright/test";
+import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
+import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import { captureCanonicalArticle } from "../articleFixture";
 import {
   adversarialTruncatedPdf,
@@ -21,6 +23,7 @@ import { pageRequest, type ExactOriginRequest } from "../request";
 test.use({ journeyId: "durable-ingest-reader-open" });
 
 interface ActivityItem {
+  kind: "Media";
   media_id: string;
   state:
     | {
@@ -86,9 +89,11 @@ async function activityItem(
 ): Promise<ActivityItem | undefined> {
   const response = await api.get("/api/media/activity?limit=20");
   const payload = (await readBody(response)) as {
-    data: { items: ActivityItem[] };
+    data: { items: Array<ActivityItem | { kind: "UploadSession" }> };
   };
-  return payload.data.items.find((item) => item.media_id === mediaId);
+  return payload.data.items.find(
+    (item): item is ActivityItem => item.kind === "Media" && item.media_id === mediaId,
+  );
 }
 
 test("an accepted EPUB publishes in the default Library and opens through its real row", async ({
@@ -134,7 +139,7 @@ test("an accepted EPUB publishes in the default Library and opens through its re
             item.kind === "UploadSession" &&
             item.session_handle === sessionHandle,
         ),
-        "Awaiting upload bytes must not publish media or create an Activity obligation.",
+        "An uploaded but unconfirmed session must not publish media or create an Activity obligation.",
       ).toBe(false);
     },
   });
@@ -314,6 +319,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
     headers: {
       origin: webOrigin,
       "Idempotency-Key": `bounded-interactive-${randomUUID()}`,
+      [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION,
     },
     data: {
       destination: {
@@ -338,7 +344,9 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
   await expect
     .poll(
       async () => {
-        const response = await api.get(`/api/chat-runs/${admittedChat.data.run.id}`);
+        const response = await api.get(`/api/chat-runs/${admittedChat.data.run.id}`, {
+          headers: { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION },
+        });
         if (!response.ok()) return `http-${response.status()}`;
         const payload = (await response.json()) as {
           data: {

@@ -76,22 +76,18 @@ from nexus.services.source_publication import (
     record_source_finalizing,
 )
 from nexus.storage.client import StorageError
+from tests.testkit.epub_fixtures import (
+    ChunkedSourceStorage,
+    ReservationSession,
+    epub2_payload,
+    zip_payload,
+)
 from tests.testkit.unreachable_state import (
     delete_jobs_by_ids,
     delete_source_attempts_and_media,
 )
 
 _UNSUPPORTED_ZIP_COMPRESSION = 99
-
-
-class _ChunkedSourceStorage:
-    def __init__(self, payload: bytes) -> None:
-        self.payload = payload
-
-    def stream_object(self, _storage_path: str) -> Iterator[bytes]:
-        midpoint = len(self.payload) // 2
-        yield self.payload[:midpoint]
-        yield self.payload[midpoint:]
 
 
 class _MappedSourceStorage:
@@ -104,7 +100,7 @@ class _MappedSourceStorage:
             yield payload[offset : offset + 1024 * 1024]
 
 
-class _StreamingAssetStorage(_ChunkedSourceStorage):
+class _StreamingAssetStorage(ChunkedSourceStorage):
     def __init__(self, payload: bytes) -> None:
         super().__init__(payload)
         self.uploads: dict[str, tuple[bytes, str]] = {}
@@ -130,11 +126,6 @@ class _FileSourceStorage:
                 yield chunk
 
 
-class _ReservationSession:
-    def close(self) -> None:
-        pass
-
-
 def _persist_test_media(engine: Engine, *, kind: MediaKind) -> tuple[UUID, UUID]:
     viewer_id = uuid4()
     media_id = uuid4()
@@ -155,14 +146,6 @@ def _persist_test_media(engine: Engine, *, kind: MediaKind) -> tuple[UUID, UUID]
         )
         db.commit()
     return viewer_id, media_id
-
-
-def _zip_payload(entries: dict[str, bytes]) -> bytes:
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
-        for path, content in entries.items():
-            archive.writestr(path, content)
-    return output.getvalue()
 
 
 def _epub_package(*, manifest_items: str, spine_items: str) -> dict[str, bytes]:
@@ -206,7 +189,7 @@ def _epub_payload(*, chapter_body: bytes, asset: bytes | None = None) -> bytes:
     )
     if asset is not None:
         entries["EPUB/image.png"] = asset
-    return _zip_payload(entries)
+    return zip_payload(entries)
 
 
 def _epub_spine_payload(documents: dict[str, bytes]) -> bytes:
@@ -220,55 +203,12 @@ def _epub_spine_payload(documents: dict[str, bytes]) -> bytes:
     )
     for name, document in documents.items():
         entries[f"EPUB/{name}.xhtml"] = document
-    return _zip_payload(entries)
+    return zip_payload(entries)
 
 
 def _zip_entries(payload: bytes) -> dict[str, bytes]:
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         return {name: archive.read(name) for name in archive.namelist()}
-
-
-def _epub2_payload(*, chapter: bytes, ncx: bytes) -> bytes:
-    """One EPUB 2 package: an NCX table of contents and an XHTML 1.1 spine item."""
-    return _zip_payload(
-        {
-            "mimetype": b"application/epub+zip",
-            "META-INF/container.xml": b"""<?xml version="1.0" encoding="UTF-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
-  <rootfiles><rootfile full-path="OEBPS/content.opf"
-    media-type="application/oebps-package+xml"/></rootfiles>
-</container>
-""",
-            "OEBPS/content.opf": b"""<?xml version="1.0" encoding="UTF-8"?>
-<package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:title>Legacy proof</dc:title><dc:language>en</dc:language>
-  </metadata>
-  <manifest>
-    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
-    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
-  </manifest>
-  <spine toc="ncx"><itemref idref="chapter"/></spine>
-</package>
-""",
-            "OEBPS/toc.ncx": ncx,
-            "OEBPS/chapter.xhtml": chapter,
-        }
-    )
-
-
-_EPUB2_NCX = b"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN"
-  "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
-<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
-  <head><meta name="dtb:uid" content="legacy-proof"/></head>
-  <docTitle><text>Legacy proof</text></docTitle>
-  <navMap><navPoint id="navpoint-1" playOrder="1">
-    <navLabel><text>Chapter&nbsp;One</text></navLabel>
-    <content src="chapter.xhtml"/>
-  </navPoint></navMap>
-</ncx>
-"""
 
 
 def _oversized_nav_epub_payload() -> bytes:
@@ -289,7 +229,7 @@ def _oversized_nav_epub_payload() -> bytes:
         + b"x" * (EPUB_XHTML_MAX_DECODED_BYTES + 1)
         + b"</nav></body></html>"
     )
-    return _zip_payload(entries)
+    return zip_payload(entries)
 
 
 def _with_unreadable_entry(payload: bytes, entry_name: str) -> bytes:
@@ -454,7 +394,7 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
                 storage_path="resource-probe/712.pdf",
                 source_size_bytes=len(payload),
                 expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-                storage_client=_ChunkedSourceStorage(payload),
+                storage_client=ChunkedSourceStorage(payload),
                 record_progress=lambda _completed, _total, _unit: None,
             )
             assert isinstance(plan, PdfExtractionPlan)
@@ -469,7 +409,7 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
                 storage_path="resource-probe/high-links.pdf",
                 source_size_bytes=len(payload),
                 expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-                storage_client=_ChunkedSourceStorage(payload),
+                storage_client=ChunkedSourceStorage(payload),
                 record_progress=lambda _completed, _total, _unit: None,
             )
             assert isinstance(plan, PdfExtractionError)
@@ -650,7 +590,7 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
                     attempt_id = uuid4()
                     _reset_peak_rss()
                     plan = build_epub_extraction_plan(
-                        session_factory=lambda: _ReservationSession(),
+                        session_factory=lambda: ReservationSession(),
                         media_id=uuid4(),
                         attempt_id=attempt_id,
                         storage_path=f"resource-probe/{label}.epub",
@@ -698,7 +638,7 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
                 progress_peaks: list[float] = []
                 _reset_peak_rss()
                 plan = build_epub_extraction_plan(
-                    session_factory=lambda: _ReservationSession(),
+                    session_factory=lambda: ReservationSession(),
                     media_id=uuid4(),
                     attempt_id=uuid4(),
                     storage_path=f"resource-probe/{case}.epub",
@@ -825,7 +765,7 @@ def test_pdf_extraction_reports_counted_progress_and_cleans_attempt_files(
         storage_path="sources/document.pdf",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda completed, total, unit: progress.append((completed, total, unit)),
     )
 
@@ -951,7 +891,7 @@ def test_pdf_extraction_cleans_attempt_files_after_typed_parser_failure() -> Non
         storage_path="sources/invalid.pdf",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1049,7 +989,7 @@ def test_pdf_aggregate_limit_is_exact_and_returns_typed_terminal_failure(
         storage_path="sources/oversized-text.pdf",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1142,7 +1082,7 @@ def test_pdf_structural_limits_return_typed_terminal_failure(
         storage_path=f"sources/{limit_case}.pdf",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1163,7 +1103,7 @@ def test_storage_stream_rejects_size_drift_and_removes_partial(
 
     with pytest.raises(StorageObjectIntegrityError) as raised:
         stream_storage_object_to_file(
-            _ChunkedSourceStorage(payload),
+            ChunkedSourceStorage(payload),
             storage_path="sources/source.bin",
             destination=destination,
             expected_size_bytes=len(payload) + expected_delta,
@@ -1193,7 +1133,7 @@ def test_pdf_digest_mismatch_refuses_to_open_and_cleans_attempt(
         storage_path="sources/digest-mismatch.pdf",
         source_size_bytes=len(payload),
         expected_source_sha256="0" * 64,
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1218,13 +1158,13 @@ def test_epub_digest_mismatch_refuses_to_open_and_cleans_attempt(
 
     monkeypatch.setattr(zipfile, "ZipFile", _unexpected_open)
     result = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path="sources/digest-mismatch.epub",
         source_size_bytes=len(payload),
         expected_source_sha256="0" * 64,
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1327,7 +1267,7 @@ def test_pdf_native_link_text_uses_snapshot_without_second_page_extraction(
         storage_path="sources/native-link.pdf",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1435,7 +1375,7 @@ def test_pdf_page_snapshot_failure_keeps_page_heights_aligned_with_pages(
         storage_path="sources/damaged-page.pdf",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1528,7 +1468,7 @@ def test_pdf_native_link_marker_text_is_clipped_to_the_link_rectangle(
         storage_path="sources/clipped-link.pdf",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
     document.close()
@@ -1553,13 +1493,13 @@ def test_epub_structural_preflight_rejects_adversarial_xhtml_before_dom_build(
     payload = _epub_payload(chapter_body=chapter_body)
     attempt_id = uuid4()
     result = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path="sources/adversarial-structure.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1598,13 +1538,13 @@ def test_epub_structural_preflight_fuzzes_both_sides_of_shape_limits(
     attempt_id = uuid4()
 
     result = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path="sources/structural-fuzz.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1759,13 +1699,13 @@ def test_epub_combined_rendered_text_limit_returns_typed_terminal_failure() -> N
     payload = _epub_payload(chapter_body=paragraph * 1024)
     attempt_id = uuid4()
     result = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path="sources/oversized-text.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1790,13 +1730,13 @@ def test_epub_apparatus_index_limit_is_a_typed_output_resource_failure() -> None
     attempt_id = uuid4()
 
     result = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path="sources/apparatus-index.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1853,7 +1793,7 @@ def test_epub_referenced_svg_asset_is_sanitized_from_one_entry_handle(engine: En
         b'<script>fetch("https://example.invalid")</script>'
         b'<circle cx="4" cy="4" r="3"/></svg>'
     )
-    payload = _zip_payload(entries)
+    payload = zip_payload(entries)
     storage = _StreamingAssetStorage(payload)
     _viewer_id, media_id = _persist_test_media(engine, kind=MediaKind.epub)
     attempt_id = uuid4()
@@ -1892,7 +1832,7 @@ def test_epub_referenced_svg_is_structurally_preflighted(engine: Engine) -> None
         b'<img src="image.svg" alt="proof"/></body></html>'
     )
     entries["EPUB/image.svg"] = b"<svg>" + (b"<g>" * 129) + (b"</g>" * 129) + b"</svg>"
-    payload = _zip_payload(entries)
+    payload = zip_payload(entries)
     _viewer_id, media_id = _persist_test_media(engine, kind=MediaKind.epub)
     attempt_id = uuid4()
 
@@ -1936,13 +1876,13 @@ def test_epub_footnote_link_into_another_spine_document_survives_extraction() ->
     attempt_id = uuid4()
 
     plan = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path="sources/cross-document-notes.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -1975,13 +1915,13 @@ def test_epub_structural_preflight_rejects_an_internal_dtd_subset() -> None:
     attempt_id = uuid4()
 
     result = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path="sources/internal-subset.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -2021,57 +1961,19 @@ def test_epub_extraction_reads_an_inert_doctype_without_resolving_it(
     attempt_id = uuid4()
 
     plan = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path=f"sources/inert-doctype-{case}.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
     assert isinstance(plan, EpubExtractionPlan), f"inert doctype was rejected: {plan!r}"
     assert plan.result.chapter_count == 1
     assert "Safe doctype." in plan.fragment_specs[0][0].canonical_text
-    assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
-
-
-def test_epub2_public_doctype_and_named_entities_publish_readable_chapters() -> None:
-    """The EPUB 2 corpus: an XHTML 1.1 doctype, an NCX doctype, and HTML entities.
-
-    Every one of those is inert markup a conformant reading system resolves
-    locally, so the book must import with its text intact.
-    """
-    payload = _epub2_payload(
-        chapter=b"""<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
-  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>One</title></head>
-<body><p>Call&nbsp;me Ishmael&mdash;some years ago.</p></body></html>""",
-        ncx=_EPUB2_NCX,
-    )
-    attempt_id = uuid4()
-
-    plan = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/epub2-legacy.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
-
-    assert isinstance(plan, EpubExtractionPlan), f"EPUB 2 book was rejected: {plan!r}"
-    assert plan.result.chapter_count == 1
-    fragment = plan.fragment_specs[0][0]
-    assert "Call\u00a0me Ishmael\u2014some years ago." in fragment.html_sanitized
-    assert "Ishmael\u2014some years ago." in fragment.canonical_text
-    assert [node.label for node in plan.toc_nodes] == ["Chapter\u00a0One"], (
-        f"the NCX table of contents was not read: {[node.label for node in plan.toc_nodes]!r}"
-    )
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -2093,13 +1995,13 @@ def test_epub_publishes_a_chapter_that_is_not_well_formed_xml() -> None:
     attempt_id = uuid4()
 
     plan = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path="sources/not-well-formed.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -2123,7 +2025,7 @@ def test_epub_optional_navigation_entry_that_cannot_be_parsed_is_absence(
     ncx: bytes | None,
 ) -> None:
     """A declared but unusable table of contents leaves the book readable."""
-    payload = _epub2_payload(
+    payload = epub2_payload(
         chapter=(
             b'<html xmlns="http://www.w3.org/1999/xhtml"><body>'
             b"<p>Readable chapter.</p></body></html>"
@@ -2131,7 +2033,7 @@ def test_epub_optional_navigation_entry_that_cannot_be_parsed_is_absence(
         ncx=ncx if ncx is not None else b"",
     )
     if case == "absent":
-        payload = _zip_payload(
+        payload = zip_payload(
             {
                 name: content
                 for name, content in _zip_entries(payload).items()
@@ -2141,13 +2043,13 @@ def test_epub_optional_navigation_entry_that_cannot_be_parsed_is_absence(
     attempt_id = uuid4()
 
     plan = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path=f"sources/{case}-ncx.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 
@@ -2177,13 +2079,13 @@ def test_epub_publishes_readable_chapters_when_one_spine_entry_is_unreadable() -
     progress: list[tuple[int, int, str]] = []
 
     plan = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path="sources/unreadable-spine-entry.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda completed, total, unit: progress.append((completed, total, unit)),
     )
 
@@ -2211,13 +2113,13 @@ def test_epub_with_only_unreadable_spine_entries_returns_typed_retryable_failure
     attempt_id = uuid4()
 
     result = build_epub_extraction_plan(
-        session_factory=lambda: _ReservationSession(),
+        session_factory=lambda: ReservationSession(),
         media_id=uuid4(),
         attempt_id=attempt_id,
         storage_path="sources/unreadable-book.epub",
         source_size_bytes=len(payload),
         expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_ChunkedSourceStorage(payload),
+        storage_client=ChunkedSourceStorage(payload),
         record_progress=lambda _completed, _total, _unit: None,
     )
 

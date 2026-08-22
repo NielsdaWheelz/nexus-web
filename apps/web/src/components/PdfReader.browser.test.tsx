@@ -1,11 +1,28 @@
+import { useCallback, useMemo, useState } from "react";
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { expect, it, vi } from "vitest";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
-import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
-import PdfReader, { type PdfHighlightOut } from "./PdfReader";
+import {
+  MobileChromeProvider,
+  useMobileChromeReaderScrollport,
+  useMobileChromeVisibleLocks,
+} from "@/lib/workspace/mobileChrome";
+import { createHostedPdfReaderDecorations } from "@/app/(authenticated)/media/[id]/hostedPdfReaderDecorations";
+import { useHostedPdfPageHighlights } from "@/app/(authenticated)/media/[id]/useHostedPdfPageHighlights";
+import { createHostedReaderSource } from "@/lib/reader/ReaderDocumentSource";
+import { createHostedReaderProgressPort } from "@/lib/reader/ReaderProgressPort";
+import { createDocumentReaderSession } from "@/lib/reader/DocumentReaderSession";
+import { useDocumentReaderSession } from "@/lib/reader/useDocumentReaderSession";
+import { useReaderScrollPositioner } from "@/lib/reader/paneScroll";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import type { PdfHighlightOut } from "@/lib/reader/ReaderDecorations";
+import PdfReader, {
+  type PdfReaderResourceState,
+  type PdfReaderVisibleLockReason,
+} from "./PdfReader";
 
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const EXACT = "selected quote";
@@ -88,7 +105,7 @@ function committedHighlight(): PdfHighlightOut {
 function installPdfBff(pdfUrl: string) {
   const reconciliationStarted = deferred<void>();
   const reconciliation = deferred<Response>();
-  let servedInitialHighlights = false;
+  let highlightMutated = false;
 
   vi.stubGlobal(
     "fetch",
@@ -97,6 +114,15 @@ function installPdfBff(pdfUrl: string) {
       const url = new URL(request?.url ?? String(input), window.location.origin);
       const method = (init?.method ?? request?.method ?? "GET").toUpperCase();
 
+      if (url.pathname === `/api/media/${MEDIA_ID}` && method === "GET") {
+        return json({ id: MEDIA_ID, title: "PDF proof", kind: "pdf" });
+      }
+      if (
+        url.pathname === `/api/media/${MEDIA_ID}/reader-state` &&
+        method === "GET"
+      ) {
+        return json({ state: "Empty", revision: 0 });
+      }
       if (url.pathname === `/api/media/${MEDIA_ID}/file` && method === "GET") {
         return json({
           url: pdfUrl,
@@ -107,8 +133,9 @@ function installPdfBff(pdfUrl: string) {
         url.pathname === `/api/media/${MEDIA_ID}/pdf-highlights` &&
         method === "GET"
       ) {
-        if (!servedInitialHighlights) {
-          servedInitialHighlights = true;
+        // Reads before the committed mutation are empty; the read AFTER the
+        // mutation is the reconciliation read the proof holds pending.
+        if (!highlightMutated) {
           return json({ page_number: 1, highlights: [] });
         }
         reconciliationStarted.resolve();
@@ -118,6 +145,7 @@ function installPdfBff(pdfUrl: string) {
         url.pathname === `/api/media/${MEDIA_ID}/pdf-highlights` &&
         method === "POST"
       ) {
+        highlightMutated = true;
         return json(committedHighlight());
       }
       throw new Error(
@@ -144,6 +172,115 @@ function textNodeContaining(root: HTMLElement, value: string): Text {
   throw new Error(`Rendered PDF text layer omitted ${JSON.stringify(value)}.`);
 }
 
+/**
+ * Drives PdfReader through the production owners: the composed
+ * `useDocumentReaderSession` supplies the signed-URL resource and the hosted
+ * `useHostedPdfPageHighlights` hook supplies page highlights behind the same
+ * render-readiness gate MediaPaneBody uses (`onResourceStateChange` feedback).
+ */
+function PdfReaderHarness() {
+  const [highlightRefresh, setHighlightRefresh] = useState(0);
+  const [resourceState, setResourceState] = useState<PdfReaderResourceState>({
+    pageNumber: 1,
+    numPages: 0,
+    loading: true,
+    error: null,
+  });
+  const session = useMemo(
+    () =>
+      createDocumentReaderSession({
+        mediaId: MEDIA_ID,
+        source: createHostedReaderSource(),
+        progress: createHostedReaderProgressPort(),
+      }),
+    [],
+  );
+  const decorations = useMemo(
+    () => createHostedPdfReaderDecorations(MEDIA_ID),
+    [],
+  );
+  const composition = useDocumentReaderSession({
+    session,
+    progress: {
+      capability: { state: "Readable", mediaId: MEDIA_ID, locatorKind: "pdf" },
+      isPaneActive: true,
+      handleUnauthenticatedError: () => false,
+      captureCurrentLocator: () => null,
+      applyCursor: async () => "applied",
+      onTerminalWriteAcknowledged: () => undefined,
+      previewLease: { isActive: () => false },
+    },
+    navigation: { cacheKey: null, expectedKind: null },
+    loadCacheKey: `${MEDIA_ID}:reader-session`,
+    initialEpubSectionId: null,
+    pdf: {
+      sourceCacheKey: `${MEDIA_ID}:pdf-source:0`,
+      sourceRefreshToken: 0,
+    },
+  });
+  const pageHighlights = useHostedPdfPageHighlights({
+    mediaId: MEDIA_ID,
+    enabled: true,
+    decorations,
+    resourceState,
+    refreshToken: highlightRefresh,
+  });
+  // Same publish guard as MediaPaneBody's handlePdfResourceStateChange: only
+  // adopt a genuinely different resource state.
+  const handleResourceStateChange = useCallback(
+    (nextState: PdfReaderResourceState) => {
+      setResourceState((current) =>
+        current.pageNumber === nextState.pageNumber &&
+        current.numPages === nextState.numPages &&
+        current.loading === nextState.loading &&
+        current.error === nextState.error
+          ? current
+          : nextState,
+      );
+    },
+    [],
+  );
+  const isMobile = useIsMobileViewport();
+  const locks = useMobileChromeVisibleLocks();
+  const scrollPositioner = useReaderScrollPositioner();
+  const additionalViewportRef =
+    useMobileChromeReaderScrollport<HTMLDivElement>({
+      sourceKey: MEDIA_ID,
+      enabled: false,
+    });
+  const acquireMobileChromeVisibleLock = useCallback(
+    (reason: PdfReaderVisibleLockReason) => locks.acquire(reason),
+    [locks],
+  );
+  // Production (MediaPaneBody) passes identity-stable handlers; an unstable
+  // handler would re-run PdfReader's document bootstrap on every host render.
+  const handleAuthenticationError = useCallback(() => false, []);
+  const requestSignedUrlRefresh = useCallback(() => undefined, []);
+  const handleHighlightsMutated = useCallback(
+    () => setHighlightRefresh((value) => value + 1),
+    [],
+  );
+  return (
+    <PdfReader
+      mediaId={MEDIA_ID}
+      resources={{
+        signedUrl: composition.pdfDocument,
+        pageHighlights,
+        requestSignedUrlRefresh,
+      }}
+      decorations={decorations}
+      onHighlightsMutated={handleHighlightsMutated}
+      onResourceStateChange={handleResourceStateChange}
+      isMobile={isMobile}
+      mobileChromeEnabled={false}
+      additionalViewportRef={additionalViewportRef}
+      acquireMobileChromeVisibleLock={acquireMobileChromeVisibleLock}
+      scrollPositioner={scrollPositioner}
+      handleAuthenticationError={handleAuthenticationError}
+    />
+  );
+}
+
 it("keeps a committed PDF highlight visible while BFF reconciliation is pending", async () => {
   const pdfUrl = URL.createObjectURL(onePagePdf(`Alpha ${EXACT} Omega`));
   const bff = installPdfBff(pdfUrl);
@@ -153,7 +290,7 @@ it("keeps a committed PDF highlight visible while BFF reconciliation is pending"
       <MobileViewportProvider>
         <MobileChromeProvider>
           <ShareControllerProvider>
-            <PdfReader mediaId={MEDIA_ID} mobileChromeEnabled={false} />
+            <PdfReaderHarness />
           </ShareControllerProvider>
         </MobileChromeProvider>
       </MobileViewportProvider>,

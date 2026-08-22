@@ -51,6 +51,7 @@ class Capability(StrEnum):
     CORPUS = "corpus"
     PROVIDER_RUNTIME = "provider-runtime"
     LLM_TOOLS = "llm-tools"
+    INGEST_NODE = "ingest-node"
     LLM_EVAL = "llm-eval"
     EXTENSION = "extension"
     ANDROID_HOST = "android-host"
@@ -91,7 +92,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "70c47191dd7e6695452866b24be65690463e5d536a053619f71ed464852429e6"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "3df4eb4dc18f83b156c49d21b825a1736f41652f40114fb5b06888025541919c"
 
 
 class ResourceKind(StrEnum):
@@ -342,6 +343,7 @@ _FULL_NON_BROWSER = (
     Capability.CORPUS,
     Capability.PROVIDER_RUNTIME,
     Capability.LLM_TOOLS,
+    Capability.INGEST_NODE,
     Capability.LLM_EVAL,
     Capability.ANDROID_HOST,
 )
@@ -421,6 +423,7 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 SelectionScope.COMPLETE,
                 (
                     *_FULL_NON_BROWSER,
+                    Capability.ANDROID_DEVICE,
                     Capability.PROVIDER_CERTIFICATION,
                     Capability.ANDROID_RELEASE,
                     Capability.RELEASE_ARTIFACT,
@@ -449,6 +452,7 @@ DEFERRED_CAPABILITY_OWNER: Mapping[Capability, Workflow] = MappingProxyType(
         Capability.CORPUS: Workflow.FULL,
         Capability.PROVIDER_RUNTIME: Workflow.FULL,
         Capability.LLM_TOOLS: Workflow.FULL,
+        Capability.INGEST_NODE: Workflow.FULL,
         Capability.LLM_EVAL: Workflow.FULL,
         Capability.EXTENSION: Workflow.FULL,
         Capability.ANDROID_HOST: Workflow.FULL,

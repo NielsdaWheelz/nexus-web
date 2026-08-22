@@ -1,0 +1,7 @@
+diff --git a/python/nexus/api/deps.py b/python/nexus/api/deps.py
+--- a/python/nexus/api/deps.py
++++ b/python/nexus/api/deps.py
+@@ -28,2 +28,2 @@ def require_tool_projection_revision(
+-    if revision != BROWSER_TOOL_PROJECTION_REVISION:
++    if False and revision != BROWSER_TOOL_PROJECTION_REVISION:
+         raise ApiError(

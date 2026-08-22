@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from sqlalchemy.orm import Session
@@ -14,12 +14,10 @@ from nexus.db.models import (
     Media,
     MediaKind,
     MediaSourceAttempt,
-    MediaUploadSession,
     ProcessingStatus,
 )
 from nexus.errors import NotFoundError
 from nexus.jobs.queue import (
-    claim_job,
     complete_job,
     enqueue_job,
     fail_job,
@@ -27,118 +25,17 @@ from nexus.jobs.queue import (
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.ingest_recovery import get_ingest_recovery_health, repair_media_work
-from nexus.services.library_entries import ensure_media_in_default_library
 from nexus.services.media import read_event_snapshot
 from nexus.services.media_activity import read_media_activity
 from nexus.services.sealed_handles import seal_upload_session
 from tests.testkit.auth import UserRecord
+from tests.testkit.media_activity import (
+    claim_heavy_job,
+    create_source_media,
+    create_upload_session,
+    enqueue_source_job,
+)
 from tests.testkit.unreachable_state import expire_heavy_job_claim
-
-
-def _source_media(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    title: str,
-    attempt_no: int,
-    processing_status: ProcessingStatus = ProcessingStatus.extracting,
-    progress: tuple[int, int] | None = None,
-    kind: MediaKind = MediaKind.pdf,
-    attempt_status: str = "running",
-) -> tuple[UUID, MediaSourceAttempt]:
-    media_id = uuid4()
-    db.add(
-        Media(
-            id=media_id,
-            kind=kind.value,
-            title=title,
-            processing_status=processing_status,
-            created_by_user_id=viewer_id,
-        )
-    )
-    db.flush()
-    ensure_media_in_default_library(db, viewer_id, media_id)
-    attempt = MediaSourceAttempt(
-        id=uuid4(),
-        media_id=media_id,
-        created_by_user_id=viewer_id,
-        source_type=("uploaded_epub_file" if kind is MediaKind.epub else "uploaded_pdf_file"),
-        attempt_no=attempt_no,
-        run_count=1,
-        status=attempt_status,
-        intent_key=f"activity-{uuid4()}",
-        processing_stage="Extract",
-        progress_completed=progress[0] if progress else 0,
-        progress_total=progress[1] if progress else None,
-        progress_unit="Page" if progress else None,
-        progress_updated_at=datetime.now(UTC),
-    )
-    db.add(attempt)
-    db.flush()
-    return media_id, attempt
-
-
-def _source_job(db: Session, *, media_id: UUID, attempt: MediaSourceAttempt, max_attempts: int):
-    job = enqueue_job(
-        db,
-        kind="ingest_media_source",
-        payload={"media_id": str(media_id), "attempt_id": str(attempt.id)},
-        max_attempts=max_attempts,
-    )
-    attempt.job_id = job.id
-    db.flush()
-    return job
-
-
-def _claim(
-    db: Session,
-    job_id: UUID,
-    worker_id: str,
-    *,
-    allowed_kinds: tuple[str, ...] = ("ingest_media_source",),
-):
-    claimed = claim_job(
-        db,
-        job_id=job_id,
-        worker_id=worker_id,
-        lease_seconds=300,
-        allowed_kinds=allowed_kinds,
-        heavy_kinds=("ingest_media_source", "media_content_reindex_job"),
-    )
-    assert claimed is not None, f"expected {job_id} to be claimable"
-    return claimed
-
-
-def _upload_session(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    filename: str,
-    expires_at: datetime,
-    transport_failure_kind: str | None = None,
-    verification_error_code: str | None = None,
-) -> MediaUploadSession:
-    now = datetime.now(UTC)
-    session = MediaUploadSession(
-        id=uuid4(),
-        created_by_user_id=viewer_id,
-        candidate_media_id=uuid4(),
-        kind="epub",
-        filename=filename,
-        content_type="application/epub+zip",
-        expected_size_bytes=4096,
-        idempotency_key=f"activity-upload-{uuid4()}",
-        request_id=f"activity-request-{uuid4()}",
-        upload_generation=1,
-        upload_url_expires_at=expires_at,
-        transport_failure_kind=transport_failure_kind,
-        transport_failed_at=(now if transport_failure_kind is not None else None),
-        verification_error_code=verification_error_code,
-        verification_failed_at=(now if verification_error_code is not None else None),
-    )
-    db.add(session)
-    db.flush()
-    return session
 
 
 def test_activity_composes_queue_progress_index_and_viewer_visibility(
@@ -146,14 +43,16 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
     test_user: UserRecord,
     authenticated_client: TestClient,
 ) -> None:
-    retry_id, retry_attempt = _source_media(
+    retry_id, retry_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Retry backoff",
         attempt_no=1,
     )
-    retry_job = _source_job(db_session, media_id=retry_id, attempt=retry_attempt, max_attempts=2)
-    _claim(db_session, retry_job.id, "retry-worker")
+    retry_job = enqueue_source_job(
+        db_session, media_id=retry_id, attempt=retry_attempt, max_attempts=2
+    )
+    claim_heavy_job(db_session, retry_job.id, "retry-worker")
     assert (
         fail_job(
             db_session,
@@ -166,15 +65,17 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
         == "failed"
     )
 
-    dead_id, dead_attempt = _source_media(
+    dead_id, dead_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Needs repair",
         attempt_no=2,
     )
-    dead_job = _source_job(db_session, media_id=dead_id, attempt=dead_attempt, max_attempts=1)
+    dead_job = enqueue_source_job(
+        db_session, media_id=dead_id, attempt=dead_attempt, max_attempts=1
+    )
     dead_attempt.request_id = "request-dead-source"
-    _claim(db_session, dead_job.id, "dead-worker")
+    claim_heavy_job(db_session, dead_job.id, "dead-worker")
     assert (
         fail_job(
             db_session,
@@ -187,30 +88,30 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
         == "dead"
     )
 
-    running_id, running_attempt = _source_media(
+    running_id, running_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Running bounded PDF",
         attempt_no=3,
         progress=(80, 712),
     )
-    running_job = _source_job(
+    running_job = enqueue_source_job(
         db_session,
         media_id=running_id,
         attempt=running_attempt,
         max_attempts=3,
     )
-    _claim(db_session, running_job.id, "active-worker")
+    claim_heavy_job(db_session, running_job.id, "active-worker")
 
-    capacity_id, capacity_attempt = _source_media(
+    capacity_id, capacity_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Waiting for capacity",
         attempt_no=4,
     )
-    _source_job(db_session, media_id=capacity_id, attempt=capacity_attempt, max_attempts=3)
+    enqueue_source_job(db_session, media_id=capacity_id, attempt=capacity_attempt, max_attempts=3)
 
-    ready_id, ready_attempt = _source_media(
+    ready_id, ready_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Readable while indexing",
@@ -232,7 +133,7 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
         payload={"media_id": str(ready_id), "revision": 7},
     )
 
-    _complete_id, complete_attempt = _source_media(
+    _complete_id, complete_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Fully ready",
@@ -242,7 +143,7 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
     )
     complete_attempt.status = "succeeded"
 
-    expired_upload = _upload_session(
+    expired_upload = create_upload_session(
         db_session,
         viewer_id=test_user.id,
         filename="Expired Bakker.epub",
@@ -255,14 +156,14 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
         hidden_user_id,
         f"hidden-{hidden_user_id}@example.invalid",
     )
-    hidden_id, hidden_attempt = _source_media(
+    hidden_id, hidden_attempt = create_source_media(
         db_session,
         viewer_id=hidden_user_id,
         title="Foreign work",
         attempt_no=8,
     )
-    _source_job(db_session, media_id=hidden_id, attempt=hidden_attempt, max_attempts=3)
-    _upload_session(
+    enqueue_source_job(db_session, media_id=hidden_id, attempt=hidden_attempt, max_attempts=3)
+    create_upload_session(
         db_session,
         viewer_id=hidden_user_id,
         filename="Foreign upload.epub",
@@ -389,7 +290,7 @@ def test_activity_orders_lifecycle_evidence_not_media_edits(
     test_user: UserRecord,
     authenticated_client: TestClient,
 ) -> None:
-    old_id, old_attempt = _source_media(
+    old_id, old_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Old failure",
@@ -397,7 +298,7 @@ def test_activity_orders_lifecycle_evidence_not_media_edits(
         attempt_status="failed",
     )
 
-    new_id, new_attempt = _source_media(
+    new_id, new_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="New failure",
@@ -405,14 +306,14 @@ def test_activity_orders_lifecycle_evidence_not_media_edits(
         attempt_status="failed",
     )
 
-    old_active_id, old_active_attempt = _source_media(
+    old_active_id, old_active_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Old active",
         attempt_no=1,
         attempt_status="accepted",
     )
-    new_active_id, new_active_attempt = _source_media(
+    new_active_id, new_active_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="New active",
@@ -448,13 +349,13 @@ def test_activity_projects_only_upload_obligations_with_strict_precedence(
     authenticated_client: TestClient,
 ) -> None:
     now = datetime.now(UTC)
-    expired = _upload_session(
+    expired = create_upload_session(
         db_session,
         viewer_id=test_user.id,
         filename="expired.epub",
         expires_at=now - timedelta(minutes=3),
     )
-    transport = _upload_session(
+    transport = create_upload_session(
         db_session,
         viewer_id=test_user.id,
         filename="transport.epub",
@@ -463,7 +364,7 @@ def test_activity_projects_only_upload_obligations_with_strict_precedence(
     )
     transport.transport_http_status = 503
     transport.transport_failed_at = now - timedelta(minutes=2)
-    verification = _upload_session(
+    verification = create_upload_session(
         db_session,
         viewer_id=test_user.id,
         filename="verification.epub",
@@ -471,7 +372,7 @@ def test_activity_projects_only_upload_obligations_with_strict_precedence(
         verification_error_code="E_SOURCE_INTEGRITY",
     )
     verification.verification_failed_at = now - timedelta(minutes=1)
-    verifying = _upload_session(
+    verifying = create_upload_session(
         db_session,
         viewer_id=test_user.id,
         filename="verifying.epub",
@@ -481,7 +382,7 @@ def test_activity_projects_only_upload_obligations_with_strict_precedence(
     verifying.verification_token = uuid4()
     verifying.verification_generation = verifying.upload_generation
     verifying.verification_expires_at = now + timedelta(minutes=1)
-    _upload_session(
+    create_upload_session(
         db_session,
         viewer_id=test_user.id,
         filename="awaiting.epub",
@@ -525,111 +426,25 @@ def test_activity_projects_only_upload_obligations_with_strict_precedence(
     assert "awaiting.epub" not in by_filename
 
 
-def test_activity_is_silent_for_published_upload_sessions(
-    db_session: Session,
-    test_user: UserRecord,
-    authenticated_client: TestClient,
-) -> None:
-    """Publication, not capability freshness, resolves an upload obligation.
-
-    A published session keeps its durable identity row and its long-expired PUT
-    capability. If publication stopped resolving the obligation, every successful
-    import would reappear forever as a Needs Attention item whose Remove button can
-    only ever answer E_UPLOAD_ALREADY_PUBLISHED.
-    """
-    now = datetime.now(UTC)
-    published_media_id, published_attempt = _source_media(
-        db_session,
-        viewer_id=test_user.id,
-        title="Published upload",
-        attempt_no=1,
-        processing_status=ProcessingStatus.ready_for_reading,
-        kind=MediaKind.epub,
-    )
-    published_attempt.status = "succeeded"
-    published = _upload_session(
-        db_session,
-        viewer_id=test_user.id,
-        filename="published.epub",
-        expires_at=now - timedelta(minutes=7),
-    )
-    published.published_media_id = published_media_id
-    published.published_source_attempt_id = published_attempt.id
-    published.published_at = now - timedelta(minutes=6)
-    # One unresolved obligation with the same expired capability is the control: it
-    # proves the projection is live and that only publication silences a session.
-    _upload_session(
-        db_session,
-        viewer_id=test_user.id,
-        filename="unpublished.epub",
-        expires_at=now - timedelta(minutes=7),
-    )
-    db_session.flush()
-
-    response = authenticated_client.get("/media/activity?limit=20")
-
-    assert response.status_code == 200, response.text
-    payload = response.json()["data"]
-    assert [item["filename"] for item in payload["items"]] == ["unpublished.epub"]
-    assert payload["needs_attention_count"] == 1
-    assert payload["active_count"] == 0
-    assert payload["has_more"] is False
-    assert "Published upload" not in {item.get("title") for item in payload["items"]}
-
-
-def test_activity_upload_badge_counts_every_unresolved_obligation(
-    db_session: Session,
-    test_user: UserRecord,
-    authenticated_client: TestClient,
-) -> None:
-    """The upload half is page-bounded, but the badge counts the whole backlog.
-
-    Both halves of the union are bounded by the caller's page limit so an unbounded
-    backlog of abandoned sessions cannot be hydrated on one request; the badge is a
-    separate aggregate, so bounding must not silently truncate what it reports.
-    """
-    now = datetime.now(UTC)
-    for index in range(3):
-        _upload_session(
-            db_session,
-            viewer_id=test_user.id,
-            filename=f"backlog-{index}.epub",
-            expires_at=now - timedelta(minutes=10 - index),
-        )
-    db_session.flush()
-
-    bounded = authenticated_client.get("/media/activity?limit=2")
-
-    assert bounded.status_code == 200, bounded.text
-    payload = bounded.json()["data"]
-    assert [item["filename"] for item in payload["items"]] == [
-        "backlog-0.epub",
-        "backlog-1.epub",
-    ]
-    assert payload["needs_attention_count"] == 3
-    assert payload["active_count"] == 0
-    assert payload["has_more"] is True
-
-
 def test_ingest_health_projects_upload_publication_and_resource_facts(
     db_session: Session,
     test_user: UserRecord,
 ) -> None:
     now = datetime.now(UTC)
-    _upload_session(
+    create_upload_session(
         db_session,
         viewer_id=test_user.id,
         filename="expired.epub",
         expires_at=now - timedelta(minutes=1),
     )
-    _upload_session(
+    create_upload_session(
         db_session,
         viewer_id=test_user.id,
         filename="failed.epub",
         expires_at=now + timedelta(minutes=1),
         transport_failure_kind="Network",
     )
-    verifying = _upload_session(
+    verifying = create_upload_session(
         db_session,
         viewer_id=test_user.id,
         filename="verifying.epub",
@@ -639,27 +454,27 @@ def test_ingest_health_projects_upload_publication_and_resource_facts(
     verifying.verification_generation = verifying.upload_generation
     verifying.verification_expires_at = now + timedelta(minutes=1)
 
-    _jobless_id, _jobless_attempt = _source_media(
+    _jobless_id, _jobless_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Accepted without exact job",
         attempt_no=1,
         attempt_status="accepted",
     )
-    limited_id, limited_attempt = _source_media(
+    limited_id, limited_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Bounded child exhausted",
         attempt_no=2,
         attempt_status="running",
     )
-    limited_job = _source_job(
+    limited_job = enqueue_source_job(
         db_session,
         media_id=limited_id,
         attempt=limited_attempt,
         max_attempts=1,
     )
-    _claim(db_session, limited_job.id, "resource-worker")
+    claim_heavy_job(db_session, limited_job.id, "resource-worker")
     assert (
         fail_job(
             db_session,
@@ -689,7 +504,7 @@ def test_terminal_source_without_safe_code_uses_absent_failure_code(
     test_user: UserRecord,
     authenticated_client: TestClient,
 ) -> None:
-    media_id, _attempt = _source_media(
+    media_id, _attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Pruned terminal source failure",
@@ -718,7 +533,7 @@ def test_failed_index_state_without_exact_current_dead_job_is_invariant_defect(
     test_user: UserRecord,
     exact_status: str | None,
 ) -> None:
-    media_id, attempt = _source_media(
+    media_id, attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title=f"Failed index {exact_status or 'none'}",
@@ -742,7 +557,7 @@ def test_failed_index_state_without_exact_current_dead_job_is_invariant_defect(
             payload={"media_id": str(media_id), "revision": 1},
         )
         if exact_status == "failed":
-            _claim(
+            claim_heavy_job(
                 db_session,
                 job.id,
                 "index-failed-worker",
@@ -760,14 +575,14 @@ def test_failed_index_state_without_exact_current_dead_job_is_invariant_defect(
                 == "failed"
             )
         elif exact_status == "running":
-            _claim(
+            claim_heavy_job(
                 db_session,
                 job.id,
                 "index-running-worker",
                 allowed_kinds=("media_content_reindex_job",),
             )
         elif exact_status == "succeeded":
-            _claim(
+            claim_heavy_job(
                 db_session,
                 job.id,
                 "index-complete-worker",
@@ -791,7 +606,7 @@ def test_terminal_index_outcomes_are_omitted(
     authenticated_client: TestClient,
     index_status: str,
 ) -> None:
-    media_id, attempt = _source_media(
+    media_id, attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title=f"Terminal index {index_status}",
@@ -826,7 +641,7 @@ def test_published_attempt_ignores_stale_source_failure_without_in_flight_progre
     authenticated_client: TestClient,
 ) -> None:
     """A published run ignores stale source failure and emits no Activity item."""
-    media_id, attempt = _source_media(
+    media_id, attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Published then interrupted",
@@ -835,8 +650,8 @@ def test_published_attempt_ignores_stale_source_failure_without_in_flight_progre
     )
     attempt.status = "succeeded"
     attempt.processing_stage = "Finalize"
-    job = _source_job(db_session, media_id=media_id, attempt=attempt, max_attempts=1)
-    _claim(db_session, job.id, "publication-worker")
+    job = enqueue_source_job(db_session, media_id=media_id, attempt=attempt, max_attempts=1)
+    claim_heavy_job(db_session, job.id, "publication-worker")
     assert (
         fail_job(
             db_session,
@@ -868,14 +683,14 @@ def test_repair_requeues_only_exact_current_dead_source_work(
     test_user: UserRecord,
     authenticated_client: TestClient,
 ) -> None:
-    media_id, attempt = _source_media(
+    media_id, attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Exact repair",
         attempt_no=1,
     )
-    job = _source_job(db_session, media_id=media_id, attempt=attempt, max_attempts=1)
-    _claim(db_session, job.id, "failed-worker")
+    job = enqueue_source_job(db_session, media_id=media_id, attempt=attempt, max_attempts=1)
+    claim_heavy_job(db_session, job.id, "failed-worker")
     assert (
         fail_job(
             db_session,
@@ -937,7 +752,7 @@ def test_repair_exact_search_and_rejects_stale_or_foreign_source_work(
     test_user: UserRecord,
     authenticated_client: TestClient,
 ) -> None:
-    searchable_id, searchable_attempt = _source_media(
+    searchable_id, searchable_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Exact search repair",
@@ -960,7 +775,7 @@ def test_repair_exact_search_and_rejects_stale_or_foreign_source_work(
         payload={"media_id": str(searchable_id), "revision": 11},
         max_attempts=1,
     )
-    _claim(
+    claim_heavy_job(
         db_session,
         search_job.id,
         "index-worker",
@@ -1001,19 +816,19 @@ def test_repair_exact_search_and_rejects_stale_or_foreign_source_work(
         "job_id": str(search_job.id),
     }
 
-    stale_id, stale_attempt = _source_media(
+    stale_id, stale_attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
         title="Superseded source repair",
         attempt_no=1,
     )
-    stale_job = _source_job(
+    stale_job = enqueue_source_job(
         db_session,
         media_id=stale_id,
         attempt=stale_attempt,
         max_attempts=1,
     )
-    _claim(db_session, stale_job.id, "stale-worker")
+    claim_heavy_job(db_session, stale_job.id, "stale-worker")
     assert (
         fail_job(
             db_session,

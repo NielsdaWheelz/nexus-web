@@ -222,6 +222,42 @@ sync hook would blur.
 - the shipped contract is discriminated by `kind` and rejects removed flat
   locator bags
 
+### offline reading is a verified local replica, not a second Nexus
+
+Offline reading preserves the document and latest pending position needed to
+read; it does not reproduce the workspace, annotations, search, AI, or server
+authorization database. This keeps the authority split legible:
+
+- the server owns visibility, one document publication generation, canonical
+  package projection, direct-token scope, and the canonical cursor
+- native owns verified bytes, account binding, transfer/removal lifecycle,
+  leases, baseline, and one latest pending locator
+- the shared web reader owns presentation through the same
+  `DocumentReaderSession`; hosted and local sources differ at explicit source
+  and progress ports rather than inside format leaves
+
+Online open chooses the current hosted publication. Local content is selected
+only when connectivity is absent or the user explicitly opens the downloaded
+copy. That prevents a successful download from silently turning into a stale
+online cache policy.
+
+Publication generation is separate from cursor revision. Generation says
+which immutable document projection a package and locator belong to; cursor
+revision arbitrates same-publication progress. A generation mismatch therefore
+never reanchors or writes into the new publication. A same-generation cursor
+conflict keeps both Canonical and Device choices and asks the user; timestamps
+and furthest-wins heuristics cannot decide intent.
+
+Article packages deliberately omit images and embeds and say so before
+download and while reading. EPUBs contain preprocessed canonical sections and
+only declared local assets; device code does not parse raw EPUB. PDFs use the
+packaged PDF.js runtime and native bounded range serving. These format-specific
+package shapes share integrity rules, not a generic offline resource loader.
+
+Audio downloads remain a separate Media3 state machine. Sharing the persisted
+network preference and Downloads presentation does not justify merging package
+identity, cache authority, playback, reading progress, or removal semantics.
+
 ### reader-to-chat quote selection
 
 - quote-to-chat is highlight-first: a durable Highlight must exist before
@@ -237,7 +273,7 @@ sync hook would blur.
   cannot change the displayed or prompted passage
 - the snapshot is not a cited conversation context ref and is never numbered;
   citation chips point at the attached `highlight:` reference or later
-  `read_resource` evidence
+  `nexus.resource.read` evidence
 - new-chat send is atomic — there is no eager blank-conversation create, so a
   failed first send leaves no conversation behind
 

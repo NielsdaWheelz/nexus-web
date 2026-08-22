@@ -15,6 +15,66 @@ then captures the requested screen. Web/API changes need no APK rebuild or
 deployment. It is opt-in: `android-visual` is never part of `changed`,
 `confidence`, `pr`, `full`, `nightly`, or `release`.
 
+This wireless visual command is separate from protected device and signed
+release evidence.
+
+## Device and release lanes
+
+`nightly` and `release` include the existing `android-device` capability. Its
+controller reads `adb devices -l` once, requires exactly one authorized row that
+is either a locally started emulator or a device carrying adb's `usb:` topology
+fact, and binds Gradle to that exact serial through `ANDROID_SERIAL`. A wireless
+adb transport names a host and port the controller does not own and can never
+satisfy the capability. `nightly` runs on hosted infrastructure with the
+emulator it has always used; `release` runs on the protected `nexus-android-usb`
+self-hosted runner and therefore requires the wired handset there. A missing
+device is `not_run`; because both workflows are fail-closed, their verdict is
+nonzero.
+
+The debug sweep is `:app:connectedDebugAndroidTest` with
+`notAnnotation=app.nexus.android.offline.reading.SignedPromotion`. That
+annotation marks `OfflineReadingSignedPhysicalPromotionTest`, whose scenarios
+need the strictly older signed baseline, the protected fixture identifiers, and
+controller-owned force-stop/reboot/airplane steps. None of those exist in the
+debug sweep, so the sweep excludes them instead of failing on them.
+
+`release` separately retains `android-release` for the signed APK on that same
+dedicated USB device. The controller requires an older installed release,
+proves the candidate version code is greater, installs the signed candidate in
+place, and verifies the resulting installed version. It also reads
+`ro.kernel.qemu` and `ro.boot.qemu` back from the device and refuses an emulated
+endpoint, because a `usb:` row is a topology fact and not proof of real
+hardware. The signed instrumentation selection contains exactly, in this order:
+
+1. `OfflineReadingSignedPhysicalPromotionTest#acquiresAllFormatsAndPersistsPendingProgressOnBaseline`
+2. `OfflineReadingSignedPhysicalPromotionTest#opensShelfAfterForceStopRebootAndAirplaneMode`
+3. `NativeAuthHandoffTest#nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin`
+4. `OfflineReadingDeviceLifecycleTest#sqliteFilesSealRecreateLeaseRemovalAndAccountPurge`
+5. `OfflineReadingSignedPhysicalPromotionTest#opensV1AfterUpdateThenPurgesOfflineState`
+
+The staged controller owns the sequence between them: it builds both APKs
+without installing the candidate, attests the device online, installs only the
+release instrumentation APK beside the strictly older baseline, runs (1), then
+force-stops, reboots, waits for first unlock, attests airplane mode, runs (2),
+installs the candidate in place, and only then runs the candidate-update methods
+(3)–(5). `OfflineReadingDeviceLifecycleTest` proves the signed artifact can
+recreate sealed SQLite/file state, reopen a package, delay removal behind a
+lease, and purge on account change; it is not a substitute for the promotion
+scenario.
+
+Signed-release evidence and the immutable release manifest retain the exact
+direct API origin read back from the signed APK's `BuildConfig` bytecode. The
+physical promotion scenario compares it with the real mint response's
+`package_base_url`; any mismatch fails promotion. Do not weaken the native
+exact-origin check.
+
+Current infrastructure status: the executable staged promotion owner exists and
+is controller-wired, but no protected USB run has been recorded in this
+checkout. Missing USB hardware, a missing older installed baseline, or a missing
+operator-unlock checkpoint remains `not_run` and blocks release. Do not infer
+offline-reading release readiness from the controller topology tests alone; only
+a recorded protected run is device evidence.
+
 ## What the command does
 
 1. Rejects `main`, a `--sha` other than `HEAD`, an invalid `--path`, or a

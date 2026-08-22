@@ -1,6 +1,6 @@
-diff --git a/migrations/alembic/versions/0218_document_import_digest_finalize.py b/migrations/alembic/versions/0218_document_import_digest_finalize.py
---- a/migrations/alembic/versions/0218_document_import_digest_finalize.py
-+++ b/migrations/alembic/versions/0218_document_import_digest_finalize.py
+diff --git a/migrations/alembic/versions/0221_document_import_digest_finalize.py b/migrations/alembic/versions/0221_document_import_digest_finalize.py
+--- a/migrations/alembic/versions/0221_document_import_digest_finalize.py
++++ b/migrations/alembic/versions/0221_document_import_digest_finalize.py
 @@ -217,7 +217,7 @@
      # to one exact source job before this legacy state can be discarded.
      _assert_no_active_source_publication_defects()

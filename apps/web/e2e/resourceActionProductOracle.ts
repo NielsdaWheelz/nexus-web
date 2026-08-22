@@ -894,6 +894,11 @@ export const NON_RESOURCE_COMMANDS = [
     owner: "Artifact build handle",
     commands: "Cancel active build; no ArtifactBuild ResourceRef is introduced",
   },
+  {
+    owner: "Offline download row",
+    commands:
+      "Remove this device's downloaded copy, confirming unsynced-position loss",
+  },
 ] as const;
 
 /** Exact legacy islands whose survival fails the hard cut. */

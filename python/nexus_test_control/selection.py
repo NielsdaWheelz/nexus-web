@@ -159,6 +159,7 @@ def proof_target(repo_root: Path, proof: str) -> SelectionTarget:
     direct = _direct_test_target(path)
     if direct is None or runner not in {
         "gradle",
+        "node-test",
         "playwright",
         "pytest",
         "vitest",
@@ -171,6 +172,7 @@ def proof_target(repo_root: Path, proof: str) -> SelectionTarget:
         Capability.COMPONENT: "vitest",
         Capability.EXTENSION: "playwright",
         Capability.HOSTED: "pytest",
+        Capability.INGEST_NODE: "node-test",
         Capability.CODEX_HOSTED: "pytest",
         Capability.JOURNEYS_ALL: "playwright",
         Capability.KERNEL_PYTHON: "pytest",
@@ -179,6 +181,7 @@ def proof_target(repo_root: Path, proof: str) -> SelectionTarget:
         Capability.LLM_EVAL: "pytest",
         Capability.MIGRATIONS: "pytest",
         Capability.PROVIDER_CERTIFICATION: "pytest",
+        Capability.RELEASE_ARTIFACT: "pytest",
         Capability.SERVICE: "pytest",
     }.get(direct.capability)
     if runner != expected_runner:
@@ -488,6 +491,7 @@ def _direct_test_target(path: str) -> SelectionTarget | None:
         ("python/tests/audit/", Capability.AUDIT),
         ("python/tests/contract/", Capability.PROVIDER_RUNTIME),
         ("python/tests/llm_tools_contract/", Capability.LLM_TOOLS),
+        ("python/tests/release_artifact/", Capability.RELEASE_ARTIFACT),
         ("python/tests/hosted/release/", Capability.PROVIDER_CERTIFICATION),
         (
             "python/tests/hosted/nightly/test_codex_personal_metadata.py",
@@ -510,6 +514,8 @@ def _direct_test_target(path: str) -> SelectionTarget | None:
         return SelectionTarget(Capability.ANDROID_DEVICE, f"gradle:{path}")
     if path.startswith("apps/android/app/src/test/") and path.endswith(".kt"):
         return SelectionTarget(Capability.ANDROID_HOST, f"gradle:{path}")
+    if path.startswith("node/ingest/test/") and path.endswith(".test.mjs"):
+        return SelectionTarget(Capability.INGEST_NODE, f"node-test:{path}")
     return None
 
 

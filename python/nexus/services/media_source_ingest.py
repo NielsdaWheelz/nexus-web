@@ -69,6 +69,10 @@ from nexus.services.contributor_taxonomy import (
     RawCreditEntry,
     build_observation,
 )
+from nexus.services.document_embeds import (
+    delete_document_embed_artifacts,
+    replace_document_embed_artifact,
+)
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
     validate_file_ingest_request,
@@ -96,6 +100,7 @@ from nexus.services.reader_apparatus import (
     replace_media_apparatus,
     source_fingerprint,
 )
+from nexus.services.reader_publication import ReaderPublicationSourceFile
 from nexus.services.remote_file_client import (
     REMOTE_FILE_CONTENT_TYPES,
     fetch_binary_to_storage,
@@ -119,6 +124,8 @@ from nexus.services.web_article_artifacts import delete_web_article_artifacts
 from nexus.services.web_article_ingest import materialize_web_article_source
 from nexus.services.web_article_structure import (
     WEB_ARTICLE_HTML_MAX_BYTES,
+    WebArticlePreparedFragment,
+    document_embed_artifact_occurrences,
     prepare_web_article_fragment,
 )
 from nexus.services.x_identity import classify_x_url, is_x_url
@@ -2888,12 +2895,7 @@ def _run_prepared_html_article(
             "Article has no readable text.",
         )
 
-    from nexus.services.document_embeds import (
-        DocumentEmbedLockSetChanged,
-        delete_document_embed_artifacts,
-        replace_document_embed_artifact,
-    )
-    from nexus.services.web_article_structure import document_embed_artifact_occurrences
+    from nexus.services.document_embeds import DocumentEmbedLockSetChanged
 
     embed_urls = [
         item.detected.canonical_source_url
@@ -2923,84 +2925,29 @@ def _run_prepared_html_article(
         def publish_html_artifacts(
             db: Session, locked_attempt: MediaSourceAttempt
         ) -> tuple[UUID, ContributorObservationBatch]:
-            media = db.get(Media, media_id)
-            if media is None:
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-            owner_user_id = locked_attempt.created_by_user_id or media.created_by_user_id
-            if owner_user_id is None:
-                raise AssertionError("stored HTML source attempt has no owner")
-            if not extract_embeds:
-                delete_document_embed_artifacts(
-                    db,
-                    owner_user_id=owner_user_id,
+            from nexus.services.reader_publication import replace_reader_publication
+
+            def replace_projection(media: Media) -> tuple[UUID, ContributorObservationBatch]:
+                return _replace_stored_html_projection(
+                    db=db,
+                    media=media,
+                    locked_attempt=locked_attempt,
                     media_id=media_id,
-                )
-            delete_web_article_artifacts(
-                db,
-                media_id=media_id,
-                include_content_index=False,
-            )
-            fragment = Fragment(
-                media_id=media_id,
-                idx=0,
-                html_sanitized=prepared.html_sanitized,
-                canonical_text=canonical_text,
-                created_at=datetime.now(UTC),
-            )
-            db.add(fragment)
-            db.flush()
-            insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
-            if extract_embeds:
-                queued_children = replace_document_embed_artifact(
-                    db,
-                    owner_user_id=owner_user_id,
-                    media_id=media_id,
-                    source_attempt_id=locked_attempt.id,
-                    occurrences=document_embed_artifact_occurrences(
-                        fragment_id=fragment.id,
-                        document_embeds=prepared.document_embeds,
-                    ),
-                    extraction_error_code=prepared.document_embed_extraction_error_code,
-                    extraction_error_message=prepared.document_embed_extraction_error_message,
+                    actor_storage_path=storage_path,
+                    content_html=content_html,
+                    prepared=prepared,
+                    extract_embeds=extract_embeds,
                     request_id=request_id,
-                    locked_existing_target_media_ids=frozenset(planned_existing_media_ids),
+                    planned_existing_media_ids=planned_existing_media_ids,
+                    payload=payload,
                 )
-                for child_media_id, child_attempt_id in queued_children:
-                    enqueue_accepted_source_attempt_in_transaction(
-                        db,
-                        media_id=child_media_id,
-                        attempt_id=child_attempt_id,
-                        actor_user_id=owner_user_id,
-                        request_id=request_id,
-                    )
-            replace_media_apparatus(
+
+            return replace_reader_publication(
                 db,
                 media_id=media_id,
-                media_kind="web_article",
-                source_fingerprint_value=source_fingerprint(
-                    "web_article",
-                    locked_attempt.requested_url or media.requested_url,
-                    storage_path,
-                    hashlib.sha256(content_html.encode("utf-8")).hexdigest(),
-                    canonical_text,
-                ),
-                items=attach_fragment_locators(
-                    media_id=media_id,
-                    fragment_id=fragment.id,
-                    media_kind="web_article",
-                    canonical_text=prepared.canonical_text,
-                    items=prepared.apparatus_items,
-                    html_sanitized=prepared.html_sanitized,
-                ),
-                edges=prepared.apparatus_edges,
+                expected_kind="web_article",
+                replace_projection=replace_projection,
             )
-            observation: ContributorObservationBatch = NOT_OBSERVED
-            if extract_embeds:
-                title = str(payload.get("title") or "").strip()
-                if title:
-                    media.title = title[:255]
-                observation = _persist_browser_article_metadata(db, media, payload)
-            return fragment.id, observation
 
         try:
             return run_source_publication_phase(
@@ -3013,6 +2960,99 @@ def _run_prepared_html_article(
         except DocumentEmbedLockSetChanged as exc:
             planned_existing_media_ids.add(exc.media_id)
     raise AssertionError("stored HTML embed media lock set did not stabilize")
+
+
+def _replace_stored_html_projection(
+    *,
+    db: Session,
+    media: Media,
+    locked_attempt: MediaSourceAttempt,
+    media_id: UUID,
+    actor_storage_path: str,
+    content_html: str,
+    prepared: WebArticlePreparedFragment,
+    extract_embeds: bool,
+    request_id: str | None,
+    planned_existing_media_ids: set[UUID],
+    payload: dict[str, object],
+) -> tuple[UUID, ContributorObservationBatch]:
+    storage_path = actor_storage_path
+    canonical_text = prepared.canonical_text
+    owner_user_id = locked_attempt.created_by_user_id or media.created_by_user_id
+    if owner_user_id is None:
+        raise AssertionError("stored HTML source attempt has no owner")
+    if not extract_embeds:
+        delete_document_embed_artifacts(
+            db,
+            owner_user_id=owner_user_id,
+            media_id=media_id,
+        )
+    delete_web_article_artifacts(
+        db,
+        media_id=media_id,
+        include_content_index=False,
+    )
+    fragment = Fragment(
+        media_id=media_id,
+        idx=0,
+        html_sanitized=prepared.html_sanitized,
+        canonical_text=canonical_text,
+        created_at=datetime.now(UTC),
+    )
+    db.add(fragment)
+    db.flush()
+    insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
+    if extract_embeds:
+        queued_children = replace_document_embed_artifact(
+            db,
+            owner_user_id=owner_user_id,
+            media_id=media_id,
+            source_attempt_id=locked_attempt.id,
+            occurrences=document_embed_artifact_occurrences(
+                fragment_id=fragment.id,
+                document_embeds=prepared.document_embeds,
+            ),
+            extraction_error_code=prepared.document_embed_extraction_error_code,
+            extraction_error_message=prepared.document_embed_extraction_error_message,
+            request_id=request_id,
+            locked_existing_target_media_ids=frozenset(planned_existing_media_ids),
+        )
+        for child_media_id, child_attempt_id in queued_children:
+            enqueue_accepted_source_attempt_in_transaction(
+                db,
+                media_id=child_media_id,
+                attempt_id=child_attempt_id,
+                actor_user_id=owner_user_id,
+                request_id=request_id,
+            )
+    replace_media_apparatus(
+        db,
+        media_id=media_id,
+        media_kind="web_article",
+        source_fingerprint_value=source_fingerprint(
+            "web_article",
+            locked_attempt.requested_url or media.requested_url,
+            storage_path,
+            hashlib.sha256(content_html.encode("utf-8")).hexdigest(),
+            canonical_text,
+        ),
+        items=attach_fragment_locators(
+            media_id=media_id,
+            fragment_id=fragment.id,
+            media_kind="web_article",
+            canonical_text=prepared.canonical_text,
+            items=prepared.apparatus_items,
+            html_sanitized=prepared.html_sanitized,
+        ),
+        edges=prepared.apparatus_edges,
+    )
+    observation: ContributorObservationBatch = NOT_OBSERVED
+    if extract_embeds:
+        title = str(payload.get("title") or "").strip()
+        if title:
+            media.title = title[:255]
+        observation = _persist_browser_article_metadata(db, media, payload)
+    return fragment.id, observation
 
 
 def _run_browser_article_capture(
@@ -3167,29 +3207,12 @@ def _run_remote_file(
 
     def publish_remote_file(
         db: Session, locked_attempt: MediaSourceAttempt
-    ) -> tuple[str | None, dict[str, object], list[str]]:
+    ) -> tuple[dict[str, object], list[str]]:
         media = db.get(Media, media_id)
         if media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         media.canonical_source_url = normalize_url_for_display(fetched.final_url)
         media.updated_at = func.now()
-        media_file = db.get(MediaFile, media_id)
-        previous_path = str(media_file.storage_path) if media_file is not None else None
-        if media_file is None:
-            db.add(
-                MediaFile(
-                    media_id=media_id,
-                    storage_path=storage_path,
-                    content_type=fetched.content_type,
-                    size_bytes=fetched.size_bytes,
-                    source_sha256=fetched.sha256_hex,
-                )
-            )
-        else:
-            media_file.storage_path = storage_path
-            media_file.content_type = fetched.content_type
-            media_file.size_bytes = fetched.size_bytes
-            media_file.source_sha256 = fetched.sha256_hex
         if source_package is not None or source_package_diagnostics:
             source_payload = dict(locked_attempt.source_payload or {})
             if source_package_diagnostics:
@@ -3206,15 +3229,20 @@ def _run_remote_file(
             else:
                 raise AssertionError("source-package branch has no package state")
             locked_attempt.source_payload = source_payload
-        response, old_asset_paths = _publish_prepared_file_source(
+        return _publish_prepared_file_source(
             db,
             media_id=media_id,
             kind=kind,
             prepared=prepared,
+            source_file=ReaderPublicationSourceFile(
+                storage_path=storage_path,
+                content_type=fetched.content_type,
+                size_bytes=fetched.size_bytes,
+                source_sha256=fetched.sha256_hex,
+            ),
         )
-        return previous_path, response, old_asset_paths
 
-    previous_storage_path, response, old_asset_paths = run_source_publication_phase(
+    response, cleanup_paths = run_source_publication_phase(
         session_factory=session_factory,
         label="publish_remote_file_reference",
         fence=fence,
@@ -3238,14 +3266,12 @@ def _run_remote_file(
             )
     finally:
         finalize_db.close()
-    if previous_storage_path and previous_storage_path != storage_path:
-        delete_document_storage_objects([previous_storage_path], storage_client)
     _finalize_prepared_file_source(
         session_factory,
         media_id=media_id,
         kind=kind,
         prepared=prepared,
-        old_storage_paths=old_asset_paths,
+        old_storage_paths=cleanup_paths,
     )
     return response
 
@@ -3482,21 +3508,43 @@ def _publish_prepared_file_source(
     media_id: UUID,
     kind: str,
     prepared: object,
+    source_file: ReaderPublicationSourceFile | None = None,
 ) -> tuple[dict[str, object], list[str]]:
+    """Publish one prepared plan and report its post-commit storage cleanup.
+
+    ``source_file`` is present only when this run prepared a new source object; the
+    publication owner installs that reader-visible pointer inside its own lock, so a
+    publication that replaces nothing leaves the current pointer and generation and
+    returns the rejected prepared object for cleanup.
+    """
     if kind == MediaKind.pdf.value:
         from nexus.services.pdf_ingest import PdfExtractionPlan
         from nexus.services.pdf_lifecycle import publish_pdf_source
 
         if not isinstance(prepared, PdfExtractionPlan):
+            # justify-defect: the prepare and publish phases of one run share the
+            # media kind, so a mismatched plan type is a broken call graph.
             raise AssertionError("PDF source plan has the wrong type")
-        return publish_pdf_source(db, media_id=media_id, plan=prepared), []
+        return publish_pdf_source(
+            db,
+            media_id=media_id,
+            plan=prepared,
+            source_file=source_file,
+        )
     if kind == MediaKind.epub.value:
         from nexus.services.epub_ingest import EpubExtractionPlan
         from nexus.services.epub_lifecycle import publish_epub_source
 
         if not isinstance(prepared, EpubExtractionPlan):
+            # justify-defect: the prepare and publish phases of one run share the
+            # media kind, so a mismatched plan type is a broken call graph.
             raise AssertionError("EPUB source plan has the wrong type")
-        return publish_epub_source(db, media_id=media_id, plan=prepared)
+        return publish_epub_source(
+            db,
+            media_id=media_id,
+            plan=prepared,
+            source_file=source_file,
+        )
     raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be PDF or EPUB.")
 
 

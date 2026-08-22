@@ -1,0 +1,22 @@
+diff --git a/python/nexus/services/tool_runtime/execution.py b/python/nexus/services/tool_runtime/execution.py
+--- a/python/nexus/services/tool_runtime/execution.py
++++ b/python/nexus/services/tool_runtime/execution.py
+@@ -1787,16 +1787,5 @@ def _run_search(
+     }
+     if not scopes:
+-        recorder.stage_audit(
+-            scope="conversation_context",
+-            requested_types=list(query.effective_result_types),
+-            filters=filters,
+-            citations=[],
+-            selected_citations=[],
+-            search_query_fingerprint=hash_query(value.query),
+-        )
+-        return HandlerSuccess(
+-            tool_declarations.NexusSearchSuccess(matches=[], total_candidates=0),
+-            actual_attempts=0,
+-        )
++        scopes = [scope_from_uri("all")]
+     try:
+         response = search_scopes(recorder.db, viewer_id, query, scopes)
+     except ApiError as exc:

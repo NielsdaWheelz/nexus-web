@@ -22,20 +22,32 @@ from typing import Any
 from uuid import UUID
 
 import httpx
-from llm_tools import BraveSearchProvider, WebSearchProvider
+from llm_tools import WebSearchProvider
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.models import ArtifactBuild
 from nexus.jobs.queue import JobExecutionContext, JobRow, RescheduleRequested, get_job
 from nexus.logging import get_logger
-from nexus.schemas.presence import Presence, absent, present
 from nexus.services.artifacts import engine
 from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.llm_execution import ExecutionRuntime, ProviderRetryMode
+from nexus.services.tool_runtime.composition import (
+    ComposedToolRuntime,
+    compose_configured_web_search_provider,
+    compose_product_tool_runtime,
+)
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
+
+
+def compose_dossier_tool_runtime(
+    web_search_provider: WebSearchProvider | None,
+) -> ComposedToolRuntime:
+    """Compose the exact product runtime consumed by a Dossier worker attempt."""
+
+    return compose_product_tool_runtime(web_search_provider)
 
 
 def dossier_build(
@@ -68,18 +80,18 @@ def dossier_build(
             # justify-defect: a claimed worker execution always owns its durable
             # job row; coordination cannot checkpoint without that lease record.
             raise AssertionError("dossier worker job disappeared")
-        web_provider: Presence[WebSearchProvider] = (
-            present(BraveSearchProvider(client, api_key=settings.brave_search_api_key))
-            if settings.brave_search_api_key
-            else absent()
+        web_provider: WebSearchProvider | None = compose_configured_web_search_provider(
+            client,
+            settings=settings,
         )
+        tool_runtime = compose_dossier_tool_runtime(web_provider)
         dossier_runtime = DossierBuildRuntime(
             build_id=build_id,
             artifact_id=build.artifact_id,
             job=job,
             execution_context=context,
             llm_runtime=runtime,
-            web_search_provider=web_provider,
+            research_tool_operation=tool_runtime.operations["idea_dossier_research"],
         )
         reschedule = await engine.run_build(
             db,

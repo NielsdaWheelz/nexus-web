@@ -6,6 +6,7 @@ import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
+import type { ResourceActionSnapshot } from "@/lib/actions/resourceActionSnapshot";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
@@ -26,7 +27,7 @@ import ContextualActionMenu from "./ContextualActionMenu";
 
 const ACCOUNT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
-const MEDIA_REF = `media:${MEDIA_ID}`;
+const MEDIA_REF = canonicalResourceRef({ scheme: "media", id: MEDIA_ID });
 const RESOLVE_PATH = "/api/resource-items/action-snapshots/resolve";
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
@@ -35,7 +36,7 @@ const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
 };
 
 const mediaSubject = {
-  ref: canonicalResourceRef({ scheme: "media", id: MEDIA_ID }),
+  ref: MEDIA_REF,
 };
 
 const snapshot = {
@@ -53,7 +54,7 @@ const snapshot = {
     { kind: "Open", availability: { kind: "Available" } },
     { kind: "Chat", availability: { kind: "Available" } },
   ],
-} as const;
+} as const satisfies ResourceActionSnapshot;
 
 function response(body: unknown, status: number = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -64,10 +65,20 @@ function response(body: unknown, status: number = 200): Response {
 
 function installBff({
   failFirstResolve = false,
+  deferResolve = false,
+  resolvedSnapshot = snapshot,
 }: {
   readonly failFirstResolve?: boolean;
+  readonly deferResolve?: boolean;
+  readonly resolvedSnapshot?: ResourceActionSnapshot;
 } = {}) {
   const resolveCalls: unknown[] = [];
+  let releaseResolve: (() => void) | null = null;
+  const resolveBoundary = deferResolve
+    ? new Promise<void>((resolve) => {
+        releaseResolve = resolve;
+      })
+    : null;
   vi.stubGlobal(
     "fetch",
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -82,55 +93,76 @@ function installBff({
         if (failFirstResolve && resolveCalls.length === 1) {
           throw new Error("temporary snapshot failure");
         }
-        return response({ data: { snapshots: [snapshot] } });
+        await resolveBoundary;
+        return response({ data: { snapshots: [resolvedSnapshot] } });
       }
       return response({ data: null });
     },
   );
-  return { resolveCalls };
+  return {
+    resolveCalls,
+    releaseResolve() {
+      if (releaseResolve === null) {
+        throw new Error("No deferred resource snapshot resolve is pending.");
+      }
+      releaseResolve();
+      releaseResolve = null;
+    },
+  };
+}
+
+function menuEnvironment(menu: ReactNode) {
+  return withRenderEnvironment(
+    <AuthenticatedAccountProvider
+      account={{ accountId: ACCOUNT_ID, calendarTimeZone: "UTC" }}
+    >
+      <MobileChromeProvider>
+        <KeybindingsProvider>
+          <FeedbackProvider>
+            <PaneReturnMementoProvider>
+              <WorkspaceStoreProvider
+                initialState={createDefaultWorkspaceState(
+                  "/libraries",
+                  workspacePrimaryMetrics,
+                )}
+                workspacePrimaryMetrics={workspacePrimaryMetrics}
+              >
+                <LecternProvider>
+                  <LibraryPlacementControllerProvider>
+                    <ShareControllerProvider>
+                      <OfflineMediaProvider
+                        accountId={ACCOUNT_ID}
+                        transport={null}
+                      >
+                        <ResourceOverlaysProvider>
+                          <GlobalPlayerProvider>
+                            <ResourceActionRuntimeProvider>
+                              {menu}
+                              <ResourceActionOverlays />
+                            </ResourceActionRuntimeProvider>
+                          </GlobalPlayerProvider>
+                        </ResourceOverlaysProvider>
+                      </OfflineMediaProvider>
+                    </ShareControllerProvider>
+                  </LibraryPlacementControllerProvider>
+                </LecternProvider>
+              </WorkspaceStoreProvider>
+            </PaneReturnMementoProvider>
+          </FeedbackProvider>
+        </KeybindingsProvider>
+      </MobileChromeProvider>
+    </AuthenticatedAccountProvider>,
+  );
 }
 
 function renderMenu(menu: ReactNode) {
-  return render(
-    withRenderEnvironment(
-      <AuthenticatedAccountProvider
-        account={{ accountId: ACCOUNT_ID, calendarTimeZone: "UTC" }}
-      >
-        <MobileChromeProvider>
-          <KeybindingsProvider>
-            <FeedbackProvider>
-              <PaneReturnMementoProvider>
-                <WorkspaceStoreProvider
-                  initialState={createDefaultWorkspaceState(
-                    "/libraries",
-                    workspacePrimaryMetrics,
-                  )}
-                  workspacePrimaryMetrics={workspacePrimaryMetrics}
-                >
-                  <LecternProvider>
-                    <LibraryPlacementControllerProvider>
-                      <ShareControllerProvider>
-                        <OfflineMediaProvider accountId={ACCOUNT_ID} transport={null}>
-                          <ResourceOverlaysProvider>
-                            <GlobalPlayerProvider>
-                              <ResourceActionRuntimeProvider>
-                                {menu}
-                                <ResourceActionOverlays />
-                              </ResourceActionRuntimeProvider>
-                            </GlobalPlayerProvider>
-                          </ResourceOverlaysProvider>
-                        </OfflineMediaProvider>
-                      </ShareControllerProvider>
-                    </LibraryPlacementControllerProvider>
-                  </LecternProvider>
-                </WorkspaceStoreProvider>
-              </PaneReturnMementoProvider>
-            </FeedbackProvider>
-          </KeybindingsProvider>
-        </MobileChromeProvider>
-      </AuthenticatedAccountProvider>,
-    ),
-  );
+  const view = render(menuEnvironment(menu));
+  return {
+    ...view,
+    rerenderMenu(nextMenu: ReactNode) {
+      view.rerender(menuEnvironment(nextMenu));
+    },
+  };
 }
 
 async function openMore(): Promise<HTMLElement> {
@@ -150,6 +182,34 @@ describe("ContextualActionMenu", () => {
     vi.unstubAllGlobals();
     localStorage.clear();
     sessionStorage.clear();
+  });
+
+  it("keeps local-only menus independent of the canonical resource runtime", async () => {
+    const refresh = vi.fn();
+    render(
+      <ContextualActionMenu
+        label="More"
+        sections={[
+          {
+            id: "Pane",
+            actions: [
+              {
+                kind: "command",
+                id: "Pane.Refresh",
+                label: "Refresh",
+                onSelect: refresh,
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const menu = await openMore();
+    await userEvent.click(
+      within(menu).getByRole("menuitem", { name: "Refresh" }),
+    );
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("keeps local pane commands available and appends the canonical resource plan as one ordered suffix", async () => {
@@ -203,8 +263,93 @@ describe("ContextualActionMenu", () => {
     // and the canonical planner retains its own Chat/Danger group boundaries.
     expect(within(menu).getAllByRole("separator")).toHaveLength(4);
 
-    await userEvent.click(within(menu).getByRole("menuitem", { name: "Refresh" }));
+    await userEvent.click(
+      within(menu).getByRole("menuitem", { name: "Refresh" }),
+    );
     expect(refresh).toHaveBeenCalledTimes(1);
+    expect(bff.resolveCalls).toHaveLength(1);
+  });
+
+  it("keeps an open local menu mounted when its resource subject is published", async () => {
+    const bff = installBff({
+      resolvedSnapshot: {
+        ...snapshot,
+        capabilities: [
+          ...snapshot.capabilities,
+          { kind: "LibraryPlacement", availability: { kind: "Available" } },
+        ],
+      },
+    });
+    const refresh = vi.fn();
+    const sections = [
+      {
+        id: "Pane" as const,
+        actions: [
+          {
+            kind: "command" as const,
+            id: "Pane.Refresh",
+            label: "Refresh",
+            onSelect: refresh,
+          },
+        ],
+      },
+    ];
+    const view = renderMenu(
+      <ContextualActionMenu label="More" sections={sections} />,
+    );
+
+    const menu = await openMore();
+    const refreshItem = within(menu).getByRole("menuitem", { name: "Refresh" });
+    expect(refreshItem).toBeEnabled();
+    refreshItem.focus();
+    expect(refreshItem).toHaveFocus();
+    expect(bff.resolveCalls).toHaveLength(0);
+
+    view.rerenderMenu(
+      <ContextualActionMenu
+        label="More"
+        sections={sections}
+        actionSubject={mediaSubject}
+      />,
+    );
+
+    await waitFor(() => expect(bff.resolveCalls).toHaveLength(1));
+    expect(screen.getByRole("button", { name: "More" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByRole("menu")).toBe(menu);
+    expect(
+      within(menu).getByRole("menuitem", { name: "Refresh" }),
+    ).toBeEnabled();
+    expect(refreshItem).toHaveFocus();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Libraries…" }),
+    ).toBeEnabled();
+    expect(bff.resolveCalls).toHaveLength(1);
+  });
+
+  it("keeps a resource-only trigger disabled until its canonical plan is ready", async () => {
+    const bff = installBff({ deferResolve: true });
+    renderMenu(
+      <ContextualActionMenu
+        label="More"
+        sections={[]}
+        actionSubject={mediaSubject}
+      />,
+    );
+
+    const trigger = await screen.findByRole("button", { name: "More" });
+    await waitFor(() => expect(bff.resolveCalls).toHaveLength(1));
+    expect(trigger).toHaveAttribute("aria-disabled", "true");
+    expect(trigger).toHaveAccessibleDescription("Actions are still loading.");
+
+    bff.releaseResolve();
+    await waitFor(() =>
+      expect(trigger).not.toHaveAttribute("aria-disabled", "true"),
+    );
+    const menu = await openMore();
+    expect(within(menu).getByRole("menuitem", { name: "Open" })).toBeEnabled();
     expect(bff.resolveCalls).toHaveLength(1);
   });
 
@@ -233,12 +378,16 @@ describe("ContextualActionMenu", () => {
 
     await waitFor(() => expect(bff.resolveCalls).toHaveLength(1));
     const menu = await openMore();
-    expect(within(menu).getByRole("menuitem", { name: "Refresh" })).toBeEnabled();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Refresh" }),
+    ).toBeEnabled();
     expect(
       within(menu).getByRole("menuitem", { name: "Retry actions" }),
     ).toBeEnabled();
 
-    await userEvent.click(within(menu).getByRole("menuitem", { name: "Refresh" }));
+    await userEvent.click(
+      within(menu).getByRole("menuitem", { name: "Refresh" }),
+    );
     expect(refresh).toHaveBeenCalledTimes(1);
 
     const retryMenu = await openMore();

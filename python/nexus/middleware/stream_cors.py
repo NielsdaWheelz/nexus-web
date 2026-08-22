@@ -52,7 +52,7 @@ class StreamCORSMiddleware:
                     "access-control-allow-origin": origin,
                     "access-control-allow-methods": "GET, OPTIONS",
                     "access-control-allow-headers": (
-                        "Authorization, Last-Event-ID, X-Nexus-SSE-Attempt"
+                        "Authorization, Last-Event-ID, X-Nexus-SSE-Attempt, X-Nexus-Tool-Projection"
                     ),
                     "access-control-max-age": "600",
                 },

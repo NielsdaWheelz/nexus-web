@@ -108,26 +108,46 @@ class OfflineMediaStoreContractTest {
     }
 
     @Test
+    fun `logout account transition selects every durable download for removal`() {
+        val first = UUID.fromString("22222222-2222-4222-8222-222222222222")
+        val second = UUID.fromString("33333333-3333-4333-8333-333333333333")
+        val downloads = listOf(first to "first", second to "second")
+
+        assertEquals(
+            setOf("first", "second"),
+            selectAccountRemovalIds(downloads, retainedAccountId = null) { it.first to it.second },
+        )
+        assertEquals(
+            setOf("second"),
+            selectAccountRemovalIds(downloads, retainedAccountId = first) { it.first to it.second },
+        )
+    }
+
+    @Test
     fun `reserve boundary rejects the byte that would cross 512 MiB`() {
+        // Behavior-identical delegation proof: the audio factory now delegates to the one
+        // StorageAdmissionPolicy owner; this truth table is the exact pre-extraction boundary.
+        assertEquals(512L * 1024L * 1024L, StorageAdmissionPolicy.RESERVE_BYTES)
         assertTrue(
-            preservesStorageReserve(
-                OFFLINE_STORAGE_RESERVE_BYTES + 1,
+            StorageAdmissionPolicy.preservesReserve(
+                StorageAdmissionPolicy.RESERVE_BYTES + 1,
                 1,
             )
         )
         assertFalse(
-            preservesStorageReserve(
-                OFFLINE_STORAGE_RESERVE_BYTES,
+            StorageAdmissionPolicy.preservesReserve(
+                StorageAdmissionPolicy.RESERVE_BYTES,
                 1,
             )
         )
         assertTrue(
-            preservesStorageReserve(
-                OFFLINE_STORAGE_RESERVE_BYTES,
+            StorageAdmissionPolicy.preservesReserve(
+                StorageAdmissionPolicy.RESERVE_BYTES,
                 0,
             )
         )
-        assertFalse(preservesStorageReserve(Long.MAX_VALUE, Long.MAX_VALUE))
+        assertFalse(StorageAdmissionPolicy.preservesReserve(Long.MAX_VALUE, Long.MAX_VALUE))
+        assertFalse(StorageAdmissionPolicy.preservesReserve(Long.MAX_VALUE, -1))
     }
 
     @Test

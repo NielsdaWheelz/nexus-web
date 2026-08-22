@@ -120,6 +120,18 @@
       "purpose": [
         "Deterministic podcast episode-list response"
       ]
+    },
+    {
+      "path": "testdata/offline-reading-contract-v1.json",
+      "sha256": "2c64ccf586dbfe85480623e9a3a6b4c9edd4d10cc5d0aba1140e68a4ec97968b",
+      "source": "repo-authored: independently reviewed Android offline-reading V1 contract cases",
+      "license": "Repository-owned test data; retained as the cross-language offline-reading package and reader-content oracle",
+      "purpose": [
+        "Cross-language V1 package manifest, member integrity, revision-key, and ZIP conformance",
+        "Transfer conformance: accepted response headers plus encoding, redirect, length, package-origin, account, and generation faults",
+        "Canonical PDF, EPUB with declared local asset, and text-only web-article reader contracts",
+        "Offline-reading product copy: explicit downloaded-copy and web-image-omission disclosures"
+      ]
     }
   ]
 }

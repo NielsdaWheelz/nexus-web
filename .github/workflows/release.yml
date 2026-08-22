@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, nexus-android-usb]
     timeout-minutes: 150
     environment: android-release
     env:
@@ -34,11 +34,18 @@ jobs:
       ANDROID_PUBLISH_STABLE: ${{ inputs.publish_stable }}
       NEXUS_ANDROID_RELEASE_BASE_URL: ${{ vars.NEXUS_ANDROID_RELEASE_BASE_URL }}
       NEXUS_ANDROID_RELEASE_OWNED_HOST: ${{ vars.NEXUS_ANDROID_RELEASE_OWNED_HOST }}
+      NEXUS_ANDROID_RELEASE_API_ORIGIN: ${{ vars.NEXUS_ANDROID_RELEASE_API_ORIGIN }}
       NEXUS_ANDROID_RELEASE_CERT_SHA256: ${{ secrets.NEXUS_ANDROID_RELEASE_CERT_SHA256 }}
       NEXUS_ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.NEXUS_ANDROID_RELEASE_KEY_ALIAS }}
       NEXUS_ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.NEXUS_ANDROID_RELEASE_KEY_PASSWORD }}
       NEXUS_ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.NEXUS_ANDROID_RELEASE_STORE_PASSWORD }}
       NEXUS_GOOGLE_WEB_CLIENT_ID: ${{ vars.NEXUS_GOOGLE_WEB_CLIENT_ID }}
+      # Non-secret identifiers only. The older physical baseline is pre-authenticated
+      # by the protected lab operator; no browser session/cookie crosses a command line.
+      NEXUS_ANDROID_RELEASE_PROMOTION_ACCOUNT_ID: ${{ vars.NEXUS_ANDROID_RELEASE_PROMOTION_ACCOUNT_ID }}
+      NEXUS_ANDROID_RELEASE_PROMOTION_PDF_MEDIA_ID: ${{ vars.NEXUS_ANDROID_RELEASE_PROMOTION_PDF_MEDIA_ID }}
+      NEXUS_ANDROID_RELEASE_PROMOTION_EPUB_MEDIA_ID: ${{ vars.NEXUS_ANDROID_RELEASE_PROMOTION_EPUB_MEDIA_ID }}
+      NEXUS_ANDROID_RELEASE_PROMOTION_ARTICLE_MEDIA_ID: ${{ vars.NEXUS_ANDROID_RELEASE_PROMOTION_ARTICLE_MEDIA_ID }}
       NEXUS_ANDROID_VERSION_CODE: ${{ inputs.version_code }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -89,21 +96,8 @@ jobs:
           chmod 600 "$RUNNER_TEMP/nexus-release.jks"
           echo "NEXUS_ANDROID_RELEASE_STORE_FILE=$RUNNER_TEMP/nexus-release.jks" >> "$GITHUB_ENV"
 
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Certify providers, signed APK, and native auth handoff
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_6
-          script: ./scripts/test release
+      - name: Protected release gate
+        run: ./scripts/test release
 
       - name: Create or update verified draft release
         env:
@@ -123,7 +117,7 @@ jobs:
               --verify-tag \
               --draft \
               --title "$ANDROID_RELEASE_TAG" \
-              --notes "Signed Nexus Android APK. Provider certification, signature verification, offline emulator installation, local App Link routing, and native auth handoff passed before this draft was created."
+              --notes "Signed Nexus Android APK. Provider certification, signature verification, staged real-API offline-reading acquisition on the older USB baseline, reboot/airplane-mode cold shelf, in-place V1 reopen/progress/purge, local App Link routing, and native auth handoff passed before this draft was created."
           fi
           release_dirs=(test-results/runs/*/release)
           if [ "${#release_dirs[@]}" -ne 1 ] || [ ! -d "${release_dirs[0]}" ]; then

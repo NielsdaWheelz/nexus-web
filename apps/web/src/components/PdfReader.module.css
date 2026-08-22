@@ -142,6 +142,18 @@
   font-size: var(--text-sm);
 }
 
+.errorRetry {
+  display: block;
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--danger);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
 @media (max-width: 768px),
   (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
   .pdfViewport {

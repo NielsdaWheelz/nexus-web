@@ -1,0 +1,12 @@
+diff --git a/python/nexus/auth/middleware.py b/python/nexus/auth/middleware.py
+--- a/python/nexus/auth/middleware.py
++++ b/python/nexus/auth/middleware.py
+@@ -277,7 +277,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
+         if self.bootstrap_callback:
+             default_library_id = self._cached_default_library_id(user_id)
+             if default_library_id is None:
+-                bootstrap_task = self._bootstrap_task_by_user.get(user_id)
++                bootstrap_task = None
+                 if bootstrap_task is None:
+                     bootstrap_task = asyncio.create_task(
+                         self._bootstrap_and_cache(user_id, email),

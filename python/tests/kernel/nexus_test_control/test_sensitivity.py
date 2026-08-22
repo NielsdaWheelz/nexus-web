@@ -466,6 +466,35 @@ def test_isolated_worktree_disables_container_sampling_before_exact_teardown(
     assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 3, 5)
 
 
+def test_isolated_worktree_links_node_ingest_dependencies(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("node/ingest/node_modules\n.nexus-test\n")
+    ingest = tmp_path / "node/ingest"
+    ingest.mkdir(parents=True)
+    (ingest / "package.json").write_text("{}\n")
+    _commit(tmp_path, "base")
+    revision = _git_output(tmp_path, "rev-parse", "HEAD")
+    source_dependency = ingest / "node_modules"
+    source_dependency.mkdir()
+    (source_dependency / "dependency-sentinel").write_text("installed\n")
+
+    def clean_runtime(
+        _worktree: Path,
+        _environment: Mapping[str, str],
+    ) -> tuple[str, ...]:
+        return ()
+
+    with isolated_worktree(
+        tmp_path,
+        revision,
+        overlays=(),
+        runtime_cleaner=clean_runtime,
+    ) as red_root:
+        isolated_dependency = red_root / "node/ingest/node_modules"
+        assert isolated_dependency.is_symlink()
+        assert isolated_dependency.resolve() == source_dependency.resolve()
+        assert (isolated_dependency / "dependency-sentinel").read_text() == "installed\n"
+
+
 def test_isolated_worktree_owns_its_python_environment(tmp_path: Path) -> None:
     (tmp_path / ".gitignore").write_text("python/.venv\n.nexus-test\n")
     project = tmp_path / "python"

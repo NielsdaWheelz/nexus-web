@@ -120,7 +120,11 @@ cookie-free lane: `/api/oracle/plates/[id]` strips browser credentials and sends
 only the internal secret to FastAPI `/oracle/plates/{id}`. The **only** direct
 browser-to-FastAPI exception is Server-Sent Events: the browser streams from
 FastAPI `/stream/*` using a short-lived, single-use stream token minted through
-the BFF. See [`rules/layers.md`](rules/layers.md) and
+the BFF. The Android native offline-reading transfer is the other deliberately
+narrow direct lane: native mints a media/generation/schema-bound, single-use
+token through the authenticated BFF, then consumes it only at the configured
+FastAPI `/offline-reading/packages/{media_id}` origin. It is not browser product
+data and grants no general fetch authority. See [`rules/layers.md`](rules/layers.md) and
 [`rules/modules/transport.md`](rules/modules/transport.md).
 
 ---
@@ -330,7 +334,11 @@ Streaming bypasses the BFF for data delivery:
 4. The client parses the SSE wire format (`lib/api/sse-stream.ts`), validates each
    event exhaustively (`lib/api/sse/events.ts`), and folds it into UI state.
 
-This is used by chat runs, oracle readings, and media processing status.
+This is used by chat runs, oracle readings, Dossier builds, media processing
+status, Podcast refresh runs, and the active Podcast subscription lifecycle.
+The lifecycle stream is keyed by the subscription epoch UUID while its public
+route remains viewer + Podcast addressed; every snapshot reasserts that exact
+epoch and viewer before it can cross the stream.
 
 ---
 
@@ -369,6 +377,18 @@ original-file object metadata), `project_gutenberg_catalog`,
 (`epub_toc_nodes`, `epub_nav_locations`, `epub_fragment_sources`,
 `epub_resources` for private extracted asset object metadata),
 `pdf_page_text_spans`.
+
+**Reader publication identity** — `reader_publications` gives each ready PDF,
+EPUB, or web article one document-only generation. `reader_publication.py` is
+the publication and capture owner: immutable object writes precede the
+transactional canonical pointer swap, a replacement increments the generation
+once, and package capture restarts once rather than mixing database and object
+generations. Every write that changes what a reader sees is a publication,
+including metadata enrichment's title write. `nexus.ops.reader_publication_preflight`
+is the idempotent operator entrypoint that publishes any eligible ready document
+still missing a row at generation `1`; run it before exposing a reading-capable
+APK ([`deployment.md`](../deployment.md)). Offline packages and device
+availability are not server rows.
 
 **Retrieval index** — `content_blocks`, `evidence_spans`, `content_chunks`,
 `content_chunk_parts`, `content_embeddings` (PGVector 256),
@@ -665,12 +685,14 @@ the scheduler loop) go through the one helper `db/retries.py:retry_serializable`
 ### 7.4 Auth, identity & bootstrap
 
 Supabase issues JWTs; FastAPI verifies them via JWKS (`auth/verifier.py`) and
-derives a `Viewer`. On a user's first request per process, `AuthMiddleware` runs
+derives a `Viewer`. On a user's first request per process, `AuthMiddleware`
+coalesces concurrent cold requests into one cancellation-shielded task and runs
 **bootstrap** (`services/bootstrap.py`: `ensure_user_and_default_library`) once —
-idempotent under SERIALIZABLE, creating the `users` row, a default library, and an
-admin membership; its bounded process-local LRU carries the resulting
-`default_library_id` on later `Viewer` projections without another threadpool or
-database hop. Eviction only repeats the idempotent bootstrap on a later request.
+idempotent under SERIALIZABLE across processes, creating the `users` row, a default
+library, and an admin membership. Its bounded process-local LRU carries the
+resulting `default_library_id` on later `Viewer` projections without another
+threadpool or database hop. Failure is never cached; eviction only repeats the
+idempotent bootstrap on a later request.
 Visibility is enforced by boolean predicates (`auth/permissions.py`) that take an
 explicit session and never leak existence (not-found == not-visible).
 
@@ -728,7 +750,7 @@ Other identity surfaces:
 
 One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
 the in-app search page, mobile Nexus, desktop Nexus, and chat
-`app_search` agent tool (RAG). The request is a single typed `SearchQuery` value
+`nexus.search` tool (RAG). The request is a single typed `SearchQuery` value
 object parsed at the
 edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
 Conversations, People, Web) folding the internal result types, with
@@ -816,15 +838,30 @@ user_link_target: UserLinkTargetMode)` row per `ResourceScheme` replaces the
 
 ### 7.7 Citations & the agent tool contract
 
-The chat/oracle LLM can call four tools (`services/agent_tools/`):
+Chat publishes one frozen eleven-tool native plan:
 
-- **`app_search`** — RAG retrieval over the user's library (scoped to
-  `media:`/`library:` refs); produces numbered, citable results.
-- **`web_search`** — Brave public web search; numbered, citable.
-- **`read_resource`** — reads exact text for a `ResourceRef`; evidence reads are
-  citable, oversized docs redirect to inspect.
-- **`inspect_resource`** — returns a navigable document map of a `media:` ref;
-  navigation only, never cited.
+- **`web.search`** — bounded Brave public-web search; numbered and citable.
+- **`nexus.search`** — scoped retrieval over the user's Nexus corpus; numbered
+  and citable.
+- **`nexus.resource.read`** — exact bounded text and immutable evidence for an
+  admitted resource.
+- **`nexus.document.search`** — bounded matching sections inside one admitted
+  readable document.
+- **`nexus.resource.inspect`** — an ordered document map and canonical read
+  URIs; navigation only.
+- **`nexus.relations.list`** — bounded one-hop graph relations from one admitted
+  resource.
+- **`nexus.library.add`**, **`nexus.note.create`**,
+  **`nexus.highlight.create`**, **`nexus.edge.create`**, and
+  **`nexus.queue.add`** — the five additive, owner-gated Write operations. They
+  persist their exact effects with the tool result and support scoped Undo.
+
+Idea-Dossier research receives only a frozen HostTable grant for `web.search`.
+Oracle and the other background algorithms retain their direct operation-owned
+retrieval; they do not inherit Chat's catalogue. Tool declarations, grants,
+limits, replay policy, and durable execution are owned by
+`services/tool_runtime/`; `services/agent_tools/` remains the domain-adapter
+layer, not a second tool contract.
 
 Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
 (attached context refs first, then each tool's selected results). A citation **is an
@@ -975,6 +1012,24 @@ text. This is a linchpin area with its own design contract — read
 [`modules/reader-implementation.md`](modules/reader-implementation.md) and
 [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md).
 
+The shared document-reader composition coordinates hosted and local document
+sources. `DocumentReaderSession` owns source/progress orchestration, initial
+active-unit and preferred-locator selection, and canonical locator projection;
+format composition and `useReaderProgress` retain visible navigation/Find state
+and cursor ordering/writes. Hosted composition supplies current API inputs,
+decorations, activity, and the canonical online cursor port. The Android shelf
+supplies a lease-scoped local source and a native progress port; the core does
+not import workspace, auth, or Next route owners. Leaf text/PDF renderers
+consume resolved content rather than fetching media or progress themselves.
+
+For offline-capable documents, `reader_publication.py` captures one coherent
+generation and `offline_reading_packages.py` emits deterministic V1 ZIPs from
+that projection. The direct route uses the existing signing key and one-use JTI
+claim table. The package contains canonical reader inputs only: PDF bytes,
+sanitized undecorated article text, or preprocessed EPUB navigation/sections and
+declared local assets. It contains no credentials, highlights, notes, AI state,
+or remote article subresources.
+
 The core idea is two coordinate systems, both **codepoint-based**:
 
 - **Reflowable formats** (web/transcript/EPUB): a position is
@@ -1116,8 +1171,8 @@ retrieval, plate selection, LLM prompt/call, parse, persistence, and SSE event
 emission. A short question → retrieve candidates and pick a plate image → one LLM
 call produces a structured three-phase interpretation → stream + persist as
 `oracle_reading_events` + citation "folios". It has its **own**
-prompt/persistence and does **not** use the four chat agent tools, but it
-**reuses the SSE transport**. Retrieval consumes the shared search substrate:
+prompt/persistence and does **not** consume Chat's frozen Native tool plan, but
+it **reuses the SSE transport**. Retrieval consumes the shared search substrate:
 `services/search/embedding.build_query_embedding` (one active-model embedding for
 both lanes) feeds `search/content_chunk_candidates.retrieve_content_chunk_candidates`,
 scoped to the Oracle Corpus library for public-domain candidates (mapped to
@@ -1357,6 +1412,15 @@ Episode Transcribe prefers a publisher sidecar, then the quota-gated Deepgram
 path; explicit Video Transcribe uses the YouTube caption provider. Current
 transcript origin is exactly `Publisher | Imported | Generated`.
 
+The canonical Podcast detail pane observes those two independent owners through
+one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
+on the subscription and its current backfill notify only the subscription UUID;
+the stream re-reads durable state and remains nonterminal until both owners are
+`Complete | SourceLimited | Failed`. A serialized latest-state drain revalidates
+detail and episodes without overlap when committed snapshots change, so reused
+global episodes and later backfill pages converge without browser polling, a
+manual Refresh, or a second ingest path.
+
 The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 (podcast, video, reader, agent, and Nexus actions all address it); **Now
 Playing** is one device-local audio session, not a second durable list.
@@ -1453,7 +1517,7 @@ full contract is [`modules/consumption-activity.md`](modules/consumption-activit
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
 
 The same `search()` backs the `/search` results page, mobile Nexus deep
-results, desktop Nexus results, and the chat `app_search` tool. All consume
+results, desktop Nexus results, and the Chat `nexus.search` tool. All consume
 the canonical frontend `SearchQuery` model. Desktop **Nexus**
 (`components/nexus/`, `lib/nexus/`) is a controlled switchboard presentation
 over explicit result projections, not a second search model: its zero state is
@@ -1748,18 +1812,36 @@ they open over Resume and never become panes.
 **Android shell** (`apps/android`): a Kotlin app with `MainActivity` for the
 hardened WebView and `ShareActivity` for system-share capture. The WebView has
 no `addJavascriptInterface`, file/content access, third-party cookies, or
-off-origin in-WebView navigation. Two strict AndroidX WebKit listeners are
-confined to the exact owned origin and main frame: `nexusOfflineMedia` carries
-download commands/snapshots, and `nexusPlayer` carries service-player
-commands/snapshots. `NexusOriginClient` calls only fixed listening-state and
-Consumption-activity BFF paths with WebView cookies; arbitrary native product
-HTTP is forbidden. `OfflineMediaStore` is the sole device owner of Media3
-downloads, index, non-evicting app-private cache, public-media data source,
-network policy, account purge, recovery, and native playback source
-resolution. Ready canonical audio is read directly from that cache; the
-superseded WebView GET/range route does not exist. Work resumes only after a
-verified account handshake while Nexus is foregrounded; there is no
-boot/background scheduler or cold-launch-offline shell. Native Google sign-in
+off-origin in-WebView navigation. Three strict AndroidX WebKit listeners are
+confined to their exact owned main-frame origins: `nexusOfflineMedia` retains
+audio download commands/snapshots, `nexusPlayer` retains service-player
+commands/snapshots, and `nexusOfflineReading` carries the separate reading
+snapshot/command protocol for the hosted origin and packaged shelf.
+
+`OfflineMediaStore` remains the sole device owner of Media3 downloads, index,
+non-evicting app-private cache, account purge, recovery, and native playback
+source resolution. `OfflineReadingStore` separately owns reading SQLite rows,
+app-private package files, Keystore binding seal, transfers, leases, removals,
+and pending reader position. They share only the persisted network-policy value
+and presentation grouping; neither store becomes a generic offline store.
+For eligible ready documents, the server-owned resource-action snapshot gives
+the hosted renderer the exact media ID, canonical document kind, and bounded
+`requestedTitle` for enqueue. That title is presentation metadata only; it
+does not authorize work or select package identity.
+
+When validated connectivity is absent, `MainActivity` can load the committed
+APK shelf at `appassets.androidplatform.net` without hosted bootstrap. The
+request router serves only packaged static assets and in-memory lease paths;
+PDF byte ranges are handled natively, and every other reserved-host request is
+a local 404 rather than a network fallback. Reading transfer I/O is owned by a
+persisted user-initiated JobScheduler lane and uses only its supplied network.
+`OfflineReadingOriginClient` calls fixed account-binding/token/progress BFF
+paths plus the exact configured direct package origin. No renderer supplies an
+account, URL, header, cookie, or filesystem path. Native state-changing BFF
+requests explicitly carry the exact pinned hosted `Origin`; OkHttp does not
+synthesize browser CSRF headers.
+
+Native Google sign-in
 (Credential Manager) and Custom-Tab OAuth both converge on a server-minted,
 single-use, PKCE-bound
 `nexus://auth/handoff` code that injects a first-party session cookie into the

@@ -45,8 +45,6 @@ private const val DURABLE_INDEX_MUTATION_ATTEMPTS = 3
 private const val SYSTEM_LIMIT_FENCE_TIMEOUT_MS = 1_500L
 private const val OFFLINE_MEDIA_CACHE_DIRECTORY = "offline-media"
 private const val OFFLINE_MEDIA_DOWNLOAD_INDEX_NAME = "offline_media"
-private const val OFFLINE_MEDIA_PREFERENCES = "offline_media_policy"
-private const val NETWORK_POLICY_KEY = "network_policy"
 private const val LOG_TAG = "NexusOfflineMedia"
 
 internal class OfflinePlaybackSource(
@@ -387,6 +385,14 @@ internal fun removalRequiresManagerObservation(state: Int): Boolean {
     )
 }
 
+internal fun <T> selectAccountRemovalIds(
+    values: List<T>,
+    retainedAccountId: UUID?,
+    identity: (T) -> Pair<UUID, String>,
+): Set<String> = values.map(identity)
+    .filter { (accountId, _) -> retainedAccountId == null || accountId != retainedAccountId }
+    .mapTo(mutableSetOf()) { (_, id) -> id }
+
 private inline fun <T> indexResult(block: () -> T): Result<T> {
     return try {
         Result.success(block())
@@ -419,6 +425,17 @@ internal class OfflineMediaStore private constructor(
         val accountId: UUID,
         val generation: Long,
         val callback: (Result<Pair<List<OfflineMediaItem>, NetworkPolicy>>) -> Unit,
+    )
+
+    private data class PendingPurge(
+        val generation: Long,
+        val waitingForRemoval: MutableSet<String>,
+        val callback: (Result<Unit>) -> Unit,
+    )
+
+    private data class QueuedPurge(
+        val generation: Long,
+        val callback: (Result<Unit>) -> Unit,
     )
 
     private class PendingEnqueue(
@@ -500,10 +517,7 @@ internal class OfflineMediaStore private constructor(
             safeHttpClient,
         ),
     )
-    private val preferences = appContext.getSharedPreferences(
-        OFFLINE_MEDIA_PREFERENCES,
-        Context.MODE_PRIVATE,
-    )
+    private val networkPolicyStore = OfflineNetworkPolicyStore(appContext)
     private val connectivityManager =
         appContext.getSystemService(ConnectivityManager::class.java)
     private val readLeases = mutableMapOf<String, Int>()
@@ -518,12 +532,14 @@ internal class OfflineMediaStore private constructor(
     )
     private val admissionTokens = ConcurrentHashMap<String, AdmissionToken>()
     private val connectQueue = ArrayDeque<QueuedConnect>()
+    private val purgeQueue = ArrayDeque<QueuedPurge>()
     private val sessionGeneration = AtomicLong(0)
     private val foregroundGeneration = AtomicLong(0)
 
     @Volatile
     private var activeAccountId: UUID? = null
     private var pendingConnect: PendingConnect? = null
+    private var pendingPurge: PendingPurge? = null
     private var initialized = false
     private var reconciled = false
     private var foregroundRequested = false
@@ -734,8 +750,11 @@ internal class OfflineMediaStore private constructor(
                             pendingRemovals.remove(download.request.id)
                         }
                         completeRemoval(download.request.id, Result.success(Unit))
+                        val purge = pendingPurge
                         val connect = pendingConnect
-                        if (connect != null && connect.waitingForRemoval.remove(download.request.id)) {
+                        if (purge != null && purge.waitingForRemoval.remove(download.request.id)) {
+                            finishPurgeIfReady(purge)
+                        } else if (connect != null && connect.waitingForRemoval.remove(download.request.id)) {
                             finishConnectIfReady(connect)
                         } else {
                             metadata(download).takeIf { it.accountId == activeAccountId }?.let {
@@ -775,6 +794,20 @@ internal class OfflineMediaStore private constructor(
         activeAccountId = null
         sessionGeneration.incrementAndGet()
         admissionTokens.clear()
+    }
+
+    /**
+     * Fences admissions, durably removes every account-owned audio copy, and
+     * reports success only after Media3 and cache removal have been observed.
+     */
+    fun purgeAndDisconnect(callback: (Result<Unit>) -> Unit) {
+        activeAccountId = null
+        admissionTokens.clear()
+        val generation = sessionGeneration.incrementAndGet()
+        worker.execute {
+            purgeQueue.addLast(QueuedPurge(generation, callback))
+            startNextConnect()
+        }
     }
 
     fun connect(
@@ -982,22 +1015,22 @@ internal class OfflineMediaStore private constructor(
             if (activeAccountId == null) {
                 return@execute callback(Result.failure(AccountMismatchException()))
             }
-            if (networkPolicy == policy) {
-                return@execute callback(Result.success(Unit))
-            }
-            if (!preferences.edit().putString(NETWORK_POLICY_KEY, policy.name).commit()) {
+            val persisted = runCatching {
+                if (networkPolicyStore.get() != policy) networkPolicyStore.set(policy)
+                networkPolicyStore.get()
+            }.getOrElse {
                 return@execute callback(
-                    Result.failure(OfflineMediaPersistenceException())
+                    Result.failure(OfflineMediaPersistenceException(it))
                 )
             }
-            networkPolicy = policy
-            val requirements = requirementsFor(policy)
+            networkPolicy = persisted
+            val requirements = requirementsFor(persisted)
             mainHandler.post {
                 downloadManager.setRequirements(requirements)
                 if (foregroundAuthorized && activeAccountId != null) {
                     OfflineMediaDownloadService.resume(appContext)
                 }
-                listeners.forEach { it.onNetworkPolicyChanged(policy) }
+                listeners.forEach { it.onNetworkPolicyChanged(persisted) }
                 callback(Result.success(Unit))
             }
         }
@@ -1285,16 +1318,24 @@ internal class OfflineMediaStore private constructor(
         )
 
     private fun startNextConnect() {
-        if (pendingConnect != null || connectQueue.isEmpty() || !initialized) {
+        if (pendingConnect != null || pendingPurge != null || !initialized) {
             return
         }
+        if (purgeQueue.isEmpty() && connectQueue.isEmpty()) return
         if (!reconciled && !reconcile()) {
-            connectQueue.removeFirst().callback(
-                Result.failure(OfflineMediaPersistenceException())
-            )
+            if (purgeQueue.isNotEmpty()) {
+                purgeQueue.removeFirst().callback(Result.failure(OfflineMediaPersistenceException()))
+            } else if (connectQueue.isNotEmpty()) {
+                connectQueue.removeFirst().callback(Result.failure(OfflineMediaPersistenceException()))
+            }
             startNextConnect()
             return
         }
+        if (purgeQueue.isNotEmpty()) {
+            startPurge(purgeQueue.removeFirst())
+            return
+        }
+        if (connectQueue.isEmpty()) return
         val queued = connectQueue.removeFirst()
         if (queued.generation != sessionGeneration.get()) {
             startNextConnect()
@@ -1345,6 +1386,58 @@ internal class OfflineMediaStore private constructor(
         }
     }
 
+    private fun startPurge(queued: QueuedPurge) {
+        val downloads = try {
+            downloads()
+        } catch (error: IOException) {
+            queued.callback(Result.failure(OfflineMediaPersistenceException(error)))
+            startNextConnect()
+            return
+        }
+        val waiting = selectAccountRemovalIds(downloads, retainedAccountId = null) {
+            metadata(it).accountId to it.request.id
+        }.toMutableSet()
+        for ((id, admission) in pendingEnqueues) {
+            waiting.add(id)
+            admission.canceled.set(true)
+            admission.cancellation.cancel()
+            admission.callbacks.add {
+                worker.execute {
+                    val active = pendingPurge
+                    if (active != null && active.waitingForRemoval.remove(id)) {
+                        finishPurgeIfReady(active)
+                    }
+                }
+            }
+        }
+        val pending = PendingPurge(queued.generation, waiting, queued.callback)
+        pendingPurge = pending
+        if (waiting.isEmpty()) {
+            finishPurgeIfReady(pending)
+            return
+        }
+        for (download in downloads) {
+            if (!beginAccountRemoval(download)) {
+                failPurge(pending, OfflineMediaPersistenceException())
+                return
+            }
+        }
+    }
+
+    private fun finishPurgeIfReady(purge: PendingPurge) {
+        if (purge.waitingForRemoval.isNotEmpty() || pendingPurge !== purge) return
+        pendingPurge = null
+        purge.callback(Result.success(Unit))
+        startNextConnect()
+    }
+
+    private fun failPurge(purge: PendingPurge, error: OfflineMediaPersistenceException) {
+        if (pendingPurge !== purge) return
+        pendingPurge = null
+        purge.callback(Result.failure(error))
+        startNextConnect()
+    }
+
     private fun finishConnectIfReady(connect: PendingConnect) {
         if (connect.waitingForRemoval.isNotEmpty()) {
             return
@@ -1384,6 +1477,11 @@ internal class OfflineMediaStore private constructor(
     }
 
     private fun failConnectRemoval(id: String) {
+        val purge = pendingPurge
+        if (purge != null && purge.waitingForRemoval.remove(id)) {
+            failPurge(purge, OfflineMediaPersistenceException())
+            return
+        }
         val connect = pendingConnect ?: return
         if (connect.waitingForRemoval.remove(id)) {
             failConnect(connect, OfflineMediaPersistenceException())
@@ -1929,11 +2027,7 @@ internal class OfflineMediaStore private constructor(
     }
 
     private fun loadNetworkPolicy(): NetworkPolicy {
-        val value = preferences.getString(
-            NETWORK_POLICY_KEY,
-            NetworkPolicy.UnmeteredOnly.name,
-        )
-        return NetworkPolicy.valueOf(value ?: error("network policy preference was null"))
+        return networkPolicyStore.get()
     }
 
     private fun requirementsFor(policy: NetworkPolicy): Requirements {

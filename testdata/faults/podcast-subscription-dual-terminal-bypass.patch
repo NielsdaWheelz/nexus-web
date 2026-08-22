@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/podcasts/subscriptions.py b/python/nexus/services/podcasts/subscriptions.py
+--- a/python/nexus/services/podcasts/subscriptions.py
++++ b/python/nexus/services/podcasts/subscriptions.py
+@@ -857,7 +857,7 @@ def read_subscription_lifecycle(
+     )
+     terminal = (
+         row["sync_status"] in _TERMINAL_SYNC_STATUSES
+-        and backfill_state in _TERMINAL_BACKFILL_STATES
++        or backfill_state in _TERMINAL_BACKFILL_STATES
+     )
+     return PodcastSubscriptionLifecycle(
+         subscription_id=subscription_id,

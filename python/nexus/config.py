@@ -449,11 +449,6 @@ class Settings(BaseSettings):
     # positive cadence (prod: 86400). The on-demand trigger still fires on ingest.
     atlas_project_schedule_seconds: int = Field(default=0, alias="ATLAS_PROJECT_SCHEDULE_SECONDS")
 
-    # Amanuensis: ASSISTANT_WRITE_TOOLS_ENABLED=false omits the five write
-    # ToolSpecs from the chat tool loop, leaving a read-only agent (amanuensis
-    # D-6, AC-6).
-    assistant_write_tools_enabled: bool = Field(default=True, alias="ASSISTANT_WRITE_TOOLS_ENABLED")
-
     # Post Room: private email ingest address (Cloudflare Email Worker → HMAC-signed POST).
     # EMAIL_INGEST_ENABLED gates route registration; when false the endpoint is absent
     # entirely (no live public POST target in CI/local). Required keys are validated

@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- The shelf pins the canonical dark room: it imports the hosted design-token
+     owner and must never resolve the light overrides on a light-mode device. -->
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <!-- unsafe-inline is style-only: the shared reader uses reviewed React style props; package HTML forbids style tags/attributes. -->
+    <!-- wasm-unsafe-eval is required for the packaged PDF.js JPX/JBIG2/ICC WebAssembly modules; it grants no script evaluation and adds no origin. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" />
+    <title>Nexus · Downloaded reading</title>
+    <script type="module" crossorigin src="/nexus-offline/assets/index-BnFwN24i.js"></script>
+    <link rel="stylesheet" crossorigin href="/nexus-offline/assets/index-CYiirNwy.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

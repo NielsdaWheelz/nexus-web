@@ -90,7 +90,6 @@ _CODEX_AGENT_IMAGE_ENVIRONMENT_NAMES = frozenset(
         "GPG_KEY",
         "LANG",
         "NODE_ENV",
-        "NODE_INGEST_SCRIPT",
         "PATH",
         "PYTHONPATH",
         "PYTHON_SHA256",
@@ -2221,6 +2220,10 @@ def publish_config(source: Path, store: ReleaseStore, *, next_source_sha: str) -
     store.require_current_record()
     store.assert_fresh_candidate(next_source_sha)
     values = _read_env(source)
+    if "NODE_INGEST_SCRIPT" in values:
+        raise ReleaseDefect(
+            "NODE_INGEST_SCRIPT is image-owned and must not be present in published production config"
+        )
     canonical = "".join(f"{key}={values[key]}\n" for key in sorted(values)).encode()
     digest = hashlib.sha256(canonical).hexdigest()
     store.paths.config_root.mkdir(mode=0o750, parents=True, exist_ok=True)

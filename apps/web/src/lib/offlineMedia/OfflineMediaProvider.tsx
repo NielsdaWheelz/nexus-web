@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
-import DownloadsOverlay from "@/components/offlineMedia/DownloadsOverlay";
+import { requestDownloadsOpen } from "@/components/offlineMedia/downloadsSurfaceIngress";
 import { apiFetch } from "@/lib/api/client";
 import { absent, type Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -133,7 +133,6 @@ export function OfflineMediaProvider({
   const capability =
     session.accountId === accountId ? session.capability : CONNECTING;
   const [asyncDefect, setAsyncDefect] = useState<Error | null>(null);
-  const [downloadsOpen, setDownloadsOpen] = useState(false);
 
   useEffect(() => {
     const sessionTransport =
@@ -142,7 +141,6 @@ export function OfflineMediaProvider({
         : transport;
     if (sessionTransport === null) {
       setSession({ accountId, capability: UNAVAILABLE });
-      setDownloadsOpen(false);
       return;
     }
 
@@ -171,7 +169,7 @@ export function OfflineMediaProvider({
         setAsyncDefect(error);
       },
       handleUnauthenticatedApiError,
-      () => setDownloadsOpen(true),
+      requestDownloadsOpen,
     );
     setSession({ accountId, capability: CONNECTING });
     void controller
@@ -222,7 +220,6 @@ export function OfflineMediaProvider({
     document.addEventListener("visibilitychange", refreshOnVisibility);
     return () => {
       current = false;
-      setDownloadsOpen(false);
       document.removeEventListener("visibilitychange", refreshOnVisibility);
       controller.dispose();
     };
@@ -234,15 +231,7 @@ export function OfflineMediaProvider({
     <OfflineMediaContext.Provider value={capability}>
       {children}
       {capability.kind === "Ready" ? (
-        <>
-          <OfflineMediaAnnouncements store={capability.store} />
-          <DownloadsOverlay
-            open={downloadsOpen}
-            onClose={() => setDownloadsOpen(false)}
-            store={capability.store}
-            controller={capability.controller}
-          />
-        </>
+        <OfflineMediaAnnouncements store={capability.store} />
       ) : null}
     </OfflineMediaContext.Provider>
   );

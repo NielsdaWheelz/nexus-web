@@ -14,7 +14,7 @@ from types import ModuleType
 
 import pytest
 
-from nexus.release_artifact import CandidateImages
+from nexus.release_artifact import CandidateImages, build_runtime_identity
 from tests.testkit.host_release import (
     CURRENT_SHA,
     HostReleaseHarness,
@@ -26,6 +26,10 @@ NEXT_SHA = "2" * 40
 IMAGE_DIGEST = "a" * 64
 WORKER_DIGEST = "b" * 64
 ORACLE_DIGEST = "c" * 64
+CURRENT_DATABASE_REVISION = build_runtime_identity(
+    REPO_ROOT,
+    SOURCE_SHA,
+).expected_database_revision
 
 
 def _release_module() -> ModuleType:
@@ -52,7 +56,7 @@ def _candidate(source_sha: str = SOURCE_SHA) -> dict[str, object]:
             "api": f"ghcr.io/nielsdawheelz/nexus-api@sha256:{IMAGE_DIGEST}",
             "worker": f"ghcr.io/nielsdawheelz/nexus-worker@sha256:{WORKER_DIGEST}",
         },
-        "expected_database_revision": "0218",
+        "expected_database_revision": CURRENT_DATABASE_REVISION,
         "expected_oracle_manifest_digest": f"sha256:{ORACLE_DIGEST}",
     }
 
@@ -332,7 +336,7 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
     assert stat.S_IMODE(profile_metadata.st_mode) == 0o644
     assert state["apparmor_profile_load_count"] == 1
     assert state["apparmor_profile_preflight_count"] == 1
-    assert state["database_revision"] == "0218"
+    assert state["database_revision"] == CURRENT_DATABASE_REVISION
     assert state["backup_dump_count"] == 1
     assert state["backup_verify_count"] == 2
     assert state["migration_count"] == 1
@@ -343,15 +347,15 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
     assert state["jobs"] == {}
     assert state["ancestry_proofs"] == [
         {
-            "candidate_head": "0218",
+            "candidate_head": CURRENT_DATABASE_REVISION,
             "current_revision": "0210",
-            "heads": ["0218"],
+            "heads": [CURRENT_DATABASE_REVISION],
             "is_ancestor": True,
         },
         {
-            "candidate_head": "0218",
+            "candidate_head": CURRENT_DATABASE_REVISION,
             "current_revision": "0210",
-            "heads": ["0218"],
+            "heads": [CURRENT_DATABASE_REVISION],
             "is_ancestor": True,
         },
     ]
@@ -684,7 +688,10 @@ def test_forward_fix_converges_stopped_writer_limits_without_requesting_live_sta
         else:
             container["image_id"] = state["worker_image_id"]
             container["config"]["Image"] = state["worker_image"]
-    harness.update_state(containers=containers, database_revision="0218")
+    harness.update_state(
+        containers=containers,
+        database_revision=CURRENT_DATABASE_REVISION,
+    )
     successor_sha = harness.install_candidate(_candidate(NEXT_SHA))
 
     completed = harness.run_apply(source_sha=successor_sha)
@@ -1195,7 +1202,7 @@ def test_host_apply_replays_every_durable_phase_after_process_death(
     assert completed is not None
     assert completed.phase is release.ReleasePhase.AwaitingFrontendPromotion
     state = harness.state()
-    assert state["database_revision"] == "0218"
+    assert state["database_revision"] == CURRENT_DATABASE_REVISION
     assert state["migration_count"] == 1
     assert state["jobs"] == {}
     assert not tuple(release.ReleasePaths.under(tmp_path).state_root.rglob("*.partial"))
@@ -1369,7 +1376,7 @@ def test_host_apply_recovers_a_completed_migration_side_effect_without_reapplyin
     persisted = _stored_attempt(release, tmp_path)
     assert persisted is not None
     assert persisted.phase is release.ReleasePhase.DataMutationStarted
-    assert harness.state()["database_revision"] == "0218"
+    assert harness.state()["database_revision"] == CURRENT_DATABASE_REVISION
 
     replayed = harness.run_apply(interrupt_after_migration=True)
 
@@ -1457,7 +1464,10 @@ def test_forward_fix_accepts_advanced_schema_and_stopped_writers(
         else:
             container["image_id"] = state["worker_image_id"]
             container["config"]["Image"] = state["worker_image"]
-    harness.update_state(containers=containers, database_revision="0218")
+    harness.update_state(
+        containers=containers,
+        database_revision=CURRENT_DATABASE_REVISION,
+    )
 
     successor_sha = harness.install_candidate(_candidate(NEXT_SHA))
     completed = harness.run_apply(source_sha=successor_sha)
@@ -1721,6 +1731,29 @@ def test_config_publication_creates_an_immutable_content_addressed_snapshot(
                     release.ReleaseStore(paths),
                     next_source_sha=SOURCE_SHA,
                 )
+
+
+def test_config_publication_rejects_even_blank_image_owned_node_ingest_script_before_mutation(
+    tmp_path: Path,
+) -> None:
+    """Risk: published production config substitutes the baked egress implementation."""
+    release = _release_module()
+    with _host_harness(tmp_path) as harness:
+        paths = release.ReleasePaths.under(harness.root)
+        source = tmp_path / "source.env"
+        source.write_text("ALPHA=first\nNODE_INGEST_SCRIPT=\n", encoding="utf-8")
+        before_config = {path.name for path in paths.config_root.iterdir()}
+        before_current = paths.current_config.readlink()
+
+        with pytest.raises(release.ReleaseDefect, match="NODE_INGEST_SCRIPT"):
+            release.publish_config(
+                source,
+                release.ReleaseStore(paths),
+                next_source_sha=SOURCE_SHA,
+            )
+
+        assert {path.name for path in paths.config_root.iterdir()} == before_config
+        assert paths.current_config.readlink() == before_current
 
 
 def test_inspect_resumes_when_current_publication_prefix_is_not_terminal(

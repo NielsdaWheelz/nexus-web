@@ -17,14 +17,19 @@ from nexus.db.models import MediaFile, MediaUploadSession, MediaUploadSessionDes
 from nexus.storage.client import get_storage_client
 
 
-def test_0217_0218_backfill_is_resumable_fail_closed_and_hard_contracts_schema(
+def test_0220_0221_backfill_is_resumable_fail_closed_and_hard_contracts_schema(
     empty_migration_database_url: str,
 ) -> None:
     migration_root = Path(__file__).parents[3] / "migrations"
     config = Config(migration_root / "alembic.ini")
     config.set_main_option("script_location", str(migration_root / "alembic"))
-    assert ScriptDirectory.from_config(config).get_current_head() == "0218"
-    command.upgrade(config, "0216")
+    scripts = ScriptDirectory.from_config(config)
+    sessions_revision = scripts.get_revision("0220")
+    finalize_revision = scripts.get_revision("0221")
+    assert sessions_revision is not None and sessions_revision.down_revision == "0219"
+    assert finalize_revision is not None and finalize_revision.down_revision == "0220"
+    assert len(scripts.get_heads()) == 1
+    command.upgrade(config, "0219")
 
     user_id = UUID("00000000-0000-0000-0000-000000002160")
     valid_id = UUID("00000000-0000-0000-0000-000000002161")
@@ -171,7 +176,7 @@ def test_0217_0218_backfill_is_resumable_fail_closed_and_hard_contracts_schema(
                 },
             )
 
-        command.upgrade(config, "0217")
+        command.upgrade(config, "0220")
         inspector = inspect(engine)
         assert {column["name"] for column in inspector.get_columns("media_upload_sessions")} == {
             "id",
@@ -206,9 +211,9 @@ def test_0217_0218_backfill_is_resumable_fail_closed_and_hard_contracts_schema(
         )
 
         with pytest.raises(RuntimeError, match="failed to read media_file"):
-            command.upgrade(config, "0218")
+            command.upgrade(config, "0221")
         with engine.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0217"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0220"
             assert (
                 connection.scalar(
                     text("SELECT source_sha256 FROM media_file WHERE media_id = :id"),
@@ -226,9 +231,9 @@ def test_0217_0218_backfill_is_resumable_fail_closed_and_hard_contracts_schema(
 
         storage.put_object(*sources[missing_id], "application/pdf")
         with pytest.raises(RuntimeError, match="size changed"):
-            command.upgrade(config, "0218")
+            command.upgrade(config, "0221")
         with engine.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0217"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0220"
             assert (
                 connection.scalar(
                     text("SELECT source_sha256 FROM media_file WHERE media_id = :id"),
@@ -239,9 +244,9 @@ def test_0217_0218_backfill_is_resumable_fail_closed_and_hard_contracts_schema(
 
         storage.put_object(*sources[changed_id], "application/pdf")
         with pytest.raises(RuntimeError, match="active source publication defects"):
-            command.upgrade(config, "0218")
+            command.upgrade(config, "0221")
         with engine.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0217"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0220"
             assert (
                 connection.scalar(
                     text("SELECT source_sha256 FROM media_file WHERE media_id = :id"),
@@ -276,10 +281,10 @@ def test_0217_0218_backfill_is_resumable_fail_closed_and_hard_contracts_schema(
                 {"id": phantom_id},
             )
         storage.delete_object(phantom_source[0])
-        command.upgrade(config, "0218")
+        command.upgrade(config, "0221")
         inspector = inspect(engine)
         with engine.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0218"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0221"
             assert dict(
                 connection.execute(
                     text("SELECT media_id, source_sha256 FROM media_file ORDER BY media_id")
@@ -326,18 +331,18 @@ def test_0217_0218_backfill_is_resumable_fail_closed_and_hard_contracts_schema(
         assert MediaFile.source_sha256.nullable is False
 
         with pytest.raises(NotImplementedError, match="irreversible document-import"):
-            command.downgrade(config, "0217")
-        # 0217 owns the session tables and the digest column. `alembic downgrade
-        # 0216` stops at 0218's own refusal, so 0217's contract is asserted on the
+            command.downgrade(config, "0220")
+        # 0220 owns the session tables and the digest column. `alembic downgrade
+        # 0219` stops at 0221's own refusal, so 0220's contract is asserted on the
         # revision itself: without it, a later "make local resets easier" edit could
         # drop media_upload_sessions and media_file.source_sha256 with the whole
         # suite green, destroying every durable upload obligation and source digest.
-        revision_0217 = ScriptDirectory.from_config(config).get_revision("0217")
-        assert revision_0217.module is not None
+        revision_0220 = ScriptDirectory.from_config(config).get_revision("0220")
+        assert revision_0220.module is not None
         with pytest.raises(
-            NotImplementedError, match="0217 is an irreversible document-import hard cutover"
+            NotImplementedError, match="0220 is an irreversible document-import hard cutover"
         ):
-            revision_0217.module.downgrade()
+            revision_0220.module.downgrade()
     finally:
         for storage_path, _payload in sources.values():
             storage.delete_object(storage_path)
