@@ -774,7 +774,7 @@
       "proofs": [
         "vitest:apps/web/src/components/nexus/MediaActivityPage.browser.test.tsx"
       ],
-      "expected_failure": "retries only the exact original upload and removes terminal verification failure"
+      "expected_failure": "offered no Retry upload capability"
     },
     {
       "id": "document-import-confirm-replay-conflict",
@@ -846,7 +846,7 @@
       "proofs": [
         "vitest:apps/web/src/lib/media/ingestionClient.unit.test.ts"
       ],
-      "expected_failure": "expected an unresolved item, got Defect"
+      "expected_failure": "reached the Add sheet as Defect"
     },
     {
       "id": "document-import-child-liveness-bypass",

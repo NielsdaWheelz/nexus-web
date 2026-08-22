@@ -661,6 +661,10 @@ describe("Nexus Activity workflow", () => {
       screen.getByRole("listitem", { current: "step", name: "Validate step" }),
     ).toBeVisible();
 
+    expect(
+      screen.queryByRole("button", { name: "Retry upload" }),
+      "a transport-failed upload offered no Retry upload capability",
+    ).not.toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Retry upload" }));
     const fileInput = screen.getByLabelText("Choose The Last Bakker.epub to retry upload");
     await userEvent.upload(
