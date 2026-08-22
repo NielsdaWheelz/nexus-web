@@ -15,10 +15,7 @@ interface NexusPlayerBridge {
 }
 
 declare global {
-  interface Window {
-    nexusPlayer?: NexusPlayerBridge;
-  }
-  // Android injects this property on Window, whose global object is globalThis.
+  // Android injects the bridge on the page's global object.
   var nexusPlayer: NexusPlayerBridge | undefined;
 }
 
@@ -78,29 +75,32 @@ export class AndroidPlayerClient {
   }
 
   private readonly onMessage = (event: { data: unknown }): void => {
-    let raw: unknown;
+    // Only ingress classification is a protocol failure; what subscribers do
+    // with a valid message is their own outcome.
+    let message: AndroidPlayerReply | AndroidPlayerEvent;
     try {
-      raw =
+      const raw: unknown =
         typeof event.data === "string"
           ? (JSON.parse(event.data) as unknown)
           : event.data;
-      const message = decodeAndroidPlayerMessage(raw);
-      if (isAndroidPlayerEvent(message)) {
-        for (const listener of this.listeners) listener(message);
-        return;
-      }
-      const pending = this.pending.get(message.requestId);
-      if (!pending) return;
-      this.pending.delete(message.requestId);
-      clearTimeout(pending.timeout);
-      if (message.kind === "Rejected") {
-        pending.reject(new NativePlayerRejectedError(message.code));
-      } else {
-        pending.resolve(message);
-      }
+      message = decodeAndroidPlayerMessage(raw);
     } catch (error) {
       this.onProtocolFailure(error);
       this.closeWithError(error);
+      return;
+    }
+    if (isAndroidPlayerEvent(message)) {
+      for (const listener of this.listeners) listener(message);
+      return;
+    }
+    const pending = this.pending.get(message.requestId);
+    if (!pending) return;
+    this.pending.delete(message.requestId);
+    clearTimeout(pending.timeout);
+    if (message.kind === "Rejected") {
+      pending.reject(new NativePlayerRejectedError(message.code));
+    } else {
+      pending.resolve(message);
     }
   };
 

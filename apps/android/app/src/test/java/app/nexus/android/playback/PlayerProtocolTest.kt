@@ -173,6 +173,9 @@ class PlayerProtocolTest {
             ),
         )
 
+        val lecternPendingNaturalEnd = corpusPendingNaturalEnd(
+            PlayerOrigin.Lectern(uuid(11))
+        )
         val replies = buildList {
             add(
                 JSONObject(
@@ -188,7 +191,7 @@ class PlayerProtocolTest {
                     PlayerWire.snapshot(
                         uuid(31),
                         absentNatural,
-                        Presence.Absent,
+                        Presence.Present(lecternPendingNaturalEnd),
                     )
                 )
             )
@@ -206,11 +209,31 @@ class PlayerProtocolTest {
             replies.drop(3),
         )
 
-        val pendingNaturalEnd = PendingNaturalEnd(
+        assertJsonArraySimilar(
+            protocolCorpus.getJSONArray("events"),
+            listOf(
+                JSONObject(PlayerWire.snapshotChanged(absentOff)),
+                JSONObject(
+                    PlayerWire.controllerReconnected(
+                        snapshotJson(absentNatural),
+                        lecternPendingNaturalEnd,
+                    )
+                ),
+                JSONObject(
+                    PlayerWire.naturalEndPending(
+                        corpusPendingNaturalEnd(PlayerOrigin.Direct)
+                    )
+                ),
+            ),
+        )
+    }
+
+    private fun corpusPendingNaturalEnd(origin: PlayerOrigin): PendingNaturalEnd =
+        PendingNaturalEnd(
             accountId = uuid(2),
             sessionKey = uuid(8),
             mediaId = uuid(9),
-            origin = PlayerOrigin.Direct,
+            origin = origin,
             clientMutationId = uuid(29),
             terminalListening = TerminalListening(
                 positionMs = 120_000,
@@ -221,20 +244,6 @@ class PlayerProtocolTest {
             ),
             expectedConsumptionOverrideRevision = Presence.Present(4),
         )
-        assertJsonArraySimilar(
-            protocolCorpus.getJSONArray("events"),
-            listOf(
-                JSONObject(PlayerWire.snapshotChanged(absentOff)),
-                JSONObject(
-                    PlayerWire.controllerReconnected(
-                        snapshotJson(absentNatural),
-                        null,
-                    )
-                ),
-                JSONObject(PlayerWire.naturalEndPending(pendingNaturalEnd)),
-            ),
-        )
-    }
 
     @Test
     fun `canonical nested variants are emitted exactly by native owners`() {

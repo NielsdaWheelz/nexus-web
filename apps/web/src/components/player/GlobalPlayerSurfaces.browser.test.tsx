@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Component, type ReactNode } from "react";
@@ -7,7 +7,13 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { ResourceCacheProvider } from "@/lib/api/resourceCache";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
+import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { ResourceOverlaysProvider } from "@/lib/resources/resourceOverlaysController";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { ANDROID_PLAYER_PROTOCOL_VERSION } from "@/lib/player/androidPlayerProtocol";
 import {
   GlobalPlayerProvider,
@@ -63,8 +69,11 @@ function installBff({ holdSettlement = false } = {}): {
   });
   vi.stubGlobal(
     "fetch",
-    async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), window.location.origin);
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(
+        input instanceof Request ? input.url : String(input),
+        window.location.origin,
+      );
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
       }
@@ -117,10 +126,45 @@ function installBff({ holdSettlement = false } = {}): {
           },
         });
       }
+      if (url.pathname === "/api/resource-items/action-snapshots/resolve") {
+        // The shell resolves action snapshots for the playing media; the
+        // player surfaces under test do not depend on their content.
+        const body =
+          typeof init?.body === "string"
+            ? (JSON.parse(init.body) as { refs?: unknown })
+            : null;
+        const refs = Array.isArray(body?.refs) ? (body.refs as string[]) : [];
+        return jsonResponse({
+          data: {
+            snapshots: refs.map((ref) => ({
+              ref,
+              activation: {
+                resourceRef: ref,
+                kind: "none",
+                href: null,
+                unresolvedReason: null,
+              },
+              missing: true,
+              factsRevision: "0".repeat(64),
+              capabilities: [],
+            })),
+          },
+        });
+      }
       throw new Error(`Unexpected BFF request: ${url.pathname}`);
     },
   );
   return { releaseSettlement, settlementStarted };
+}
+
+type FakeBridge = {
+  postMessage: (message: string) => void;
+  onmessage: ((event: { data: unknown }) => void) | null;
+};
+
+/** The only fake: the external `window.nexusPlayer` bridge Android injects. */
+function installBridge(bridge: FakeBridge): void {
+  vi.stubGlobal("nexusPlayer", bridge);
 }
 
 function installSkewedBridge(): void {
@@ -140,11 +184,7 @@ function installSkewedBridge(): void {
     },
     onmessage: null,
   };
-  vi.stubGlobal("nexusPlayer", bridge);
-  Object.defineProperty(document.defaultView!, "nexusPlayer", {
-    configurable: true,
-    value: bridge,
-  });
+  installBridge(bridge);
 }
 
 function canonicalSnapshot(): object {
@@ -209,6 +249,32 @@ function canonicalSnapshot(): object {
   };
 }
 
+function installCorruptMatchingIdentityBridge(): void {
+  const bridge: FakeBridge = {
+    postMessage: (message) => {
+      const command = JSON.parse(message) as {
+        requestId: string;
+        protocolVersion: number;
+        protocolContractSha256: string;
+      };
+      queueMicrotask(() => {
+        bridge.onmessage?.({
+          data: JSON.stringify({
+            kind: "Connected",
+            requestId: command.requestId,
+            protocolVersion: command.protocolVersion,
+            protocolContractSha256: command.protocolContractSha256,
+            snapshot: { kind: "Canonical" },
+            pendingNaturalEnd: { kind: "Absent" },
+          }),
+        });
+      });
+    },
+    onmessage: null,
+  };
+  installBridge(bridge);
+}
+
 function installConnectThenRejectedPlayBridge(): { connected: Promise<void> } {
   let resolveConnected: () => void = () => {};
   const connected = new Promise<void>((resolve) => {
@@ -250,11 +316,7 @@ function installConnectThenRejectedPlayBridge(): { connected: Promise<void> } {
     },
     onmessage: null,
   };
-  vi.stubGlobal("nexusPlayer", bridge);
-  Object.defineProperty(document.defaultView!, "nexusPlayer", {
-    configurable: true,
-    value: bridge,
-  });
+  installBridge(bridge);
   return { connected };
 }
 
@@ -344,11 +406,7 @@ function installNaturalEndBarrierBridge({
     },
     onmessage: null,
   };
-  vi.stubGlobal("nexusPlayer", bridge);
-  Object.defineProperty(document.defaultView!, "nexusPlayer", {
-    configurable: true,
-    value: bridge,
-  });
+  installBridge(bridge);
   return {
     connected,
     emitReceipt: () => {
@@ -474,11 +532,7 @@ function installUnavailablePlayReconnectBridge(): {
     },
     onmessage: null,
   };
-  vi.stubGlobal("nexusPlayer", bridge);
-  Object.defineProperty(document.defaultView!, "nexusPlayer", {
-    configurable: true,
-    value: bridge,
-  });
+  installBridge(bridge);
   return {
     connected,
     reconnect: () => {
@@ -514,10 +568,8 @@ function PlayerCommandProbe() {
 }
 
 function renderPlayerSurfaces({
-  includeSurfaces = true,
   includeCommandProbe = false,
 }: {
-  includeSurfaces?: boolean;
   includeCommandProbe?: boolean;
 } = {}): void {
   render(
@@ -537,16 +589,33 @@ function renderPlayerSurfaces({
                   workspacePrimaryMetrics={workspacePrimaryMetrics}
                 >
                   <MobileChromeProvider>
-                    <LecternProvider>
-                      <DefectBoundary>
-                        <GlobalPlayerProvider accountId={ACCOUNT_ID}>
-                          <WalknoteSessionProvider>
-                            {includeSurfaces ? <GlobalPlayerSurfaces /> : null}
-                            {includeCommandProbe ? <PlayerCommandProbe /> : null}
-                          </WalknoteSessionProvider>
-                        </GlobalPlayerProvider>
-                      </DefectBoundary>
-                    </LecternProvider>
+                    <KeybindingsProvider>
+                      <LecternProvider>
+                        <LibraryPlacementControllerProvider>
+                          <ShareControllerProvider>
+                            <OfflineMediaProvider
+                              accountId={ACCOUNT_ID}
+                              transport={null}
+                            >
+                              <ResourceOverlaysProvider>
+                                <DefectBoundary>
+                                  <GlobalPlayerProvider accountId={ACCOUNT_ID}>
+                                    <ResourceActionRuntimeProvider>
+                                      <WalknoteSessionProvider>
+                                        <GlobalPlayerSurfaces />
+                                        {includeCommandProbe ? (
+                                          <PlayerCommandProbe />
+                                        ) : null}
+                                      </WalknoteSessionProvider>
+                                    </ResourceActionRuntimeProvider>
+                                  </GlobalPlayerProvider>
+                                </DefectBoundary>
+                              </ResourceOverlaysProvider>
+                            </OfflineMediaProvider>
+                          </ShareControllerProvider>
+                        </LibraryPlacementControllerProvider>
+                      </LecternProvider>
+                    </KeybindingsProvider>
                   </MobileChromeProvider>
                 </WorkspaceStoreProvider>
               </PaneReturnMementoProvider>
@@ -569,33 +638,45 @@ describe("Global player protocol-skew presentation", () => {
     installSkewedBridge();
     renderPlayerSurfaces();
 
+    const player = await screen.findByRole("region", { name: "Media player" });
+    const surface = within(player);
+    expect(surface.getByText("Update Nexus for Android")).toBeVisible();
     expect(
-      await screen.findByText("Update Nexus for Android"),
+      surface.getByText("This app version no longer matches the Nexus player."),
     ).toBeVisible();
-    expect(
-      screen.getByText("This app version no longer matches the Nexus player."),
-    ).toBeVisible();
-    const update = screen.getByRole("link", { name: "Update" });
+    const update = surface.getByRole("link", { name: "Update" });
     expect(update).toHaveAttribute("href", "/android");
     await userEvent.tab();
     expect(update).toHaveFocus();
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-    await waitFor(() => expect(update).toBeVisible());
+    expect(surface.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
   it("keeps Retry for transient bridge unavailability", async () => {
     installBff();
     renderPlayerSurfaces();
 
-    expect(await screen.findByRole("button", { name: "Retry" })).toBeVisible();
+    const player = await screen.findByRole("region", { name: "Media player" });
+    const surface = within(player);
+    expect(surface.getByRole("button", { name: "Retry" })).toBeVisible();
+    expect(surface.queryByText("Update Nexus for Android")).toBeNull();
+    expect(surface.queryByRole("link", { name: "Update" })).toBeNull();
+  });
+
+  it("defects, never Update or Retry, when a matching-identity reply is malformed", async () => {
+    installBff();
+    installCorruptMatchingIdentityBridge();
+    renderPlayerSurfaces();
+
+    expect(await screen.findByText("Player defect boundary")).toBeVisible();
     expect(screen.queryByText("Update Nexus for Android")).toBeNull();
     expect(screen.queryByRole("link", { name: "Update" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
   it("defects, rather than offering Retry, when Play is rejected after connect", async () => {
     installBff();
     const bridge = installConnectThenRejectedPlayBridge();
-    renderPlayerSurfaces({ includeSurfaces: false, includeCommandProbe: true });
+    renderPlayerSurfaces({ includeCommandProbe: true });
 
     await bridge.connected;
     await userEvent.click(screen.getByRole("button", { name: "Send Play" }));
@@ -609,7 +690,7 @@ describe("Global player protocol-skew presentation", () => {
     const bridge = installNaturalEndBarrierBridge({
       delayAcknowledgement: true,
     });
-    renderPlayerSurfaces({ includeSurfaces: false, includeCommandProbe: true });
+    renderPlayerSurfaces({ includeCommandProbe: true });
 
     await bridge.connected;
     await userEvent.click(screen.getByRole("button", { name: "Send Play" }));
@@ -635,7 +716,7 @@ describe("Global player protocol-skew presentation", () => {
     const bridge = installNaturalEndBarrierBridge({
       delayFirstPlayRejection: true,
     });
-    renderPlayerSurfaces({ includeSurfaces: false, includeCommandProbe: true });
+    renderPlayerSurfaces({ includeCommandProbe: true });
 
     await bridge.connected;
     await userEvent.click(screen.getByRole("button", { name: "Send Play" }));
@@ -654,7 +735,7 @@ describe("Global player protocol-skew presentation", () => {
       delayFirstPlayRejection: true,
       delayAcknowledgement: true,
     });
-    renderPlayerSurfaces({ includeSurfaces: false, includeCommandProbe: true });
+    renderPlayerSurfaces({ includeCommandProbe: true });
 
     await bridge.connected;
     await userEvent.click(screen.getByRole("button", { name: "Send Play" }));
@@ -692,7 +773,7 @@ describe("Global player protocol-skew presentation", () => {
   it("drops an ambiguous reconnect-frozen Play and drains queued Seek", async () => {
     installBff();
     const bridge = installUnavailablePlayReconnectBridge();
-    renderPlayerSurfaces({ includeSurfaces: false, includeCommandProbe: true });
+    renderPlayerSurfaces({ includeCommandProbe: true });
 
     await bridge.connected;
     await userEvent.click(screen.getByRole("button", { name: "Send Play" }));

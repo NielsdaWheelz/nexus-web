@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import type { BrowserContext, Page } from "playwright/test";
 import { ANDROID_PLAYER_PROTOCOL_VERSION } from "@/lib/player/androidPlayerProtocol";
+import { readAndroidPlayerProtocolCorpus } from "@/lib/player/androidPlayerProtocolCorpus";
 import {
   expect,
   expectInvalidPasswordFeedback,
@@ -36,16 +34,8 @@ const FIRST_PASSWORD = "Nexus-invitation-password-01!";
 const REPLACEMENT_PASSWORD = "Nexus-replacement-password-02!";
 const ENDED_SESSION_PASSWORD = "Nexus-ended-session-password-03!";
 const MAX_COOKIE_VALUE_BYTES = 3_800;
-const PLAYER_PROTOCOL_CONTRACT_SHA256 = createHash("sha256")
-  .update(
-    readFileSync(
-      path.resolve(
-        __dirname,
-        "../../../../testdata/android/player-protocol.json",
-      ),
-    ),
-  )
-  .digest("hex");
+const PLAYER_PROTOCOL_CONTRACT_SHA256 =
+  readAndroidPlayerProtocolCorpus().contractSha256;
 
 async function savePassword(page: Page, password: string): Promise<void> {
   await page.getByLabel("New password", { exact: true }).fill(password);

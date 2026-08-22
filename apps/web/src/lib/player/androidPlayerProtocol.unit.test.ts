@@ -1,6 +1,3 @@
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Presence } from "@/lib/api/presence";
 import type { PlaybackRateResolution } from "@/lib/lectern/contract";
@@ -27,6 +24,7 @@ import {
   type AndroidPlayerReply,
   type AndroidPlayerSnapshot,
 } from "./androidPlayerProtocol";
+import { readAndroidPlayerProtocolCorpus } from "./androidPlayerProtocolCorpus";
 
 type ProtocolCorpus = {
   readonly version: number;
@@ -167,16 +165,13 @@ const INVENTORY = {
   } satisfies Record<AndroidActivitySyncSnapshot["sync"]["kind"], true>,
 } as const;
 
-const corpusBytes = readFileSync(
-  path.resolve(
-    __dirname,
-    "../../../../../testdata/android/player-protocol.json",
-  ),
-);
-const PROTOCOL_CONTRACT_SHA256 = createHash("sha256")
-  .update(corpusBytes)
-  .digest("hex");
+const { bytes: corpusBytes, contractSha256: PROTOCOL_CONTRACT_SHA256 } =
+  readAndroidPlayerProtocolCorpus();
 const corpus = JSON.parse(corpusBytes.toString("utf8")) as ProtocolCorpus;
+
+function kinds(entries: readonly Record<string, unknown>[]): Set<unknown> {
+  return new Set(entries.map((entry) => entry.kind));
+}
 
 function materialize(value: unknown): unknown {
   if (value === "$PROTOCOL_CONTRACT_SHA256") {
@@ -246,6 +241,51 @@ describe("Android player protocol compatibility", () => {
     expect(Object.keys(INVENTORY)).toEqual(Object.keys(corpus.inventory));
   });
 
+  it("carries one canonical example for every inventoried discriminant", () => {
+    expect(kinds(corpus.commands)).toEqual(new Set(Object.keys(INVENTORY.commands)));
+    expect(kinds([...corpus.replies, ...corpus.rejections])).toEqual(
+      new Set(Object.keys(INVENTORY.replies)),
+    );
+    expect(new Set(corpus.rejections.map((entry) => entry.code))).toEqual(
+      new Set(Object.keys(INVENTORY.rejectionCodes)),
+    );
+    expect(kinds(corpus.events)).toEqual(new Set(Object.keys(INVENTORY.events)));
+    expect(kinds(corpus.snapshots)).toEqual(
+      new Set(Object.keys(INVENTORY.snapshots)),
+    );
+    const nested: Record<keyof ProtocolCorpus["nestedVariants"], keyof typeof INVENTORY> = {
+      activityCapture: "activityCapture",
+      activitySync: "activitySync",
+      origins: "origins",
+      persistence: "persistence",
+      playbackRateSources: "playbackRateSources",
+      playbackPhases: "playbackPhases",
+      pauseShorteningModes: "pauseShorteningModes",
+      pauseShorteningProvenance: "pauseShorteningProvenance",
+      presence: "presence",
+    };
+    for (const [owner, inventoryOwner] of Object.entries(nested)) {
+      const examples = corpus.nestedVariants[
+        owner as keyof ProtocolCorpus["nestedVariants"]
+      ];
+      const discriminants = new Set(
+        examples.map((example) =>
+          typeof example === "string"
+            ? example
+            : testRecord(example, owner).kind,
+        ),
+      );
+      expect(discriminants, owner).toEqual(
+        new Set(Object.keys(INVENTORY[inventoryOwner])),
+      );
+    }
+    const receipts = [...corpus.replies, ...corpus.events]
+      .map((entry) => entry.pendingNaturalEnd)
+      .filter((presence): presence is Record<string, unknown> => presence !== undefined)
+      .map((presence) => presence.kind);
+    expect(new Set(receipts)).toEqual(new Set(Object.keys(INVENTORY.presence)));
+  });
+
   it("classifies a noncurrent version before inspecting an opaque body", () => {
     expect(() =>
       decodeAndroidPlayerMessage({
@@ -265,33 +305,66 @@ describe("Android player protocol compatibility", () => {
     ).toThrow(AndroidPlayerUpdateRequiredError);
   });
 
-  it("keeps malformed matching-identity data on the defect path", () => {
-    expect(() =>
-      decodeAndroidPlayerMessage({
+  it("keeps every matching-identity corruption on the defect path, never Update Required", () => {
+    const reply = (kind: string): Record<string, unknown> => {
+      const found = materializedEntries([
+        ...corpus.replies,
+        ...corpus.events,
+      ]).find((entry) => entry.kind === kind);
+      if (!found) throw new Error(`Protocol corpus is missing ${kind}`);
+      return found;
+    };
+    const connected = reply("Connected");
+    const snapshotReply = reply("Snapshot");
+    const corruptions: Record<string, Record<string, unknown>> = {
+      "unknown discriminant": {
         protocolVersion: 2,
         protocolContractSha256: PROTOCOL_CONTRACT_SHA256,
         kind: "NotAMessage",
-      }),
-    ).toThrow(TypeError);
-  });
-
-  it("preserves plain decoder errors as matching-identity defects", () => {
-    const connected = materializedEntries(corpus.replies).find(
-      (reply) => reply.kind === "Connected",
-    );
-    if (!connected) throw new Error("Protocol corpus is missing Connected reply");
-
-    let observed: unknown;
-    try {
-      decodeAndroidPlayerMessage({
+      },
+      "extra envelope key": { ...connected, extra: true },
+      "missing required field": Object.fromEntries(
+        Object.entries(connected).filter(([key]) => key !== "snapshot"),
+      ),
+      "presence with extra key": {
         ...connected,
         pendingNaturalEnd: { kind: "Absent", unexpected: true },
-      });
-    } catch (error) {
-      observed = error;
+      },
+      "presence without value": {
+        ...connected,
+        pendingNaturalEnd: { kind: "Present" },
+      },
+      "malformed media id in receipt": replaceNested(
+        snapshotReply,
+        ["pendingNaturalEnd", "value", "mediaId"],
+        "not-a-media-id",
+      ),
+      "unknown snapshot kind": replaceNested(connected, ["snapshot", "kind"], "Other"),
+      "unknown enum": replaceNested(
+        connected,
+        ["snapshot", "deviceDefaultPauseShorteningMode"],
+        "Sometimes",
+      ),
+      "out of range number": replaceNested(
+        connected,
+        ["snapshot", "pauseShorteningSavedOnDeviceMs"],
+        -1,
+      ),
+      "unknown rejection code": {
+        ...materializedEntries(corpus.rejections)[0],
+        code: "Teapot",
+      },
+    };
+    for (const [label, fixture] of Object.entries(corruptions)) {
+      let observed: unknown;
+      try {
+        decodeAndroidPlayerMessage(fixture);
+      } catch (error) {
+        observed = error;
+      }
+      expect(observed, label).toBeInstanceOf(Error);
+      expect(observed, label).not.toBeInstanceOf(AndroidPlayerUpdateRequiredError);
     }
-    expect(observed).toBeInstanceOf(Error);
-    expect(observed).not.toBeInstanceOf(TypeError);
   });
 
   it("keeps malformed v2 identity data on the defect path", () => {
@@ -335,34 +408,26 @@ describe("Android player protocol compatibility", () => {
     if (!absent || !canonical || !preview) {
       throw new Error("Protocol corpus is missing a snapshot variant");
     }
-    const cases: ReadonlyArray<
-      readonly [
-        base: Record<string, unknown>,
-        path: readonly string[],
-        variants: readonly unknown[],
-      ]
-    > = [
-      [absent, ["activitySync", "capture"], corpus.nestedVariants.activityCapture],
-      [absent, ["activitySync", "sync"], corpus.nestedVariants.activitySync],
-      [canonical, ["session", "origin"], corpus.nestedVariants.origins],
-      [preview, ["persistence"], corpus.nestedVariants.persistence],
-      [canonical, ["phase"], corpus.nestedVariants.playbackPhases],
-      [
-        canonical,
-        ["pauseShortening", "effectiveMode"],
-        corpus.nestedVariants.pauseShorteningModes,
-      ],
-      [
-        canonical,
-        ["pauseShortening", "provenance"],
-        corpus.nestedVariants.pauseShorteningProvenance,
-      ],
-      [preview, ["descriptor", "durationMs"], corpus.nestedVariants.presence],
-    ];
-    for (const [base, path, variants] of cases) {
+    type NestedOwner = keyof ProtocolCorpus["nestedVariants"];
+    const placements: Record<
+      Exclude<NestedOwner, "playbackRateSources">,
+      readonly [base: Record<string, unknown>, path: readonly string[]]
+    > = {
+      activityCapture: [absent, ["activitySync", "capture"]],
+      activitySync: [absent, ["activitySync", "sync"]],
+      origins: [canonical, ["session", "origin"]],
+      persistence: [preview, ["persistence"]],
+      playbackPhases: [canonical, ["phase"]],
+      pauseShorteningModes: [canonical, ["pauseShortening", "effectiveMode"]],
+      pauseShorteningProvenance: [canonical, ["pauseShortening", "provenance"]],
+      presence: [preview, ["descriptor", "durationMs"]],
+    };
+    for (const [owner, [base, path]] of Object.entries(placements)) {
+      const variants = corpus.nestedVariants[owner as NestedOwner];
+      expect(variants.length, owner).toBeGreaterThan(0);
       for (const variant of variants) {
         const fixture = replaceNested(base, path, variant);
-        expect(decodeSnapshotFixture(fixture)).toEqual(fixture);
+        expect(decodeSnapshotFixture(fixture), `${owner}: ${JSON.stringify(variant)}`).toEqual(fixture);
       }
     }
     for (const source of corpus.nestedVariants.playbackRateSources) {

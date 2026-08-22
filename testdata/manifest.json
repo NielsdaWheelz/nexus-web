@@ -3,7 +3,7 @@
   "artifacts": [
     {
       "path": "testdata/android/player-protocol.json",
-      "sha256": "d97000cb03a6f4896129dbdc7d849b53955b0287f48bde150273df46a4f97a0b",
+      "sha256": "f164f64512425ca32ce5ffaacefd6ca6dd2d14a9daedcf2e1e51f3ebd8d8af1e",
       "source": "repo-authored: canonical Android player protocol v2 cases",
       "license": "Repository-owned test data; retained as the cross-language player protocol and release-identity oracle",
       "purpose": [

@@ -616,7 +616,6 @@ def test_android_player_protocol_corpus_has_canonical_repository_bytes() -> None
         "inventory",
         "commands",
         "snapshots",
-        "pendingNaturalEnd",
         "replies",
         "rejections",
         "events",
