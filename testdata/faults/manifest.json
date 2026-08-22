@@ -874,6 +874,15 @@
         "node-test:node/ingest/test/accepted_url_egress.test.mjs"
       ],
       "expected_failure": "expected UnsafeDestination before any request; CLI returned Success"
+    },
+    {
+      "id": "document-media-offline-reading-readiness-gate-bypass",
+      "patch": "testdata/faults/document-media-offline-reading-readiness-gate-bypass.patch",
+      "sha256": "9fc3c679e7c8e18d2a31b3f0755a40e937aff541566d24458e9817d335277f22",
+      "proofs": [
+        "pytest:python/tests/service/test_resource_action_snapshots.py::test_document_media_subtypes_publish_their_exact_action_families"
+      ],
+      "expected_failure": "assert 'OfflineReading' not in"
     }
   ]
 }
