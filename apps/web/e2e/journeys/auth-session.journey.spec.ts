@@ -1,6 +1,6 @@
 import type { BrowserContext, Page } from "playwright/test";
 import { ANDROID_PLAYER_PROTOCOL_VERSION } from "@/lib/player/androidPlayerProtocol";
-import { readAndroidPlayerProtocolCorpus } from "@/lib/player/androidPlayerProtocolCorpus";
+import { readAndroidPlayerProtocolCorpus } from "../../androidPlayerProtocolCorpus";
 import {
   expect,
   expectInvalidPasswordFeedback,

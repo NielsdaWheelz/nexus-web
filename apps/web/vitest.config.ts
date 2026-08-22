@@ -4,7 +4,7 @@ import { playwright } from "@vitest/browser-playwright";
 import { readFileSync } from "node:fs";
 import path from "path";
 import type { Plugin } from "vite";
-import { readAndroidPlayerProtocolCorpus } from "./src/lib/player/androidPlayerProtocolCorpus";
+import { readAndroidPlayerProtocolCorpus } from "./androidPlayerProtocolCorpus";
 
 const playerProtocol = readAndroidPlayerProtocolCorpus();
 

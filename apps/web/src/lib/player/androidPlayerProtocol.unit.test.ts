@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Presence } from "@/lib/api/presence";
 import type { PlaybackRateResolution } from "@/lib/lectern/contract";
@@ -13,6 +16,7 @@ import {
 import {
   ANDROID_PLAYER_PROTOCOL_VERSION,
   AndroidPlayerUpdateRequiredError,
+  androidPlayerProtocolIdentity,
   decodeAndroidPlayerMessage,
   type AndroidActivitySyncSnapshot,
   type AndroidPlaybackRateState,
@@ -24,7 +28,6 @@ import {
   type AndroidPlayerReply,
   type AndroidPlayerSnapshot,
 } from "./androidPlayerProtocol";
-import { readAndroidPlayerProtocolCorpus } from "./androidPlayerProtocolCorpus";
 
 type ProtocolCorpus = {
   readonly version: number;
@@ -165,8 +168,17 @@ const INVENTORY = {
   } satisfies Record<AndroidActivitySyncSnapshot["sync"]["kind"], true>,
 } as const;
 
-const { bytes: corpusBytes, contractSha256: PROTOCOL_CONTRACT_SHA256 } =
-  readAndroidPlayerProtocolCorpus();
+// Independent oracle: the raw repository bytes, hashed here, must equal the
+// identity the build injected through the shared corpus reader.
+const corpusBytes = readFileSync(
+  path.resolve(
+    __dirname,
+    "../../../../../testdata/android/player-protocol.json",
+  ),
+);
+const PROTOCOL_CONTRACT_SHA256 = createHash("sha256")
+  .update(corpusBytes)
+  .digest("hex");
 const corpus = JSON.parse(corpusBytes.toString("utf8")) as ProtocolCorpus;
 
 function kinds(entries: readonly Record<string, unknown>[]): Set<unknown> {
@@ -233,6 +245,13 @@ function decodeSnapshotFixture(
 }
 
 describe("Android player protocol compatibility", () => {
+  it("injects the raw corpus digest as the build's player identity", () => {
+    expect(androidPlayerProtocolIdentity()).toEqual({
+      protocolVersion: ANDROID_PLAYER_PROTOCOL_VERSION,
+      protocolContractSha256: PROTOCOL_CONTRACT_SHA256,
+    });
+  });
+
   it("keeps the corpus inventory exhaustive over production unions", () => {
     expect(corpus.version).toBe(ANDROID_PLAYER_PROTOCOL_VERSION);
     for (const [owner, variants] of Object.entries(INVENTORY)) {

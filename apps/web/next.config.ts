@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { getEnv } from "./src/lib/env";
-import { readAndroidPlayerProtocolCorpus } from "./src/lib/player/androidPlayerProtocolCorpus";
+import { readAndroidPlayerProtocolCorpus } from "./androidPlayerProtocolCorpus";
 
 // Fail the deploy, not the request: a staging/prod build with missing/invalid env aborts
 // `next build`, so Vercel never promotes the bad artifact and the last-good deployment keeps
