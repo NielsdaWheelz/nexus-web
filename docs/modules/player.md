@@ -249,6 +249,17 @@ Lectern pane is the sole full-list editor).
   for Android** state; matching-identity corruption remains a defect. The
   signed APK embeds the same identity, and production release fails before
   mutation unless the latest stable signed manifest matches it.
+- `lib/player/nativeOperationPump.ts` is the web's pure native operation pump.
+  One `SessionIntent` is in flight; later session intents queue FIFO. `Dismiss`,
+  `PodcastSettings`, and `ListeningProjection` are latest-wins keys (`Dismiss`
+  is barrier-exempt, as native). A `NaturalEndPending` rejection parks the
+  operation on the current receipt and replays it once that receipt is
+  acknowledged; a superseded or cleared receipt releases it. A transport
+  failure freezes the operation and the shell's Retry is derived from that
+  frozen state, so nothing else can clear it; Retry replays the frozen
+  operation. `androidPlayerRuntime.tsx` owns the single exhaustive failure
+  classifier (skew, retryable transport, barrier, cancellation, defect) that
+  feeds the pump.
 - The service derives each Media3 controller's available player commands from
   the current natural-end and persistence lifecycle barriers and updates them
   synchronously whenever those barriers change. Controller seeks checkpoint

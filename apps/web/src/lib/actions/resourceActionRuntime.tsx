@@ -1,5 +1,6 @@
 "use client";
 
+import { assertNever } from "@/lib/assertNever";
 import {
   createElement,
   createContext,
@@ -1630,6 +1631,8 @@ export function ResourceActionRuntimeProvider({
       case "PreviewAudioFailed":
       case "PreviewAudioAtEnd":
         break;
+      default:
+        assertNever(playerSession.state, "global player state");
     }
     return byRef;
   }, [playerSession.state]);

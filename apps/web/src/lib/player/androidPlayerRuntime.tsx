@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { ApiError, isApiError } from "@/lib/api/client";
+import { assertNever } from "@/lib/assertNever";
 import {
   absent,
   present,
@@ -200,7 +201,7 @@ function classifyNativeFailure(error: unknown): NativeFailure {
       case "ProtocolMismatch":
         return { kind: "Defect", error };
       default:
-        return { kind: "Defect", error: error.code satisfies never };
+        return assertNever(error.code, "native rejection code");
     }
   }
   return { kind: "Defect", error };
@@ -243,7 +244,7 @@ function androidPlayerMutationErrorMessage(
     case "Defect":
       throw error;
     default:
-      return failure satisfies never;
+      return assertNever(failure, "native failure");
   }
 }
 
@@ -639,7 +640,7 @@ export function AndroidPlayerRuntimeProvider({
         setAsyncDefect({ error: failure.error });
         return;
       default:
-        failure satisfies never;
+        assertNever(failure, "native failure");
     }
   }, []);
 
@@ -668,7 +669,7 @@ export function AndroidPlayerRuntimeProvider({
           commitPump(releaseFromPump(pumpRef.current, operation));
           return;
         default:
-          failure satisfies never;
+          assertNever(failure, "native failure");
       }
     },
     [commitPump],
