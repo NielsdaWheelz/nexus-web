@@ -64,24 +64,6 @@ _CHILD_WAIT_POLL_SECONDS = 0.25
 # is bounded by the configured TERM grace.
 _PROCESS_GROUP_EXIT_POLL_SECONDS = 0.01
 _PR_SET_PDEATHSIG = 1
-# An outer harness may tag the process it launches (this supervisor) with
-# markers that identify that exact process to its own teardown. The fresh
-# execution child runs in its own session for containment, so it is a distinct
-# process the harness never started; carrying the supervisor's identity markers
-# into that new session would make one supervisor look like several processes to
-# the harness. The child is instead reaped through supervisor liveness, so it
-# drops these markers. Empty in production, where nothing sets them.
-_SUPERVISION_IDENTITY_ENVIRON = (
-    "NEXUS_TEST_PROCESS_OWNER",
-    "NEXUS_TEST_PROCESS_OWNER_FD",
-)
-
-
-def _execution_child_environment() -> dict[str, str]:
-    """The parent environment minus any outer-harness process-identity markers."""
-    return {
-        key: value for key, value in os.environ.items() if key not in _SUPERVISION_IDENTITY_ENVIRON
-    }
 
 
 type _ChildExitReason = Literal["Exited", "Timeout", "Shutdown", "ClaimLost"]
@@ -334,7 +316,6 @@ class BackgroundProcessExecutor:
                             stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL,
                             start_new_session=True,
-                            env=_execution_child_environment(),
                             pass_fds=(request_fd, result_fd, liveness_read_fd),
                         )
                     except OSError as exc:

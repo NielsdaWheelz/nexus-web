@@ -2306,23 +2306,25 @@ def _stop_process_group(
     run_id: str,
     owner_token: str,
 ) -> None:
-    if sys.platform == "darwin":
-        owned_group = _darwin_owned_process_group(repo_root, run_id, owner_token)
-    elif sys.platform == "linux":
-        owned_group = _linux_owned_process_group(run_id, owner_token)
-    else:
-        raise RuntimeContractError("owned process cleanup requires Linux or Darwin")
+    owned_groups = _owned_process_group_map(repo_root, run_id, owner_token)
     try:
         os.killpg(process_group_id, 0)
+        recorded_group_alive = True
     except ProcessLookupError:
-        if owned_group is not None:
-            raise RuntimeContractError(
-                "owned process identity identifies a group the kernel cannot signal"
-            ) from None
-        return
+        recorded_group_alive = False
     except PermissionError as exc:
         raise RuntimeContractError("owned process group could not be verified") from exc
-    if owned_group is None or owned_group[0] != process_group_id:
+    if not recorded_group_alive:
+        if process_group_id in owned_groups:
+            raise RuntimeContractError(
+                "owned process identity identifies a group the kernel cannot signal"
+            )
+        # The recorded worker group is already gone; reap any bounded child group
+        # it may have left behind (parent-death teardown races the ledger cleanup).
+        for group_id in sorted(owned_groups):
+            _terminate_process_group(group_id)
+        return
+    if process_group_id not in owned_groups:
         raise RuntimeContractError("process group no longer belongs to the exact test run")
     if process_start_token is not None:
         try:
@@ -2337,7 +2339,10 @@ def _stop_process_group(
             or leader_identity.start_token != process_start_token
         ):
             raise RuntimeContractError("process group no longer belongs to the exact test run")
-    _terminate_process_group(process_group_id)
+    # Terminate the recorded worker group and every bounded execution child it
+    # forked into its own session; all carry this run's one secret owner token.
+    for group_id in sorted(owned_groups):
+        _terminate_process_group(group_id)
 
 
 def _terminate_process_group(process_group_id: int) -> None:
@@ -2381,11 +2386,16 @@ def _recover_planned_process_group(
 ) -> tuple[int, str | None] | None:
     if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
         raise RuntimeContractError("planned process lacks its exact ownership contract")
-    if sys.platform == "darwin":
-        return _darwin_owned_process_group(repo_root, run_id, owner_token)
-    if sys.platform == "linux":
-        return _linux_owned_process_group(run_id, owner_token)
-    raise RuntimeContractError("owned process recovery requires Linux or Darwin")
+    owned_groups = _owned_process_group_map(repo_root, run_id, owner_token)
+    if not owned_groups:
+        return None
+    # `_stop_process_group` reaps every group in the tree, so recovery only needs
+    # one representative: prefer a group whose leader carries the token.
+    for group_id in sorted(owned_groups):
+        if owned_groups[group_id] is not None:
+            return group_id, owned_groups[group_id]
+    representative = min(owned_groups)
+    return representative, owned_groups[representative]
 
 
 def _owned_process_identity_matches(
@@ -2555,10 +2565,11 @@ def _linux_process_environment(process_id: int) -> tuple[bytes, ...]:
     return tuple((Path("/proc") / str(process_id) / "environ").read_bytes().split(b"\0"))
 
 
-def _linux_owned_process_group(
+def _linux_owner_token_identities(
     run_id: str,
     owner_token: str,
-) -> tuple[int, str | None] | None:
+) -> list[tuple[int, _ProcessIdentity]]:
+    """Every live process whose environment carries this run's exact owner token."""
     require_run_id(run_id)
     if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
         raise RuntimeContractError("Linux process owner requires an exact owner token")
@@ -2587,23 +2598,39 @@ def _linux_owned_process_group(
         if identity.uid != os.getuid():
             raise RuntimeContractError("owned Linux process identity changed during cleanup")
         holder_identities.append((process_id, identity))
-    if not holder_identities:
-        return None
-    process_group_ids = {identity.process_group_id for _, identity in holder_identities}
-    if len(process_group_ids) != 1:
-        raise RuntimeContractError("owned Linux process token identifies multiple groups")
-    [process_group_id] = process_group_ids
-    if process_group_id <= 1:
-        raise RuntimeContractError("owned Linux process token identifies an unsafe group")
-    leader_start_token = next(
-        (
-            identity.start_token
-            for process_id, identity in holder_identities
-            if process_id == process_group_id
-        ),
-        None,
-    )
-    return process_group_id, leader_start_token
+    return holder_identities
+
+
+def _owned_process_group_map(
+    repo_root: Path,
+    run_id: str,
+    owner_token: str,
+) -> dict[int, str | None]:
+    """The process groups that make up one owned process's tree.
+
+    An owned worker forks bounded execution children into their own sessions --
+    the containment design under proof here -- so a single owner token, a
+    per-launch secret, legitimately spans the worker's group and one group per
+    live child. Every carrier holds that secret, so each group is definitively
+    owned by this run and must be reaped. The value is the group leader's start
+    token when the leader itself carries the token, else ``None``.
+    """
+    if sys.platform == "darwin":
+        holders = _darwin_owner_marker_identities(repo_root, run_id, owner_token)
+    elif sys.platform == "linux":
+        holders = _linux_owner_token_identities(run_id, owner_token)
+    else:
+        raise RuntimeContractError("owned process cleanup requires Linux or Darwin")
+    groups: dict[int, str | None] = {}
+    for process_id, identity in holders:
+        process_group_id = identity.process_group_id
+        if process_group_id <= 1:
+            raise RuntimeContractError("owned process token identifies an unsafe group")
+        if process_id == process_group_id:
+            groups[process_group_id] = identity.start_token
+        else:
+            groups.setdefault(process_group_id, None)
+    return groups
 
 
 def _process_owner_marker(repo_root: Path, run_id: str, owner_token: str) -> Path:
@@ -2629,17 +2656,18 @@ def _remove_process_owner_marker(repo_root: Path, run_id: str, owner_token: str)
             ) from exc
 
 
-def _darwin_owned_process_group(
+def _darwin_owner_marker_identities(
     repo_root: Path,
     run_id: str,
     owner_token: str,
-) -> tuple[int, str | None] | None:
+) -> list[tuple[int, _ProcessIdentity]]:
+    """Every live process holding this run's inherited owner-marker descriptor."""
     marker = _process_owner_marker(repo_root, run_id, owner_token)
     if not marker.is_file():
-        return None
+        return []
     holder_ids = _darwin_owner_marker_holders(marker)
     if not holder_ids:
-        return None
+        return []
     holder_identities: list[tuple[int, _ProcessIdentity]] = []
     for process_id in holder_ids:
         try:
@@ -2651,25 +2679,9 @@ def _darwin_owned_process_group(
         if identity.uid != os.getuid():
             raise RuntimeContractError("owned Darwin process marker has a foreign holder")
         holder_identities.append((process_id, identity))
-    if not holder_identities:
-        if _darwin_owner_marker_holders(marker):
-            raise RuntimeContractError("owned Darwin process marker holders changed during cleanup")
-        return None
-    process_group_ids = {identity.process_group_id for _, identity in holder_identities}
-    if len(process_group_ids) != 1:
-        raise RuntimeContractError("owned Darwin process marker identifies multiple groups")
-    [process_group_id] = process_group_ids
-    if process_group_id <= 1:
-        raise RuntimeContractError("owned Darwin process marker identifies an unsafe group")
-    leader_start_token = next(
-        (
-            identity.start_token
-            for process_id, identity in holder_identities
-            if process_id == process_group_id
-        ),
-        None,
-    )
-    return process_group_id, leader_start_token
+    if not holder_identities and _darwin_owner_marker_holders(marker):
+        raise RuntimeContractError("owned Darwin process marker holders changed during cleanup")
+    return holder_identities
 
 
 def _darwin_owner_marker_holders(marker: Path) -> tuple[int, ...]:
