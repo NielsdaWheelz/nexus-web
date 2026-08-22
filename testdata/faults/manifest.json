@@ -279,7 +279,7 @@
       "proofs": [
         "pytest:python/tests/service/test_codex_metadata_enrichment.py"
       ],
-      "expected_failure": "the Uncertain checkpoint was not durably committed before native dispatch"
+      "expected_failure": "AssertionError at background child boundary"
     },
     {
       "id": "durable-codex-metadata-postaccept-loss-misclassification",
