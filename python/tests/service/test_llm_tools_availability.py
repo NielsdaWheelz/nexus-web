@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import asyncio
 import importlib
-import threading
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
@@ -312,7 +311,7 @@ def test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch(
             monkeypatch.setenv("WORKER_LANE", "interactive")
             clear_settings_cache()
             try:
-                worker = create_worker(stop_event=threading.Event())
+                worker = create_worker()
                 assert worker.allowed_kinds is not None
                 assert {"chat_run", "dossier_build"} <= set(worker.allowed_kinds)
             finally:

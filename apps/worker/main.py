@@ -102,9 +102,14 @@ def register_shutdown_signal_handlers(stop_event: threading.Event) -> None:
 
 def create_worker(
     *,
-    stop_event: threading.Event,
+    stop_event: threading.Event | None = None,
     successful_cycle_callback: Callable[[], None] | None = None,
 ) -> JobWorker:
+    # The entrypoint binds SIGINT/SIGTERM to its own event before construction
+    # and passes it; a caller that never drives cooperative shutdown (a topology
+    # inspection) gets a private event so it need not fabricate one.
+    if stop_event is None:
+        stop_event = threading.Event()
     settings = get_settings()
     registry = get_default_registry()
     if settings.worker_lane == "interactive":
