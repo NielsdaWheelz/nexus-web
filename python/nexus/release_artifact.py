@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -35,6 +36,11 @@ _CANDIDATE_MANIFEST_KEYS = frozenset(
 )
 _REPOSITORY = "NielsdaWheelz/nexus-web"
 _RUNTIME_IDENTITY_PATH = Path("/app/runtime-identity.json")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+ANDROID_PLAYER_PROTOCOL_VERSION = 2
+ANDROID_PLAYER_PROTOCOL_CORPUS = Path("testdata/android/player-protocol.json")
+ANDROID_RELEASE_TAG = re.compile(r"android-v[a-zA-Z0-9._-]+")
+_ANDROID_PLAYER_PROTOCOL_FIELDS = frozenset({"version", "contract_sha256"})
 
 
 # justify-defect: malformed owned release artifacts are deployment defects, not modeled outcomes.
@@ -67,6 +73,46 @@ class RuntimeIdentity:
             "expected_database_revision": self.expected_database_revision,
             "expected_oracle_manifest_digest": self.expected_oracle_manifest_digest,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class AndroidPlayerProtocolIdentity:
+    """The exact web/native player compatibility identity: v2 plus the corpus digest."""
+
+    version: int
+    contract_sha256: str
+
+    def __post_init__(self) -> None:
+        if type(self.version) is not int or self.version != ANDROID_PLAYER_PROTOCOL_VERSION:
+            raise BackendArtifactDefect("Android player protocol version is unsupported")
+        _require_match("Android player protocol contract SHA-256", self.contract_sha256, _SHA256)
+
+    def as_json(self) -> dict[str, int | str]:
+        return {"version": self.version, "contract_sha256": self.contract_sha256}
+
+    @classmethod
+    def from_json(cls, value: object) -> AndroidPlayerProtocolIdentity:
+        if not isinstance(value, dict) or set(value) != _ANDROID_PLAYER_PROTOCOL_FIELDS:
+            raise BackendArtifactDefect("Android player protocol identity is malformed")
+        version = value["version"]
+        contract_sha256 = value["contract_sha256"]
+        if not isinstance(version, int) or not isinstance(contract_sha256, str):
+            raise BackendArtifactDefect("Android player protocol identity is malformed")
+        return cls(version=version, contract_sha256=contract_sha256)
+
+    @classmethod
+    def of_corpus(cls, corpus: Path) -> AndroidPlayerProtocolIdentity:
+        """Hash the raw corpus bytes; nothing decodes or re-serializes them."""
+        try:
+            raw = corpus.read_bytes()
+        except OSError as exc:
+            raise BackendArtifactDefect(
+                "Android player protocol corpus is absent or unreadable"
+            ) from exc
+        return cls(
+            version=ANDROID_PLAYER_PROTOCOL_VERSION,
+            contract_sha256=hashlib.sha256(raw).hexdigest(),
+        )
 
 
 @dataclass(frozen=True, slots=True)

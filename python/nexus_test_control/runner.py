@@ -30,6 +30,12 @@ from botocore.exceptions import BotoCoreError
 from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.ops.codex_hosted_evidence import codex_hosted_evidence_is_valid
+from nexus.release_artifact import (
+    ANDROID_PLAYER_PROTOCOL_CORPUS,
+    ANDROID_RELEASE_TAG,
+    AndroidPlayerProtocolIdentity,
+    BackendArtifactDefect,
+)
 from nexus_test_control import android_visual
 from nexus_test_control.build import StandaloneBuild, ensure_standalone_build
 from nexus_test_control.evidence import (
@@ -310,6 +316,7 @@ _EXTERNAL_PROTOCOL_CAPABILITIES = frozenset(
     }
 )
 _TEST_GOOGLE_CLIENT_ID = "nexus-test.apps.googleusercontent.com"
+_ANDROID_RELEASE_OWNED_HOST = "nexus.nielseriknandal.com"
 _CRITICAL_JOURNEY_IDS = frozenset(
     {
         "auth-session",
@@ -3848,18 +3855,6 @@ class _AndroidReleaseInputs:
     apkanalyzer: Path
 
 
-@dataclass(frozen=True, slots=True)
-class _AndroidPlayerProtocolIdentity:
-    version: int
-    contract_sha256: str
-
-    def as_json(self) -> dict[str, int | str]:
-        return {
-            "version": self.version,
-            "contract_sha256": self.contract_sha256,
-        }
-
-
 def _run_android_release(
     context: CapabilityContext,
     environment: Mapping[str, str],
@@ -4136,7 +4131,7 @@ def _run_release_artifact(
         evidence_version != 2
         or source.get("run_id") != execution.run_id
         or not isinstance(tag, str)
-        or re.fullmatch(r"android-v[a-zA-Z0-9._-]+", tag) is None
+        or ANDROID_RELEASE_TAG.fullmatch(tag) is None
         or apk_relative != "apps/android/app/build/outputs/apk/release/app-release.apk"
         or not isinstance(expected_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
@@ -4150,7 +4145,7 @@ def _run_release_artifact(
         or version_name != tag.removeprefix("android-v")
         or not isinstance(git_sha, str)
         or re.fullmatch(r"[0-9a-f]{40}", git_sha) is None
-        or app_link_host != "nexus.nielseriknandal.com"
+        or app_link_host != _ANDROID_RELEASE_OWNED_HOST
     ):
         return _release_failure(capability, started, "Android release evidence changed shape")
     try:
@@ -4296,7 +4291,7 @@ def _android_release_inputs(
             capability, "Android release is missing protected inputs: " + ", ".join(missing)
         )
     tag = environment["ANDROID_RELEASE_TAG"]
-    if re.fullmatch(r"android-v[a-zA-Z0-9._-]+", tag) is None:
+    if ANDROID_RELEASE_TAG.fullmatch(tag) is None:
         return _fail(capability, "Android release tag must match android-v*")
     try:
         tag_sha = _git_commit(repo_root, tag, environment)
@@ -4311,7 +4306,7 @@ def _android_release_inputs(
     if (
         parsed.scheme != "https"
         or parsed.hostname != owned_host
-        or owned_host != "nexus.nielseriknandal.com"
+        or owned_host != _ANDROID_RELEASE_OWNED_HOST
         or parsed.username is not None
         or parsed.password is not None
         or parsed.path not in {"", "/"}
@@ -4525,30 +4520,20 @@ def _release_manifest_facts(text: str) -> tuple[str, str, str, str, str, str] | 
     )
 
 
-def _android_player_protocol_identity(repo_root: Path) -> _AndroidPlayerProtocolIdentity:
-    corpus = repo_root / "testdata/android/player-protocol.json"
+def _android_player_protocol_identity(repo_root: Path) -> AndroidPlayerProtocolIdentity:
     try:
-        digest = _sha256_file(corpus)
-    except OSError as error:
+        return AndroidPlayerProtocolIdentity.of_corpus(repo_root / ANDROID_PLAYER_PROTOCOL_CORPUS)
+    except BackendArtifactDefect as error:
+        raise RuntimeContractError(str(error)) from error
+
+
+def _android_player_protocol_identity_from_json(value: object) -> AndroidPlayerProtocolIdentity:
+    try:
+        return AndroidPlayerProtocolIdentity.from_json(value)
+    except BackendArtifactDefect as error:
         raise RuntimeContractError(
-            "Android player protocol corpus is absent or unreadable"
+            "Android release evidence player protocol changed shape"
         ) from error
-    return _AndroidPlayerProtocolIdentity(version=2, contract_sha256=digest)
-
-
-def _android_player_protocol_identity_from_json(value: object) -> _AndroidPlayerProtocolIdentity:
-    if not isinstance(value, dict) or set(value) != {"version", "contract_sha256"}:
-        raise RuntimeContractError("Android release evidence player protocol changed shape")
-    version = value.get("version")
-    contract_sha256 = value.get("contract_sha256")
-    if (
-        type(version) is not int
-        or version != 2
-        or not isinstance(contract_sha256, str)
-        or re.fullmatch(r"[0-9a-f]{64}", contract_sha256) is None
-    ):
-        raise RuntimeContractError("Android release evidence player protocol changed shape")
-    return _AndroidPlayerProtocolIdentity(version=version, contract_sha256=contract_sha256)
 
 
 def _git_commit(repo_root: Path, revision: str, environment: Mapping[str, str]) -> str:

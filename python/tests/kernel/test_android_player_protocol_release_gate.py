@@ -109,7 +109,10 @@ def test_release_manifest_decoder_accepts_only_the_exact_corpus_identity(
             "manifest version is unsupported",
         ),
         (
-            {**_stable_manifest({"version": 2, "contract_sha256": "a" * 64}), "tag": "android-v0.0.1"},
+            {
+                **_stable_manifest({"version": 2, "contract_sha256": "a" * 64}),
+                "tag": "android-v0.0.1",
+            },
             "tag differs from the selected stable release",
         ),
     ],
@@ -128,8 +131,13 @@ def test_release_manifest_decoder_rejects_noncurrent_or_legacy_manifests(
 ) -> None:
     release = _release_module()
     path = _write_manifest(tmp_path / "release-manifest.json", manifest)
+    # A published APK whose identity lags the candidate is an expected release
+    # condition (the signed APK must ship first); every malformed shape is a defect.
+    expected = (
+        release.ReleaseBlocked if message == "differs from the corpus" else release.ReleaseDefect
+    )
 
-    with pytest.raises(release.ReleaseDefect, match=message):
+    with pytest.raises(expected, match=message):
         release.load_android_release_manifest(path, corpus=CORPUS, expected_tag=STABLE_TAG)
 
 

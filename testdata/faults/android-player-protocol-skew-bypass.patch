@@ -1,11 +1,12 @@
 diff --git a/deploy/hetzner/release.py b/deploy/hetzner/release.py
 --- a/deploy/hetzner/release.py
 +++ b/deploy/hetzner/release.py
-@@ -1847,6 +1847,6 @@ def load_android_release_manifest(
-         version=player_version,
-         contract_sha256=player_digest,
-     )
+@@ -1815,7 +1815,7 @@
+         identity = AndroidPlayerProtocolIdentity.from_json(manifest.get("player_protocol"))
+     except BackendArtifactDefect as exc:
+         raise ReleaseDefect(f"Android release manifest {exc}") from exc
 -    if identity != android_player_protocol_identity(corpus):
 +    if False and identity != android_player_protocol_identity(corpus):
-         raise ReleaseDefect("Android release manifest player protocol differs from the corpus")
-     return AndroidReleaseManifest(tag=tag, player_protocol=identity)
+         raise ReleaseBlocked("Android release manifest player protocol differs from the corpus")
+     return AndroidReleaseManifest(player_protocol=identity)
+ 

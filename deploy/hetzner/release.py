@@ -31,6 +31,9 @@ from pathlib import Path
 from typing import Any
 
 from nexus.release_artifact import (
+    ANDROID_PLAYER_PROTOCOL_CORPUS,
+    ANDROID_RELEASE_TAG,
+    AndroidPlayerProtocolIdentity,
     BackendArtifactDefect,
     CandidateManifest,
     RuntimeIdentity,
@@ -133,8 +136,6 @@ _MIN_PARSER_TEMP_FREE_BYTES = 512 * 1024 * 1024
 _CODEX_CAPACITY_SCHEMA_VERSION = "nexus-codex-capacity.v1"
 _CODEX_CAPACITY_CANARY_SCHEMA_VERSION = "nexus-codex-capacity-canary.v1"
 _CODEX_CAPACITY_PHASES = ("cold", "warm_1", "warm_2")
-_ANDROID_PLAYER_PROTOCOL_VERSION = 2
-_ANDROID_PLAYER_PROTOCOL_CORPUS = "testdata/android/player-protocol.json"
 _CODEX_CAPACITY_EVIDENCE_FIELDS = frozenset(
     {
         "schema_version",
@@ -289,7 +290,6 @@ _ANDROID_RELEASE_MANIFEST_FIELDS = frozenset(
         "assets",
     }
 )
-_ANDROID_PLAYER_PROTOCOL_FIELDS = frozenset({"version", "contract_sha256"})
 _TERMINAL_PHASES = frozenset({"RolledBack", "Succeeded", "ForwardFixRequired"})
 _BUNDLE_FILES = frozenset(
     {
@@ -301,7 +301,7 @@ _BUNDLE_FILES = frozenset(
         "release.py",
         "python/nexus/__init__.py",
         "python/nexus/release_artifact.py",
-        _ANDROID_PLAYER_PROTOCOL_CORPUS,
+        ANDROID_PLAYER_PROTOCOL_CORPUS.as_posix(),
     }
 )
 # justify-retry-schedule: release provider/host effects retry exactly once under
@@ -351,22 +351,7 @@ class ReleaseBlocked(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class AndroidPlayerProtocolIdentity:
-    version: int
-    contract_sha256: str
-
-    def __post_init__(self) -> None:
-        if self.version != _ANDROID_PLAYER_PROTOCOL_VERSION:
-            raise ReleaseDefect("Android player protocol version is unsupported")
-        _require_match("Android player protocol contract SHA-256", self.contract_sha256, _SHA256)
-
-    def as_json(self) -> dict[str, int | str]:
-        return {"version": self.version, "contract_sha256": self.contract_sha256}
-
-
-@dataclass(frozen=True, slots=True)
 class AndroidReleaseManifest:
-    tag: str
     player_protocol: AndroidPlayerProtocolIdentity
 
 
@@ -1775,13 +1760,9 @@ def _read_json(path: Path) -> object:
 
 def android_player_protocol_identity(corpus: Path) -> AndroidPlayerProtocolIdentity:
     try:
-        raw = corpus.read_bytes()
-    except OSError as exc:
-        raise ReleaseDefect("Android player protocol corpus is absent or unreadable") from exc
-    return AndroidPlayerProtocolIdentity(
-        version=_ANDROID_PLAYER_PROTOCOL_VERSION,
-        contract_sha256=hashlib.sha256(raw).hexdigest(),
-    )
+        return AndroidPlayerProtocolIdentity.of_corpus(corpus)
+    except BackendArtifactDefect as exc:
+        raise ReleaseDefect(str(exc)) from exc
 
 
 def load_android_release_manifest(
@@ -1790,11 +1771,7 @@ def load_android_release_manifest(
     corpus: Path,
     expected_tag: str,
 ) -> AndroidReleaseManifest:
-    _require_match(
-        "stable Android release tag",
-        expected_tag,
-        re.compile(r"android-v[a-zA-Z0-9._-]+\Z"),
-    )
+    _require_match("stable Android release tag", expected_tag, ANDROID_RELEASE_TAG)
     manifest = _closed_mapping(
         _read_json(path), _ANDROID_RELEASE_MANIFEST_FIELDS, "Android release manifest"
     )
@@ -1834,22 +1811,13 @@ def load_android_release_manifest(
         _require_match(f"Android release manifest asset {name}", digest, _SHA256)
     if any(assets[name] != source_apk_sha256 for name in apk_names):
         raise ReleaseDefect("Android release manifest APK assets differ from their source digest")
-    player = _closed_mapping(
-        manifest.get("player_protocol"),
-        _ANDROID_PLAYER_PROTOCOL_FIELDS,
-        "Android release manifest player protocol",
-    )
-    player_version = player.get("version")
-    player_digest = player.get("contract_sha256")
-    if type(player_version) is not int or not isinstance(player_digest, str):
-        raise ReleaseDefect("Android release manifest player protocol is malformed")
-    identity = AndroidPlayerProtocolIdentity(
-        version=player_version,
-        contract_sha256=player_digest,
-    )
+    try:
+        identity = AndroidPlayerProtocolIdentity.from_json(manifest.get("player_protocol"))
+    except BackendArtifactDefect as exc:
+        raise ReleaseDefect(f"Android release manifest {exc}") from exc
     if identity != android_player_protocol_identity(corpus):
-        raise ReleaseDefect("Android release manifest player protocol differs from the corpus")
-    return AndroidReleaseManifest(tag=tag, player_protocol=identity)
+        raise ReleaseBlocked("Android release manifest player protocol differs from the corpus")
+    return AndroidReleaseManifest(player_protocol=identity)
 
 
 def _read_canonical_json(path: Path, label: str) -> object:
@@ -5367,7 +5335,7 @@ class HostRelease:
         expected_web = {
             "source_sha": candidate.source_sha,
             "player_protocol": android_player_protocol_identity(
-                bundle / _ANDROID_PLAYER_PROTOCOL_CORPUS
+                bundle / ANDROID_PLAYER_PROTOCOL_CORPUS
             ).as_json(),
         }
         if web != expected_web:
