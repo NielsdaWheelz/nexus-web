@@ -45,6 +45,18 @@ export class NativePlayerTimeoutError extends Error {
   }
 }
 
+/**
+ * A command timed out or met a stale session, and the reconciling snapshot
+ * did not confirm it. The outcome is unknown, which is a transport condition
+ * the user may retry, not malformed data.
+ */
+export class NativePlayerReconciliationError extends Error {
+  constructor(operation: string) {
+    super(`${operation} timed out and reconciliation did not confirm it.`);
+    this.name = "NativePlayerReconciliationError";
+  }
+}
+
 export class NativePlayerRejectedError extends Error {
   readonly code: Extract<AndroidPlayerReply, { kind: "Rejected" }>["code"];
 
