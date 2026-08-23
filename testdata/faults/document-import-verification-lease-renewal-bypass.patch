@@ -1,0 +1,27 @@
+diff --git a/python/nexus/services/media_upload_sessions.py b/python/nexus/services/media_upload_sessions.py
+--- a/python/nexus/services/media_upload_sessions.py
++++ b/python/nexus/services/media_upload_sessions.py
+@@ -830,7 +830,7 @@
+             token=token,
+             lease_expires_at=now + _VERIFICATION_LEASE,
+         )
+-        session.verification_expires_at = renewed.lease_expires_at
++        # Fault: the phase-boundary heartbeat no longer extends the fence.
+         session.updated_at = now
+     return renewed
+ 
+@@ -1039,7 +1039,13 @@
+                     return _published(session, "Reused")
+                 # The fence is the lease *token*, not its expiry: a slow verifier
+                 # nobody stole from still publishes, and a stolen lease never does.
+-                if session.verification_token != token:
++                # Fault: expiry alone rejects the commit again, so a slow but live
++                # and unstolen verifier can never publish.
++                if (
++                    session.verification_token != token
++                    or session.verification_expires_at is None
++                    or session.verification_expires_at <= now
++                ):
+                     raise _verification_lease_lost(session, generation)
+                 _assert_lease_pins_generation(session, generation)
+                 if (

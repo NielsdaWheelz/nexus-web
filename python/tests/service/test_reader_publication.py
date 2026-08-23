@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from uuid import UUID, uuid4
@@ -80,6 +81,7 @@ def test_capture_restarts_once_without_mixing_database_and_minio_publications(
                     storage_path=paths[0],
                     content_type="application/pdf",
                     size_bytes=len(payloads[0]),
+                    source_sha256=hashlib.sha256(payloads[0]).hexdigest(),
                 )
             ),
         )
@@ -120,7 +122,7 @@ def test_capture_restarts_once_without_mixing_database_and_minio_publications(
             engine,
             media_id=media_id,
             storage_path=paths[1],
-            size_bytes=len(payloads[1]),
+            payload=payloads[1],
         )
         continue_first_assembly.set()
         captured = capture_future.result(timeout=10)
@@ -166,7 +168,7 @@ def test_capture_restarts_once_without_mixing_database_and_minio_publications(
             engine,
             media_id=media_id,
             storage_path=paths[2],
-            size_bytes=len(payloads[2]),
+            payload=payloads[2],
         )
         continue_assembly[0].set()
         assert assembly_started[1].wait(10), "capture did not perform its one allowed restart"
@@ -174,7 +176,7 @@ def test_capture_restarts_once_without_mixing_database_and_minio_publications(
             engine,
             media_id=media_id,
             storage_path=paths[3],
-            size_bytes=len(payloads[3]),
+            payload=payloads[3],
         )
         continue_assembly[1].set()
         with pytest.raises(ReaderPublicationBusy) as busy:
@@ -253,6 +255,7 @@ def test_missing_object_defects_at_an_unchanged_generation_and_restarts_after_a_
                 storage_path=paths[0],
                 content_type="application/pdf",
                 size_bytes=len(payloads[0]),
+                source_sha256=hashlib.sha256(payloads[0]).hexdigest(),
             ),
         )
         db.get(Media, media_id).processing_status = ProcessingStatus.ready_for_reading  # type: ignore[union-attr]
@@ -297,7 +300,7 @@ def test_missing_object_defects_at_an_unchanged_generation_and_restarts_after_a_
                 engine,
                 media_id=media_id,
                 storage_path=paths[1],
-                size_bytes=len(payloads[1]),
+                payload=payloads[1],
             )
         return b"".join(objects.stream(projection.object_references[0]))
 
@@ -326,7 +329,7 @@ def _replace_pdf_pointer(
     *,
     media_id: UUID,
     storage_path: str,
-    size_bytes: int,
+    payload: bytes,
 ) -> None:
     with Session(engine) as db:
         replace_reader_publication(
@@ -337,7 +340,8 @@ def _replace_pdf_pointer(
             source_file=ReaderPublicationSourceFile(
                 storage_path=storage_path,
                 content_type="application/pdf",
-                size_bytes=size_bytes,
+                size_bytes=len(payload),
+                source_sha256=hashlib.sha256(payload).hexdigest(),
             ),
         )
         db.commit()

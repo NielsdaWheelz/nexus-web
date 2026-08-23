@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
@@ -58,6 +59,7 @@ def test_owned_object_write_and_document_delete_converge_across_postgres_and_min
                 storage_path=storage_path,
                 content_type="application/pdf",
                 size_bytes=len(payload),
+                source_sha256=hashlib.sha256(payload).hexdigest(),
             )
         )
         db.commit()

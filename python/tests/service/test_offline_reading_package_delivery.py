@@ -114,6 +114,7 @@ def test_direct_package_is_account_generation_integrity_and_replay_bound(
                     storage_path=source_path,
                     content_type="application/pdf",
                     size_bytes=len(source),
+                    source_sha256=hashlib.sha256(source).hexdigest(),
                 )
             ),
         )

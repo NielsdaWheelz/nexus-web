@@ -7,10 +7,10 @@ import json
 import posixpath
 import re
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Literal, cast
 from urllib.parse import unquote, urlparse
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -29,7 +29,6 @@ from nexus.db.models import (
 from nexus.db.models import (
     MediaSourceAttemptStatus as DbMediaSourceAttemptStatus,
 )
-from nexus.db.session import transaction
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -137,7 +136,6 @@ from nexus.storage.client import StorageClientBase, StorageError, get_storage_cl
 from nexus.storage.paths import (
     build_source_artifact_storage_path,
     build_storage_path,
-    build_upload_staging_storage_path,
     get_file_extension,
 )
 from nexus.tasks.storage_object_cleanup import (
@@ -185,6 +183,7 @@ _NON_REACQUIRABLE_FILE_ERROR_CODES = {
 _TERMINAL_SOURCE_FAILURE_CODES = frozenset(
     {
         ApiErrorCode.E_SOURCE_ACCESS_DENIED,
+        ApiErrorCode.E_SOURCE_INTEGRITY,
         ApiErrorCode.E_SOURCE_TOO_LARGE,
         ApiErrorCode.E_SOURCE_NOT_READABLE,
         ApiErrorCode.E_SSRF_BLOCKED,
@@ -201,40 +200,6 @@ _TERMINAL_SOURCE_FAILURE_CODES = frozenset(
         ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED,
         ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
         ApiErrorCode.E_BILLING_REQUIRED,
-    }
-)
-_UPLOAD_CONFIRM_FAILURE_CODES = frozenset(
-    {
-        ApiErrorCode.E_ARCHIVE_UNSAFE,
-        ApiErrorCode.E_BILLING_REQUIRED,
-        ApiErrorCode.E_CAPTURE_TOO_LARGE,
-        ApiErrorCode.E_FILE_TOO_LARGE,
-        ApiErrorCode.E_INGEST_FAILED,
-        ApiErrorCode.E_INGEST_TIMEOUT,
-        ApiErrorCode.E_INVALID_CONTENT_TYPE,
-        ApiErrorCode.E_INVALID_FILE_TYPE,
-        ApiErrorCode.E_INVALID_REQUEST,
-        ApiErrorCode.E_PDF_PASSWORD_REQUIRED,
-        ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
-        ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
-        ApiErrorCode.E_SANITIZATION_FAILED,
-        ApiErrorCode.E_SIGN_UPLOAD_FAILED,
-        ApiErrorCode.E_SOURCE_ACCESS_DENIED,
-        ApiErrorCode.E_SOURCE_FETCH_FAILED,
-        ApiErrorCode.E_SOURCE_NOT_READABLE,
-        ApiErrorCode.E_SOURCE_TOO_LARGE,
-        ApiErrorCode.E_SSRF_BLOCKED,
-        ApiErrorCode.E_STORAGE_ERROR,
-        ApiErrorCode.E_STORAGE_MISSING,
-        ApiErrorCode.E_TRANSCRIPTION_FAILED,
-        ApiErrorCode.E_TRANSCRIPTION_TIMEOUT,
-        ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE,
-        ApiErrorCode.E_X_POST_UNAVAILABLE,
-        ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED,
-        ApiErrorCode.E_X_PROVIDER_CREDITS_DEPLETED,
-        ApiErrorCode.E_X_PROVIDER_RATE_LIMITED,
-        ApiErrorCode.E_X_PROVIDER_TIMEOUT,
-        ApiErrorCode.E_X_PROVIDER_UNAVAILABLE,
     }
 )
 
@@ -1021,6 +986,7 @@ def accept_browser_file_capture(
                 storage_path=storage_path,
                 content_type=normalized_content_type,
                 size_bytes=len(payload),
+                source_sha256=hashlib.sha256(payload).hexdigest(),
             )
         )
     attempt = create_attempt(
@@ -1039,6 +1005,7 @@ def accept_browser_file_capture(
             "size_bytes": len(payload),
             "source_url": clean_source_url,
             "storage_path": storage_path,
+            "source_sha256": hashlib.sha256(payload).hexdigest(),
             "library_ids": [str(library_id) for library_id in library_ids],
         },
         request_id=request_id,
@@ -1120,105 +1087,6 @@ def accept_browser_file_capture(
         idempotency_outcome="created",
         processing_status=_status_to_str(media.processing_status),
         ingest_enqueued=ingest_enqueued,
-    )
-
-
-def accept_uploaded_file_source(
-    *,
-    db: Session,
-    viewer_id: UUID,
-    kind: str,
-    filename: str,
-    content_type: str,
-    size_bytes: int,
-    library_ids: list[UUID],
-    request_id: str | None = None,
-    idempotency_key: str | None = None,
-) -> dict[str, object]:
-    """Accept an uploaded PDF/EPUB source and return a signed upload URL."""
-    settings = get_settings()
-    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
-    validate_file_ingest_request(kind, content_type, size_bytes)
-
-    source_type = f"uploaded_{kind}_file"
-    intent_key = _upload_intent_key(
-        source_type=source_type,
-        filename=filename,
-        content_type=content_type,
-        size_bytes=size_bytes,
-        library_ids=library_ids,
-    )
-    clean_idempotency_key = _clean_idempotency_key(idempotency_key)
-    if clean_idempotency_key is not None:
-        _lock_idempotency_key(db, viewer_id, clean_idempotency_key)
-        existing_attempt = _find_idempotent_attempt(db, viewer_id, clean_idempotency_key)
-        if existing_attempt is not None:
-            if existing_attempt.intent_key != intent_key:
-                raise ConflictError(
-                    ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
-                    "Idempotency key was reused for a different source ingest request.",
-                )
-            media = db.get(Media, existing_attempt.media_id)
-            if media is None:
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-            return _upload_init_response(
-                db=db,
-                media=media,
-                attempt=existing_attempt,
-                content_type=content_type,
-                size_bytes=size_bytes,
-                expires_in_seconds=settings.signed_url_expiry_s,
-                idempotency_outcome="reused",
-            )
-
-    ext = get_file_extension(kind)
-    media_id = uuid4()
-    storage_path = build_upload_staging_storage_path(media_id, ext)
-    now = datetime.now(UTC)
-    media = Media(
-        id=media_id,
-        kind=kind,
-        title=filename,
-        processing_status=ProcessingStatus.pending,
-        created_by_user_id=viewer_id,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(media)
-    db.add(
-        MediaFile(
-            media_id=media_id,
-            storage_path=storage_path,
-            content_type=content_type,
-            size_bytes=size_bytes,
-        )
-    )
-    db.flush()
-    library_entries.assign_libraries_for_media_in_current_transaction(
-        db, viewer_id, media_id, library_ids
-    )
-    attempt = record_upload_source_intent(
-        db=db,
-        media=media,
-        viewer_id=viewer_id,
-        filename=filename,
-        content_type=content_type,
-        size_bytes=size_bytes,
-        request_id=request_id,
-        idempotency_key=clean_idempotency_key,
-        intent_key=intent_key,
-        library_ids=library_ids,
-    )
-    db.commit()
-
-    return _upload_init_response(
-        db=db,
-        media=media,
-        attempt=attempt,
-        content_type=content_type,
-        size_bytes=size_bytes,
-        expires_in_seconds=settings.signed_url_expiry_s,
-        idempotency_outcome="created",
     )
 
 
@@ -1906,131 +1774,6 @@ def repair_source_for_system_media(
         ingest_enqueued=ingest_enqueued,
         processing_status=_status_to_str(media.processing_status),
     )
-
-
-def record_upload_source_intent(
-    *,
-    db: Session,
-    media: Media,
-    viewer_id: UUID,
-    filename: str,
-    content_type: str,
-    size_bytes: int,
-    request_id: str | None = None,
-    idempotency_key: str | None = None,
-    intent_key: str | None = None,
-    library_ids: list[UUID] | None = None,
-) -> MediaSourceAttempt:
-    """Record the durable source intent created by upload init."""
-    source_type = f"uploaded_{media.kind}_file"
-    return create_attempt(
-        db,
-        media=media,
-        viewer_id=viewer_id,
-        source_type=source_type,
-        intent_key=intent_key or build_intent_key(source_type, str(media.id), None),
-        requested_url=None,
-        canonical_source_url=None,
-        provider=None,
-        provider_target_ref=None,
-        source_payload={
-            "filename": filename,
-            "content_type": content_type,
-            "size_bytes": size_bytes,
-            "library_ids": [str(library_id) for library_id in library_ids or []],
-        },
-        request_id=request_id,
-        idempotency_key=idempotency_key,
-        status=_ATTEMPT_ACCEPTED,
-    )
-
-
-def confirm_uploaded_source(
-    *,
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    library_ids: list[UUID],
-    request_id: str | None,
-) -> dict[str, object]:
-    """Confirm uploaded bytes and enqueue the shared source attempt job."""
-    from nexus.services import upload as upload_service
-
-    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
-    try:
-        result = upload_service.confirm_ingest(db, viewer_id, media_id)
-    except Exception as exc:
-        if _is_upload_confirm_failure(exc):
-            _fail_latest_attempt_and_media(db, media_id, exc, stage="upload")
-            db.commit()
-        raise
-
-    actual_media_id = UUID(result["media_id"])
-    library_entries.assign_libraries_for_media(db, viewer_id, actual_media_id, library_ids)
-    media = db.execute(select(Media).where(Media.id == actual_media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    if bool(result["duplicate"]) or media.processing_status != ProcessingStatus.pending:
-        attempt = _latest_source_attempt(db, actual_media_id)
-        if attempt is None:
-            attempt = record_upload_source_intent(
-                db=db,
-                media=media,
-                viewer_id=viewer_id,
-                filename=str(media.title or ""),
-                content_type=str(media.media_file.content_type if media.media_file else ""),
-                size_bytes=int(media.media_file.size_bytes if media.media_file else 0),
-                request_id=request_id,
-            )
-            attempt.status = _ATTEMPT_SUCCEEDED
-            db.commit()
-        return {
-            "media_id": str(actual_media_id),
-            "source_attempt_id": str(attempt.id),
-            "source_type": attempt.source_type,
-            "source_attempt_status": attempt.status,
-            "idempotency_outcome": "reused" if bool(result["duplicate"]) else "created",
-            "duplicate": bool(result["duplicate"]),
-            "processing_status": _status_to_str(media.processing_status),
-            "ingest_enqueued": False,
-        }
-
-    attempt = _latest_source_attempt(db, actual_media_id)
-    if attempt is None or not attempt.source_type.startswith("uploaded_"):
-        attempt = record_upload_source_intent(
-            db=db,
-            media=media,
-            viewer_id=viewer_id,
-            filename=str(media.title or ""),
-            content_type=str(media.media_file.content_type if media.media_file else ""),
-            size_bytes=int(media.media_file.size_bytes if media.media_file else 0),
-            request_id=request_id,
-        )
-    mark_source_queued(db, media)
-    _bump_media_fact_collections(db)
-    attempt.updated_at = func.now()
-    db.commit()
-    ingest_enqueued = _enqueue_accepted_attempt(
-        db,
-        media_id=actual_media_id,
-        attempt_id=attempt.id,
-        actor_user_id=viewer_id,
-        request_id=request_id,
-        failure_stage="extract",
-    )
-    media = db.get(Media, actual_media_id) or media
-    attempt = db.get(MediaSourceAttempt, attempt.id) or attempt
-    return {
-        "media_id": str(actual_media_id),
-        "source_attempt_id": str(attempt.id),
-        "source_type": attempt.source_type,
-        "source_attempt_status": attempt.status,
-        "idempotency_outcome": "created",
-        "duplicate": False,
-        "processing_status": _status_to_str(media.processing_status),
-        "ingest_enqueued": ingest_enqueued,
-    }
 
 
 def _url_source_spec(url: str) -> dict[str, object]:
@@ -3457,6 +3200,7 @@ def _run_remote_file(
         fence=fence,
         storage_path=storage_path,
         source_size_bytes=fetched.size_bytes,
+        source_sha256=fetched.sha256_hex,
         source_package=source_package,
         source_package_diagnostics=source_package_diagnostics,
     )
@@ -3494,6 +3238,7 @@ def _run_remote_file(
                 storage_path=storage_path,
                 content_type=fetched.content_type,
                 size_bytes=fetched.size_bytes,
+                source_sha256=fetched.sha256_hex,
             ),
         )
 
@@ -3611,7 +3356,9 @@ def _run_existing_file(
     media_id: UUID,
     fence: SourcePublicationFence,
 ) -> dict[str, object]:
-    def begin_file_extraction(db: Session, _attempt: MediaSourceAttempt) -> tuple[str, str, int]:
+    def begin_file_extraction(
+        db: Session, _attempt: MediaSourceAttempt
+    ) -> tuple[str, str, int, str]:
         media = db.get(Media, media_id)
         if media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
@@ -3632,9 +3379,10 @@ def _run_existing_file(
             str(media.kind),
             str(media_file.storage_path),
             int(media_file.size_bytes),
+            str(media_file.source_sha256),
         )
 
-    kind, storage_path, source_size_bytes = run_source_publication_phase(
+    kind, storage_path, source_size_bytes, source_sha256 = run_source_publication_phase(
         session_factory=session_factory,
         label="begin_existing_file_extraction",
         fence=fence,
@@ -3647,6 +3395,7 @@ def _run_existing_file(
         kind,
         storage_path=storage_path,
         source_size_bytes=source_size_bytes,
+        source_sha256=source_sha256,
         fence=fence,
     )
 
@@ -3658,6 +3407,7 @@ def _materialize_existing_file_source(
     *,
     storage_path: str,
     source_size_bytes: int,
+    source_sha256: str,
     fence: SourcePublicationFence,
     source_package: PdfSourcePackageArtifact | None = None,
     source_package_diagnostics: dict[str, object] | None = None,
@@ -3669,6 +3419,7 @@ def _materialize_existing_file_source(
         fence=fence,
         storage_path=storage_path,
         source_size_bytes=source_size_bytes,
+        source_sha256=source_sha256,
         source_package=source_package,
         source_package_diagnostics=source_package_diagnostics,
     )
@@ -3702,6 +3453,7 @@ def _prepare_existing_file_source(
     fence: SourcePublicationFence,
     storage_path: str,
     source_size_bytes: int,
+    source_sha256: str,
     source_package: PdfSourcePackageArtifact | None = None,
     source_package_diagnostics: dict[str, object] | None = None,
 ) -> object:
@@ -3723,6 +3475,7 @@ def _prepare_existing_file_source(
             attempt_id=fence.attempt_id,
             storage_path=storage_path,
             source_size_bytes=source_size_bytes,
+            expected_source_sha256=source_sha256,
             record_progress=record_progress,
             source_package=source_package,
             source_package_diagnostics=source_package_diagnostics,
@@ -3736,6 +3489,7 @@ def _prepare_existing_file_source(
             attempt_id=fence.attempt_id,
             storage_path=storage_path,
             source_size_bytes=source_size_bytes,
+            expected_source_sha256=source_sha256,
             record_progress=record_progress,
         )
     else:
@@ -3988,14 +3742,6 @@ def _is_terminal_source_failure(exc: Exception, *, source_type: str) -> bool:
     return exc.code in _TERMINAL_SOURCE_FAILURE_CODES
 
 
-def _is_upload_confirm_failure(exc: Exception) -> bool:
-    if isinstance(exc, StorageError):
-        return True
-    if not isinstance(exc, ApiError):
-        return False
-    return exc.code in _UPLOAD_CONFIRM_FAILURE_CODES
-
-
 def _find_idempotent_attempt(
     db: Session,
     viewer_id: UUID,
@@ -4100,27 +3846,6 @@ def build_intent_key(
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
-def _upload_intent_key(
-    *,
-    source_type: str,
-    filename: str,
-    content_type: str,
-    size_bytes: int,
-    library_ids: list[UUID],
-) -> str:
-    return json.dumps(
-        {
-            "source_type": source_type,
-            "filename": filename,
-            "content_type": content_type,
-            "size_bytes": size_bytes,
-            "library_ids": sorted(str(library_id) for library_id in library_ids),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
 def _library_ids_from_payload(payload: dict[str, object] | None) -> list[UUID]:
     raw_ids = (payload or {}).get("library_ids")
     if not isinstance(raw_ids, list):
@@ -4144,97 +3869,6 @@ def _clean_idempotency_key(value: str | None) -> str | None:
             "Idempotency-Key is too long.",
         )
     return clean
-
-
-def _upload_init_response(
-    *,
-    db: Session,
-    media: Media,
-    attempt: MediaSourceAttempt,
-    content_type: str,
-    size_bytes: int,
-    expires_in_seconds: int,
-    idempotency_outcome: str,
-) -> dict[str, object]:
-    # Browser direct upload TTL is capped at 300s and by signed_url_expiry_s: the
-    # server cannot post-write-check a browser PUT, so the signed expiry (persisted
-    # below) + the R2 lifecycle + the orphan sweep are the durable backstops (spec §3.1).
-    capped_ttl = min(int(expires_in_seconds), 300, int(get_settings().signed_url_expiry_s))
-    expires_at = datetime.now(UTC) + timedelta(seconds=capped_ttl)
-    media_file = media.media_file or db.get(MediaFile, media.id)
-    expected_staging_path = build_upload_staging_storage_path(
-        media.id,
-        get_file_extension(str(media.kind)),
-    )
-    upload_url: str | None = None
-    can_sign_upload = (
-        media_file is not None
-        and media_file.storage_path == expected_staging_path
-        and media.processing_status == ProcessingStatus.pending
-        and media.processing_started_at is None
-        and attempt.status in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED}
-    )
-    if can_sign_upload:
-        if media_file is None:
-            raise AssertionError("signable upload has no media file")
-        # Lock the media row, reject a teardown intent, and persist
-        # signed_upload_expires_at BEFORE signing (spec §3.1). A replayed init extends
-        # the timestamp; nothing can sign after a claim. Own short transaction.
-        with transaction(db):
-            locked = db.execute(
-                text("SELECT 1 FROM media WHERE id = :m FOR UPDATE"), {"m": media.id}
-            ).first()
-            if locked is None:
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-            if db.execute(
-                text("SELECT 1 FROM media_teardown_intents WHERE media_id = :m"),
-                {"m": media.id},
-            ).first():
-                raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "Media is being deleted")
-            db.execute(
-                text(
-                    """
-                    UPDATE media_source_attempts
-                    SET signed_upload_expires_at = now() + (CAST(:ttl AS integer) * interval '1 second'),
-                        updated_at = now()
-                    WHERE id = :attempt_id
-                    """
-                ),
-                {"ttl": capped_ttl, "attempt_id": attempt.id},
-            )
-        try:
-            signed_upload = get_storage_client().sign_upload(
-                media_file.storage_path,
-                content_type=content_type,
-                size_bytes=size_bytes,
-                expires_in=capped_ttl,
-            )
-            upload_url = signed_upload.upload_url
-        except StorageError:
-            mark_source_attempt_and_media_failed(
-                db=db,
-                media_id=media.id,
-                attempt_id=attempt.id,
-                stage="upload",
-                error_code=ApiErrorCode.E_SIGN_UPLOAD_FAILED.value,
-                error_message="Failed to initialize upload",
-            )
-            db.commit()
-            db.expire_all()
-            media = db.get(Media, media.id) or media
-            attempt = db.get(MediaSourceAttempt, attempt.id) or attempt
-
-    return {
-        "media_id": str(media.id),
-        "source_attempt_id": str(attempt.id),
-        "source_type": attempt.source_type,
-        "source_attempt_status": attempt.status,
-        "idempotency_outcome": idempotency_outcome,
-        "processing_status": _status_to_str(media.processing_status),
-        "ingest_enqueued": False,
-        "upload_url": upload_url,
-        "expires_at": expires_at.isoformat(),
-    }
 
 
 def _source_action_response_with_capabilities(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from pathlib import Path
 from uuid import uuid4
 
@@ -68,6 +69,7 @@ def test_epub_navigation_and_document_map_share_exact_canonical_positions(
                 storage_path=storage_path,
                 content_type="application/epub+zip",
                 size_bytes=len(payload),
+                source_sha256=hashlib.sha256(payload).hexdigest(),
             )
         )
         db.commit()
@@ -80,6 +82,7 @@ def test_epub_navigation_and_document_map_share_exact_canonical_positions(
             attempt_id=uuid4(),
             storage_path=storage_path,
             source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
             storage_client=storage,
             record_progress=lambda _completed, _total, _unit: None,
         )
@@ -170,6 +173,7 @@ def test_real_epub_fixture_retains_known_book_structure(engine: Engine) -> None:
                 storage_path=storage_path,
                 content_type="application/epub+zip",
                 size_bytes=len(payload),
+                source_sha256=hashlib.sha256(payload).hexdigest(),
             )
         )
         db.commit()
@@ -183,6 +187,7 @@ def test_real_epub_fixture_retains_known_book_structure(engine: Engine) -> None:
             attempt_id=uuid4(),
             storage_path=storage_path,
             source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
             storage_client=storage,
             record_progress=lambda _completed, _total, _unit: None,
         )

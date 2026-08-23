@@ -11,6 +11,7 @@ already-ready document has a publication generation at all.
 
 from __future__ import annotations
 
+import hashlib
 from uuid import UUID, uuid4
 
 import fitz
@@ -59,6 +60,7 @@ def test_source_pointer_moves_exactly_when_its_publication_bumps_the_generation(
             storage_path=published_path,
             content_type="application/pdf",
             size_bytes=len(published_payload),
+            source_sha256=hashlib.sha256(published_payload).hexdigest(),
         ),
     )
 
@@ -67,6 +69,7 @@ def test_source_pointer_moves_exactly_when_its_publication_bumps_the_generation(
         attempt_id=uuid4(),
         storage_path=prepared_path,
         source_size_bytes=len(prepared_payload),
+        expected_source_sha256=hashlib.sha256(prepared_payload).hexdigest(),
         storage_client=storage,
         record_progress=lambda _completed, _total, _unit: None,
     )
@@ -75,6 +78,7 @@ def test_source_pointer_moves_exactly_when_its_publication_bumps_the_generation(
         storage_path=prepared_path,
         content_type="application/pdf",
         size_bytes=len(prepared_payload),
+        source_sha256=hashlib.sha256(prepared_payload).hexdigest(),
     )
 
     # The document is no longer extracting, so this run publishes nothing.
@@ -152,6 +156,7 @@ def test_enriched_title_of_a_published_document_advances_its_generation(
             storage_path=source_path,
             content_type="application/pdf",
             size_bytes=len(payload),
+            source_sha256=hashlib.sha256(payload).hexdigest(),
         ),
     )
     with Session(engine) as db:
@@ -220,6 +225,7 @@ def test_preflight_publishes_every_ready_document_that_has_no_generation(
             storage_path=source_path,
             content_type="application/pdf",
             size_bytes=len(payload),
+            source_sha256=hashlib.sha256(payload).hexdigest(),
         ),
     )
     with Session(engine) as db:

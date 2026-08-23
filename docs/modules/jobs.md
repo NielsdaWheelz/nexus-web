@@ -28,6 +28,29 @@ single-concurrency. The worker installs the process-global rate limiter at
 startup (see [llms.md](llms.md)) so the first job of any kind has a working
 limiter.
 
+The interactive lane dispatches in-process. The background lane instead runs every
+handler in a fresh bounded child through `jobs/process_executor.py`
+(`docs/cutovers/document-import-reliability-hard-cutover.md` §7): the supervisor keeps
+the claim, heartbeat, Heavy-capacity lease, wall timeout, and terminal transition, and
+never imports a parser, provider, or storage client.
+
+Child lifetime is bound to supervisor lifetime three ways, so an abrupt supervisor
+death cannot leave an orphan holding a live claim: a liveness pipe whose write end only
+the supervisor holds (the portable mechanism, and the one that works on darwin dev),
+`PR_SET_PDEATHSIG` armed in the child's own bootstrap on Linux with a `getppid` recheck
+for the fork/exec window, and PID-namespace teardown in the deployed container, where
+`worker-background` runs with `init: true`.
+
+Shutdown is cooperative. One `threading.Event` per worker is set by SIGINT/SIGTERM
+(`apps/worker/main.py:register_shutdown_signal_handlers`); the loop observes it between
+jobs and `BackgroundProcessExecutor.execute` observes it while a child is running. On
+shutdown the child gets the ordinary TERM-grace-then-KILL sequence and the job is
+released straight back to `pending` without consuming a retry attempt, because the
+interruption is explained by the operator and not by the job. The heartbeat thread sets
+a second interrupt when it observes that the claim is gone; that child is terminated
+too, and the job is deliberately not settled, because the worker no longer owns it.
+`stop_grace_period: 30s` on the deployed service gives that sequence room.
+
 ## The registry (`jobs/registry.py`)
 
 The registry is the source of truth mapping job kind → handler + policy. Each
@@ -40,9 +63,10 @@ kind is a frozen `JobDefinition`:
 - `periodic_interval_seconds` — set only for scheduler-driven background or
   maintenance kinds.
 - `failed_result_statuses` — see the gotcha below.
-- `dead_letter_handler` — the kind-specific hook run once retries are exhausted;
-  a hook may finalize domain state, project suspension, or only record safe
-  diagnostics according to that kind's contract.
+- `dead_letter_projection` — a member of the closed `DeadLetterProjection` union
+  applied once retries are exhausted; a projection may finalize domain state,
+  project suspension, or only record safe diagnostics according to that kind's
+  contract.
 
 `get_task_contract_digest()` is a stable SHA-256 fingerprint over the registry's
 kind/attempts/delays/lease policy. API `/version` and each worker heartbeat expose
@@ -58,27 +82,38 @@ plus the structured synthesis call plus the one bounded repair round
 
 ### Dead-lettering
 
-Exhausted retries dead-letter the row. Six kinds register a hook:
+Exhausted retries dead-letter the row. `jobs/dead_letter_projections.py` is the
+single owner that applies a kind's repair inside the same transaction as the
+terminal `dead` transition — that transition fires exactly once and has no
+redrive, so the repair cannot be split across a process or transaction boundary.
+The module imports only SQLAlchemy and `nexus.errors` at module scope, which is
+what keeps the background supervisor free of parser, provider, and storage graphs
+(`docs/cutovers/document-import-reliability-hard-cutover.md` §4.2.1). The three
+background-lane projections are pure SQL in that module; the three interactive-lane
+projections keep their existing owners and are imported inside their own branch,
+which the background lane never reaches.
 
-- `chat_run` (`_dead_letter_chat_run`) leaves the run, assistant message, and
-  event stream nonterminal and records safe suspension diagnostics. It requeues
-  only when cancellation was already requested, so the worker can publish the
-  ordinary cancelled fold.
-- `note_reindex_job` (`_dead_letter_note_reindex`) marks the note's content index
-  `failed` so a stranded reindex is observable instead of stuck `pending`.
-- `dossier_build` (`_dead_letter_dossier_build`) preserves the active build and
-  projects it as suspended; it does not invent a modeled Dossier failure or
-  unlock another Generate.
-- `media_teardown` (`_dead_letter_media_teardown`) voids only the exact
-  still-current teardown intent so a newer lifecycle cannot be overwritten.
-- `podcast_backfill_subscription` (`_dead_letter_podcast_backfill`) stamps the
-  current backfill fence Failed only when the dead job still names its exact
-  backfill ID, step, and cursor digest; dead rows remain operator-visible.
-- `podcast_sync_subscription_job` (`_dead_letter_podcast_sync_subscription`)
-  exact-matches subscription epoch, generation, job, and attempt before marking
-  the subscription and every joined refresh item Failed.
+Six kinds declare a projection:
 
-Other kinds have no hook; their failure is recorded on their own domain row.
+- `ChatRun` (`chat_run`) leaves the run, assistant message, and event stream
+  nonterminal and records safe suspension diagnostics. It requeues only when
+  cancellation was already requested, so the worker can publish the ordinary
+  cancelled fold.
+- `NoteContentIndex` (`note_reindex_job`) marks the note's content index `failed`
+  so a stranded reindex is observable instead of stuck `pending`.
+- `DossierBuild` (`dossier_build`) preserves the active build and projects it as
+  suspended; it does not invent a modeled Dossier failure or unlock another
+  Generate.
+- `MediaTeardownIntent` (`media_teardown`) voids only the exact still-current
+  teardown intent so a newer lifecycle cannot be overwritten.
+- `PodcastBackfill` (`podcast_backfill_subscription`) stamps the current backfill
+  fence Failed only when the dead job still names its exact backfill ID, step, and
+  cursor digest; dead rows remain operator-visible.
+- `PodcastSubscriptionSync` (`podcast_sync_subscription_job`) exact-matches
+  subscription epoch, generation, job, and attempt before marking the subscription
+  and every joined refresh item Failed.
+
+Every other kind declares `"None"`; its failure is recorded on its own domain row.
 
 ### The `failed_result_statuses` gotcha
 

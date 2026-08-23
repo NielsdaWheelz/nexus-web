@@ -1701,8 +1701,7 @@ export function useNexusController(): NexusController {
         const committed = mediaId
           ? addSession.state.items.find(
               (item) =>
-                (item.kind === "Accepted" && item.result.mediaId === mediaId) ||
-                (item.kind === "AcceptedUncertain" && item.mediaId === mediaId),
+                item.kind === "Accepted" && item.result.mediaId === mediaId,
             )
           : undefined;
         replayId = committed?.id ?? null;

@@ -279,7 +279,7 @@
       "proofs": [
         "pytest:python/tests/service/test_codex_metadata_enrichment.py"
       ],
-      "expected_failure": "the Uncertain checkpoint was not durably committed before native dispatch"
+      "expected_failure": "AssertionError at background child boundary"
     },
     {
       "id": "durable-codex-metadata-postaccept-loss-misclassification",
@@ -714,6 +714,150 @@
       "expected_failure": "first Bearer [REDACTED] failed bootstrap"
     },
     {
+      "id": "document-import-digest-nullability-bypass",
+      "patch": "testdata/faults/document-import-digest-nullability-bypass.patch",
+      "sha256": "ec4530e5b26bfa76a772c041023407814e97c6e2d1e3635c6c07339312b5ded0",
+      "proofs": [
+        "pytest:python/tests/migrations/test_document_import_reliability_migration.py::test_0220_0221_backfill_is_resumable_fail_closed_and_hard_contracts_schema"
+      ],
+      "expected_failure": "assert not True"
+    },
+    {
+      "id": "document-import-upload-generation-bypass",
+      "patch": "testdata/faults/document-import-upload-generation-bypass.patch",
+      "sha256": "254aec97add5a633f5bdb2969532748010d6039e9c97715567750f0a68188419",
+      "proofs": [
+        "pytest:python/tests/service/test_media_upload_sessions.py"
+      ],
+      "expected_failure": "E_UPLOAD_GENERATION_STALE"
+    },
+    {
+      "id": "document-import-time-dimension-bypass",
+      "patch": "testdata/faults/document-import-time-dimension-bypass.patch",
+      "sha256": "1bfec9ccb8b84c4641238900a5bc2c4939275a4da93c02d881c300867ad39a4d",
+      "proofs": [
+        "pytest:python/tests/service/test_background_worker_process_containment.py::test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child"
+      ],
+      "expected_failure": "resource-limited source settlement lost its exact dimension"
+    },
+    {
+      "id": "document-import-parser-dimension-bypass",
+      "patch": "testdata/faults/document-import-parser-dimension-bypass.patch",
+      "sha256": "654deddf8105de00b683bdb761400fd24c0c65a6aeefdde1f909fd49f7055018",
+      "proofs": [
+        "pytest:python/tests/service/test_bounded_media_extraction.py"
+      ],
+      "expected_failure": "PDF resource-limit projection lost its typed carrier"
+    },
+    {
+      "id": "document-import-activity-upload-omission",
+      "patch": "testdata/faults/document-import-activity-upload-omission.patch",
+      "sha256": "9b8b9fc6c27806bb047da3db49597c88d57f3d4464e6e8c2b909a1e124284e30",
+      "proofs": [
+        "pytest:python/tests/service/test_media_activity.py::test_activity_projects_only_upload_obligations_with_strict_precedence"
+      ],
+      "expected_failure": "assert 0 == 3"
+    },
+    {
+      "id": "document-import-reconciler-readiness-bypass",
+      "patch": "testdata/faults/document-import-reconciler-readiness-bypass.patch",
+      "sha256": "6745f440dd18b8424b582891df4639b0d6fb51e5ba0ddd5ec8fe5a2181e42254",
+      "proofs": [
+        "pytest:python/tests/service/test_ingest_reconciliation_readiness.py"
+      ],
+      "expected_failure": "assert not True"
+    },
+    {
+      "id": "document-import-upload-retry-ui-bypass",
+      "patch": "testdata/faults/document-import-upload-retry-ui-bypass.patch",
+      "sha256": "8e13d15cb2c2aab5a218575a79a73b17a76e3919505a3f4d31ede73c650c70b2",
+      "proofs": [
+        "vitest:apps/web/src/components/nexus/MediaActivityPage.browser.test.tsx"
+      ],
+      "expected_failure": "offered no Retry upload capability"
+    },
+    {
+      "id": "document-import-confirm-replay-conflict",
+      "patch": "testdata/faults/document-import-confirm-replay-conflict.patch",
+      "sha256": "88962497b42d585fb4d423d8ebc2a7c797b23d279e138ec071002a5d3abc637a",
+      "proofs": [
+        "pytest:python/tests/service/test_upload_confirm_replay_convergence.py"
+      ],
+      "expected_failure": "assert [ConflictErro... published.')] == []"
+    },
+    {
+      "id": "document-import-verification-lease-renewal-bypass",
+      "patch": "testdata/faults/document-import-verification-lease-renewal-bypass.patch",
+      "sha256": "9f69db8aa254192062d7111249cf7546416051257b8cdbca5cc86071ad54b205",
+      "proofs": [
+        "pytest:python/tests/service/test_upload_verification_lease_renewal.py"
+      ],
+      "expected_failure": "assert [ConflictErro...ad session.')] == []"
+    },
+    {
+      "id": "document-import-verification-lease-theft-misclassification",
+      "patch": "testdata/faults/document-import-verification-lease-theft-misclassification.patch",
+      "sha256": "340f0f3a70111212fa8aef4f01e6e367639953abccf3fd6d02ab59132e1e6930",
+      "proofs": [
+        "pytest:python/tests/service/test_upload_verification_lease_theft.py"
+      ],
+      "expected_failure": "is <ApiErrorCode.E_UPLOAD_VERIFICATION_IN_PROGRESS"
+    },
+    {
+      "id": "document-import-confirm-failed-fact-omission",
+      "patch": "testdata/faults/document-import-confirm-failed-fact-omission.patch",
+      "sha256": "f5bb6a3470a6bcbc61fcb157e4fea38d78f2909ecf3b72bffede8a04e2d9b8ca",
+      "proofs": [
+        "pytest:python/tests/service/test_upload_confirm_failed_fact.py"
+      ],
+      "expected_failure": "assert ['ConfirmStarted'] == ['ConfirmStar...onfirmFailed']"
+    },
+    {
+      "id": "document-import-upload-publication-silence-bypass",
+      "patch": "testdata/faults/document-import-upload-publication-silence-bypass.patch",
+      "sha256": "7ed32911f0ffd4576efdb7a275ec84f6620fa335fd81ef9d608d8271a36011c2",
+      "proofs": [
+        "pytest:python/tests/service/test_media_activity_published_upload_silence.py"
+      ],
+      "expected_failure": "== ['unpublished.epub']"
+    },
+    {
+      "id": "document-import-activity-upload-badge-truncation",
+      "patch": "testdata/faults/document-import-activity-upload-badge-truncation.patch",
+      "sha256": "0d84ce1bf234d5684efe9824981a7df4693bcbdddb69d0e7885c704b809b8737",
+      "proofs": [
+        "pytest:python/tests/service/test_media_activity_upload_badge_bound.py"
+      ],
+      "expected_failure": "assert 2 == 3"
+    },
+    {
+      "id": "document-import-epub2-doctype-rejection",
+      "patch": "testdata/faults/document-import-epub2-doctype-rejection.patch",
+      "sha256": "b945b1194f5fdd2d12ce6e722aa8388e77bab05b5c2f321bfb541631d85b282b",
+      "proofs": [
+        "pytest:python/tests/service/test_epub2_doctype_entities_extraction.py"
+      ],
+      "expected_failure": "the NCX table of contents was not read"
+    },
+    {
+      "id": "document-import-upload-error-defect-laundering",
+      "patch": "testdata/faults/document-import-upload-error-defect-laundering.patch",
+      "sha256": "acfd0ba41f28b58a919b2cfad3609bfb6061d8a3b64528da9a97502276379f75",
+      "proofs": [
+        "vitest:apps/web/src/lib/media/ingestionClient.unit.test.ts"
+      ],
+      "expected_failure": "reached the Add sheet as Defect"
+    },
+    {
+      "id": "document-import-child-liveness-bypass",
+      "patch": "testdata/faults/document-import-child-liveness-bypass.patch",
+      "sha256": "0afc76b09d86c4f632fc5fa6a81cc72820d3bdd163719185853329874326d5be",
+      "proofs": [
+        "pytest:python/tests/service/test_background_worker_supervisor_liveness.py"
+      ],
+      "expected_failure": "the child is not bound to supervisor liveness"
+    },
+    {
       "id": "android-player-protocol-skew-bypass",
       "patch": "testdata/faults/android-player-protocol-skew-bypass.patch",
       "sha256": "7d6caac2351888bf82d0ee6695c7732b2dcc848bcf948aa9973336c41cf86071",
@@ -730,6 +874,15 @@
         "node-test:node/ingest/test/accepted_url_egress.test.mjs"
       ],
       "expected_failure": "expected UnsafeDestination before any request; CLI returned Success"
+    },
+    {
+      "id": "document-media-offline-reading-readiness-gate-bypass",
+      "patch": "testdata/faults/document-media-offline-reading-readiness-gate-bypass.patch",
+      "sha256": "9fc3c679e7c8e18d2a31b3f0755a40e937aff541566d24458e9817d335277f22",
+      "proofs": [
+        "pytest:python/tests/service/test_resource_action_snapshots.py::test_document_media_subtypes_publish_their_exact_action_families"
+      ],
+      "expected_failure": "assert 'OfflineReading' not in"
     }
   ]
 }

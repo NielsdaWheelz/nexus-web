@@ -30,6 +30,14 @@ from pydantic_settings import BaseSettings
 from nexus.job_topology import MAINTENANCE_JOB_KINDS
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
+# Cross-runtime upload safety contract. Keep this equal to
+# `DIRECT_UPLOAD_PUT_TIMEOUT_MS` in `apps/web/src/lib/media/ingestionClient.ts`.
+DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS = 240
+# The one background-worker memory limit. It is deployment shape, not per-environment
+# configuration, so it is a constant here and `mem_limit: 448m` in
+# `deploy/hetzner/docker-compose.yml`; the cgroup readiness check proves at startup
+# that the deployed limit is exactly this value.
+BACKGROUND_WORKER_MEMORY_LIMIT_BYTES = 448 * 1024 * 1024
 
 
 def _database_url_looks_like_supabase(database_url: str) -> bool:
@@ -155,9 +163,8 @@ class Settings(BaseSettings):
     media_teardown_cleanup_grace_seconds: int = Field(
         default=60, alias="MEDIA_TEARDOWN_CLEANUP_GRACE_SECONDS"
     )
-    # writeMayLandUntil horizon for an in-process write's durable final-sweep
-    # record. Must exceed r2_read_timeout_seconds so a delayed writer can be
-    # aborted (or must renew under the media lock) before its reservation lapses.
+    # writeMayLandUntil horizon for a durable final-sweep record. Must exceed
+    # both bounded server writes and the browser's direct-upload PUT deadline.
     storage_object_cleanup_write_window_seconds: int = Field(
         default=300, alias="STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS"
     )
@@ -296,6 +303,25 @@ class Settings(BaseSettings):
     )
     worker_db_failure_backoff_max_seconds: float = Field(
         default=900.0, alias="WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS"
+    )
+    background_process_cgroup_root: Path = Field(
+        default=Path("/sys/fs/cgroup"), alias="BACKGROUND_PROCESS_CGROUP_ROOT"
+    )
+    background_process_wall_timeout_seconds: float = Field(
+        default=900.0,
+        alias="BACKGROUND_PROCESS_WALL_TIMEOUT_SECONDS",
+    )
+    background_process_term_grace_seconds: float = Field(
+        default=5.0,
+        alias="BACKGROUND_PROCESS_TERM_GRACE_SECONDS",
+    )
+    background_process_result_max_bytes: int = Field(
+        default=1024 * 1024,
+        alias="BACKGROUND_PROCESS_RESULT_MAX_BYTES",
+    )
+    background_process_oom_score_adj: int = Field(
+        default=750,
+        alias="BACKGROUND_PROCESS_OOM_SCORE_ADJ",
     )
     sync_gutenberg_catalog_schedule_seconds: int = Field(
         default=0, alias="SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS"
@@ -539,6 +565,13 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_LOCK_TIMEOUT_MS must be >= 0.")
         if self.database_idle_in_tx_timeout_ms < 0:
             raise ValueError("DATABASE_IDLE_IN_TX_TIMEOUT_MS must be >= 0.")
+        if self.ingest_reconcile_schedule_seconds < 0:
+            raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 0.")
+        if (
+            self.nexus_env in (Environment.STAGING, Environment.PROD)
+            and self.ingest_reconcile_schedule_seconds == 0
+        ):
+            raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be > 0 in staging and prod.")
 
         # NEXUS_INTERNAL_SECRET is required only in staging/prod
         if self.nexus_env in (Environment.STAGING, Environment.PROD):
@@ -588,6 +621,11 @@ class Settings(BaseSettings):
                 "STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS must be greater than "
                 "R2_READ_TIMEOUT_SECONDS so a delayed writer can be aborted before "
                 "its reservation lapses."
+            )
+        if self.storage_object_cleanup_write_window_seconds <= DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS:
+            raise ValueError(
+                "STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS must be greater than the "
+                f"{DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS}-second browser direct-upload PUT timeout."
             )
         if self.storage_orphan_sweep_interval_seconds <= 0:
             raise ValueError("STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS must be > 0.")
@@ -733,8 +771,6 @@ class Settings(BaseSettings):
                     "NEXUS_FABLE_RETENTION_ACCEPTED_AT must be an RFC 3339 timestamp, "
                     f"got {self.nexus_fable_retention_accepted_at!r}"
                 ) from exc
-        if self.ingest_reconcile_schedule_seconds < 0:
-            raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 0.")
         if self.ingest_stale_extracting_seconds < 1:
             raise ValueError("INGEST_STALE_EXTRACTING_SECONDS must be >= 1.")
         if self.ingest_stale_requeue_max_attempts < 1:
@@ -804,6 +840,18 @@ class Settings(BaseSettings):
                 "WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS must be >= "
                 "WORKER_DB_FAILURE_BACKOFF_SECONDS."
             )
+        if not self.background_process_cgroup_root.is_absolute():
+            raise ValueError("BACKGROUND_PROCESS_CGROUP_ROOT must be an absolute path.")
+        if not 0 < self.background_process_wall_timeout_seconds <= 900:
+            raise ValueError("BACKGROUND_PROCESS_WALL_TIMEOUT_SECONDS must be > 0 and <= 900.")
+        if not 0 < self.background_process_term_grace_seconds <= 30:
+            raise ValueError("BACKGROUND_PROCESS_TERM_GRACE_SECONDS must be > 0 and <= 30.")
+        if not 1024 <= self.background_process_result_max_bytes <= 4 * 1024 * 1024:
+            raise ValueError(
+                "BACKGROUND_PROCESS_RESULT_MAX_BYTES must be between 1024 and 4194304."
+            )
+        if not 1 <= self.background_process_oom_score_adj <= 1000:
+            raise ValueError("BACKGROUND_PROCESS_OOM_SCORE_ADJ must be between 1 and 1000.")
         if self.sync_gutenberg_catalog_schedule_seconds < 0:
             raise ValueError("SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS must be >= 0.")
         if self.background_job_prune_schedule_seconds < 0:

@@ -9,8 +9,18 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from tempfile import gettempdir
+from uuid import uuid4
 
 from apps.codex_agent.capacity_canary import check
+
+_LINUX_SUN_PATH_BYTES = 108
+
+
+def _short_socket_path() -> Path:
+    socket_path = Path(gettempdir()) / f"nexus-capacity-canary-{uuid4().hex[:16]}.sock"
+    assert len(str(socket_path).encode("utf-8")) < _LINUX_SUN_PATH_BYTES
+    return socket_path
 
 
 @contextmanager
@@ -81,12 +91,13 @@ def _empty_success_terminal_host(socket_path: Path) -> Iterator[None]:
             server.shutdown()
             thread.join(timeout=5)
             server.server_close()
+            socket_path.unlink(missing_ok=True)
 
 
-def test_capacity_canary_rejects_succeeded_terminal_without_metadata_object(tmp_path: Path) -> None:
+def test_capacity_canary_rejects_succeeded_terminal_without_metadata_object() -> None:
     """Risk: qualification promotes a host whose successful turns cannot publish metadata."""
 
-    socket_path = tmp_path / "capacity-canary.sock"
+    socket_path = _short_socket_path()
     with _empty_success_terminal_host(socket_path):
         result, exit_code = asyncio.run(check(socket_path))
 

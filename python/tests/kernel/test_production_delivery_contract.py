@@ -46,6 +46,11 @@ def test_ci_setup_survives_a_persistent_self_hosted_workspace() -> None:
     assert 'test "$(git -C "$checkout" rev-parse HEAD)" = "$revision"' in setup
 
     assert "if ! sudo -n true >/dev/null 2>&1; then" in setup
+    for step in setup.split("\n    - name: ")[1:]:
+        if "sudo " in step:
+            assert "if ! sudo -n true >/dev/null 2>&1; then" in step, (
+                f"setup step uses sudo without the passwordless guard: {step.splitlines()[0]}"
+            )
     assert "steps.container.outputs.docker == 'true'" in setup
 
 
@@ -316,6 +321,25 @@ def test_production_compose_is_topology_only_and_app_activation_is_narrow() -> N
     ):
         assert activation_contract in controller
     assert 'arguments=("stop", "--timeout", "30", "worker-background")' in controller
+
+
+def test_background_worker_can_start_before_api_readiness() -> None:
+    compose = (REPO_ROOT / "deploy/hetzner/docker-compose.yml").read_text(encoding="utf-8")
+    interactive_start = compose.index("  worker-interactive:\n")
+    background_start = compose.index("  worker-background:\n")
+    migration_start = compose.index("  migration:\n")
+
+    interactive = compose[interactive_start:background_start]
+    background = compose[background_start:migration_start]
+
+    # The background lane owns reconciliation freshness, so API readiness may
+    # depend on it. Its only startup prerequisite is the durable queue owner.
+    assert "      postgres:\n        condition: service_healthy\n" in background
+    assert "      api:\n" not in background
+
+    # The interactive lane does not produce reconciliation freshness and can
+    # remain sequenced behind the ready API without creating a dependency cycle.
+    assert "      api:\n        condition: service_healthy\n" in interactive
 
 
 def test_production_compose_declares_the_exact_resource_envelope() -> None:

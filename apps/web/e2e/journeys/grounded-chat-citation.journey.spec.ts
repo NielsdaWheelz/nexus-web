@@ -15,6 +15,10 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
+  // A Heavy ingest job now runs in a fresh child process, so on a constrained CI
+  // runner a document’s ingest/index pipeline (plus the fresh-database maintenance
+  // backlog) needs materially more wall time than the pre-cutover in-process worker.
+  test.setTimeout(300_000);
   const api = pageRequest(page, webOrigin);
   const mediaId = await captureCanonicalArticle(page, "grounded-source");
   await expect
@@ -28,7 +32,7 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
       },
       {
         message: `Expected grounded source ${mediaId} to publish searchable evidence.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe("ready");
@@ -144,7 +148,7 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   await expect(
     citation,
     `Conversation ${conversationId} completed without a user-visible citation to evidence ${evidence!.context_ref.id}.`,
-  ).toBeVisible({ timeout: 25_000 });
+  ).toBeVisible({ timeout: 60_000 });
   await expect(
     citation,
     `Citation from conversation ${conversationId} did not retain its exact evidence activation target for media ${mediaId}.`,

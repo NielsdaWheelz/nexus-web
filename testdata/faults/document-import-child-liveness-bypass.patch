@@ -1,0 +1,20 @@
+diff --git a/python/nexus/jobs/process_executor.py b/python/nexus/jobs/process_executor.py
+--- a/python/nexus/jobs/process_executor.py
++++ b/python/nexus/jobs/process_executor.py
+@@ -760,15 +760,7 @@
+     3. in the deployed container, PID-namespace teardown: ``worker-background`` runs
+        with ``init: true`` and the supervisor is docker-init's direct child.
+     """
+-    _arm_parent_death_signal()
+-    if os.getppid() != supervisor_pid:
+-        _kill_own_process_group()
+-    threading.Thread(
+-        target=_kill_process_group_when_supervisor_exits,
+-        args=(liveness_fd,),
+-        name="supervisor-liveness-watchdog",
+-        daemon=True,
+-    ).start()
++    del liveness_fd, supervisor_pid
+ 
+ 
+ def _kill_process_group_when_supervisor_exits(liveness_fd: int) -> None:

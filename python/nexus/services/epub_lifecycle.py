@@ -10,7 +10,13 @@ from nexus.db.models import (
     Media,
     ProcessingStatus,
 )
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import (
+    ApiError,
+    ApiErrorCode,
+    InvalidRequestError,
+    NotFoundError,
+    ResourceLimitError,
+)
 from nexus.logging import get_logger
 from nexus.services.collection_revisions import (
     CollectionFamily,
@@ -39,23 +45,19 @@ _MAX_ERROR_MSG_LEN = 1000
 _EPUB_AUTHOR_SOURCE = "epub_opf"
 
 
-def confirm_ingest_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    library_ids: list[UUID],
-    *,
-    request_id: str | None = None,
-) -> dict:
-    from nexus.services.media_source_ingest import confirm_uploaded_source
-
-    return confirm_uploaded_source(
-        db=db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        library_ids=library_ids,
-        request_id=request_id,
+def _extraction_api_error(plan: EpubExtractionError) -> ApiError:
+    message = (plan.error_message or "EPUB extraction failed")[:_MAX_ERROR_MSG_LEN]
+    code = _source_api_error_code(plan.error_code)
+    if plan.resource_limit_dimension is None:
+        return ApiError(code, message)
+    # justify-service-invariant-check: the parser result pairs a free-form code
+    # string with an optional dimension, so only this projection can state that
+    # a dimension means the declared resource-limit code.
+    assert code is ApiErrorCode.E_RESOURCE_LIMIT, (
+        f"EPUB extraction reported dimension {plan.resource_limit_dimension} "
+        f"with error code {code.value}"
     )
+    return ResourceLimitError(message, dimension=plan.resource_limit_dimension)
 
 
 def retry_epub_ingest_for_viewer(
@@ -82,6 +84,7 @@ def prepare_epub_source(
     attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
+    expected_source_sha256: str,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
 ) -> EpubExtractionPlan:
     """Acquire and parse one EPUB into an immutable publication plan."""
@@ -91,14 +94,12 @@ def prepare_epub_source(
         attempt_id=attempt_id,
         storage_path=storage_path,
         source_size_bytes=source_size_bytes,
+        expected_source_sha256=expected_source_sha256,
         storage_client=get_storage_client(),
         record_progress=record_progress,
     )
     if isinstance(plan, EpubExtractionError):
-        raise ApiError(
-            _source_api_error_code(plan.error_code),
-            (plan.error_message or "EPUB extraction failed")[:_MAX_ERROR_MSG_LEN],
-        )
+        raise _extraction_api_error(plan)
     return plan
 
 

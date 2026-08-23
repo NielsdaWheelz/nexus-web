@@ -30,6 +30,7 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         "durable-job-replay",
         "native-agent-host",
         "database-object-convergence",
+        "document-import-reliability",
         "llm-tool-safety",
         "android-player-protocol-skew",
         "immutable-production-release",

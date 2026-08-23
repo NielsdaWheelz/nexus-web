@@ -4,6 +4,7 @@ import {
   type Request,
 } from "playwright/test";
 import { uniqueCanonicalReaderEpub } from "../corpus";
+import { uploadDocument } from "../documentUploadFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -81,61 +82,31 @@ async function uploadCanonicalEpub(
   const api = pageRequest(page, webOrigin);
   const objects = pageRequest(page, minioOrigin);
   const epub = uniqueCanonicalReaderEpub(userId);
-  const initResponse = await api.post("/api/media/upload/init", {
-    headers: {
-      origin: webOrigin,
-      "Idempotency-Key": `reader-progress-${userId}`,
-    },
-    data: {
-      kind: "epub",
-      filename: "canonical-reader-progress.epub",
-      content_type: "application/epub+zip",
-      size_bytes: epub.byteLength,
-      library_ids: [],
-    },
+  const published = await uploadDocument({
+    api,
+    objects,
+    payload: epub,
+    kind: "Epub",
+    filename: "canonical-reader-progress.epub",
+    idempotencyKey: `reader-progress-${userId}`,
   });
-  const initText = await initResponse.text();
-  expect(
-    initResponse.ok(),
-    `Reader fixture acceptance failed: ${initResponse.status()} ${initText.slice(0, 500)}`,
-  ).toBeTruthy();
-  const init = (JSON.parse(initText) as {
-    data: { media_id: string; upload_url: string | null };
-  }).data;
-  if (init.upload_url) {
-    const upload = await objects.put(init.upload_url, {
-      headers: { "Content-Type": "application/epub+zip" },
-      data: epub,
-    });
-    expect(
-      upload.ok(),
-      `Local EPUB object upload for ${init.media_id} failed with ${upload.status()}.`,
-    ).toBeTruthy();
-    const confirm = await api.post(`/api/media/${init.media_id}/ingest`, {
-      headers: { origin: webOrigin },
-      data: { library_ids: [] },
-    });
-    expect(
-      confirm.ok(),
-      `EPUB confirmation for ${init.media_id} failed: ${confirm.status()} ${await confirm.text()}`,
-    ).toBeTruthy();
-  }
+  const mediaId = published.mediaId;
   await expect
     .poll(
       async () => {
-        const response = await api.get(`/api/media/${init.media_id}`);
+        const response = await api.get(`/api/media/${mediaId}`);
         if (!response.ok()) return `http-${response.status()}`;
         return ((await response.json()) as {
           data: { processing_status: string };
         }).data.processing_status;
       },
       {
-        message: `Expected EPUB ${init.media_id} to become readable before progress movement.`,
+        message: `Expected EPUB ${mediaId} to become readable before progress movement.`,
         timeout: 25_000,
       },
     )
     .toBe("ready_for_reading");
-  return init.media_id;
+  return mediaId;
 }
 
 test("reader progress resumes, completes, and resets through its product actions", async ({

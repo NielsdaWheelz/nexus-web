@@ -18,8 +18,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
-from nexus.config import clear_settings_cache, get_settings
+from nexus.config import (
+    BACKGROUND_WORKER_MEMORY_LIMIT_BYTES,
+    clear_settings_cache,
+    get_settings,
+)
 from nexus.db.session import create_session_factory
+from nexus.jobs.process_executor import ValidatedCgroup
 from nexus.jobs.registry import get_task_contract_digest
 from nexus.jobs.worker import JobWorker
 from nexus.release_artifact import RuntimeIdentity, write_runtime_identity_value
@@ -168,9 +173,10 @@ def test_worker_loop_publishes_only_after_a_real_database_cycle(engine: Engine) 
         allowed_kinds=("runtime_health_probe_test",),
         successful_cycle_callback=record_successful_cycle,
         successful_cycle_interval_seconds=5.0,
+        stop_event=stop_event,
     )
 
-    worker.run_forever(stop_event=stop_event)
+    worker.run_forever()
 
     assert successful_cycles == ["database_cycle"]
 
@@ -191,9 +197,10 @@ def test_worker_heartbeat_file_failure_does_not_change_queue_progress(engine: En
         allowed_kinds=("runtime_health_probe_test",),
         successful_cycle_callback=fail_heartbeat_publication,
         successful_cycle_interval_seconds=5.0,
+        stop_event=stop_event,
     )
 
-    worker.run_forever(stop_event=stop_event)
+    worker.run_forever()
 
     assert attempted_cycles == ["database_cycle"]
 
@@ -215,7 +222,7 @@ def test_worker_publishes_health_only_for_the_exact_database_revision(
         },
     )
     monkeypatch.setattr(worker_main, "configure_logging", lambda: None)
-    monkeypatch.setattr(worker_main, "_register_signal_handlers", lambda _stop: None)
+    monkeypatch.setattr(worker_main, "register_shutdown_signal_handlers", lambda _stop: None)
     expected_ready = [True]
     observations: list[str] = []
 
@@ -226,8 +233,7 @@ def test_worker_publishes_health_only_for_the_exact_database_revision(
         def __init__(self, callback: Callable[[], None]) -> None:
             self._callback = callback
 
-        def run_forever(self, *, stop_event: threading.Event) -> None:
-            del stop_event
+        def run_forever(self) -> None:
             self._callback()
             if expected_ready[0]:
                 heartbeat = check_worker_health(lane="interactive", heartbeat_path=heartbeat_path)
@@ -238,8 +244,11 @@ def test_worker_publishes_health_only_for_the_exact_database_revision(
                 observations.append(caught.value.code)
 
     def create_one_cycle_worker(
-        *, successful_cycle_callback: Callable[[], None] | None = None
+        *,
+        stop_event: threading.Event,
+        successful_cycle_callback: Callable[[], None] | None = None,
     ) -> OneCycleWorker:
+        del stop_event
         assert successful_cycle_callback is not None
         return OneCycleWorker(successful_cycle_callback)
 
@@ -294,3 +303,117 @@ def test_worker_health_binds_live_process_release_contract(
     with pytest.raises(WorkerHeartbeatError) as noncanonical:
         check_worker_health(lane="interactive", heartbeat_path=heartbeat_path)
     assert noncanonical.value.code == "heartbeat_invalid"
+
+
+# Each rejected shape is one condition the background lane's readiness depends on:
+# a limit that is present, exactly the deployed limit, killable one child at a time,
+# and enforced by an actually delegated memory controller.
+_REJECTED_CGROUP_SHAPES = (
+    pytest.param("memory", "1", "0", id="memory-max-differs-from-the-deployed-limit"),
+    pytest.param("memory", "max", "0", id="memory-max-declares-no-limit"),
+    pytest.param(
+        "memory",
+        str(BACKGROUND_WORKER_MEMORY_LIMIT_BYTES),
+        "1",
+        id="oom-group-kills-the-supervisor-with-its-child",
+    ),
+    pytest.param(
+        "cpu",
+        str(BACKGROUND_WORKER_MEMORY_LIMIT_BYTES),
+        "0",
+        id="memory-controller-is-not-delegated",
+    ),
+)
+
+
+def _write_cgroup_shape(root: Path, *, controllers: str, memory_max: str, oom_group: str) -> Path:
+    memberships = [
+        line.removeprefix("0::")
+        for line in Path("/proc/self/cgroup").read_text(encoding="ascii").splitlines()
+        if line.startswith("0::/")
+    ]
+    assert len(memberships) == 1
+    directory = root / memberships[0].lstrip("/")
+    directory.mkdir(parents=True)
+    (directory / "cgroup.controllers").write_text(f"{controllers}\n", encoding="ascii")
+    (directory / "memory.max").write_text(f"{memory_max}\n", encoding="ascii")
+    (directory / "memory.oom.group").write_text(f"{oom_group}\n", encoding="ascii")
+    (directory / "memory.events").write_text("oom_kill 0\n", encoding="ascii")
+    return directory
+
+
+@pytest.mark.parametrize(("controllers", "memory_max", "oom_group"), _REJECTED_CGROUP_SHAPES)
+def test_background_worker_refuses_to_publish_health_without_the_live_cgroup_contract(
+    runtime_identity_file: tuple[Path, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    controllers: str,
+    memory_max: str,
+    oom_group: str,
+) -> None:
+    del runtime_identity_file
+    heartbeat_path = tmp_path / "background-heartbeat.json"
+    identity = get_runtime_identity()
+    cgroup_root = tmp_path / "cgroup"
+    _write_cgroup_shape(
+        cgroup_root,
+        controllers=controllers,
+        memory_max=memory_max,
+        oom_group=oom_group,
+    )
+    monkeypatch.setenv("BACKGROUND_PROCESS_CGROUP_ROOT", str(cgroup_root))
+    clear_settings_cache()
+    try:
+        settings = get_settings()
+
+        assert not worker_main._worker_readiness_check(
+            lane="background",
+            settings=settings,
+            expected_database_revision=identity.expected_database_revision,
+        ), (
+            "background readiness accepted a cgroup with "
+            f"controllers={controllers!r}, memory.max={memory_max!r}, "
+            f"memory.oom.group={oom_group!r}"
+        )
+
+        WorkerHeartbeatPublisher(
+            lane="background",
+            allowed_job_kinds=expected_job_kinds("background"),
+            source_sha=identity.source_sha,
+            expected_database_revision=identity.expected_database_revision,
+            expected_oracle_manifest_digest=identity.expected_oracle_manifest_digest,
+            task_contract_digest=get_task_contract_digest(),
+            readiness_check=lambda: worker_main._worker_readiness_check(
+                lane="background",
+                settings=settings,
+                expected_database_revision=identity.expected_database_revision,
+            ),
+            heartbeat_path=heartbeat_path,
+            pid=os.getpid(),
+        ).publish()
+
+        assert not heartbeat_path.exists()
+        with pytest.raises(WorkerHeartbeatError) as caught:
+            check_worker_health(lane="background", heartbeat_path=heartbeat_path)
+        assert caught.value.code == "heartbeat_invalid"
+    finally:
+        clear_settings_cache()
+
+
+def test_background_worker_accepts_the_exact_deployed_cgroup_contract(tmp_path: Path) -> None:
+    """Positive control: the rejected-shape proof must not pass vacuously."""
+    cgroup_root = tmp_path / "cgroup"
+    _write_cgroup_shape(
+        cgroup_root,
+        controllers="memory",
+        memory_max=str(BACKGROUND_WORKER_MEMORY_LIMIT_BYTES),
+        oom_group="0",
+    )
+
+    cgroup = ValidatedCgroup.for_current_process(
+        cgroup_root,
+        expected_memory_limit_bytes=BACKGROUND_WORKER_MEMORY_LIMIT_BYTES,
+    )
+
+    assert cgroup.memory_limit_bytes == BACKGROUND_WORKER_MEMORY_LIMIT_BYTES
+    assert cgroup.oom_kill_count() == 0

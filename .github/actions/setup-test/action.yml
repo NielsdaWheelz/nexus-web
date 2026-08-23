@@ -113,6 +113,43 @@ runs:
       shell: bash
       run: uv sync --all-extras --locked --directory python
 
+    # The background worker's cgroup proofs need a rootless systemd user manager.
+    # The hosted runner must be provisioned; the protected self-hosted host may
+    # already carry one and may not grant passwordless sudo. Provision only what
+    # is missing and never crash setup: `doctor` reports an unusable delegate as
+    # a fail-closed verdict, whereas a setup crash produces no evidence at all.
+    - name: Provision the rootless systemd cgroup delegate
+      shell: bash
+      run: |
+        set -euo pipefail
+        runtime_dir="/run/user/$(id -u)"
+        if [ ! -S "$runtime_dir/bus" ]; then
+          if ! sudo -n true >/dev/null 2>&1; then
+            echo "::warning::no user systemd bus at $runtime_dir/bus and no passwordless sudo on this runner"
+            exit 0
+          fi
+          if ! dpkg-query --show dbus-user-session >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends dbus-user-session
+          fi
+          sudo loginctl enable-linger "$(id -un)"
+          attempts=0
+          while [ ! -S "$runtime_dir/bus" ] && [ "$attempts" -lt 100 ]; do
+            sleep 0.2
+            attempts=$((attempts + 1))
+          done
+        fi
+        if [ ! -S "$runtime_dir/bus" ]; then
+          echo "::warning::the user systemd bus did not appear at $runtime_dir/bus"
+          exit 0
+        fi
+        {
+          echo "XDG_RUNTIME_DIR=$runtime_dir"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime_dir/bus"
+        } >> "$GITHUB_ENV"
+        PYTHONPATH=python python/.venv/bin/python -c \
+          'from nexus_test_control.services import cgroup_delegate_failure; diagnostic = cgroup_delegate_failure(); print(f"::warning::{diagnostic}" if diagnostic else "user-systemd cgroup delegate ready")'
+
     - name: Install locked JavaScript dependencies
       shell: bash
       run: |

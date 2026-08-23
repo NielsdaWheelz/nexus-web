@@ -1,0 +1,16 @@
+diff --git a/apps/web/src/components/nexus/addContentSessionModel.ts b/apps/web/src/components/nexus/addContentSessionModel.ts
+--- a/apps/web/src/components/nexus/addContentSessionModel.ts
++++ b/apps/web/src/components/nexus/addContentSessionModel.ts
+@@ -269,9 +269,9 @@ function uploadAcceptanceFailure(
+ }
+ 
+ export function acceptanceErrorMessage(error: unknown): AcceptanceFailure {
+-  if (error instanceof UploadSessionError) {
+-    return uploadAcceptanceFailure(error.outcome, error);
+-  }
++  // Fault: the declared upload-session error channel falls through to the
++  // catch-all classification again, so every modeled code the API contract
++  // declares is laundered into a same-system defect.
+   if (!isApiError(error) || isSameSystemApiDefect(error)) {
+     return { kind: "Defect", error };
+   }

@@ -80,6 +80,7 @@ class PriorityRiskId(StrEnum):
     DURABLE_JOB_REPLAY = "durable-job-replay"
     NATIVE_AGENT_HOST = "native-agent-host"
     DATABASE_OBJECT_CONVERGENCE = "database-object-convergence"
+    DOCUMENT_IMPORT_RELIABILITY = "document-import-reliability"
     LLM_TOOL_SAFETY = "llm-tool-safety"
     ANDROID_PLAYER_PROTOCOL_SKEW = "android-player-protocol-skew"
     IMMUTABLE_PRODUCTION_RELEASE = "immutable-production-release"
@@ -92,7 +93,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "c4685f6dac8ebc8c5a4e49acc07b514c8d2e982ba48b23450cffc26fdfcd558e"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "a9ff519b918d2d6698bd1e7664b72c11494e163cd7b0bdfca5b85f9a627a1a21"
 
 
 class ResourceKind(StrEnum):

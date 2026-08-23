@@ -23,13 +23,13 @@ from nexus.jobs.queue import (
     get_job,
     heartbeat_job,
     lock_and_renew_running_job_claim,
-    lock_job,
     requeue_dead_job,
     reschedule_running_job,
+    revoke_jobs_by_dedupe_keys,
     revoke_jobs_for_payload,
 )
 from nexus.jobs.registry import JobDefinition, get_default_registry
-from nexus.jobs.worker import JobWorker
+from nexus.jobs.worker import JobWorker, _terminal_resource_failure
 from tests.testkit.unreachable_state import (
     assign_dead_job_to_heavy_capacity,
     clear_heavy_capacity_holder,
@@ -51,8 +51,15 @@ _PROBE_KINDS = (
     "heavy_expiry_probe",
     "heavy_missing_holder_probe",
     "heavy_publication_contention_probe",
+    "heavy_open_publication_contention_probe",
     "light_publication_contention_probe",
+    "heavy_claim_complete_order_probe",
+    "heavy_revoke_claim_order_probe",
 )
+
+
+def _resource_class_handler(*, payload: object, context: JobExecutionContext) -> dict[str, object]:
+    return {"resource_class": context.resource_class}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -89,6 +96,19 @@ def _capacity_holder(engine: Engine) -> tuple[object, ...]:
         )
 
 
+def _wait_for_backend_lock(engine: Engine, backend_pid: int) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        with engine.connect() as connection:
+            wait_event_type = connection.execute(
+                text("SELECT wait_event_type FROM pg_stat_activity WHERE pid = :pid"),
+                {"pid": backend_pid},
+            ).scalar_one_or_none()
+        if wait_event_type == "Lock":
+            return
+    raise AssertionError(f"backend {backend_pid} did not reach its expected lock wait")
+
+
 def _wait_for_backend_blocked_by(
     engine: Engine,
     *,
@@ -109,10 +129,6 @@ def _wait_for_backend_blocked_by(
 
 def test_worker_threads_registry_resource_class_into_execution_context(engine: Engine) -> None:
     kind = "heavy_worker_context_probe"
-    observed: list[str] = []
-
-    def handler(*, payload: object, context: JobExecutionContext) -> None:
-        observed.append(context.resource_class)
 
     with Session(engine) as db:
         enqueue_job(db, kind=kind, priority=0)
@@ -120,12 +136,23 @@ def test_worker_threads_registry_resource_class_into_execution_context(engine: E
     worker = JobWorker(
         session_factory=create_session_factory(engine),
         worker_id="heavy-context-worker",
-        registry={kind: JobDefinition(kind=kind, handler=handler, resource_class="Heavy")},
+        registry={
+            kind: JobDefinition(
+                kind=kind,
+                handler_path="tests.service.test_heavy_job_capacity:_resource_class_handler",
+                resource_class="Heavy",
+            )
+        },
         allowed_kinds=(kind,),
     )
 
     assert worker.run_once() is True
-    assert observed == ["Heavy"]
+    with Session(engine) as db:
+        result = db.scalar(
+            text("SELECT result FROM background_jobs WHERE kind = :kind"),
+            {"kind": kind},
+        )
+    assert result == {"resource_class": "Heavy"}
     assert _capacity_holder(engine) == (None, None, None, None)
 
 
@@ -187,6 +214,295 @@ def test_concurrent_claims_admit_only_one_heavy_job(engine: Engine) -> None:
         assert complete_job(db, job_id=job_id, worker_id=worker_id)
         db.commit()
     assert _capacity_holder(engine) == (None, None, None, None)
+
+
+def test_heavy_claim_and_completion_cannot_form_an_inverse_lock_cycle(engine: Engine) -> None:
+    kind = "heavy_claim_complete_order_probe"
+    with Session(engine) as db:
+        holder = enqueue_job(db, kind=kind, priority=0)
+        candidate = enqueue_job(db, kind=kind, priority=1)
+        db.commit()
+        assert (
+            claim_job(
+                db,
+                job_id=holder.id,
+                worker_id="lock-order-holder",
+                lease_seconds=300,
+                heavy_kinds=(kind,),
+            )
+            is not None
+        )
+        db.commit()
+
+    holder_locked = threading.Event()
+    complete_now = threading.Event()
+    completion_done = threading.Event()
+    claim_backend_ready = threading.Event()
+    claim_backend_pid: list[int] = []
+    outcomes: list[tuple[str, object]] = []
+    failures: list[BaseException] = []
+
+    def complete_holder() -> None:
+        try:
+            with Session(engine) as db:
+                db.execute(text("SET LOCAL statement_timeout = '5s'"))
+                db.execute(
+                    text("SELECT id FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+                    {"job_id": holder.id},
+                ).one()
+                holder_locked.set()
+                assert complete_now.wait(timeout=5)
+                completed = complete_job(
+                    db,
+                    job_id=holder.id,
+                    worker_id="lock-order-holder",
+                )
+                db.commit()
+                outcomes.append(("complete", completed))
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            completion_done.set()
+
+    def claim_candidate() -> None:
+        try:
+            with Session(engine) as db:
+                db.execute(text("SET LOCAL statement_timeout = '5s'"))
+                claim_backend_pid.append(int(db.scalar(text("SELECT pg_backend_pid()"))))
+                claim_backend_ready.set()
+                claimed = claim_job(
+                    db,
+                    job_id=candidate.id,
+                    worker_id="lock-order-candidate",
+                    lease_seconds=300,
+                    heavy_kinds=(kind,),
+                )
+                db.commit()
+                outcomes.append(("claim", claimed.id if claimed is not None else None))
+        except BaseException as exc:
+            failures.append(exc)
+
+    with Session(engine) as candidate_blocker:
+        candidate_blocker.execute(
+            text("SELECT id FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+            {"job_id": candidate.id},
+        ).one()
+        completion_thread = threading.Thread(target=complete_holder)
+        completion_thread.start()
+        assert holder_locked.wait(timeout=5)
+        claim_thread = threading.Thread(target=claim_candidate)
+        claim_thread.start()
+        assert claim_backend_ready.wait(timeout=5)
+        _wait_for_backend_lock(engine, claim_backend_pid[0])
+        complete_now.set()
+        assert completion_done.wait(timeout=5), (
+            "completion blocked behind capacity held before the candidate job lock"
+        )
+        candidate_blocker.commit()
+
+    completion_thread.join(timeout=5)
+    claim_thread.join(timeout=5)
+    assert not completion_thread.is_alive() and not claim_thread.is_alive(), (
+        "claim and completion deadlocked"
+    )
+    assert not failures, f"claim/completion concurrency failed: {failures!r}"
+    assert ("complete", True) in outcomes
+    assert ("claim", candidate.id) in outcomes
+    assert _capacity_holder(engine)[:3] == (
+        candidate.id,
+        "lock-order-candidate",
+        1,
+    )
+    with Session(engine) as db:
+        assert complete_job(
+            db,
+            job_id=candidate.id,
+            worker_id="lock-order-candidate",
+        )
+        db.commit()
+
+
+def test_revoke_serializes_before_claim_and_clears_any_new_heavy_holder(engine: Engine) -> None:
+    kind = "heavy_revoke_claim_order_probe"
+    dedupe_key = "heavy-revoke-claim-order"
+    with Session(engine) as db:
+        target = enqueue_job(db, kind=kind, dedupe_key=dedupe_key)
+        db.commit()
+
+    claim_backend_ready = threading.Event()
+    revoke_backend_ready = threading.Event()
+    claim_backend_pid: list[int] = []
+    revoke_backend_pid: list[int] = []
+    outcomes: list[tuple[str, object]] = []
+    failures: list[BaseException] = []
+
+    def claim_target() -> None:
+        try:
+            with Session(engine) as db:
+                db.execute(text("SET LOCAL statement_timeout = '5s'"))
+                claim_backend_pid.append(int(db.scalar(text("SELECT pg_backend_pid()"))))
+                claim_backend_ready.set()
+                claimed = claim_job(
+                    db,
+                    job_id=target.id,
+                    worker_id="revoke-race-claimant",
+                    lease_seconds=300,
+                    heavy_kinds=(kind,),
+                )
+                db.commit()
+                outcomes.append(("claim", claimed.id if claimed is not None else None))
+        except BaseException as exc:
+            failures.append(exc)
+
+    def revoke_target() -> None:
+        try:
+            with Session(engine) as db:
+                db.execute(text("SET LOCAL statement_timeout = '5s'"))
+                revoke_backend_pid.append(int(db.scalar(text("SELECT pg_backend_pid()"))))
+                revoke_backend_ready.set()
+                revoke_jobs_by_dedupe_keys(db, kind=kind, dedupe_keys=(dedupe_key,))
+                db.commit()
+                outcomes.append(("revoke", True))
+        except BaseException as exc:
+            failures.append(exc)
+
+    with Session(engine) as blocker:
+        blocker.execute(
+            text("SELECT id FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+            {"job_id": target.id},
+        ).one()
+        claim_thread = threading.Thread(target=claim_target)
+        claim_thread.start()
+        assert claim_backend_ready.wait(timeout=5)
+        _wait_for_backend_lock(engine, claim_backend_pid[0])
+        revoke_thread = threading.Thread(target=revoke_target)
+        revoke_thread.start()
+        assert revoke_backend_ready.wait(timeout=5)
+        _wait_for_backend_lock(engine, revoke_backend_pid[0])
+        blocker.commit()
+
+    claim_thread.join(timeout=5)
+    revoke_thread.join(timeout=5)
+    assert not claim_thread.is_alive() and not revoke_thread.is_alive(), (
+        "revoke and claim deadlocked"
+    )
+    assert not failures, f"revoke/claim concurrency failed: {failures!r}"
+    assert ("claim", target.id) in outcomes
+    assert ("revoke", True) in outcomes
+    with Session(engine) as oracle:
+        assert (
+            oracle.scalar(
+                text("SELECT count(*) FROM background_jobs WHERE id = :job_id"),
+                {"job_id": target.id},
+            )
+            == 0
+        )
+    assert _capacity_holder(engine) == (None, None, None, None)
+
+
+def test_concurrent_heavy_heartbeat_and_resource_settlement_share_one_lock_order(
+    engine: Engine,
+) -> None:
+    kind = "heavy_transition_probe"
+    for index in range(5):
+        worker_id = f"heavy-transition-worker-{index}"
+        with Session(engine) as db:
+            job = enqueue_job(db, kind=kind, priority=0, max_attempts=3)
+            db.commit()
+            claimed = claim_job(
+                db,
+                job_id=job.id,
+                worker_id=worker_id,
+                lease_seconds=30,
+                allowed_kinds=(kind,),
+                heavy_kinds=(kind,),
+            )
+            db.commit()
+        assert claimed is not None
+
+        barrier = threading.Barrier(2)
+        outcomes: list[tuple[str, bool]] = []
+        failures: list[BaseException] = []
+
+        def heartbeat(
+            *,
+            claimed=claimed,
+            worker_id=worker_id,
+            barrier=barrier,
+            outcomes=outcomes,
+            failures=failures,
+        ) -> None:
+            try:
+                with Session(engine) as db:
+                    db.execute(text("SET LOCAL statement_timeout = '5s'"))
+                    barrier.wait()
+                    renewed = heartbeat_job(
+                        db,
+                        job_id=claimed.id,
+                        worker_id=worker_id,
+                        lease_seconds=30,
+                        resource_class="Heavy",
+                    )
+                    db.commit()
+                    outcomes.append(("heartbeat", renewed))
+            except BaseException as exc:
+                failures.append(exc)
+
+        def settle(
+            *,
+            claimed=claimed,
+            worker_id=worker_id,
+            barrier=barrier,
+            outcomes=outcomes,
+            failures=failures,
+        ) -> None:
+            try:
+                with Session(engine) as db:
+                    db.execute(text("SET LOCAL statement_timeout = '5s'"))
+                    barrier.wait()
+                    settled = _terminal_resource_failure(
+                        db,
+                        claimed=claimed,
+                        worker_id=worker_id,
+                        projection="Job",
+                        dimension="Memory",
+                    )
+                    db.commit()
+                    outcomes.append(("settlement", bool(settled)))
+            except BaseException as exc:
+                failures.append(exc)
+
+        threads = [threading.Thread(target=heartbeat), threading.Thread(target=settle)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert not [thread for thread in threads if thread.is_alive()], (
+            "queue transitions deadlocked"
+        )
+        assert not failures, f"concurrent queue transition failed: {failures!r}"
+        assert ("settlement", True) in outcomes
+        with Session(engine) as oracle:
+            row = oracle.execute(
+                text(
+                    """
+                    SELECT status, attempts, claimed_by, lease_expires_at, error_code, result
+                    FROM background_jobs
+                    WHERE id = :job_id
+                    """
+                ),
+                {"job_id": claimed.id},
+            ).one()
+        assert tuple(row) == (
+            "dead",
+            1,
+            None,
+            None,
+            "E_RESOURCE_LIMIT",
+            {"kind": "ResourceFailure", "dimension": "Memory"},
+        )
+        assert _capacity_holder(engine) == (None, None, None, None)
 
 
 def test_blocked_heavy_is_unchanged_and_light_work_proceeds(engine: Engine) -> None:
@@ -400,7 +716,107 @@ def test_open_light_publication_does_not_block_concurrent_heavy_admission(
     assert _capacity_holder(engine) == (None, None, None, None)
 
 
-def test_heavy_heartbeat_waits_for_capacity_before_locking_job_transition(
+def test_open_heavy_publication_retains_capacity_until_its_commit(engine: Engine) -> None:
+    kind = "heavy_open_publication_contention_probe"
+    with Session(engine) as db:
+        holder = enqueue_job(db, kind=kind, priority=0)
+        candidate = enqueue_job(db, kind=kind, priority=1)
+        db.commit()
+        claimed_holder = claim_job(
+            db,
+            job_id=holder.id,
+            worker_id="heavy-publication-worker",
+            lease_seconds=60,
+            allowed_kinds=(kind,),
+            heavy_kinds=(kind,),
+        )
+        db.commit()
+        assert claimed_holder is not None
+
+    backend_ready = threading.Event()
+    backend_pid: list[int] = []
+    outcomes: list[UUID | None] = []
+    failures: list[BaseException] = []
+
+    def admit_candidate() -> None:
+        try:
+            with Session(engine) as db:
+                db.execute(text("SET LOCAL statement_timeout = '5s'"))
+                backend_pid.append(int(db.scalar(text("SELECT pg_backend_pid()"))))
+                backend_ready.set()
+                claimed = claim_job(
+                    db,
+                    job_id=candidate.id,
+                    worker_id="blocked-heavy-candidate",
+                    lease_seconds=60,
+                    allowed_kinds=(kind,),
+                    heavy_kinds=(kind,),
+                )
+                db.commit()
+                outcomes.append(claimed.id if claimed is not None else None)
+        except BaseException as exc:
+            failures.append(exc)
+
+    with Session(engine) as publication:
+        renewed_holder = lock_and_renew_running_job_claim(
+            publication,
+            context=JobExecutionContext(
+                job_id=holder.id,
+                worker_id="heavy-publication-worker",
+                attempt_no=1,
+                resource_class="Heavy",
+            ),
+            lease_seconds=300,
+        )
+        assert renewed_holder is not None
+        assert _capacity_holder(engine)[:3] == (
+            holder.id,
+            "heavy-publication-worker",
+            1,
+        )
+        admission_thread = threading.Thread(target=admit_candidate)
+        admission_thread.start()
+        assert backend_ready.wait(timeout=5)
+        _wait_for_backend_lock(engine, backend_pid[0])
+        with engine.connect() as oracle:
+            assert oracle.execute(
+                text(
+                    """
+                    SELECT status, attempts, claimed_by
+                    FROM background_jobs
+                    WHERE id = :job_id
+                    """
+                ),
+                {"job_id": candidate.id},
+            ).one() == ("pending", 0, None)
+        publication.commit()
+
+    admission_thread.join(timeout=5)
+    assert not admission_thread.is_alive(), "Heavy admission remained blocked after publication"
+    assert not failures, f"Heavy publication/admission concurrency failed: {failures!r}"
+    assert outcomes == [None]
+    with Session(engine) as db:
+        candidate_state = db.execute(
+            text(
+                """
+                SELECT status, attempts, claimed_by
+                FROM background_jobs
+                WHERE id = :job_id
+                """
+            ),
+            {"job_id": candidate.id},
+        ).one()
+        assert candidate_state == ("pending", 0, None)
+        assert complete_job(
+            db,
+            job_id=holder.id,
+            worker_id="heavy-publication-worker",
+        )
+        db.commit()
+    assert _capacity_holder(engine) == (None, None, None, None)
+
+
+def test_heavy_heartbeat_waits_for_job_before_locking_capacity_transition(
     engine: Engine,
 ) -> None:
     """Risk: inverse Heavy locks deadlock heartbeat against a queue transition."""
@@ -443,23 +859,24 @@ def test_heavy_heartbeat_waits_for_capacity_before_locking_job_transition(
         except BaseException as exc:
             heartbeat_failures.append(exc)
 
-    capacity_blocker = Session(engine)
+    job_blocker = Session(engine)
     heartbeat_thread = threading.Thread(target=run_heartbeat)
     heartbeat_started = False
-    job_was_lockable = False
+    capacity_was_lockable = False
     try:
-        blocker = capacity_blocker.execute(
+        blocker = job_blocker.execute(
             text(
                 """
-                SELECT pg_backend_pid(), resource_class
-                FROM background_job_capacity_leases
-                WHERE resource_class = 'Heavy'
+                SELECT pg_backend_pid(), id
+                FROM background_jobs
+                WHERE id = :job_id
                 FOR UPDATE
                 """
-            )
+            ),
+            {"job_id": job.id},
         ).one()
         blocker_pid = int(blocker[0])
-        assert blocker[1] == "Heavy"
+        assert blocker[1] == job.id
 
         heartbeat_thread.start()
         heartbeat_started = True
@@ -470,14 +887,26 @@ def test_heavy_heartbeat_waits_for_capacity_before_locking_job_transition(
             waiting_pid=heartbeat_pid,
             blocking_pid=blocker_pid,
         ), (
-            "Heavy heartbeat did not reach the capacity-row lock wait; "
+            "Heavy heartbeat did not reach the job-row lock wait; "
             f"heartbeat_pid={heartbeat_pid}, blocker_pid={blocker_pid}, job_id={job.id}"
         )
 
         with Session(engine) as probe:
             probe.execute(text("SET LOCAL statement_timeout = '250ms'"))
             try:
-                job_was_lockable = lock_job(probe, job.id) is not None
+                capacity_was_lockable = (
+                    probe.execute(
+                        text(
+                            """
+                            SELECT resource_class
+                            FROM background_job_capacity_leases
+                            WHERE resource_class = 'Heavy'
+                            FOR UPDATE
+                            """
+                        )
+                    ).scalar_one()
+                    == "Heavy"
+                )
             except OperationalError as exc:
                 if getattr(exc.orig, "sqlstate", None) != "57014":
                     raise
@@ -485,8 +914,8 @@ def test_heavy_heartbeat_waits_for_capacity_before_locking_job_transition(
             else:
                 probe.rollback()
     finally:
-        capacity_blocker.rollback()
-        capacity_blocker.close()
+        job_blocker.rollback()
+        job_blocker.close()
         if heartbeat_started:
             heartbeat_thread.join(timeout=10)
         if not heartbeat_thread.is_alive():
@@ -497,12 +926,12 @@ def test_heavy_heartbeat_waits_for_capacity_before_locking_job_transition(
                 cleanup.commit()
 
     assert heartbeat_started
-    assert not heartbeat_thread.is_alive(), "Heavy heartbeat did not finish after capacity release"
+    assert not heartbeat_thread.is_alive(), "Heavy heartbeat did not finish after job release"
     assert not heartbeat_failures, f"Heavy heartbeat failed: {heartbeat_failures!r}"
     assert heartbeat_results == [True]
-    assert job_was_lockable, (
-        "Heavy heartbeat locked the job while waiting for capacity; heartbeat and "
-        f"reschedule/complete/fail can deadlock for job {job.id}"
+    assert capacity_was_lockable, (
+        "Heavy heartbeat locked capacity while waiting for its job; heartbeat and "
+        f"claim/reschedule/complete/fail can deadlock for job {job.id}"
     )
     assert _capacity_holder(engine) == (None, None, None, None)
 

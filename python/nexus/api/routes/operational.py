@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 
-from nexus.config import get_settings
+from nexus.config import Environment, get_settings
 from nexus.jobs.registry import get_task_contract_digest
 from nexus.responses import success_response
 from nexus.runtime_health import get_runtime_identity, is_database_ready
@@ -24,9 +24,15 @@ def get_readiness(response: Response) -> dict | JSONResponse:
     """Prove bounded database reachability and exact schema identity."""
     identity = get_runtime_identity()
     settings = get_settings()
+    reconciler_max_age_seconds = (
+        2 * int(settings.ingest_reconcile_schedule_seconds)
+        if settings.nexus_env in (Environment.STAGING, Environment.PROD)
+        else None
+    )
     if not is_database_ready(
         database_url=settings.database_url,
         expected_revision=identity.expected_database_revision,
+        reconciler_max_age_seconds=reconciler_max_age_seconds,
     ):
         return JSONResponse(
             status_code=503,

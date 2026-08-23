@@ -189,9 +189,9 @@ Sequencing honesty — parked work that predates all dreaming:
    One Press or fold its spec into §V and close it.
 3. **First-paint streaming.** Fully specified, measured baselines, zero lines
    written, user-facing on every load.
-4. **The `file_sha256` landmine.** `models.py` (~line 1186) still references a
-   column dropped in mig 0138 inside a partial-index text expression — silently
-   wrong on fresh databases. Ten-minute fix.
+4. **Source provenance.** Uploaded originals carry a required
+   `media_files.source_sha256`; extraction verifies it before parser entry, and
+   schema convergence rejects the removed `file_sha256` residue.
 
 ## Declined
 

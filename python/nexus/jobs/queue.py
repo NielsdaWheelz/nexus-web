@@ -257,6 +257,32 @@ def _lock_heavy_capacity_for_job(db: Session, job_id: UUID) -> _HeavyCapacityLea
     return None if row is None else _capacity_from_row(row)
 
 
+def _lock_heavy_capacity_for_jobs(
+    db: Session, job_ids: Collection[UUID]
+) -> _HeavyCapacityLease | None:
+    """Lock capacity only when it names one of the already-locked target jobs."""
+    if not job_ids:
+        return None
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT job_id, worker_id, attempt_no, lease_expires_at,
+                       clock_timestamp() AS database_now
+                FROM background_job_capacity_leases
+                WHERE resource_class = 'Heavy'
+                  AND job_id = ANY(CAST(:job_ids AS uuid[]))
+                FOR UPDATE
+                """
+            ),
+            {"job_ids": list(job_ids)},
+        )
+        .mappings()
+        .first()
+    )
+    return None if row is None else _capacity_from_row(row)
+
+
 def _clear_heavy_capacity(db: Session, lease: _HeavyCapacityLease) -> None:
     if lease.job_id is None:
         return
@@ -290,37 +316,25 @@ def _clear_heavy_capacity(db: Session, lease: _HeavyCapacityLease) -> None:
         raise AssertionError("Heavy capacity holder changed while locked")
 
 
+def _heavy_capacity_appears_available(lease: _HeavyCapacityLease) -> bool:
+    """Use one unlocked snapshot only to avoid selecting clearly blocked Heavy work."""
+    return (
+        lease.job_id is None
+        or lease.lease_expires_at is None
+        or lease.lease_expires_at <= lease.database_now
+    )
+
+
 def _heavy_capacity_is_available(db: Session, lease: _HeavyCapacityLease) -> bool:
+    """Revalidate the capacity authority while its row is locked.
+
+    Job and capacity lease expiry are written and renewed atomically. Admission
+    therefore never locks the holder job underneath the capacity row; a stale
+    holder is reclaimed solely from the authoritative capacity expiry.
+    """
     if lease.job_id is None:
         return True
-    holder = (
-        db.execute(
-            text(
-                """
-                SELECT status, claimed_by, attempts, lease_expires_at
-                FROM background_jobs
-                WHERE id = :job_id
-                FOR UPDATE
-                """
-            ),
-            {"job_id": lease.job_id},
-        )
-        .mappings()
-        .one()
-    )
-    # justify-defect: the holder is written and cleared inside the same transition
-    # that moves its job, so a holder naming a job that is not that exact running
-    # attempt is an impossible persisted state.
-    if (
-        holder["status"] != RUNNING
-        or holder["claimed_by"] != lease.worker_id
-        or int(holder["attempts"]) != lease.attempt_no
-        or holder["lease_expires_at"] is None
-    ):
-        raise AssertionError("Heavy capacity holder does not match its running job")
-    if (
-        lease.lease_expires_at is not None and lease.lease_expires_at > lease.database_now
-    ) or holder["lease_expires_at"] > lease.database_now:
+    if lease.lease_expires_at is not None and lease.lease_expires_at > lease.database_now:
         return False
     _clear_heavy_capacity(db, lease)
     return True
@@ -352,7 +366,12 @@ def _claim_locked_job(
     worker_id: str,
     lease_seconds: int,
     heavy_kinds: Collection[str],
-) -> JobRow:
+) -> JobRow | None:
+    is_heavy = str(candidate["kind"]) in heavy_kinds
+    if is_heavy:
+        capacity = _lock_heavy_capacity(db)
+        if not _heavy_capacity_is_available(db, capacity):
+            return None
     was_interrupted = str(candidate["status"]) == RUNNING
     claimed = (
         db.execute(
@@ -389,7 +408,7 @@ def _claim_locked_job(
         .mappings()
         .one()
     )
-    if str(claimed["kind"]) in heavy_kinds:
+    if is_heavy:
         acquired = db.execute(
             text(
                 """
@@ -411,8 +430,8 @@ def _claim_locked_job(
                 "lease_expires_at": claimed["lease_expires_at"],
             },
         ).first()
-        # justify-defect: the caller proved capacity free while holding the row
-        # lock it still holds, so the row cannot have been taken in between.
+        # justify-defect: this transaction still holds both the candidate job
+        # lock and the capacity lock under the global job-before-capacity order.
         if acquired is None:
             raise AssertionError("Heavy job claim did not acquire capacity")
     return _row_to_job(claimed)
@@ -541,7 +560,7 @@ def claim_next_job(
     # capacity state it can neither hold nor release.
     lane_admits_heavy = allowed_kinds is None or bool(heavy_kind_set & set(allowed_kinds))
     capacity_available = (
-        _heavy_capacity_is_available(db, _lock_heavy_capacity(db)) if lane_admits_heavy else False
+        _heavy_capacity_appears_available(_read_heavy_capacity(db)) if lane_admits_heavy else False
     )
     candidate = (
         db.execute(
@@ -613,13 +632,6 @@ def claim_job(
     if allowed_kinds is not None and len(allowed_kinds) == 0:
         return None
     heavy_kind_set = frozenset(heavy_kinds)
-    # A lane that admits no Heavy kind never needs the capacity row, and must not
-    # lock it: doing so couples the interactive lane's claim loop to background
-    # capacity state it can neither hold nor release.
-    lane_admits_heavy = allowed_kinds is None or bool(heavy_kind_set & set(allowed_kinds))
-    capacity_available = (
-        _heavy_capacity_is_available(db, _lock_heavy_capacity(db)) if lane_admits_heavy else False
-    )
     candidate = (
         db.execute(
             text(
@@ -650,8 +662,6 @@ def claim_job(
     )
     if candidate is None:
         return None
-    if str(candidate["kind"]) in heavy_kind_set and not capacity_available:
-        return None
     return _claim_locked_job(
         db,
         candidate=candidate,
@@ -674,8 +684,6 @@ def dead_letter_expired_job(
     """
     if allowed_kinds is not None and len(allowed_kinds) == 0:
         return None
-    capacity = _lock_heavy_capacity(db)
-
     if allowed_kinds is None:
         row = (
             db.execute(
@@ -749,7 +757,8 @@ def dead_letter_expired_job(
 
     if row is None:
         return None
-    if capacity.job_id == UUID(str(row["id"])):
+    capacity = _lock_heavy_capacity_for_job(db, UUID(str(row["id"])))
+    if capacity is not None:
         _clear_heavy_capacity(db, capacity)
     return _row_to_job(row)
 
@@ -839,11 +848,10 @@ def heartbeat_job(
 ) -> bool:
     """Atomically extend one running job and its matching Heavy capacity lease.
 
-    Heavy work locks capacity before the job, matching every transition that
-    releases the holder. Light work keeps the unlocked verification read, so a
-    Light heartbeat never contends for the Heavy row.
+    Every running-job transition locks the exact job before its Heavy capacity
+    holder. Light work uses only an unlocked verification read, so a Light
+    heartbeat never contends for the Heavy row.
     """
-    capacity = _lock_heavy_capacity(db) if resource_class == "Heavy" else _read_heavy_capacity(db)
     job = (
         db.execute(
             text(
@@ -863,6 +871,13 @@ def heartbeat_job(
         .first()
     )
     if job is None:
+        return False
+    capacity = (
+        _lock_heavy_capacity_for_job(db, job_id)
+        if resource_class == "Heavy"
+        else _read_heavy_capacity(db)
+    )
+    if capacity is None:
         return False
     if not _capacity_matches_running_job(
         capacity,
@@ -907,8 +922,8 @@ def heartbeat_job(
                 "lease_expires_at": renewed,
             },
         ).first()
-        # justify-defect: Heavy heartbeat holds the capacity row lock from
-        # verification through renewal, so the exact holder cannot move.
+        # justify-defect: Heavy heartbeat holds the exact job and capacity rows
+        # from verification through renewal, so the holder cannot move.
         if updated is None:
             raise AssertionError("Heavy capacity holder changed while locked")
     return True
@@ -926,13 +941,11 @@ def lock_and_renew_running_job_claim(
     must perform every authoritative mutation only after this succeeds and
     commit before the renewed lease expires.
 
-    Capacity is verified but never locked or renewed here: this runs at the head
-    of long publication transactions, so pinning the single Heavy row would hold
-    a global mutex for the whole artifact write and stall every other lane's
-    claim. The worker's heartbeat thread owns lease renewal for both the job and
-    its capacity holder.
+    A Heavy publication locks and renews its exact capacity holder after the job
+    lock, retaining both through commit. That prevents capacity expiry from
+    admitting a second Heavy job while the heartbeat is blocked behind the
+    publication's job lock. Light publication never touches Heavy capacity.
     """
-    capacity = _read_heavy_capacity(db)
     job = (
         db.execute(
             text(
@@ -958,14 +971,17 @@ def lock_and_renew_running_job_claim(
     )
     if job is None:
         return None
-    if not _capacity_matches_running_job(
-        capacity,
-        job_id=context.job_id,
-        worker_id=context.worker_id,
-        attempt_no=context.attempt_no,
-        resource_class=context.resource_class,
-    ):
-        return None
+    capacity: _HeavyCapacityLease | None = None
+    if context.resource_class == "Heavy":
+        capacity = _lock_heavy_capacity_for_job(db, context.job_id)
+        if (
+            capacity is None
+            or capacity.worker_id != context.worker_id
+            or capacity.attempt_no != context.attempt_no
+            or capacity.lease_expires_at is None
+            or capacity.lease_expires_at <= capacity.database_now
+        ):
+            return None
     row = (
         db.execute(
             text(
@@ -987,6 +1003,31 @@ def lock_and_renew_running_job_claim(
         .mappings()
         .one()
     )
+    if capacity is not None:
+        renewed = db.execute(
+            text(
+                """
+                UPDATE background_job_capacity_leases
+                SET lease_expires_at = :lease_expires_at,
+                    updated_at = clock_timestamp()
+                WHERE resource_class = 'Heavy'
+                  AND job_id = :job_id
+                  AND worker_id = :worker_id
+                  AND attempt_no = :attempt_no
+                RETURNING resource_class
+                """
+            ),
+            {
+                "job_id": context.job_id,
+                "worker_id": context.worker_id,
+                "attempt_no": int(context.attempt_no),
+                "lease_expires_at": row["lease_expires_at"],
+            },
+        ).first()
+        # justify-defect: this transaction still holds the exact job and
+        # capacity rows, so the holder cannot change between validation/update.
+        if renewed is None:
+            raise AssertionError("Heavy capacity holder changed while locked")
     return _row_to_job(row)
 
 
@@ -1107,26 +1148,31 @@ def revoke_jobs_by_dedupe_keys(
     """
     if not dedupe_keys:
         return
-    capacity = _lock_heavy_capacity(db)
-    if capacity.job_id is not None:
-        held_job = db.execute(
+    targets = (
+        db.execute(
             text(
                 """
-                SELECT id
-                FROM background_jobs
-                WHERE id = :job_id
-                  AND kind = :kind
-                  AND dedupe_key = ANY(:dedupe_keys)
-                FOR UPDATE
-                """
+            SELECT id
+            FROM background_jobs
+            WHERE kind = :kind
+              AND dedupe_key = ANY(:dedupe_keys)
+            ORDER BY id ASC
+            FOR UPDATE
+            """
             ),
-            {"job_id": capacity.job_id, "kind": kind, "dedupe_keys": list(dedupe_keys)},
-        ).first()
-        if held_job is not None:
-            _clear_heavy_capacity(db, capacity)
+            {"kind": kind, "dedupe_keys": list(dedupe_keys)},
+        )
+        .scalars()
+        .all()
+    )
+    if not targets:
+        return
+    capacity = _lock_heavy_capacity_for_jobs(db, targets)
+    if capacity is not None:
+        _clear_heavy_capacity(db, capacity)
     db.execute(
-        text("DELETE FROM background_jobs WHERE kind = :kind AND dedupe_key = ANY(:dedupe_keys)"),
-        {"kind": kind, "dedupe_keys": list(dedupe_keys)},
+        text("DELETE FROM background_jobs WHERE id = ANY(:job_ids)"),
+        {"job_ids": list(targets)},
     )
 
 
@@ -1137,39 +1183,32 @@ def revoke_jobs_for_payload(
     expected_payload_match: Mapping[str, Any],
 ) -> None:
     """Delete queue rows selected by an owned exact JSON payload subset."""
-    capacity = _lock_heavy_capacity(db)
-    if capacity.job_id is not None:
-        held_job = db.execute(
+    target_payload = json.dumps(dict(expected_payload_match))
+    targets = (
+        db.execute(
             text(
                 """
-                SELECT id
-                FROM background_jobs
-                WHERE id = :job_id
-                  AND kind = :kind
-                  AND payload @> CAST(:expected_payload_match AS jsonb)
-                FOR UPDATE
-                """
-            ),
-            {
-                "job_id": capacity.job_id,
-                "kind": kind,
-                "expected_payload_match": json.dumps(dict(expected_payload_match)),
-            },
-        ).first()
-        if held_job is not None:
-            _clear_heavy_capacity(db, capacity)
-    db.execute(
-        text(
-            """
-            DELETE FROM background_jobs
+            SELECT id
+            FROM background_jobs
             WHERE kind = :kind
               AND payload @> CAST(:expected_payload_match AS jsonb)
+            ORDER BY id ASC
+            FOR UPDATE
             """
-        ),
-        {
-            "kind": kind,
-            "expected_payload_match": json.dumps(dict(expected_payload_match)),
-        },
+            ),
+            {"kind": kind, "expected_payload_match": target_payload},
+        )
+        .scalars()
+        .all()
+    )
+    if not targets:
+        return
+    capacity = _lock_heavy_capacity_for_jobs(db, targets)
+    if capacity is not None:
+        _clear_heavy_capacity(db, capacity)
+    db.execute(
+        text("DELETE FROM background_jobs WHERE id = ANY(:job_ids)"),
+        {"job_ids": list(targets)},
     )
 
 
@@ -1205,6 +1244,23 @@ def reschedule_running_job(
     if delay_seconds is not None and (type(delay_seconds) is not int or delay_seconds < 0):
         raise ValueError("delay_seconds must be a non-negative integer")
 
+    owned = db.execute(
+        text(
+            """
+            SELECT attempts
+            FROM background_jobs
+            WHERE id = :job_id
+              AND status = 'running'
+              AND claimed_by = :worker_id
+              AND attempts = :attempt_no
+              AND lease_expires_at > now()
+            FOR UPDATE
+            """
+        ),
+        {"job_id": job_id, "worker_id": worker_id, "attempt_no": int(attempt_no)},
+    ).one_or_none()
+    if owned is None:
+        return False
     capacity = _lock_heavy_capacity_for_job(db, job_id)
     updated = db.execute(
         text(
@@ -1673,20 +1729,59 @@ def ingest_operation_health(
         .mappings()
         .one()
     )
-    latest = (
+    reconciler = (
         db.execute(
             text(
                 """
-                SELECT status, result, finished_at, created_at
-                FROM background_jobs
-                WHERE kind = 'reconcile_stale_ingest_media_job'
-                ORDER BY created_at DESC, id DESC
-                LIMIT 1
+                SELECT
+                    latest_success.status AS successful_status,
+                    latest_success.result AS successful_result,
+                    latest_success.finished_at AS successful_finished_at,
+                    latest_completed.status AS completed_status,
+                    latest_completed.result AS completed_result,
+                    latest_completed.finished_at AS completed_finished_at
+                FROM (SELECT 1) AS anchor
+                LEFT JOIN LATERAL (
+                    SELECT status, result, finished_at
+                    FROM background_jobs
+                    WHERE kind = 'reconcile_stale_ingest_media_job'
+                      AND status = 'succeeded'
+                      AND finished_at IS NOT NULL
+                    ORDER BY finished_at DESC, id DESC
+                    LIMIT 1
+                ) AS latest_success ON true
+                LEFT JOIN LATERAL (
+                    SELECT status, result, finished_at
+                    FROM background_jobs
+                    WHERE kind = 'reconcile_stale_ingest_media_job'
+                      AND status IN ('succeeded', 'dead')
+                      AND finished_at IS NOT NULL
+                    ORDER BY finished_at DESC, id DESC
+                    LIMIT 1
+                ) AS latest_completed ON true
                 """
             )
         )
         .mappings()
-        .one_or_none()
+        .one()
+    )
+    latest_successful = (
+        {
+            "status": reconciler["successful_status"],
+            "result": reconciler["successful_result"],
+            "finished_at": reconciler["successful_finished_at"],
+        }
+        if reconciler["successful_status"] is not None
+        else None
+    )
+    latest_completed = (
+        {
+            "status": reconciler["completed_status"],
+            "result": reconciler["completed_result"],
+            "finished_at": reconciler["completed_finished_at"],
+        }
+        if reconciler["completed_status"] is not None
+        else None
     )
     return {
         "dead_source_count": int(row["dead_source_count"] or 0),
@@ -1701,7 +1796,8 @@ def ingest_operation_health(
             if row["oldest_due_background_age"] is not None
             else None
         ),
-        "latest_reconciler": dict(latest) if latest is not None else None,
+        "latest_successful_reconciler": latest_successful,
+        "latest_completed_reconciler": latest_completed,
     }
 
 
@@ -1713,6 +1809,26 @@ def complete_job(
     result_payload: Mapping[str, Any] | None = None,
 ) -> bool:
     """Mark one running row as succeeded when owned by worker_id."""
+    owned = (
+        db.execute(
+            text(
+                """
+                SELECT attempts
+                FROM background_jobs
+                WHERE id = :job_id
+                  AND status = 'running'
+                  AND claimed_by = :worker_id
+                  AND lease_expires_at > now()
+                FOR UPDATE
+                """
+            ),
+            {"job_id": job_id, "worker_id": worker_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if owned is None:
+        return False
     capacity = _lock_heavy_capacity_for_job(db, job_id)
     updated = db.execute(
         text(
@@ -1760,7 +1876,6 @@ def fail_job(
     result_payload: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Apply retry/dead transition for a failed running job owned by worker_id."""
-    capacity = _lock_heavy_capacity_for_job(db, job_id)
     row = (
         db.execute(
             text(
@@ -1781,6 +1896,7 @@ def fail_job(
     )
     if row is None:
         return None
+    capacity = _lock_heavy_capacity_for_job(db, job_id)
 
     attempts = int(row["attempts"])
     max_attempts = int(row["max_attempts"])

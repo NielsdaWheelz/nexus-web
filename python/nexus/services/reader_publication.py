@@ -34,11 +34,17 @@ class ReaderPublicationObjectReference:
 
 @dataclass(frozen=True)
 class ReaderPublicationSourceFile:
-    """One immutable object that becomes the reader-visible source file pointer."""
+    """One immutable object that becomes the reader-visible source file pointer.
+
+    ``source_sha256`` is the verified digest of that exact object; the pointer and
+    its digest move together so a reader never sees a file whose recorded digest
+    belongs to a superseded object.
+    """
 
     storage_path: str
     content_type: str
     size_bytes: int
+    source_sha256: str
 
 
 @dataclass(frozen=True)
@@ -294,12 +300,14 @@ def _install_reader_source_file(
                 storage_path=source_file.storage_path,
                 content_type=source_file.content_type,
                 size_bytes=source_file.size_bytes,
+                source_sha256=source_file.source_sha256,
             )
         )
         return
     media_file.storage_path = source_file.storage_path
     media_file.content_type = source_file.content_type
     media_file.size_bytes = source_file.size_bytes
+    media_file.source_sha256 = source_file.source_sha256
 
 
 def replace_reader_document_title(db: Session, *, media: Media, title: str) -> bool:

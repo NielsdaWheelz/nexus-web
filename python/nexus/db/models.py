@@ -1140,6 +1140,104 @@ class Membership(Base):
     user: Mapped["User"] = relationship("User", back_populates="memberships")
 
 
+class MediaUploadSession(Base):
+    """Viewer-owned durable intent for one direct PDF/EPUB upload."""
+
+    __tablename__ = "media_upload_sessions"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_media_upload_sessions_created_by_user"),
+        nullable=False,
+    )
+    candidate_media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    request_id: Mapped[str] = mapped_column(Text, nullable=False)
+    upload_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    upload_url_expires_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+    verification_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    verification_generation: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    verification_expires_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    transport_failure_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transport_http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    transport_failed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    verification_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verification_failed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    published_media_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", name="fk_media_upload_sessions_published_media"),
+        nullable=True,
+    )
+    published_source_attempt_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "media_source_attempts.id",
+            name="fk_media_upload_sessions_published_source_attempt",
+        ),
+        nullable=True,
+    )
+    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "created_by_user_id",
+            "idempotency_key",
+            name="uq_media_upload_sessions_viewer_idempotency",
+        ),
+        UniqueConstraint("candidate_media_id", name="uq_media_upload_sessions_candidate_media"),
+        UniqueConstraint("published_media_id", name="uq_media_upload_sessions_published_media"),
+        UniqueConstraint(
+            "published_source_attempt_id",
+            name="uq_media_upload_sessions_published_source_attempt",
+        ),
+    )
+
+
+class MediaUploadSessionDestination(Base):
+    """One normalized library destination carried by upload intent."""
+
+    __tablename__ = "media_upload_session_destinations"
+
+    upload_session_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "media_upload_sessions.id",
+            name="fk_media_upload_session_destinations_session",
+        ),
+        primary_key=True,
+    )
+    library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "libraries.id",
+            name="fk_media_upload_session_destinations_library",
+        ),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+
 class Media(Base):
     """Media model - a readable item (article, book, podcast, video, etc.)."""
 
@@ -1276,15 +1374,6 @@ class Media(Base):
                 "AND processing_started_at IS NOT NULL"
             ),
         ),
-        Index(
-            "idx_media_stale_pending_upload_cleanup",
-            "created_at",
-            "processing_started_at",
-            "id",
-            postgresql_where=text(
-                "processing_status = 'pending' AND kind IN ('pdf', 'epub') AND file_sha256 IS NULL"
-            ),
-        ),
     )
 
     # Relationships
@@ -1395,9 +1484,6 @@ class MediaSourceAttempt(Base):
     retry_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    signed_upload_expires_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1843,6 +1929,7 @@ class MediaFile(Base):
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(Text, nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_sha256: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Relationship
     media: Mapped["Media"] = relationship("Media", back_populates="media_file")

@@ -18,8 +18,10 @@ contracts, and verification scope for the hard cutover.
 > The writable-destination cursor is now the alphabetical/ranked
 > `library_destinations:v2` keyset (rank + `lower(name)` + name + id); only
 > `:v2` is accepted, and a pre-cutover or malformed cursor returns
-> `400 E_INVALID_CURSOR`. This document's ingest, capability, route, request,
-> and response contracts remain normative.
+> `400 E_INVALID_CURSOR`. This document's capability, route, request, and
+> response contracts remain normative; uploaded PDF/EPUB acceptance is
+> superseded by
+> [`document-import-reliability-hard-cutover.md`](document-import-reliability-hard-cutover.md).
 
 ## Summary
 
@@ -410,8 +412,7 @@ Required backend behavior:
 The writable destination contract applies to every endpoint that accepts
 `library_ids` for library-entry writes:
 
-- `POST /media/upload/init`
-- `POST /media/{id}/ingest`
+- `POST /media/uploads`
 - `POST /media/capture/article`
 - `POST /media/capture/url`
 - `POST /media/capture/file` via `x-nexus-library-ids`
@@ -730,7 +731,7 @@ Update:
 - `python/nexus/services/library_governance.py`
 - `python/nexus/services/library_entries.py`
 - `python/nexus/services/media_ingest.py`
-- `python/nexus/services/upload.py`
+- `python/nexus/services/media_upload_sessions.py`
 - `python/nexus/services/media.py`
 - `python/nexus/services/epub_lifecycle.py`
 - `python/nexus/services/podcasts/subscriptions.py`

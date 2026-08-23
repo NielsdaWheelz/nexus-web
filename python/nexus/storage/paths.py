@@ -6,8 +6,11 @@ canonical object key construction.
 
 Path Invariants:
     - Media original: media/{media_id}/original.{ext}
+    - Upload verification candidate, which is also the immutable published source
+      of an uploaded document:
+      media/{media_id}/candidates/{verification_token}/original.{ext}
     - Media source artifact: media/{media_id}/source/{attempt_id}.{ext}
-    - Upload staging: uploads/media/{media_id}/original.{ext}
+    - Upload staging: uploads/sessions/{session_id}/{generation}/original.{ext}
     - EPUB asset: media/{media_id}/assets/{asset_key}
     - Oracle plate: oracle/plates/{slug}.{ext}
 
@@ -55,8 +58,6 @@ def get_file_extension(kind: str) -> str:
 def build_storage_path(media_id: UUID | str, ext: str) -> str:
     """Build the full storage path for a media file.
 
-    Called by upload/init and test fixtures.
-
     Args:
         media_id: The media UUID.
         ext: File extension (without leading dot).
@@ -82,10 +83,34 @@ def build_source_artifact_storage_path(
     return f"media/{media_id}/source/{attempt_id}.{ext}"
 
 
-def build_upload_staging_storage_path(media_id: UUID | str, ext: str) -> str:
-    """Build the private staging path used only by direct browser uploads."""
+def build_upload_verification_candidate_storage_path(
+    media_id: UUID | str,
+    verification_token: UUID | str,
+    ext: str,
+) -> str:
+    """Build the immutable, verification-token-fenced source path for one upload.
+
+    This is not a scratch location: the object copied here is exactly what a
+    successful publication records in ``media_file.storage_path``. The path is
+    fenced by the verification token rather than being derived from the media id
+    alone, so a lease that was stolen or superseded mid-copy can only ever write to
+    its own path and can never overwrite a published source. An abandoned candidate
+    is reclaimed by its own storage-cleanup reservation.
+    """
     ext = _require_bare_storage_extension(ext)
-    return f"uploads/media/{media_id}/original.{ext}"
+    return f"media/{media_id}/candidates/{verification_token}/original.{ext}"
+
+
+def build_upload_session_staging_storage_path(
+    session_id: UUID | str,
+    generation: int,
+    ext: str,
+) -> str:
+    """Build the generation-fenced private path for one direct upload capability."""
+    if generation < 1:
+        raise ValueError("Upload generation must be positive.")
+    ext = _require_bare_storage_extension(ext)
+    return f"uploads/sessions/{session_id}/{generation}/original.{ext}"
 
 
 def build_epub_asset_storage_path(media_id: UUID | str, asset_key: str) -> str:

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { APIResponse } from "playwright/test";
+import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
 import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import { captureCanonicalArticle } from "../articleFixture";
 import {
@@ -7,6 +8,7 @@ import {
   boundedCitationPdf,
   uniqueCanonicalReaderEpub,
 } from "../corpus";
+import { uploadDocument } from "../documentUploadFixture";
 import {
   apiOrigin,
   expect,
@@ -20,17 +22,8 @@ import { pageRequest, type ExactOriginRequest } from "../request";
 
 test.use({ journeyId: "durable-ingest-reader-open" });
 
-const TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection";
-
-interface UploadInit {
-  data: {
-    media_id: string;
-    source_attempt_id: string;
-    upload_url: string;
-  };
-}
-
 interface ActivityItem {
+  kind: "Media";
   media_id: string;
   state:
     | {
@@ -75,49 +68,19 @@ async function acceptPdfUpload(
   payload: Buffer,
   filename: string,
   idempotencyKey: string,
-): Promise<UploadInit["data"]> {
-  const initResponse = await api.post("/api/media/upload/init", {
-    headers: {
-      origin: webOrigin,
-      "Idempotency-Key": idempotencyKey,
-    },
-    data: {
-      kind: "pdf",
-      filename,
-      content_type: "application/pdf",
-      size_bytes: payload.byteLength,
-      library_ids: [],
-    },
+): Promise<{ media_id: string; source_attempt_id: string }> {
+  const published = await uploadDocument({
+    api,
+    objects,
+    payload,
+    kind: "Pdf",
+    filename,
+    idempotencyKey,
   });
-  const init = (await readBody(initResponse)) as UploadInit;
-  expect(new URL(init.data.upload_url).origin).toBe(minioOrigin);
-  const uploaded = await objects.put(init.data.upload_url, {
-    headers: { "Content-Type": "application/pdf" },
-    data: payload,
-  });
-  expect(
-    uploaded.ok(),
-    `Local object upload for PDF ${init.data.media_id} failed with ${uploaded.status()}.`,
-  ).toBeTruthy();
-  const confirmed = await api.post(`/api/media/${init.data.media_id}/ingest`, {
-    headers: { origin: webOrigin },
-    data: { library_ids: [] },
-  });
-  const confirmation = (await readBody(confirmed)) as {
-    data: {
-      media_id: string;
-      source_attempt_id: string;
-      duplicate: boolean;
-      ingest_enqueued: boolean;
-    };
+  return {
+    media_id: published.mediaId,
+    source_attempt_id: published.sourceAttemptId,
   };
-  expect(confirmation.data).toMatchObject({
-    media_id: init.data.media_id,
-    source_attempt_id: init.data.source_attempt_id,
-    duplicate: false,
-    ingest_enqueued: true,
-  });
-  return init.data;
 }
 
 async function activityItem(
@@ -126,9 +89,11 @@ async function activityItem(
 ): Promise<ActivityItem | undefined> {
   const response = await api.get("/api/media/activity?limit=20");
   const payload = (await readBody(response)) as {
-    data: { items: ActivityItem[] };
+    data: { items: Array<ActivityItem | { kind: "UploadSession" }> };
   };
-  return payload.data.items.find((item) => item.media_id === mediaId);
+  return payload.data.items.find(
+    (item): item is ActivityItem => item.kind === "Media" && item.media_id === mediaId,
+  );
 }
 
 test("an accepted EPUB publishes in the default Library and opens through its real row", async ({
@@ -136,6 +101,11 @@ test("an accepted EPUB publishes in the default Library and opens through its re
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
+  // The bounded-child executor runs each Heavy job in a fresh process, so a
+  // document’s ingest/enrich/reindex pipeline plus the fresh-database
+  // maintenance backlog needs materially more wall time on CI than the
+  // pre-cutover in-process worker.
+  test.setTimeout(300_000);
   const api = pageRequest(page, webOrigin);
   const objects = pageRequest(page, minioOrigin);
   const profileResponse = await api.get("/api/me");
@@ -147,62 +117,52 @@ test("an accepted EPUB publishes in the default Library and opens through its re
   const defaultLibraryId = (
     JSON.parse(profileText) as { data: { default_library_id: string } }
   ).data.default_library_id;
+  const removedInit = await api.post("/api/media/upload/init", {
+    headers: { origin: webOrigin },
+    data: {},
+  });
+  expect(
+    removedInit.status(),
+    "The provisional-media upload route must be absent after the hard cut.",
+  ).toBe(404);
   const epub = uniqueCanonicalReaderEpub(journeyUser.id);
-  const initResponse = await api.post("/api/media/upload/init", {
-    headers: {
-      origin: webOrigin,
-      "Idempotency-Key": `durable-ingest-${journeyUser.id}`,
-    },
-    data: {
-      kind: "epub",
-      filename: "canonical-reader-durable-ingest.epub",
-      content_type: "application/epub+zip",
-      size_bytes: epub.byteLength,
-      library_ids: [],
+  const published = await uploadDocument({
+    api,
+    objects,
+    payload: epub,
+    kind: "Epub",
+    filename: "canonical-reader-durable-ingest.epub",
+    idempotencyKey: `durable-ingest-${journeyUser.id}`,
+    beforeConfirm: async ({ session_handle: sessionHandle }) => {
+      const response = await api.get("/api/media/activity?limit=20");
+      const activity = (await readBody(response)) as {
+        data: { items: Array<{ kind: string; session_handle?: string }> };
+      };
+      expect(
+        activity.data.items.some(
+          (item) =>
+            item.kind === "UploadSession" &&
+            item.session_handle === sessionHandle,
+        ),
+        "An uploaded but unconfirmed session must not publish media or create an Activity obligation.",
+      ).toBe(false);
     },
   });
-  const init = (await readBody(initResponse)) as UploadInit;
-  expect(new URL(init.data.upload_url).origin).toBe(minioOrigin);
-
-  const objectResponse = await objects.put(init.data.upload_url, {
-    headers: { "Content-Type": "application/epub+zip" },
-    data: epub,
+  const mediaId = published.mediaId;
+  const removedConfirm = await api.post(`/api/media/${mediaId}/ingest`, {
+    headers: { origin: webOrigin },
+    data: {},
   });
   expect(
-    objectResponse.ok(),
-    `Local object upload for media ${init.data.media_id} failed with ${objectResponse.status()}.`,
-  ).toBeTruthy();
-
-  const confirmResponse = await api.post(
-    `/api/media/${init.data.media_id}/ingest`,
-    {
-      headers: { origin: webOrigin },
-      data: { library_ids: [] },
-    },
-  );
-  const confirmed = (await readBody(confirmResponse)) as {
-    data: {
-      media_id: string;
-      source_attempt_id: string;
-      duplicate: boolean;
-      ingest_enqueued: boolean;
-    };
-  };
-  expect(
-    confirmed.data,
-    `Upload confirmation changed the accepted identity for media ${init.data.media_id}.`,
-  ).toMatchObject({
-    media_id: init.data.media_id,
-    source_attempt_id: init.data.source_attempt_id,
-    duplicate: false,
-    ingest_enqueued: true,
-  });
+    removedConfirm.status(),
+    "The media-scoped upload confirmation route must be absent after the hard cut.",
+  ).toBe(404);
 
   await expect
     .poll(
       async () => {
         const response = await api.get(
-          `/api/media/${init.data.media_id}`,
+          `/api/media/${mediaId}`,
         );
         if (!response.ok()) return `http-${response.status()}`;
         const payload = (await response.json()) as {
@@ -211,39 +171,39 @@ test("an accepted EPUB publishes in the default Library and opens through its re
         return payload.data.processing_status;
       },
       {
-        message: `Expected worker-owned media ${init.data.media_id} to reach ready_for_reading.`,
-        timeout: 25_000,
+        message: `Expected worker-owned media ${mediaId} to reach ready_for_reading.`,
+        timeout: 90_000,
       },
     )
     .toBe("ready_for_reading");
 
   await gotoWithStrictCsp(page, `/libraries/${defaultLibraryId}`);
-  const published = page.locator(
-    `main a[href="/media/${init.data.media_id}"]`,
+  const libraryRow = page.locator(
+    `main a[href="/media/${mediaId}"]`,
   );
   await expect(
-    published,
-    `Worker-owned media ${init.data.media_id} was ready but absent from default Library ${defaultLibraryId}.`,
-  ).toBeVisible({ timeout: 15_000 });
+    libraryRow,
+    `Worker-owned media ${mediaId} was ready but absent from default Library ${defaultLibraryId}.`,
+  ).toBeVisible({ timeout: 60_000 });
   await expect(
-    published,
-    `Default Library ${defaultLibraryId} published media ${init.data.media_id} without the independently known EPUB title.`,
+    libraryRow,
+    `Default Library ${defaultLibraryId} published media ${mediaId} without the independently known EPUB title.`,
   ).toHaveAccessibleName("Canonical Reader Positions");
-  await published.click();
+  await libraryRow.click();
   await expect(page).toHaveURL(
-    new RegExp(`/media/${init.data.media_id}(?:[?#]|$)`),
+    new RegExp(`/media/${mediaId}(?:[?#]|$)`),
   );
   await expect(
     page.getByRole("heading", { name: "Canonical Reader Positions" }),
-    `Reader did not project the independently known EPUB title for media ${init.data.media_id}.`,
+    `Reader did not project the independently known EPUB title for media ${mediaId}.`,
   ).toBeVisible();
   await expect(
     page.getByRole("group", { name: "EPUB controls" }),
-    `Reader for media ${init.data.media_id} did not publish EPUB navigation.`,
+    `Reader for media ${mediaId} did not publish EPUB navigation.`,
   ).toBeVisible();
   await expect(
     page.getByLabel("Select section"),
-    `Reader for media ${init.data.media_id} did not load its persisted EPUB sections.`,
+    `Reader for media ${mediaId} did not load its persisted EPUB sections.`,
   ).toBeVisible();
 });
 
@@ -252,6 +212,11 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
+  // The bounded-child executor runs each Heavy job in a fresh process, so a
+  // document’s ingest/enrich/reindex pipeline plus the fresh-database
+  // maintenance backlog needs materially more wall time on CI than the
+  // pre-cutover in-process worker.
+  test.setTimeout(300_000);
   const api = pageRequest(page, webOrigin);
   const directApi = pageRequest(page, apiOrigin);
   const objects = pageRequest(page, minioOrigin);
@@ -272,7 +237,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
       {
         message: `Interactive proof source ${chatEvidenceMediaId} never became searchable before Heavy work began.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe("ready");
@@ -304,7 +269,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
       {
         message: `Heavy source ${bounded.media_id} never exposed in-flight counted 712-page progress.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe("active");
@@ -317,7 +282,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
   await expect(
     account,
     `The active Heavy import ${bounded.media_id} did not surface through the Account menu.`,
-  ).toHaveAttribute("data-import-count", "1", { timeout: 15_000 });
+  ).toHaveAttribute("data-import-count", "1", { timeout: 60_000 });
   await account.click();
   const accountMenu = page.getByRole("menu");
   await expect(accountMenu).toBeVisible();
@@ -416,7 +381,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
       {
         message: `Interactive worker did not complete chat ${admittedChat.data.run.id} during Heavy source ${bounded.media_id}.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe(true);
@@ -435,7 +400,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
       {
         message: `Bounded source ${bounded.media_id} did not complete its Heavy content-index operation.`,
-        timeout: 45_000,
+        timeout: 120_000,
       },
     )
     .toBe("complete");
@@ -450,7 +415,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
       {
         message: `Adversarial source ${rejected.media_id} did not publish its exact typed parser rejection.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe("E_INVALID_FILE_TYPE");

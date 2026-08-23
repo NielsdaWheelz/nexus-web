@@ -1,0 +1,449 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+from sqlalchemy import Engine, text
+from sqlalchemy.orm import Session
+
+from nexus.config import get_settings
+from nexus.db.models import Media, MediaKind, MediaSourceAttempt, ProcessingStatus
+from nexus.db.session import create_session_factory
+from nexus.jobs.queue import claim_job, claim_next_job, complete_job, enqueue_job, fail_job
+from nexus.jobs.registry import get_default_registry
+from nexus.jobs.worker import JobWorker
+from nexus.runtime_health import is_database_ready
+from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.ingest_recovery import get_ingest_recovery_health
+from tests.testkit.unreachable_state import (
+    age_completed_job,
+    delete_jobs_by_ids,
+    delete_jobs_of_kinds,
+    delete_source_attempt_and_media,
+    make_pending_job_due,
+)
+
+
+def test_deployed_database_readiness_requires_the_latest_reconciler_to_succeed_freshly(
+    engine: Engine,
+) -> None:
+    with engine.connect() as connection:
+        revision = str(
+            connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        )
+    session_factory = create_session_factory(engine)
+    future = datetime.now(UTC) + timedelta(days=1)
+    with session_factory() as db:
+        delete_jobs_of_kinds(db, kinds=("reconcile_stale_ingest_media_job",))
+        job = enqueue_job(
+            db,
+            kind="reconcile_stale_ingest_media_job",
+            payload={"request_id": "readiness-proof"},
+            max_attempts=1,
+            available_at=future,
+        )
+        db.commit()
+
+    assert not is_database_ready(
+        database_url=get_settings().database_url,
+        expected_revision=revision,
+        reconciler_max_age_seconds=120,
+    )
+
+    with session_factory() as db:
+        make_pending_job_due(db, job_id=job.id)
+        claimed = claim_job(
+            db,
+            job_id=job.id,
+            worker_id="readiness-proof-worker",
+            lease_seconds=30,
+            allowed_kinds=("reconcile_stale_ingest_media_job",),
+            heavy_kinds=(),
+        )
+        assert claimed is not None
+        assert complete_job(
+            db,
+            job_id=job.id,
+            worker_id="readiness-proof-worker",
+        )
+        db.commit()
+
+    assert is_database_ready(
+        database_url=get_settings().database_url,
+        expected_revision=revision,
+        reconciler_max_age_seconds=120,
+    )
+
+    with session_factory() as db:
+        next_job = enqueue_job(
+            db,
+            kind="reconcile_stale_ingest_media_job",
+            payload={"request_id": "readiness-next-cycle"},
+            max_attempts=1,
+            available_at=future,
+        )
+        db.commit()
+
+    assert is_database_ready(
+        database_url=get_settings().database_url,
+        expected_revision=revision,
+        reconciler_max_age_seconds=120,
+    ), "a fresh last-success must keep readiness stable while the next cycle is pending"
+
+    age_completed_job(engine, job_id=job.id, seconds=121)
+
+    assert not is_database_ready(
+        database_url=get_settings().database_url,
+        expected_revision=revision,
+        reconciler_max_age_seconds=120,
+    )
+    with session_factory() as db:
+        delete_jobs_by_ids(db, job_ids=(job.id, next_job.id))
+        db.commit()
+
+
+def test_ingest_health_uses_last_success_while_pending_and_surfaces_later_dead_cycle(
+    engine: Engine,
+) -> None:
+    session_factory = create_session_factory(engine)
+    future = datetime.now(UTC) + timedelta(days=1)
+    created_job_ids = []
+    try:
+        with session_factory() as db:
+            delete_jobs_of_kinds(db, kinds=("reconcile_stale_ingest_media_job",))
+            succeeded = enqueue_job(
+                db,
+                kind="reconcile_stale_ingest_media_job",
+                payload={"request_id": "operator-health-success"},
+                max_attempts=1,
+                available_at=future,
+            )
+            created_job_ids.append(succeeded.id)
+            db.commit()
+            make_pending_job_due(db, job_id=succeeded.id)
+            claimed = claim_job(
+                db,
+                job_id=succeeded.id,
+                worker_id="operator-health-success-worker",
+                lease_seconds=30,
+                allowed_kinds=("reconcile_stale_ingest_media_job",),
+                heavy_kinds=(),
+            )
+            assert claimed is not None
+            assert complete_job(
+                db,
+                job_id=succeeded.id,
+                worker_id="operator-health-success-worker",
+            )
+            pending = enqueue_job(
+                db,
+                kind="reconcile_stale_ingest_media_job",
+                payload={"request_id": "operator-health-next-pending"},
+                max_attempts=1,
+                available_at=future,
+            )
+            created_job_ids.append(pending.id)
+            db.commit()
+
+            pending_health = get_ingest_recovery_health(db)
+            assert pending_health["latest_reconciler_succeeded"] is True
+            assert pending_health["latest_reconciler_age_seconds"].kind == "Present"
+
+            failed = enqueue_job(
+                db,
+                kind="reconcile_stale_ingest_media_job",
+                payload={"request_id": "operator-health-later-dead"},
+                max_attempts=1,
+                available_at=future,
+            )
+            created_job_ids.append(failed.id)
+            db.commit()
+            make_pending_job_due(db, job_id=failed.id)
+            claimed_failed = claim_job(
+                db,
+                job_id=failed.id,
+                worker_id="operator-health-failed-worker",
+                lease_seconds=30,
+                allowed_kinds=("reconcile_stale_ingest_media_job",),
+                heavy_kinds=(),
+            )
+            assert claimed_failed is not None
+            assert (
+                fail_job(
+                    db,
+                    job_id=failed.id,
+                    worker_id="operator-health-failed-worker",
+                    error_code="E_RECONCILE_PROBE",
+                    error_message="later completed cycle failed",
+                    retry_delays_seconds=(),
+                )
+                == "dead"
+            )
+            db.commit()
+
+            failed_health = get_ingest_recovery_health(db)
+            assert failed_health["latest_reconciler_succeeded"] is False
+            assert failed_health["latest_reconciler_age_seconds"].kind == "Present"
+            assert failed_health["degraded"] is True
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
+            cleanup.commit()
+
+
+def test_deployed_readiness_requires_one_exact_owned_nonsucceeded_source_job(
+    engine: Engine,
+) -> None:
+    with engine.connect() as connection:
+        revision = str(
+            connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        )
+    viewer_id = uuid4()
+    media_id = uuid4()
+    attempt_id = uuid4()
+    exact_job_ids = []
+    reconciler_job_id = None
+    future = datetime.now(UTC) + timedelta(days=1)
+    try:
+        with Session(engine) as db:
+            ensure_user_and_default_library(
+                db,
+                viewer_id,
+                f"readiness-owner-{viewer_id}@example.invalid",
+            )
+            media = Media(
+                id=media_id,
+                kind=MediaKind.pdf.value,
+                title="Readiness owner proof",
+                processing_status=ProcessingStatus.extracting,
+                created_by_user_id=viewer_id,
+            )
+            db.add(media)
+            db.add(
+                MediaSourceAttempt(
+                    id=attempt_id,
+                    media_id=media_id,
+                    created_by_user_id=viewer_id,
+                    source_type="uploaded_pdf_file",
+                    attempt_no=1,
+                    run_count=0,
+                    status="accepted",
+                    intent_key=f"readiness:{attempt_id}",
+                    processing_stage="Accepted",
+                )
+            )
+            reconciler = enqueue_job(
+                db,
+                kind="reconcile_stale_ingest_media_job",
+                payload={"request_id": "readiness-owner-proof"},
+                max_attempts=1,
+                available_at=future,
+            )
+            reconciler_job_id = reconciler.id
+            db.commit()
+            make_pending_job_due(db, job_id=reconciler.id)
+            claimed_reconciler = claim_job(
+                db,
+                job_id=reconciler.id,
+                worker_id="readiness-owner-worker",
+                lease_seconds=30,
+                allowed_kinds=("reconcile_stale_ingest_media_job",),
+                heavy_kinds=(),
+            )
+            assert claimed_reconciler is not None
+            assert complete_job(
+                db,
+                job_id=reconciler.id,
+                worker_id="readiness-owner-worker",
+            )
+            db.commit()
+
+        assert not is_database_ready(
+            database_url=get_settings().database_url,
+            expected_revision=revision,
+            reconciler_max_age_seconds=120,
+        ), "an in-flight source attempt without its exact owned job is a readiness defect"
+
+        with Session(engine) as db:
+            exact = enqueue_job(
+                db,
+                kind="ingest_media_source",
+                payload={"media_id": str(media_id), "attempt_id": str(attempt_id)},
+                max_attempts=1,
+                available_at=future,
+            )
+            exact_job_ids.append(exact.id)
+            attempt = db.get(MediaSourceAttempt, attempt_id)
+            assert attempt is not None
+            attempt.job_id = exact.id
+            db.commit()
+
+        assert is_database_ready(
+            database_url=get_settings().database_url,
+            expected_revision=revision,
+            reconciler_max_age_seconds=120,
+        )
+
+        with Session(engine) as db:
+            make_pending_job_due(db, job_id=exact.id)
+            claimed_exact = claim_job(
+                db,
+                job_id=exact.id,
+                worker_id="readiness-source-worker",
+                lease_seconds=30,
+                allowed_kinds=("ingest_media_source",),
+                heavy_kinds=("ingest_media_source",),
+            )
+            assert claimed_exact is not None
+            assert complete_job(db, job_id=exact.id, worker_id="readiness-source-worker")
+            db.commit()
+
+        assert not is_database_ready(
+            database_url=get_settings().database_url,
+            expected_revision=revision,
+            reconciler_max_age_seconds=120,
+        ), "a succeeded job cannot own an attempt that still claims to be in flight"
+
+        with Session(engine) as db:
+            attempt = db.get(MediaSourceAttempt, attempt_id)
+            assert attempt is not None
+            attempt.job_id = None
+            db.flush()
+            delete_jobs_by_ids(db, job_ids=(exact.id,))
+            dead = enqueue_job(
+                db,
+                kind="ingest_media_source",
+                payload={"media_id": str(media_id), "attempt_id": str(attempt_id)},
+                max_attempts=1,
+                available_at=future,
+            )
+            exact_job_ids.append(dead.id)
+            attempt.job_id = dead.id
+            db.commit()
+            make_pending_job_due(db, job_id=dead.id)
+            claimed_dead = claim_job(
+                db,
+                job_id=dead.id,
+                worker_id="readiness-dead-worker",
+                lease_seconds=30,
+                allowed_kinds=("ingest_media_source",),
+                heavy_kinds=("ingest_media_source",),
+            )
+            assert claimed_dead is not None
+            assert (
+                fail_job(
+                    db,
+                    job_id=dead.id,
+                    worker_id="readiness-dead-worker",
+                    error_code="E_RESOURCE_LIMIT",
+                    error_message="bounded",
+                    retry_delays_seconds=(),
+                )
+                == "dead"
+            )
+            db.commit()
+
+        assert is_database_ready(
+            database_url=get_settings().database_url,
+            expected_revision=revision,
+            reconciler_max_age_seconds=120,
+        ), "a dead exact job remains the durable owner of its failed-but-unprojected attempt"
+
+        with Session(engine) as db:
+            duplicate = enqueue_job(
+                db,
+                kind="ingest_media_source",
+                payload={"media_id": str(media_id), "attempt_id": str(attempt_id)},
+                max_attempts=1,
+                available_at=future,
+            )
+            exact_job_ids.append(duplicate.id)
+            db.commit()
+            make_pending_job_due(db, job_id=duplicate.id)
+            claimed_duplicate = claim_job(
+                db,
+                job_id=duplicate.id,
+                worker_id="readiness-succeeded-worker",
+                lease_seconds=30,
+                allowed_kinds=("ingest_media_source",),
+                heavy_kinds=("ingest_media_source",),
+            )
+            assert claimed_duplicate is not None
+            assert complete_job(
+                db,
+                job_id=duplicate.id,
+                worker_id="readiness-succeeded-worker",
+                result_payload={"kind": "UnexpectedDuplicateSuccess"},
+            )
+            db.commit()
+
+        assert not is_database_ready(
+            database_url=get_settings().database_url,
+            expected_revision=revision,
+            reconciler_max_age_seconds=120,
+        ), "a linked dead job plus a second succeeded exact job is a readiness defect"
+    finally:
+        with Session(engine) as cleanup:
+            delete_source_attempt_and_media(
+                cleanup,
+                attempt_id=attempt_id,
+                media_id=media_id,
+            )
+            delete_jobs_by_ids(
+                cleanup,
+                job_ids=tuple(value for value in (*exact_job_ids, reconciler_job_id) if value),
+            )
+            cleanup.commit()
+
+
+def test_reconciler_scheduler_priority_preempts_older_ordinary_background_backlog(
+    engine: Engine,
+) -> None:
+    session_factory = create_session_factory(engine)
+    production_definition = get_default_registry()["reconcile_stale_ingest_media_job"]
+    assert production_definition.periodic_priority == -1000
+    definition = replace(
+        production_definition,
+        kind="reconciler_priority_schedule_probe",
+    )
+    backlog_kind = "reconciler_priority_backlog_probe"
+    created_job_ids = []
+    worker_id = "reconciler-priority-proof"
+    try:
+        with session_factory() as db:
+            backlog = enqueue_job(
+                db,
+                kind=backlog_kind,
+                payload={"probe": "older-ordinary-backlog"},
+                priority=100,
+            )
+            created_job_ids.append(backlog.id)
+            db.commit()
+
+        worker = JobWorker(
+            session_factory=session_factory,
+            worker_id=worker_id,
+            registry={definition.kind: definition},
+            allowed_kinds=(definition.kind,),
+        )
+        assert worker.run_scheduler_once(now=datetime(2020, 1, 1, tzinfo=UTC)) == 1
+
+        with session_factory() as db:
+            claimed = claim_next_job(
+                db,
+                worker_id=worker_id,
+                lease_seconds=30,
+                allowed_kinds=(backlog_kind, definition.kind),
+                heavy_kinds=(),
+            )
+            assert claimed is not None
+            created_job_ids.append(claimed.id)
+            assert claimed.kind == definition.kind
+            assert claimed.priority == definition.periodic_priority
+            assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
+            db.commit()
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
+            cleanup.commit()

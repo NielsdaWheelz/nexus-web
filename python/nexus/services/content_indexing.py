@@ -1544,25 +1544,6 @@ def _assert_media_reindex_waiting_postcondition(
         raise AssertionError("media content-reindex waiting-job postcondition failed")
 
 
-def mark_content_index_failed(
-    db: Session,
-    *,
-    owner: IndexOwner,
-    failure_code: str,
-    failure_message: str,
-) -> None:
-    now = datetime.now(UTC)
-    _set_index_state(
-        db,
-        owner=owner,
-        status="failed",
-        status_reason=f"{failure_code}: {failure_message}"[:1000],
-        embedding_provider=None,
-        embedding_model=None,
-        now=now,
-    )
-
-
 def mark_content_index_pending(db: Session, *, owner: IndexOwner, reason: str) -> None:
     """Flag an owner's index stale (gated out of search) without deleting its rows;
     the reindex job rebuilds and flips it back to ready."""

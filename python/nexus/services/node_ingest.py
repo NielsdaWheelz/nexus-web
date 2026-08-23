@@ -1,9 +1,7 @@
 """Strict Node subprocess boundary for web article ingestion."""
 
 import json
-import os
 import shutil
-import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -119,17 +117,16 @@ def run_node_ingest(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=_NODE_ENVIRONMENT,
-            start_new_session=True,
         )
 
         try:
             stdout, _stderr = proc.communicate(input=input_json, timeout=SUBPROCESS_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             try:
-                if hasattr(os, "killpg"):
-                    os.killpg(proc.pid, signal.SIGKILL)
-                else:
-                    proc.kill()
+                # This helper deliberately remains in the outer background child's
+                # process group. Its local timeout owns only the direct Node child;
+                # outer containment owns the complete process group.
+                proc.kill()
             except (ProcessLookupError, OSError):
                 # justify-ignore-error: the process already exited before the timeout cleanup.
                 pass
