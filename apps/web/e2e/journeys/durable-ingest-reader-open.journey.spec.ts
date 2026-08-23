@@ -101,6 +101,11 @@ test("an accepted EPUB publishes in the default Library and opens through its re
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
+  // The bounded-child executor runs each Heavy job in a fresh process, so a
+  // document’s ingest/enrich/reindex pipeline plus the fresh-database
+  // maintenance backlog needs materially more wall time on CI than the
+  // pre-cutover in-process worker.
+  test.setTimeout(300_000);
   const api = pageRequest(page, webOrigin);
   const objects = pageRequest(page, minioOrigin);
   const profileResponse = await api.get("/api/me");
@@ -167,7 +172,7 @@ test("an accepted EPUB publishes in the default Library and opens through its re
       },
       {
         message: `Expected worker-owned media ${mediaId} to reach ready_for_reading.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe("ready_for_reading");
@@ -179,7 +184,7 @@ test("an accepted EPUB publishes in the default Library and opens through its re
   await expect(
     libraryRow,
     `Worker-owned media ${mediaId} was ready but absent from default Library ${defaultLibraryId}.`,
-  ).toBeVisible({ timeout: 15_000 });
+  ).toBeVisible({ timeout: 60_000 });
   await expect(
     libraryRow,
     `Default Library ${defaultLibraryId} published media ${mediaId} without the independently known EPUB title.`,
@@ -207,6 +212,11 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
+  // The bounded-child executor runs each Heavy job in a fresh process, so a
+  // document’s ingest/enrich/reindex pipeline plus the fresh-database
+  // maintenance backlog needs materially more wall time on CI than the
+  // pre-cutover in-process worker.
+  test.setTimeout(300_000);
   const api = pageRequest(page, webOrigin);
   const directApi = pageRequest(page, apiOrigin);
   const objects = pageRequest(page, minioOrigin);
@@ -227,7 +237,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
       {
         message: `Interactive proof source ${chatEvidenceMediaId} never became searchable before Heavy work began.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe("ready");
@@ -259,7 +269,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
       {
         message: `Heavy source ${bounded.media_id} never exposed in-flight counted 712-page progress.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe("active");
@@ -272,7 +282,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
   await expect(
     account,
     `The active Heavy import ${bounded.media_id} did not surface through the Account menu.`,
-  ).toHaveAttribute("data-import-count", "1", { timeout: 15_000 });
+  ).toHaveAttribute("data-import-count", "1", { timeout: 60_000 });
   await account.click();
   const accountMenu = page.getByRole("menu");
   await expect(accountMenu).toBeVisible();
@@ -371,7 +381,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
       {
         message: `Interactive worker did not complete chat ${admittedChat.data.run.id} during Heavy source ${bounded.media_id}.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe(true);
@@ -390,7 +400,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
       {
         message: `Bounded source ${bounded.media_id} did not complete its Heavy content-index operation.`,
-        timeout: 45_000,
+        timeout: 120_000,
       },
     )
     .toBe("complete");
@@ -405,7 +415,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
       {
         message: `Adversarial source ${rejected.media_id} did not publish its exact typed parser rejection.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe("E_INVALID_FILE_TYPE");
