@@ -42,7 +42,7 @@ permissions:
 jobs:
   release:
     runs-on: [self-hosted, linux, x64, nexus-android-usb]
-    timeout-minutes: 150
+    timeout-minutes: 360
     environment: android-release
     env:
       ANDROID_RELEASE_TAG: ${{ inputs.tag }}
