@@ -282,10 +282,14 @@ acquisition they require. Step 2 may therefore run with the explicit
 `bootstrap_no_device` dispatch input, which skips exactly those stages, records
 `physical_device: null` plus the skipped stage list in the retained evidence,
 and takes the superseded stable version code as an operator attestation.
-Signature, manifest/protocol contract, pinned API origin, provider
-certification, and the Android device suite still gate the release. The step-5
-operator smoke remains mandatory, and every later release must run the full
-signed-physical stages against the then-real baseline.
+Because no handset exists anywhere, the bootstrap dispatch runs on a hosted
+runner and boots its own emulator with raw tooling, so the ordinary
+`android-device` debug suite still executes in-gate — on the same emulator
+class every non-release workflow uses. Signature, manifest/protocol contract,
+pinned API origin, provider certification, and the full release proof suite
+still gate the release. The step-5 operator smoke remains mandatory, and every
+later release must run the full signed-physical stages on the protected USB
+runner against the then-real baseline.
 
 ## Implementation boundaries
 

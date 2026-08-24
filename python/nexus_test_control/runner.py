@@ -4075,6 +4075,21 @@ def _run_android_host(
         )
 
 
+def _android_device_requires_physical(
+    context: CapabilityContext, environment: Mapping[str, str]
+) -> bool:
+    """The release workflow's device proof binds the dedicated USB handset.
+
+    The explicit bootstrap release is the one exception: it has no handset
+    anywhere, so its hosted runner boots the same emulator every non-release
+    workflow already uses, and the retained android-release evidence names the
+    signed-physical stages it skipped.
+    """
+    if context.workflow is not Workflow.RELEASE:
+        return False
+    return environment.get("NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE") != "true"
+
+
 def _run_android_device(
     context: CapabilityContext, environment: Mapping[str, str]
 ) -> CapabilityResult:
@@ -4092,7 +4107,7 @@ def _run_android_device(
     serial, device_detail = _android_device_target(
         android_root,
         environment,
-        require_physical=context.workflow is Workflow.RELEASE,
+        require_physical=_android_device_requires_physical(context, environment),
     )
     if serial is None:
         return _not_run(Capability.ANDROID_DEVICE, device_detail)
@@ -4152,7 +4167,7 @@ def _run_android_device_exact(
     serial, device_detail = _android_device_target(
         android_root,
         environment,
-        require_physical=context.workflow is Workflow.RELEASE,
+        require_physical=_android_device_requires_physical(context, environment),
     )
     if serial is None:
         return _not_run(Capability.ANDROID_DEVICE, device_detail)

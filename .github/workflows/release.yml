@@ -41,7 +41,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: [self-hosted, linux, x64, nexus-android-usb]
+    # The signed release runs on the protected lab runner with the dedicated
+    # USB handset. The explicit bootstrap release is the one exception: no
+    # handset exists anywhere, so it runs hosted and boots its own emulator.
+    runs-on: ${{ inputs.bootstrap_no_device && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "x64", "nexus-android-usb"]') }}
     timeout-minutes: 360
     environment: android-release
     env:
@@ -101,6 +104,41 @@ jobs:
           android: "true"
           llm-tools: "true"
           provider-runtime: "true"
+
+      - name: Boot the bootstrap emulator
+        if: inputs.bootstrap_no_device
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          adb="$ANDROID_HOME/platform-tools/adb"
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" --install \
+            "platform-tools" \
+            "emulator" \
+            "system-images;android-36;google_apis;x86_64" >/dev/null
+          echo no | "$avdmanager" create avd \
+            --name nexus-bootstrap \
+            --package "system-images;android-36;google_apis;x86_64" \
+            --force >/dev/null
+          nohup "$ANDROID_HOME/emulator/emulator" -avd nexus-bootstrap \
+            -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim \
+            -no-snapshot -camera-back none -camera-front none \
+            >"$RUNNER_TEMP/emulator.log" 2>&1 &
+          "$adb" wait-for-device
+          for _ in $(seq 1 120); do
+            if [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+              break
+            fi
+            sleep 5
+          done
+          test "$("$adb" shell getprop sys.boot_completed | tr -d '\r')" = "1"
+          "$adb" shell input keyevent 82
+          "$adb" devices -l
 
       - name: Decode release keystore
         env:

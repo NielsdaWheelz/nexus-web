@@ -1704,6 +1704,50 @@ def test_android_release_control_owns_physical_device_and_exact_signed_methods(
     _assert_release_artifact_retains_pinned_api_origin(tmp_path, sdk)
 
 
+def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
+    tmp_path: Path,
+) -> None:
+    """Without a handset anywhere, the bootstrap release still runs the device
+    suite — on the emulator every non-release workflow already uses."""
+    android_root = tmp_path / "apps/android"
+    sdk = tmp_path / "android-sdk"
+    sdk.mkdir()
+    _write(
+        android_root / "app/src/androidTest/java/app/nexus/android/DeviceTest.kt",
+        "package app.nexus.android\nclass DeviceTest\n",
+    )
+    _stub_tools(tmp_path, "java")
+    _write_executable(
+        sdk / "platform-tools/adb",
+        stdout=(
+            "List of devices attached\nemulator-5554 device product:sdk model:sdk transport_id:1\n"
+        ),
+    )
+    _write_executable(android_root / "gradlew")
+    environment = {
+        **_tool_environment(tmp_path),
+        "ANDROID_HOME": str(sdk),
+        "NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE": "true",
+    }
+
+    result = run_capability(
+        CapabilityContext(tmp_path, Workflow.RELEASE, ()),
+        Capability.ANDROID_DEVICE,
+        environment,
+    )
+
+    assert result.evidence.status is RunStatus.PASS, result.detail
+    gradle = [command for command in _commands(tmp_path) if command["tool"] == "gradlew"]
+    assert len(gradle) == 1
+    assert gradle[0]["argv"] == [
+        "--no-daemon",
+        ":app:connectedDebugAndroidTest",
+        "-Pandroid.testInstrumentationRunnerArguments.notAnnotation="
+        "app.nexus.android.offline.reading.SignedPromotion",
+    ]
+    assert gradle[0]["android_serial"] == "emulator-5554"
+
+
 @pytest.mark.parametrize(
     ("inventory", "expected_serial", "expected_detail"),
     [
