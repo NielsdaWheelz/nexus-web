@@ -230,7 +230,7 @@
     {
       "id": "durable-codex-metadata-timeout-collapse",
       "patch": "testdata/faults/durable-codex-metadata-timeout-collapse.patch",
-      "sha256": "ad8b9304ed85823fe2667bfe980ba122f29634dc8299eb00fdeb944b47fe5c75",
+      "sha256": "d503d1cb02f6e6b59786d74e0fe1cca8f15f7fe85cad4889b28d70e827e03e38",
       "proofs": [
         "pytest:python/tests/service/test_codex_metadata_failure_mapping.py::test_native_timeout_persists_as_a_distinct_metadata_failure"
       ],

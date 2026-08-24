@@ -1071,6 +1071,12 @@ def test_quota_is_a_known_soft_terminal_and_manual_retry_is_allowed(engine: Engi
             "failed",
             "output_schema_violation",
         ),
+        (
+            "output_limit",
+            ApiErrorCode.E_METADATA_AGENT_INVALID_OUTPUT,
+            "failed",
+            "output_limit_exceeded",
+        ),
         ("cancelled", ApiErrorCode.E_METADATA_AGENT_CANCELLED, "cancelled", None),
         (
             "auth",
@@ -1085,7 +1091,7 @@ def test_quota_is_a_known_soft_terminal_and_manual_retry_is_allowed(engine: Engi
             "host_unavailable",
         ),
     ],
-    ids=("schema", "cancel", "auth", "host-unavailable"),
+    ids=("schema", "output-limit", "cancel", "auth", "host-unavailable"),
 )
 def test_known_terminal_failures_are_distinct_and_never_retry(
     engine: Engine,

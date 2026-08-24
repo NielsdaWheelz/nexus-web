@@ -11,7 +11,9 @@ from nexus.services.contributor_taxonomy import MAX_CONTRIBUTOR_NAME_CODE_POINTS
 from nexus.services.metadata_enrichment import (
     build_enrichment_user_content,
     metadata_enrichment_agent_definition,
+    metadata_prompt_budget,
 )
+from nexus.services.native_agent_contract import METADATA_ENRICHMENT_MAX_INPUT_BYTES
 
 
 def _string_branch(schema: Mapping[str, object], name: str) -> Mapping[str, object]:
@@ -132,3 +134,18 @@ def test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets(
         assert target in content, {"kind": kind.value, "content": content}
         assert 'current_title: "download-wrapper.pdf"' in content
         assert "Early extracted text:\n---\nCanonical Work" in content
+
+
+def test_metadata_prompt_budget_closes_over_the_wire_bound() -> None:
+    """Risk: the trusted framing outgrows its reserved share and a prompt build
+    finds a negative hint or source budget at runtime instead of at review."""
+
+    budget = metadata_prompt_budget()
+    assert budget.wire_bound_bytes == METADATA_ENRICHMENT_MAX_INPUT_BYTES
+    assert (
+        budget.hint_total_max_bytes + budget.source_reserved_bytes + budget.framing_reserved_bytes
+        == budget.wire_bound_bytes
+    )
+    assert budget.framing_max_bytes <= budget.framing_reserved_bytes, (
+        "metadata prompt framing exceeds its reserved share of the wire bound"
+    )

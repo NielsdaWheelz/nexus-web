@@ -12,7 +12,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, assert_never
 
 from pydantic import (
     BaseModel,
@@ -93,7 +93,60 @@ _METADATA_MAX_AUTHORS = 20
 _METADATA_PROMPT_HINT_MAX_BYTES = 1_024
 _METADATA_PROMPT_HINT_TOTAL_MAX_BYTES = 8_192
 _METADATA_PROMPT_SOURCE_RESERVED_BYTES = 16_384
+# The wire bound splits three ways by construction: bounded hints, reserved
+# source capacity, and the remainder for the code-owned trusted framing. The
+# framing's largest possible rendering is a module fact the content contract
+# proves fits its share, so no prompt build can find a negative budget.
+_METADATA_PROMPT_FRAMING_RESERVED_BYTES = (
+    METADATA_ENRICHMENT_MAX_INPUT_BYTES
+    - _METADATA_PROMPT_HINT_TOTAL_MAX_BYTES
+    - _METADATA_PROMPT_SOURCE_RESERVED_BYTES
+)
 _METADATA_PROMPT_TRUNCATION_MARKER = " [truncated]"
+# A hint is one persisted scalar or the current author-name list; nothing else
+# is ever disclosed, so the renderer branches exhaustively on this union.
+type _MetadataPromptHint = str | list[str]
+_METADATA_PROMPT_HINT_LABELS = (
+    "kind",
+    "current_title",
+    "requested_url",
+    "canonical_source_url",
+    "canonical_url",
+    "external_playback_url",
+    "provider",
+    "provider_id",
+    "current_authors",
+    "current_publisher",
+    "current_published_date",
+    "current_language",
+    "current_description",
+    "podcast_title",
+)
+_METADATA_KIND_RULES = {
+    "epub": (
+        "Saved item is an EPUB/book work. Prefer the work title and creators over "
+        "filename, archive name, retail wrapper, or catalog chrome."
+    ),
+    "pdf": (
+        "Saved item is a PDF document. Prefer title and author from the first page, "
+        "abstract, heading, or real embedded metadata; replace filename titles."
+    ),
+    "web_article": (
+        "Saved item is the primary readable page content. Prefer the article/work "
+        "heading over site title, navigation title, SEO title, or generic page title."
+    ),
+    "video": (
+        "Saved item is a video. Title is the video title; publisher is the channel "
+        "or platform publisher when available."
+    ),
+    "podcast_episode": (
+        "Saved item is a podcast episode. Title is the episode title; publisher is "
+        "the show/podcast. Authors are hosts or creators only when clear."
+    ),
+}
+_METADATA_DEFAULT_KIND_RULE = "Saved item is the primary media work."
+_METADATA_PROMPT_PREFIX = "Known metadata:\n"
+_METADATA_PROMPT_SUFFIX = "\n---"
 # The author bound is the contributor publication truncation bound: the schema
 # must never advertise a length publication will not persist, or an accepted
 # longer name would be silently stored differently from the audited structured
@@ -363,34 +416,13 @@ def build_enrichment_user_content(
     content_sample: str,
 ) -> str:
     """Build the per-media user-turn text for structured metadata extraction."""
-    kind_rule = {
-        "epub": (
-            "Saved item is an EPUB/book work. Prefer the work title and creators over "
-            "filename, archive name, retail wrapper, or catalog chrome."
-        ),
-        "pdf": (
-            "Saved item is a PDF document. Prefer title and author from the first page, "
-            "abstract, heading, or real embedded metadata; replace filename titles."
-        ),
-        "web_article": (
-            "Saved item is the primary readable page content. Prefer the article/work "
-            "heading over site title, navigation title, SEO title, or generic page title."
-        ),
-        "video": (
-            "Saved item is a video. Title is the video title; publisher is the channel "
-            "or platform publisher when available."
-        ),
-        "podcast_episode": (
-            "Saved item is a podcast episode. Title is the episode title; publisher is "
-            "the show/podcast. Authors are hosts or creators only when clear."
-        ),
-    }.get(str(media.kind), "Saved item is the primary media work.")
+    kind_rule = _METADATA_KIND_RULES.get(str(media.kind), _METADATA_DEFAULT_KIND_RULE)
     # This order is the explicit disclosure priority when an old or malformed
     # persisted media row contains more untrusted metadata than the wire can
     # carry. Labels and prompt framing remain intact; values consume the
     # remaining byte budget in this order. Per-hint and aggregate budgets keep
     # meaningful capacity for extracted source text.
-    metadata_entries: list[tuple[str, object]] = [
+    metadata_entries: list[tuple[str, _MetadataPromptHint]] = [
         ("kind", str(media.kind)),
         ("current_title", media.title),
     ]
@@ -439,30 +471,20 @@ def build_enrichment_user_content(
     metadata_line_prefixes = tuple(f"- {label}: " for label, _ in metadata_entries)
     content_block = _clean_sample_text(content_sample) or "(no media text available)"
 
-    prompt_prefix = "Known metadata:\n"
-    prompt_middle = f"""\n\nMedia-kind target:
-{kind_rule}
-
-Early extracted text:
----
-"""
-    prompt_suffix = "\n---"
+    prompt_prefix = _METADATA_PROMPT_PREFIX
+    prompt_middle = _prompt_middle(kind_rule)
+    prompt_suffix = _METADATA_PROMPT_SUFFIX
     # The wire contract is byte-bounded, but all persisted field values and
     # extracted source are untrusted UTF-8 data. Reserve every trusted label,
     # section heading, and delimiter first; then allocate the remaining bytes
-    # deterministically to metadata values (in priority order) and source.
-    structural_bytes = len(
-        (prompt_prefix + "\n".join(metadata_line_prefixes) + prompt_middle + prompt_suffix).encode(
-            "utf-8"
-        )
-    )
+    # deterministically to metadata values (in priority order) and source. The
+    # framing fits its reserved share by construction (see
+    # metadata_prompt_budget), so every budget below is non-negative.
+    structural_bytes = _framing_bytes(metadata_line_prefixes, kind_rule)
     untrusted_budget = METADATA_ENRICHMENT_MAX_INPUT_BYTES - structural_bytes
-    if untrusted_budget < 0:
-        # The trusted structure is code-owned and has a fixed, audited size.
-        raise AssertionError("metadata prompt structure exceeds the wire input bound")
     metadata_budget = min(
         _METADATA_PROMPT_HINT_TOTAL_MAX_BYTES,
-        max(0, untrusted_budget - _METADATA_PROMPT_SOURCE_RESERVED_BYTES),
+        untrusted_budget - _METADATA_PROMPT_SOURCE_RESERVED_BYTES,
     )
     metadata_values, metadata_bytes = _allocate_bounded_metadata_hints(
         tuple(value for _, value in metadata_entries),
@@ -476,6 +498,52 @@ Early extracted text:
     return f"{prompt_prefix}{metadata_block}{prompt_middle}{_bounded_utf8_text(content_block, source_budget)}{prompt_suffix}"
 
 
+def _prompt_middle(kind_rule: str) -> str:
+    return f"""\n\nMedia-kind target:
+{kind_rule}
+
+Early extracted text:
+---
+"""
+
+
+def _framing_bytes(line_prefixes: Sequence[str], kind_rule: str) -> int:
+    return len(
+        (
+            _METADATA_PROMPT_PREFIX
+            + "\n".join(line_prefixes)
+            + _prompt_middle(kind_rule)
+            + _METADATA_PROMPT_SUFFIX
+        ).encode("utf-8")
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataPromptBudget:
+    """The wire bound's three-way split and the framing's largest possible rendering."""
+
+    wire_bound_bytes: int
+    hint_total_max_bytes: int
+    source_reserved_bytes: int
+    framing_reserved_bytes: int
+    framing_max_bytes: int
+
+
+def metadata_prompt_budget() -> MetadataPromptBudget:
+    """Expose the prompt budget so the content contract can prove it closes."""
+    longest_rule = max((*_METADATA_KIND_RULES.values(), _METADATA_DEFAULT_KIND_RULE), key=len)
+    return MetadataPromptBudget(
+        wire_bound_bytes=METADATA_ENRICHMENT_MAX_INPUT_BYTES,
+        hint_total_max_bytes=_METADATA_PROMPT_HINT_TOTAL_MAX_BYTES,
+        source_reserved_bytes=_METADATA_PROMPT_SOURCE_RESERVED_BYTES,
+        framing_reserved_bytes=_METADATA_PROMPT_FRAMING_RESERVED_BYTES,
+        framing_max_bytes=_framing_bytes(
+            tuple(f"- {label}: " for label in _METADATA_PROMPT_HINT_LABELS),
+            longest_rule,
+        ),
+    )
+
+
 def _bounded_utf8_text(value: str, max_bytes: int) -> str:
     encoded = value.encode("utf-8")
     if len(encoded) <= max_bytes:
@@ -485,16 +553,19 @@ def _bounded_utf8_text(value: str, max_bytes: int) -> str:
 
 
 def _allocate_bounded_metadata_hints(
-    values: Sequence[object], budget: int
+    values: Sequence[_MetadataPromptHint], budget: int
 ) -> tuple[tuple[str, ...], int]:
-    """Render ordered untrusted hints as bounded valid JSON values."""
+    """Render ordered untrusted hints as bounded valid JSON values.
+
+    The hint budget always covers one truncation marker per hint: the framing
+    reservation leaves the full hint total available, and at most
+    ``len(_METADATA_PROMPT_HINT_LABELS)`` hints exist.
+    """
     remaining = budget
     bounded_values: list[str] = []
     minimum_value_bytes = len(
         _json_prompt_value(_METADATA_PROMPT_TRUNCATION_MARKER.strip()).encode("utf-8")
     )
-    if budget < minimum_value_bytes * len(values):
-        raise AssertionError("metadata hint budget cannot preserve valid JSON framing")
     for index, value in enumerate(values):
         reserved_for_remaining_values = minimum_value_bytes * (len(values) - index - 1)
         bounded = _bounded_json_prompt_value(
@@ -509,16 +580,18 @@ def _allocate_bounded_metadata_hints(
     return tuple(bounded_values), budget - remaining
 
 
-def _bounded_json_prompt_value(value: object, max_bytes: int) -> str:
+def _bounded_json_prompt_value(value: _MetadataPromptHint, max_bytes: int) -> str:
     """Return a valid JSON hint within ``max_bytes``, retaining string prefixes."""
     rendered = _json_prompt_value(value)
     if len(rendered.encode("utf-8")) <= max_bytes:
         return rendered
-    if isinstance(value, str):
-        return _bounded_json_string(value, max_bytes)
-    if isinstance(value, list) and all(isinstance(item, str) for item in value):
-        return _bounded_json_string_list(value, max_bytes)
-    return _json_prompt_value(_METADATA_PROMPT_TRUNCATION_MARKER.strip())
+    match value:
+        case str():
+            return _bounded_json_string(value, max_bytes)
+        case list():
+            return _bounded_json_string_list(value, max_bytes)
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
 def _bounded_json_string(value: str, max_bytes: int) -> str:
@@ -598,68 +671,54 @@ def validate_structured_enrichment(payload: object) -> MetadataEnrichmentOutput 
 # ---------------------------------------------------------------------------
 
 
-def merge_enrichment(
-    db: Session,
-    media: Media,
-    enrichment: dict,
-) -> MetadataMergeResult:
-    """Merge native-agent enrichment into media.
+def merge_enrichment(media: Media, enrichment: MetadataEnrichmentOutput) -> MetadataMergeResult:
+    """Merge accepted native-agent enrichment into media.
 
-    The validated structured output overwrites every accepted field it includes.
+    The output model is the single owner of every value bound: each present
+    field is already stripped, non-blank, and within its declared length, so
+    merging is assignment, never a second validation or truncation.
     """
     accepted_fields: list[str] = []
     author_observation: ContributorObservationBatch = NOT_OBSERVED
 
-    if "title" in enrichment:
-        title = enrichment["title"]
-        if isinstance(title, str) and title.strip():
-            media.title = title.strip()[:255]
-            accepted_fields.append("title")
+    if enrichment.title is not None:
+        media.title = enrichment.title
+        accepted_fields.append("title")
 
-    if "authors" in enrichment:
-        authors = enrichment["authors"]
-        if isinstance(authors, list):
-            entries = [
-                RawCreditEntry(credited_name=name, raw_role=None)
-                for name in authors
-                if isinstance(name, str) and name.strip()
-            ]
-            if entries:
-                # build_observation owns cleaning/dedupe/truncation; publication
-                # applies the returned credit batch in its current transaction.
-                author_observation, truncation = build_observation({"author": entries})
-                if truncation:
-                    logger.info(
-                        "metadata_enrichment_authors_truncated",
-                        media_id=str(media.id),
-                        truncated=truncation,
-                    )
-                if isinstance(author_observation, ObservedRoleSlices):
-                    accepted_fields.append("authors")
+    if enrichment.authors is not None:
+        # build_observation owns cleaning/dedupe/truncation; publication
+        # applies the returned credit batch in its current transaction.
+        author_observation, truncation = build_observation(
+            {
+                "author": [
+                    RawCreditEntry(credited_name=name, raw_role=None) for name in enrichment.authors
+                ]
+            }
+        )
+        if truncation:
+            logger.info(
+                "metadata_enrichment_authors_truncated",
+                media_id=str(media.id),
+                truncated=truncation,
+            )
+        if isinstance(author_observation, ObservedRoleSlices):
+            accepted_fields.append("authors")
 
-    if "publisher" in enrichment:
-        publisher = enrichment["publisher"]
-        if isinstance(publisher, str) and publisher.strip():
-            media.publisher = publisher.strip()[:255]
-            accepted_fields.append("publisher")
+    if enrichment.publisher is not None:
+        media.publisher = enrichment.publisher
+        accepted_fields.append("publisher")
 
-    if "description" in enrichment:
-        desc = enrichment["description"]
-        if isinstance(desc, str) and desc.strip():
-            media.description = desc.strip()[:2000]
-            accepted_fields.append("description")
+    if enrichment.description is not None:
+        media.description = enrichment.description
+        accepted_fields.append("description")
 
-    if "published_date" in enrichment:
-        date = enrichment["published_date"]
-        if isinstance(date, str) and date.strip():
-            media.published_date = date.strip()[:64]
-            accepted_fields.append("published_date")
+    if enrichment.published_date is not None:
+        media.published_date = enrichment.published_date
+        accepted_fields.append("published_date")
 
-    if "language" in enrichment:
-        lang = enrichment["language"]
-        if isinstance(lang, str) and lang.strip():
-            media.language = lang.strip()[:32]
-            accepted_fields.append("language")
+    if enrichment.language is not None:
+        media.language = enrichment.language
+        accepted_fields.append("language")
 
     if accepted_fields:
         now = datetime.now(UTC)

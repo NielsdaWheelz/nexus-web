@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 from uuid import UUID, uuid4
 
 from sqlalchemy import Engine
@@ -45,6 +45,7 @@ type TerminalHostMode = Literal[
     "success",
     "quota",
     "invalid_output",
+    "output_limit",
     "timeout",
     "cancelled",
     "auth",
@@ -134,6 +135,7 @@ def _terminal_for(mode: TerminalHostMode, request_id: str) -> dict[str, object]:
         }
     failure_kind = {
         "quota": "quota_exhausted",
+        "output_limit": "output_limit_exceeded",
         "timeout": "turn_timeout",
         "auth": "credential_unavailable",
     }[mode]
@@ -157,6 +159,13 @@ def _run_terminal_host(
     request_count = 0
 
     class Handler(socketserver.StreamRequestHandler):
+        """Answer one command exactly as the scripted mode says.
+
+        Nothing in here asserts: socketserver swallows handler exceptions after
+        the response bytes have left, so a misuse must surface as a wire
+        outcome the worker persists and the proof's durable oracles observe.
+        """
+
         def handle(self) -> None:
             nonlocal request_count
             request_line = self.rfile.readline()
@@ -167,57 +176,85 @@ def _run_terminal_host(
                     break
                 name, value = line.decode("ascii").split(":", 1)
                 headers[name.casefold()] = value.strip()
-            command = json.loads(self.rfile.read(int(headers["content-length"])))
+            body = self.rfile.read(int(headers["content-length"]))
+            if not request_line.startswith(b"POST /v1/turns HTTP/"):
+                # A wrong route is a rejected command on the wire, never an
+                # audited turn: the worker persists E_METADATA_AGENT_HOST_REJECTED
+                # and the proof's audit count stays short.
+                self._respond(b"404 Not Found", b"application/json", b'{"detail":"unknown"}')
+                return
+            command = json.loads(body)
             request_count += 1
             with Path(audit_path).open("a", encoding="utf-8") as audit:
                 audit.write(json.dumps(command, sort_keys=True) + "\n")
             request_observed.set()
-            capacity_refused = mode in {"capacity", "capacity_gated"} or (
-                mode == "capacity_once" and request_count == 1
+            match mode:
+                case "capacity":
+                    self._refuse_capacity()
+                case "capacity_gated":
+                    # Hold the refusal until the proof releases it (or the proof
+                    # is over). The bound only outlasts any proof budget so a
+                    # forgotten gate ends the connection instead of hanging.
+                    if capacity_gate.wait(120):
+                        self._refuse_capacity()
+                case "capacity_once":
+                    if request_count == 1:
+                        self._refuse_capacity()
+                    else:
+                        self._terminal("success", command)
+                case "accepted_disconnect":
+                    self.wfile.write(
+                        b"HTTP/1.1 200 OK\r\n"
+                        b"Content-Type: application/x-ndjson\r\n"
+                        b"Content-Length: 1\r\n"
+                        b"Connection: close\r\n\r\n"
+                    )
+                    self.wfile.flush()
+                case (
+                    "success"
+                    | "quota"
+                    | "invalid_output"
+                    | "output_limit"
+                    | "timeout"
+                    | "cancelled"
+                    | "auth"
+                ):
+                    self._terminal(mode, command)
+                case _ as unreachable:
+                    assert_never(unreachable)
+
+        def _respond(self, status: bytes, content_type: bytes, payload: bytes) -> None:
+            self.wfile.write(
+                b"HTTP/1.1 "
+                + status
+                + b"\r\nContent-Type: "
+                + content_type
+                + b"\r\n"
+                + f"Content-Length: {len(payload)}\r\n".encode()
+                + b"Connection: close\r\n\r\n"
+                + payload
             )
-            if capacity_refused:
-                if mode == "capacity_gated":
-                    assert capacity_gate.wait(5), "capacity response gate was not released"
-                payload = (
-                    b'{"schema_version":"nexus-agent-rejection.v1","kind":"capacity_unavailable"}'
-                )
-                self.wfile.write(
-                    b"HTTP/1.1 503 Service Unavailable\r\n"
-                    b"Content-Type: application/json\r\n"
-                    + f"Content-Length: {len(payload)}\r\n".encode()
-                    + b"Connection: close\r\n\r\n"
-                    + payload
-                )
-                self.wfile.flush()
-                assert request_line.startswith(b"POST /v1/turns HTTP/")
-                return
-            if mode == "accepted_disconnect":
-                self.wfile.write(
-                    b"HTTP/1.1 200 OK\r\n"
-                    b"Content-Type: application/x-ndjson\r\n"
-                    b"Content-Length: 1\r\n"
-                    b"Connection: close\r\n\r\n"
-                )
-                self.wfile.flush()
-                return
-            if mode in {"capacity", "capacity_gated"}:
-                raise AssertionError("capacity host reached a terminal response")
-            terminal_mode: TerminalHostMode = "success" if mode == "capacity_once" else mode
+            self.wfile.flush()
+
+        def _refuse_capacity(self) -> None:
+            self._respond(
+                b"503 Service Unavailable",
+                b"application/json",
+                b'{"schema_version":"nexus-agent-rejection.v1","kind":"capacity_unavailable"}',
+            )
+
+        def _terminal(self, terminal_mode: TerminalHostMode, command: dict[str, Any]) -> None:
             frame = {
                 "schema_version": "nexus-agent-event.v1",
                 "request_id": command["request_id"],
                 "sequence": 0,
                 "event": _terminal_for(terminal_mode, command["request_id"]),
             }
-            payload = (json.dumps(frame, separators=(",", ":")) + "\n").encode()
-            self.wfile.write(
-                b"HTTP/1.1 200 OK\r\n"
-                b"Content-Type: application/x-ndjson\r\n"
-                + f"Content-Length: {len(payload)}\r\n".encode()
-                + b"Connection: close\r\n\r\n"
-                + payload
+            self._respond(
+                b"200 OK",
+                b"application/x-ndjson",
+                (json.dumps(frame, separators=(",", ":")) + "\n").encode(),
             )
-            assert request_line.startswith(b"POST /v1/turns HTTP/")
 
     class Server(socketserver.UnixStreamServer):
         allow_reuse_address = False

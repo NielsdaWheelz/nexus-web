@@ -24,6 +24,7 @@ from nexus.jobs.queue import (
     get_job,
     lock_and_renew_running_job_claim,
     lock_jobs_for_payload,
+    lock_running_job_claim,
     update_running_job_payload,
 )
 from nexus.logging import get_logger
@@ -57,10 +58,7 @@ from nexus.services.durable_step_journal import (
     read_step_states,
     stable_generation_id,
 )
-from nexus.services.metadata_dispatch import (
-    METADATA_STEP_PATH,
-    try_enqueue_metadata_enrichment,
-)
+from nexus.services.metadata_dispatch import METADATA_STEP_PATH
 from nexus.services.metadata_enrichment import (
     MetadataEnrichmentOutput,
     build_enrichment_user_content,
@@ -420,9 +418,15 @@ def enrich_metadata(
             raise _UncertainMetadataTurn(
                 f"media {media_uuid} already has an unresolved native-agent turn"
             )
+        if not lock_running_job_claim(db, context=context):
+            # A lapsed lease let a later attempt advance the step; the queue's
+            # reclaim is ordinary durable-workflow behaviour, not a defect.
+            db.rollback()
+            return _job_result(_SkippedPublication(reason="claim_lost_before_dispatch"))
         current = read_step_states(job).get(METADATA_STEP_PATH)
         if current is None or current.dispatch_phase is not Prepared:
-            # justify-defect: this attempt durably committed Prepared before
+            # justify-defect: this attempt owns the live claim, so no other
+            # writer advanced the step it durably committed as Prepared before
             # entering the dispatch transaction.
             raise AssertionError("metadata dispatch requires the Prepared checkpoint")
         if media is None:
@@ -722,24 +726,31 @@ def _reschedule_preaccept_capacity_wait(
     delay_seconds = _CAPACITY_WAIT_DELAYS_SECONDS[capacity_wait_index]
     next_wait_index = capacity_wait_index + 1
     with factory() as db:
+        if not lock_running_job_claim(db, context=context):
+            # The lease lapsed during the refused request and a later attempt
+            # may already own the step: this attempt must not rewrite it.
+            db.rollback()
+            raise _UncertainMetadataTurn(
+                f"metadata job {context.job_id} lost its claim during capacity wait"
+            )
         job = get_job(db, context.job_id)
         if job is None:
-            # justify-defect: the worker holds this claimed row; only unpruned
-            # terminal transitions could remove it mid-attempt.
+            # justify-defect: the locked live claim above proves the row exists.
             raise AssertionError(f"metadata job {context.job_id} disappeared at capacity wait")
-        # justify-defect: only this claimed attempt advances the wait index.
+        # justify-defect: only the live claim holder advances the wait index.
         if _capacity_wait_index(job.payload) != capacity_wait_index:
             raise AssertionError("metadata capacity wait index changed during dispatch")
         current = read_step_states(job).get(METADATA_STEP_PATH)
         if current is None or current.dispatch_phase is not Uncertain:
-            # justify-defect: a pre-accept capacity rejection can only follow
-            # this attempt's own committed Uncertain checkpoint.
+            # justify-defect: under the live claim, a pre-accept capacity
+            # rejection can only follow this attempt's own committed Uncertain
+            # checkpoint.
             raise AssertionError("metadata capacity wait requires the Uncertain checkpoint")
         if (
             _persisted_request_fingerprint(current, generation_id=generation_id)
             != request_fingerprint
         ):
-            # justify-defect: only this claimed attempt rewrites its own
+            # justify-defect: only the live claim holder rewrites its own
             # persisted fingerprint.
             raise AssertionError("metadata capacity wait request fingerprint changed")
 
@@ -851,9 +862,11 @@ def _failure_code(kind: NativeAgentFailureKind) -> ApiErrorCode:
     match kind:
         case "quota_exhausted":
             return ApiErrorCode.E_METADATA_AGENT_QUOTA_EXHAUSTED
-        case "turn_timeout" | "output_limit_exceeded":
+        case "turn_timeout":
             return ApiErrorCode.E_METADATA_AGENT_TIMEOUT
-        case "output_schema_violation":
+        case "output_schema_violation" | "output_limit_exceeded":
+            # An output outside its schema or outside the bounded stream the private
+            # contract can carry is the same product fact: no usable metadata came back.
             return ApiErrorCode.E_METADATA_AGENT_INVALID_OUTPUT
         case "credential_unavailable" | "credential_rejected":
             return ApiErrorCode.E_METADATA_AGENT_AUTH_UNAVAILABLE
@@ -1036,8 +1049,6 @@ def _publish_completed_transaction(
             ),
         )
 
-    enrichment = completed.enrichment.model_dump(exclude_none=True)
-
     current_content = build_enrichment_user_content(
         db,
         media,
@@ -1062,7 +1073,7 @@ def _publish_completed_transaction(
             ),
         )
 
-    merge_result = merge_enrichment(db, media, enrichment)
+    merge_result = merge_enrichment(media, completed.enrichment)
     if not merge_result.accepted_fields:
         code = ApiErrorCode.E_METADATA_NO_FIELDS.value
         detail = "native agent returned no applicable metadata fields"
@@ -1187,16 +1198,3 @@ def _persisted_request_fingerprint(
         # (StepReplayState's validator requires it).
         raise AssertionError("metadata replay state has no request fingerprint")
     return state.request_fingerprint.value
-
-
-def dispatch_enrich_metadata(media_id: str, request_id: str | None) -> None:
-    """Best-effort enqueue after source extraction commits."""
-    db = get_session_factory()()
-    try:
-        try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id)
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
-    finally:
-        db.close()

@@ -7,6 +7,15 @@ import json
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
+from nexus.services.contributor_taxonomy import (
+    MAX_CONTRIBUTOR_NAME_CODE_POINTS,
+    RawCreditEntry,
+    build_observation,
+)
+from nexus.services.contributors import (
+    MediaTarget,
+    apply_observed_role_slices_in_current_transaction,
+)
 from nexus.services.metadata_enrichment import build_enrichment_user_content
 from nexus.services.native_agent_contract import METADATA_ENRICHMENT_MAX_INPUT_BYTES
 from nexus.services.native_agent_operations import (
@@ -89,3 +98,48 @@ def test_metadata_prompt_bounds_oversized_persisted_hints_without_erasing_struct
         _, separator, value = line.partition(": ")
         assert separator == ": "
         json.loads(value)
+
+
+def test_metadata_prompt_bounds_the_author_hint_as_a_valid_json_array(
+    db_session: Session,
+) -> None:
+    """Risk: twenty long multi-byte credits overflow the per-hint budget and the
+    author hint is no longer a JSON array the model can read."""
+
+    media = Media(
+        kind=MediaKind.epub.value,
+        title="A canonical title",
+        processing_status=ProcessingStatus.ready_for_reading,
+    )
+    db_session.add(media)
+    db_session.flush()
+    # Realistic accented names: each renders as roughly 60 bytes of ASCII-escaped
+    # JSON, so twenty of them overrun the 1 KiB per-hint bound together while
+    # every single name fits it and the contributor name bound.
+    names = [
+        f"Author {index:02d} " + "x" * 30 + " \u00c9lodie Pr\u00e9v\u00f4t" for index in range(20)
+    ]
+    assert all(len(name) <= MAX_CONTRIBUTOR_NAME_CODE_POINTS for name in names)
+    apply_observed_role_slices_in_current_transaction(
+        db_session,
+        target=MediaTarget(media.id),
+        observation=build_observation(
+            {"author": [RawCreditEntry(credited_name=name, raw_role=None) for name in names]}
+        )[0],
+        source="metadata_enrichment",
+    )
+    db_session.flush()
+
+    prompt = build_enrichment_user_content(db_session, media, "bounded source")
+
+    assert len(prompt.encode("utf-8")) < METADATA_ENRICHMENT_MAX_INPUT_BYTES
+    metadata_block = prompt.removeprefix("Known metadata:\n").split("\n\nMedia-kind target:", 1)[0]
+    authors_line = next(
+        line for line in metadata_block.splitlines() if line.startswith("- current_authors: ")
+    )
+    authors = json.loads(authors_line.removeprefix("- current_authors: "))
+    assert isinstance(authors, list) and authors, "author hint must stay a JSON array"
+    assert len(authors_line.encode("utf-8")) <= 1_024 + len("- current_authors: ")
+    assert authors[-1] == "[truncated]", "omitted authors must be marked, not silently dropped"
+    assert all(name in names for name in authors[:-1])
+    assert 0 < len(authors) - 1 < len(names)
