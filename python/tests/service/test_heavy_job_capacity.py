@@ -119,7 +119,9 @@ def _wait_for_backend_blocked_by(
     return None
 
 
-def test_worker_threads_registry_resource_class_into_execution_context(engine: Engine) -> None:
+def test_worker_threads_registry_resource_class_into_execution_context(
+    engine: Engine,
+) -> None:
     kind = "heavy_worker_context_probe"
     observed: list[str] = []
 
@@ -504,17 +506,16 @@ def test_heavy_heartbeat_never_pins_capacity_while_waiting_on_the_job_row(
         )
 
         # The true invariant: while the heartbeat queues behind the publication's
-        # job-row lock, its capacity renewal has already committed in its own
-        # transaction, so the single Heavy capacity row is free to lock RIGHT NOW.
-        # NOWAIT makes that unforgeable -- any pinned capacity row raises 55P03
-        # instead of queueing. Under the round-1 single-transaction heartbeat
-        # (capacity FOR UPDATE, then the job-row UPDATE in the same transaction)
-        # the blocked heartbeat still held the capacity lock here, so this probe
-        # failed with lock_not_available; that is the regression this guards.
-        # Note claim_next_job cannot serve as this probe: its own admission path
-        # locks the HOLDER'S job row FOR UPDATE (_heavy_capacity_is_available),
-        # so it legitimately queues behind the publication regardless of what
-        # the heartbeat holds.
+        # job-row lock, it holds nothing else, so the single Heavy capacity row is
+        # free to lock RIGHT NOW. NOWAIT makes that unforgeable -- any pinned
+        # capacity row raises 55P03 instead of queueing. Under the round-1
+        # single-transaction heartbeat (capacity FOR UPDATE, then the job-row
+        # UPDATE in the same transaction) the blocked heartbeat still held the
+        # capacity lock here, so this probe failed with lock_not_available; that
+        # is the regression this guards. Note claim_next_job cannot serve as
+        # this probe: its own admission path locks the HOLDER'S job row FOR
+        # UPDATE (_heavy_capacity_is_available), so it legitimately queues behind
+        # the publication regardless of what the heartbeat holds.
         with Session(engine) as probe:
             try:
                 capacity_row = probe.execute(
@@ -540,10 +541,10 @@ def test_heavy_heartbeat_never_pins_capacity_while_waiting_on_the_job_row(
             observed_lease = capacity_row.lease_expires_at
             probe.rollback()
         assert observed_holder == (job.id, worker_id, 1)
-        # The holder triple is identical before and after renewal, so only the
-        # advanced capacity lease proves the probe saw the heartbeat's already
-        # committed renewal rather than the stale pre-heartbeat row.
-        assert observed_lease > lease_before
+        # The capacity renewal follows the job renewal, so while the heartbeat
+        # waits on the job row the capacity lease is still the claim's: a
+        # capacity lease can never run ahead of the holder it fences.
+        assert observed_lease == lease_before
     finally:
         publication.rollback()
         publication.close()
@@ -553,6 +554,17 @@ def test_heavy_heartbeat_never_pins_capacity_while_waiting_on_the_job_row(
             # capacity->job lock order every other Heavy transition uses.
             heartbeat_thread.join(timeout=10)
         if not heartbeat_thread.is_alive():
+            with Session(engine) as observer:
+                renewed_job, renewed_capacity = observer.execute(
+                    text(
+                        """
+                        SELECT holder.lease_expires_at, capacity.lease_expires_at
+                        FROM background_job_capacity_leases capacity
+                        JOIN background_jobs holder ON holder.id = capacity.job_id
+                        WHERE capacity.resource_class = 'Heavy'
+                        """
+                    )
+                ).one()
             with Session(engine) as cleanup:
                 current = get_job(cleanup, job.id)
                 if current is not None and current.status == "running":
@@ -563,6 +575,122 @@ def test_heavy_heartbeat_never_pins_capacity_while_waiting_on_the_job_row(
     assert not heartbeat_thread.is_alive(), "Heavy heartbeat did not finish after job release"
     assert not heartbeat_failures, f"Heavy heartbeat failed: {heartbeat_failures!r}"
     assert heartbeat_results == [True]
+    # Once both owned transactions committed, the capacity lease is exactly the
+    # holder's committed job lease -- the same instant claim admission wrote.
+    assert renewed_capacity == renewed_job > lease_before
+    assert _capacity_holder(engine) == (None, None, None, None)
+
+
+def test_heavy_heartbeat_partial_commit_never_leaves_capacity_ahead_of_its_holder(
+    engine: Engine,
+) -> None:
+    """Risk: a crash between the heartbeat's two commits reserves the Heavy slot past
+    its holder's own expiry, blocking every Heavy claim across all replicas.
+
+    The heartbeat is an operation boundary whose only injectable seam is the
+    session factory it owns; losing the database between its two owned
+    transactions is the crash the split introduces. Whatever the partial state,
+    the occupancy predicate must free the slot at the holder job's true expiry,
+    which holds only while the capacity lease never runs ahead of the job lease.
+    """
+    kind = "heavy_partial_commit_probe"
+    worker_id = "heavy-partial-commit-worker"
+    with Session(engine) as db:
+        job = enqueue_job(db, kind=kind, priority=0)
+        db.commit()
+        claimed = claim_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            lease_seconds=300,
+            allowed_kinds=(kind,),
+            heavy_kinds=(kind,),
+        )
+        db.commit()
+        assert claimed is not None
+    holder_before = _capacity_holder(engine)
+
+    real_factory = create_session_factory(engine)
+    sessions_opened = 0
+
+    def factory_lost_after_first_transaction() -> Session:
+        nonlocal sessions_opened
+        sessions_opened += 1
+        if sessions_opened > 1:
+            raise OperationalError("connection lost between heartbeat transactions", {}, None)
+        return real_factory()
+
+    with pytest.raises(OperationalError):
+        heartbeat_job(
+            session_factory=factory_lost_after_first_transaction,
+            context=JobExecutionContext(
+                job_id=job.id,
+                worker_id=worker_id,
+                attempt_no=claimed.attempts,
+                resource_class="Heavy",
+            ),
+            lease_seconds=900,
+        )
+    assert sessions_opened == 2
+
+    with Session(engine) as observer:
+        job_lease, capacity_lease = observer.execute(
+            text(
+                """
+                SELECT holder.lease_expires_at, capacity.lease_expires_at
+                FROM background_job_capacity_leases capacity
+                JOIN background_jobs holder ON holder.id = capacity.job_id
+                WHERE capacity.resource_class = 'Heavy'
+                """
+            )
+        ).one()
+    assert job_lease > holder_before[3], "the job renewal must have committed first"
+    assert capacity_lease <= job_lease, (
+        "a partial heartbeat commit left the Heavy capacity lease ahead of its holder"
+    )
+
+    # The slot is still held while the holder is alive ...
+    with Session(engine) as probe:
+        assert (
+            claim_job(
+                probe,
+                job_id=enqueue_job(probe, kind=kind, priority=0).id,
+                worker_id="heavy-partial-commit-rival",
+                lease_seconds=300,
+                allowed_kinds=(kind,),
+                heavy_kinds=(kind,),
+            )
+            is None
+        )
+        probe.rollback()
+
+    # ... and a completed heartbeat lands both leases on one instant again.
+    assert heartbeat_job(
+        session_factory=real_factory,
+        context=JobExecutionContext(
+            job_id=job.id,
+            worker_id=worker_id,
+            attempt_no=claimed.attempts,
+            resource_class="Heavy",
+        ),
+        lease_seconds=300,
+    )
+    with Session(engine) as observer:
+        job_lease, capacity_lease = observer.execute(
+            text(
+                """
+                SELECT holder.lease_expires_at, capacity.lease_expires_at
+                FROM background_job_capacity_leases capacity
+                JOIN background_jobs holder ON holder.id = capacity.job_id
+                WHERE capacity.resource_class = 'Heavy'
+                """
+            )
+        ).one()
+    assert capacity_lease == job_lease
+
+    with Session(engine) as cleanup:
+        assert complete_job(cleanup, job_id=job.id, worker_id=worker_id)
+        cleanup.commit()
     assert _capacity_holder(engine) == (None, None, None, None)
 
 
@@ -618,7 +746,9 @@ def test_heavy_heartbeat_owns_transactions_without_committing_caller_state(
     assert _capacity_holder(engine) == (None, None, None, None)
 
 
-def test_light_heartbeat_refuses_attempt_that_holds_heavy_capacity(engine: Engine) -> None:
+def test_light_heartbeat_refuses_attempt_that_holds_heavy_capacity(
+    engine: Engine,
+) -> None:
     """Resource-class drift: a redeploy demotes a running kind from Heavy to Light.
 
     The attempt still holds the single Heavy capacity row it was admitted under,
@@ -724,7 +854,11 @@ def test_heavy_holder_follows_heartbeat_reschedule_failure_repair_and_completion
             {"job_id": job.id},
         ).scalar_one()
         holder_job, holder_worker, holder_attempt, capacity_lease = _capacity_holder(engine)
-        assert (holder_job, holder_worker, holder_attempt) == (job.id, "transition-worker", 1)
+        assert (holder_job, holder_worker, holder_attempt) == (
+            job.id,
+            "transition-worker",
+            1,
+        )
         # The two-transaction heartbeat renews the capacity lease first and the
         # job lease after, each from its own commit-time clock, so the leases
         # advance independently: capacity beyond its claim-time value, and the
@@ -842,7 +976,9 @@ def test_dead_repair_defects_instead_of_reconciling_impossible_capacity(
         db.commit()
 
 
-def test_expired_heavy_reclaim_is_fenced_and_records_worker_interruption(engine: Engine) -> None:
+def test_expired_heavy_reclaim_is_fenced_and_records_worker_interruption(
+    engine: Engine,
+) -> None:
     kind = "heavy_expiry_probe"
     session_factory = create_session_factory(engine)
     with Session(engine) as db:
@@ -1000,7 +1136,9 @@ def test_heavy_heartbeat_fences_stale_attempt_after_same_worker_id_reclaim(
     assert _capacity_holder(engine) == (None, None, None, None)
 
 
-def test_heavy_renewal_rejects_missing_or_different_capacity_holder(engine: Engine) -> None:
+def test_heavy_renewal_rejects_missing_or_different_capacity_holder(
+    engine: Engine,
+) -> None:
     kind = "heavy_missing_holder_probe"
     session_factory = create_session_factory(engine)
     with Session(engine) as db:

@@ -169,6 +169,20 @@ HEAVY_CAPACITY_OCCUPIED_SQL = """EXISTS (
 )"""
 
 
+# The Heavy heartbeat's job renewal must not outlive a capacity holder that no
+# longer names the attempt: this lock-free read of the holder row rides inside
+# the job-row UPDATE so a renewal and a holder change cannot interleave between
+# two statements. Constant, parameterized only through the statement's binds.
+_HEAVY_HOLDER_FENCE_SQL = """AND EXISTS (
+                      SELECT 1
+                      FROM background_job_capacity_leases capacity
+                      WHERE capacity.resource_class = 'Heavy'
+                        AND capacity.job_id = :job_id
+                        AND capacity.worker_id = :worker_id
+                        AND capacity.attempt_no = :attempt_no
+                  )"""
+
+
 @dataclass(frozen=True)
 class _HeavyCapacityLease:
     job_id: UUID | None
@@ -851,58 +865,34 @@ def heartbeat_job(
 
     This is an operation boundary, not a primitive composed into a caller's
     transaction: it creates, commits, rolls back, and closes every Session it
-    uses. Heavy renewal uses two single-lock transactions, never one. The first
-    is a self-fencing conditional capacity UPDATE keyed on the holder's exact
-    (job_id, worker_id, attempt_no); matching no holder means this attempt lost
-    the capacity lease, reported False with no job-side effect. The job-row
-    lease renewal then runs in a second owned transaction. Because no
-    transaction here ever holds more than one of the capacity row and the job
-    row, no lock-ordering cycle with the capacity->job order every other Heavy
+    uses. Heavy renewal uses two single-lock transactions, never one, so that
+    no transaction here ever holds both the capacity row and the job row: no
+    lock-ordering cycle with the capacity->job order every other Heavy
     transition uses -- nor with a long publication transaction holding the job
     row -- can exist. A caller's unrelated staged state can never be committed
     by a heartbeat.
+
+    The job row renews first. It is the primary "this attempt is alive" fact,
+    and the renewal is self-fencing on the exact running attempt, claimant, and
+    unexpired lease -- and, for Heavy work, on the capacity holder still naming
+    this exact attempt, read without a lock inside the same statement --
+    so matching nothing means this attempt lost its claim or its capacity and
+    nothing is touched. The capacity holder then renews in a second owned
+    transaction to the job row's committed lease -- whatever live renewal
+    landed last, since a publication transaction renews that row too -- keyed
+    on the holder's exact (job_id, worker_id, attempt_no) and on the job still
+    being that running, unexpired attempt. The capacity lease therefore never
+    names an instant later than its holder's own lease: a crash between the two
+    commits can only leave capacity behind the job lease, a skew the occupancy
+    predicate already tolerates (the Heavy slot stays held while either lease
+    is live and frees at the holder's true expiry), never a capacity lease that
+    outlives a dead holder and blocks every Heavy claim until it lapses.
 
     A Light heartbeat never locks the capacity row; it only reads it unlocked
     to make the same cross-check ``lock_and_renew_running_job_claim`` makes, so
     a Light attempt that is somehow the Heavy holder is refused instead of
     renewing a lease it does not own.
     """
-    if context.resource_class == "Heavy":
-        with session_factory() as capacity_db, capacity_db.begin():
-            renewal = (
-                capacity_db.execute(
-                    text(
-                        """
-                        UPDATE background_job_capacity_leases capacity
-                        SET lease_expires_at =
-                                clock_timestamp()
-                                + (CAST(:lease_seconds AS integer) * interval '1 second'),
-                            updated_at = clock_timestamp()
-                        FROM background_jobs job
-                        WHERE capacity.resource_class = 'Heavy'
-                          AND capacity.job_id = :job_id
-                          AND capacity.worker_id = :worker_id
-                          AND capacity.attempt_no = :attempt_no
-                          AND job.id = capacity.job_id
-                          AND job.status = 'running'
-                          AND job.claimed_by = capacity.worker_id
-                          AND job.attempts = :attempt_no
-                          AND job.lease_expires_at > clock_timestamp()
-                        RETURNING capacity.job_id
-                        """
-                    ),
-                    {
-                        "job_id": context.job_id,
-                        "worker_id": context.worker_id,
-                        "attempt_no": context.attempt_no,
-                        "lease_seconds": max(int(lease_seconds), 1),
-                    },
-                )
-                .mappings()
-                .first()
-            )
-        if renewal is None:
-            return False
     with session_factory() as job_db, job_db.begin():
         if (
             context.resource_class == "Light"
@@ -915,14 +905,12 @@ def heartbeat_job(
             # contend with Heavy admission.
             return False
         # The lease is computed inline so a renewal that queued behind a long
-        # job-row lock still lands a full lease from the moment it commits, not
-        # a stale one from the capacity transaction. The job lease may therefore
-        # outlive the capacity lease by that bounded wait; the Heavy slot stays
-        # held either way because _heavy_capacity_is_available only releases it
-        # once the holder job's own lease has also expired.
-        updated = job_db.execute(
+        # job-row lock still lands a full lease from the moment it commits. The
+        # Heavy holder fence is a constant fragment interpolated into owned SQL;
+        # nothing untrusted is interpolated.
+        renewed = job_db.execute(
             text(
-                """
+                f"""
                 UPDATE background_jobs
                 SET lease_expires_at =
                         clock_timestamp()
@@ -933,6 +921,7 @@ def heartbeat_job(
                   AND claimed_by = :worker_id
                   AND attempts = :attempt_no
                   AND lease_expires_at > clock_timestamp()
+                  {_HEAVY_HOLDER_FENCE_SQL if context.resource_class == "Heavy" else ""}
                 RETURNING id
                 """
             ),
@@ -943,7 +932,41 @@ def heartbeat_job(
                 "lease_seconds": max(int(lease_seconds), 1),
             },
         ).first()
-    return updated is not None
+    if renewed is None:
+        return False
+    if context.resource_class == "Light":
+        return True
+    with session_factory() as capacity_db, capacity_db.begin():
+        renewal = (
+            capacity_db.execute(
+                text(
+                    """
+                    UPDATE background_job_capacity_leases capacity
+                    SET lease_expires_at = job.lease_expires_at,
+                        updated_at = clock_timestamp()
+                    FROM background_jobs job
+                    WHERE capacity.resource_class = 'Heavy'
+                      AND capacity.job_id = :job_id
+                      AND capacity.worker_id = :worker_id
+                      AND capacity.attempt_no = :attempt_no
+                      AND job.id = capacity.job_id
+                      AND job.status = 'running'
+                      AND job.claimed_by = capacity.worker_id
+                      AND job.attempts = :attempt_no
+                      AND job.lease_expires_at > clock_timestamp()
+                    RETURNING capacity.job_id
+                    """
+                ),
+                {
+                    "job_id": context.job_id,
+                    "worker_id": context.worker_id,
+                    "attempt_no": context.attempt_no,
+                },
+            )
+            .mappings()
+            .first()
+        )
+    return renewal is not None
 
 
 def lock_and_renew_running_job_claim(
